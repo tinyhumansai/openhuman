@@ -46,8 +46,9 @@
 #![allow(clippy::await_holding_lock)]
 
 use crate::env_guard::EnvVarGuard;
+use openhuman_core::core::runtime::DispatchCtx;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 
 use openhuman_core::config::Config;
 use openhuman_core::core::all::RegisteredController;
@@ -66,7 +67,8 @@ fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 /// Point the Ollama health probe at a closed loopback port and clear the
@@ -94,7 +96,7 @@ fn controller<'a>(
 
 async fn call(controller: &RegisteredController, params: Value) -> Result<Value, String> {
     let params = params.as_object().cloned().unwrap_or_default();
-    (controller.handler)(params).await
+    (controller.handler)(DispatchCtx::process_default(), params).await
 }
 
 /// A config rooted in `tmp/.openhuman`, matching what `OPENHUMAN_WORKSPACE`

@@ -1,4 +1,5 @@
 use super::*;
+use tinybox_bus::CommandClass;
 
 #[test]
 fn command_injection_background_chain_blocked() {
@@ -609,7 +610,7 @@ fn validate_command_truncates_secrets_in_allowlist_miss_error() {
         "Err return leaked the secret past the 80-char truncation boundary: {err}"
     );
     assert!(
-        err.starts_with(crate::security::POLICY_BLOCKED_MARKER),
+        err.starts_with(tinytools::status::POLICY_BLOCKED_MARKER),
         "hard block should lead with the recognizable policy marker: {err}"
     );
     assert!(

@@ -406,7 +406,7 @@ pub(crate) const DELIBERATELY_UNPACKED_FLEET_TOOLS: &[&str] = &[
 /// The lookup surface over [`PACKS`] handed to the generic `use_skill` tool
 /// (`tinyagents_harness::tool::packs`). `NOT_FOUND_MARKER` is the host's status
 /// vocabulary, so a "no such skill / tool" result classifies as `NotFound`.
-pub const CATALOG: PackCatalog = PackCatalog::new(PACKS, crate::tools::status::NOT_FOUND_MARKER);
+pub const CATALOG: PackCatalog = PackCatalog::new(PACKS, tinytools::status::NOT_FOUND_MARKER);
 
 pub fn pack(id: &str) -> Option<&'static ToolPack> {
     CATALOG.pack(id)

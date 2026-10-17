@@ -197,7 +197,12 @@ async fn two_agents_keep_cron_and_flows_apart(case: Case) {
     assert!(job_names(&config).is_empty());
 
     // Background visits see the agents' jobs under their own ids.
-    let visited = for_each_scope("e2e", || async { job_names(&config) }).await;
+    let visited = for_each_scope(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        "e2e",
+        |_| async { job_names(&config) },
+    )
+    .await;
     assert!(
         visited.contains(&(
             Some("agent-alpha".to_string()),
@@ -268,7 +273,12 @@ async fn no_acting_agent_falls_back_to_the_local_scope(case: Case) {
 
     // The operator's records are what the `local` visit of a background loop
     // sees.
-    let visited = for_each_scope("e2e", || async { job_names(&config) }).await;
+    let visited = for_each_scope(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        "e2e",
+        |_| async { job_names(&config) },
+    )
+    .await;
     assert!(
         visited.contains(&(None, vec!["operator-job".to_string()])),
         "{visited:?}"

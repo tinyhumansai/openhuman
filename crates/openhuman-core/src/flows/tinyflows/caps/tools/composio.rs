@@ -129,7 +129,7 @@ impl ToolBackend for ComposioToolBackend {
         // doc for why this differs from the general agent tool-call path).
         // Runs before anything else — a rejected slug never reaches the
         // composio client at all.
-        if !super::super::is_curated_flow_tool(&live_config, slug).await {
+        if !super::super::is_curated_flow_tool(ctx.dispatch, &live_config, slug).await {
             tracing::warn!(
                 target: "flows",
                 %slug,
@@ -172,7 +172,15 @@ impl ToolBackend for ComposioToolBackend {
         let (outcome, audit_id) = if tier_decision == GateDecision::Allow {
             (crate::security::approval::GateOutcome::Allow, None)
         } else {
-            super::super::gate_call_for_tier(tier_decision, slug, &summary, redacted).await
+            super::super::gate_call_for_tier(
+                ctx.dispatch,
+                ctx.approval,
+                tier_decision,
+                slug,
+                &summary,
+                redacted,
+            )
+            .await
         };
         if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
             tracing::warn!(

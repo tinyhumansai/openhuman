@@ -1,4 +1,4 @@
-//! [`ToolPolicyMiddleware`]: enforce the builder-configured `ToolPolicy` and
+//! [`ToolPolicyMiddleware`]: enforce the builder-configured `ToolCallPolicy` and
 //! the session's channel-permission ceiling at the tool boundary, and render
 //! session-scoped `use_skill` listings.
 
@@ -19,7 +19,7 @@ use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::tinyagents::policy_denial::PolicyDenial;
 use tinytools::Tool;
 
-/// `wrap_tool`: enforce the agent's builder-configured [`ToolPolicy`] at the tool
+/// `wrap_tool`: enforce the agent's builder-configured `ToolCallPolicy` at the tool
 /// boundary (issue #4249). The in-house engine ran this check in
 /// `agent_tool_exec` (`ctx.tool_policy.check(...)`); the tinyagents path bypassed
 /// it, so a `.tool_policy()` deny/require-approval silently no-opped and the tool
@@ -28,12 +28,11 @@ use tinytools::Tool;
 /// same `"Tool '<name>' <denied|requires approval> by policy '<policy>': <reason>"`
 /// wording the engine produced.
 pub(crate) struct ToolPolicyMiddleware {
-    /// The builder policy behind the harness gate, adapted to the harness
-    /// `ToolCallPolicy` seam (see [`SessionToolPolicy`]).
+    /// The builder policy behind the harness gate.
     gate: ToolPolicyGate<OpenHumanRunContext>,
     /// The session's channel-permission snapshot — enforces the per-channel deny
     /// + per-call permission-level ceiling the engine ran in `agent_tool_exec`.
-    session: crate::tools::agent_policy::ToolPolicySession,
+    session: tinytools::ToolPolicySession,
     /// Shared tool sets (same `Arc`s the runner registers) so a call's OpenHuman
     /// `Tool` can be resolved for its generated-tool runtime context and its
     /// per-call permission level.
@@ -41,56 +40,34 @@ pub(crate) struct ToolPolicyMiddleware {
     channel: String,
 }
 
-/// Adapter from the host's [`ToolPolicy`](crate::agent::tool_policy::ToolPolicy)
-/// (request + session context) to the harness `ToolCallPolicy` seam.
-struct SessionToolPolicy {
-    policy: Arc<dyn crate::agent::tool_policy::ToolPolicy>,
-    session_id: String,
-    channel: String,
-    agent_definition_id: String,
-}
+/// The session-less allow-all gate for sessions with no builder policy.
+#[derive(Debug, Default)]
+pub(crate) struct AllowAllToolPolicy;
 
 #[async_trait]
-impl ToolCallPolicy<OpenHumanRunContext> for SessionToolPolicy {
+impl ToolCallPolicy<OpenHumanRunContext> for AllowAllToolPolicy {
     fn name(&self) -> &str {
-        self.policy.name()
+        "allow_all"
     }
 
     async fn check(
         &self,
         _ctx: &RunContext<OpenHumanRunContext>,
-        call: &TaToolCall,
+        _call: &TaToolCall,
     ) -> PolicyDecision {
-        use crate::agent::tool_policy::{ToolCallContext, ToolPolicyRequest};
-        let context = ToolCallContext::session(
-            self.session_id.clone(),
-            self.channel.clone(),
-            self.agent_definition_id.clone(),
-            call.id.clone(),
-            1,
-        );
-        let request = ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
-        self.policy.check(&request).await
+        PolicyDecision::Allow
     }
 }
 
 impl ToolPolicyMiddleware {
     pub(crate) fn new(
-        policy: Arc<dyn crate::agent::tool_policy::ToolPolicy>,
-        session: crate::tools::agent_policy::ToolPolicySession,
+        policy: Arc<dyn ToolCallPolicy<OpenHumanRunContext>>,
+        session: tinytools::ToolPolicySession,
         tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
-        session_id: String,
         channel: String,
-        agent_definition_id: String,
     ) -> Self {
-        let adapter = SessionToolPolicy {
-            policy,
-            session_id,
-            channel: channel.clone(),
-            agent_definition_id,
-        };
         Self {
-            gate: ToolPolicyGate::new(Arc::new(adapter)),
+            gate: ToolPolicyGate::new(policy),
             session,
             tool_sets,
             channel,
@@ -172,7 +149,7 @@ impl ToolPolicyMiddleware {
             })
             .collect();
         tinyagents_harness::tool::packs::NoSuchPackTool {
-            not_found_marker: crate::tools::status::NOT_FOUND_MARKER,
+            not_found_marker: tinytools::status::NOT_FOUND_MARKER,
             skill: pack.id,
             tool,
             callable,
@@ -242,7 +219,7 @@ impl ToolPolicyMiddleware {
         let approval_only = desktop_approval_disabled
             && matches!(
                 decision.action,
-                crate::tools::agent_policy::ToolPolicyAction::RequireApproval
+                tinytools::ToolPolicyAction::RequireApproval
             );
         if decision.is_denied() && !approval_only {
             return Some(
@@ -351,13 +328,17 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
         call: TaToolCall,
         next: ToolHandler<'_, (), crate::agent::tinyagents::host::OpenHumanRunContext>,
     ) -> TaResult<MiddlewareToolOutcome> {
-        use crate::agent::tool_policy::ToolPolicyDecision;
-
         // Channel-permission ceiling first (session deny + per-call permission
         // level), mirroring the engine order in `agent_tool_exec`.
         #[cfg(feature = "modules")]
         let desktop_approval_disabled = match self.resolve_tool(&call.name) {
-            Some(tool) => crate::desktop::control::approvals_disabled_for(tool.as_ref()).await,
+            Some(tool) => {
+                crate::desktop::control::approvals_disabled_for(
+                    &ctx.data.dispatch_ctx(),
+                    tool.as_ref(),
+                )
+                .await
+            }
             None => false,
         };
         #[cfg(not(feature = "modules"))]
@@ -375,11 +356,11 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
         let policy_name = self.gate.policy_name();
         if let Some(reason) = decision.blocking_reason() {
             let blocked_action = match &decision {
-                ToolPolicyDecision::RequireApproval { .. } => "requires approval",
-                ToolPolicyDecision::Deny { .. } => "denied",
-                ToolPolicyDecision::Allow => "allowed",
+                PolicyDecision::RequireApproval { .. } => "requires approval",
+                PolicyDecision::Deny { .. } => "denied",
+                PolicyDecision::Allow => "allowed",
             };
-            crate::tools::registry::denials::record(
+            tinytools::registry::denials::record(
                 call.name.as_str(),
                 policy_name,
                 blocked_action,
@@ -393,7 +374,7 @@ impl ToolMiddleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                 "[tinyagents::mw] tool blocked by policy"
             );
             let content = match &decision {
-                ToolPolicyDecision::RequireApproval { .. } => PolicyDenial::ApprovalRequired {
+                PolicyDecision::RequireApproval { .. } => PolicyDenial::ApprovalRequired {
                     tool: &call.name,
                     policy: policy_name,
                     reason,

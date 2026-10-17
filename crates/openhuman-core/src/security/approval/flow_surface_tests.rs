@@ -1,13 +1,7 @@
 use super::*;
 use std::cell::Cell;
 use std::future::Future;
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
-
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
-}
+use std::task::{Context, Poll, Waker};
 
 #[test]
 fn a_closed_instance_registers_nothing_and_publishes_neither_flow_surface() {
@@ -19,7 +13,7 @@ fn a_closed_instance_registers_nothing_and_publishes_neither_flow_surface() {
         std::future::ready(17),
         |_| publications.set(publications.get() + 1),
     ));
-    let waker = Waker::from(Arc::new(Noop));
+    let waker = Waker::noop().clone();
     assert_eq!(
         publication.as_mut().poll(&mut Context::from_waker(&waker)),
         Poll::Ready(Err("agent_removed".to_owned()))
@@ -42,7 +36,7 @@ fn removal_during_workspace_lookup_suppresses_registration_and_all_surfaces() {
     let mut publication = std::pin::pin!(register_after_workspace(Some(&scope), workspace, |_| {
         publications.set(publications.get() + 1)
     },));
-    let waker = Waker::from(Arc::new(Noop));
+    let waker = Waker::noop().clone();
     let mut cx = Context::from_waker(&waker);
     assert_eq!(publication.as_mut().poll(&mut cx), Poll::Pending);
     assert_eq!(
@@ -73,7 +67,7 @@ fn a_live_or_unscoped_flow_registers_once_with_its_resolved_workspace() {
                 42
             },
         ));
-        let waker = Waker::from(Arc::new(Noop));
+        let waker = Waker::noop().clone();
         assert_eq!(
             publication.as_mut().poll(&mut Context::from_waker(&waker)),
             Poll::Ready(Ok(42))

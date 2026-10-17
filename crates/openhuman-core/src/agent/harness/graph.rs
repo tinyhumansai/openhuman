@@ -3,7 +3,7 @@
 //! Per the per-folder `graph.rs` convention, this is the harness's top-level
 //! (channel/CLI) graph definition, its available tools, and its summarization
 //! step — all thin over the shared tinyagents seam
-//! ([`run_turn_via_tinyagents_shared`]).
+//! ([`TurnSpec::run`]).
 //!
 //! **Graph.** A single agent-loop turn driven by the tinyagents harness (the
 //! canonical channel/CLI path; the legacy `run_tool_call_loop` is removed),
@@ -33,8 +33,8 @@ use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
 use crate::agent::progress::AgentProgress;
-use crate::agent::tinyagents::run_turn_via_tinyagents_shared;
 use crate::agent::tinyagents::TurnModelSource;
+use crate::agent::tinyagents::TurnSpec;
 use crate::config::{MultimodalConfig, MultimodalFileConfig};
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
@@ -57,9 +57,15 @@ pub(crate) async fn run_channel_turn_via_graph(
     multimodal_files: MultimodalFileConfig,
     on_progress: Option<Sender<AgentProgress>>,
     origin: Option<crate::agent::turn_origin::AgentTurnOrigin>,
-    sandbox_mode: crate::agent::harness::SandboxMode,
+    sandbox_mode: tinyagents_definition::SandboxMode,
+    approval: crate::security::approval::ApprovalTurnContext,
+    memory_identity: crate::memory::scope::MemoryIdentity,
 ) -> Result<crate::agent::tinyagents::TinyagentsTurnOutcome> {
     let extra_arc = Arc::new(extra_tools);
+    // A channel/CLI turn is entered without a run context: the model source
+    // was built under the turn's context, so bind that one here, once, and
+    // carry it on the turn's run context.
+    let dispatch = source.dispatch_ctx();
 
     // The callable set is the visibility whitelist. The runner advertises each via
     // its own `spec()`, deduped by name (extras shadow the registry).
@@ -100,9 +106,7 @@ pub(crate) async fn run_channel_turn_via_graph(
                 anyhow::bail!("attachments are disabled for this channel input");
             }
             if attachment_config.is_none() {
-                let mut config = crate::config::rpc::load_config_with_timeout()
-                    .await
-                    .map_err(anyhow::Error::msg)?;
+                let mut config = dispatch.load_config().await.map_err(anyhow::Error::msg)?;
                 config.multimodal = multimodal.clone();
                 config.multimodal_files = multimodal_files.clone();
                 attachment_config = Some(config);
@@ -125,7 +129,7 @@ pub(crate) async fn run_channel_turn_via_graph(
         }
     }
     let prepared = if crate::agent::multimodal::has_image_placeholders(history) {
-        crate::agent::multimodal::rehydrate_image_placeholders(history)
+        crate::agent::multimodal::rehydrate_image_placeholders(history).await
     } else {
         history.clone()
     };
@@ -138,53 +142,58 @@ pub(crate) async fn run_channel_turn_via_graph(
         "[channel:graph] routing channel turn through tinyagents harness"
     );
     let turn_origin = origin.clone();
-    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new()
+        .with_core(dispatch.core().cloned());
     run_context.origin = origin;
+    run_context.approval = approval;
+    run_context.memory_identity = Some(memory_identity);
     run_context.sandbox_mode = Some(sandbox_mode);
     run_context.workspace = attachment_workspace.map(tinytools::WorkspaceDescriptor::new);
     seed_channel_attachments(&mut run_context, &prepared);
     // The channel dispatcher owns this explicit sink. It wins over an embedder
     // scope exactly as it did before this carrier was introduced.
     run_context.progress = on_progress.clone().or(run_context.progress);
-    let outcome = run_turn_via_tinyagents_shared(
+    let outcome = TurnSpec {
         run_context,
         turn_models,
         provider_id,
         model,
-        prepared,
-        vec![extra_arc, tools_registry],
+        history: prepared,
+        tool_sets: vec![extra_arc, tools_registry],
         allowed,
         max_iterations,
         // Top-level (parent) turn — no child-progress attribution.
-        None,
+        subagent_scope: None,
         // Resolved above — drives the context-window summarization step.
         context_window,
         // No mid-flight steering on the channel path.
-        None,
+        run_queue: None,
         // Same pause as the chat path: a channel turn's continuation is the
         // user's next message, so ending the turn on the question is the whole
         // mechanism. Without this the model answers its own question (see
         // `session/turn/graph.rs`).
-        &["ask_user_clarification"],
+        early_exit_tools: &["ask_user_clarification"],
         // Channels surface the cap as an error (legacy `ErrorCheckpoint`), so no
         // graceful cap pause/summary here.
-        false,
+        pause_at_cap: false,
         // Bound the model's per-call output (legacy parity — channel turns ran at
         // the standard per-turn budget).
-        Some(crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS),
+        max_output_tokens: Some(crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS),
         // Context middlewares: cache-align + default tool-result byte cap (the
         // channel path has no session `ContextManager` to source config from).
-        crate::agent::tinyagents::TurnContextMiddleware::defaults(),
+        context_mw:
+            crate::agent::tinyagents::middleware::turn_context::TurnContextMiddleware::defaults(),
         // Channel/CLI path carries its own gating; no session `.tool_policy()`.
-        None,
+        tool_policy: None,
         // Interactive channel/CLI turn — never serve a cached model response.
-        false,
+        deterministic_cacheable: false,
         // #4457 (defect C): the channel/CLI path has no post-run wrap-up and does
         // NOT emit `TurnCompleted` itself, so let the seam emit the single
         // terminal event (legacy-engine parity).
-        false,
-    );
-    let outcome = match (turn_origin, crate::core::runtime::CoreContext::current()) {
+        defer_turn_completed_to_caller: false,
+    }
+    .run();
+    let outcome = match (turn_origin, dispatch.into_core()) {
         (Some(origin), Some(context)) => {
             crate::core::runtime::CoreContext::scope_with_turn_origin(
                 context,

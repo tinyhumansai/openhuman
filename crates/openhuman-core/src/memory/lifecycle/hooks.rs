@@ -151,6 +151,32 @@ pub struct MemoryTurn {
     pub thread_id: String,
     /// The pack the turn was given, if any.
     pub pack: Option<TurnPack>,
+    /// The first turn of the thread still verbatim in the turn's prompt: the
+    /// turns before it were compacted into a checkpoint (0 when nothing was).
+    /// Live: a compaction during the turn moves it forward.
+    pub in_prompt_from: std::sync::Arc<super::window::InPromptFrom>,
+    /// The context the turn runs under, held weakly so a finished tenant's
+    /// lease is not kept alive by a lingering turn handle.
+    pub core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
+}
+
+impl MemoryTurn {
+    /// The thread's turns still verbatim in the turn's prompt, which the
+    /// agent's own memory reads leave out (the compacted ones stay readable).
+    #[must_use]
+    pub fn in_prompt(&self) -> tinymemory_api::ThreadWindow {
+        tinymemory_api::ThreadWindow {
+            thread_id: self.thread_id.clone(),
+            from_turn: self.in_prompt_from.get(),
+        }
+    }
+
+    /// The dispatch context the turn's memory work runs under: its own, else
+    /// the calling task's.
+    #[must_use]
+    pub fn dispatch_ctx(&self) -> crate::core::runtime::DispatchCtx {
+        crate::core::runtime::DispatchCtx::from_weak(self.core.as_ref())
+    }
 }
 
 /// What the agent loop knows before the model runs.
@@ -188,6 +214,7 @@ pub struct PreTurnInput {
 /// The work is spawned, so a timed-out log still completes in the
 /// background; only its pack is dropped.
 pub async fn pre_turn(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     identity: &ResolvedIdentity,
     input: PreTurnInput,
@@ -196,11 +223,10 @@ pub async fn pre_turn(
     let started = std::time::Instant::now();
     let agent_id = identity.agent_id.clone();
     let config = config.clone();
+    let dispatch = ctx.clone();
     let identity = identity.clone();
     let thread = input.thread_id.clone();
-    let task = crate::core::runtime::spawn_scoped(async move {
-        pre_turn_work(&config, &identity, input).await
-    });
+    let task = ctx.spawn(async move { pre_turn_work(&dispatch, &config, &identity, input).await });
     let pack = match tokio::time::timeout(timeout, task).await {
         Ok(Ok(pack)) => pack,
         Ok(Err(error)) => {
@@ -213,7 +239,7 @@ pub async fn pre_turn(
         }
     };
     if let Some(pack) = &pack {
-        crate::memory::tools::record_pack_citations(&thread, pack.citations.clone());
+        crate::memory::tools::record_pack_citations(ctx, &thread, pack.citations.clone());
     }
     tracing::debug!(thread_id = %thread, %agent_id, injected = pack.is_some(), tokens = pack.as_ref().map_or(0, |pack| pack.tokens), refs = pack.as_ref().map_or(0, |pack| pack.refs.len()), elapsed_ms = started.elapsed().as_millis() as u64, "[memory:hooks] pre_turn");
     pack
@@ -222,6 +248,7 @@ pub async fn pre_turn(
 /// The direct lifecycle operation for bounded background workers. Unlike the
 /// manual timeout wrapper, its future owns all I/O and can be cancelled.
 pub(crate) async fn pre_turn_work(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     identity: &ResolvedIdentity,
     input: PreTurnInput,
@@ -258,15 +285,19 @@ pub(crate) async fn pre_turn_work(
     // the pack is still ranked and returned before the turn stops waiting.
     let date_hint = (recall && logging && config.memory.recall.date_hint).then(|| {
         let config = config.clone();
+        let ctx = ctx.clone();
         let text = input.user_text.clone();
         let deadline =
             tokio::time::Instant::now() + timeout.saturating_sub(Duration::from_millis(100));
         async move {
             let zone = config.time_zone();
-            tokio::time::timeout_at(deadline, super::date_hint::extract(&config, &text, &zone))
-                .await
-                .ok()
-                .flatten()
+            tokio::time::timeout_at(
+                deadline,
+                super::date_hint::extract(&ctx, &config, &text, &zone),
+            )
+            .await
+            .ok()
+            .flatten()
         }
     });
     let pack = async move {

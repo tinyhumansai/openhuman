@@ -107,7 +107,7 @@ function isCatalogEntryInstalled(entry: CatalogEntry, installedKeys: Set<string>
 /**
  * Source tone table: where a skill comes from (shipped with the app, or
  * fetched from a remote catalogue) maps to a `Badge` variant instead of a
- * bespoke tint. See `gitbooks/developing/theming.md`.
+ * bespoke tint. See `docs/gitbooks/en/developing/theming.md`.
  */
 const SOURCE_VARIANT: Record<string, BadgeVariant> = {
   'built-in': 'success',

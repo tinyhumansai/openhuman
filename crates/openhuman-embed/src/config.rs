@@ -85,11 +85,17 @@ pub async fn load_or_init() -> anyhow::Result<RuntimeConfig> {
     RuntimeConfig::load_or_init().await
 }
 
-/// [`load_or_init`] under the core's RPC load timeout, honouring an
-/// embedder-scoped config in the ambient context. The error is
-/// user-presentable.
-pub async fn load_config_with_timeout() -> Result<RuntimeConfig, String> {
-    openhuman_core::config::rpc::load_config_with_timeout().await
+/// [`load_or_init`] under the core's RPC load timeout, for a host entry that
+/// runs outside any turn (a desktop command, gateway activation): it reads the
+/// host's own context ([`DispatchCtx::host_default`]), honouring an
+/// embedder-supplied config on it. The error is user-presentable.
+///
+/// [`DispatchCtx::host_default`]: openhuman_core::core::runtime::DispatchCtx::host_default
+pub async fn load_host_config() -> Result<RuntimeConfig, String> {
+    openhuman_core::config::ops::load_config_in(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+    )
+    .await
 }
 
 /// The OpenHuman root (`~/.openhuman`, or `OPENHUMAN_WORKSPACE`'s root) that
@@ -111,7 +117,7 @@ mod tests;
 
 /// Operator search policy and direct-route credential vocabulary.
 pub use openhuman_core::config::{
-    SearchConfig, SearchEngineCredentials, SearchPresentation, SearchProviderSettings, SearchRoute,
+    PresentationMode, ProviderRoute, SearchConfig, SearchEngineCredentials, SearchProviderSettings,
 };
 /// The three native search capabilities whose names an operator can present.
 pub use openhuman_core::profiles::provider_settings::SearchRole;

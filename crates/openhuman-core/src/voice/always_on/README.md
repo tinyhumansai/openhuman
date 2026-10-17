@@ -17,7 +17,7 @@ The split follows the audio callback, not the cost of a call. A module call is a
 | [`capture.rs`](./capture.rs) | Reserves and starts a module-owned stream, polls at most two chunks per call, and forwards ordered batches through a bounded host queue. Cancellation releases the opaque lease; failed cleanup remains tracked for retry. |
 | [`lock_watcher.rs`](./lock_watcher.rs) | The macOS screen-lock privacy hook. `spawn_lock_watcher` polls `CGSessionCopyCurrentDictionary` every two seconds and flips `PAUSED` on lock/unlock transitions. Other platforms log that the watcher is unavailable and never pause (no lock signal yet). |
 | [`processor.rs`](./processor.rs) | Owns the enabled/paused gates, VAD session and transcription tasks. Toggle-off and sign-out stop capture, cancel pending transcriptions and drain the processor before restart. |
-| [`transcribe.rs`](./transcribe.rs) | Transcribes a finished utterance through the configured STT provider (the same factory dispatch `voice.stt_dispatch` uses), applies the wake-word gate (`tinyvoice::extract_command`), and routes recognized commands either to a local fast path (`execute_intent`, media transport and volume via `osascript` on macOS) or, for `VoiceIntent::Unknown` or a failed local execution, to the agent via `crate::voice::dictation_listener::publish_transcription`. |
+| [`transcribe.rs`](./transcribe.rs) | Transcribes a finished utterance through the configured STT provider (the same factory dispatch `voice.stt_dispatch` uses), applies the wake-word gate (`tinyvoice::sequence_utterance`), and routes recognized commands either to a local fast path (`execute_intent`, media transport and volume via `osascript` on macOS) or, for `VoiceIntent::Unknown` or a failed local execution, to the agent via `crate::voice::dictation_listener::publish_transcription`. |
 
 `always_on.rs` (one level up, in `voice/`) is the module entry point: it declares these four submodules, re-exports `start_if_enabled`/`stop`, and holds the shared `LOG_PREFIX` constant.
 
@@ -30,7 +30,7 @@ The split follows the audio callback, not the cost of a call. A module call is a
 
 ## Wake word and privacy
 
-Transcription is forced to English (`Some("en")`) because auto-detect rendered the wake word in non-Latin scripts that could never match. The wake-word gate fails closed: if `tinyvoice::extract_command` errors, the utterance is dropped rather than delivered unaddressed to the agent. Logs never include the raw transcript or spoken command, only lengths and intent kinds, per the PII-safe logging rule.
+Transcription is forced to English (`Some("en")`) because auto-detect rendered the wake word in non-Latin scripts that could never match. The wake-word gate fails closed: if `tinyvoice::sequence_utterance` errors, the utterance is dropped rather than delivered unaddressed to the agent. Logs never include the raw transcript or spoken command, only lengths and intent kinds, per the PII-safe logging rule.
 
 ## Configuration
 

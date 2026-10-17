@@ -177,7 +177,7 @@ A finding's `basis` is **READ** when it was seen (a response, a log line) and
 
 ## See also
 
-- [Memory](../../gitbooks/features/memory.md) and [Memory architecture](../../gitbooks/developing/architecture/memory.md), the behavior under test.
+- [Memory](../../docs/gitbooks/en/features/memory.md) and [Memory architecture](../../docs/gitbooks/en/developing/architecture/memory.md), the behavior under test.
 - [`vendor/tinymemory/`](../../vendor/tinymemory) and its repo, [tinyhumansai/tinymemory](https://github.com/tinyhumansai/tinymemory).
 - [`docs/specs/memory-v2.md`](../../docs/specs/memory-v2.md) for the layout spec.
 - [`life-scenarios/`](https://github.com/tinyhumansai/openhuman-benchmarks/blob/main/life-scenarios/README.md) in openhuman-benchmarks, and [`scripts/README.md`](../README.md).

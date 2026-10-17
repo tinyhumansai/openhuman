@@ -117,7 +117,7 @@ Most agent harnesses run one heavy process per agent and resend a big prompt on 
 
 <h3>Built for developers</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust quickstart</a> · <a href="./gitbooks/developing/embed/README.md">Embedding guide</a> · <a href="./crates/openhuman-embed/examples">Examples</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust quickstart</a> · <a href="./docs/gitbooks/en/developing/embed/README.md">Embedding guide</a> · <a href="./crates/openhuman-embed/examples">Examples</a></p>
 
 <p>Use it as a Rust library: call an agent like any other function, or run a whole fleet from one small server.</p>
 
@@ -224,9 +224,9 @@ OpenHuman rethinks the parts that cost the most: how much text the AI has to rea
 
 <p align="center">
  <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./gitbooks/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
-  <source media="(prefers-color-scheme: light)" srcset="./gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
-  <img alt="SWE-bench Verified run swe-x86-1: OpenHuman against six other harnesses on ten panels" src="./gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="./docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified run swe-x86-1: OpenHuman against six other harnesses on ten panels" src="./docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
  </picture>
 </p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-Next: the [Rust quickstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), the [embedding guide](./gitbooks/developing/embed/README.md) and the [developer docs](https://tinyhumans.gitbook.io/openhuman/developing).
+Next: the [Rust quickstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), the [embedding guide](./docs/gitbooks/en/developing/embed/README.md) and the [developer docs](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

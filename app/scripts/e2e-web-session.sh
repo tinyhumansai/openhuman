@@ -20,13 +20,30 @@ PW_CORE_RPC_TOKEN="${PW_CORE_RPC_TOKEN:-openhuman-playwright-token}"
 PW_CORE_RPC_URL="http://127.0.0.1:${OPENHUMAN_CORE_PORT}/rpc"
 PW_BASE_URL="http://127.0.0.1:${E2E_WEB_PORT}"
 
-OPENHUMAN_WORKSPACE="${OPENHUMAN_WORKSPACE:-$(mktemp -d)}"
+E2E_WEB_WORKSPACE_EXPLICIT="${OPENHUMAN_WORKSPACE:+1}"
 CREATED_TEMP_WORKSPACE=""
-if [ ! -d "${OPENHUMAN_WORKSPACE}" ] || [[ "${OPENHUMAN_WORKSPACE}" == /tmp/* ]]; then
+if [ -z "$E2E_WEB_WORKSPACE_EXPLICIT" ]; then
+  OPENHUMAN_WORKSPACE="$(mktemp -d)"
   CREATED_TEMP_WORKSPACE="$OPENHUMAN_WORKSPACE"
 fi
 export OPENHUMAN_WORKSPACE
 export OPENHUMAN_KEYRING_BACKEND="${OPENHUMAN_KEYRING_BACKEND:-file}"
+if [ -n "$E2E_WEB_WORKSPACE_EXPLICIT" ]; then
+  if [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ] &&
+    [ -z "${OPENHUMAN_KEYRING_MASTER_KEY_FILE:-}" ] &&
+    [ "${OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY:-}" != "1" ]; then
+    echo "ERROR: an explicit OPENHUMAN_WORKSPACE requires OPENHUMAN_KEYRING_MASTER_KEY or OPENHUMAN_KEYRING_MASTER_KEY_FILE." >&2
+    exit 2
+  fi
+  if [ "${OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY:-}" = "1" ] &&
+    [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ]; then
+    unset OPENHUMAN_KEYRING_MASTER_KEY_FILE
+  fi
+else
+  # A disposable workspace must not accidentally inherit a key-file path
+  # outside the test tree from the developer or runner environment.
+  unset OPENHUMAN_KEYRING_MASTER_KEY_FILE
+fi
 
 MOCK_PID=""
 CORE_PID=""
@@ -272,6 +289,11 @@ if [ -n "$STALE_SOURCE" ]; then
   echo "       the previous one and pass." >&2
   echo "       Rebuild first: pnpm --filter openhuman-app test:e2e:web:build" >&2
   exit 1
+fi
+
+if [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ] &&
+  [ -z "${OPENHUMAN_KEYRING_MASTER_KEY_FILE:-}" ]; then
+  export OPENHUMAN_KEYRING_MASTER_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
 fi
 
 export OPENHUMAN_CORE_BIN="$E2E_WEB_CORE_TARGET_DIR/debug/openhuman-core"

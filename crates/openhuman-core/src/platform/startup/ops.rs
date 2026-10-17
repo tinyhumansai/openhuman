@@ -1,38 +1,11 @@
 use std::path::Path;
-use tinyagents_session::transcript::{migrate_layout_if_needed, TranscriptLayoutMigration};
 
 /// Run one-shot workspace migrations needed at process startup.
 ///
 /// Failures are logged and do not abort startup. Individual migration helpers
 /// remain responsible for their own idempotency markers.
-pub fn run_workspace_migrations(workspace_dir: &Path) {
-    let layout_migration: anyhow::Result<TranscriptLayoutMigration> =
-        migrate_layout_if_needed(workspace_dir);
-    match layout_migration {
-        Ok(outcome) if outcome.already_done => {
-            log::debug!("[runtime] session_layout migration already applied");
-        }
-        Ok(outcome) => {
-            log::info!(
-                "[runtime] session_layout migration applied: jsonl_moved={} md_moved={} pruned_dirs={} warnings={}",
-                outcome.jsonl_moved,
-                outcome.md_moved,
-                outcome.legacy_dirs_pruned,
-                outcome.warnings.len(),
-            );
-            for warning in &outcome.warnings {
-                log::warn!("[runtime] session_layout migration warning: {warning}");
-            }
-        }
-        Err(err) => {
-            log::warn!(
-                "[runtime] session_layout migration failed: {err} — \
-                 falling back to in-place legacy reads"
-            );
-        }
-    }
-
-    match crate::threads::migrate_welcome_agent_artifacts(workspace_dir) {
+pub fn run_workspace_migrations(ctx: &crate::core::runtime::DispatchCtx, workspace_dir: &Path) {
+    match crate::threads::migrate_welcome_agent_artifacts(ctx, workspace_dir) {
         Ok(result) if result.already_done => {
             log::debug!("[migration::welcome-to-orchestrator] already applied");
         }

@@ -5,13 +5,20 @@
 //! `[http_request]` defaults, TinyJuice for page extraction, and (with the
 //! `web3` feature) the x402 payment flow.
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
+#[cfg(feature = "web3")]
+use tinytools::{PermissionLevel, Tool, ToolResult};
 use tinytools_std::network::{
-    AsyncHtmlExtractor, HttpLimits, HttpRequestTool, NetGate, WebFetchTool,
+    AsyncHtmlExtractor, CurlTool, HttpLimits, HttpRequestTool, NetGate, WebFetchTool,
 };
 
+use super::gate::RoutedGate;
 use crate::config::HttpRequestConfig;
+use crate::security::approval::ApprovalChatContext;
+use crate::security::SecurityPolicy;
+use crate::tools::per_call::PerCallTool;
 use {tinyjuice_bus::tools::summary_focus_property, tinyjuice_bus::tools::SUMMARY_FOCUS_ARG};
 
 /// The fallbacks for a `0` limit, from the `[http_request]` schema defaults, so
@@ -26,7 +33,9 @@ fn http_limits() -> HttpLimits {
 
 /// HTML detection and extraction execute in the lazily loaded TinyJuice module.
 #[derive(Debug)]
-struct TinyJuiceHtml;
+struct TinyJuiceHtml {
+    ctx: DispatchCtx,
+}
 
 #[async_trait::async_trait]
 impl AsyncHtmlExtractor for TinyJuiceHtml {
@@ -41,15 +50,39 @@ impl AsyncHtmlExtractor for TinyJuiceHtml {
     }
 
     async fn to_markdown(&self, html: &str) -> anyhow::Result<String> {
-        crate::inference::tokenjuice::extract_html(html.to_string())
+        crate::inference::tokenjuice::extract_html(&self.ctx, html.to_string())
             .await
             .map_err(anyhow::Error::msg)
     }
 }
 
 /// `http_request`, with the x402 402-retry wired in when `web3` is compiled.
+///
+/// For a caller that is not in a chat turn (a flow node, a direct dispatch): its
+/// disclosures and x402 quotes carry no chat routing. A chat turn registers
+/// [`routed_http_request_tool`] instead.
 pub fn http_request_tool(
+    ctx: &DispatchCtx,
     gate: Arc<dyn NetGate>,
+    allowed_domains: Vec<String>,
+    max_response_size: usize,
+    timeout_secs: u64,
+) -> HttpRequestTool {
+    http_request_tool_for(
+        ctx,
+        gate,
+        None,
+        allowed_domains,
+        max_response_size,
+        timeout_secs,
+    )
+}
+
+/// [`http_request_tool`] whose x402 quotes are owned by `chat`.
+fn http_request_tool_for(
+    ctx: &DispatchCtx,
+    gate: Arc<dyn NetGate>,
+    chat: Option<&ApprovalChatContext>,
     allowed_domains: Vec<String>,
     max_response_size: usize,
     timeout_secs: u64,
@@ -62,13 +95,140 @@ pub fn http_request_tool(
         http_limits(),
     );
     #[cfg(feature = "web3")]
-    let tool = tool.with_payment_hook(Arc::new(x402::X402PaymentHook));
+    let tool = tool.with_payment_hook(Arc::new(x402::X402PaymentHook::new(ctx, chat)));
+    #[cfg(not(feature = "web3"))]
+    let _ = (ctx, chat);
     tool
+}
+
+/// `http_request` for chat turns: built for each call around that call's chat,
+/// so its egress disclosures and x402 quotes reach (and belong to) that chat.
+pub fn routed_http_request_tool(
+    policy: Arc<SecurityPolicy>,
+    allowed_domains: Vec<String>,
+    max_response_size: usize,
+    timeout_secs: u64,
+) -> PerCallTool<HttpRequestTool> {
+    PerCallTool::new(move |chat, ctx| {
+        http_request_tool_for(
+            ctx,
+            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            chat,
+            allowed_domains.clone(),
+            max_response_size,
+            timeout_secs,
+        )
+    })
+}
+
+/// Dedicated x402 agent entry point backed by the same host HTTP policy and
+/// the module payment hook used by `http_request`, built for each call around
+/// that call's chat.
+#[cfg(feature = "web3")]
+pub(crate) fn x402_request_tool(
+    policy: Arc<SecurityPolicy>,
+    allowed_domains: Vec<String>,
+    max_response_size: usize,
+    timeout_secs: u64,
+) -> PerCallTool<impl Tool> {
+    PerCallTool::new(move |chat, ctx| {
+        let gate: Arc<dyn NetGate> = Arc::new(RoutedGate::new(Arc::clone(&policy), chat));
+        X402RequestTool {
+            gate: Arc::clone(&gate),
+            inner: http_request_tool_for(
+                ctx,
+                gate,
+                chat,
+                allowed_domains.clone(),
+                max_response_size,
+                timeout_secs,
+            ),
+        }
+    })
+}
+
+#[cfg(feature = "web3")]
+#[derive(Debug)]
+struct X402RequestTool {
+    gate: Arc<dyn NetGate>,
+    inner: HttpRequestTool,
+}
+
+#[cfg(feature = "web3")]
+#[async_trait::async_trait]
+impl Tool for X402RequestTool {
+    fn name(&self) -> &'static str {
+        tinywallet_bus::tools::x402_request_tool_declaration().name
+    }
+
+    fn description(&self) -> &'static str {
+        tinywallet_bus::tools::x402_request_tool_declaration().description
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        tinywallet_bus::tools::x402_request_tool_declaration()
+            .parameters
+            .clone()
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.gate.network_needs_approval()
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.inner.execute(args).await
+    }
+}
+
+/// `curl` for chat turns: built for each call around that call's chat, so its
+/// egress disclosure reaches that chat.
+pub fn routed_curl_tool(
+    policy: Arc<SecurityPolicy>,
+    allowed_domains: Vec<String>,
+    action_dir: std::path::PathBuf,
+    dest_subdir: String,
+    max_download_bytes: u64,
+    timeout_secs: u64,
+) -> PerCallTool<CurlTool> {
+    PerCallTool::new(move |chat, _ctx| {
+        CurlTool::new(
+            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            allowed_domains.clone(),
+            action_dir.clone(),
+            dest_subdir.clone(),
+            max_download_bytes,
+            timeout_secs,
+        )
+    })
+}
+
+/// `web_fetch` for chat turns: built for each call around that call's chat, so
+/// its egress disclosure reaches that chat.
+pub fn routed_web_fetch_tool(
+    policy: Arc<SecurityPolicy>,
+    allowed_domains: Vec<String>,
+    max_bytes: Option<usize>,
+    timeout_secs: Option<u64>,
+) -> PerCallTool<WebFetchTool> {
+    PerCallTool::new(move |chat, ctx| {
+        web_fetch_tool(
+            ctx,
+            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            allowed_domains.clone(),
+            max_bytes,
+            timeout_secs,
+        )
+    })
 }
 
 /// `web_fetch`, converting HTML through TinyJuice and opting into TinyJuice's
 /// optional `summary_focus` argument.
 pub fn web_fetch_tool(
+    ctx: &DispatchCtx,
     gate: Arc<dyn NetGate>,
     allowed_domains: Vec<String>,
     max_bytes: Option<usize>,
@@ -80,7 +240,7 @@ pub fn web_fetch_tool(
         max_bytes,
         timeout_secs,
         http_limits(),
-        Arc::new(TinyJuiceHtml),
+        Arc::new(TinyJuiceHtml { ctx: ctx.clone() }),
     )
     // Opts into a caller-steered summary; see `tokenjuice::focus`.
     .with_schema_property(SUMMARY_FOCUS_ARG, summary_focus_property())
@@ -91,13 +251,42 @@ mod x402 {
     //! x402 machine payment for `http_request`'s `402 Payment Required` retry.
 
     use async_trait::async_trait;
-    use base64::engine::Engine as _;
-    use tinytools_std::network::{PaymentAttempt, PaymentHook, PaymentOutcome};
+    use tinytools_std::network::{PaymentAttempt, PaymentHook};
 
-    use crate::web3::x402;
+    use super::{ApprovalChatContext, DispatchCtx};
+    use crate::modules::x402_service;
 
+    /// `Err("COMPONENT_DISABLED:wallet")` when `[components] wallet` is off:
+    /// the hook declines before any quote, signing or module load. The 402
+    /// response then surfaces to the caller unpaid.
+    pub(super) fn declined_when_wallet_off(config: &crate::config::Config) -> Result<(), String> {
+        if config.components.wallet {
+            return Ok(());
+        }
+        log::debug!("[tool.http_request] x402 payment declined: component 'wallet' disabled");
+        Err(format!(
+            "{}:wallet",
+            crate::core::runtime::components::COMPONENT_DISABLED
+        ))
+    }
+
+    /// The 402 handler for one `http_request` call. It owns the call's chat
+    /// routing: `PaymentHook::pay` takes no run context, so the quote owner is
+    /// held here and the hook is built per call.
     #[derive(Debug)]
-    pub(super) struct X402PaymentHook;
+    pub(super) struct X402PaymentHook {
+        ctx: DispatchCtx,
+        chat: Option<ApprovalChatContext>,
+    }
+
+    impl X402PaymentHook {
+        pub(super) fn new(ctx: &DispatchCtx, chat: Option<&ApprovalChatContext>) -> Self {
+            Self {
+                ctx: ctx.clone(),
+                chat: chat.cloned(),
+            }
+        }
+    }
 
     #[async_trait]
     impl PaymentHook for X402PaymentHook {
@@ -106,73 +295,70 @@ mod x402 {
             url: &str,
             response_headers: &reqwest::header::HeaderMap,
         ) -> Result<PaymentAttempt, String> {
-            let payment_result = x402::handle_402_and_pay(response_headers, url)
+            let challenge = response_headers
+                .get("PAYMENT-REQUIRED")
+                .or_else(|| response_headers.get("X-PAYMENT-REQUIRED"))
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| {
+                    "402 response is missing a valid PAYMENT-REQUIRED header".to_string()
+                })?;
+            let config = self
+                .ctx
+                .load_config()
                 .await
-                .map_err(|e| format!("x402 payment failed: {e}"))?;
-
-            // Stamped with the ledger's session and the active chat thread, exactly as
-            // the `x402_request` tool stamps its own.
-            let record = x402::pending_record(&payment_result);
-            let record_id = record.id.clone();
-            let _ = x402::store::with_ledger_mut(|l| l.record_payment(record));
+                .map_err(|error| format!("x402 payment failed: {error}"))?;
+            declined_when_wallet_off(&config)?;
+            let owner = self
+                .chat
+                .as_ref()
+                .map(|context| tinywallet_bus::wire::QuoteOwner {
+                    thread_id: context.thread_id.clone(),
+                    client_id: context.client_id.clone(),
+                });
+            let (service, payment) = x402_service::prepare_payment(
+                &self.ctx,
+                &config,
+                url.to_owned(),
+                challenge.to_owned(),
+                owner,
+            )
+            .await
+            .map_err(|error| format!("x402 payment failed: {error}"))?;
 
             log::debug!(
                 "[tool.http_request] retrying with x402 payment header amount={} asset={}",
-                payment_result.amount_atomic,
-                payment_result.asset
+                payment.amount_atomic,
+                payment.asset
             );
 
-            let url = url.to_string();
+            let payment_id = payment.payment_id;
+            let config = config.clone();
             Ok(PaymentAttempt {
-                headers: vec![("PAYMENT-SIGNATURE".to_string(), payment_result.header_value)],
-                settle: Box::new(move |outcome| settle(&record_id, &url, &outcome)),
+                headers: vec![("PAYMENT-SIGNATURE".to_string(), payment.payment_header)],
+                settle: Box::new(move |outcome| {
+                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                        runtime.spawn(async move {
+                            if let Err(error) = x402_service::record_payment(
+                                &config,
+                                service,
+                                payment_id,
+                                outcome.status,
+                                outcome.payment_response,
+                            )
+                            .await
+                            {
+                                log::warn!(
+                                    "[tool.http_request] x402 settlement recording failed: {error}"
+                                );
+                            }
+                        });
+                    } else {
+                        log::warn!(
+                            "[tool.http_request] x402 settlement not recorded: runtime unavailable"
+                        );
+                    }
+                }),
             })
-        }
-    }
-
-    /// Write the retry's result back onto the ledger entry the payment opened.
-    fn settle(record_id: &str, url: &str, outcome: &PaymentOutcome) {
-        let settled_status = if outcome.success {
-            x402::PaymentStatus::Settled
-        } else {
-            x402::PaymentStatus::Failed
-        };
-        let tx_sig = outcome
-            .payment_response
-            .as_deref()
-            .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
-            .and_then(|bytes| serde_json::from_slice::<x402::SettlementResponse>(&bytes).ok())
-            .and_then(|r| {
-                if r.success && !r.transaction.is_empty() {
-                    Some(r.transaction)
-                } else {
-                    None
-                }
-            });
-
-        let _ = x402::store::with_ledger_mut(|l| {
-            if let Some(rec) = l
-                .recent_payments(100)
-                .into_iter()
-                .find(|r| r.id == record_id)
-            {
-                let mut updated = rec;
-                updated.status = settled_status;
-                updated.tx_signature = tx_sig.clone();
-                l.record_payment(updated);
-            }
-        });
-
-        if settled_status == x402::PaymentStatus::Settled {
-            log::debug!(
-                "[tool.http_request] x402 payment settled for {url} tx={:?}",
-                tx_sig
-            );
-        } else {
-            log::warn!(
-                "[tool.http_request] x402 payment retry returned status {}",
-                outcome.status
-            );
         }
     }
 }

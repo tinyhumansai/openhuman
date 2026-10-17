@@ -24,7 +24,9 @@ export function PinnedTodoCard({
       steps={items.map(item => ({
         id: item.id,
         label:
-          item.reason && item.status === 'failed' ? `${item.text} — ${item.reason}` : item.text,
+          item.reason && (item.status === 'failed' || item.status === 'skipped')
+            ? `${item.text} — ${item.reason}`
+            : item.text,
       }))}
       statuses={items.map(item => item.status)}
       activeIndex={progress.done}

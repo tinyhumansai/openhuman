@@ -24,7 +24,10 @@
 //!   widen it to a sibling tenant;
 //! - [`Memory::forget`] forgets only ids the root's subtree holds — an id from
 //!   another tenant is left alone as if it named nothing;
-//! - [`Memory::learn`] writes at the root, whatever the caller's metadata says.
+//! - [`Memory::learn`] writes at the root, whatever the caller's metadata says,
+//!   and [`Memory::store`] writes at the root or one agent's node below it;
+//! - [`Memory::search`] ranks only items the root's subtree holds, narrowed by
+//!   kind and tag.
 //!
 //! The engine is the one every agent uses: the configured `[memory]` engine,
 //! or one the host installed with [`install_host_engine`]. With neither, memory
@@ -33,8 +36,11 @@
 
 use openhuman_core::config::Config;
 use openhuman_core::memory::engine::{self, Binding};
+use openhuman_core::memory::scope::MemoryIdentity;
 use openhuman_core::memory::{brain, explore, lifecycle, ops, types};
-use tinymemory_api::{ItemKind, MemoryMeta, MetaFilter, Namespace, Reach};
+use tinymemory_api::{
+    ItemKind, MemoryMeta, MetaFilter, Namespace, Reach, StoreItem, StoreReceipt, WriteOptions,
+};
 use tinymemory_tools::MemoryLayout;
 
 pub use openhuman_core::memory::brain::{
@@ -89,6 +95,22 @@ pub struct ItemsQuery {
     pub cursor: Option<String>,
 }
 
+/// Which items [`Memory::search`] ranks.
+#[derive(Debug, Clone, Default)]
+pub struct SearchQuery {
+    /// What to rank the items against.
+    pub query: String,
+    /// One memory agent's node plus the root's items it inherits, as
+    /// [`Memory::recall`] reads it; `None` searches the whole root.
+    pub agent_id: Option<String>,
+    /// Item kinds to include; empty means every kind.
+    pub kinds: Vec<ItemKind>,
+    /// Match an item carrying any one of these tags; empty means no constraint.
+    pub tags_any: Vec<String>,
+    /// Most hits returned.
+    pub limit: Option<usize>,
+}
+
 /// One tenant's memory: every call confined to one layout root. See the
 /// module docs.
 #[derive(Clone)]
@@ -119,8 +141,9 @@ impl Memory {
             ));
         }
         let layout = MemoryLayout::new(namespace)?;
-        // The host binding outranks any identity in scope, so a call made from
-        // inside an agent's turn still lands on this root.
+        // The host binding outranks every identity, and the facade acts as the
+        // root one, so a call made from inside an agent's turn still lands on
+        // this root.
         base.memory.root = Some(root.to_string());
         base.memory.agent_id = None;
         log::debug!("[embed][memory] bound root={root}");
@@ -171,7 +194,7 @@ impl Memory {
 
     /// The agents with logged turns under the root, most first.
     pub async fn agents(&self) -> MemoryResult<AgentsView> {
-        lifecycle::views::agents_list(&self.config).await
+        lifecycle::views::agents_list(&self.config, &MemoryIdentity::root()).await
     }
 
     /// A page of items, newest first.
@@ -253,6 +276,52 @@ impl Memory {
         .await
     }
 
+    /// Ranked items matching `query.query` under the root, narrowed by kind
+    /// and tag: [`Memory::fetch`] for a host that files what it captures
+    /// under tags of its own and reads only some of them back.
+    pub async fn search(&self, query: SearchQuery) -> MemoryResult<FetchView> {
+        let mut filter = self.reading(query.agent_id.as_deref())?;
+        filter.kinds = query.kinds;
+        filter.tags_any = query.tags_any;
+        ops::fetch(
+            &self.config,
+            types::FetchParams {
+                refers_to: None,
+                query: query.query,
+                mode: None,
+                filter: Some(filter),
+                limit: query.limit,
+                cursor: None,
+            },
+        )
+        .await
+    }
+
+    /// Stores an item of any kind the host captured itself (a document, a
+    /// conversation, a learning) at the root, shared by every agent bound
+    /// there, or at `agent_id`'s node. The node is authoritative: a
+    /// namespace in the item's meta is overwritten. Everything else in the
+    /// meta (tags, source, `observed_at`, `observed_actor`) is kept, so an
+    /// identical item stored again is a replay
+    /// ([`StoreItem::fingerprint`](api::StoreItem::fingerprint)).
+    ///
+    /// [`WriteOptions::accepted`] returns once the engine has durably
+    /// accepted the item, before it is readable: a capture on a live path,
+    /// or a bulk import that reads nothing back until it ends.
+    pub async fn store(
+        &self,
+        mut item: StoreItem,
+        agent_id: Option<&str>,
+        options: WriteOptions,
+    ) -> MemoryResult<StoreReceipt> {
+        let node = match agent_id.map(str::trim).filter(|agent| !agent.is_empty()) {
+            Some(agent) => self.layout.conversations(agent)?,
+            None => self.layout.learnings().clone(),
+        };
+        item.meta_mut().namespace = node;
+        ops::store_item_with(&self.config, item, options).await
+    }
+
     /// Stores a shared learning at the root. The root is authoritative: a
     /// namespace in `params.meta` is overwritten.
     pub async fn learn(&self, params: LearnParams) -> MemoryResult<LearnView> {
@@ -309,7 +378,7 @@ impl Memory {
 
     /// The brain's sources under the root and their sizes.
     pub async fn brain_sources(&self) -> MemoryResult<BrainSourcesView> {
-        brain::sources(&self.config).await
+        brain::sources(&self.config, &MemoryIdentity::root()).await
     }
 
     /// Brain documents matching `query`, optionally of one source.
@@ -321,6 +390,7 @@ impl Memory {
     ) -> MemoryResult<BrainSearchView> {
         brain::search(
             &self.config,
+            &MemoryIdentity::root(),
             brain::BrainSearchParams {
                 query: query.into(),
                 source,
@@ -332,13 +402,14 @@ impl Memory {
 
     /// Files a document (a file on disk, or text) in the root's brain.
     pub async fn brain_ingest(&self, params: BrainIngestParams) -> MemoryResult<BrainIngestView> {
-        brain::ingest(&self.config, params).await
+        brain::ingest(&self.config, &MemoryIdentity::root(), params).await
     }
 
     /// Forgets every brain document of one source under the root.
     pub async fn brain_forget(&self, source: impl Into<String>) -> MemoryResult<BrainForgetView> {
         brain::forget(
             &self.config,
+            &MemoryIdentity::root(),
             brain::BrainForgetParams {
                 source: source.into(),
             },

@@ -22,6 +22,12 @@ fn main() {
         log::debug!("[cli] early dotenv load failed: {err}");
     }
 
+    // Local development only: link the module implementation crates in and
+    // register them with the core's linked-module seam. They are served only
+    // when the configuration asks (`OPENHUMAN_MODULE_SOURCE=linked`).
+    #[cfg(feature = "linked-modules")]
+    openhuman_modules_linked::install();
+
     // The guard must outlive everything, so it is bound in `main`.
     #[cfg(feature = "crash-reporting")]
     let _sentry_guard = init_sentry();

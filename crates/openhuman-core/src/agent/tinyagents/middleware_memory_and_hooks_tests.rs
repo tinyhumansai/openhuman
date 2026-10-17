@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::tinyagents::middleware::embedder_hooks::EmbedderToolHooksMiddleware;
 
 #[tokio::test]
 async fn embedder_tool_hooks_post_use_replays_the_normalized_pre_call_arguments() {

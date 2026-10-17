@@ -3,9 +3,11 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Extension;
 use axum::Json;
 
 use crate::core_host::core::invoke::invoke_method;
+use crate::core_host::core::runtime::DispatchCtx;
 use crate::core_host::core::types::AppState;
 use crate::core_host::core::StructuredRpcError;
 
@@ -26,12 +28,20 @@ use crate::{RpcError, RpcFailure, RpcRequest, RpcSuccess, JSONRPC_VERSION, SERVE
 /// # Arguments
 ///
 /// * `state` - The application state, injected by Axum.
+/// * `ctx` - The [`DispatchCtx`] the serving middleware attached to the request:
+///   the operator's context, or the context of the SaaS user the gateway
+///   admitted. A request that carries none dispatches unbound.
 /// * `req` - The parsed [`RpcRequest`].
-pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
+pub async fn rpc_handler(
+    State(state): State<AppState>,
+    ctx: Option<Extension<DispatchCtx>>,
+    Json(req): Json<RpcRequest>,
+) -> Response {
+    let ctx = ctx.map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx);
     let id = req.id.clone();
     let method = req.method.clone();
     let started = std::time::Instant::now();
-    let result = invoke_method(state, method.as_str(), req.params).await;
+    let result = invoke_method(ctx, state, method.as_str(), req.params).await;
     let ms = started.elapsed().as_millis();
 
     match result {

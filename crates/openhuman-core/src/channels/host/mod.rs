@@ -1,34 +1,28 @@
-//! OpenHuman implementation of the `tinychannels::host` capability boundary.
+//! OpenHuman host callbacks and event subscribers for the TinyChannels module.
 //!
-//! [`build_channel_host`] assembles the concrete [`tinychannels::ChannelHost`]
-//! from OpenHuman internals (voice, inference, approvals, conversation store,
-//! shutdown registry, web event bus). [`build_provider_context`] wraps it into
-//! the [`tinychannels::host::ProviderContext`] handed to channel providers.
-//!
-//! [`ChannelApprovalSurfaceSubscriber`] and [`ChannelTurnStateSubscriber`]
-//! bridge OpenHuman events into the provider-independent approval surface and
-//! remote-control turn state; `remote_control` backs `/status`, `/sessions`
-//! and `/new`.
-//!
-//! Ported providers reach host capabilities through this context instead of
-//! calling OpenHuman internals directly — the inversion that lets them live in
-//! the standalone `tinychannels` crate. Lean providers ignore the host.
+//! Production startup serves the typed callback surface from `runtime::startup`;
+//! legacy provider-trait adapters remain compiled only for their unit tests.
 
 mod adapters;
 mod channel_events;
 pub(crate) mod remote_control;
 
+pub(crate) use adapters::{ConfigAllowlistStore, OpenHumanEventSink, VoiceTranscriber};
+#[cfg(test)]
 pub use adapters::{
-    ConfigAllowlistStore, ConversationHistoryStore, CoreApprovalGate, CoreShutdownRegistry,
-    OpenHumanEventSink, VoiceSynthesizer, VoiceTranscriber,
+    ConversationHistoryStore, CoreApprovalGate, CoreShutdownRegistry, VoiceSynthesizer,
 };
 pub use channel_events::{ChannelApprovalSurfaceSubscriber, ChannelTurnStateSubscriber};
 
+#[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
 use tinychannels::host::ChannelHostBuilder;
+#[cfg(test)]
 use tinychannels::ChannelHost;
 
+#[cfg(test)]
 use crate::config::Config;
 
 /// Assemble the full OpenHuman [`ChannelHost`] from a config snapshot.
@@ -39,6 +33,7 @@ use crate::config::Config;
 /// (turn dispatch, run ledger, pairing) are simply left unset — a provider
 /// that needs one degrades gracefully. Emoji reactions are deliberately unset:
 /// the local-model reaction gate was removed, so providers never react.
+#[cfg(test)]
 pub fn build_channel_host(config: Arc<Config>) -> Arc<dyn ChannelHost> {
     ChannelHostBuilder::new()
         .lifecycle(Arc::new(CoreShutdownRegistry))

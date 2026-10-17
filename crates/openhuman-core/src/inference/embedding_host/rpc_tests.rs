@@ -467,7 +467,7 @@ async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
     .expect("provider builds");
 
     let vectors = embedder
-        .embed(&["connection test"])
+        .embed(&["connection test".to_string()])
         .await
         .expect("conformant endpoint must verify");
     let probe_dims = vectors.first().map(|v| v.len()).unwrap_or(0);

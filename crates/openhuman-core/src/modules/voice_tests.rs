@@ -110,11 +110,20 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
         Err(VoiceCallError::Unavailable(_))
     ));
     assert!(matches!(
-        super::extract_command(&config, "hey tiny pause", "Hey Tiny").await,
+        super::sequence_utterance(&config, "hey tiny pause", "Hey Tiny").await,
         Err(VoiceCallError::Unavailable(_))
     ));
     assert!(matches!(
-        super::wake_word_present(&config, "hey tiny", "Hey Tiny").await,
+        super::gate_recording(
+            &config,
+            1.0,
+            0.5,
+            super::RecordingGates {
+                min_duration_secs: 0.3,
+                silence_threshold: 0.01
+            }
+        )
+        .await,
         Err(VoiceCallError::Unavailable(_))
     ));
     assert!(matches!(
@@ -193,20 +202,39 @@ async fn the_published_module_answers_through_this_client() {
         VoiceIntent::Unknown
     );
     assert_eq!(
-        super::extract_command(&config, "hey tiny open slack", "Hey Tiny")
+        super::sequence_utterance(&config, "hey tiny open slack", "Hey Tiny")
             .await
-            .expect("extract"),
-        Some("open slack".to_string())
+            .expect("sequence"),
+        super::UtteranceDisposition::Command {
+            command: "open slack".to_string()
+        }
     );
     assert_eq!(
-        super::extract_command(&config, "open slack", "Hey Tiny")
+        super::sequence_utterance(&config, "open slack", "Hey Tiny")
             .await
-            .expect("extract"),
-        None
+            .expect("sequence"),
+        super::UtteranceDisposition::Ignored
     );
-    assert!(super::wake_word_present(&config, "hey tiny", "Hey Tiny")
+    assert_eq!(
+        super::sequence_utterance(&config, "hey tiny", "Hey Tiny")
+            .await
+            .expect("sequence"),
+        super::UtteranceDisposition::BareWake
+    );
+    assert_eq!(
+        super::gate_recording(
+            &config,
+            0.1,
+            0.5,
+            super::RecordingGates {
+                min_duration_secs: 0.3,
+                silence_threshold: 0.01
+            }
+        )
         .await
-        .expect("present"));
+        .expect("gate"),
+        super::GateVerdict::TooShort
+    );
 
     // The mode split is the reason this call takes a mode at all.
     assert!(
@@ -355,7 +383,7 @@ async fn every_entry_point_degrades_rather_than_hanging_when_the_module_is_gone(
         Err(VoiceCallError::Unavailable(_))
     ));
     assert!(matches!(
-        super::extract_command(&config, "hey tiny pause", "Hey Tiny").await,
+        super::sequence_utterance(&config, "hey tiny pause", "Hey Tiny").await,
         Err(VoiceCallError::Unavailable(_))
     ));
 
@@ -429,4 +457,36 @@ fn every_member_this_client_calls_is_one_the_contract_declares() {
             "the host calls `{member}`, which the contract does not dispatch"
         );
     }
+}
+
+/// The session input and action tags are a wire contract with the module: a
+/// rename on either side makes a hotkey press a no-op, which looks like a dead
+/// key rather than an error, so the spellings the host sends and expects are
+/// pinned.
+#[test]
+fn recording_session_wire_spellings_match_the_contract() {
+    use super::{SessionAction, SessionAdvance, SessionInput, SessionPhase};
+    assert_eq!(
+        serde_json::to_string(&SessionInput::SetupReady {
+            stop_buffered: false
+        })
+        .unwrap(),
+        r#"{"input":"setup_ready","stop_buffered":false}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&SessionInput::Finished { generation: 4 }).unwrap(),
+        r#"{"input":"finished","generation":4}"#
+    );
+    let reply: SessionAdvance = serde_json::from_str(
+        r#"{"accepted":true,"phase":"recording","generation":2,"action":{"action":"defer_stop","generation":2,"after_ms":1500}}"#,
+    )
+    .unwrap();
+    assert_eq!(reply.phase, SessionPhase::Recording);
+    assert_eq!(
+        reply.action,
+        SessionAction::DeferStop {
+            generation: 2,
+            after_ms: 1500
+        }
+    );
 }

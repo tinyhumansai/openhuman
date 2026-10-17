@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-use openhuman_core::tools::timeout::{output_unbounded, CommandEnvironment};
+use tinytools_std::timeout::{output_unbounded, CommandEnvironment};
 
 #[tokio::test]
 async fn overlapping_command_environments_replace_inheritance_without_crossing_turns() {

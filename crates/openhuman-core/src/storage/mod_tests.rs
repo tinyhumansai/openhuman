@@ -20,13 +20,33 @@ fn the_environment_wins_over_the_config_file() {
 }
 
 #[test]
-fn blank_values_keep_the_classic_layout() {
-    assert_eq!(url_from(None, &config_with(None)), None);
-    assert_eq!(url_from(Some("  ".into()), &config_with(Some(""))), None);
+fn blank_values_fall_through_to_the_workspace_default() {
+    let config = config_with(None);
+    let default = config::default_url(&config.workspace_dir);
+    assert_eq!(url_from(None, &config).as_deref(), Some(default.as_str()));
+    assert_eq!(
+        url_from(Some("  ".into()), &config_with(Some(""))).as_deref(),
+        Some(default.as_str())
+    );
     assert_eq!(
         url_from(Some(" ".into()), &config_with(Some(" memory "))).as_deref(),
         Some("memory"),
         "a blank override falls through to the file"
+    );
+}
+
+#[test]
+fn the_default_url_is_a_directory_under_the_workspace() {
+    let config = config_with(None);
+    let url = url_from(None, &config).unwrap();
+    assert_eq!(
+        url,
+        format!("sqlite:{}", config.workspace_dir.join("storage").display())
+    );
+    assert_eq!(explicit_url(&config), None, "nothing was configured");
+    assert_eq!(
+        explicit_url(&config_with(Some("memory"))).as_deref(),
+        Some("memory")
     );
 }
 

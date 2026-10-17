@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::sync::Arc;
 use tinytools::{PermissionLevel, Tool, ToolResult};
-use {crate::cron, tinyflows_schedule::types::Schedule};
+use {crate::cron, tinyflows_bus::schedule::types::Schedule};
 
 /// Tool that lets the agent manage recurring and one-shot scheduled tasks.
 pub struct ScheduleTool {
@@ -65,13 +65,30 @@ impl Tool for ScheduleTool {
         match args.get("action").and_then(|v| v.as_str()) {
             Some("list") | Some("get") => false,
             Some("create") | Some("add") | Some("once") => {
-                !current_turn_may_skip_approval(&schedule_args_as_cron_add(args))
+                // The trait predicate carries no run context, so it reads the
+                // calling task's turn scope.
+                !current_turn_may_skip_approval(
+                    &schedule_args_as_cron_add(args),
+                    crate::core::runtime::DispatchCtx::ambient_turn()
+                        .turn_origin()
+                        .as_ref(),
+                )
             }
             _ => true,
         }
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> Result<ToolResult> {
         let action = args
             .get("action")
             .and_then(|value| value.as_str())
@@ -90,7 +107,9 @@ impl Tool for ScheduleTool {
                 if let Some(blocked) = self.enforce_mutation_allowed(action) {
                     return Ok(blocked);
                 }
-                self.handle_create_like(action, &args).await
+                let origin =
+                    crate::agent::tinyagents::host::run_context::turn_origin_for_tool(tool_context);
+                self.handle_create_like(action, &args, origin.as_ref()).await
             }
             "cancel" | "remove" => {
                 if let Some(blocked) = self.enforce_mutation_allowed(action) {
@@ -229,6 +248,7 @@ impl ScheduleTool {
         &self,
         action: &str,
         args: &serde_json::Value,
+        origin: Option<&crate::agent::turn_origin::AgentTurnOrigin>,
     ) -> Result<ToolResult> {
         let command = args
             .get("command")
@@ -305,7 +325,8 @@ impl ScheduleTool {
                     active_hours: None,
                 }
             } else if let Some(delay_str) = delay {
-                let at = Utc::now() + cron::parse_human_delay(delay_str)?;
+                let at = Utc::now()
+                    + crate::cron::client::parse_human_delay(&self.config, delay_str).await?;
                 Schedule::At { at }
             } else if let Some(at_str) = run_at {
                 let at: DateTime<Utc> = DateTime::parse_from_rfc3339(at_str)
@@ -352,7 +373,7 @@ impl ScheduleTool {
                     delivery: None,
                     delete_after_run,
                 },
-                current_job_origin(),
+                current_job_origin(origin),
             )
             .map_err(anyhow::Error::msg)?;
 

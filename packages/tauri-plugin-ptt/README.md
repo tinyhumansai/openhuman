@@ -2,7 +2,7 @@
 
 Push-to-talk + TTS plugin for Tauri v2, targeting iOS.
 
-Used by the experimental [iOS companion](../../gitbooks/features/ios-companion.md). Wraps `AVAudioEngine` + `Speech.framework` (STT) + `AVSpeechSynthesizer` (TTS).
+Used by the experimental [iOS companion](../../docs/gitbooks/en/features/ios-companion.md). Wraps `AVAudioEngine` + `Speech.framework` (STT) + `AVSpeechSynthesizer` (TTS).
 On non-iOS targets all commands return a `NotSupported` error so the
 desktop build is not affected.
 
@@ -80,6 +80,6 @@ Swift (PTTPlugin.swift)
 
 ## Further reading
 
-- [iOS companion](../../gitbooks/features/ios-companion.md) and [Native voice](../../gitbooks/features/native-tools/voice.md).
-- [Tauri shell](../../gitbooks/developing/architecture/tauri-shell.md) for how plugins are registered.
+- [iOS companion](../../docs/gitbooks/en/features/ios-companion.md) and [Native voice](../../docs/gitbooks/en/features/native-tools/voice.md).
+- [Tauri shell](../../docs/gitbooks/en/developing/architecture/tauri-shell.md) for how plugins are registered.
 - [`app/src/assets/audio/`](../../app/src/assets/audio/README.md) for the desktop PTT chimes.

@@ -111,17 +111,17 @@ async fn fire_hooks_accepts_empty_hook_list() {
         iteration_count: 1,
     };
     // Should not panic
-    fire_hooks(&[], ctx);
+    fire_hooks(&[], &crate::core::runtime::DispatchCtx::unbound(), ctx);
 }
 
 // ── Detached hooks keep the dispatch's CoreContext ────────────────────────────
 
-/// A detached hook task must observe the same ambient [`CoreContext`] as the
-/// dispatch that fired it. A bare `tokio::spawn` loses the `CURRENT_CONTEXT`
+/// A detached hook task must observe the same [`CoreContext`] as the dispatch
+/// that fired it, handed over explicitly. A bare `tokio::spawn` loses the `CURRENT_CONTEXT`
 /// task-local — under a scoped multi-tenant dispatch that meant the hook fell
 /// back to the process default context, and any context-derived work behind
 /// it read and wrote another tenant's workspace. `fire_hooks` now re-enters
-/// the captured scope inside the spawned task; this pins that.
+/// the context it was given inside the spawned task; this pins that.
 #[tokio::test]
 async fn fired_hooks_observe_the_firing_dispatchs_core_context() {
     use crate::core::runtime::context::CoreContext;
@@ -164,10 +164,13 @@ async fn fired_hooks_observe_the_firing_dispatchs_core_context() {
         iteration_count: 0,
     };
 
-    CoreContext::scope(std::sync::Arc::clone(&tenant_ctx), async {
-        fire_hooks(&[probe], turn);
-    })
-    .await;
+    // The explicit context is what the hook runs under; no task scope is
+    // entered around the call.
+    fire_hooks(
+        &[probe],
+        &crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&tenant_ctx)),
+        turn,
+    );
 
     let seen = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
         .await
@@ -178,5 +181,43 @@ async fn fired_hooks_observe_the_firing_dispatchs_core_context() {
         std::sync::Arc::ptr_eq(&seen, &tenant_ctx),
         "the detached hook must observe the dispatch's scoped context, \
          not the process default"
+    );
+}
+
+/// The process-wide snapshot is independent of any task scope: a hook the host
+/// registered is listed by name whatever context is active, and the per-context
+/// snapshot starts from the same list.
+#[tokio::test]
+async fn embedder_snapshots_read_the_process_registry_not_the_task_scope() {
+    use crate::core::runtime::context::CoreContext;
+
+    struct Named;
+    #[async_trait::async_trait]
+    impl PostTurnHook for Named {
+        fn name(&self) -> &str {
+            "snapshot-scope-probe"
+        }
+        async fn on_turn_complete(&self, _ctx: &TurnContext) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    replace_embedder_post_turn_hook("snapshot-scope-probe", Some(std::sync::Arc::new(Named)));
+    let tenant_ctx = CoreContext::for_test(crate::core::runtime::DomainSet::full(), None);
+    let in_scope = CoreContext::scope(tenant_ctx, async {
+        embedder_post_turn_hooks()
+            .iter()
+            .any(|hook| hook.name() == "snapshot-scope-probe")
+    })
+    .await;
+    let via_ctx = embedder_post_turn_hooks_in(&crate::core::runtime::DispatchCtx::unbound())
+        .iter()
+        .any(|hook| hook.name() == "snapshot-scope-probe");
+    replace_embedder_post_turn_hook("snapshot-scope-probe", None);
+
+    assert!(in_scope, "the process registry is visible under a scope");
+    assert!(
+        via_ctx,
+        "the per-context snapshot extends the same registry"
     );
 }

@@ -503,10 +503,19 @@ fn key_for_is_thread_scoped_not_client_scoped() {
     // Regression guard for the conversation-amnesia / dead-Cancel bug, where a
     // reconnect under a new client_id orphaned the thread's session + in-flight
     // handle.
-    assert_eq!(key_for("thread-abc"), "thread-abc");
-    assert_eq!(key_for(""), "");
+    assert_eq!(
+        key_for(&crate::core::runtime::DispatchCtx::ambient(), "thread-abc"),
+        "thread-abc"
+    );
+    assert_eq!(
+        key_for(&crate::core::runtime::DispatchCtx::ambient(), ""),
+        ""
+    );
     // The same thread resolves to the same key no matter which socket asks.
-    assert_eq!(key_for("thread-xyz"), key_for("thread-xyz"));
+    assert_eq!(
+        key_for(&crate::core::runtime::DispatchCtx::ambient(), "thread-xyz"),
+        key_for(&crate::core::runtime::DispatchCtx::ambient(), "thread-xyz")
+    );
 }
 
 #[test]

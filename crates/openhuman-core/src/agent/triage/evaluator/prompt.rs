@@ -1,7 +1,9 @@
 //! Prompt assembly for the classifier turn: the system prompt from the
 //! built-in agent definition and the rendered user message.
 
-use crate::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::agent::harness::host_definition::AgentDefinition;
+use tinyagents_definition::PromptSource;
+use tinytools_agent::dialect::ToolCallFormat;
 
 use super::super::decision::ParseError;
 use super::super::envelope::TriggerEnvelope;
@@ -14,10 +16,9 @@ pub(crate) fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
         PromptSource::Inline(body) | PromptSource::Verbatim(body) if !body.is_empty() => {
             Some(body.clone())
         }
-        PromptSource::Dynamic(build) => {
-            use crate::agent::prompts::{
-                ConnectedIntegration, PromptContext, PromptTool, ToolCallFormat,
-            };
+        PromptSource::Dynamic(()) => {
+            let build = def.extensions.prompt_builder?;
+            use crate::agent::prompts::{ConnectedIntegration, PromptContext, PromptTool};
             let empty_tools: Vec<PromptTool<'_>> = Vec::new();
             let empty_integrations: Vec<ConnectedIntegration> = Vec::new();
             let empty_visible: std::collections::HashSet<String> = std::collections::HashSet::new();

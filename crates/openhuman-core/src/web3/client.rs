@@ -41,7 +41,10 @@ impl CryptoClient {
     pub async fn routes(&self) -> Result<Value, String> {
         tracing::debug!("{LOG_PREFIX} routes");
         self.inner
-            .get::<Value>("/agent-integrations/crypto/routes")
+            .get::<Value>(
+                &crate::security::approval::ApprovalTurnContext::default(),
+                "/agent-integrations/crypto/routes",
+            )
             .await
             .map_err(|e| format!("web3 routes failed: {e}"))
     }
@@ -52,7 +55,11 @@ impl CryptoClient {
         // addresses (sender / recipient) which must not be emitted in full.
         tracing::debug!("{LOG_PREFIX} swap_tx chain_id={:?}", body.get("chainId"));
         self.inner
-            .post::<Value>("/agent-integrations/crypto/swap", body)
+            .post::<Value>(
+                &crate::security::approval::ApprovalTurnContext::default(),
+                "/agent-integrations/crypto/swap",
+                body,
+            )
             .await
             .map_err(|e| format!("web3 swap quote failed: {e}"))
     }
@@ -67,7 +74,11 @@ impl CryptoClient {
             body.get("dstChainId")
         );
         self.inner
-            .post::<Value>("/agent-integrations/crypto/bridge", body)
+            .post::<Value>(
+                &crate::security::approval::ApprovalTurnContext::default(),
+                "/agent-integrations/crypto/bridge",
+                body,
+            )
             .await
             .map_err(|e| format!("web3 bridge quote failed: {e}"))
     }

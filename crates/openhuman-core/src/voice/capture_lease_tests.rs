@@ -192,7 +192,7 @@ async fn capture_never_retries_through_an_unattested_bus() {
     let lease = CaptureLease {
         state: Arc::new(State {
             id: 0,
-            port: Arc::new(BusPort(ModuleClient::fixture(proxy))),
+            port: Arc::new(BusPort(crate::modules::ops::fixture_client(proxy))),
             handle: CaptureHandle("lease".into()),
             kind: Kind::Recording,
             closed: AtomicBool::new(false),

@@ -4,6 +4,7 @@
 //! for the CLI. It supports commands for running the server, making RPC calls,
 //! and invoking domain-specific functionality across various namespaces.
 
+use crate::core::runtime::DispatchCtx;
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -414,7 +415,15 @@ fn run_call_command(args: &[String]) -> Result<()> {
         .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     let value = rt
-        .block_on(async { invoke_method(default_state(), &method, params).await })
+        .block_on(async {
+            invoke_method(
+                DispatchCtx::process_default(),
+                default_state(),
+                &method,
+                params,
+            )
+            .await
+        })
         .map_err(anyhow::Error::msg)?;
 
     // Output the result as pretty-printed JSON to stdout.
@@ -477,7 +486,15 @@ fn run_namespace_command(
         .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     let value = rt
-        .block_on(async { invoke_method(default_state(), &method, Value::Object(params)).await })
+        .block_on(async {
+            invoke_method(
+                DispatchCtx::process_default(),
+                default_state(),
+                &method,
+                Value::Object(params),
+            )
+            .await
+        })
         .map_err(anyhow::Error::msg)?;
 
     println!("{}", serde_json::to_string_pretty(&value)?);

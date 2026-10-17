@@ -14,7 +14,7 @@ fn fresh_defaults_are_managed_exa_and_gemini_with_roles_presentation() {
     let cfg = SearchConfig::default();
     assert!(!cfg.needs_migration());
     assert!(cfg.is_enabled());
-    assert_eq!(cfg.presentation, SearchPresentation::Roles);
+    assert_eq!(cfg.presentation, PresentationMode::Roles);
     assert_eq!(
         provider(&cfg, "exa"),
         Some(SearchProviderSettings::managed())
@@ -31,7 +31,7 @@ fn fresh_defaults_are_managed_exa_and_gemini_with_roles_presentation() {
 fn legacy_omitted_presentation_migrates_to_routed_roles() {
     let mut cfg = legacy("engine = \"managed\"\n");
     cfg.migrate_legacy(LegacySearchInputs::default());
-    assert_eq!(cfg.presentation, SearchPresentation::Roles);
+    assert_eq!(cfg.presentation, PresentationMode::Roles);
     assert_eq!(cfg.schema_version, SEARCH_SCHEMA_VERSION);
 }
 
@@ -39,7 +39,7 @@ fn legacy_omitted_presentation_migrates_to_routed_roles() {
 fn legacy_all_tools_migrates_to_routed_roles() {
     let mut cfg = legacy("engine = \"managed\"\npresentation = \"all_tools\"\n");
     cfg.migrate_legacy(LegacySearchInputs::default());
-    assert_eq!(cfg.presentation, SearchPresentation::Roles);
+    assert_eq!(cfg.presentation, PresentationMode::Roles);
 }
 
 // v2 files were forced onto `all_tools`, which hides the routed
@@ -49,7 +49,7 @@ fn v2_all_tools_moves_back_to_roles_once() {
     let mut cfg = legacy("schema_version = 2\npresentation = \"all_tools\"\n");
     assert!(cfg.needs_migration());
     assert!(cfg.migrate_legacy(LegacySearchInputs::default()));
-    assert_eq!(cfg.presentation, SearchPresentation::Roles);
+    assert_eq!(cfg.presentation, PresentationMode::Roles);
     assert_eq!(cfg.schema_version, SEARCH_SCHEMA_VERSION);
     assert!(!cfg.migrate_legacy(LegacySearchInputs::default()));
 }
@@ -64,7 +64,7 @@ fn v2_migration_keeps_providers_roles_and_other_presentations() {
     let before_providers = cfg.providers.clone();
     let before_roles = cfg.roles.clone();
     assert!(cfg.migrate_legacy(LegacySearchInputs::default()));
-    assert_eq!(cfg.presentation, SearchPresentation::Router);
+    assert_eq!(cfg.presentation, PresentationMode::Router);
     assert_eq!(cfg.providers, before_providers);
     assert_eq!(cfg.roles, before_roles);
     assert!(provider(&cfg, "brave").is_some());
@@ -76,7 +76,7 @@ fn a_current_all_tools_choice_is_kept() {
         "schema_version = {SEARCH_SCHEMA_VERSION}\npresentation = \"all_tools\"\n"
     ));
     assert!(!cfg.migrate_legacy(LegacySearchInputs::default()));
-    assert_eq!(cfg.presentation, SearchPresentation::AllTools);
+    assert_eq!(cfg.presentation, PresentationMode::AllTools);
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn parallel_is_direct_only() {
     let mut cfg = SearchConfig::default();
     cfg.providers
         .insert("parallel".into(), SearchProviderSettings::managed());
-    assert_eq!(cfg.route("parallel"), SearchRoute::Direct);
+    assert_eq!(cfg.route("parallel"), ProviderRoute::Direct);
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn explicit_provider_selection_maps_managed_and_routes() {
         provider(&cfg, "tinyfish"),
         Some(SearchProviderSettings {
             enabled: false,
-            route: SearchRoute::Direct,
+            route: ProviderRoute::Direct,
         })
     );
     assert_eq!(
@@ -287,7 +287,7 @@ fn selected_legacy_exa_keeps_own_key_when_managed_is_also_selected() {
 fn managed_presentation_provider_is_cleared() {
     let mut cfg = legacy("presentation = \"router\"\npresentation_provider = \"managed\"\n");
     cfg.migrate_legacy(LegacySearchInputs::default());
-    assert_eq!(cfg.presentation, SearchPresentation::Router);
+    assert_eq!(cfg.presentation, PresentationMode::Router);
     assert!(cfg.presentation_provider.is_none());
 }
 
@@ -296,9 +296,9 @@ fn route_is_direct_for_providers_that_cannot_be_managed() {
     let mut cfg = SearchConfig::default();
     cfg.providers
         .insert("brave".into(), SearchProviderSettings::managed());
-    assert_eq!(cfg.route("brave"), SearchRoute::Direct);
-    assert_eq!(cfg.route("exa"), SearchRoute::Managed);
-    assert_eq!(cfg.route("unknown"), SearchRoute::Direct);
+    assert_eq!(cfg.route("brave"), ProviderRoute::Direct);
+    assert_eq!(cfg.route("exa"), ProviderRoute::Backend);
+    assert_eq!(cfg.route("unknown"), ProviderRoute::Direct);
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn enabled_provider_names_skip_disabled_entries() {
         "tavily".into(),
         SearchProviderSettings {
             enabled: false,
-            route: SearchRoute::Direct,
+            route: ProviderRoute::Direct,
         },
     );
     let names: Vec<_> = cfg.enabled_provider_names().into_iter().collect();
@@ -317,14 +317,20 @@ fn enabled_provider_names_skip_disabled_entries() {
 
 #[test]
 fn route_and_presentation_parse_accept_legacy_spellings() {
-    assert_eq!(SearchRoute::parse("backend"), Some(SearchRoute::Managed));
-    assert_eq!(SearchRoute::parse(" Direct "), Some(SearchRoute::Direct));
-    assert_eq!(SearchRoute::parse("other"), None);
     assert_eq!(
-        SearchPresentation::parse("all_tools"),
-        Some(SearchPresentation::AllTools)
+        ProviderRoute::parse("backend"),
+        Some(ProviderRoute::Backend)
     );
-    assert_eq!(SearchPresentation::parse("nope"), None);
+    assert_eq!(
+        ProviderRoute::parse(" Direct "),
+        Some(ProviderRoute::Direct)
+    );
+    assert_eq!(ProviderRoute::parse("other"), None);
+    assert_eq!(
+        PresentationMode::parse("all_tools"),
+        Some(PresentationMode::AllTools)
+    );
+    assert_eq!(PresentationMode::parse("nope"), None);
 }
 
 #[test]
@@ -347,7 +353,7 @@ fn v2_managed_tinyfish_without_a_key_is_turned_off() {
         provider(&cfg, "tinyfish"),
         Some(SearchProviderSettings {
             enabled: false,
-            route: SearchRoute::Direct,
+            route: ProviderRoute::Direct,
         })
     );
 }
@@ -371,7 +377,7 @@ fn tinyfish_takes_its_own_key_and_is_never_managed() {
     assert!(cfg.credentials_mut("tinyfish").is_some());
     cfg.providers
         .insert("tinyfish".into(), SearchProviderSettings::managed());
-    assert_eq!(cfg.route("tinyfish"), SearchRoute::Direct);
+    assert_eq!(cfg.route("tinyfish"), ProviderRoute::Direct);
 }
 
 #[test]

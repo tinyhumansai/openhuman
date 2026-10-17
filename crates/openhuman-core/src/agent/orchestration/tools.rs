@@ -57,21 +57,19 @@ mod worker_thread;
 
 pub(crate) use dispatch::DelegationDispatch;
 
-/// Recreate the minimal live TinyAgents carrier for callers that invoke a
-/// concrete tool directly inside `with_parent_context`. Normal agent turns
-/// always arrive through the typed dispatchers with their original carrier;
-/// this compatibility path keeps controller/test callers inside an explicit
-/// parent context from losing their recursive delegation authority.
-pub(crate) fn ambient_parent_run_context(
+/// A minimal live TinyAgents carrier over `parent`, for tests that drive a
+/// concrete tool directly (outside an agent turn) under an explicit parent
+/// execution context. Normal agent turns always arrive through the typed
+/// dispatchers with their original carrier.
+#[cfg(test)]
+pub(crate) fn live_parent_run_context(
     kind: &str,
-) -> Option<
-    tinyagents_harness::context::RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-> {
-    crate::agent::harness::current_parent().map(|parent| {
-        crate::agent::tinyagents::host::OpenHumanRunContext::new()
-            .with_parent(parent)
-            .into_tinyagents(tinyagents_harness::context::RunConfig::new(kind))
-    })
+    parent: crate::agent::harness::ParentExecutionContext,
+) -> tinyagents_harness::context::RunContext<crate::agent::tinyagents::host::OpenHumanRunContext> {
+    crate::agent::tinyagents::host::OpenHumanRunContext::new()
+        .with_host_env(&parent.host_env)
+        .with_parent(parent)
+        .into_tinyagents(tinyagents_harness::context::RunConfig::new(kind))
 }
 
 pub use archetype_delegation::{ArchetypeDelegationTool, DelegationTarget};

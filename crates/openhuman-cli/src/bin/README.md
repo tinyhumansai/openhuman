@@ -117,5 +117,5 @@ cargo test -p openhuman-cli --features bin-tools --bin openhuman-fleet
 - [openhuman-benchmarks](https://github.com/tinyhumansai/openhuman-benchmarks): the benchmark and profiling binaries
   (`profile/`), their driver scripts and the method behind the published
   numbers.
-- [`gitbooks/developing/performance.md`](../../../../gitbooks/developing/performance.md):
+- [`docs/gitbooks/en/developing/performance.md`](../../../../docs/gitbooks/en/developing/performance.md):
   the numbers those benchmarks feed.

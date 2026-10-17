@@ -6,11 +6,10 @@
 //! router that can point at arbitrary native capabilities.
 
 use crate::config::{
-    Config, SearchConfig, SearchPresentation, SearchProviderSettings, SearchRoute,
+    Config, PresentationMode, ProviderRoute, SearchConfig, SearchProviderSettings,
 };
 use crate::core::runtime::direct_profile_provider::{validate_endpoint, DirectProfileProvider};
 use crate::core::runtime::SaasConfig;
-use crate::search::providers;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use tinysearch_bus::Role;
@@ -26,9 +25,9 @@ pub struct ProfileProviderSettings {
 }
 
 impl ProfileProviderSettings {
-    /// Binding of the authenticated task's own profile, never a process fallback.
-    pub fn current() -> Option<Arc<Self>> {
-        let context = crate::core::runtime::CoreContext::scoped()?;
+    /// Binding of the profile `ctx` runs for, never a process fallback.
+    pub fn in_ctx(ctx: &crate::core::runtime::DispatchCtx) -> Option<Arc<Self>> {
+        let context = ctx.core()?;
         context.profile()?;
         context.embedder_config()?.profile_providers.clone()
     }
@@ -61,13 +60,13 @@ impl ProfileProviderSettings {
             providers: BTreeMap::new(),
             ..SearchConfig::default()
         });
-        if search.presentation != SearchPresentation::Roles {
+        if search.presentation != PresentationMode::Roles {
             anyhow::bail!("profile search requires role presentation");
         }
         if search.providers.iter().any(|(provider, setting)| {
             setting.enabled
                 && (!matches!(provider.as_str(), "exa" | "gemini")
-                    || setting.route != SearchRoute::Direct)
+                    || setting.route != ProviderRoute::Direct)
         }) {
             anyhow::bail!("profile search permits only direct Exa and Gemini providers");
         }
@@ -127,7 +126,7 @@ impl ProfileProviderSettings {
         ]);
         let role_names = saas.search_role_names.clone();
         let mut used = HashSet::new();
-        for role in crate::search::providers::ROLES {
+        for role in tinysearch_bus::ROLES {
             let canonical = tinysearch_bus::names::role_tool_name(role);
             let name = role_names
                 .get(&role)
@@ -186,12 +185,10 @@ impl ProfileProviderSettings {
     /// An advertised role maps exactly once to its canonical module operation.
     /// Renamed canonical operations and provider-native names never resolve.
     pub fn canonical_role_name(&self, advertised: &str) -> Option<&'static str> {
-        crate::search::providers::ROLES
-            .into_iter()
-            .find_map(|role| {
-                (self.advertised_role_name(role) == advertised)
-                    .then(|| tinysearch_bus::names::role_tool_name(role))
-            })
+        tinysearch_bus::ROLES.into_iter().find_map(|role| {
+            (self.advertised_role_name(role) == advertised)
+                .then(|| tinysearch_bus::names::role_tool_name(role))
+        })
     }
 
     /// The operator-selected name for a role, or the ordinary canonical name.
@@ -213,7 +210,7 @@ impl ProfileProviderSettings {
             if self
                 .search
                 .roles
-                .get(providers::role_key(role))
+                .get(tinysearch_bus::role_key(role))
                 .is_none_or(Vec::is_empty)
             {
                 return false;

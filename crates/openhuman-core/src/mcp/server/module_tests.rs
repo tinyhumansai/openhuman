@@ -2,6 +2,16 @@ use super::*;
 use std::sync::Mutex;
 use tinymcp_bus::ServerHostCall;
 
+struct CallbackDrop(Option<tokio::sync::oneshot::Sender<()>>);
+
+impl Drop for CallbackDrop {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(());
+        }
+    }
+}
+
 #[derive(Default)]
 struct PortState {
     opened: Option<ServerSessionConfig>,
@@ -197,6 +207,62 @@ async fn server_session_cancellation_reaches_module_owner() {
 
     assert!(matches!(error, ServerError::Cancelled));
     assert!(port.0.lock().unwrap().cancelled);
+}
+
+#[tokio::test]
+async fn closing_session_aborts_and_joins_a_running_host_callback() {
+    let port = Arc::new(FixturePort(Mutex::new(PortState::default())));
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let started_tx = Arc::new(Mutex::new(Some(started_tx)));
+    let (dropped_tx, mut dropped_rx) = tokio::sync::oneshot::channel();
+    let dropped_tx = Arc::new(Mutex::new(Some(dropped_tx)));
+    let release = CancellationToken::new();
+    let dispatch = {
+        let started_tx = Arc::clone(&started_tx);
+        let dropped_tx = Arc::clone(&dropped_tx);
+        let release = release.clone();
+        move |_call| {
+            let started = started_tx.lock().unwrap().take();
+            let dropped = dropped_tx.lock().unwrap().take();
+            let release = release.clone();
+            async move {
+                let _drop_notice = CallbackDrop(dropped);
+                if let Some(started) = started {
+                    let _ = started.send(());
+                }
+                release.cancelled().await;
+                ServerHostReply::Success { value: Value::Null }
+            }
+        }
+    };
+    let session = Arc::new(
+        ServerSession::open_with_port_and_dispatch(port, dispatch)
+            .await
+            .unwrap(),
+    );
+    let submit_session = Arc::clone(&session);
+    let submit = tokio::spawn(async move {
+        submit_session
+            .submit(
+                Map::new(),
+                r#"{"jsonrpc":"2.0","id":1,"method":"resources/read"}"#.to_owned(),
+                &CancellationToken::new(),
+            )
+            .await
+    });
+    started_rx.await.expect("host callback started");
+
+    session.close().await.unwrap();
+    let callback_was_joined = dropped_rx.try_recv().is_ok();
+    // Let the pre-fix implementation finish its detached task so a RED run
+    // does not leave work running after the test returns.
+    release.cancel();
+    let _ = submit.await.unwrap();
+
+    assert!(
+        callback_was_joined,
+        "terminal session close must abort and join an in-flight host callback"
+    );
 }
 
 #[tokio::test]

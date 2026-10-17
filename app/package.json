@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.64.15",
+  "version": "0.64.18",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -60,8 +60,8 @@
     "test:e2e:session:full": "pnpm test:e2e:build && pnpm test:e2e:session",
     "test:all": "pnpm test:coverage && pnpm test:rust && pnpm test:e2e",
     "rust:check": "cargo check --manifest-path ../crates/openhuman-app/Cargo.toml",
-    "rust:format": "cargo fmt --manifest-path ../Cargo.toml --all && cargo fmt --manifest-path ../crates/openhuman-app/Cargo.toml --all",
-    "rust:format:check": "cargo fmt --manifest-path ../Cargo.toml --all --check && cargo fmt --manifest-path ../crates/openhuman-app/Cargo.toml --all --check",
+    "rust:format": "cargo fmt --manifest-path ../Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui && cargo fmt --manifest-path ../crates/openhuman-app/Cargo.toml --package openhuman-app",
+    "rust:format:check": "cargo fmt --manifest-path ../Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check && cargo fmt --manifest-path ../crates/openhuman-app/Cargo.toml --package openhuman-app -- --check",
     "rust:clippy": "cargo clippy --manifest-path ../crates/openhuman-app/Cargo.toml -- -D warnings",
     "format": "prettier --write . && pnpm rust:format",
     "format:check": "prettier --check . && pnpm rust:format:check",
@@ -82,13 +82,9 @@
     "@noble/ciphers": "^1.2.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.0.1",
-    "@noble/secp256k1": "^3.0.0",
     "@radix-ui/react-collapsible": "^1.1.20",
     "@reduxjs/toolkit": "^2.11.2",
     "@rive-app/react-webgl2": "^4.28.6",
-    "@scure/base": "^2.2.0",
-    "@scure/bip32": "^2.0.1",
-    "@scure/bip39": "^2.0.1",
     "@sentry/react": "^10.38.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",

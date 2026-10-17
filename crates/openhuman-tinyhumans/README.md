@@ -121,7 +121,7 @@ let runtime = RuntimeBuilder::new()
     .await?;
 ```
 
-See [`gitbooks/developing/tinyhumans-api-key.md`](../../gitbooks/developing/tinyhumans-api-key.md)
+See [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../docs/gitbooks/en/developing/tinyhumans-api-key.md)
 for what one TinyHumans API key unlocks across inference, search, embeddings,
 media, integrations, voice and Jev.
 
@@ -275,9 +275,9 @@ pnpm debug rust openhuman_tinyhumans
 
 ## Further reading
 
-- [`gitbooks/developing/tinyhumans-api-key.md`](../../gitbooks/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
-- [`gitbooks/developing/architecture.md`](../../gitbooks/developing/architecture.md): architecture overview.
-- [`gitbooks/developing/embedding.md`](../../gitbooks/developing/embedding.md): embedding the core in another product.
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`docs/gitbooks/en/developing/architecture.md`](../../docs/gitbooks/en/developing/architecture.md): architecture overview.
+- [`docs/gitbooks/en/developing/embedding.md`](../../docs/gitbooks/en/developing/embedding.md): embedding the core in another product.
 - [`crates/README.md`](../README.md): crates overview.
 - [`vendor/tinyhumans-sdk/README.md`](../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.
 - [`src/hosted/announcements/`](src/hosted/announcements/README.md): the `announcements` module README.

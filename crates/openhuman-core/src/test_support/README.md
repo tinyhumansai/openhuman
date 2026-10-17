@@ -166,5 +166,5 @@ of `scripts/ci/self-hosted/lanes-plan.mjs`
 
 ## Further reading
 
-- [Testing strategy](../../../../gitbooks/developing/testing-strategy.md)
+- [Testing strategy](../../../../docs/gitbooks/en/developing/testing-strategy.md)
 - [Integration test layout](../../../../tests/README.md)

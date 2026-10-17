@@ -2,13 +2,17 @@ use super::*;
 
 #[tokio::test]
 async fn per_turn_tool_limit_reaches_the_execution_policy() {
-    crate::agent::stop_hooks::with_tool_call_limit(Some(2), async {
-        let policy = run_policy_for(10, false);
-        assert_eq!(policy.limits.max_tool_calls, 2);
-        assert_eq!(policy.limits.max_model_calls, 10);
-    })
-    .await;
+    let policy = run_policy_for_provider(10, false, false, Some(2));
+    assert_eq!(policy.limits.max_tool_calls, 2);
+    assert_eq!(policy.limits.max_model_calls, 10);
     assert_eq!(run_policy_for(10, false).limits.max_tool_calls, 80);
+    // A host cap can only narrow the product default, never widen it.
+    assert_eq!(
+        run_policy_for_provider(10, false, false, Some(1_000))
+            .limits
+            .max_tool_calls,
+        80
+    );
 }
 
 /// #6953: the model reads how long each tool call took, so it can budget the
@@ -19,36 +23,9 @@ fn tool_results_carry_their_duration() {
 }
 
 #[test]
-fn stream_timeouts_are_set_explicitly_with_first_event_off() {
-    let mut limits = RunPolicy::default().limits;
-    apply_stream_limits(&mut limits, None, None, None);
-    assert_eq!(limits.stream_idle_timeout_ms, Some(120_000));
-    assert_eq!(limits.stream_first_event_timeout_ms, None);
-    assert_eq!(limits.max_consecutive_stream_idle_timeouts, Some(5));
-}
-
-#[test]
-fn stream_timeout_env_overrides_parse() {
-    assert_eq!(parse_stream_idle_timeout_ms(Some("30")), Some(30_000));
-    assert_eq!(parse_stream_idle_timeout_ms(Some("0")), None);
-    assert_eq!(parse_stream_idle_timeout_ms(Some("junk")), Some(120_000));
-    assert_eq!(
-        parse_stream_first_event_timeout_ms(Some("45")),
-        Some(45_000)
-    );
-    assert_eq!(parse_stream_first_event_timeout_ms(Some("0")), None);
-    assert_eq!(parse_stream_first_event_timeout_ms(None), None);
-    assert_eq!(parse_max_consecutive_stream_idle_timeouts(Some("0")), None);
-    assert_eq!(
-        parse_max_consecutive_stream_idle_timeouts(Some("2")),
-        Some(2)
-    );
-}
-
-#[test]
 fn local_providers_get_longer_ceilings_than_hosted_ones() {
-    let hosted = run_policy_for_provider(10, false, false);
-    let local = run_policy_for_provider(10, false, true);
+    let hosted = run_policy_for_provider(10, false, false, None);
+    let local = run_policy_for_provider(10, false, true, None);
     // Env overrides win over both defaults, so compare only without one.
     if std::env::var_os("OPENHUMAN_MODEL_CALL_TIMEOUT_SECS").is_none()
         && std::env::var_os("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS").is_none()
@@ -72,7 +49,7 @@ fn local_web_backstop_sits_above_the_local_turn_ceiling() {
     let backstop = local_web_turn_backstop_secs();
     assert_eq!(
         backstop,
-        turn_secs.map(|s| s + LOCAL_WEB_TURN_BACKSTOP_GRACE_SECS)
+        turn_secs.map(|s| s + tinyagents_harness::turn_policy::LOCAL_WEB_TURN_BACKSTOP_GRACE_SECS)
     );
 }
 
@@ -124,7 +101,7 @@ fn hosted_openai_keeps_the_hosted_ceilings_in_the_policy() {
         return;
     }
     let local = provider_is_self_hosted("openai", Some("https://api.openai.com/v1"));
-    let policy = run_policy_for_provider(10, false, local);
+    let policy = run_policy_for_provider(10, false, local, None);
     assert_eq!(policy.limits.max_model_call_ms, Some(900_000));
     assert_eq!(policy.limits.max_wall_clock_ms, Some(3_600_000));
 }

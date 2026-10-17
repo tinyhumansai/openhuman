@@ -1,6 +1,6 @@
 use super::*;
 use crate::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
-use crate::agent::harness::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::registry::agents::BUILTINS;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};

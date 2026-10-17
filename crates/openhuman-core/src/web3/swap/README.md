@@ -1,52 +1,22 @@
-# web3/swap
+# web3_swap
 
-Single-chain token swaps via the deBridge proxy, one of the three families
-under [`web3`](../README.md) alongside `bridge` and `dapp`. See the parent
-README for the shared quote store, chain-id mapping, and signing path; this
-file only covers what is specific to swaps.
+Single-chain token swaps use the TinyWallet module for provider parsing, quote
+construction, module-owned quote storage, transaction encoding, approval-bound
+signing, and broadcast. OpenHuman keeps the `web3_swap` RPC controllers and
+agent-tool adapters, and supplies authenticated access to the backend
+deBridge proxy plus generic, guarded chain transport.
 
-## What it does
-
-A swap quote asks deBridge for a route to exchange one token for another on
-the same chain. Cross-chain requests are rejected here with a pointer to
-`web3_bridge`, since deBridge's `/swap` endpoint is single-chain only. The
-actual quote logic (address defaulting, the backend call, unsigned-tx
-extraction) lives in `Web3Service::quote_swap` in the vendored `tinywallet-web3`
-crate; this module only owns the RPC controllers ([`schemas.rs`](./schemas.rs)) for the
-`web3_swap` namespace. The agent tools are in
-`tinywallet_web3::tools::web3`.
-
-## Key files
-
-| File | Role |
-| --- | --- |
-| [`mod.rs`](./mod.rs) | Module docs. |
-| [`schemas.rs`](./schemas.rs) | `web3_swap` RPC controller schemas and handlers: `quote`, `execute`, `routes`. Handlers deserialize params and delegate to the process-wide `Web3Service` (`web3::seams::service()`): `quote_swap` / `execute_quote` / `routes`, wrapping the result in `Outcome`. |
-
-## RPC / controllers
-
-Namespace `web3_swap` (method form `openhuman.web3_swap_<function>`):
+## Operations
 
 | Function | Purpose |
 | --- | --- |
-| `quote` | Prepare a single-chain swap. Params: `chainId`, `tokenIn`, `tokenInAmount`, `tokenOut`, and optional `tokenOutRecipient`, `senderAddress`, `slippage` (default `"auto"`). Returns a prepared quote with a `quoteId`. |
-| `execute` | Confirm and execute a prepared quote (`quoteId`, `confirmed: true`). Signs and broadcasts. |
-| `routes` | List the chains deBridge can swap and bridge between. No params. |
+| `quote` | Prepare a single-chain swap quote. Cross-chain requests are routed to `web3_bridge`. |
+| `execute` | Execute a stored quote after `confirmed: true` and host approval of the exact intent. |
+| `routes` | List provider-supported routes through the module/backend boundary. |
 
-## Agent tools
+Quotes are bound to their preparing chat thread and client. Module absence,
+ownership mismatch, expiry, and provider errors fail closed; there is no local
+quote or signing fallback.
 
-`web3_swap_quote`, `web3_swap_execute`, `web3_swap_routes`. They call the
-backend per invocation and return a tool error, rather than being hidden,
-when the caller is not signed in.
-
-## Notes
-
-- Recipient and sender addresses default to the wallet's own derived address for the chain family when omitted.
-- The quote id returned by `quote` is bound to the chat thread that prepared it; see the parent [README](../README.md) for the quote store's TTL and ownership rules, which this module shares with `bridge` and `dapp`.
-
-## Further reading
-
-- [Parent module (`web3`)](../README.md)
-- [Wallet](../../../../../gitbooks/features/wallet.md)
-- [tinywallet submodule](../../../../../vendor/tinywallet/README.md)
-- [Loadable modules](../../../../../gitbooks/developing/loadable-modules.md)
+The host controller schemas are in [`schemas.rs`](./schemas.rs). See the
+[parent Web3 architecture](../README.md) for the module/host boundary.

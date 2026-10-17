@@ -9,10 +9,11 @@
 //! call. That agreement is this file's job.
 
 use super::*;
-use crate::tools::implementations::presentation::types::SlideSpec;
+use crate::tools::implementations::document::format::spec::SlideImage;
+use crate::tools::implementations::presentation::types::SlideRequest;
 
-fn slide(title: &str) -> SlideSpec {
-    SlideSpec {
+fn slide(title: &str) -> SlideRequest {
+    SlideRequest {
         title: title.to_string(),
         body: Some("Body".to_string()),
         bullets: vec!["Bullet".to_string()],
@@ -21,17 +22,18 @@ fn slide(title: &str) -> SlideSpec {
     }
 }
 
-fn input(slides: Vec<SlideSpec>) -> GeneratePresentationInput {
+fn input(slides: Vec<SlideRequest>) -> GeneratePresentationInput {
     GeneratePresentationInput {
         title: "Quarterly".to_string(),
+        artifact_id: None,
         author: Some("Alice".to_string()),
         theme: Some("plain".to_string()),
         slides,
     }
 }
 
-fn resolved(bytes: &[u8], caption: Option<&str>) -> ResolvedSlideImage {
-    ResolvedSlideImage {
+fn resolved(bytes: &[u8], caption: Option<&str>) -> SlideImage {
+    SlideImage {
         bytes: bytes.to_vec(),
         format: crate::tools::implementations::document::format::spec::ImageFormat::Png,
         width_px: 4,

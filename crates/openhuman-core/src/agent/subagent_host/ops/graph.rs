@@ -3,7 +3,7 @@
 //! Per the per-folder `graph.rs` convention, this module owns the sub-agent
 //! folder's graph definition, its available tools, and its summarization step —
 //! all thin over the shared tinyagents seam
-//! ([`run_turn_via_tinyagents_shared`]).
+//! ([`TurnSpec::run`]).
 //!
 //! **Graph.** A single agent-loop turn driven by the tinyagents harness: the
 //! model is called, requested tools run, and the loop repeats until the model

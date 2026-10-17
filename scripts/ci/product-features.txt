@@ -100,11 +100,10 @@ hosting
 # build-time OPENHUMAN_TINYMEMES_DEFAULT) enables it.
 tinymemes
 
-# Storage driver for the default on-disk layout: the small desktop stores
-# (approvals, devices, notifications, task sources) keep their rows in SQLite
-# document tables inside their existing `.db` files, importing the old tables
-# on first open. Also serves `sqlite:` in `[storage] url`. MongoDB is not part
-# of the product.
+# Storage driver for the default backend, `sqlite:<workspace>/storage`: every
+# store, the session store included, lives in it, and older installs' per-domain
+# databases and transcript files are imported into it once. Also serves
+# `sqlite:` in `[storage] url`. MongoDB is not part of the product.
 storage-sqlite
 
 # OS keychain providers owned by the RPC host layer.

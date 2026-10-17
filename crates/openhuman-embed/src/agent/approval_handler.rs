@@ -27,6 +27,7 @@ impl ApprovalSubscription {
         handler: Arc<dyn ApprovalHandler>,
         removed: tokio::sync::watch::Receiver<bool>,
         lifecycle: Arc<super::lifecycle::ApprovalState>,
+        core: Option<std::sync::Weak<openhuman_core::core::runtime::CoreContext>>,
     ) -> Self {
         let cancellation = CancellationToken::new();
         let subscriber = Arc::new(Handler {
@@ -35,6 +36,7 @@ impl ApprovalSubscription {
             cancellation: cancellation.clone(),
             removed,
             lifecycle,
+            core,
         });
         Self {
             _subscription: BUS.subscribe(subscriber),
@@ -48,6 +50,7 @@ struct Handler {
     cancellation: CancellationToken,
     removed: tokio::sync::watch::Receiver<bool>,
     lifecycle: Arc<super::lifecycle::ApprovalState>,
+    core: Option<std::sync::Weak<openhuman_core::core::runtime::CoreContext>>,
 }
 #[async_trait::async_trait]
 impl EventHandler<DomainEvent> for Handler {
@@ -66,8 +69,12 @@ impl EventHandler<DomainEvent> for Handler {
         if agent_id.as_deref() != Some(&self.agent_id) || *self.removed.borrow() {
             return;
         }
-        let approvals =
-            Approvals::new(&self.agent_id, self.removed.clone(), self.lifecycle.clone());
+        let approvals = Approvals::new(
+            &self.agent_id,
+            self.removed.clone(),
+            self.lifecycle.clone(),
+            self.core.clone(),
+        );
         let Ok(pending) = approvals.pending() else {
             return;
         };

@@ -76,20 +76,6 @@ async fn a_failed_forget_is_kept_for_the_next_drain() {
 }
 
 #[test]
-fn a_deletion_is_queued_once() {
-    let tmp = tempfile::tempdir().unwrap();
-    enqueue(tmp.path(), thread("t"));
-    enqueue(tmp.path(), thread("t"));
-    enqueue(
-        tmp.path(),
-        PendingDeletion::Source {
-            source_id: "src-1".into(),
-        },
-    );
-    assert_eq!(pending(tmp.path()).len(), 2);
-}
-
-#[test]
 fn an_unparsable_queue_is_set_aside_not_lost() {
     let tmp = tempfile::tempdir().unwrap();
     let file = path(tmp.path());

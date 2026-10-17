@@ -14,6 +14,7 @@ async fn flows_run_detached_returns_running_run_id_and_inserts_row() {
     .unwrap();
 
     let outcome = flows_run_detached(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &flow.id,
         json!({}),
@@ -56,6 +57,7 @@ async fn flows_run_detached_registers_the_run_before_returning_its_id() {
     .unwrap();
 
     let outcome = flows_run_detached(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &flow.id,
         json!({}),
@@ -520,35 +522,6 @@ async fn approval_manifest_never_claims_trust_that_was_never_granted() {
         // lists are empty together and `gate_installed` is the only signal.
         assert!(missing.is_empty(), "{missing:?}");
     }
-}
-
-#[test]
-fn split_manifest_trust_claims_nothing_without_a_gate() {
-    let entries = vec![
-        json!({ "kind": "approvable", "tool_name": "flows_http_request" }),
-        json!({ "kind": "approvable", "tool_name": "flows_code" }),
-        json!({ "kind": "blocked", "tool_name": "SHOPIFY_CREATE_ORDER" }),
-    ];
-
-    // No gate: nothing ever parks, so nothing is missing — and no grant was ever
-    // made, so nothing is already trusted either. Both lists must be empty; a
-    // populated `already_trusted` here is what the save+enable card renders as
-    // "already authorized" for a permission the flow does not hold.
-    let (missing, already_trusted) = split_manifest_trust(&entries, false, &HashSet::new());
-    assert!(missing.is_empty(), "{missing:?}");
-    assert!(already_trusted.is_empty(), "{already_trusted:?}");
-
-    // Gate installed, nothing granted: every approvable key is asked for, and
-    // the non-approvable entry is still skipped.
-    let (missing, already_trusted) = split_manifest_trust(&entries, true, &HashSet::new());
-    assert_eq!(missing, vec!["flows_http_request", "flows_code"]);
-    assert!(already_trusted.is_empty(), "{already_trusted:?}");
-
-    // Gate installed with one grant held: that key moves across, and only it.
-    let trusted: HashSet<String> = ["flows_code".to_string()].into_iter().collect();
-    let (missing, already_trusted) = split_manifest_trust(&entries, true, &trusted);
-    assert_eq!(missing, vec!["flows_http_request"]);
-    assert_eq!(already_trusted, vec!["flows_code"]);
 }
 
 #[tokio::test]

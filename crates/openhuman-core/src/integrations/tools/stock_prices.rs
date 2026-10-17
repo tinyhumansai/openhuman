@@ -178,6 +178,27 @@ impl Tool for StockQuoteTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl StockQuoteTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let symbol = args
             .get("symbol")
             .and_then(|v| v.as_str())
@@ -188,7 +209,11 @@ impl Tool for StockQuoteTool {
         tracing::info!("[stock_quote] symbol={}", symbol);
 
         let body = json!({ "symbol": symbol });
-        match self.client.post::<QuoteResponse>(PATH_QUOTE, &body).await {
+        match self
+            .client
+            .post::<QuoteResponse>(approval, PATH_QUOTE, &body)
+            .await
+        {
             Ok(resp) => {
                 let q = &resp.quote;
                 let mut out = format!(
@@ -266,6 +291,27 @@ impl Tool for StockExchangeRateTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl StockExchangeRateTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let from = args
             .get("from_currency")
             .and_then(|v| v.as_str())
@@ -284,7 +330,7 @@ impl Tool for StockExchangeRateTool {
         let body = json!({ "fromCurrency": from, "toCurrency": to });
         match self
             .client
-            .post::<ExchangeRateResponse>(PATH_EXCHANGE_RATE, &body)
+            .post::<ExchangeRateResponse>(approval, PATH_EXCHANGE_RATE, &body)
             .await
         {
             Ok(resp) => {
@@ -359,6 +405,27 @@ impl Tool for StockOptionsTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl StockOptionsTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let symbol = args
             .get("symbol")
             .and_then(|v| v.as_str())
@@ -379,7 +446,7 @@ impl Tool for StockOptionsTool {
         let body = json!({ "symbol": symbol, "requireGreeks": require_greeks });
         match self
             .client
-            .post::<OptionsResponse>(PATH_OPTIONS, &body)
+            .post::<OptionsResponse>(approval, PATH_OPTIONS, &body)
             .await
         {
             Ok(resp) => {
@@ -467,6 +534,27 @@ impl Tool for StockCryptoSeriesTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl StockCryptoSeriesTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let symbol = args
             .get("symbol")
             .and_then(|v| v.as_str())
@@ -486,7 +574,7 @@ impl Tool for StockCryptoSeriesTool {
 
         match self
             .client
-            .post::<CryptoSeriesResponse>(PATH_CRYPTO_SERIES, &body)
+            .post::<CryptoSeriesResponse>(approval, PATH_CRYPTO_SERIES, &body)
             .await
         {
             Ok(resp) => {
@@ -574,6 +662,27 @@ impl Tool for StockCommodityTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl StockCommodityTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let commodity = args
             .get("commodity")
             .and_then(|v| v.as_str())
@@ -593,7 +702,7 @@ impl Tool for StockCommodityTool {
 
         match self
             .client
-            .post::<CommodityResponse>(PATH_COMMODITY, &body)
+            .post::<CommodityResponse>(approval, PATH_COMMODITY, &body)
             .await
         {
             Ok(resp) => {

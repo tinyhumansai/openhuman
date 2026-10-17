@@ -590,3 +590,16 @@ test("the submodule probe is not fooled by the superproject above it", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a cfg attribute on an ALL element does not hide the record", () => {
+  const src = [
+    "pub const ALL: &[ModuleRecord] = &[",
+    "    TINYCOMPUTER,",
+    '    #[cfg(feature = "documents")]',
+    "    TINYDOCS,",
+    '    #[cfg(feature = "modules")] // loader only',
+    "    TINYBOX,",
+    "];",
+  ].join("\n");
+  assert.deepEqual(parseAllList(src), ["TINYCOMPUTER", "TINYDOCS", "TINYBOX"]);
+});

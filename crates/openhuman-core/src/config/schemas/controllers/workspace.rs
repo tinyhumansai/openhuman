@@ -1,5 +1,6 @@
 //! Handlers for workspace state: onboarding flags, analytics, dashboard, data and agent paths, and local-data reset.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
@@ -12,12 +13,14 @@ use super::super::helpers::{
 };
 
 pub(super) fn handle_workspace_onboarding_flag_exists(
+    ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkspaceOnboardingFlagParams>(params)?;
         to_json(
             config_rpc::workspace_onboarding_flag_resolve(
+                &ctx,
                 payload.flag_name,
                 DEFAULT_ONBOARDING_FLAG_NAME,
             )
@@ -26,11 +29,15 @@ pub(super) fn handle_workspace_onboarding_flag_exists(
     })
 }
 
-pub(super) fn handle_workspace_onboarding_flag_set(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_workspace_onboarding_flag_set(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkspaceOnboardingFlagSetParams>(params)?;
         to_json(
             config_rpc::workspace_onboarding_flag_set(
+                &ctx,
                 payload.flag_name,
                 DEFAULT_ONBOARDING_FLAG_NAME,
                 payload.value,
@@ -40,26 +47,35 @@ pub(super) fn handle_workspace_onboarding_flag_set(params: Map<String, Value>) -
     })
 }
 
-pub(super) fn handle_update_analytics_settings(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_analytics_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<AnalyticsSettingsUpdate>(params)?;
         let patch = config_rpc::AnalyticsSettingsPatch {
             enabled: update.enabled,
         };
-        to_json(config_rpc::load_and_apply_analytics_settings(patch).await?)
+        to_json(config_rpc::load_and_apply_analytics_settings(&ctx, patch).await?)
     })
 }
 
-pub(super) fn handle_update_user_timezone(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_user_timezone(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<UserTimezoneUpdate>(params)?;
-        to_json(config_rpc::load_and_apply_user_timezone(update.timezone).await?)
+        to_json(config_rpc::load_and_apply_user_timezone(&ctx, update.timezone).await?)
     })
 }
 
-pub(super) fn handle_get_user_timezone(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
-        let config = config_rpc::load_config_with_timeout().await?;
+pub(super) fn handle_get_user_timezone(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let config = ctx.load_config().await?;
         to_json(crate::core::Outcome::single_log(
             config_rpc::user_timezone_json(&config),
             "user time zone read",
@@ -67,10 +83,13 @@ pub(super) fn handle_get_user_timezone(_params: Map<String, Value>) -> Controlle
     })
 }
 
-pub(super) fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
+pub(super) fn handle_get_analytics_settings(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
         use crate::core::Outcome;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let result = serde_json::json!({
             "enabled": config.observability.analytics_enabled,
         });
@@ -81,22 +100,34 @@ pub(super) fn handle_get_analytics_settings(_params: Map<String, Value>) -> Cont
     })
 }
 
-pub(super) fn handle_get_dashboard_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { to_json(config_rpc::get_dashboard_settings().await?) })
+pub(super) fn handle_get_dashboard_settings(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_dashboard_settings(&ctx).await?) })
 }
 
-pub(super) fn handle_agent_server_status(_params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_agent_server_status(
+    _ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::agent_server_status()) })
 }
 
-pub(super) fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { to_json(config_rpc::reset_local_data().await?) })
+pub(super) fn handle_reset_local_data(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::reset_local_data(&ctx).await?) })
 }
 
-pub(crate) fn handle_get_data_paths(params: Map<String, Value>) -> ControllerFuture {
+pub(crate) fn handle_get_data_paths(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] get_data_paths enter");
-        match resolve_data_paths(params).await {
+        match resolve_data_paths(&ctx, params).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] get_data_paths ok");
                 to_json(outcome)
@@ -116,6 +147,7 @@ pub(crate) fn handle_get_data_paths(params: Map<String, Value>) -> ControllerFut
 /// and leave the real user's data behind. Absent/blank → marker-based
 /// resolution (the default used by the agent tool and diagnostics).
 async fn resolve_data_paths(
+    ctx: &DispatchCtx,
     params: Map<String, Value>,
 ) -> Result<crate::core::Outcome<Value>, String> {
     let user_id = params
@@ -130,14 +162,17 @@ async fn resolve_data_paths(
     );
     match user_id.as_deref() {
         Some(id) => config_rpc::get_data_paths_for_user(id).await,
-        None => config_rpc::get_data_paths().await,
+        None => config_rpc::get_data_paths(ctx).await,
     }
 }
 
-pub(crate) fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async {
+pub(crate) fn handle_get_agent_paths(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
         log::debug!("[config][rpc] get_agent_paths enter");
-        match config_rpc::get_agent_paths().await {
+        match config_rpc::get_agent_paths(&ctx).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] get_agent_paths ok");
                 to_json(outcome)
@@ -150,7 +185,10 @@ pub(crate) fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerF
     })
 }
 
-pub(super) fn handle_update_agent_paths(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_update_agent_paths(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         log::debug!("[config][rpc] update_agent_paths enter");
         let update = match deserialize_params::<AgentPathsUpdate>(params) {
@@ -164,7 +202,7 @@ pub(super) fn handle_update_agent_paths(params: Map<String, Value>) -> Controlle
             action_dir: update.action_dir,
             files_dir: update.files_dir,
         };
-        match config_rpc::load_and_apply_agent_paths_settings(patch).await {
+        match config_rpc::load_and_apply_agent_paths_settings(&ctx, patch).await {
             Ok(outcome) => {
                 log::debug!("[config][rpc] update_agent_paths ok");
                 to_json(outcome)
@@ -177,13 +215,19 @@ pub(super) fn handle_update_agent_paths(params: Map<String, Value>) -> Controlle
     })
 }
 
-pub(super) fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { to_json(config_rpc::get_onboarding_completed().await?) })
+pub(super) fn handle_get_onboarding_completed(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_onboarding_completed(&ctx).await?) })
 }
 
-pub(super) fn handle_set_onboarding_completed(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_set_onboarding_completed(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<OnboardingCompletedSetParams>(params)?;
-        to_json(config_rpc::set_onboarding_completed(payload.value).await?)
+        to_json(config_rpc::set_onboarding_completed(&ctx, payload.value).await?)
     })
 }

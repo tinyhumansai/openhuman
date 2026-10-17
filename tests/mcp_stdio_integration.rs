@@ -1,37 +1,129 @@
-//! Integration coverage for the stdio MCP client against the real core binary.
+//! Wire-level integration coverage for OpenHuman's stdio MCP server.
 //!
-//! Keep this as an integration test so Cargo builds `openhuman-core` as part of
-//! the test graph and exposes it through `CARGO_BIN_EXE_openhuman-core`. Running
-//! a nested `cargo build` from a lib unit test is prone to CI disk exhaustion.
+//! The server is a subprocess and the test acts as an external MCP client over
+//! newline-delimited JSON-RPC. This keeps the host test independent of MCP
+//! implementation crates while exercising the real CLI transport.
 
-// Exercises the gated `mcp_client::McpStdioClient` transport, so the whole
-// suite is compiled only when the `mcp` feature is on — otherwise the slim
-// build's `cargo test --no-default-features --tests` fails to compile against the removed API (#4799).
 #![cfg(feature = "mcp")]
 
-use openhuman_core::mcp::config_servers::McpStdioClient;
-use std::path::PathBuf;
-use tinymcp_bus::McpClientIdentityConfig;
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
+use tinymcp_bus::LATEST_PROTOCOL_VERSION;
 
-const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+fn send_message(writer: &mut impl Write, message: &Value) {
+    serde_json::to_writer(&mut *writer, message).expect("serialize MCP message");
+    writer.write_all(b"\n").expect("write MCP message");
+    writer.flush().expect("flush MCP message");
+}
 
-#[tokio::test]
-async fn stdio_client_talks_to_openhuman_mcp_server() {
-    let client = McpStdioClient::new(
-        env!("CARGO_BIN_EXE_openhuman-core").to_string(),
-        vec!["mcp".into()],
-        Vec::new(),
-        Some(PathBuf::from(env!("OPENHUMAN_REPOSITORY_ROOT"))),
-        // The identity is the contract's now; the client takes it by
-        // reference rather than consuming one.
-        &McpClientIdentityConfig::default(),
+fn wait_for_response(receiver: &Receiver<Result<Value, String>>, request_id: u64) -> Value {
+    loop {
+        let message = receiver
+            .recv_timeout(Duration::from_secs(60))
+            .expect("stdio MCP response arrives before the deadline")
+            .expect("stdio MCP server writes valid JSON-RPC to stdout");
+        if message.get("id") == Some(&json!(request_id)) {
+            return message;
+        }
+    }
+}
+
+#[test]
+fn stdio_server_initializes_and_lists_core_tools() {
+    let workspace = tempfile::tempdir().expect("temporary MCP workspace");
+    let workspace_path =
+        std::fs::canonicalize(workspace.path()).expect("canonicalize temporary MCP workspace");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+        .arg("mcp")
+        .current_dir(&workspace_path)
+        .env("OPENHUMAN_WORKSPACE", &workspace_path)
+        .env("OPENHUMAN_KEYRING_BACKEND", "encrypted_file")
+        .env("OPENHUMAN_KEYRING_MASTER_KEY", "42".repeat(32))
+        .env_remove("OPENHUMAN_KEYRING_MASTER_KEY_FILE")
+        .env_remove("OPENHUMAN_APP_ENV")
+        .env_remove("OPENHUMAN_MODE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn OpenHuman's stdio MCP server");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let stdout = child.stdout.take().expect("child stdout");
+    let (sender, receiver) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let message = line.map_err(|error| error.to_string()).and_then(|line| {
+                serde_json::from_str(&line)
+                    .map_err(|error| format!("{error}: stdout line {line:?}"))
+            });
+            if sender.send(message).is_err() {
+                break;
+            }
+        }
+    });
+
+    send_message(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": LATEST_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "openhuman-stdio-integration",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+            },
+        }),
+    );
+    let initialized = wait_for_response(&receiver, 1);
+    assert!(initialized.get("error").is_none(), "{initialized}");
+    assert_eq!(
+        initialized["result"]["protocolVersion"],
+        LATEST_PROTOCOL_VERSION
     );
 
-    let init = client.initialize().await.expect("initialize");
-    assert_eq!(init.protocol_version, LATEST_PROTOCOL_VERSION);
+    send_message(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }),
+    );
+    send_message(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {},
+        }),
+    );
+    let listed = wait_for_response(&receiver, 2);
+    assert!(listed.get("error").is_none(), "{listed}");
+    assert!(
+        listed["result"]["tools"]
+            .as_array()
+            .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == "memory.recall")),
+        "the server exposes the read-only memory tool: {listed}"
+    );
 
-    let tools = client.list_tools().await.expect("list_tools");
-    assert!(tools.iter().any(|tool| tool.name == "memory.recall"));
-
-    client.close_session().await.expect("close");
+    send_message(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/exit",
+            "params": {},
+        }),
+    );
+    drop(stdin);
+    let status = child.wait().expect("wait for stdio server shutdown");
+    reader.join().expect("join stdout reader");
+    assert!(status.success(), "stdio MCP server exited with {status}");
 }

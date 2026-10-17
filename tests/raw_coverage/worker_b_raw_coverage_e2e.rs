@@ -25,7 +25,7 @@ use openhuman_core::agent::turn_origin::{self, AgentTurnOrigin};
 use openhuman_core::config::Config;
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::security::approval::gate::{
-    ApprovalChatContext, ApprovalGate, APPROVAL_CHAT_CONTEXT,
+    ApprovalChatContext, ApprovalGate, ApprovalTurnContext,
 };
 use openhuman_core::security::approval::types::{ExecutionOutcome, GateOutcome};
 use openhuman_core::security::credentials::{
@@ -274,7 +274,7 @@ async fn setup() -> TestHarness {
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
     ];
 
-    let _ = openhuman_core::agent::harness::AgentDefinitionRegistry::init_global_builtins();
+    let _ = openhuman_core::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let (addr, rpc_join) = serve_rpc().await;
     TestHarness {
@@ -434,10 +434,11 @@ async fn inference_provider_success_paths_use_mock_models_and_chat() {
 
 #[tokio::test]
 async fn tools_web_answer_uses_managed_gemini_grounding_and_returns_citations() {
-    if std::env::var_os("TINYSEARCH_TEST_MODULE").is_none() {
+    if openhuman_core::modules::local_artifact("tinysearch").is_none() {
         eprintln!(
-            "SKIPPED (not run, not asserted): TINYSEARCH_TEST_MODULE is not set. Build vendor/tinysearch \
-             and export TINYSEARCH_TEST_MODULE=<path to libtinysearch>, or use scripts/test-rust-with-mock.sh"
+            "SKIPPED (not run, not asserted): no tinysearch library. Run \
+             `node scripts/modules/build.mjs tinysearch` and set OPENHUMAN_MODULE_SOURCE_DIR, \
+             or use scripts/test-rust-with-mock.sh"
         );
         return;
     }
@@ -513,10 +514,11 @@ async fn tools_web_answer_uses_managed_gemini_grounding_and_returns_citations() 
 async fn tools_web_search_success_path_uses_backend_session_and_shapes_results() {
     // The search RPC runs through the TinySearch module; CI and
     // scripts/test-rust-with-mock.sh build it and export its path.
-    if std::env::var_os("TINYSEARCH_TEST_MODULE").is_none() {
+    if openhuman_core::modules::local_artifact("tinysearch").is_none() {
         eprintln!(
-            "SKIPPED (not run, not asserted): TINYSEARCH_TEST_MODULE is not set. Build vendor/tinysearch \
-             and export TINYSEARCH_TEST_MODULE=<path to libtinysearch>, or use scripts/test-rust-with-mock.sh"
+            "SKIPPED (not run, not asserted): no tinysearch library. Run \
+             `node scripts/modules/build.mjs tinysearch` and set OPENHUMAN_MODULE_SOURCE_DIR, \
+             or use scripts/test-rust-with-mock.sh"
         );
         return;
     }
@@ -607,24 +609,23 @@ async fn approval_gate_rpc_decision_resumes_parked_tool_and_records_execution() 
                 client_id: "worker-b-client".to_string(),
                 request_id: None,
             },
-            APPROVAL_CHAT_CONTEXT.scope(
-                ApprovalChatContext {
+            async move {
+                let turn = ApprovalTurnContext::chat(ApprovalChatContext {
                     thread_id: "worker-b-thread".to_string(),
                     client_id: "worker-b-client".to_string(),
                     // No turn in scope in this fixture; the field is documented as
                     // carried only when the caller has one (`gate.rs:91-95`).
                     request_id: None,
-                },
-                async move {
-                    gate_for_task
-                        .intercept_audited(
-                            "tools.web_search",
-                            "search the web for coverage",
-                            json!({ "query": "<redacted>", "max_results": 3 }),
-                        )
-                        .await
-                },
-            ),
+                });
+                gate_for_task
+                    .intercept_audited(
+                        &turn,
+                        "tools.web_search",
+                        "search the web for coverage",
+                        json!({ "query": "<redacted>", "max_results": 3 }),
+                    )
+                    .await
+            },
         )
         .await
     });

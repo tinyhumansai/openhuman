@@ -2,7 +2,7 @@
 
 import { cn } from '@/components/assistant-ui/lib/utils';
 import { useT } from '@/lib/i18n/I18nContext';
-import { CheckIcon, Loader2Icon, XIcon } from 'lucide-react';
+import { CheckIcon, Loader2Icon, MinusIcon, XIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 
 import { announced, pct, progressOf } from '../utils/range';
@@ -27,13 +27,13 @@ export function AgentPlan({
   activeIndex: number;
   title?: string | undefined;
   /** Core progress can complete steps out of order or stop on a failed step. */
-  statuses?: readonly ('pending' | 'active' | 'done' | 'failed')[];
+  statuses?: readonly ('pending' | 'active' | 'done' | 'failed' | 'skipped')[];
   stepTestId?: string;
 }) {
   const { t } = useT();
   const total = steps.length;
   const completed = statuses
-    ? statuses.filter(status => status === 'done').length
+    ? statuses.filter(status => status === 'done' || status === 'skipped').length
     : progressOf(activeIndex, total);
   const countLabel = t('chat.todos.ofTotal')
     .replace('{done}', String(completed))
@@ -70,14 +70,17 @@ export function AgentPlan({
           const done = status === 'done';
           const active = status === 'active';
           const failed = status === 'failed';
+          const skipped = status === 'skipped';
           const statusText = t(
             status === 'done'
               ? 'conversations.taskCard.state.done'
-              : status === 'failed'
-                ? 'conversations.taskCard.state.failed'
-                : status === 'active'
-                  ? 'conversations.backgroundTasks.statusRunning'
-                  : 'orchestration.runStatus.pending'
+              : skipped
+                ? 'conversations.taskCard.state.cancelled'
+                : status === 'failed'
+                  ? 'conversations.taskCard.state.failed'
+                  : status === 'active'
+                    ? 'conversations.backgroundTasks.statusRunning'
+                    : 'orchestration.runStatus.pending'
           );
           return (
             <li
@@ -91,6 +94,8 @@ export function AgentPlan({
               <span className="flex size-4 shrink-0 items-center justify-center">
                 {done ? (
                   <CheckIcon aria-hidden className="text-muted-foreground size-3.5" />
+                ) : skipped ? (
+                  <MinusIcon aria-hidden className="text-muted-foreground size-3.5" />
                 ) : failed ? (
                   <XIcon aria-hidden className="text-destructive size-3.5" />
                 ) : active ? (
@@ -111,6 +116,7 @@ export function AgentPlan({
                     done && 'text-muted-foreground',
                     active && 'text-foreground/90',
                     failed && 'text-destructive',
+                    skipped && 'line-through decoration-[1.5px]',
                     !done && !active && !failed && 'text-muted-foreground'
                   )}>
                   {item.label}

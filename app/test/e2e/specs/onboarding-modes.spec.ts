@@ -6,8 +6,8 @@
  */
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import { waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
+import { triggerAuthLoopbackBypass } from '../helpers/loopback-auth-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { dismissBootCheckGateIfVisible } from '../helpers/shared-flows';
 import {
@@ -136,7 +136,7 @@ describe('Onboarding — self-hosted and managed paths', function () {
     await waitForAppReady(20_000);
     await dismissBootCheckGateIfVisible(8_000);
 
-    await triggerAuthDeepLinkBypass('e2e-onboarding-managed');
+    await triggerAuthLoopbackBypass('e2e-onboarding-managed');
     await waitForAppReady(20_000);
     await waitForAuthBootstrap(20_000);
 

@@ -9,13 +9,10 @@ async fn forced_approval_parks_with_autonomy_disabled_and_releases_exact_request
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(
-                chat_ctx(),
-                worker.intercept_forced(
-                    "browser",
-                    "Click Submit on checkout",
-                    serde_json::json!({"action": "click", "target": "Submit"}),
-                ),
+            worker.intercept_forced(
+                "browser",
+                "Click Submit on checkout",
+                serde_json::json!({"action": "click", "target": "Submit"}),
             ),
         )
         .await
@@ -43,11 +40,8 @@ async fn forced_approval_parks_with_autonomy_disabled_and_releases_exact_request
 #[tokio::test]
 async fn forced_approval_denies_without_routable_web_chat_origin() {
     let (gate, _dir) = test_gate();
-    let outcome = APPROVAL_CHAT_CONTEXT
-        .scope(
-            chat_ctx(),
-            gate.intercept_forced("browser", "click", serde_json::json!({})),
-        )
+    let outcome = gate
+        .intercept_forced("browser", "click", serde_json::json!({}))
         .await;
     assert!(matches!(outcome, GateOutcome::Deny { .. }));
     assert!(gate.list_pending().unwrap().is_empty());
@@ -74,10 +68,7 @@ async fn forced_approval_ignores_auto_approval_and_rejects_persistent_grants() {
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(
-                chat_ctx(),
-                worker.intercept_forced("browser_forced_test", "click", serde_json::json!({})),
-            ),
+            worker.intercept_forced("browser_forced_test", "click", serde_json::json!({})),
         )
         .await
     });
@@ -139,13 +130,18 @@ async fn forced_approval_still_denies_automation_and_channel_origins() {
 
 #[test]
 fn saas_outcome_is_absent_outside_saas() {
-    assert!(saas_outcome_with(false, "shell").is_none());
+    assert!(saas_outcome_with(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        false,
+        "shell"
+    )
+    .is_none());
 }
 
 #[test]
 fn saas_outcome_never_parks_and_denies_without_an_allowlisted_group() {
     // No agent host is installed here, so no tool group is allowlisted.
-    match saas_outcome_with(true, "shell") {
+    match saas_outcome_with(&crate::core::runtime::DispatchCtx::ambient(), true, "shell") {
         Some(GateOutcome::Deny { reason }) => {
             assert!(reason.starts_with(POLICY_DENIED_MARKER), "{reason}");
             assert!(reason.contains("no approval surface"), "{reason}");

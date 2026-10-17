@@ -12,13 +12,15 @@ use tinyagents_session::transcript::TranscriptMessage;
 use tinyinference_llm::model::{ModelRequest, ModelStreamItem};
 use tinytools_agent::dialect::ToolDialect;
 
+use tinyagents_harness::middleware::wrap_harness_instruction;
+
 use crate::agent::{
     message_convert::dialect_response_from_provider,
     session_host::turn_checkpoint::{
         self, build_deterministic_checkpoint, build_deterministic_final_summary,
         close_repair_instruction, close_verification_prompt, final_answer_instruction,
         parse_close_verdict, quotes_harness_instruction, render_tool_results,
-        results_from_tool_outcomes, wrap_harness_instruction, CloseVerdict, CloseViolation,
+        results_from_tool_outcomes, CloseVerdict, CloseViolation,
     },
     tinyagents::{TinyagentsTurnOutcome, TurnModelSource},
 };
@@ -32,7 +34,7 @@ pub(super) struct RepairUsage {
     pub(super) output_tokens: u64,
     pub(super) cached_input_tokens: u64,
     /// Cost of these calls: reported charge, catalog estimate, or unknown.
-    pub(super) cost: crate::agent::cost::CostTally,
+    pub(super) cost: tinyagents_harness::cost::CostTally,
     /// Model the calls ran on, for pricing a call that reported no charge.
     pub(super) pricing_model: String,
     /// The newest repair call's own input/output: a repair runs after the
@@ -90,6 +92,8 @@ fn classified_halt_close(outcome: &TinyagentsTurnOutcome) -> Option<GroundedClos
 /// Repair an otherwise valid terminal reply which omits the host's required
 /// structured-output block.  This mirrors the legacy session contract while
 /// keeping the repair call and its usage inside the explicit driver sidecar.
+/// The call records into the caller-owned `usage` before streaming, so a
+/// repair cut off by the turn deadline is still billed.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn repair_required_output(
     source: &TurnModelSource,
@@ -103,7 +107,8 @@ pub(super) async fn repair_required_output(
     reply_already_streamed: bool,
     progress: Option<&tokio::sync::mpsc::Sender<crate::agent::progress::AgentProgress>>,
     iteration: u32,
-) -> Option<GroundedClose> {
+    usage: &mut RepairUsage,
+) -> Option<String> {
     use tinyagents_harness::config as required;
 
     if required::output_satisfies_contract(reply, contract) {
@@ -119,7 +124,6 @@ pub(super) async fn repair_required_output(
     )));
     let (candidate, candidate_usage) =
         completion(source, model, temperature, thread_id, prompt_history).await;
-    let mut usage = RepairUsage::for_model(model);
     usage.record(candidate_usage, true);
     let candidate = candidate.trim().to_owned();
     let candidate_is_usable = !candidate.is_empty()
@@ -132,7 +136,7 @@ pub(super) async fn repair_required_output(
         } else {
             format!("{}\n\n{reply}", required::synthesize_block(contract))
         };
-        return Some(GroundedClose { output, usage });
+        return Some(output);
     }
 
     // The main loop may have already emitted the original reply.  Never
@@ -157,10 +161,7 @@ pub(super) async fn repair_required_output(
             tracing::debug!(%error, "[session-runtime] required-output repair progress receiver closed");
         }
     }
-    Some(GroundedClose {
-        output: format!("{reply}{continuation}"),
-        usage,
-    })
+    Some(format!("{reply}{continuation}"))
 }
 
 /// The tool-less closing instruction for `outcome`: the cap checkpoint when the
@@ -204,6 +205,7 @@ pub(super) async fn close_if_needed(
     base_history: &[tinyinference_llm::message::Message],
     user_message: &str,
     outcome: &TinyagentsTurnOutcome,
+    budget: Option<std::time::Duration>,
 ) -> Option<GroundedClose> {
     let needs_cap_close = outcome.hit_cap && !outcome.wrap_up_injected;
     let needs_final_close = outcome.text.trim().is_empty() || outcome.breaker_halt.is_some();
@@ -261,9 +263,39 @@ pub(super) async fn close_if_needed(
         }
     };
 
-    let (output, usage) =
-        close_with_one_repair(model, instruction, stop_reason, ask, verify, fallback).await;
+    let mut usage = RepairUsage::for_model(model);
+    let output = within_close_budget(
+        budget,
+        close_with_one_repair(instruction, stop_reason, ask, verify, &fallback, &mut usage),
+        &fallback,
+    )
+    .await;
     Some(GroundedClose { output, usage })
+}
+
+/// Run `close` within `budget`, else ship `fallback` (the deterministic summary
+/// a rejected close ships). `None` (no turn deadline) waits for `close`. The
+/// close records into a caller-owned `RepairUsage`, so calls that finished
+/// before a timeout are still billed.
+async fn within_close_budget(
+    budget: Option<std::time::Duration>,
+    close: impl std::future::Future<Output = String>,
+    fallback: impl FnOnce() -> String,
+) -> String {
+    let Some(budget) = budget else {
+        return close.await;
+    };
+    match tokio::time::timeout(budget, close).await {
+        Ok(closed) => closed,
+        Err(_) => {
+            let budget_ms = budget.as_millis() as u64;
+            tracing::warn!(
+                budget_ms,
+                "[session-runtime] grounded close ran out of the turn budget; shipping the deterministic summary"
+            );
+            fallback()
+        }
+    }
 }
 
 /// Ask for a closing message, screen it, and on a violation ask exactly once
@@ -280,20 +312,19 @@ pub(super) async fn close_if_needed(
 /// exercised without a provider; the deterministic guard stays here, ahead of
 /// `verify`, because it is the one check that cannot fail open.
 async fn close_with_one_repair<A, AF, V, VF>(
-    model: &str,
     instruction: String,
     stop_reason: Option<&str>,
     ask: A,
     verify: V,
     fallback: impl FnOnce() -> String,
-) -> (String, RepairUsage)
+    usage: &mut RepairUsage,
+) -> String
 where
     A: Fn(String) -> AF,
     AF: std::future::Future<Output = (String, Option<BilledUsage>)>,
     V: Fn(String) -> VF,
     VF: std::future::Future<Output = (Option<CloseViolation>, Option<BilledUsage>)>,
 {
-    let mut usage = RepairUsage::for_model(model);
     let mut prompt = instruction.clone();
     for attempt in 0..2 {
         let (candidate, candidate_usage) = ask(prompt).await;
@@ -311,7 +342,7 @@ where
             violation
         };
         let Some(violation) = violation else {
-            return (candidate, usage);
+            return candidate;
         };
         if attempt > 0 {
             break;
@@ -322,7 +353,7 @@ where
         );
         prompt = close_repair_instruction(&instruction, violation);
     }
-    (fallback(), usage)
+    fallback()
 }
 
 async fn completion(

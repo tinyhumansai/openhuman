@@ -16,7 +16,7 @@ Two hosts drive it:
 
 - `openhuman-core run --mode saas --saas-config <file>`: the JSON-RPC server
   behind a trusted gateway (`openhuman-rpc`'s `saas_gateway`). See
-  [SaaS profiles](../../../../gitbooks/developing/saas-profiles.md) for
+  [SaaS profiles](../../../../docs/gitbooks/en/developing/saas-profiles.md) for
   deploying it.
 - `openhuman_embed::ProfileRuntime`: the same host in-process, without the
   gateway (`crates/openhuman-embed/src/profiles.rs`).
@@ -269,8 +269,10 @@ A profile holds one thread per conversation, whatever interface it came in on:
   direct `load_or_init` calls, environment writes and `home_dir()` lookups.
   Detached work uses `spawn_scoped` so it keeps its profile.
 - **Host tools are opt-in and confined.** A user's context has no `Platform`
-  family, so shell and file tools are absent unless the operator lists their
-  group in `tool_allowlist`:
+  family. The standalone SaaS CLI has no host-tool adapter and exposes no
+  shell or file tools, even when their group is in `tool_allowlist`. An
+  embedding host must supply profile tool adapters and a permission callback;
+  the allowlist limits which host groups those adapters may expose:
   - `host_files` (`file_read`, `file_write`, `edit`, `apply_patch`, `grep`,
     `glob`, `list`, `csv_export`, `read_workspace_state`) runs in-process,
     confined by the forced policy to the profile's `sandbox/`. In SaaS the
@@ -289,7 +291,8 @@ A profile holds one thread per conversation, whatever interface it came in on:
     `resolve_time` in `tool_scope(ToolScopeSpec::Named(..))`
     (`tools::OPERATOR_ADMITTABLE`); only those three are registered despite
     their family being off, and only when named. Cron stays bound by
-    `[cron] agent_jobs_only`.
+    `[cron] agent_jobs_only`. An embedded (library) agent gets the same three
+    by naming them in its own definition's scope (`HostOverrides::named_tools`).
   - `max_tool_iterations` caps tool rounds per profile turn (chat, relay and
     cron), forced as `agent.max_tool_iterations_override`.
 - **The user surface is an allowlist.** Within the user families, only the
@@ -485,3 +488,13 @@ nothing to sweep.
 
 On shutdown a sweep in flight is not awaited: its claims lapse after ten
 minutes and another node may then run the interrupted occurrence again.
+
+## One turn at a time per profile
+
+Chat turns (`web_chat::run_chat_task`), relayed-message turns
+(`run_relay_turn`) and the cron sweep's runs of one profile take that
+profile's gate ([`turn_gate`](turn_gate.rs)) for the whole turn, so they
+queue instead of overlapping. A due cron occurrence waits behind an in-flight
+chat turn rather than being skipped; the sweep takes the gate before claiming
+the occurrence so the wait does not use up the claim lease. Different
+profiles never contend, and work with no profile (desktop) is not gated.

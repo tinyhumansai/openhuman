@@ -7,6 +7,7 @@ use super::*;
 use crate::agent::orchestration::background_completions::{
     pending_for, record_completion, router_for_workspace, TestWorkspace,
 };
+use crate::core::runtime::DispatchCtx;
 use crate::core::runtime::{ContextOverlay, DomainSet};
 use crate::tools::toolpacks::ToolGroups;
 
@@ -47,18 +48,19 @@ async fn pair() -> Pair {
     let thread = unique("t");
     let session = web_session(&thread);
     for (ctx, ws, task) in [(&alice, &ws_a, "task-alice"), (&bob, &ws_b, "task-bob")] {
-        CoreContext::scope(
-            Arc::clone(ctx),
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(Arc::clone(ctx));
             record_completion(
+                &scope_ctx,
                 ws.path(),
                 &session,
                 task,
                 "researcher",
                 "done",
                 Some(thread.clone()),
-            ),
-        )
-        .await;
+            )
+            .await
+        };
     }
     Pair {
         alice,
@@ -78,22 +80,44 @@ fn in_scope<R>(ctx: &Arc<CoreContext>, f: impl FnOnce() -> R) -> R {
 async fn one_profiles_busy_turn_does_not_block_anothers_thread() {
     let _guard = crate::config::TEST_ENV_LOCK.lock().await;
     let p = pair().await;
-    let turn = in_scope(&p.alice, || TurnBusy::start(&p.session));
+    let turn = in_scope(&p.alice, || {
+        TurnBusy::start(&DispatchCtx::ambient(), &p.session)
+    });
 
-    assert!(in_scope(&p.alice, || is_busy(&p.thread)));
-    assert!(!in_scope(&p.bob, || is_busy(&p.thread)));
+    assert!(in_scope(&p.alice, || is_busy(
+        &DispatchCtx::ambient(),
+        &p.thread
+    )));
+    assert!(!in_scope(&p.bob, || is_busy(
+        &DispatchCtx::ambient(),
+        &p.thread
+    )));
     let router_b = router_for_workspace(p.ws_b.path());
-    let batch = in_scope(&p.bob, || claim_ready(&router_b, &p.thread))
-        .expect("bob's thread is idle while alice's turn runs");
+    let batch = in_scope(&p.bob, || {
+        claim_ready(&DispatchCtx::ambient(), &router_b, &p.thread)
+    })
+    .expect("bob's thread is idle while alice's turn runs");
     assert_eq!(batch[0].task_id, "task-bob");
     router_b.release(&["task-bob".to_string()]);
 
     // Bob's Stop clears only Bob's turns; Alice stays busy.
-    assert_eq!(in_scope(&p.bob, || clear_busy_for_thread(&p.thread)), 0);
-    assert!(in_scope(&p.alice, || is_busy(&p.thread)));
+    assert_eq!(
+        in_scope(&p.bob, || clear_busy_for_thread(
+            &DispatchCtx::ambient(),
+            &p.thread
+        )),
+        0
+    );
+    assert!(in_scope(&p.alice, || is_busy(
+        &DispatchCtx::ambient(),
+        &p.thread
+    )));
 
     drop(turn);
-    assert!(!in_scope(&p.alice, || is_busy(&p.thread)));
+    assert!(!in_scope(&p.alice, || is_busy(
+        &DispatchCtx::ambient(),
+        &p.thread
+    )));
 }
 
 #[tokio::test]
@@ -106,18 +130,21 @@ async fn a_delivery_in_flight_for_one_profile_does_not_take_anothers_slot() {
     );
 
     let held = in_scope(&p.alice, || {
-        DeliverySlot::claim(&p.thread, router_a.clone())
+        DeliverySlot::claim(&DispatchCtx::ambient(), &p.thread, router_a.clone())
     })
     .expect("alice claims her slot");
     assert!(
         in_scope(&p.alice, || DeliverySlot::claim(
+            &DispatchCtx::ambient(),
             &p.thread,
             router_a.clone()
         ))
         .is_none(),
         "one delivery per thread within a profile"
     );
-    let bob_slot = in_scope(&p.bob, || DeliverySlot::claim(&p.thread, router_b.clone()));
+    let bob_slot = in_scope(&p.bob, || {
+        DeliverySlot::claim(&DispatchCtx::ambient(), &p.thread, router_b.clone())
+    });
     assert!(
         bob_slot.is_some(),
         "alice's delivery does not hold bob's slot"
@@ -144,24 +171,28 @@ async fn a_delivery_in_flight_for_one_profile_does_not_take_anothers_slot() {
         let (thread, router_bob, bob_log) = (thread.clone(), router_bob.clone(), bob_log.clone());
         let alice_log = log("alice");
         async move {
-            let retry = CoreContext::scope(
-                bob,
-                try_deliver_with(thread, router_bob, bob_log, |_t, _n| async {
+            let retry = {
+                let scope_ctx = crate::core::runtime::DispatchCtx::new(bob);
+                try_deliver_with(&scope_ctx, thread, router_bob, bob_log, |_t, _n| async {
                     unreachable!("bob's delivery succeeds")
-                }),
-            )
-            .await;
+                })
+                .await
+            };
             assert_eq!(retry, None);
             alice_log(thread_a, notice).await
         }
     };
-    let retry = CoreContext::scope(
-        Arc::clone(&p.alice),
-        try_deliver_with(p.thread.clone(), router_a, alice_deliver, |_t, _n| async {
-            unreachable!("alice's delivery succeeds")
-        }),
-    )
-    .await;
+    let retry = {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(Arc::clone(&p.alice));
+        try_deliver_with(
+            &scope_ctx,
+            p.thread.clone(),
+            router_a,
+            alice_deliver,
+            |_t, _n| async { unreachable!("alice's delivery succeeds") },
+        )
+        .await
+    };
     assert_eq!(retry, None);
 
     let delivered = delivered.lock().unwrap().clone();
@@ -182,18 +213,26 @@ async fn desktop_keys_are_the_bare_ids() {
     let thread = unique("t-desk");
     let session = unique("desk-session");
     in_scope(&desktop, || {
-        background_completions::note_session_thread(&session, &thread)
+        background_completions::note_session_thread(&DispatchCtx::ambient(), &session, &thread)
     });
 
-    let turn = in_scope(&desktop, || TurnBusy::start(&session));
+    let turn = in_scope(&desktop, || {
+        TurnBusy::start(&DispatchCtx::ambient(), &session)
+    });
     assert_eq!(turn.key, session);
     assert!(busy().lock().unwrap().contains_key(&session));
-    assert!(in_scope(&desktop, || is_busy(&thread)));
+    assert!(in_scope(&desktop, || is_busy(
+        &DispatchCtx::ambient(),
+        &thread
+    )));
     drop(turn);
     assert!(!busy().lock().unwrap().contains_key(&session));
 
     let router = router_for_workspace(ws.path());
-    let slot = in_scope(&desktop, || DeliverySlot::claim(&thread, router)).expect("free");
+    let slot = in_scope(&desktop, || {
+        DeliverySlot::claim(&DispatchCtx::ambient(), &thread, router)
+    })
+    .expect("free");
     assert_eq!(slot.key, thread);
     assert!(delivering().lock().unwrap().contains(&thread));
     drop(slot);
@@ -207,13 +246,20 @@ async fn an_older_guard_dropping_keeps_a_replacement_turn_busy() {
     let thread = unique("t-interrupt");
     let session = web_session(&thread);
 
-    let old = in_scope(&desktop, || TurnBusy::start(&session));
-    let new = in_scope(&desktop, || TurnBusy::start(&session));
+    let old = in_scope(&desktop, || {
+        TurnBusy::start(&DispatchCtx::ambient(), &session)
+    });
+    let new = in_scope(&desktop, || {
+        TurnBusy::start(&DispatchCtx::ambient(), &session)
+    });
     drop(old);
     assert!(
-        in_scope(&desktop, || is_busy(&thread)),
+        in_scope(&desktop, || is_busy(&DispatchCtx::ambient(), &thread)),
         "replacement still running"
     );
     drop(new);
-    assert!(!in_scope(&desktop, || is_busy(&thread)));
+    assert!(!in_scope(&desktop, || is_busy(
+        &DispatchCtx::ambient(),
+        &thread
+    )));
 }

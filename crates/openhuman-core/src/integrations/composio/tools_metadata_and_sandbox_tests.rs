@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::agent::harness::SandboxMode;
+use tinyagents_definition::SandboxMode;
 /// Every composio tool must report `ToolCategory::Workflow` so the
 /// skills sub-agent (`category_filter = "skill"`) picks them up.
 ///
@@ -134,7 +134,7 @@ async fn connect_tool_execute_rejects_missing_toolkit() {
 
 #[tokio::test]
 async fn connect_tool_refuses_without_interactive_chat_context() {
-    // No `APPROVAL_CHAT_CONTEXT` in scope → background/cron turn. There is no
+    // No chat approval context → background/cron turn. There is no
     // surface for the Connect card, so the tool must fail closed (it returns
     // before touching the network).
     let t = ComposioConnectTool::new(fake_config_arc());
@@ -174,9 +174,19 @@ fn canonicalize_toolkit_slug_maps_known_aliases_and_passes_through() {
     assert_eq!(super::super::canonicalize_toolkit_slug("gmail"), "gmail");
 }
 
+/// The execution context the harness hands a tool dispatched inside a turn
+/// whose chat is `chat`.
+fn chat_tool_context(
+    chat: crate::security::approval::ApprovalChatContext,
+) -> tinyagents_harness::tool::ToolExecutionContext {
+    crate::agent::tinyagents::host::run_context::tool_context_with_approval(
+        crate::security::approval::ApprovalTurnContext::chat(chat),
+    )
+}
+
 #[tokio::test]
 async fn connect_tool_validates_before_gating_in_chat_context() {
-    use crate::security::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+    use crate::security::approval::ApprovalChatContext;
     // With a chat context the interactive guard passes; with no composio
     // credentials the client factory errors — so execute canonicalizes the
     // slug, reloads config, checks connected state, and returns a clean error
@@ -188,10 +198,11 @@ async fn connect_tool_validates_before_gating_in_chat_context() {
         client_id: "c-test".into(),
         request_id: None,
     };
-    let result = APPROVAL_CHAT_CONTEXT
-        .scope(
-            ctx,
-            tool.execute(serde_json::json!({ "toolkit": "google_drive" })),
+    let result = tool
+        .execute_with_context(
+            serde_json::json!({ "toolkit": "google_drive" }),
+            tinytools::ToolCallOptions::default(),
+            Some(&chat_tool_context(ctx)),
         )
         .await
         .unwrap();

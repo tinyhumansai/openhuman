@@ -59,3 +59,12 @@ async fn an_utterance_started_after_stop_never_polls_its_transcription() {
     tasks.join_next().await.unwrap().unwrap();
     assert!(!delivered.load(Ordering::SeqCst));
 }
+
+#[tokio::test]
+async fn voice_component_off_keeps_always_on_down_even_when_enabled() {
+    let mut config = crate::config::Config::default();
+    config.voice_server.always_on_enabled = true;
+    config.components.voice = false;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
+    assert!(!ENABLED.load(Ordering::SeqCst));
+}

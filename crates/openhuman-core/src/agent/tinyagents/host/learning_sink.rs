@@ -34,6 +34,8 @@ use crate::agent::hooks::{self, PostTurnHook, TurnContext};
 pub struct OpenHumanLearningSink {
     /// Hooks fired, in parallel, for every completed turn.
     hooks: Vec<Arc<dyn PostTurnHook>>,
+    /// The owning turn's dispatch context; unbound falls back to the task's.
+    dispatch: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
 }
 
 impl OpenHumanLearningSink {
@@ -44,7 +46,16 @@ impl OpenHumanLearningSink {
     /// hosts to pass `None` for the capability in that case, so absence stays
     /// distinguishable from a sink that ran and did nothing.
     pub fn new(hooks: Vec<Arc<dyn PostTurnHook>>) -> Self {
-        Self { hooks }
+        Self {
+            hooks,
+            dispatch: None,
+        }
+    }
+
+    /// Binds the owning turn's dispatch context.
+    pub fn with_dispatch(mut self, dispatch: crate::core::runtime::DispatchCtx) -> Self {
+        self.dispatch = dispatch.downgrade();
+        self
     }
 
     /// Appends one more hook.
@@ -112,7 +123,11 @@ impl LearningSink for OpenHumanLearningSink {
             self.hooks.len()
         );
 
-        hooks::fire_hooks(&self.hooks, Self::turn_context_from(summary));
+        hooks::fire_hooks(
+            &self.hooks,
+            &crate::core::runtime::DispatchCtx::from_weak(self.dispatch.as_ref()),
+            Self::turn_context_from(summary),
+        );
         Ok(())
     }
 }

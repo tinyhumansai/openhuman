@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::runtime::{spawn_scoped, ContextOverlay, DomainSet};
+use crate::core::runtime::{ContextOverlay, DispatchCtx, DomainSet};
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use crate::tools::toolpacks::ToolGroups;
 
@@ -68,7 +68,8 @@ fn derive_with_carries_policy_catalogue_and_approval_flag() {
         autonomy: AutonomyLevel::ReadOnly,
         ..SecurityPolicy::default()
     });
-    let definitions = Arc::new(crate::agent::harness::AgentDefinitionRegistry::default());
+    let definitions =
+        Arc::new(crate::agent::harness::host_definition::AgentDefinitionRegistry::default());
     let mut spec = overlay("/tmp/agent-scope-ws")
         .session_agent("alpha")
         .agent_policy(Arc::clone(&policy))
@@ -142,7 +143,7 @@ async fn scope_dir_and_agent_id_follow_the_ambient_context() {
 }
 
 #[tokio::test]
-async fn spawn_scoped_keeps_the_agent_context_and_tokio_spawn_does_not() {
+async fn a_context_spawn_keeps_the_agent_context_and_tokio_spawn_does_not() {
     let parent = root("/tmp/agent-scope-spawn");
     let policy = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,
@@ -155,14 +156,15 @@ async fn spawn_scoped_keeps_the_agent_context_and_tokio_spawn_does_not() {
     );
 
     let (scoped, bare) = CoreContext::scope(alpha, async {
-        let scoped = spawn_scoped(async {
-            (
-                current_agent_id(),
-                CoreContext::current_agent_policy().map(|p| p.autonomy),
-            )
-        })
-        .await
-        .unwrap();
+        let scoped = DispatchCtx::ambient()
+            .spawn(async {
+                (
+                    current_agent_id(),
+                    DispatchCtx::ambient().agent_policy().map(|p| p.autonomy),
+                )
+            })
+            .await
+            .unwrap();
         let bare = tokio::spawn(async { CoreContext::scoped().is_some() })
             .await
             .unwrap();
@@ -176,9 +178,9 @@ async fn spawn_scoped_keeps_the_agent_context_and_tokio_spawn_does_not() {
 }
 
 #[test]
-fn current_slot_without_a_context_uses_the_unscoped_state() {
-    let first = current_slot::<Counter>();
-    let second = current_slot::<Counter>();
+fn slot_without_a_context_uses_the_unscoped_state() {
+    let first = slot_for::<Counter>(&crate::core::runtime::DispatchCtx::ambient());
+    let second = slot_for::<Counter>(&crate::core::runtime::DispatchCtx::ambient());
     assert!(Arc::ptr_eq(&first, &second));
 }
 
@@ -199,4 +201,54 @@ fn an_unscoped_saas_task_never_meets_shared_slots() {
         &slot_in::<Counter>(true, Some(&ctx)),
         &ctx.agent_state().slot::<Counter>()
     ));
+}
+
+#[tokio::test]
+async fn an_explicit_dispatch_context_wins_over_the_ambient_one() {
+    let parent = root("/tmp/agent-scope-explicit");
+    let alpha = agent(&parent, "alpha");
+    let beta = agent(&parent, "beta");
+
+    // The ambient scope is beta's; the explicit context is alpha's, and the
+    // slot must come from alpha's.
+    let (explicit, ambient) = CoreContext::scope(Arc::clone(&beta), async {
+        (
+            slot_for::<Counter>(&DispatchCtx::new(Arc::clone(&alpha))),
+            slot_for::<Counter>(&DispatchCtx::ambient()),
+        )
+    })
+    .await;
+
+    assert!(Arc::ptr_eq(
+        &explicit,
+        &alpha.agent_state().slot::<Counter>()
+    ));
+    assert!(Arc::ptr_eq(&ambient, &beta.agent_state().slot::<Counter>()));
+    assert!(!Arc::ptr_eq(&explicit, &ambient));
+}
+
+#[tokio::test]
+async fn explicit_contexts_keep_their_slots_across_awaits_and_spawned_tasks() {
+    let parent = root("/tmp/agent-scope-concurrent");
+    let alpha = DispatchCtx::new(agent(&parent, "alpha"));
+    let beta = DispatchCtx::new(agent(&parent, "beta"));
+
+    let work = |ctx: DispatchCtx, times: u32| async move {
+        for _ in 0..times {
+            tokio::task::yield_now().await;
+            *slot_for::<Counter>(&ctx).0.lock().unwrap() += 1;
+        }
+        // A spawned task with no ambient scope still reaches the same slot
+        // because the context travels as an argument.
+        tokio::spawn(async move { *slot_for::<Counter>(&ctx).0.lock().unwrap() })
+            .await
+            .unwrap()
+    };
+    let (a, b) = tokio::join!(
+        tokio::spawn(work(alpha.clone(), 3)),
+        tokio::spawn(work(beta.clone(), 5))
+    );
+
+    assert_eq!(a.unwrap(), 3, "alpha counts only its own work");
+    assert_eq!(b.unwrap(), 5, "beta counts only its own work");
 }

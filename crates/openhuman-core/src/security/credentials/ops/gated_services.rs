@@ -43,7 +43,10 @@ pub(super) fn spawn_integrations_cache_warm(config: &Config) {
 /// Start all login-gated background services (local AI and voice). Called both
 /// from the initial boot path (when an existing
 /// session is detected) and from `set_credential()` when a credential is installed.
-pub async fn start_credential_gated_services(config: &Config) {
+pub async fn start_credential_gated_services(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) {
     // These login-gated services are mutually independent — the ONLY ordering
     // constraint is voice-server → standalone-dictation-listener (they contend
     // for the single rdev global listener on macOS). Previously each was
@@ -127,13 +130,14 @@ pub async fn start_credential_gated_services(config: &Config) {
     //      with everything else).
     {
         let config = config.clone();
+        let ctx = ctx.clone();
         tasks.push((
             "voice_hotkey",
             tokio::spawn(async move {
                 let step = std::time::Instant::now();
-                crate::voice::server::start_if_enabled(&config).await;
-                if !config.voice_server.auto_start {
-                    crate::voice::dictation_listener::start_if_enabled(&config).await;
+                crate::voice::server::start_if_enabled(&ctx, &config).await;
+                if !config.voice_server.auto_start && config.components.voice {
+                    crate::voice::dictation_listener::start_if_enabled(&ctx, &config).await;
                 }
                 log::debug!(
                     "[services] voice hotkey services registered ({} ms)",
@@ -151,11 +155,12 @@ pub async fn start_credential_gated_services(config: &Config) {
     //     command registration above.
     {
         let config = config.clone();
+        let ctx = ctx.clone();
         tasks.push((
             "always_on",
             tokio::spawn(async move {
                 let step = std::time::Instant::now();
-                crate::voice::always_on::start_if_enabled(&config).await;
+                crate::voice::always_on::start_if_enabled(&ctx, &config).await;
                 log::debug!(
                     "[services] always-on listening started ({} ms)",
                     step.elapsed().as_millis()
@@ -186,7 +191,10 @@ pub async fn start_credential_gated_services(config: &Config) {
 
 /// Stop all login-gated background services.  Called from `clear_credential()`
 /// on logout so orphan processes don't consume resources.
-pub async fn stop_credential_gated_services(config: &Config) {
+pub async fn stop_credential_gated_services(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) {
     // 2. Voice server
     if let Some(server) = crate::voice::server::try_global_server() {
         server.stop().await;
@@ -215,7 +223,7 @@ pub async fn stop_credential_gated_services(config: &Config) {
         log::warn!("[services] voice capture cleanup pending: {error}");
     }
 
-    if let Err(error) = crate::integrations::composio::trigger_history::close_global().await {
+    if let Err(error) = crate::integrations::composio::trigger_history::close_global(ctx).await {
         log::warn!("[composio][history] archive release failed on sign-out: {error}");
     }
 

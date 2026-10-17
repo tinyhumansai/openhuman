@@ -37,6 +37,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CI: "true"
     steps:
+      # The TinyFlows fixture tree contains paths beyond MAX_PATH. Configure
+      # Git before checkout so recursive submodule checkout can create them.
+      - name: Enable long Git paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: actions/checkout@v7
         with:
           persist-credentials: false

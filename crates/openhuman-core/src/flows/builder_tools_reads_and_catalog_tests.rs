@@ -6,7 +6,7 @@ use crate::flows::builder_tools::catalog_search::search_catalog;
 #[tokio::test]
 async fn revise_workflow_validates_and_returns_revision_proposal() {
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
 
     let result = tool
         .execute(json!({
@@ -29,7 +29,7 @@ async fn revise_workflow_validates_and_returns_revision_proposal() {
 #[tokio::test]
 async fn revise_workflow_omitted_require_approval_defaults_true() {
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
 
     let result = tool
         .execute(json!({ "name": "Revised flow", "graph": valid_graph() }))
@@ -44,7 +44,7 @@ async fn revise_workflow_omitted_require_approval_defaults_true() {
 #[tokio::test]
 async fn revise_workflow_explicit_require_approval_true_is_respected() {
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
 
     let result = tool
         .execute(json!({
@@ -63,7 +63,7 @@ async fn revise_workflow_explicit_require_approval_true_is_respected() {
 #[tokio::test]
 async fn revise_workflow_rejects_invalid_graph() {
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
 
     let result = tool
         .execute(json!({
@@ -82,7 +82,7 @@ fn revise_workflow_never_persists() {
     // The revise tool shares propose_workflow's human-in-the-loop invariant:
     // no side effect, no permission gate — it only validates and returns.
     let tmp = TempDir::new().unwrap();
-    let tool = ReviseWorkflowTool::new(test_config(&tmp));
+    let tool = revise_workflow_tool(test_config(&tmp));
     assert_eq!(tool.name(), "revise_workflow");
     assert_eq!(tool.permission_level(), PermissionLevel::None);
     assert!(!tool.external_effect());
@@ -93,7 +93,7 @@ fn revise_workflow_never_persists() {
 #[tokio::test]
 async fn list_flows_is_read_only_and_lists() {
     let tmp = TempDir::new().unwrap();
-    let tool = ListFlowsTool::new(test_config(&tmp));
+    let tool = list_flows_tool(test_config(&tmp));
     assert_eq!(tool.permission_level(), PermissionLevel::None);
     assert!(!tool.external_effect());
 
@@ -107,7 +107,7 @@ async fn list_flows_is_read_only_and_lists() {
 #[tokio::test]
 async fn get_flow_missing_id_is_error() {
     let tmp = TempDir::new().unwrap();
-    let tool = GetFlowTool::new(test_config(&tmp));
+    let tool = get_flow_tool(test_config(&tmp));
     assert_eq!(tool.permission_level(), PermissionLevel::None);
 
     let result = tool.execute(json!({})).await.unwrap();
@@ -118,7 +118,7 @@ async fn get_flow_missing_id_is_error() {
 #[tokio::test]
 async fn get_flow_unknown_id_is_error() {
     let tmp = TempDir::new().unwrap();
-    let tool = GetFlowTool::new(test_config(&tmp));
+    let tool = get_flow_tool(test_config(&tmp));
 
     let result = tool.execute(json!({ "id": "nope" })).await.unwrap();
     assert!(result.is_error);
@@ -130,7 +130,7 @@ async fn get_flow_unknown_id_is_error() {
 #[tokio::test]
 async fn get_flow_run_missing_id_is_error() {
     let tmp = TempDir::new().unwrap();
-    let tool = GetFlowRunTool::new(test_config(&tmp));
+    let tool = get_flow_run_tool(test_config(&tmp));
     assert_eq!(tool.permission_level(), PermissionLevel::None);
 
     let result = tool.execute(json!({})).await.unwrap();
@@ -458,6 +458,25 @@ async fn search_tool_catalog_flags_runtime_gated_uncurated_rows() {
     // Uncurated row of a curated toolkit: `runtime_gated: true`.
     let uncurated_row = results.iter().find(|r| r["featured"] == false).unwrap();
     assert_eq!(uncurated_row["runtime_gated"], true);
+}
+
+#[tokio::test]
+async fn search_catalog_does_not_show_a_toolkit_the_host_does_not_offer() {
+    seed_live_catalog_cache("offeredpolicytest", vec![twt_lookup(), twt_replies()]);
+    let mut config = Config::default();
+    let offered = search_catalog(&config, "tweet", Some("offeredpolicytest"), 40).await;
+    assert!(
+        !offered.results.is_empty(),
+        "control: the toolkit is searchable"
+    );
+
+    config.composio.offered_toolkits_deny = vec!["OfferedPolicyTest".into()];
+    let denied = search_catalog(&config, "tweet", Some("offeredpolicytest"), 40).await;
+    assert!(
+        denied.results.is_empty(),
+        "a denied toolkit must not be searchable by name: {:?}",
+        denied.results
+    );
 }
 
 #[tokio::test]

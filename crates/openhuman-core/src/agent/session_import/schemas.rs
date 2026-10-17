@@ -1,26 +1,18 @@
-//! Controller schema + handler for `openhuman.session_import_run`.
+//! Controller schema + handler for `openhuman.session_import_run`: a manual
+//! retry of the boot-time import of legacy session files into the backend.
 
+use crate::core::runtime::DispatchCtx;
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::projector::journal_message_from_transcript;
-use tinyagents_session::transcript::import::ops::run_import;
-use tinyagents_session::transcript::import::types::ImportOptions;
-
 #[derive(Debug, Deserialize, Default)]
 struct SessionImportRunParams {
     #[serde(default)]
     dry_run: bool,
-    #[serde(default)]
-    only: Option<String>,
-    #[serde(default)]
-    force: bool,
-    #[serde(default)]
-    verbose: bool,
     /// Workspace override for tooling; defaults to the configured workspace.
     #[serde(default)]
     workspace: Option<String>,
@@ -43,21 +35,13 @@ pub fn session_import_schemas(function: &str) -> ControllerSchema {
             namespace: "session_import",
             function: "run",
             description:
-                "One-time import of legacy session transcripts (session_raw JSONL, legacy \
-                 Markdown) into TinyAgents store/journal records under \
-                 {workspace}/tinyagents_store. Sources are never modified; re-runs are \
-                 idempotent.",
+                "Import the workspace's legacy session files (session_db/sessions.db, \
+                 session_raw transcripts, turn-state JSON) into the storage backend. Runs \
+                 once per workspace (the boot-time import already did, so this is for \
+                 retrying a failed one); sources are never modified and records already in \
+                 the backend are never overwritten.",
             inputs: vec![
-                optional_bool("dry_run", "Plan and report only; write nothing."),
-                FieldSchema {
-                    name: "only",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment:
-                        "Glob over session stems to import a subset (skips the global marker).",
-                    required: false,
-                },
-                optional_bool("force", "Re-import even when markers say the work is done."),
-                optional_bool("verbose", "Per-item info logging."),
+                optional_bool("dry_run", "Report which legacy sources exist and write nothing."),
                 FieldSchema {
                     name: "workspace",
                     ty: TypeSchema::Option(Box::new(TypeSchema::String)),
@@ -68,7 +52,7 @@ pub fn session_import_schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "summary",
                 ty: TypeSchema::Json,
-                comment: "Import summary: counters, per-item reports, warnings.",
+                comment: "Import summary: whether it was a dry run, the legacy sources found, and per-store results.",
                 required: true,
             }],
         },
@@ -87,11 +71,12 @@ pub fn session_import_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_session_import_run(params: Map<String, Value>) -> ControllerFuture {
+fn handle_session_import_run(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: SessionImportRunParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
 
+        let overridden = payload.workspace.is_some();
         let workspace = match payload.workspace {
             Some(dir) => std::path::PathBuf::from(dir),
             None => {
@@ -101,23 +86,74 @@ fn handle_session_import_run(params: Map<String, Value>) -> ControllerFuture {
                 config.workspace_dir
             }
         };
-        let opts = ImportOptions {
-            dry_run: payload.dry_run,
-            only: payload.only,
-            force: payload.force,
-            verbose: payload.verbose,
-        };
 
         tracing::info!(
             workspace = %workspace.display(),
-            dry_run = opts.dry_run,
+            dry_run = payload.dry_run,
             "[session-import] rpc run"
         );
-        let summary = run_import(&workspace, &opts, journal_message_from_transcript)
+        let sources = legacy_sources(&workspace);
+        if payload.dry_run {
+            return Outcome::new(
+                json!({ "dry_run": true, "workspace": workspace, "sources": sources, "imports": [] }),
+                Vec::new(),
+            )
+            .into_cli_compatible_json();
+        }
+        let configured = crate::config::Config::load_or_init()
             .await
-            .map_err(|e| format!("session import failed: {e:#}"))?;
-        let logs = summary.warnings.clone();
-        Outcome::new(summary, logs).into_cli_compatible_json()
+            .map_err(|e| format!("failed to load config: {e}"))?;
+        let configured_workspace = configured.workspace_dir.clone();
+        let config = crate::config::Config {
+            workspace_dir: workspace.clone(),
+            ..configured
+        };
+        // A workspace override that differs from the configured one must not
+        // write into the installed backend (bound to the configured workspace).
+        let backend = if !overridden || workspace == configured_workspace {
+            match crate::storage::installed() {
+                Some(backend) => backend,
+                None => crate::storage::local::backend_for(&workspace)
+                    .map_err(|e| format!("open the storage backend: {e:#}"))?,
+            }
+        } else {
+            crate::storage::open(&crate::storage::config::default_url(&workspace))
+                .await
+                .map_err(|e| format!("open the storage backend: {e:#}"))?
+        };
+        let reports = tokio::task::spawn_blocking(move || {
+            crate::storage::import::sessions::run_with(&backend, &config)
+        })
+        .await
+        .map_err(|e| format!("session import task failed: {e}"))?;
+        let imports: Vec<Value> = reports
+            .iter()
+            .map(|report| match &report.outcome {
+                Ok(outcome) => {
+                    json!({ "domain": report.domain, "outcome": format!("{outcome:?}") })
+                }
+                Err(error) => json!({ "domain": report.domain, "error": format!("{error:#}") }),
+            })
+            .collect();
+        let logs = reports
+            .iter()
+            .filter_map(|report| report.outcome.as_ref().err())
+            .map(|error| format!("{error:#}"))
+            .collect();
+        Outcome::new(
+            json!({ "dry_run": false, "workspace": workspace, "sources": sources, "imports": imports }),
+            logs,
+        )
+        .into_cli_compatible_json()
+    })
+}
+
+/// Which legacy session sources `workspace` still holds.
+fn legacy_sources(workspace: &std::path::Path) -> Value {
+    json!({
+        "sessions_db": workspace.join("session_db").join("sessions.db").is_file(),
+        "session_raw": workspace.join("session_raw").is_dir(),
+        "turn_states": workspace.join("memory").join("conversations").join("turn_states").is_dir(),
     })
 }
 

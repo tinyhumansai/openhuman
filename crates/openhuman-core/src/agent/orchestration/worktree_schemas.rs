@@ -15,11 +15,11 @@
 //!
 //! [`Config`]: crate::config::schema::types::Config
 
+use crate::core::runtime::DispatchCtx;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -113,12 +113,10 @@ fn schema_for(function: &str) -> ControllerSchema {
 
 /// Resolve the project repo root every worktree op anchors on — the agent's
 /// `action_dir` from the loaded config.
-async fn repo_root(cid: &str) -> Result<PathBuf, String> {
-    let config = config_rpc::load_config_with_timeout()
-        .await
-        .inspect_err(|err| {
-            log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] config_failed err={err}");
-        })?;
+async fn repo_root(ctx: &DispatchCtx, cid: &str) -> Result<PathBuf, String> {
+    let config = ctx.load_config().await.inspect_err(|err| {
+        log::warn!(target: "worktree_rpc", "[worktree_rpc][{cid}] config_failed err={err}");
+    })?;
     Ok(config.action_dir.clone())
 }
 
@@ -144,40 +142,40 @@ fn require_managed_worktree_path(params: &Map<String, Value>) -> Result<PathBuf,
     Ok(path)
 }
 
-fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_list(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] list.entry");
-        let root = repo_root(&cid).await?;
+        let root = repo_root(&ctx, &cid).await?;
         list_view(&root, &cid)
     })
 }
 
-fn handle_status(params: Map<String, Value>) -> ControllerFuture {
+fn handle_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] status.entry");
-        let root = repo_root(&cid).await?;
+        let root = repo_root(&ctx, &cid).await?;
         let path = require_managed_worktree_path(&params)?;
         status_view(&root, &path, &cid)
     })
 }
 
-fn handle_diff(params: Map<String, Value>) -> ControllerFuture {
+fn handle_diff(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] diff.entry");
-        let root = repo_root(&cid).await?;
+        let root = repo_root(&ctx, &cid).await?;
         let path = require_managed_worktree_path(&params)?;
         diff_view(&root, &path, &cid)
     })
 }
 
-fn handle_remove(params: Map<String, Value>) -> ControllerFuture {
+fn handle_remove(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "worktree_rpc", "[worktree_rpc][{cid}] remove.entry");
-        let root = repo_root(&cid).await?;
+        let root = repo_root(&ctx, &cid).await?;
         let path = require_managed_worktree_path(&params)?;
         let force = params
             .get("force")

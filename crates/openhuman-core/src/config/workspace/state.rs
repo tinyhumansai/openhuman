@@ -23,6 +23,7 @@
 //! );
 //! ```
 
+use crate::storage::rusqlite;
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use std::path::{Path, PathBuf};
 

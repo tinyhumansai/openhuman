@@ -9,7 +9,8 @@
 use chrono::Utc;
 use tinymemory_api::{
     EraseRequest, FetchRequest, ForgetTarget, ItemId, LearningKind, ListRequest, MemoryMeta,
-    MetaFilter, RecallRequest, StoreItem, StoreReceipt, TimeHint, WriteOptions,
+    MetaFilter, RecallMode, RecallRequest, StoreItem, StoreReceipt, ThreadWindow, TimeHint,
+    WriteOptions,
 };
 
 use crate::config::Config;
@@ -170,6 +171,19 @@ fn time_hint(config: &Config, refers_to: Option<RefersTo>) -> MemoryResult<Optio
 
 /// `memory_recall`.
 pub async fn recall(config: &Config, params: RecallParams) -> MemoryResult<RecallView> {
+    recall_with(config, params, RecallMode::Answer, None).await
+}
+
+/// [`recall`] in `mode`, leaving `exclude_thread`'s turns out. The agent's
+/// memory tool asks for [`RecallMode::Evidence`] (its own model answers) and
+/// excludes the thread it runs in, whose user turn is logged before the tool
+/// reads and would otherwise come back as a memory.
+pub async fn recall_with(
+    config: &Config,
+    params: RecallParams,
+    mode: RecallMode,
+    exclude_thread: Option<ThreadWindow>,
+) -> MemoryResult<RecallView> {
     let bound = bound(config)?;
     let request = RecallRequest {
         question: params.question,
@@ -177,12 +191,15 @@ pub async fn recall(config: &Config, params: RecallParams) -> MemoryResult<Recal
         limit: clamp_limit(params.limit),
         instructions: None,
         refers_to: time_hint(config, params.refers_to)?,
+        exclude_thread,
+        mode,
     };
     request.validate()?;
     let answer = bound.engine.recall(request).await?;
     tracing::debug!(
         engine = %bound.id,
         citations = answer.citations.len(),
+        ?mode,
         "[memory:ops] recall answered"
     );
     Ok(RecallView {
@@ -195,6 +212,15 @@ pub async fn recall(config: &Config, params: RecallParams) -> MemoryResult<Recal
 /// `memory_fetch`. An unset mode uses the engine's first declared mode; a
 /// mode the engine does not declare is `UNSUPPORTED`.
 pub async fn fetch(config: &Config, params: FetchParams) -> MemoryResult<FetchView> {
+    fetch_with(config, params, None).await
+}
+
+/// [`fetch`] leaving `exclude_thread`'s turns out (see [`recall_with`]).
+pub async fn fetch_with(
+    config: &Config,
+    params: FetchParams,
+    exclude_thread: Option<ThreadWindow>,
+) -> MemoryResult<FetchView> {
     let bound = bound(config)?;
     let descriptor = bound.engine.descriptor();
     let mode = match params.mode {
@@ -216,6 +242,7 @@ pub async fn fetch(config: &Config, params: FetchParams) -> MemoryResult<FetchVi
         beliefs: 0,
         max_scopes: None,
         refers_to: time_hint(config, params.refers_to)?,
+        exclude_thread,
     };
     request.validate()?;
     let page = bound.engine.fetch(request).await?;
@@ -319,12 +346,23 @@ pub async fn learn_with(
 }
 
 /// Scrubs `item` and stores it on the bound engine.
-pub async fn store_item(config: &Config, mut item: StoreItem) -> MemoryResult<StoreReceipt> {
+pub async fn store_item(config: &Config, item: StoreItem) -> MemoryResult<StoreReceipt> {
+    store_item_with(config, item, WriteOptions::visible()).await
+}
+
+/// [`store_item`], returning as soon as `options` allows: a host capturing
+/// as it goes passes [`WriteOptions::accepted`] so it never waits on the
+/// engine indexing the item.
+pub async fn store_item_with(
+    config: &Config,
+    mut item: StoreItem,
+    options: WriteOptions,
+) -> MemoryResult<StoreReceipt> {
     if let Some(root) = super::user_scope::confinement(config)? {
         super::user_scope::clamp_item(&mut item, &root);
     }
     let bound = bound(config)?;
-    store_on(&bound, item).await
+    store_on_with(&bound, item, options).await
 }
 
 /// Stores `item` on `bound`; the bound engine scrubs it ([`super::guard`]).
@@ -350,18 +388,24 @@ pub async fn store_on_with(
     Ok(receipt)
 }
 
-/// Stores `items` on `bound` in one bulk call (`MemoryEngine::store_many`):
-/// each is listed on return, ranked recall may lag behind for all but the
-/// last. For imports and backfills.
-pub async fn store_many_on(
+/// Stores `items` on `bound` in one bulk call, returning as soon as
+/// `options` allows. With [`WriteOptions::visible`] each item is listed on
+/// return, and ranked recall may lag behind for all but the last. A backfill
+/// or an import that reads nothing back until it ends passes
+/// [`WriteOptions::accepted`]: an engine that supports it (CortexDB) returns
+/// once the items are durably accepted, before they are indexed, and any
+/// other stores them as with `visible`.
+pub async fn store_many_on_with(
     bound: &BoundEngine,
     items: Vec<StoreItem>,
+    options: WriteOptions,
 ) -> MemoryResult<Vec<StoreReceipt>> {
     let count = items.len();
-    let receipts = bound.engine.store_many(items).await?;
+    let receipts = bound.engine.store_many_with(items, options).await?;
     tracing::debug!(
         engine = %bound.id,
         count,
+        wait = ?options.wait,
         replayed = receipts.iter().filter(|r| r.replayed).count(),
         "[memory:ops] batch stored"
     );
@@ -417,7 +461,11 @@ pub async fn forget(config: &Config, params: ForgetParams) -> MemoryResult<Forge
 /// layout v3, and the retired `user:<id>` one while it is still read); a legacy tree is left alone, because on a self-hosted CortexDB
 /// other accounts may share it (see `layout_migration`). An engine that
 /// cannot erase answers `UNSUPPORTED`.
-pub async fn erase_all(config: &Config, params: EraseAllParams) -> MemoryResult<EraseAllView> {
+pub async fn erase_all(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    params: EraseAllParams,
+) -> MemoryResult<EraseAllView> {
     if !params.confirm {
         return Err(MemoryError::invalid(
             "erasing all memory needs confirm: true; nothing erased comes back",
@@ -426,7 +474,7 @@ pub async fn erase_all(config: &Config, params: EraseAllParams) -> MemoryResult<
     let bound = bound(config)?;
     // Earlier durable tool writes must finish or be discarded before the
     // remote wipe; hold the owner barrier until the erase has completed.
-    let _writes = super::tool_writes::fence_and_clear(config).await?;
+    let _writes = super::tool_writes::fence_and_clear(ctx, config).await?;
     super::lifecycle::prefetch::invalidate(config);
     let mut request = EraseRequest::new(tinymemory_api::Reach::subtree(
         tinymemory_api::Namespace::ROOT,

@@ -64,12 +64,12 @@ fn query(client_id: &str, token: Option<&str>) -> Query<EventsQuery> {
 
 #[tokio::test]
 async fn events_require_a_credential_and_reject_unknown_bind_tokens() {
-    let missing = events_handler(HeaderMap::new(), query("client", None)).await;
+    let missing = events_handler(HeaderMap::new(), None, query("client", None)).await;
     assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(missing.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("Missing credentials"));
 
-    let invalid = events_handler(HeaderMap::new(), query("client", Some("unknown"))).await;
+    let invalid = events_handler(HeaderMap::new(), None, query("client", Some("unknown"))).await;
     assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(invalid.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("unknown, expired"));
@@ -81,10 +81,10 @@ async fn events_bind_token_is_client_bound_and_single_use() {
         .expect("bind token")
         .token;
 
-    let wrong = events_handler(HeaderMap::new(), query("wrong", Some(&token))).await;
+    let wrong = events_handler(HeaderMap::new(), None, query("wrong", Some(&token))).await;
     assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
 
-    let accepted = events_handler(HeaderMap::new(), query("right", Some(&token))).await;
+    let accepted = events_handler(HeaderMap::new(), None, query("right", Some(&token))).await;
     assert_eq!(accepted.status(), StatusCode::OK);
     assert_eq!(
         accepted.headers()[header::CONTENT_TYPE],
@@ -92,7 +92,7 @@ async fn events_bind_token_is_client_bound_and_single_use() {
     );
     drop(accepted);
 
-    let replay = events_handler(HeaderMap::new(), query("right", Some(&token))).await;
+    let replay = events_handler(HeaderMap::new(), None, query("right", Some(&token))).await;
     assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -104,7 +104,8 @@ async fn events_stream_forwards_only_the_bound_client() {
     let token = crate::core_host::core::event_bind_tokens::issue("stream-client", None)
         .expect("bind token")
         .token;
-    let response = events_handler(HeaderMap::new(), query("stream-client", Some(&token))).await;
+    let response =
+        events_handler(HeaderMap::new(), None, query("stream-client", Some(&token))).await;
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
 
@@ -131,7 +132,7 @@ async fn events_stream_forwards_only_the_bound_client() {
 
 #[tokio::test]
 async fn domain_events_require_a_bearer() {
-    let response = domain_events_handler(HeaderMap::new()).await;
+    let response = domain_events_handler(HeaderMap::new(), None).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("Bearer token required"));
@@ -164,7 +165,7 @@ async fn domain_events_stream_config_then_published_events() {
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
-    let response = domain_events_handler(headers).await;
+    let response = domain_events_handler(headers, None).await;
     assert_eq!(response.status(), StatusCode::OK);
     let mut chunks = response.into_body().into_data_stream();
 

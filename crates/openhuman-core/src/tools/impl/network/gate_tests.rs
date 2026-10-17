@@ -14,7 +14,13 @@ fn policy(autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPol
 }
 
 fn http(security: Arc<SecurityPolicy>) -> HttpRequestTool {
-    super::super::host::http_request_tool(security, vec!["example.com".into()], 1_000_000, 30)
+    super::super::host::http_request_tool(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        security,
+        vec!["example.com".into()],
+        1_000_000,
+        30,
+    )
 }
 
 // --- the gate answers with the policy's own decisions -----------------------
@@ -120,6 +126,7 @@ async fn web_fetch_and_curl_are_blocked_under_local_only_privacy_mode() {
     let _mode = super::super::local_only_scope();
     let security = Arc::new(SecurityPolicy::default());
     let fetch = super::super::host::web_fetch_tool(
+        &crate::core::runtime::DispatchCtx::ambient(),
         security.clone(),
         vec!["example.com".into()],
         None,
@@ -196,6 +203,7 @@ fn readonly_http_request_is_not_external_effect_because_execute_blocks() {
 #[test]
 fn web_fetch_is_read_only_and_never_prompts() {
     let tool: WebFetchTool = super::super::host::web_fetch_tool(
+        &crate::core::runtime::DispatchCtx::ambient(),
         policy(AutonomyLevel::Supervised, 100),
         vec![],
         None,

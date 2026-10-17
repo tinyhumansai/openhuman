@@ -8,7 +8,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tinytools::WorkspaceDescriptor;
 
-use crate::agent::harness::definition::AgentTier;
+use tinyagents_definition::AgentTier;
 use tinyagents_session::transcript::TranscriptMessage;
 
 /// Per-spawn options that override or augment what the
@@ -203,21 +203,21 @@ pub struct SubagentUsage {
         default = "unknown_cost_source",
         skip_serializing_if = "is_unknown_cost_source"
     )]
-    pub cost_source: crate::agent::cost::CostSource,
+    pub cost_source: tinyagents_harness::cost::CostSource,
 }
 
-fn unknown_cost_source() -> crate::agent::cost::CostSource {
-    crate::agent::cost::CostSource::Unknown
+fn unknown_cost_source() -> tinyagents_harness::cost::CostSource {
+    tinyagents_harness::cost::CostSource::Unknown
 }
 
-fn is_unknown_cost_source(source: &crate::agent::cost::CostSource) -> bool {
-    *source == crate::agent::cost::CostSource::Unknown
+fn is_unknown_cost_source(source: &tinyagents_harness::cost::CostSource) -> bool {
+    *source == tinyagents_harness::cost::CostSource::Unknown
 }
 
 impl SubagentUsage {
     /// The run's cost as a tally, for folding into a parent's.
-    pub fn cost(&self) -> crate::agent::cost::CostTally {
-        crate::agent::cost::CostTally {
+    pub fn cost(&self) -> tinyagents_harness::cost::CostTally {
+        tinyagents_harness::cost::CostTally {
             known_usd: self.charged_amount_usd,
             source: self.cost_source,
         }

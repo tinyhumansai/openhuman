@@ -10,7 +10,6 @@
 pub mod state;
 mod sync;
 
-use chrono::{DateTime, Utc};
 use tinymemory_api::{ForgetTarget, MetaFilter};
 
 use crate::config::schema::{MemorySourceConfig, MemorySourceKind};
@@ -18,12 +17,12 @@ use crate::config::Config;
 
 use super::engine;
 use super::error::{MemoryError, MemoryResult};
-use super::types::{SourceStatus, SourceView, SourcesAddParams};
+use super::types::{SourceView, SourcesAddParams};
 
 pub use sync::{start_sync, sync_due, sync_one};
 
-/// Fewest minutes between scheduled syncs of one source.
-pub const MIN_SCHEDULE_MINS: u32 = 15;
+/// Fewest minutes between scheduled syncs of one source (the module's).
+pub use tinymemory_integrations::sources::sync::MIN_SCHEDULE_MINS;
 
 /// The view of `source` with its sync state.
 #[must_use]
@@ -140,7 +139,7 @@ pub fn apply_add(
         schedule_mins: params.schedule_mins,
         namespace,
     };
-    sync::reader_entry(&source)?;
+    sync::validate(&source)?;
     config.memory.sources.push(source.clone());
     tracing::info!(id = %source.id, kind = kind.as_str(), "[memory:sources] source added");
     Ok(source)
@@ -184,26 +183,6 @@ pub async fn forget_items(config: &Config, id: &str) -> MemoryResult<usize> {
     };
     tracing::debug!(id = %id, forgotten = report.forgotten, "[memory:sources] items forgotten");
     Ok(report.forgotten)
-}
-
-/// Whether `source` is due for a scheduled sync at `now`.
-#[must_use]
-pub fn is_due(
-    source: &MemorySourceConfig,
-    last: Option<&state::SourceState>,
-    now: DateTime<Utc>,
-) -> bool {
-    let Some(mins) = source.schedule_mins else {
-        return false;
-    };
-    match last {
-        Some(state) if state.status == SourceStatus::Syncing => false,
-        Some(state) => state.last_sync_at.is_none_or(|at| {
-            now.signed_duration_since(at)
-                >= chrono::Duration::minutes(i64::from(mins.max(MIN_SCHEDULE_MINS)))
-        }),
-        None => true,
-    }
 }
 
 /// The layout source `source` files into: its own `namespace` (a layout

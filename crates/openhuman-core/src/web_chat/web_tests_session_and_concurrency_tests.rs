@@ -211,6 +211,7 @@ async fn start_chat_runs_distinct_threads_concurrently() {
     let thread_b = "concurrent-thread-b";
 
     start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "client-a",
         thread_a,
         "hello a",
@@ -223,6 +224,7 @@ async fn start_chat_runs_distinct_threads_concurrently() {
     .await
     .expect("thread A should start");
     start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "client-b",
         thread_b,
         "hello b",
@@ -247,8 +249,20 @@ async fn start_chat_runs_distinct_threads_concurrently() {
     );
 
     // Cleanup: cancel both and clear the test hook.
-    let _ = cancel_chat_scoped("client-a", thread_a, None).await;
-    let _ = cancel_chat_scoped("client-b", thread_b, None).await;
+    let _ = cancel_chat_scoped(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "client-a",
+        thread_a,
+        None,
+    )
+    .await;
+    let _ = cancel_chat_scoped(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "client-b",
+        thread_b,
+        None,
+    )
+    .await;
     set_test_run_chat_task_block(None).await;
 }
 
@@ -263,6 +277,7 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
 
     let thread_id = "cancel-coop-thread";
     let request_id = start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "cancel-client",
         thread_id,
         "park me",
@@ -283,9 +298,14 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
         "turn should still be parked, not yet dropped"
     );
 
-    let cancelled = cancel_chat_scoped("cancel-client", thread_id, None)
-        .await
-        .expect("cancel_chat should succeed");
+    let cancelled = cancel_chat_scoped(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "cancel-client",
+        thread_id,
+        None,
+    )
+    .await
+    .expect("cancel_chat should succeed");
     assert_eq!(
         cancelled.as_deref(),
         Some(request_id.as_str()),
@@ -303,11 +323,12 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
 /// Issue #4746: a turn that never produces a terminal event on its own — a
 /// wedged main agent stuck mid tool-call, or a delegated sub-agent that never
 /// returns (modeled here by the parked test block) — must still end in a
-/// terminal `chat_error`, never an empty reply / an endless `inference_heartbeat`
+/// terminal event, never an empty reply / an endless `inference_heartbeat`
 /// stream until the socket dies. The web turn driver's wall-clock backstop fires
-/// and emits a graceful, retryable `turn_timeout` chat_error, and tears the
-/// wedged future down cooperatively (its `Drop` guard flips well before the 30s
-/// test sleep would elapse).
+/// and tears the wedged future down cooperatively (its `Drop` guard flips well
+/// before the 30s test sleep would elapse). The block parks before the turn
+/// resolves its config, so there is no workspace to write a closing reply to:
+/// the turn ends in the graceful, retryable `turn_timeout` chat_error.
 #[tokio::test]
 async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error() {
     let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
@@ -324,6 +345,7 @@ async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error(
 
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "backstop-client",
         "backstop-thread",
         "park me until the wall-clock backstop fires",
@@ -336,32 +358,13 @@ async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error(
     .await
     .expect("turn should start");
 
-    let recv = timeout(Duration::from_secs(20), async move {
-        loop {
-            let event = rx.recv().await.expect("event stream should stay open");
-            if event.event == "chat_error" && event.request_id == request_id {
-                return event;
-            }
-        }
-    })
+    let recv = timeout(
+        Duration::from_secs(20),
+        terminal_event(&mut rx, &request_id),
+    )
     .await
-    .expect("a wedged turn must still emit a terminal chat_error (issue #4746)");
-
-    assert_eq!(
-        recv.error_type.as_deref(),
-        Some("turn_timeout"),
-        "the backstop must surface a graceful turn_timeout, not a generic error"
-    );
-    assert_eq!(
-        recv.error_retryable,
-        Some(true),
-        "a turn_timeout is safe to retry in the same thread"
-    );
-    let message = recv.message.unwrap_or_default();
-    assert!(
-        !message.contains("openhuman_turn_wall_clock_timeout"),
-        "internal marker must not leak into user copy: {message}"
-    );
+    .expect("a wedged turn must still emit a terminal event (issue #4746)");
+    assert_turn_timeout(&recv);
 
     // The wedged future is torn down cooperatively when the backstop drops it
     // (the Drop guard flips), not left sleeping to its 30s test wall.
@@ -369,6 +372,46 @@ async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error(
 
     set_test_run_chat_task_block(None).await;
     // `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` is cleared by `_env_guard`'s Drop.
+}
+
+/// The idle guard ends a turn that emits no progress with nothing in flight,
+/// well inside the wall-clock ceiling. The parked test block emits nothing and
+/// parks before the turn resolves its config, like a turn wedged in session
+/// checkout, so the turn ends in the graceful `turn_timeout` chat_error.
+#[tokio::test]
+async fn silent_turn_hits_idle_guard_and_emits_turn_timeout_chat_error() {
+    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+    let _env_guard =
+        crate::config::test_env::EnvVarGuard::locked_set_async("OPENHUMAN_WEB_TURN_IDLE_SECS", "1")
+            .await;
+    let block = make_block();
+    set_test_run_chat_task_block(Some(block.clone())).await;
+
+    let mut rx = subscribe_web_channel_events();
+    let request_id = start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "idle-client",
+        "idle-thread",
+        "park me until the idle guard fires",
+        None,
+        None,
+        None,
+        None,
+        ChatRequestMetadata::default(),
+    )
+    .await
+    .expect("turn should start");
+
+    let recv = timeout(
+        Duration::from_secs(20),
+        terminal_event(&mut rx, &request_id),
+    )
+    .await
+    .expect("a silent turn must end in a terminal event");
+    assert_turn_timeout(&recv);
+    wait_for_flag(&block.dropped, "silent turn future dropped by idle guard").await;
+
+    set_test_run_chat_task_block(None).await;
 }
 
 /// A `parallel`-mode turn runs CONCURRENTLY with the primary turn on the SAME
@@ -383,6 +426,7 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
 
     // Primary turn (default interrupt mode) parks in IN_FLIGHT.
     start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "pp-client",
         thread_id,
         "primary",
@@ -399,6 +443,7 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
     // Parallel turn on the SAME thread must NOT interrupt the primary — it
     // lives in the parallel lane while the primary stays in-flight.
     start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "pp-client",
         thread_id,
         "branch",
@@ -414,7 +459,7 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
     wait_for_parallel(|e| e.iter().any(|(_, t)| t == thread_id)).await;
     // Primary is still in-flight — the parallel send did not interrupt it.
     assert!(
-        in_flight_entries_for_test()
+        in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient())
             .await
             .iter()
             .any(|(k, _)| k == thread_id),
@@ -422,9 +467,14 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
     );
 
     // A thread-level cancel tears down BOTH the primary and the parallel turn.
-    cancel_chat_scoped("pp-client", thread_id, None)
-        .await
-        .expect("cancel should succeed");
+    cancel_chat_scoped(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "pp-client",
+        thread_id,
+        None,
+    )
+    .await
+    .expect("cancel should succeed");
     wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
     wait_for_parallel(|e| !e.iter().any(|(_, t)| t == thread_id)).await;
 
@@ -570,6 +620,7 @@ async fn unscoped_cancel_stops_the_threads_detached_subagents() {
     let child = tokio::spawn(std::future::pending::<()>());
     let (_status_tx, status_rx) = running_subagents::status_channel();
     running_subagents::register(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "task-web-stop-1".into(),
         "researcher".into(),
         "session-web-stop".into(),
@@ -580,12 +631,18 @@ async fn unscoped_cancel_stops_the_threads_detached_subagents() {
         std::sync::Arc::new(tinyagents_harness::run_queue::RunQueue::new()),
         child.abort_handle(),
         status_rx,
-    );
+    )
+    .expect("fixture registration admitted");
 
     // A scoped cancel for some other request is not a Stop: the child lives.
-    let scoped = channel_web_cancel("stop-client", thread_id, Some("req-unrelated"))
-        .await
-        .expect("scoped cancel");
+    let scoped = channel_web_cancel(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "stop-client",
+        thread_id,
+        Some("req-unrelated"),
+    )
+    .await
+    .expect("scoped cancel");
     assert_eq!(scoped.value["cancelled"], serde_json::json!(false));
     assert_eq!(scoped.value["subagents_cancelled"], serde_json::json!(0));
     assert!(
@@ -594,9 +651,14 @@ async fn unscoped_cancel_stops_the_threads_detached_subagents() {
     );
 
     // The Stop button: no turn in flight, but the detached child is stopped.
-    let stop = channel_web_cancel("stop-client", thread_id, None)
-        .await
-        .expect("stop");
+    let stop = channel_web_cancel(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "stop-client",
+        thread_id,
+        None,
+    )
+    .await
+    .expect("stop");
     assert_eq!(stop.value["cancelled"], serde_json::json!(true));
     assert_eq!(stop.value["request_id"], serde_json::Value::Null);
     assert_eq!(stop.value["subagents_cancelled"], serde_json::json!(1));
@@ -604,4 +666,31 @@ async fn unscoped_cancel_stops_the_threads_detached_subagents() {
         .await
         .expect("aborted child finishes promptly");
     assert!(joined.expect_err("child aborted").is_cancelled());
+}
+
+/// The terminal event (`chat_done` or `chat_error`) for `request_id`.
+async fn terminal_event(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::web_chat::WebChannelEvent>,
+    request_id: &str,
+) -> crate::web_chat::WebChannelEvent {
+    loop {
+        let event = rx.recv().await.expect("event stream should stay open");
+        if event.request_id == request_id
+            && matches!(event.event.as_str(), "chat_done" | "chat_error")
+        {
+            return event;
+        }
+    }
+}
+
+/// A graceful, retryable `turn_timeout` whose user copy hides the marker.
+fn assert_turn_timeout(event: &crate::web_chat::WebChannelEvent) {
+    assert_eq!(event.event, "chat_error", "{event:?}");
+    assert_eq!(event.error_type.as_deref(), Some("turn_timeout"));
+    assert_eq!(event.error_retryable, Some(true));
+    let message = event.message.clone().unwrap_or_default();
+    assert!(
+        !message.contains("openhuman_turn_wall_clock_timeout"),
+        "internal marker must not leak into user copy: {message}"
+    );
 }

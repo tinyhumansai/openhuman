@@ -45,9 +45,9 @@ pub(super) fn utf8(
 /// never sign in again. Today's behaviour is kept instead: quarantine the
 /// bytes (`secrets.enc.corrupt.<ts>`, never deleted) and log loudly.
 ///
-/// Under the same cross-process lock writers take, the file is probed again
-/// first: a concurrent writer may already have replaced it, and quarantining
-/// that replacement would destroy good secrets.
+/// The driver's probe takes the cross-process lock used by writers. A
+/// fingerprint before that probe is compared again under OpenHuman's lock
+/// before quarantine, so a concurrent writer's replacement stays untouched.
 ///
 /// # Errors
 ///
@@ -58,7 +58,16 @@ pub(super) fn recover_corrupt_file(
     key: &[u8; 32],
     cause: &StorageError,
 ) -> Result<(), SecretStorageError> {
-    let _guard = file_store::lock_for_write(path)?;
+    recover_corrupt_file_after_probe(path, key, cause, || {})
+}
+
+fn recover_corrupt_file_after_probe(
+    path: &Path,
+    key: &[u8; 32],
+    cause: &StorageError,
+    after_probe: impl FnOnce(),
+) -> Result<(), SecretStorageError> {
+    let before_probe = file_store::fingerprint(path)?;
     let store = EncryptedFileSecrets::at_path(path, Zeroizing::new(*key));
     match crate::storage::block_on(async move { store.list("").await }) {
         Ok(_) => {
@@ -70,6 +79,16 @@ pub(super) fn recover_corrupt_file(
         // Anything else (a transient read or permission error) says nothing
         // about the file's contents: never move a possibly healthy file aside.
         Err(error) => return Err(backend_error(error)),
+    }
+    after_probe();
+
+    // The driver holds this same sidecar lock while probing. Acquire
+    // OpenHuman's guard only after its probe returns, then ensure a concurrent
+    // writer did not replace the corrupt bytes with a healthy store.
+    let _guard = file_store::lock_for_write(path)?;
+    if file_store::fingerprint(path)? != before_probe {
+        log::info!("[keyring:encrypted_file] secrets file changed after the failed probe; not quarantining");
+        return Ok(());
     }
     log::error!(
         "[keyring:encrypted_file] secrets file unreadable ({}): master key may have changed \

@@ -7,7 +7,7 @@ can have (calling an LLM, running an agent, making an HTTP request, running
 code, calling a tool, reading/writing state, resolving a sub-workflow,
 recalling/writing memory) is a trait the engine declares and this module
 implements. See
-[`gitbooks/developing/architecture/flows-on-tinyagents.md`](../../../../../gitbooks/developing/architecture/flows-on-tinyagents.md)
+[`docs/gitbooks/en/developing/architecture/flows-on-tinyagents.md`](../../../../../docs/gitbooks/en/developing/architecture/flows-on-tinyagents.md)
 for the engine's own model (trigger model, run state shape, the two-gate
 security model); this README covers only the host seam.
 
@@ -15,16 +15,17 @@ security model); this README covers only the host seam.
 
 - [`mod.rs`](./mod.rs): export-focused. Re-exports `caps::build_capabilities` and
   `caps::open_flow_checkpointer`, the two entry points `flows::ops*.rs`
-  calls to drive a run; re-exports `tinyflows_sqlite::checkpoint` as
-  `checkpoint_sqlite` under its historical path.
+  calls to drive a run. The checkpointer is `tinyflows_drivers::DriverCheckpointer`
+  on the flow catalog's storage; the `checkpoints.db` tinyflows used to write is
+  imported once.
 - `caps/`: every capability adapter except `memory`, plus construction,
   curation, preflight, and invocation logic. `build_capabilities` also fills
   `tasks` with the engine's own `TokioTaskRunner` and deliberately leaves
   `shell` and `approvals` as `None` (no host shell adapter yet; approvals
   reuse the engine's pause/`flows_resume` fallback).
   - `ops.rs`: `build_capabilities` (assembles the `Capabilities` bundle for
-    one run), `open_flow_checkpointer` (opens the durable SQLite checkpointer
-    at `<workspace_dir>/flows/checkpoints.db`), Composio curation/preflight
+    one run), `open_flow_checkpointer` (a `DriverCheckpointer` on the flow
+    catalog's storage), Composio curation/preflight
     (`is_curated_flow_tool`, `preflight_composio_args`), and the
     `OpenHumanTools` / `PreflightToolInvoker` tool-call adapters.
   - `agent.rs`: `OpenHumanAgentRunner` (`AgentRunner`): resolves an `agent`
@@ -45,8 +46,7 @@ security model); this README covers only the host seam.
     graph, output, or logs.
   - `code.rs`: `OpenHumanCode` (`CodeRunner`); runs JS/Python through
     `sandbox::execute_in_sandbox` under `CODE_RUN_TIMEOUT_SECS`.
-  - `StateStore` is `tinyflows_sqlite::flows::SqliteStateStore` (built in
-    `ops.rs`), namespaced per flow (`"flow:<id>"`) so saved flows never
+  - `StateStore` is `FlowState` (`state.rs`, `FlowStateDocuments`), namespaced per flow (`"flow:<id>"`) so saved flows never
     collide on a state key.
   - `resolver.rs`: `OpenHumanWorkflowResolver` (`WorkflowResolver`);
     resolves a `sub_workflow` node's id to a stored workflow.
@@ -81,7 +81,7 @@ security model); this README covers only the host seam.
 ## Security model
 
 The contract is spelled out in
-[flows-on-tinyagents.md § The security model: two gates](../../../../../gitbooks/developing/architecture/flows-on-tinyagents.md#the-security-model-two-gates);
+[flows-on-tinyagents.md § The security model: two gates](../../../../../docs/gitbooks/en/developing/architecture/flows-on-tinyagents.md#the-security-model-two-gates);
 this module holds the outer gate. `tier.rs` consults the user's autonomy
 tier for each acting node's `CommandClass` and forces an `ApprovalGate`
 round-trip on `Prompt`, even when the saved flow's own `require_approval` is
@@ -111,5 +111,5 @@ above.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Workflows](../../../../../gitbooks/features/workflows.md)
+- [Workflows](../../../../../docs/gitbooks/en/features/workflows.md)
 - [tinyflows](../../../../../vendor/tinyflows/README.md)

@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::debug::prompt_size::{PromptSizeReport, SectionSize, ToolSize};
 use crate::agent::debug::DumpPromptOptions;
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 
 /// Default agent whose prompt is measured when the caller names none — the
@@ -136,10 +137,17 @@ fn history_tokens(context_tokens: usize, fixed_prompt_tokens: usize) -> usize {
     context_tokens.saturating_sub(fixed_prompt_tokens)
 }
 
-async fn history_section(thread_id: &str, fixed_prompt_tokens: usize) -> Option<ContextSection> {
-    let outcome = crate::threads::ops::token_usage(crate::threads::ops::ThreadTokenUsageRequest {
-        thread_id: thread_id.to_string(),
-    })
+async fn history_section(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    fixed_prompt_tokens: usize,
+) -> Option<ContextSection> {
+    let outcome = crate::threads::ops::token_usage(
+        ctx,
+        crate::threads::ops::ThreadTokenUsageRequest {
+            thread_id: thread_id.to_string(),
+        },
+    )
     .await
     .ok()?;
     let usage = outcome.value.data?;
@@ -179,9 +187,10 @@ fn tools_section(tools: &[ToolSize]) -> ContextSection {
 /// prompt sections, one rolled-up `tools` section, and (when `thread_id` is
 /// given) a `history` section.
 pub async fn context_breakdown(
+    ctx: &DispatchCtx,
     params: ContextBreakdownParams,
 ) -> Result<Outcome<ContextBreakdownResponse>, String> {
-    let config = crate::config::rpc::load_config_with_timeout().await?;
+    let config = ctx.load_config().await?;
     let agent_id = params
         .agent_id
         .as_deref()
@@ -203,7 +212,7 @@ pub async fn context_breakdown(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if let Some(history) = history_section(thread_id, fixed_prompt_tokens).await {
+        if let Some(history) = history_section(ctx, thread_id, fixed_prompt_tokens).await {
             sections.push(history);
         }
     }

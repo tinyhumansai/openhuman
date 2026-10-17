@@ -4,10 +4,10 @@
 //! management (install, start, stop, etc.) and provides the mapping between
 //! RPC methods and their underlying implementation handlers.
 
+use crate::core::runtime::DispatchCtx;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -174,17 +174,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_install(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_install(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::service_install(&config).await?)
     })
 }
 
 /// Service controller for `service.start`.
-fn handle_start(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_start(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::service_start(&config).await?)
     })
 }
@@ -202,7 +202,7 @@ struct ServiceRestartParams {
 /// Unlike install/start/stop/status, the restart action targets the currently
 /// running core process itself, so it only needs restart metadata and not the
 /// persisted service config.
-fn handle_restart(params: Map<String, Value>) -> ControllerFuture {
+fn handle_restart(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: ServiceRestartParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
@@ -215,7 +215,7 @@ fn handle_restart(params: Map<String, Value>) -> ControllerFuture {
 /// Service controller for `service.shutdown`.
 ///
 /// Uses the same `{source, reason}` shape as `service.restart`.
-fn handle_shutdown(params: Map<String, Value>) -> ControllerFuture {
+fn handle_shutdown(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: ServiceRestartParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
@@ -226,25 +226,25 @@ fn handle_shutdown(params: Map<String, Value>) -> ControllerFuture {
 }
 
 /// Service controller for `service.stop`.
-fn handle_stop(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_stop(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::service_stop(&config).await?)
     })
 }
 
 /// Service controller for `service.status`.
-fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_status(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::service_status(&config).await?)
     })
 }
 
 /// Service controller for `service.uninstall`.
-fn handle_uninstall(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_uninstall(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::service_uninstall(&config).await?)
     })
 }
@@ -255,19 +255,19 @@ struct DaemonHostSetParams {
 }
 
 /// Service controller for `service.daemon_host_get`.
-fn handle_daemon_host_get(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_daemon_host_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::daemon_host_get(&config).await?)
     })
 }
 
 /// Service controller for `service.daemon_host_set`.
-fn handle_daemon_host_set(params: Map<String, Value>) -> ControllerFuture {
+fn handle_daemon_host_set(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: DaemonHostSetParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::service::rpc::daemon_host_set(&config, payload.show_tray).await?)
     })
 }

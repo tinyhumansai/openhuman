@@ -9,10 +9,13 @@ async fn thread_update_title_persists_new_title() {
     let thread_id = "t-title";
     create_thread_with_title(&workspace, thread_id, "Original title").await;
 
-    let outcome = thread_update_title(crate::threads::UpdateConversationThreadTitleRequest {
-        thread_id: thread_id.to_string(),
-        title: "  Invoice follow-up  ".to_string(),
-    })
+    let outcome = thread_update_title(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        crate::threads::UpdateConversationThreadTitleRequest {
+            thread_id: thread_id.to_string(),
+            title: "  Invoice follow-up  ".to_string(),
+        },
+    )
     .await
     .expect("thread_update_title");
 
@@ -30,10 +33,13 @@ async fn thread_update_title_returns_error_for_missing_thread() {
     let workspace = tempfile::tempdir().expect("workspace");
     let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
 
-    let err = thread_update_title(crate::threads::UpdateConversationThreadTitleRequest {
-        thread_id: "nonexistent-thread".to_string(),
-        title: "New title".to_string(),
-    })
+    let err = thread_update_title(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        crate::threads::UpdateConversationThreadTitleRequest {
+            thread_id: "nonexistent-thread".to_string(),
+            title: "New title".to_string(),
+        },
+    )
     .await
     .expect_err("missing thread must return an error");
 
@@ -62,13 +68,18 @@ async fn run_to_completion_runs_the_tail_after_the_caller_is_dropped() {
     let flag = Arc::clone(&tail_ran);
     let (release, parked) = tokio::sync::oneshot::channel::<()>();
 
-    let mut call = Box::pin(run_to_completion("test_destructive_op", async move {
-        // Stands in for the blocking store mutation still in progress.
-        let _ = parked.await;
-        // Stands in for the cleanup that must never be skipped.
-        flag.store(true, Ordering::SeqCst);
-        Ok::<(), String>(())
-    }));
+    let dispatch = crate::core::runtime::DispatchCtx::unbound();
+    let mut call = Box::pin(run_to_completion(
+        &dispatch,
+        "test_destructive_op",
+        async move {
+            // Stands in for the blocking store mutation still in progress.
+            let _ = parked.await;
+            // Stands in for the cleanup that must never be skipped.
+            flag.store(true, Ordering::SeqCst);
+            Ok::<(), String>(())
+        },
+    ));
 
     // Poll once so the inner task is spawned, then abandon the caller — exactly
     // what dropping the RPC future does.
@@ -94,4 +105,36 @@ async fn run_to_completion_runs_the_tail_after_the_caller_is_dropped() {
     })
     .await
     .expect("cleanup must still run after the caller's future was dropped");
+}
+
+/// The detached task runs under the context the caller handed over, not the
+/// one its own task happens to be scoped to, and two callers for different
+/// contexts do not see each other's.
+#[tokio::test]
+async fn run_to_completion_runs_under_the_explicit_context() {
+    use crate::core::runtime::context::CoreContext;
+    use crate::core::runtime::{DispatchCtx, DomainSet};
+    use std::sync::Arc;
+
+    let a = CoreContext::for_test(DomainSet::full(), Some(std::path::PathBuf::from("/tmp/a")));
+    let b = CoreContext::for_test(DomainSet::full(), Some(std::path::PathBuf::from("/tmp/b")));
+    let seen_by = |dispatch: DispatchCtx| async move {
+        run_to_completion(&dispatch, "test_context", async {
+            tokio::task::yield_now().await;
+            Ok::<_, String>(CoreContext::current())
+        })
+        .await
+        .expect("task joins")
+        .expect("the task has a context")
+    };
+    // `b` is the caller's own scope; `a` is handed over explicitly and wins.
+    let (seen_a, seen_b) = CoreContext::scope(Arc::clone(&b), async {
+        tokio::join!(
+            seen_by(DispatchCtx::new(Arc::clone(&a))),
+            seen_by(DispatchCtx::new(Arc::clone(&b)))
+        )
+    })
+    .await;
+    assert!(Arc::ptr_eq(&seen_a, &a));
+    assert!(Arc::ptr_eq(&seen_b, &b));
 }

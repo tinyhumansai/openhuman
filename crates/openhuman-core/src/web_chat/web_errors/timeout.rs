@@ -20,6 +20,18 @@ pub(crate) fn turn_timeout_error_message(secs: u64) -> String {
     )
 }
 
+/// Build the synthetic error string a web turn raises when its idle guard
+/// (`web_chat::turn_activity`) fires: no progress event, and no model or tool
+/// call in flight, for `secs`. Carries [`TURN_TIMEOUT_MARKER`], so it gets the
+/// same `turn_timeout` copy and the same Sentry treatment as the backstop.
+/// Nothing was in flight when it fired, by construction.
+pub(crate) fn turn_idle_error_message(secs: u64) -> String {
+    format!(
+        "{TURN_TIMEOUT_MARKER}: agent turn made no progress for {secs}s with no model or \
+         tool call in flight (it wedged outside a model or tool call)"
+    )
+}
+
 /// True when `err` is a turn wall-clock timeout — either the synthetic marker
 /// raised by the web turn driver's outer backstop ([`TURN_TIMEOUT_MARKER`]), or
 /// the tinyagents harness's own `TinyAgentsError::Timeout` (issue #4746). The

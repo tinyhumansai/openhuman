@@ -1,11 +1,14 @@
-//! Task-local plumbing that lets `SpawnSubagentTool` reach the parent
-//! agent's runtime context (provider, tools, model, …) without widening
-//! the [`tinytools::Tool`] trait.
+//! The parent agent's runtime snapshot that `spawn_subagent` and the other
+//! orchestration tools hand to the sub-agents they start (provider, tools,
+//! model, …) without widening the [`tinytools::Tool`] trait.
 //!
-//! [`PARENT_CONTEXT`] is set by the parent
-//! [`crate::agent::OpenHumanSessionHost`] around its `turn` so that any tool
-//! executing inside that turn (in particular `spawn_subagent`) can read
-//! the parent's provider, tool list, and model information.
+//! A [`ParentExecutionContext`] travels explicitly: the parent
+//! [`crate::agent::OpenHumanSessionHost`] attaches it to its turn's
+//! [`OpenHumanRunContext`](crate::agent::tinyagents::host::OpenHumanRunContext)
+//! (`parent`), tools read it from there, and controller-spawned background
+//! surfaces (the workflow engine, agent teams) build a root one with
+//! [`crate::agent::orchestration::parent_context::with_root_parent`] and pass it
+//! to the spawns they make. There is no ambient copy.
 //!
 //! Stashed in `Arc`s so cloning into a child costs a refcount bump
 //! rather than a full copy.
@@ -25,8 +28,8 @@ use tinytools::{Tool, ToolSpec};
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Snapshot of the parent agent's runtime, made available to any tool
-/// running inside [`crate::agent::OpenHumanSessionHost::turn`] via the
-/// [`PARENT_CONTEXT`] task-local.
+/// running inside [`crate::agent::OpenHumanSessionHost::turn`] through the
+/// turn's run context.
 ///
 /// All heavy fields are `Arc`-shared so cloning the context for sub-agents
 /// is essentially free.
@@ -121,7 +124,7 @@ pub struct ParentExecutionContext {
     /// this, sub-agents inherit a hardcoded PFormat default while the
     /// runtime uses native function-calling, and the model emits
     /// uncallable P-Format tool_call blocks.
-    pub tool_call_format: crate::agent::prompts::ToolCallFormat,
+    pub tool_call_format: tinytools_agent::dialect::ToolCallFormat,
 
     /// Parent's own session-transcript key, formatted as
     /// `"{unix_ts}_{agent_id}"`. Sub-agents chain this (plus any
@@ -152,6 +155,12 @@ pub struct ParentExecutionContext {
     /// boundary as web-channel queue messages.
     pub run_queue:
         Option<Arc<tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
+
+    /// The host environment of the turn that built this snapshot (shared model
+    /// budget, delegation depth, hooks, cancellation). Runs started from the
+    /// snapshot instead of a live harness carrier (the orchestration control
+    /// plane, triage escalation) apply it so host policy follows delegation.
+    pub host_env: crate::agent::turn_env::HostTurnEnv,
 }
 
 /// A context-preparation source that already ran for the current parent turn.
@@ -159,30 +168,4 @@ pub struct ParentExecutionContext {
 pub struct AgentContextPreparedSource {
     pub source: String,
     pub has_enough_context: Option<bool>,
-}
-
-tokio::task_local! {
-    /// Parent execution context, scoped per agent turn. `None` for any
-    /// tool invocation that happens outside an agent turn (e.g. CLI/RPC
-    /// direct tool calls); `spawn_subagent` rejects in that case.
-    pub static PARENT_CONTEXT: ParentExecutionContext;
-}
-
-/// Returns a clone of the current parent execution context, if one is set.
-///
-/// Returns `None` when called from outside [`crate::agent::OpenHumanSessionHost::turn`]
-/// (e.g. CLI tool invocation).
-pub fn current_parent() -> Option<ParentExecutionContext> {
-    PARENT_CONTEXT.try_with(|ctx| ctx.clone()).ok()
-}
-
-/// Run `future` with `ctx` installed as the active parent context.
-pub async fn with_parent_context<F, R>(ctx: ParentExecutionContext, future: F) -> R
-where
-    F: std::future::Future<Output = R>,
-{
-    // Box before `scope` so only a pointer moves into the task-local frame
-    // rather than the whole nested turn generator — see the measurements on
-    // the explicit usage ledger on `OpenHumanRunContext`.
-    PARENT_CONTEXT.scope(ctx, Box::pin(future)).await
 }

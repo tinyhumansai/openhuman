@@ -262,6 +262,7 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   }),
   media_list_models: spec('checkMediaModels', ImageIcon, 'media'),
   generate_document: spec('createDocument', FileTextIcon, 'media', { chip: chip.text('title') }),
+  show_ui: spec('showView', AppWindowIcon, 'skill'),
   generate_presentation: spec('createPresentation', PresentationIcon, 'media', {
     chip: chip.text('title'),
   }),
@@ -443,7 +444,12 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   workspace_update_persona: spec('updatePersona', UserRoundIcon, 'system'),
   workspace_reset_persona: spec('updatePersona', UserRoundIcon, 'system'),
   workspace_init: spec('setUpWorkspace', FolderOpenIcon, 'system'),
-  artifact_delete: spec('deleteArtifact', PackageIcon, 'system'),
+  create_artifact: spec('createArtifact', PackageIcon, 'system'),
+  update_artifact: spec('updateArtifact', PackageIcon, 'system'),
+  read_artifact: spec('checkArtifacts', PackageIcon, 'system'),
+  list_artifacts: spec('checkArtifacts', PackageIcon, 'system'),
+  delete_artifact: spec('deleteArtifact', PackageIcon, 'system'),
+  share_artifact: spec('shareArtifact', PackageIcon, 'system'),
 };
 
 /**

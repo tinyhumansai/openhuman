@@ -2,28 +2,58 @@
 
 use super::*;
 
+/// Reconcile visible delegate names without reopening a caller's explicit
+/// restriction. Revoked names disappear; a newly connected name is admitted
+/// only for the wildcard belt.
+pub(in crate::agent::session_host) fn reconcile_synthesized_visibility(
+    visible: &mut std::collections::HashSet<String>,
+    previous: &std::collections::HashSet<String>,
+    next: &std::collections::HashSet<String>,
+    auto_include_new: bool,
+) {
+    for name in previous.difference(next) {
+        visible.remove(name);
+    }
+    if auto_include_new {
+        visible.extend(next.iter().cloned());
+    }
+}
+
 impl OpenHumanTurnPrelude {
     /// Rebuild every delegation-dependent tool view from the current cached
     /// integration set, replacing rather than appending. A revoked delegate is
     /// removed from the executable source, schema, and policy together before
     /// this request is prepared.
     pub(super) fn refresh_delegation_tool_surface(&self) -> anyhow::Result<()> {
-        use crate::agent::harness::definition::AgentDefinitionRegistry;
-        use crate::tools::agent_policy::ToolPolicyEngine;
+        use crate::agent::harness::host_definition::AgentDefinitionRegistry;
         use crate::tools::orchestrator_tools::collect_orchestrator_tools;
+        use tinytools::ToolPolicyEngine;
 
         let Some(registry) = AgentDefinitionRegistry::current() else {
             return Ok(());
         };
-        let Some(definition) = self.session_definition(&registry) else {
-            return Ok(());
-        };
+        let definition = self.session_definition(&registry);
         let has_recorded_tool_snapshot = self
             .mutable
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .recorded_tool_snapshot_adopted;
-        if definition.subagents.is_empty() && !has_recorded_tool_snapshot {
+        #[cfg(feature = "mcp")]
+        let has_configured_mcp_tools = !self
+            .mutable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mcp_tools
+            .configured
+            .is_empty();
+        #[cfg(not(feature = "mcp"))]
+        let has_configured_mcp_tools = false;
+        if definition
+            .as_ref()
+            .is_none_or(|definition| definition.subagents.is_empty())
+            && !has_recorded_tool_snapshot
+            && !has_configured_mcp_tools
+        {
             return Ok(());
         }
         let (integrations, integrations_are_authoritative, recorded_tool_snapshot_adopted) = {
@@ -39,25 +69,35 @@ impl OpenHumanTurnPrelude {
         };
         #[cfg(feature = "mcp")]
         let mcp_tools = self.collect_mcp_search_tools();
+        #[cfg(feature = "mcp")]
+        let configured_mcp_tools = self.collect_configured_mcp_tools();
         let mut surface = self
             .tool_surface
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut collected = collect_orchestrator_tools(&definition, &registry, &integrations);
+        let mut collected = definition
+            .as_ref()
+            .map(|definition| collect_orchestrator_tools(definition, &registry, &integrations))
+            .unwrap_or_default();
         #[cfg(feature = "mcp")]
         collected.extend(mcp_tools);
-        let rebuilt = self.rebuilt_recorded_tools(
-            &definition,
-            &surface.tools,
-            &collected,
-            &integrations,
-            integrations_are_authoritative,
-        );
+        #[cfg(feature = "mcp")]
+        collected.extend(configured_mcp_tools);
+        let rebuilt = definition.as_ref().map_or_else(Vec::new, |definition| {
+            self.rebuilt_recorded_tools(
+                definition,
+                &surface.tools,
+                &collected,
+                &integrations,
+                integrations_are_authoritative,
+            )
+        });
         collected.extend(rebuilt);
-        super::super::managed_tools::reject_synthesized_collisions(
+        tinyagents_runtime::reject_synthesized_collisions(
             &surface.permanent_tool_names,
             &collected,
-        )?;
+        )
+        .map_err(anyhow::Error::msg)?;
         let synthesized =
             super::super::builder::drop_synthesized_name_collisions(&surface.tools, collected);
         let synthesized_names = synthesized
@@ -119,6 +159,28 @@ impl OpenHumanTurnPrelude {
                 .iter()
                 .map(|spec| (spec.name.as_str(), spec))
                 .collect::<std::collections::HashMap<_, _>>();
+            for spec in &mut specs {
+                if let Some(frozen) = recorded.get(spec.name.as_str()) {
+                    *spec = Arc::new((*frozen).clone());
+                }
+            }
+        }
+        #[cfg(feature = "mcp")]
+        {
+            let recorded = self
+                .mutable
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .mcp_tools
+                .recorded_specs
+                .clone();
+            let recorded = recorded
+                .iter()
+                .map(|spec| (spec.name.as_str(), spec))
+                .collect::<std::collections::HashMap<_, _>>();
+            // A resumed thread keeps the exact MCP declaration it was shown,
+            // while the current module presentation still supplies its live
+            // executor. This mirrors the REPL snapshot restoration above.
             for spec in &mut specs {
                 if let Some(frozen) = recorded.get(spec.name.as_str()) {
                     *spec = Arc::new((*frozen).clone());

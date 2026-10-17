@@ -1,7 +1,7 @@
 # docs/
 
 Internal maintainer documentation. Public and contributor docs live in
-`gitbooks/` (navigation in `gitbooks/SUMMARY.md`); agent and contributor rules
+`docs/gitbooks/en/` (navigation in `docs/gitbooks/en/SUMMARY.md`); agent and contributor rules
 live in `AGENTS.md` (`CLAUDE.md` is a symlink to it); per-domain design notes
 sit beside the code as `crates/openhuman-core/src/<domain>/README.md`.
 

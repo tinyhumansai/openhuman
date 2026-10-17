@@ -48,6 +48,7 @@ async fn create_thread_with_title(_workspace: &tempfile::TempDir, thread_id: &st
         .expect("load config")
         .workspace_dir;
     conversations_store::ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         dir,
         CreateConversationThread {
             id: thread_id.to_string(),

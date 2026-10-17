@@ -30,7 +30,7 @@ fn all_tools_registers_the_memory_tool_while_memory_is_on() {
     // registered tool: a host `tool_search` would shadow it.
     assert!(!tools
         .iter()
-        .any(|tool| { tool.name() == crate::tools::implementations::meta::TOOL_SEARCH_NAME }));
+        .any(|tool| { tool.name() == tinytools::TOOL_SEARCH_NAME }));
 }
 /// The three `whatsapp_data_*` agent tools are gone, in every build.
 ///

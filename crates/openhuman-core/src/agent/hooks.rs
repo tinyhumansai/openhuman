@@ -6,7 +6,7 @@
 
 #[path = "hooks_scope.rs"]
 mod scope;
-pub use scope::{turn_post_turn_hooks, turn_tool_hooks, HookScope};
+pub use scope::HookScope;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -38,13 +38,23 @@ pub fn replace_embedder_post_turn_hook(name: &str, hook: Option<Arc<dyn PostTurn
     }
 }
 
-/// Snapshot hooks supplied by the embedding host.
+/// Snapshot of the process-wide hooks the embedding host registered, without
+/// any agent-local ones. The host's install/restore bookkeeping reads this; a
+/// turn passes its own context to [`embedder_post_turn_hooks_in`].
 pub fn embedder_post_turn_hooks() -> Vec<Arc<dyn PostTurnHook>> {
-    let mut hooks = EMBEDDER_POST_TURN_HOOKS
+    EMBEDDER_POST_TURN_HOOKS
         .lock()
         .expect("embedder post-turn hooks poisoned")
-        .clone();
-    if let Some(local) = crate::core::runtime::CoreContext::current_host_overrides() {
+        .clone()
+}
+
+/// Snapshot hooks supplied by the embedding host, plus the agent-local ones of
+/// the agent `ctx` runs for.
+pub fn embedder_post_turn_hooks_in(
+    ctx: &crate::core::runtime::DispatchCtx,
+) -> Vec<Arc<dyn PostTurnHook>> {
+    let mut hooks = embedder_post_turn_hooks();
+    if let Some(local) = ctx.host_overrides() {
         hooks.extend(local.post_turn_hooks());
     }
     hooks
@@ -238,6 +248,18 @@ pub trait ToolHook: Send + Sync {
         }
     }
 
+    /// [`before_tool_decision`](ToolHook::before_tool_decision) for the call
+    /// `dispatch` runs for: the context of the turn that raised it. A hook that
+    /// reads the acting tenant or profile overrides this and takes it from
+    /// `dispatch`; the default ignores it.
+    async fn before_tool_decision_in(
+        &self,
+        _dispatch: &crate::core::runtime::DispatchCtx,
+        context: &ToolHookContext,
+    ) -> ToolHookDecision {
+        self.before_tool_decision(context).await
+    }
+
     /// Observe a completed tool and optionally append text to its result, which
     /// the model then sees. Defaults to [`after_tool`](ToolHook::after_tool)
     /// with no appended text.
@@ -275,13 +297,20 @@ pub fn replace_embedder_tool_hook(name: &str, hook: Option<Arc<dyn ToolHook>>) {
     }
 }
 
-/// Snapshot tool hooks supplied by the embedding host.
+/// Snapshot of the process-wide tool hooks the embedding host registered,
+/// without any agent-local ones. See [`embedder_post_turn_hooks`].
 pub fn embedder_tool_hooks() -> Vec<Arc<dyn ToolHook>> {
-    let mut hooks = EMBEDDER_TOOL_HOOKS
+    EMBEDDER_TOOL_HOOKS
         .lock()
         .expect("embedder tool hooks poisoned")
-        .clone();
-    if let Some(local) = crate::core::runtime::CoreContext::current_host_overrides() {
+        .clone()
+}
+
+/// Snapshot tool hooks supplied by the embedding host, plus the agent-local
+/// ones of the agent `ctx` runs for.
+pub fn embedder_tool_hooks_in(ctx: &crate::core::runtime::DispatchCtx) -> Vec<Arc<dyn ToolHook>> {
+    let mut hooks = embedder_tool_hooks();
+    if let Some(local) = ctx.host_overrides() {
         hooks.extend(local.tool_hooks());
     }
     hooks
@@ -292,23 +321,27 @@ pub fn embedder_tool_hooks() -> Vec<Arc<dyn ToolHook>> {
 mod tests;
 
 /// Fire all hooks in parallel, logging errors without blocking the caller.
-pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
+pub fn fire_hooks(
+    hooks: &[Arc<dyn PostTurnHook>],
+    dispatch: &crate::core::runtime::DispatchCtx,
+    ctx: TurnContext,
+) {
     log::debug!(
         "[learning] dispatching {} post-turn hook(s) (tool_calls={}, response_chars={})",
         hooks.len(),
         ctx.tool_calls.len(),
         ctx.assistant_response.chars().count()
     );
-    // Capture the ambient CoreContext before detaching: a bare `tokio::spawn`
+    // Take the caller's CoreContext before detaching: a bare `tokio::spawn`
     // does not inherit the `CURRENT_CONTEXT` task-local, so under a scoped
     // multi-tenant dispatch a detached hook would fall back to the process
     // default context — and anything context-derived inside the hook (for
     // example a workspace-scoped store) would read and
     // write another tenant's workspace. Re-entering the scope inside the task
     // keeps the hook on the dispatch it belongs to; when there is no scoped
-    // context (the desktop's single-tenant path), `current()` already answers
-    // the process default and re-scoping it is a no-op.
-    let core_ctx = crate::core::runtime::context::CoreContext::current();
+    // context (the desktop's single-tenant path), the process default is
+    // already what the hook reads and re-scoping it is a no-op.
+    let core_ctx = dispatch.core().cloned();
     for (idx, hook) in hooks.iter().enumerate() {
         let hook = Arc::clone(hook);
         let ctx = ctx.clone();

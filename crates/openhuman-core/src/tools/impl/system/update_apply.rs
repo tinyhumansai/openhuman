@@ -19,6 +19,8 @@
 //! high impact (replaces a binary on disk, optionally restarts the core
 //! process) and must not happen silently.
 
+use crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool;
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -105,6 +107,21 @@ impl Tool for UpdateApplyTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &dispatch_ctx_for_tool(None)).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        self.run(args, &dispatch_ctx_for_tool(context)).await
+    }
+}
+
+impl UpdateApplyTool {
+    async fn run(&self, args: Value, ctx: &DispatchCtx) -> anyhow::Result<ToolResult> {
         tracing::debug!(args = %args, "[update_apply] execute start");
 
         if let Some(blocked) = Self::require_consent(&args) {
@@ -116,7 +133,7 @@ impl Tool for UpdateApplyTool {
             return Ok(blocked);
         }
 
-        let outcome = update::rpc::update_run().await;
+        let outcome = update::rpc::update_run(ctx).await;
         for log in &outcome.logs {
             tracing::debug!(target: "update_apply", "{log}");
         }

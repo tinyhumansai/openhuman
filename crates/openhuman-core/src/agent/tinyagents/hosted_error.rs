@@ -11,7 +11,7 @@
 use tinyagents_harness::runtime::{HostedError, HostedErrorKind, TimeoutBound};
 use tinyagents_harness::TinyAgentsError;
 
-use crate::agent::error::TurnTimeoutBound;
+use tinyagents_harness::agent_error::TurnTimeoutBound;
 
 /// The host-side name of a harness [`TimeoutBound`].
 pub(super) fn turn_timeout_bound(bound: TimeoutBound) -> TurnTimeoutBound {

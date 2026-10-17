@@ -1,6 +1,6 @@
 //! Host ownership and cancellation of opaque TinyVoice capture leases.
 use super::audio_capture::{RecordingResult, TARGET_SAMPLE_RATE};
-use crate::{config::Config, modules::client::ModuleClient};
+use crate::config::Config;
 use base64::Engine as _;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
@@ -8,6 +8,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, LazyLock, Mutex,
 };
+use tinybus::module::ModuleClient;
 use tinyvoice_bus::{
     capture::{
         AudioOutput, CaptureBatch, CaptureError, CaptureHandle, CapturePollRequest, CaptureResult,
@@ -124,7 +125,7 @@ pub(super) struct CaptureLease {
 }
 impl CaptureLease {
     pub(super) async fn reserve(config: &Config, kind: Kind) -> Result<Self, String> {
-        let port: Arc<dyn Port> = Arc::new(BusPort(ModuleClient::new(config.clone())));
+        let port: Arc<dyn Port> = Arc::new(BusPort(crate::modules::client(config.clone())));
         Self::reserve_with_port(port, kind).await
     }
     async fn reserve_with_port(port: Arc<dyn Port>, kind: Kind) -> Result<Self, String> {
@@ -319,8 +320,8 @@ impl Drop for CaptureLease {
     }
 }
 fn malformed() -> String {
-    ModuleClient::report_malformed_reply(MODULE);
-    crate::modules::client::ModuleCallError::ModuleFault.to_string()
+    crate::modules::report::malformed_reply(MODULE);
+    tinybus::module::ModuleCallError::ModuleFault.to_string()
 }
 fn capture_error(error: CaptureError) -> String {
     let reason = match error {

@@ -11,7 +11,8 @@ use super::types::{
     ComposioTriggerEvent, ComposioTriggerHistoryEntry, ComposioTriggerHistoryResult,
 };
 use crate::config::Config;
-use crate::modules::client::ModuleClient;
+use crate::core::runtime::DispatchCtx;
+use tinybus::module::ModuleClient;
 use tinyconnectors_bus::names::methods;
 
 static GLOBAL_TRIGGER_HISTORY: OnceLock<Arc<TriggerHistory>> = OnceLock::new();
@@ -36,10 +37,11 @@ impl TriggerHistory {
         if let Some(client) = self.fixture.as_ref() {
             return client.clone();
         }
-        ModuleClient::new(config.clone())
+        crate::modules::client(config.clone())
     }
 
     async fn ensure_lease(
+        ctx: &DispatchCtx,
         config: &Config,
         lease: &mut Option<Lease>,
         client: ModuleClient,
@@ -57,6 +59,9 @@ impl TriggerHistory {
         let state_dir = state_dir
             .to_str()
             .ok_or_else(|| "trigger archive requires a UTF-8 state directory".to_owned())?;
+        // The archive opens on the module's storage: bring yesterday's JSONL
+        // files across first (once per state directory, best effort).
+        crate::modules::import_legacy_connectors(ctx, &config.workspace_dir.join("state")).await;
         let handle = client
             .call(
                 "tinyconnectors",
@@ -77,16 +82,18 @@ impl TriggerHistory {
 
     async fn acquire(
         &self,
+        ctx: &DispatchCtx,
         config: &Config,
     ) -> Result<tokio::sync::OwnedMutexGuard<Option<Lease>>, String> {
         let lease = Arc::clone(&self.lease);
         let config = config.clone();
         let client = self.client(&config);
+        let task_ctx = ctx.clone();
         // Keep ownership installation running if the caller is cancelled while
         // OpenArchive completes. A later close can still release the handle.
-        crate::core::runtime::spawn_scoped(async move {
+        ctx.spawn(async move {
             let mut guard = lease.lock_owned().await;
-            Self::ensure_lease(&config, &mut guard, client).await?;
+            Self::ensure_lease(&task_ctx, &config, &mut guard, client).await?;
             Ok(guard)
         })
         .await
@@ -112,10 +119,11 @@ impl TriggerHistory {
     /// Archive one delivered event, serialized with reads and scope changes.
     pub async fn record(
         &self,
+        ctx: &DispatchCtx,
         config: &Config,
         event: ComposioTriggerEvent,
     ) -> Result<ComposioTriggerHistoryEntry, String> {
-        let lease = self.acquire(config).await?;
+        let lease = self.acquire(ctx, config).await?;
         let handle = lease.as_ref().expect("lease installed").handle.clone();
         lease
             .as_ref()
@@ -133,10 +141,11 @@ impl TriggerHistory {
     /// Read persisted history without changing the user's connector route.
     pub async fn read(
         &self,
+        ctx: &DispatchCtx,
         config: &Config,
         limit: Option<usize>,
     ) -> Result<ComposioTriggerHistoryResult, String> {
-        let lease = self.acquire(config).await?;
+        let lease = self.acquire(ctx, config).await?;
         let handle = lease.as_ref().expect("lease installed").handle.clone();
         lease
             .as_ref()
@@ -152,13 +161,11 @@ impl TriggerHistory {
     }
 
     /// Release the module resource while retaining all persisted documents.
-    pub async fn close(&self) -> Result<(), String> {
+    pub async fn close(&self, ctx: &crate::core::runtime::DispatchCtx) -> Result<(), String> {
         let lease = Arc::clone(&self.lease);
-        crate::core::runtime::spawn_scoped(async move {
-            Self::release(&mut *lease.lock_owned().await).await
-        })
-        .await
-        .map_err(|_| "trigger archive release task failed".to_owned())?
+        ctx.spawn(async move { Self::release(&mut *lease.lock_owned().await).await })
+            .await
+            .map_err(|_| "trigger archive release task failed".to_owned())?
     }
 }
 
@@ -185,9 +192,9 @@ pub fn global() -> Option<Arc<TriggerHistory>> {
 }
 
 /// Close an existing lease on sign-out or runtime shutdown; never load at exit.
-pub(crate) async fn close_global() -> Result<(), String> {
+pub(crate) async fn close_global(ctx: &crate::core::runtime::DispatchCtx) -> Result<(), String> {
     match global() {
-        Some(store) => store.close().await,
+        Some(store) => store.close(ctx).await,
         None => Ok(()),
     }
 }

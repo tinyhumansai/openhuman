@@ -41,4 +41,6 @@ pub use text::{
 pub use types::MaybeSet;
 
 #[cfg(test)]
+pub(crate) mod classic_transcript_fixture;
+#[cfg(test)]
 pub(crate) mod module_test_process;

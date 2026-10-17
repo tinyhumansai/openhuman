@@ -58,6 +58,12 @@ description: "A turn is one native model/tool loop; a session is the durable ide
 
 [Complete runnable example](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/streaming.rs). The full file includes imports, runtime setup and local fixtures used by this excerpt.
 
+## Attaching files
+
+A host that already holds a file's bytes (an inbound photo from a channel webhook, an upload) attaches it with `Turn::attach(HostAttachment::new(bytes, mime).named(name))`, or several at once with `Turn::attachments`. Each file is staged into the agent's acting workspace and reaches the model ahead of the message: `image/*` as an image block, anything else as a document block. A model that cannot take a file natively gets the core's fallback instead (extracted text for PDF and Office documents, a vision readout for images, metadata otherwise). The `[multimodal]` and `[multimodal_files]` count and size limits apply, and a turn over them fails before any model call. Blank or `application/octet-stream` types are sniffed from the name and bytes.
+
+No local path is read, so attachments are accepted whatever the turn's origin, including external-channel turns whose `[IMAGE:…]`/`[FILE:…]` text markers are refused. Only a runtime-owned `Agent` carries them: a turn on a caller-built runtime's orchestrator (`Core::agent`) is refused with `attachments_unsupported` rather than run without its files, because `inference.agent_chat` carries only a string.
+
 ## Behavior to account for
 
 The stream example checks that deltas precede the final result and that collected and streaming replies agree. A cancellation token passed to a turn is preserved by streaming; cancellation unblocks forwarding even when the consumer has stopped draining a full buffer.

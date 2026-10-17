@@ -14,7 +14,7 @@ import Badge from '../../ui/Badge';
 import Button from '../../ui/Button';
 import Card from '../../ui/Card';
 
-type ModuleState = 'available' | 'loading' | 'ready' | 'failed' | 'unsupported';
+type ModuleState = 'available' | 'loading' | 'ready' | 'failed' | 'unsupported' | 'disabled';
 type Route = 'hosted' | 'direct_openrouter' | 'open_jev' | 'sage' | 'unavailable';
 
 export interface ComputerStatus {
@@ -38,7 +38,9 @@ const stateVariant = (state?: ModuleState) =>
     ? ('success' as const)
     : state === 'failed' || state === 'unsupported'
       ? ('danger' as const)
-      : ('neutral' as const);
+      : state === 'disabled'
+        ? ('warning' as const)
+        : ('neutral' as const);
 
 export default function ComputerStatusCard({ refreshKey = 0 }: { refreshKey?: number } = {}) {
   const { t } = useT();

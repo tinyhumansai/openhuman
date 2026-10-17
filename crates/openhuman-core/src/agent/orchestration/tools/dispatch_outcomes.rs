@@ -32,7 +32,7 @@ pub(super) fn format_subagent_failure(tool_name: &str, message: &str) -> String 
 }
 
 pub(crate) fn is_unexecuted_tool_call_stub(output: &str) -> bool {
-    use super::tool_call_text::{contains_tool_call_payload, strip_tool_calls_from_response};
+    use tinytools_agent::dialect::{contains_tool_call_payload, strip_tool_calls_from_response};
     if !contains_tool_call_payload(output) {
         return false;
     }
@@ -77,10 +77,8 @@ pub(crate) fn incomplete_envelope(
 
 /// How a sub-agent handed back as `Incomplete { reason }` was stopped
 /// (iteration cap or failure breaker), for its `SubagentCompleted` event.
-pub(crate) fn incomplete_stop(reason: &str) -> Option<crate::agent::turn_stop::TurnStop> {
-    Some(crate::agent::turn_stop::TurnStop::from_incomplete_reason(
-        reason,
-    ))
+pub(crate) fn incomplete_stop(reason: &str) -> Option<tinyagents_harness::turn_stop::TurnStop> {
+    Some(crate::agent::turn_projection::stop_from_incomplete(reason))
 }
 
 /// The parent's tool result for a sub-agent the harness stopped early: a
@@ -95,7 +93,7 @@ pub(crate) fn stopped_subagent_result(
     reason: &str,
     envelope: String,
 ) -> ToolResult {
-    let stop = crate::agent::turn_stop::TurnStop::from_incomplete_reason(reason);
+    let stop = crate::agent::turn_projection::stop_from_incomplete(reason);
     log::debug!(
         "[subagent] {tool_name} child stopped early agent_id={agent_id} task_id={task_id} \
          {}; returning a failed tool result",

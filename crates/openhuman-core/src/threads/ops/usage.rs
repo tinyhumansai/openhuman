@@ -1,9 +1,10 @@
 //! Aggregated token/cost usage for a thread, re-audited at current pricing.
 
-use super::support::{counts, envelope, workspace_dir};
+use super::support::{counts, envelope, transcript_store};
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::threads::ApiEnvelope;
-use tinyagents_session::transcript::spend::thread_spend;
+use tinyagents_session::transcript::spend::thread_spend_in;
 
 /// Request for [`token_usage`]: the thread whose persisted usage to total.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -24,7 +25,7 @@ pub struct ThreadTokenUsageResponse {
     /// recorded charge and no catalogued price). Never a guessed rate.
     pub cost_usd: Option<f64>,
     /// `charged`, `estimated` (some turn priced from list rates) or `unknown`.
-    pub cost_source: crate::agent::cost::CostSource,
+    pub cost_source: tinyagents_harness::cost::CostSource,
     pub turn_count: usize,
     /// Spend of the most recent turn, the orchestrator's own: every model call
     /// of that turn summed, so a long tool loop reports many times its context.
@@ -61,12 +62,19 @@ pub struct SubagentUsageDto {
     pub runs: usize,
 }
 
-/// Total a thread's persisted token/cost usage across its root transcripts.
+/// Total a thread's persisted token/cost usage across its root transcripts
+/// and their sub-agents, read from the store the request's tenant wrote them
+/// to.
 pub async fn token_usage(
+    ctx: &DispatchCtx,
     request: ThreadTokenUsageRequest,
 ) -> Result<Outcome<ApiEnvelope<ThreadTokenUsageResponse>>, String> {
-    let dir = workspace_dir().await?;
-    let spend = thread_spend(&dir, &request.thread_id);
+    // Resolved here, in the request's scope; the read itself is blocking.
+    let locator = transcript_store(ctx, &request.thread_id).await?.locator();
+    let thread_id = request.thread_id.clone();
+    let spend = tokio::task::spawn_blocking(move || thread_spend_in(locator.as_ref(), &thread_id))
+        .await
+        .map_err(|e| format!("thread usage task: {e}"))?;
 
     if !spend.found_transcript {
         return Ok(envelope(
@@ -162,7 +170,7 @@ fn empty_response(thread_id: &str) -> ThreadTokenUsageResponse {
         output_tokens: 0,
         cached_input_tokens: 0,
         cost_usd: Some(0.0),
-        cost_source: crate::agent::cost::CostSource::Charged,
+        cost_source: tinyagents_harness::cost::CostSource::Charged,
         turn_count: 0,
         last_turn_input_tokens: 0,
         last_turn_output_tokens: 0,
@@ -185,8 +193,8 @@ fn empty_response(thread_id: &str) -> ThreadTokenUsageResponse {
 fn recorded_cost(
     split: &tinyagents_session::transcript::spend::CostSplit,
     model: Option<&str>,
-) -> crate::agent::cost::CostTally {
-    use crate::agent::cost::{CallCost, CostSource, CostTally};
+) -> tinyagents_harness::cost::CostTally {
+    use tinyagents_harness::cost::{CallCost, CostSource, CostTally};
     use tinyagents_session::transcript::UsageCostSource;
 
     let mut cost = CostTally {

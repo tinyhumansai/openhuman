@@ -49,7 +49,7 @@ pub fn is_backend_unavailable_message(msg: &str) -> bool {
 /// - `MODULE_CALL_REPORTED:` — the shared client already emitted a sanitized
 ///   report; product callers must not report its returned error again;
 ///
-/// - [`crate::tools::status::MODULE_FAULT_MARKER`] — every terminal load
+/// - [`tinytools::status::MODULE_FAULT_MARKER`] — every terminal load
 ///   failure from `modules::ops` and tinybus' `load_first_admitted` carries it;
 /// - `module '<id>' could not be loaded` — the load wording itself, for a
 ///   caller that rewrapped the reason without the marker;
@@ -82,7 +82,7 @@ pub fn is_module_unavailable_message(msg: &str) -> bool {
             && msg.contains(": ai.tinyhumans.tinybus.Error.Failed: "));
     connector_output
         || msg.contains("MODULE_CALL_REPORTED:")
-        || msg.contains(crate::tools::status::MODULE_FAULT_MARKER)
+        || msg.contains(tinytools::status::MODULE_FAULT_MARKER)
         || (lower.contains("module '") && lower.contains("could not be loaded"))
         || (lower.contains("module '")
             && lower.contains("is unavailable: modules are disabled in configuration"))

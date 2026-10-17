@@ -10,9 +10,9 @@ use crate::core::events::DomainEvent;
 use anyhow::Result;
 use chrono::Utc;
 use {
-    tinyflows_schedule::types::delivery_mode, tinyflows_schedule::types::CronJob,
-    tinyflows_schedule::types::DeliveryConfig, tinyflows_schedule::types::DeliveryStatus,
-    tinyflows_schedule::types::JobType,
+    tinyflows_bus::schedule::types::delivery_mode, tinyflows_bus::schedule::types::CronJob,
+    tinyflows_bus::schedule::types::DeliveryConfig, tinyflows_bus::schedule::types::DeliveryStatus,
+    tinyflows_bus::schedule::types::JobType,
 };
 
 pub(super) const MORNING_BRIEFING_AGENT_ID: &str = "morning_briefing";
@@ -73,12 +73,13 @@ pub(super) fn cron_alert_body(job: &CronJob, output: &str) -> String {
 /// explicitly triggered (empty output is still skipped). Returns how the
 /// delivery went, for the run record.
 pub async fn deliver_job(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
     run_id: &str,
     output: &str,
 ) -> DeliveryStatus {
-    match deliver_run(config, job, run_id, output, true).await {
+    match deliver_run(ctx, config, job, run_id, output, true).await {
         Ok(status) => status,
         Err(e) => {
             if job.delivery.best_effort {
@@ -114,18 +115,20 @@ pub(super) fn cron_result_should_alert(success: bool, output: &str) -> bool {
 /// [`deliver_run`] under a fresh run id, discarding the status.
 #[cfg(test)]
 pub(super) async fn deliver_if_configured(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
     output: &str,
     success: bool,
 ) -> Result<()> {
     let run_id = uuid::Uuid::new_v4().to_string();
-    deliver_run(config, job, &run_id, output, success)
+    deliver_run(ctx, config, job, &run_id, output, success)
         .await
         .map(|_| ())
 }
 
 pub(super) async fn deliver_run(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     job: &CronJob,
     run_id: &str,
@@ -187,7 +190,7 @@ pub(super) async fn deliver_run(
         // created the job and send it there once.
         delivery_mode::ORIGIN => {
             if deliver_to_chat {
-                status = deliver_to_origin(config, job, run_id, output).await?;
+                status = deliver_to_origin(ctx, config, job, run_id, output).await?;
             }
         }
 

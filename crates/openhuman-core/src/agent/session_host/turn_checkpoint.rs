@@ -1,3 +1,5 @@
+use tinyagents_harness::middleware::wrap_harness_instruction;
+
 /// Instruction appended (as a synthetic user turn) to the provider
 /// messages when a turn hits the tool-call iteration cap. Asks the model
 /// to wrap up with a resumable checkpoint instead of letting the turn die.
@@ -138,7 +140,7 @@ pub(crate) struct CheckpointToolResult {
 /// transcript messages do not preserve a tool-result error flag, so this must
 /// use [`ToolCallOutcome`] rather than trying to infer success from prose.
 pub(crate) fn results_from_tool_outcomes(
-    outcomes: &[crate::agent::tinyagents::ToolCallOutcome],
+    outcomes: &[tinyagents_harness::turn_outcome::ToolCallOutcome],
 ) -> Vec<CheckpointToolResult> {
     outcomes
         .iter()
@@ -320,7 +322,7 @@ will read."
 /// It rides in as a bare user-role message, so a model that reads it as
 /// operator content deliberates about it aloud and quotes it back. The closing
 /// directives forbid the three shapes that reached a user's screen; the frame
-/// [`wrap_harness_instruction`] adds is what makes it structurally distinct
+/// [`wrap_harness_instruction`] (tinyagents-harness) adds is what makes it structurally distinct
 /// from the conversation in the first place.
 pub(crate) const FINAL_ANSWER_INSTRUCTION: &str = concat!(
     "You have finished using tools for this turn but have not yet written a reply to the user. ",
@@ -348,15 +350,6 @@ const STOP_NOTE_PREAMBLE: &str = "\
 The harness stopped this turn early because its tool calls stopped making progress: they kept failing, or \
 kept repeating the same step. Its stop note is written for you, not for the user, so explain it in your own \
 words rather than repeating it, and describe each call as the tool records show it:";
-
-/// Frame a harness directive so the model can tell it from operator content,
-/// the way `<stop_note>` and `<tool_records>` already mark their spans.
-pub(crate) fn wrap_harness_instruction(instruction: &str) -> String {
-    format!(
-        "<harness_instruction>\n{}\n</harness_instruction>",
-        instruction.trim()
-    )
-}
 
 /// Shortest span, in words, that counts as a quotation of harness text.
 ///

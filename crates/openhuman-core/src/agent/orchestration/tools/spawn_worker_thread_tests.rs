@@ -1,5 +1,4 @@
 use super::*;
-use crate::agent::harness::fork_context::with_parent_context;
 use crate::agent::harness::ParentExecutionContext;
 use crate::threads::store::CreateConversationThread;
 use std::path::PathBuf;
@@ -36,7 +35,8 @@ fn test_parent_ctx(workspace_dir: PathBuf) -> ParentExecutionContext {
         on_progress: None,
         run_queue: None,
         agent_config: crate::config::AgentConfig::default(),
-        tool_call_format: crate::agent::prompts::ToolCallFormat::Native,
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::Native,
+        host_env: Default::default(),
     }
 }
 
@@ -45,6 +45,7 @@ async fn rejects_if_already_worker_thread() {
     let temp = TempDir::new().unwrap();
     let thread_id = "worker-123";
     conversations::ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         CreateConversationThread {
             id: thread_id.to_string(),
@@ -71,6 +72,7 @@ async fn rejects_if_has_parent_thread_id() {
     let temp = TempDir::new().unwrap();
     let thread_id = "sub-123";
     conversations::ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         CreateConversationThread {
             id: thread_id.to_string(),
@@ -119,21 +121,27 @@ async fn rejects_agent_outside_parent_allowlist() {
     let temp = TempDir::new().unwrap();
     let parent = test_parent_ctx(temp.path().to_path_buf());
 
-    with_parent_context(parent, async {
-        let tool = SpawnWorkerThreadTool::new();
-        let result = tool
-            .execute(json!({
+    let live = crate::agent::orchestration::tools::live_parent_run_context(
+        "worker-allowlist-test",
+        parent,
+    );
+    let tool = SpawnWorkerThreadTool::new();
+    let result = tool
+        .execute_with_live_parent_context(
+            json!({
                 "agent_id": "task_manager_agent",
                 "prompt": "do it",
                 "task_title": "Task"
-            }))
-            .await
-            .unwrap();
+            }),
+            None,
+            live.data.child(),
+            Some(&live),
+        )
+        .await
+        .unwrap();
 
-        assert!(result.is_error);
-        assert!(result.output().contains(
-            "spawn_worker_thread: agent 'task_manager_agent' is not in parent agent 'orchestrator' subagents.allowlist"
-        ));
-    })
-    .await;
+    assert!(result.is_error);
+    assert!(result.output().contains(
+        "spawn_worker_thread: agent 'task_manager_agent' is not in parent agent 'orchestrator' subagents.allowlist"
+    ));
 }

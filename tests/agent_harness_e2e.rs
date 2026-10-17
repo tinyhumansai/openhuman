@@ -13,6 +13,8 @@
 
 #[path = "support/env_guard.rs"]
 mod env_guard;
+#[path = "support/linked_modules.rs"]
+mod linked_modules;
 #[path = "support/scripted_stack.rs"]
 mod scripted_stack;
 use env_guard::EnvVarGuard;
@@ -35,7 +37,7 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
-use openhuman_core::agent::harness::AgentDefinitionRegistry;
+use openhuman_core::agent::harness::host_definition::AgentDefinitionRegistry;
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_rpc::server::build_core_http_router;
 
@@ -75,6 +77,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 static SCRIPTED_COMPLETIONS: OnceLock<Mutex<std::collections::VecDeque<Value>>> = OnceLock::new();
 static CAPTURED_COMPLETION_REQUESTS: OnceLock<Mutex<Vec<Value>>> = OnceLock::new();
+const SCRIPT_DISCOVERED_MCP_TOOL: &str = "__script_discovered_mcp_tool__";
 
 fn with_scripted<T>(f: impl FnOnce(&mut std::collections::VecDeque<Value>) -> T) -> T {
     let m = SCRIPTED_COMPLETIONS.get_or_init(|| Mutex::new(Default::default()));
@@ -326,7 +329,7 @@ async fn scripted_chat_completions(
     }
 
     let next = with_scripted(|q| q.pop_front());
-    let Some(entry) = next else {
+    let Some(mut entry) = next else {
         let message = json!({ "role": "assistant", "content": "default scripted completion" });
         return completion_response(streaming, message);
     };
@@ -343,6 +346,19 @@ async fn scripted_chat_completions(
             Json(json!({ "error": { "message": message, "type": "server_error" } })),
         )
             .into_response();
+    }
+
+    if let Some(tool_calls) = entry.get_mut("toolCalls").and_then(Value::as_array_mut) {
+        for call in tool_calls {
+            if call.get("name").and_then(Value::as_str) != Some(SCRIPT_DISCOVERED_MCP_TOOL) {
+                continue;
+            }
+            let name = scripted_discovered_mcp_tool_name(&body).unwrap_or_else(|| {
+                panic!("the next model request did not advertise the searched MCP action")
+            });
+            call["name"] = json!(name);
+            call["id"] = json!(format!("call_{name}"));
+        }
     }
 
     let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
@@ -643,6 +659,7 @@ async fn wait_for_terminal_request(
 struct Stack {
     rpc_base: String,
     _home_guard: EnvVarGuard,
+    _action_dir_guard: EnvVarGuard,
     _workspace_guard: EnvVarGuard,
     _backend_guard: EnvVarGuard,
     _vite_guard: EnvVarGuard,
@@ -688,8 +705,11 @@ async fn boot_stack_with_config(extra_config: &str) -> Stack {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().to_path_buf();
     let openhuman_home = home.join(".openhuman");
+    let action_dir = home.join("OpenHuman/projects");
+    std::fs::create_dir_all(&action_dir).expect("create action directory");
 
     let home_guard = EnvVarGuard::set_to_path("HOME", &home);
+    let action_dir_guard = EnvVarGuard::set_to_path("OPENHUMAN_ACTION_DIR", &action_dir);
     let workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
     let backend_guard = EnvVarGuard::unset("BACKEND_URL");
     let vite_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
@@ -726,6 +746,7 @@ async fn boot_stack_with_config(extra_config: &str) -> Stack {
     Stack {
         rpc_base,
         _home_guard: home_guard,
+        _action_dir_guard: action_dir_guard,
         _workspace_guard: workspace_guard,
         _backend_guard: backend_guard,
         _vite_guard: vite_guard,
@@ -766,6 +787,32 @@ async fn send_web_chat(
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("accepted web chat has no request_id: {result}"))
         .to_owned()
+}
+
+async fn bind_thread_action_dir(stack: &Stack, thread_id: &str, action_dir: &Path) {
+    let created = post_json_rpc(
+        &stack.rpc_base,
+        7_900,
+        "openhuman.threads_upsert",
+        json!({
+            "id": thread_id,
+            "title": thread_id,
+            "created_at": "2026-01-01T00:00:00Z"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&created, "upsert attachment test thread");
+    let bound = post_json_rpc(
+        &stack.rpc_base,
+        7_901,
+        "openhuman.threads_update_working_dir",
+        json!({
+            "thread_id": thread_id,
+            "action_dir": action_dir.to_string_lossy()
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&bound, "bind attachment test thread action directory");
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -958,6 +1005,12 @@ async fn subagent_delegation_happy_path_inner() {
     let fixture_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/images/handoff-hero.png");
     let stack = boot_stack().await;
+    bind_thread_action_dir(
+        &stack,
+        "thread-sub",
+        &stack._tmp.path().join("OpenHuman/projects"),
+    )
+    .await;
     let image_path = Path::new(&std::env::var("HOME").expect("test HOME"))
         .join("OpenHuman/projects/delegation-vision.png");
     std::fs::create_dir_all(image_path.parent().expect("action directory"))
@@ -1402,6 +1455,12 @@ async fn approval_gate_approve_flow_inner() {
         text_completion("Done. File written: APPROVED_WRITE_CANARY"),
     ]);
     let stack = boot_stack_with_config(SUPERVISED_AUTONOMY_CONFIG).await;
+    bind_thread_action_dir(
+        &stack,
+        "thread-approve",
+        &stack._tmp.path().join("OpenHuman/projects"),
+    )
+    .await;
 
     // Pre-create the file so file_write sees it as an existing file and
     // external_effect_with_args returns true → approval gate intercepts.
@@ -2172,6 +2231,12 @@ async fn multi_hop_delegation_chain_inner() {
     let fixture_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/images/handoff-hero.png");
     let stack = boot_stack().await;
+    bind_thread_action_dir(
+        &stack,
+        "thread-multihop",
+        &stack._tmp.path().join("OpenHuman/projects"),
+    )
+    .await;
     let image_path = Path::new(&std::env::var("HOME").expect("test HOME"))
         .join("OpenHuman/projects/delegation-vision.png");
     std::fs::create_dir_all(image_path.parent().expect("action directory"))
@@ -2304,8 +2369,8 @@ async fn multi_hop_delegation_chain_inner() {
 
 mod streaming_support {
     use async_trait::async_trait;
-    use openhuman_core::agent::harness::definition::{
-        AgentDefinition, AgentDefinitionRegistry, ToolScope as DefinitionToolScope,
+    use openhuman_core::agent::harness::host_definition::{
+        AgentDefinition, AgentDefinitionRegistry,
     };
     use openhuman_core::agent::OpenHumanSessionHost;
     use openhuman_core::config::{AgentConfig, ContextConfig};
@@ -2315,6 +2380,7 @@ mod streaming_support {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
+    use tinyagents_definition::ToolScope as DefinitionToolScope;
     use tinyinference_llm::message::{AssistantMessage, ContentBlock};
     use tinyinference_llm::model::{
         ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
@@ -3090,9 +3156,11 @@ async fn model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline_inner()
     // `Timeout` onto the same generic `turn_timeout` copy — so an inherited
     // value below the 8s bound asserted here would fire first, produce an
     // identical terminal, and let the whole test pass with the per-call ceiling
-    // unwired. Cleared, not set, so it falls back to its 900s default and can
-    // play no part in the outcome.
+    // unwired. Cleared, not set, so it falls back to its 3600s default and can
+    // play no part in the outcome. The web idle guard reads its own variable;
+    // it is cleared for the same reason.
     let _web_backstop = EnvVarGuard::unset("OPENHUMAN_WEB_TURN_TIMEOUT_SECS");
+    let _web_idle = EnvVarGuard::unset("OPENHUMAN_WEB_TURN_IDLE_SECS");
 
     // Every upstream reply is held for 25s — comfortably past the 2s per-call
     // ceiling and comfortably short of the 600s turn deadline. Armed globally
@@ -4129,19 +4197,17 @@ async fn orchestrator_calls_a_connected_mcp_tool_directly_inner() {
     reset_script(Vec::new());
     let stack = boot_stack().await;
     // Connecting also writes the tool cache the orchestrator's surface reads.
-    let server_id = declare_and_connect_registry_echo_server(&stack.rpc_base, 940).await;
-    let action = openhuman_core::mcp::registry::action_tool::searchable_name(
-        &server_id,
-        REGISTRY_MCP_SERVER,
-        "echo",
-    );
+    declare_and_connect_registry_echo_server(&stack.rpc_base, 940).await;
 
     reset_script(vec![
         tool_call_completion(
             "tool_search",
             json!({ "query": "echo message on my connected MCP server" }),
         ),
-        tool_call_completion(&action, json!({ "message": MCP_ECHO_CANARY })),
+        tool_call_completion(
+            SCRIPT_DISCOVERED_MCP_TOOL,
+            json!({ "message": MCP_ECHO_CANARY }),
+        ),
         text_completion("The MCP tool answered."),
     ]);
     let mut events = spawn_sse_collector(format!(
@@ -4191,6 +4257,8 @@ async fn orchestrator_calls_a_connected_mcp_tool_directly_inner() {
         Some("chat_done"),
         "the direct MCP turn must finish: {done}"
     );
+    let action = scripted_discovered_mcp_tool_name_from_requests(&requests)
+        .expect("the searched MCP action was advertised to the model");
     let search = tool_result_text(&requests, "tool_search").expect("search result");
     assert!(
         search.contains(&action),
@@ -4220,6 +4288,39 @@ async fn orchestrator_calls_a_connected_mcp_tool_directly_inner() {
 
     registry_join.abort();
     stack.shutdown();
+}
+
+#[cfg(feature = "mcp")]
+fn scripted_discovered_mcp_tool_name(body: &Value) -> Option<String> {
+    let native = body
+        .pointer("/tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|tool| {
+            let function = tool.get("function")?;
+            let description = function.get("description")?.as_str()?;
+            let properties = function.pointer("/parameters/properties")?.as_object()?;
+            if description.starts_with("MCP server ") && properties.contains_key("message") {
+                function.get("name")?.as_str().map(str::to_owned)
+            } else {
+                None
+            }
+        });
+    native.or_else(|| {
+        advertised_tool_names(&json!({ "body": body }))
+            .into_iter()
+            .find(|name| name.starts_with("mcp_") && !name.starts_with("mcp_registry_"))
+    })
+}
+
+#[cfg(feature = "mcp")]
+fn scripted_discovered_mcp_tool_name_from_requests(requests: &[Value]) -> Option<String> {
+    requests
+        .iter()
+        .rev()
+        .find_map(|request| request.get("body"))
+        .and_then(scripted_discovered_mcp_tool_name)
 }
 
 // ── #5821: the tool-policy boundary is APPENDED, not prepended ──────────────
@@ -4559,10 +4660,12 @@ async fn todo_list_ticks_off_five_items_across_turns_inner() {
     // Turn 1 writes the plan (item 1 in progress). Turns 2-6 each complete
     // one more item; the final write has every item completed. Every todo write
     // also triggers verify-before-finish, so reserve a separate scripted answer
-    // for its extra model request on each turn.
+    // for its extra model request on each turn. A turn that ends with steps
+    // still open is held once more first, by the plan-order check.
     let mut script = vec![
         todo_write(&FIVE_STEPS, 0),
         text_completion("Plan written; starting on the first step."),
+        text_completion("The remaining steps continue in the next turns."),
         // A todo write triggers the orchestrator's verify-before-finish
         // middleware, which makes one more model request before the turn ends.
         // Keep that completion separate so each following turn advances one
@@ -4572,6 +4675,11 @@ async fn todo_list_ticks_off_five_items_across_turns_inner() {
     for completed in 1..=FIVE_STEPS.len() {
         script.push(todo_write(&FIVE_STEPS, completed));
         script.push(text_completion(&format!("Step {completed} done.")));
+        if completed < FIVE_STEPS.len() {
+            script.push(text_completion(
+                "The remaining steps continue in the next turns.",
+            ));
+        }
         script.push(text_completion(
             "The completed work matches the requested step.",
         ));
@@ -4737,18 +4845,18 @@ async fn todo_list_ticks_off_five_items_across_turns_inner() {
     stack.shutdown();
 }
 
-/// Two `in_progress` items break the single-focus invariant: the store
-/// refuses the write, the agent gets a tool error it can correct, and the
-/// list it wrote before is untouched.
+/// Two `in_progress` items break the single-focus invariant: the store keeps
+/// the first, sets the other back to pending and says so in the result, so
+/// the agent sees the list it now has instead of an error.
 #[test]
-fn todo_list_rejects_two_items_in_progress() {
+fn todo_list_keeps_one_item_in_progress() {
     run_on_agent_stack(
-        "todo_list_rejects_two_items_in_progress",
-        todo_list_rejects_two_items_in_progress_inner,
+        "todo_list_keeps_one_item_in_progress",
+        todo_list_keeps_one_item_in_progress_inner,
     );
 }
 
-async fn todo_list_rejects_two_items_in_progress_inner() {
+async fn todo_list_keeps_one_item_in_progress_inner() {
     let _lock = env_lock();
     reset_script(vec![
         todo_write(&["Only step", "Next step"], 0),
@@ -4759,7 +4867,7 @@ async fn todo_list_rejects_two_items_in_progress_inner() {
                 { "content": "Next step", "status": "in_progress" }
             ] }),
         ),
-        // A read (no `todos`) shows the earlier write survived the rejection.
+        // A read (no `todos`) shows the list the fix left.
         tool_call_completion("todo", json!({})),
         text_completion("Kept one thing in progress."),
     ]);
@@ -4798,28 +4906,28 @@ async fn todo_list_rejects_two_items_in_progress_inner() {
     assert_eq!(
         todo_frames.len(),
         3,
-        "write, rejected write, read: {results:?}"
+        "write, fixed write, read: {results:?}"
     );
     assert_eq!(todo_frames[0]["success"], json!(true), "{}", todo_frames[0]);
     assert_eq!(
         todo_frames[1]["success"],
-        json!(false),
-        "two in_progress must be rejected: {}",
+        json!(true),
+        "two in_progress are fixed, not rejected: {}",
         todo_frames[1]
     );
     assert!(
         todo_frames[1]["output"]
             .as_str()
             .unwrap_or("")
-            .contains("in_progress"),
-        "the error names the invariant: {}",
+            .contains("Only one step may be in progress"),
+        "the result says what was fixed: {}",
         todo_frames[1]
     );
     let read: Value = serde_json::from_str(todo_frames[2]["output"].as_str().unwrap()).unwrap();
     assert_eq!(
         todo_statuses(&read),
         vec!["in_progress", "pending"],
-        "the rejected write left the list untouched: {read}"
+        "the second in_progress went back to pending: {read}"
     );
 
     stack.shutdown();
@@ -5168,4 +5276,247 @@ async fn a_wrong_tool_guess_is_retried_not_treated_as_an_auth_blocker_inner() {
     );
 
     stack.shutdown();
+}
+
+// ─── Web-turn idle guard ─────────────────────────────────────────────────────
+//
+// Both tests shrink the idle window (`OPENHUMAN_WEB_TURN_IDLE_SECS`) to 30s so
+// the guard's logic runs in seconds instead of the 900s default. Not smaller:
+// checking out a cold session on this stack emits no progress and takes
+// 6-15 seconds here, which a smaller window rightly counts as a stall.
+//
+// Local only: the shell steps need TinyBox built in, so the section is
+// compiled only with `--features linked-modules` (which CI never enables).
+// Run with `OPENHUMAN_MODULE_SOURCE=linked RUST_MIN_STACK=67108864 cargo test
+// -p openhuman-cli --features linked-modules --test agent_harness_e2e --
+// long_shell_call_outlives stalled_turn_is_stopped --test-threads=1`.
+//
+// Shell runs without the native jail (`OPENHUMAN_SANDBOX=off`), which reports
+// itself unsuitable on a macOS test host; the unjailed path uses the same
+// TinyBox output loop and keeps TinyBox's command analysis.
+#[cfg(feature = "linked-modules")]
+mod idle_guard_local {
+    use super::*;
+
+    /// Wait for `event_name` for this request, failing fast if the turn ends
+    /// first: the idle guard must not have stopped it.
+    async fn wait_for_event_before_terminal(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+        event_name: &str,
+        request_id: &str,
+        timeout: Duration,
+    ) -> Value {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let event = match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(event)) => event,
+                Ok(None) => panic!("SSE channel closed waiting for {event_name}"),
+                Err(_) => panic!("timed out waiting for {event_name}"),
+            };
+            if event.get("request_id").and_then(Value::as_str) != Some(request_id) {
+                continue;
+            }
+            match event.get("event").and_then(Value::as_str) {
+                Some(name) if name == event_name => return event,
+                Some("chat_done") | Some("chat_error") => {
+                    panic!("turn ended before {event_name}: {event}")
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A shell call that runs well past the idle window keeps the turn alive: an
+    /// open tool call is never idle, and the call reports progress while it runs.
+    /// Killing its process from outside the stack ends the call with a failed
+    /// result, and the turn carries on to the model's next reply. One killed
+    /// command does not wedge the turn, so the idle guard never fires.
+    #[test]
+    fn long_shell_call_outlives_the_idle_window_and_survives_an_external_kill() {
+        run_on_agent_stack(
+            "long_shell_call_outlives_the_idle_window_and_survives_an_external_kill",
+            long_shell_call_outlives_the_idle_window_and_survives_an_external_kill_inner,
+        );
+    }
+
+    async fn long_shell_call_outlives_the_idle_window_and_survives_an_external_kill_inner() {
+        let _lock = env_lock();
+        super::linked_modules::install_if_requested();
+        let _idle = EnvVarGuard::set("OPENHUMAN_WEB_TURN_IDLE_SECS", "30");
+        let _unjailed = EnvVarGuard::set("OPENHUMAN_SANDBOX", "off");
+        // A sleep length no other process uses, so the kill below hits only this
+        // command.
+        let command = format!("sleep {}.{}", 7_000 + std::process::id() % 1_000, 37);
+        reset_script(vec![
+            tool_call_completion("shell", json!({ "command": command })),
+            text_completion("The long command was stopped. KILLED_SHELL_CANARY"),
+        ]);
+        let stack = boot_stack().await;
+        let mut events = spawn_sse_collector(format!(
+            "{}/events?client_id=harness-idle-shell",
+            stack.rpc_base
+        ))
+        .await;
+        let request_id = send_web_chat(
+            &stack.rpc_base,
+            610,
+            "harness-idle-shell",
+            "thread-idle-shell",
+            "run the long command",
+        )
+        .await;
+
+        let call = wait_for_event_before_terminal(
+            &mut events,
+            "tool_call",
+            &request_id,
+            Duration::from_secs(60),
+        )
+        .await;
+        assert_eq!(call.get("tool_name").and_then(Value::as_str), Some("shell"));
+
+        // Inside the 30s idle window the call reports progress (every 15s); it
+        // stays open past the window below, which the guard counts as active.
+        let progress = wait_for_event_before_terminal(
+            &mut events,
+            "tool_progress",
+            &request_id,
+            Duration::from_secs(30),
+        )
+        .await;
+        let message = progress
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            message.starts_with("running "),
+            "progress message: {progress}"
+        );
+        assert_eq!(
+            progress.get("tool_call_id"),
+            call.get("tool_call_id"),
+            "progress belongs to the running call"
+        );
+
+        // Kill the command from outside the stack.
+        let killed = std::process::Command::new("pkill")
+            .args(["-f", &command])
+            .status()
+            .expect("run pkill");
+        assert!(killed.success(), "pkill found no `{command}` process");
+
+        let result = wait_for_event_before_terminal(
+            &mut events,
+            "tool_result",
+            &request_id,
+            Duration::from_secs(30),
+        )
+        .await;
+        assert_eq!(
+            result.get("success"),
+            Some(&json!(false)),
+            "a killed command is a failed call: {result}"
+        );
+        let done =
+            wait_for_terminal_request(&mut events, Duration::from_secs(60), Some(&request_id))
+                .await;
+        assert_eq!(
+            done.get("event").and_then(Value::as_str),
+            Some("chat_done"),
+            "{done}"
+        );
+        let reply = done
+            .get("full_response")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(reply.contains("KILLED_SHELL_CANARY"), "{reply}");
+
+        stack.shutdown();
+    }
+
+    /// Clears the park-after-run test hook even when an assertion unwinds.
+    struct ParkAfterRunGuard;
+
+    impl Drop for ParkAfterRunGuard {
+        fn drop(&mut self) {
+            openhuman_core::web_chat::set_test_park_after_run(false);
+        }
+    }
+
+    /// A turn that goes quiet with nothing in flight is stopped by the idle guard
+    /// and closed with a reply saying what it did and where it got stuck. The turn
+    /// runs a real shell step and finishes its run, then is parked before its
+    /// reply is saved (`set_test_park_after_run`), like a stuck save. The closing
+    /// reply comes from one more model call, which sees the stop reason, the stuck
+    /// point and the shell step.
+    #[test]
+    fn stalled_turn_is_stopped_by_the_idle_guard_and_closed_with_a_summary() {
+        run_on_agent_stack(
+            "stalled_turn_is_stopped_by_the_idle_guard_and_closed_with_a_summary",
+            stalled_turn_is_stopped_by_the_idle_guard_and_closed_with_a_summary_inner,
+        );
+    }
+
+    async fn stalled_turn_is_stopped_by_the_idle_guard_and_closed_with_a_summary_inner() {
+        let _lock = env_lock();
+        super::linked_modules::install_if_requested();
+        let _idle = EnvVarGuard::set("OPENHUMAN_WEB_TURN_IDLE_SECS", "30");
+        let _unjailed = EnvVarGuard::set("OPENHUMAN_SANDBOX", "off");
+        openhuman_core::web_chat::set_test_park_after_run(true);
+        let _park = ParkAfterRunGuard;
+        reset_script(vec![
+            // request[0]: the turn runs one shell step.
+            tool_call_completion("shell", json!({ "command": "echo STEP_ONE_CANARY" })),
+            // request[1]: its final answer, which is never saved (the turn parks).
+            text_completion("All done. UNSAVED_REPLY_CANARY"),
+            // request[2]: the idle guard's closing call.
+            text_completion("I ran one command, then the turn stalled while saving. CLOSE_CANARY"),
+        ]);
+        let stack = boot_stack().await;
+        let mut events = spawn_sse_collector(format!(
+            "{}/events?client_id=harness-idle-stall",
+            stack.rpc_base
+        ))
+        .await;
+        let request_id = send_web_chat(
+            &stack.rpc_base,
+            611,
+            "harness-idle-stall",
+            "thread-idle-stall",
+            "run one step",
+        )
+        .await;
+
+        let done =
+            wait_for_terminal_request(&mut events, Duration::from_secs(60), Some(&request_id))
+                .await;
+        assert_eq!(
+            done.get("event").and_then(Value::as_str),
+            Some("chat_done"),
+            "a stopped turn is closed with a reply, not an error: {done}"
+        );
+        let reply = done
+            .get("full_response")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(reply.contains("CLOSE_CANARY"), "{reply}");
+        assert!(!reply.contains("UNSAVED_REPLY_CANARY"), "{reply}");
+
+        let captured = with_captured(|c| c.clone());
+        assert_eq!(captured.len(), 3, "turn calls plus one closing call");
+        let close_prompt = captured[2].to_string();
+        for expected in [
+            "nothing happened for 30 seconds",
+            "after the agent finished, while its reply was being saved",
+            "done: Shell (echo STEP_ONE_CANARY)",
+        ] {
+            assert!(
+                close_prompt.contains(expected),
+                "closing call missing {expected:?}: {close_prompt}"
+            );
+        }
+
+        stack.shutdown();
+    }
 }

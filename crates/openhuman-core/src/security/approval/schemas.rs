@@ -3,6 +3,7 @@
 //! Wires `approval_list_pending` and `approval_decide` into the
 //! global registry consumed by `crates/openhuman-core/src/core/all.rs`.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
@@ -179,17 +180,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_list_pending(params: Map<String, Value>) -> ControllerFuture {
+fn handle_list_pending(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let agent_id = read_optional_string(&params, "agent_id")?;
-        let outcome = approval_rpc::approval_list_pending(agent_id.as_deref())
+        let outcome = approval_rpc::approval_list_pending(&ctx, agent_id.as_deref())
             .await
             .map_err(|e| e.to_string())?;
         to_json(outcome)
     })
 }
 
-fn handle_list_recent_decisions(params: Map<String, Value>) -> ControllerFuture {
+fn handle_list_recent_decisions(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let limit = read_optional_u64(&params, "limit")?.map(|value| value as usize);
         let outcome = approval_rpc::approval_list_recent_decisions(limit)
@@ -199,7 +200,7 @@ fn handle_list_recent_decisions(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
-fn handle_get_gate_state(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_get_gate_state(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let outcome = approval_rpc::approval_get_gate_state()
             .await
@@ -208,7 +209,7 @@ fn handle_get_gate_state(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_decide(params: Map<String, Value>) -> ControllerFuture {
+fn handle_decide(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let request_id = read_required_string(&params, "request_id")?;
         let decision_str = read_required_string(&params, "decision")?;
@@ -220,14 +221,14 @@ fn handle_decide(params: Map<String, Value>) -> ControllerFuture {
         })?;
         let agent_id = read_optional_string(&params, "agent_id")?;
         let outcome =
-            approval_rpc::approval_decide(request_id.trim(), decision, agent_id.as_deref())
+            approval_rpc::approval_decide(&ctx, request_id.trim(), decision, agent_id.as_deref())
                 .await
                 .map_err(|e| e.to_string())?;
         to_json(outcome)
     })
 }
 
-fn handle_preauthorize_flow(params: Map<String, Value>) -> ControllerFuture {
+fn handle_preauthorize_flow(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let flow_id = read_required_string(&params, "flow_id")?;
         let tool_names = match params.get("tool_names") {

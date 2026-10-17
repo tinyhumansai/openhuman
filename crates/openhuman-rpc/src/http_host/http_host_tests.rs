@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use axum::http::StatusCode;
 
+use crate::core_host::core::runtime::DispatchCtx;
 use crate::http_host::auth::{
     resolve_default_auth_username_from_user_value, sanitize_basic_auth_username,
 };
@@ -55,14 +56,17 @@ async fn start_serves_files_with_basic_auth() {
     let mut file = std::fs::File::create(&file_path).unwrap();
     writeln!(file, "hello from hosted dir").unwrap();
 
-    let server = start_hosted_dir_server(StartHostedDirParams {
-        directory: tmp.path().display().to_string(),
-        port: 0,
-        bind_host: "127.0.0.1".to_string(),
-        server_name: Some("test".to_string()),
-        disable_auth: false,
-        username: Some("tester".to_string()),
-    })
+    let server = start_hosted_dir_server(
+        &DispatchCtx::host_default(),
+        StartHostedDirParams {
+            directory: tmp.path().display().to_string(),
+            port: 0,
+            bind_host: "127.0.0.1".to_string(),
+            server_name: Some("test".to_string()),
+            disable_auth: false,
+            username: Some("tester".to_string()),
+        },
+    )
     .await
     .unwrap();
 

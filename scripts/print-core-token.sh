@@ -77,7 +77,7 @@ Looked for:
 
 If you are running the dockerized core, set OPENHUMAN_CORE_TOKEN in your
 .env (or the App Platform secrets UI) and bounce the container. See
-gitbooks/features/cloud-deploy.md for the full single-source-of-truth setup.
+docs/gitbooks/en/features/cloud-deploy.md for the full single-source-of-truth setup.
 EOF
   exit 1
 fi

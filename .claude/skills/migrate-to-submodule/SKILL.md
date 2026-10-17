@@ -104,10 +104,30 @@ If the change spans nested submodules (`tinyagents/vendor/tinytools`,
 `tinymemory/vendor/tinycortex`, ...), release/merge the innermost first and bump
 gitlinks outward.
 
+### Iterate locally before releasing
+
+Between Steps 2 and 3, run the host against your unreleased module with
+`OPENHUMAN_MODULE_SOURCE=linked` (build `openhuman-cli` with
+`--features linked-modules`) or `OPENHUMAN_MODULE_SOURCE=source` (after
+`node scripts/modules/build.mjs <name> --print-env`). These modes are for local
+development and local tests only; CI and shipped builds use the pinned release.
+Before pushing, run `node scripts/modules/pin-status.mjs` to see whether the
+gitlink is ahead of the registry pin. Then release and re-pin with
+`scripts/modules/release-and-repin.mjs` (Steps 3-4). See the modules README
+(`crates/openhuman-core/src/modules/README.md`).
+
 ## Step 3: Release the submodule
 
 Only for **loadable modules** (a `cdylib` with a registry record). Pure Cargo
 libraries just need the merged commit.
+
+**Helper:** `node scripts/modules/release-and-repin.mjs <name> [--bump patch|minor|major]`
+automates this step and Step 4 (dispatch, watch, `checksum.toml`, record rewrite,
+gitlink checkout, pin gates). It asks before dispatching, because publishing is
+hard to undo. `--version X.Y.Z` re-pins to a release that already exists, and
+`--dry-run` prints the plan. `node scripts/modules/pin-status.mjs` shows whether a
+gitlink is in sync with, ahead of, or behind its registry pin. The manual steps
+below remain the reference for what the helper does.
 
 1. Trigger the submodule's `Release` workflow (`workflow_dispatch` on `main`,
    input `bump`: patch/minor/major/current), e.g.
@@ -124,6 +144,9 @@ libraries just need the merged commit.
 
 Modules are pinned **twice**, and both must describe the same release
 (`scripts/ci/check-module-pins.mjs`):
+
+`scripts/modules/release-and-repin.mjs` does items 1-3 and runs the checks in 5;
+the details below are what it writes.
 
 1. **Submodule gitlink**: `git -C vendor/<name> fetch --tags && git -C vendor/<name> checkout vX.Y.Z`,
    then stage the gitlink in the superproject.

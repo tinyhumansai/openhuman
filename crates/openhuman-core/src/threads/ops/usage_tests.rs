@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::cost::CostSource;
+use tinyagents_harness::cost::CostSource;
 use tinyagents_session::transcript::spend::CostSplit;
 use tinyagents_session::transcript::UsageCostSource;
 

@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 pub const BEARER: &str = "saas-e2e-gateway-bearer-0123456789abcdef";
+pub const TEST_MASTER_KEY: &str =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Environment a developer machine may carry that would point the child at a
 /// single user, or that the boot guard refuses outright.
@@ -20,6 +22,8 @@ pub const SCRUBBED_ENV: &[&str] = &[
     "OPENHUMAN_DEV_CONNECT",
     "OPENHUMAN_BACKEND_SESSION_TOKEN",
     "OPENHUMAN_BACKEND_API_KEY",
+    "OPENHUMAN_KEYRING_MASTER_KEY",
+    "OPENHUMAN_KEYRING_MASTER_KEY_FILE",
     "OPENHUMAN_CORE_TOKEN",
     "OPENHUMAN_APPROVAL_GATE",
     "OPENHUMAN_SANDBOX",
@@ -68,13 +72,17 @@ pub fn core_command(d: &Deployment, extra: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_openhuman-core"));
     cmd.args(["run", "--mode", "saas", "--saas-config"])
         .arg(&d.config)
-        .args(extra)
-        // Keep the child away from the developer's real `~/.openhuman`.
-        .env("HOME", d.tmp.path())
-        .env("USERPROFILE", d.tmp.path());
+        .args(extra);
     for var in SCRUBBED_ENV {
         cmd.env_remove(var);
     }
+    // Keep the child away from the developer's real `~/.openhuman`, and give
+    // each temporary deployment a deterministic host key. SaaS profile tests
+    // exercise secret storage without an RPC host installing an OS keyring.
+    cmd.env("HOME", d.tmp.path())
+        .env("USERPROFILE", d.tmp.path())
+        .env("OPENHUMAN_KEYRING_BACKEND", "file")
+        .env("OPENHUMAN_KEYRING_MASTER_KEY", TEST_MASTER_KEY);
     cmd
 }
 

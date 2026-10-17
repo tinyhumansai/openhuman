@@ -34,9 +34,11 @@ With no usable engine (signed out and no CortexDB key), memory is **off**:
 ## Who is acting (`memory::scope`)
 
 A `MemoryIdentity` (an agent definition and, for a team member, its team) is
-scoped around every turn: by the session host and channel dispatch for
-top-level agents, the sub-agent runner for children, the team runtime for
-members. Memory resolves it against the config of whoever reads or writes,
+carried explicitly on every turn's run context (`OpenHumanRunContext::memory_identity`):
+set by the session host and channel dispatch for top-level agents, derived with
+`child` by the sub-agent runner for children, and handed down by the team
+runtime for members. RPC handlers and the embed facade act as the root
+identity. Memory resolves it against the config of whoever reads or writes,
 first match wins:
 
 | | memory agent id | layout root |
@@ -220,8 +222,20 @@ CortexDB refuses for it is written again without it (tinymemory's fallback). Off
 ## Agent tool: `memory`
 
 One tool, `action` = `recall` | `fetch` | `learn` | `forget`:
-- `recall { question, filter? }` → `{answer, citations[]}`.
-- `fetch { query, mode?, filter?, limit? }` → `{hits[]}`; `mode` limited to the engine's `fetch_modes`.
+- `recall { question, filter?, refers_to? }` → `{evidence, items}`: the engine's
+  evidence (`RecallMode::Evidence`, no engine-written answer) as dated lines,
+  capped at about 2,500 tokens and cut only at line ends, and how many items it
+  rests on (their ids are recorded as the turn's citations); `{evidence: "",
+  note}` when nothing was recalled.
+- `fetch { query, mode?, filter?, refers_to?, cursor? }` → `{items, matches,
+  next_cursor?}`: five matches at a time, best first, as dated lines with their
+  ids; `next_cursor` continues the same search. `mode` is limited to the
+  engine's `fetch_modes`. The page size is the host's: the tool takes no `limit`.
+- `recall` and `fetch` leave out the calling thread's turns still verbatim in
+  the prompt (`ThreadWindow`), so the message being answered never comes back
+  as a memory while turns compacted out of a long thread stay readable. A run
+  that does not know its window (a sub-agent, a direct dispatch) leaves the
+  whole thread out. RPC `memory_recall` / `memory_fetch` keep their shapes.
 - `learn { text, kind?, confidence? }` → `{id, status: "queued; not yet saved to memory"}`. The host fills `meta`: the
   layout's learnings node, `workspace`, `thread_id`, `agent_id` (the memory
   agent id), `tool_call`, `source.kind = "agent"`.

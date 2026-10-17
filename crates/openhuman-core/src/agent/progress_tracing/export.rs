@@ -133,6 +133,7 @@ pub(crate) async fn export_run_trace_from_journal(
 /// The backend stamps the authenticated user onto the trace, while the child
 /// run's original parent/root ids remain in trace metadata for navigation.
 pub(crate) async fn export_subagent_journal_trace(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     journal_run_id: &str,
     thread_id: Option<&str>,
@@ -151,16 +152,17 @@ pub(crate) async fn export_subagent_journal_trace(
         );
         return;
     }
-    let observations = match crate::agent::tinyagents::journal::read_run_events(journal_run_id, 0)
-        .await
-    {
-        Ok(observations) if !observations.is_empty() => observations,
-        Ok(_) => return,
-        Err(err) => {
-            log::warn!("[agent-tracing] child journal read failed run_id={journal_run_id}: {err}");
-            return;
-        }
-    };
+    let observations =
+        match crate::agent::tinyagents::journal::read_run_events(ctx, journal_run_id, 0).await {
+            Ok(observations) if !observations.is_empty() => observations,
+            Ok(_) => return,
+            Err(err) => {
+                log::warn!(
+                    "[agent-tracing] child journal read failed run_id={journal_run_id}: {err}"
+                );
+                return;
+            }
+        };
     let first = &observations[0];
     let user_id = crate::security::credentials::identity::peek_credential_user_identity()
         .and_then(|identity| identity.id.or(identity.email));

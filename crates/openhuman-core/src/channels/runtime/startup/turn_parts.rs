@@ -9,9 +9,10 @@
 use super::chat_workload::{resolve_chat_workload, ChatWorkloadResolution};
 use super::prompt::format_access_context;
 use crate::agent::host_runtime;
-use crate::channels::context::{effective_channel_message_timeout_secs, ChannelRuntimeContext};
+use crate::channels::context::ChannelRuntimeContext;
 use crate::channels::system_prompt::{ChannelPromptInputs, ChannelSystemPrompt};
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::inference::provider;
 use crate::security::SecurityPolicy;
 use crate::tools;
@@ -92,6 +93,7 @@ fn default_tool_descs(config: &Config) -> Vec<(&'static str, &'static str)> {
 /// `security`. Side-effect free apart from the workspace's audit logger: it
 /// installs no process-global policy and registers no subscriber.
 pub(crate) fn build_channel_turn_parts(
+    dispatch: &DispatchCtx,
     config: &Config,
     security: &Arc<SecurityPolicy>,
     descs: PromptToolDescs,
@@ -104,7 +106,8 @@ pub(crate) fn build_channel_turn_parts(
     };
     let (model, provider_name) = match resolve_chat_workload(config) {
         ChatWorkloadResolution::Cloud => {
-            let (_chat, model) = provider::create_chat_model_with_model_id(
+            let (_chat, model) = provider::create_chat_model_with_model_id_in(
+                dispatch,
                 "chat",
                 config,
                 config.default_temperature,
@@ -120,7 +123,8 @@ pub(crate) fn build_channel_turn_parts(
                 slug = %slug,
                 "[channels][startup] chat workload routed to per-workload provider — building dedicated channel provider"
             );
-            let (_chat, model_id) = provider::create_chat_model_with_model_id(
+            let (_chat, model_id) = provider::create_chat_model_with_model_id_in(
+                dispatch,
                 "chat",
                 config,
                 config.default_temperature,
@@ -141,7 +145,7 @@ pub(crate) fn build_channel_turn_parts(
         config.workspace_dir.clone(),
     )?;
     let workspace = config.workspace_dir.clone();
-    let capabilities = crate::profiles::capabilities::ProfileCapabilities::current();
+    let capabilities = crate::profiles::capabilities::ProfileCapabilities::in_ctx(dispatch);
     let tools_registry = Arc::new(if capabilities.is_some() {
         // The profile host route builds the selected belt once with the exact
         // durable thread. No second, unnamed factory invocation is needed here.
@@ -229,11 +233,14 @@ pub(crate) fn build_channel_turn_parts(
 /// The runtime context for `parts`, delivering replies to `channels_by_name`
 /// and starting with no per-chat history.
 pub(crate) fn runtime_context(
+    dispatch: &DispatchCtx,
     config: &Config,
     parts: ChannelTurnParts,
     channels_by_name: Arc<HashMap<String, Arc<dyn crate::channels::Channel>>>,
+    message_timeout_secs: u64,
 ) -> ChannelRuntimeContext {
     ChannelRuntimeContext {
+        relay_thread: None,
         channels_by_name,
         turn_model_source: None,
         default_provider: Arc::new(parts.provider_name),
@@ -250,12 +257,11 @@ pub(crate) fn runtime_context(
         reliability: Arc::new(config.reliability.clone()),
         provider_runtime_options: parts.provider_runtime_options,
         workspace_dir: Arc::new(config.workspace_dir.clone()),
-        message_timeout_secs: effective_channel_message_timeout_secs(
-            config.channels_config.message_timeout_secs,
-        ),
+        message_timeout_secs,
         multimodal: config.multimodal.clone(),
         multimodal_files: config.multimodal_files.clone(),
         // Crate-native turn models for the channel turn (Phase 3 P3-B).
         config: Some(Arc::new(config.clone())),
+        core: dispatch.downgrade(),
     }
 }

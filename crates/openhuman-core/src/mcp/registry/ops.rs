@@ -33,7 +33,15 @@ use crate::core::events::DomainEvent;
 use crate::core::Outcome;
 use crate::mcp::host;
 
-use super::helpers::{encode, inject_required_env_keys, require};
+use tinymcp_bus::{
+    explain_not_connected, not_connected_message, require_identifier as require,
+    NotConnectedExplanation, NotConnectedRemedy,
+};
+
+/// Renders a value into the `Outcome` payload the frontend expects.
+fn encode<T: serde::Serialize>(value: &T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|error| format!("serialization error: {error}"))
+}
 
 async fn module_call<R: serde::de::DeserializeOwned>(
     config: &Config,
@@ -118,8 +126,7 @@ pub async fn mcp_clients_registry_get(
 
     // The registry tab shows what a server would ask for, and fetching the two
     // separately would be two catalog round trips for one screen.
-    let mut server = encode(&detail.server)?;
-    inject_required_env_keys(&mut server, &detail.required_env_keys);
+    let server = detail.server_json()?;
 
     Ok(Outcome::new(
         json!({ "server": server }),
@@ -473,77 +480,19 @@ pub enum Caller {
 }
 
 impl Caller {
-    fn connect(self) -> Option<&'static str> {
+    /// The tools this caller can reach, which decides what a refusal names.
+    fn remedy(self) -> NotConnectedRemedy<'static> {
         match self {
-            Self::Rpc => Some("mcp_clients_connect"),
-            Self::Agent => None,
+            Self::Rpc => NotConnectedRemedy {
+                connect: Some("mcp_clients_connect"),
+                status: "mcp_clients_status",
+            },
+            Self::Agent => NotConnectedRemedy {
+                connect: None,
+                status: "mcp_registry_status",
+            },
         }
     }
-
-    fn status(self) -> &'static str {
-        match self {
-            Self::Rpc => "mcp_clients_status",
-            Self::Agent => "mcp_registry_status",
-        }
-    }
-}
-
-/// What a `NotConnected` answer for `requested` means, read against every install.
-#[derive(Debug)]
-pub(crate) enum NotConnected {
-    /// `requested` is a registry qualified name installed as this one server:
-    /// list that server's tools instead.
-    Resolved(String),
-    /// A refusal that names what is actually wrong.
-    Refused(String),
-}
-
-/// `tinymcp` answers `NotConnected` for any id without a live connection,
-/// including one that was never installed and a registry qualified name passed
-/// where an install's `server_id` belongs. "Not connected" is true of that
-/// string and false of the server, so read it against the installs.
-pub(crate) fn explain_not_connected(
-    requested: &str,
-    installs: &[tinymcp::ConnStatus],
-    caller: Caller,
-) -> NotConnected {
-    if let Some(install) = installs.iter().find(|s| s.server_id == requested) {
-        return NotConnected::Refused(not_connected_message(install, caller));
-    }
-    let named: Vec<&str> = installs
-        .iter()
-        .filter(|s| s.qualified_name == requested)
-        .map(|s| s.server_id.as_str())
-        .collect();
-    match named.as_slice() {
-        [server_id] => NotConnected::Resolved((*server_id).to_string()),
-        [] => NotConnected::Refused(format!(
-            "no installed MCP server has server_id={requested}; server_id is the install's \
-             identifier, not its registry name — call {} to list installed servers",
-            caller.status()
-        )),
-        several => NotConnected::Refused(format!(
-            "{requested} is a registry name installed as several servers; pass one server_id: {}",
-            several.join(", ")
-        )),
-    }
-}
-
-/// An installed server with no live connection: say where it stands and how to connect it.
-fn not_connected_message(install: &tinymcp::ConnStatus, caller: Caller) -> String {
-    let remedy = caller.connect().map_or_else(
-        || "it has to be connected before its tools can be listed".to_string(),
-        |connect| format!("connect it first via {connect}"),
-    );
-    let mut message = format!(
-        "server_id={} is {}; {remedy}",
-        install.server_id,
-        install.status.as_str(),
-    );
-    if let Some(error) = &install.last_error {
-        message.push_str(&format!(" (last error: {error})"));
-    }
-    message
 }
 
 pub async fn mcp_clients_list_tools(
@@ -569,8 +518,8 @@ pub async fn mcp_clients_list_tools(
             }) {
                 return Err(error);
             }
-            match explain_not_connected(&server_id, &installs, caller) {
-                NotConnected::Resolved(resolved) => {
+            match explain_not_connected(&server_id, &installs, caller.remedy()) {
+                NotConnectedExplanation::Resolved(resolved) => {
                     server_id = resolved;
                     module_call(
                         config,
@@ -583,11 +532,12 @@ pub async fn mcp_clients_list_tools(
                             .iter()
                             .find(|install| install.server_id == server_id)
                             .map_or(error.clone(), |install| {
-                                not_connected_message(install, caller)
+                                not_connected_message(install, caller.remedy())
                             })
                     })?
                 }
-                NotConnected::Refused(message) => return Err(message),
+                NotConnectedExplanation::Refused(message) => return Err(message),
+                _ => return Err(error),
             }
         }
     };

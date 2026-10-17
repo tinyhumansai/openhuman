@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::types::SubagentRunError;
-use crate::agent::tinyagents::{run_turn_via_tinyagents_shared, SubagentScope};
+use crate::agent::tinyagents::{SubagentScope, TurnSpec};
 use tinyagents_harness::run_queue::RunQueue;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinyjuice_bus::types::AgentTokenjuiceCompression;
@@ -26,7 +26,7 @@ pub(in super::super) struct AggregatedUsage {
     pub(in super::super) output_tokens: u64,
     pub(in super::super) cached_input_tokens: u64,
     /// Cost of the run's calls: reported charge, catalog estimate, or unknown.
-    pub(in super::super) cost: crate::agent::cost::CostTally,
+    pub(in super::super) cost: tinyagents_harness::cost::CostTally,
 }
 
 /// Drive a sub-agent turn on the tinyagents harness. Returns
@@ -58,8 +58,8 @@ pub(in super::super) async fn run_subagent_via_graph(
     model_vision: bool,
     // Transcript-persistence provenance: the resolved child transcript stem
     // (`{parent_chain}__{child_session_key}`) and the provider label (the parent
-    // turn's event channel) so the child's raw transcript lands in `session_raw`
-    // with the right stem + provider/model meta — parity with the removed
+    // turn's event channel) so the child's raw transcript lands in the turn
+    // tree's transcript store with the right stem + provider/model meta — parity with the removed
     // `SubagentObserver::persist_transcript`.
     transcript_stem: &str,
     provider_label: &str,
@@ -94,6 +94,8 @@ pub(in super::super) async fn run_subagent_via_graph(
     // the child carrier cannot disagree.
     let trace_session_group = run_context.thread_id.clone().or_else(|| thread_id.clone());
     let thread_id = inherited_thread_id(run_context.thread_id.clone(), thread_id);
+    // Where this child's transcript is written: its turn tree's store.
+    let transcripts = super::transcript::subagent_transcripts(&run_context, &workspace_dir);
     tracing::info!(
         model,
         max_iterations,
@@ -146,7 +148,7 @@ pub(in super::super) async fn run_subagent_via_graph(
     // (BYOK/custom). The expanded copy is provider-only — the persisted `history`
     // written back below keeps the original markers.
     let dispatch_history = if crate::agent::multimodal::has_image_placeholders(history) {
-        crate::agent::multimodal::rehydrate_image_placeholders(history)
+        crate::agent::multimodal::rehydrate_image_placeholders(history).await
     } else {
         history.clone()
     };
@@ -167,7 +169,8 @@ pub(in super::super) async fn run_subagent_via_graph(
     // worker thread. Attach a snapshot middleware that mirrors each `before_model`
     // request's transcript here, so the error path below can still persist the
     // rounds that completed before the failure.
-    let transcript_snapshot = crate::agent::tinyagents::TranscriptSnapshotSink::default();
+    let transcript_snapshot =
+        crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshotSink::default();
     // The seeded history is always kept; only rounds past it are split into
     // accepted and unanswered on failure (#6281).
     transcript_snapshot
@@ -177,7 +180,7 @@ pub(in super::super) async fn run_subagent_via_graph(
 
     // A sub-agent turn runs *nested inside* the parent agent's turn (parent
     // harness → spawn_subagent tool → here), so the child's full
-    // `run_turn_via_tinyagents_shared` future would otherwise sit on the parent's
+    // `TurnSpec::run` future would otherwise sit on the parent's
     // poll stack. Heap-allocate it (as the legacy `run_inner_loop` did) so the
     // parent+child harness drives don't overflow the stack.
     // Native-tool support drives the durable-history suffix dispatcher; capture it
@@ -189,6 +192,7 @@ pub(in super::super) async fn run_subagent_via_graph(
     // dispatch boundary. Reusing that owned value preserves its immediate
     // parent-ledger link; forking again here would hide nested child usage in a
     // second, unreachable ledger.
+    let dispatch = run_context.dispatch_ctx();
     let mut child_context = run_context;
     // A parallel task may omit `thread_id`; that means inherit the parent
     // conversation, not erase it. Only an explicit task thread may replace
@@ -196,26 +200,26 @@ pub(in super::super) async fn run_subagent_via_graph(
     child_context.thread_id = thread_id.clone();
     child_context.progress = on_progress.clone().or(child_context.progress);
     child_context.workspace = workspace_descriptor.clone().or(child_context.workspace);
-    let run_result = Box::pin(run_turn_via_tinyagents_shared(
-        child_context,
+    let run_result = TurnSpec {
+        run_context: child_context,
         turn_models,
         provider_id,
         model,
-        dispatch_history,
+        history: dispatch_history,
         // Dynamic (per-spawn) tools first so a dynamic tool that intentionally
         // shadows a parent-registry tool of the same name is the one that
         // *executes* — matching the advertisement order (`dedup_tool_specs_by_name`
         // lists dynamic specs before parent specs in `runner.rs`). The shared
         // adapter resolves a name by scanning the sets in order, so a
         // parent-first order would run the parent impl for a shadowed name.
-        vec![Arc::new(dynamic_tools), parent_tools],
+        tool_sets: vec![Arc::new(dynamic_tools), parent_tools],
         // Fail-closed (issue #4452): a sub-agent ALWAYS carries a concrete,
         // resolved allowlist (`allowed_names`), so pass it as `Some(..)`. An empty
         // set is therefore a genuine deny-all — a tool-less agent
         // (`ToolScope::Named([])`), a zero-match `skill_filter`, or a `named` list
         // that resolved to nothing registers ZERO tools instead of implicitly
         // inheriting the parent's full surface (shell/file-write/spawn).
-        Some(allowed_names),
+        allowed: Some(allowed_names),
         max_iterations,
         subagent_scope,
         // Resolved above — drives the sub-agent context-window summarization step.
@@ -223,31 +227,32 @@ pub(in super::super) async fn run_subagent_via_graph(
         // Mid-flight steering: forward queued steer messages into the run.
         run_queue,
         // Pause + checkpoint when the child asks the user a clarifying question.
-        &["ask_user_clarification"],
+        early_exit_tools: &["ask_user_clarification"],
         // Pause gracefully at the model-call cap so we can summarize a resumable
         // checkpoint (below) instead of erroring — legacy cap-summary parity.
-        true,
+        pause_at_cap: true,
         // Bound the sub-agent's per-call output at its configured budget.
-        Some(max_output_tokens),
+        max_output_tokens: Some(max_output_tokens),
         // Context middlewares (#4466): config-sourced TokenJuice compaction +
         // tool-result byte cap + microcompact + summarization opt-outs (built
         // above), plus the live transcript-snapshot sink for error recovery.
-        {
+        context_mw: {
             let mut mw = context_mw;
             mw.transcript_snapshot = Some(transcript_snapshot.clone());
             mw
         },
         // Sub-agents gate via their own SubagentToolSource policy path, not the
         // session `.tool_policy()`; no enforcement threaded here.
-        None,
+        tool_policy: None,
         // Sub-agent turns run tools with external effects; not a deterministic
         // internal run, so response caching stays off (safe default).
-        false,
+        deterministic_cacheable: false,
         // #4457 (defect C): irrelevant for sub-agents — they carry a
         // `subagent_scope`, so the seam never emits a top-level `TurnCompleted`
         // (they report via `Subagent*` events). Pass `false` for clarity.
-        false,
-    ))
+        defer_turn_completed_to_caller: false,
+    }
+    .run()
     .await;
 
     if let Some(config) = config.filter(|config| config.observability.share_usage_data) {
@@ -260,8 +265,10 @@ pub(in super::super) async fn run_subagent_via_graph(
             let thread_id = trace_session_group.clone();
             let agent_id = agent_id.to_string();
             let task_id = task_id.to_string();
+            let dispatch = dispatch.clone();
             tokio::spawn(async move {
                 crate::agent::progress_tracing::export_subagent_journal_trace(
+                    &dispatch,
                     &config,
                     &journal_run_id,
                     thread_id.as_deref(),
@@ -278,8 +285,8 @@ pub(in super::super) async fn run_subagent_via_graph(
         Err(err) => {
             // #4466: the harness dropped its partial transcript, but the snapshot
             // middleware mirrored every completed round. Persist those rounds to
-            // `session_raw` (so `learning/transcript_ingest` can still read a
-            // failed run) and mirror them onto the worker thread, THEN surface the
+            // the turn tree's transcript store (so the thread's usage and view
+            // still count a failed run) and mirror them onto the worker thread, THEN surface the
             // error. Previously the `?`-return skipped both persistence steps, so
             // a failed run left no transcript and an empty worker thread.
             let mapped = map_tinyagents_subagent_error(err);
@@ -313,6 +320,8 @@ pub(in super::super) async fn run_subagent_via_graph(
                 "[subagent_host:graph] sub-agent run errored; persisting recovered transcript before returning (#4466)"
             );
             super::transcript::persist_failed_run(
+                &dispatch,
+                transcripts.as_ref(),
                 &workspace_dir,
                 transcript_stem,
                 agent_id,
@@ -405,16 +414,19 @@ pub(in super::super) async fn run_subagent_via_graph(
                     .with_cache_creation_tokens(u.cache_creation_tokens)
                     .with_reasoning_tokens(u.reasoning_tokens);
                     let billed = match call_cost {
-                        crate::agent::cost::CallCost::Charged(usd) => billed.with_charged_usd(usd),
-                        crate::agent::cost::CallCost::Estimated(usd) => {
+                        tinyagents_harness::cost::CallCost::Charged(usd) => {
+                            billed.with_charged_usd(usd)
+                        }
+                        tinyagents_harness::cost::CallCost::Estimated(usd) => {
                             billed.with_estimated_usd(usd)
                         }
-                        crate::agent::cost::CallCost::Unknown => billed,
+                        tinyagents_harness::cost::CallCost::Unknown => billed,
                     };
                     crate::platform::cost::record_provider_usage_scoped(
                         model,
                         &billed,
-                        crate::platform::cost::UsageScope::ambient(
+                        crate::platform::cost::UsageScope::in_ctx(
+                            &dispatch,
                             Some(&usage_provider_id),
                             Some((agent_id, task_id)),
                         ),
@@ -434,11 +446,9 @@ pub(in super::super) async fn run_subagent_via_graph(
         }
     }
 
-    // Persist the sub-agent's raw transcript to `session_raw` (parity with the
-    // removed `SubagentObserver::persist_transcript`). The graph runner replaced
-    // the observer but only mirrored to the worker thread, so per-child
-    // transcripts stopped being written — breaking downstream learning ingestion
-    // (`learning/transcript_ingest`, which reads `session_raw/*.jsonl`).
+    // Persist the sub-agent's raw transcript to the turn tree's transcript
+    // store (parity with the removed `SubagentObserver::persist_transcript`),
+    // where the thread's usage and transcript view read every child back.
     // On a cap-hit / early-exit, `outcome.text` is the checkpoint (or clarifying
     // question) that stands in for a final assistant turn — append it so the
     // persisted transcript reflects the actual final state, not the pre-checkpoint
@@ -458,7 +468,7 @@ pub(in super::super) async fn run_subagent_via_graph(
         history.as_slice()
     };
     persist_subagent_transcript(
-        &workspace_dir,
+        transcripts.as_ref(),
         transcript_stem,
         agent_id,
         task_id,
@@ -480,6 +490,7 @@ pub(in super::super) async fn run_subagent_via_graph(
     // initial user prompt was already written when the worker thread was created.
     if let Some(thread_id) = worker_thread_id {
         mirror_worker_thread(
+            &dispatch,
             &workspace_dir,
             &thread_id,
             agent_id,
@@ -527,8 +538,9 @@ pub(crate) fn inherited_thread_id(
 fn build_subagent_context_mw(
     tokenjuice_compression: AgentTokenjuiceCompression,
     config: Option<&crate::config::Config>,
-) -> crate::agent::tinyagents::TurnContextMiddleware {
-    let mut mw = crate::agent::tinyagents::TurnContextMiddleware::defaults();
+) -> crate::agent::tinyagents::middleware::turn_context::TurnContextMiddleware {
+    let mut mw =
+        crate::agent::tinyagents::middleware::turn_context::TurnContextMiddleware::defaults();
     // Always thread the agent's compression profile — even on the config-default
     // path — so the definition's TokenJuice choice is honored.
     mw.tokenjuice_compression = tokenjuice_compression;
@@ -539,7 +551,8 @@ fn build_subagent_context_mw(
             // TokenJuice content-aware compaction gates on the same master
             // `[context].compaction_enabled` the chat path reads
             // (`ContextManager::compaction_enabled`).
-            mw.tokenjuice_compaction_enabled = ctx.compaction_enabled;
+            mw.tokenjuice_compaction_enabled =
+                ctx.compaction_enabled && crate::inference::tokenjuice::enabled(config);
             mw.tool_result_budget_bytes = ctx.tool_result_budget_bytes;
             // Microcompact keep-recent is `0` (disabled) unless microcompact is on.
             mw.microcompact_keep_recent = if ctx.microcompact_enabled {
@@ -586,7 +599,7 @@ fn map_tinyagents_subagent_error(err: anyhow::Error) -> SubagentRunError {
 /// every call succeeded.
 fn build_cap_digest(
     conversation: &[TranscriptEntry],
-    tool_outcomes: &[crate::agent::tinyagents::ToolCallOutcome],
+    tool_outcomes: &[tinyagents_harness::turn_outcome::ToolCallOutcome],
 ) -> String {
     use std::collections::HashMap;
     use std::fmt::Write as _;

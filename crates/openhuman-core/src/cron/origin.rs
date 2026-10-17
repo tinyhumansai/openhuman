@@ -10,8 +10,8 @@
 use crate::agent::turn_origin::{self, AgentTurnOrigin};
 use serde_json::Value;
 use {
-    tinyflows_schedule::types::delivery_mode, tinyflows_schedule::types::CronJob,
-    tinyflows_schedule::types::JobOrigin,
+    tinyflows_bus::schedule::types::delivery_mode, tinyflows_bus::schedule::types::CronJob,
+    tinyflows_bus::schedule::types::JobOrigin,
 };
 
 /// Map a live turn origin onto the origin a job created in it records.
@@ -47,12 +47,11 @@ pub(crate) fn job_origin_from_turn(origin: &AgentTurnOrigin) -> Option<JobOrigin
     }
 }
 
-/// The origin a job created by the current turn would record, read from the
-/// task-local [`AgentTurnOrigin`]. `None` outside a turn or in a turn with no
-/// conversation behind it.
-pub fn current_job_origin() -> Option<JobOrigin> {
-    let origin = turn_origin::current()?;
-    let job_origin = job_origin_from_turn(&origin);
+/// The origin a job created by the turn running under `origin` would record.
+/// `None` outside a turn or in a turn with no conversation behind it.
+pub fn current_job_origin(origin: Option<&AgentTurnOrigin>) -> Option<JobOrigin> {
+    let origin = origin?;
+    let job_origin = job_origin_from_turn(origin);
     tracing::debug!(
         turn_origin = %origin.class(),
         captured = job_origin.as_ref().map(JobOrigin::kind_str).unwrap_or("none"),
@@ -163,11 +162,10 @@ pub(crate) fn is_self_scoped_agent_job(args: &Value, turn: Option<&AgentTurnOrig
     }
 }
 
-/// [`is_self_scoped_agent_job`] against the live turn, with a log line for the
-/// decision so an exempted creation is traceable.
-pub(crate) fn current_turn_may_skip_approval(args: &Value) -> bool {
-    let turn = turn_origin::current();
-    let exempt = is_self_scoped_agent_job(args, turn.as_ref());
+/// [`is_self_scoped_agent_job`] against the turn running under `turn`, with a
+/// log line for the decision so an exempted creation is traceable.
+pub(crate) fn current_turn_may_skip_approval(args: &Value, turn: Option<&AgentTurnOrigin>) -> bool {
+    let exempt = is_self_scoped_agent_job(args, turn);
     if exempt {
         tracing::debug!("[cron] self-scoped agent job from channel turn; skipping approval gate");
     }

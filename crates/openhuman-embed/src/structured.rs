@@ -109,7 +109,7 @@ pub(crate) fn accumulate(total: &mut Option<CompletionUsage>, usage: Option<&Com
     }
 }
 
-impl openhuman_core::agent::tinyagents::response_shape::ResponseValidator for Validator {
+impl tinyagents_harness::middleware::ResponseValidator for Validator {
     fn validate(&self, text: &str, finish_reason: Option<&str>) -> Result<(), String> {
         self.validate(text, finish_reason)
             .map(|_| ())

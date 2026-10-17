@@ -41,6 +41,6 @@ pnpm test:plan -- \
 
 ## See also
 
-- [Testing strategy](../../gitbooks/developing/testing-strategy.md), where the backlog items land.
+- [Testing strategy](../../docs/gitbooks/en/developing/testing-strategy.md), where the backlog items land.
 - [`docs/TEST-COVERAGE-MATRIX.md`](../../docs/TEST-COVERAGE-MATRIX.md) and [`tests/README.md`](../../tests/README.md).
 - [`scripts/README.md`](../README.md).

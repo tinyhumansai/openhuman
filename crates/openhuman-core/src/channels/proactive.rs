@@ -308,7 +308,12 @@ impl EventHandler<DomainEvent> for ProactiveMessageSubscriber {
                             job_id: source.clone(),
                             source: automation_source,
                         },
-                        gate.intercept_audited("channels.proactive_send", &summary, redacted),
+                        gate.intercept_audited(
+                            &Default::default(),
+                            "channels.proactive_send",
+                            &summary,
+                            redacted,
+                        ),
                     )
                     .await;
                     match outcome {

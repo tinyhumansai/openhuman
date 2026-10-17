@@ -1,8 +1,8 @@
 //! Config snapshots serialized for the desktop UI.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
-use super::load::load_config_with_timeout;
 use crate::config::Config;
 use crate::core::Outcome;
 
@@ -135,8 +135,10 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
 }
 
 /// Loads config and returns the client-facing AI config slice.
-pub async fn load_and_get_client_config_snapshot() -> Result<Outcome<serde_json::Value>, String> {
-    let config = load_config_with_timeout().await?;
+pub async fn load_and_get_client_config_snapshot(
+    ctx: &DispatchCtx,
+) -> Result<Outcome<serde_json::Value>, String> {
+    let config = ctx.load_config().await?;
     let snapshot = client_config_json(&config);
     Ok(Outcome::new(
         snapshot,
@@ -157,13 +159,17 @@ pub async fn get_config_snapshot(config: &Config) -> Result<Outcome<serde_json::
 }
 
 /// Loads the configuration from disk and returns a snapshot.
-pub async fn load_and_get_config_snapshot() -> Result<Outcome<serde_json::Value>, String> {
-    let config = load_config_with_timeout().await?;
+pub async fn load_and_get_config_snapshot(
+    ctx: &DispatchCtx,
+) -> Result<Outcome<serde_json::Value>, String> {
+    let config = ctx.load_config().await?;
     get_config_snapshot(&config).await
 }
 
 /// Reads dashboard settings exposed to the desktop UI.
-pub async fn get_dashboard_settings() -> Result<Outcome<serde_json::Value>, String> {
+pub async fn get_dashboard_settings(
+    ctx: &DispatchCtx,
+) -> Result<Outcome<serde_json::Value>, String> {
     let request_id = uuid::Uuid::new_v4().to_string();
     tracing::debug!(
         target: "openhuman_core::config",
@@ -178,7 +184,7 @@ pub async fn get_dashboard_settings() -> Result<Outcome<serde_json::Value>, Stri
         "OPENHUMAN: get_dashboard_settings loading config"
     );
 
-    let config = load_config_with_timeout().await.map_err(|error| {
+    let config = ctx.load_config().await.map_err(|error| {
         tracing::warn!(
             target: "openhuman_core::config",
             request_id = %request_id,

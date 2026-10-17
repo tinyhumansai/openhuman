@@ -1,24 +1,26 @@
-//! Owned hooks carried by one dispatch task, never installed process-wide.
+//! Owned hooks carried by one session or turn, never installed process-wide
+//! and never recovered from an ambient scope.
 
-use std::future::Future;
 use std::sync::Arc;
 
 use super::{PostTurnHook, ToolHook};
 
-tokio::task_local! {
-    static ACTIVE: HookScope;
-}
-
 /// Agent/turn callbacks added after the runtime's global callbacks.
 ///
-/// Sessions snapshot these while they are built; asynchronous post-turn
-/// callbacks own that snapshot. Independently spawned tasks must explicitly
-/// inherit the scope if they build further sessions.
+/// A scope is plain data: the entry point that owns the turn hands it to the
+/// session it builds ([`OpenHumanSessionHost::set_host_env`]), which copies the
+/// tool and stop callbacks onto the turn's explicit
+/// [`OpenHumanRunContext`](crate::agent::tinyagents::host::OpenHumanRunContext)
+/// and keeps the post-turn callbacks for the learning sink. A child run
+/// inherits them through `OpenHumanRunContext::child`.
+///
+/// [`OpenHumanSessionHost::set_host_env`]: crate::agent::OpenHumanSessionHost::set_host_env
 #[derive(Clone, Default)]
 pub struct HookScope {
     tools: Vec<Arc<dyn ToolHook>>,
     post_turn: Vec<Arc<dyn PostTurnHook>>,
-    stop: Vec<Arc<dyn tinyagents_harness::middleware::StopHook<crate::agent::cost::TurnCost>>>,
+    stop:
+        Vec<Arc<dyn tinyagents_harness::middleware::StopHook<tinyagents_harness::cost::TurnCost>>>,
 }
 
 impl HookScope {
@@ -35,36 +37,31 @@ impl HookScope {
     /// Append a usage observer/budget policy checked after each model call.
     pub fn push_stop(
         &mut self,
-        hook: Arc<dyn tinyagents_harness::middleware::StopHook<crate::agent::cost::TurnCost>>,
+        hook: Arc<dyn tinyagents_harness::middleware::StopHook<tinyagents_harness::cost::TurnCost>>,
     ) {
         self.stop.push(hook);
     }
 
-    /// Build a session with scoped tool/post-turn callbacks. Stop policies
-    /// enter through the asynchronous dispatch scope when the turn runs.
-    pub fn sync_scope<T>(self, build: impl FnOnce() -> T) -> T {
-        ACTIVE.sync_scope(self, build)
+    /// The scope's own tool callbacks, in registration order.
+    pub fn tool_hooks(&self) -> &[Arc<dyn ToolHook>] {
+        &self.tools
     }
 
-    /// Run a dispatch with this scope. Nested scopes replace tool/post-turn
-    /// callbacks and append their stop policies to the ambient policies.
-    pub async fn scope<F: Future>(self, future: F) -> F::Output {
-        let mut stop = crate::agent::stop_hooks::current_stop_hooks();
-        stop.extend(self.stop.iter().cloned());
-        crate::agent::stop_hooks::with_stop_hooks(stop, ACTIVE.scope(self, future)).await
+    /// The scope's own completed-turn callbacks, in registration order.
+    pub fn post_turn_hooks(&self) -> &[Arc<dyn PostTurnHook>] {
+        &self.post_turn
     }
-}
 
-/// Session snapshot: process-wide tool callbacks, then the dispatch's callbacks.
-pub fn turn_tool_hooks() -> Vec<Arc<dyn ToolHook>> {
-    let mut hooks = super::embedder_tool_hooks();
-    let _ = ACTIVE.try_with(|scope| hooks.extend(scope.tools.iter().cloned()));
-    hooks
-}
+    /// The scope's own stop policies, in registration order.
+    pub fn stop_hooks(
+        &self,
+    ) -> &[Arc<dyn tinyagents_harness::middleware::StopHook<tinyagents_harness::cost::TurnCost>>]
+    {
+        &self.stop
+    }
 
-/// Session snapshot: process-wide post-turn callbacks, then dispatch callbacks.
-pub fn turn_post_turn_hooks() -> Vec<Arc<dyn PostTurnHook>> {
-    let mut hooks = super::embedder_post_turn_hooks();
-    let _ = ACTIVE.try_with(|scope| hooks.extend(scope.post_turn.iter().cloned()));
-    hooks
+    /// Whether the scope carries no callback of any kind.
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty() && self.post_turn.is_empty() && self.stop.is_empty()
+    }
 }

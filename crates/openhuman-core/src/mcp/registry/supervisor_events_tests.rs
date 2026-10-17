@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tinymcp::{ProbeOutcome, ServerRef, SupervisorEvent, TickReport};
+use tinymcp_bus::{ProbeOutcome, ServerRef, SupervisorEvent, TickReport};
 
 use super::*;
 use crate::core::events::DomainEvent;

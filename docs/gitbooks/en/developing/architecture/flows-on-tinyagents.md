@@ -16,12 +16,12 @@ This page is the flows counterpart to [Agent harness](agent-harness.md). That pa
 
 ## Two crates, one engine
 
-| Crate                         | Role                                                                                                                                            | Where                                                                                                                          |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `tinyflows`                   | Host-agnostic workflow model + validate + compile + run. Never hard-codes a vendor; every outside-world effect goes through a capability trait. | [`vendor/tinyflows/`](https://github.com/tinyhumansai/tinyflows)                                                                              |
+| Crate                         | Role                                                                                                                                            | Where                                                                                                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tinyflows`                   | Host-agnostic workflow model + validate + compile + run. Never hard-codes a vendor; every outside-world effect goes through a capability trait. | [`vendor/tinyflows/`](https://github.com/tinyhumansai/tinyflows)                                                                                                         |
 | `tinyagents`                  | The published state-graph + agent-loop harness both runtimes lower onto.                                                                        | crate; OpenHuman seam in [`crates/openhuman-core/src/agent/tinyagents/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/agent/tinyagents) |
 | `openhuman::flows`            | The host: CRUD/run/resume RPCs, SQLite store, triggers, the builder/scout agents.                                                               | [`crates/openhuman-core/src/flows/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/flows)                                                |
-| `openhuman::flows::tinyflows` | The capability seam: adapters implementing the `tinyflows` traits over real OpenHuman services.                                            | [`crates/openhuman-core/src/flows/tinyflows/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/flows/tinyflows)                            |
+| `openhuman::flows::tinyflows` | The capability seam: adapters implementing the `tinyflows` traits over real OpenHuman services.                                                 | [`crates/openhuman-core/src/flows/tinyflows/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/flows/tinyflows)                            |
 
 `tinyflows` is published to crates.io and is deliberately persistence-free and
 vendor-free (see its [`CLAUDE.md`](https://github.com/tinyhumansai/tinyflows/blob/main/CLAUDE.md)); OpenHuman
@@ -83,14 +83,20 @@ The entire run's working memory is a single `serde_json::Value` laid out as
 ```json
 {
   "run": {
-    "trigger": {/* the trigger payload seeded at start */}
+    "trigger": {
+      /* the trigger payload seeded at start */
+    }
   },
   "nodes": {
     "planner": {
-      "items": [/* … */]
+      "items": [
+        /* … */
+      ]
     },
     "drafter": {
-      "items": [/* … */]
+      "items": [
+        /* … */
+      ]
     }
   }
 }
@@ -117,10 +123,10 @@ Node config is resolved through jq/jaq `=`-expressions
 ([`vendor/tinyflows/crates/tinyflows/src/expr.rs`](https://github.com/tinyhumansai/tinyflows/blob/main/crates/tinyflows/src/expr.rs)) against a
 per-node scope with four bindings:
 
-| Binding | What it holds                                                                               |
-| ------- | ------------------------------------------------------------------------------------------- |
-| `item`  | the first input item's `json` (the direct predecessor's output)                             |
-| `items` | every input item's `json`, in edge order                                                    |
+| Binding | What it holds                                                                           |
+| ------- | --------------------------------------------------------------------------------------- |
+| `item`  | the first input item's `json` (the direct predecessor's output)                         |
+| `items` | every input item's `json`, in edge order                                                |
 | `run`   | run metadata and the trigger payload (`run.trigger`)                                    |
 | `nodes` | every completed node's output, keyed by id: `{ "<id>": { "item": …, "items": [ … ] } }` |
 
@@ -140,16 +146,16 @@ implements ([`vendor/tinyflows/crates/tinyflows/src/caps/mod.rs`](https://github
 `Capabilities` bundle per run by `build_capabilities`
 ([`caps/`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/tinyflows/caps/mod.rs)):
 
-| tinyflows trait    | Node(s) it backs                | OpenHuman adapter           | Wraps                                            |
-| ------------------ | ------------------------------- | --------------------------- | ------------------------------------------------ |
-| `LlmProvider`      | `agent` (bare), `output_parser` | `OpenHumanLlm`              | `inference/provider` (`create_chat_provider`)    |
-| `AgentRunner`      | `agent` (with `agent_ref`)      | `OpenHumanAgentRunner`      | the agent registry + harness `Agent`             |
-| `ToolInvoker`      | `tool_call`                     | `OpenHumanTools`            | Composio + native `oh:` tools                    |
-| `HttpClient`       | `http_request`                  | `OpenHumanHttp`             | `HttpRequestTool` (allowlist + DNS-rebind guard) |
-| `CodeRunner`       | `code`                          | `OpenHumanCode`             | the sandbox (`execute_in_sandbox`)               |
-| `StateStore`       | resumable/stateful runs         | `tinyflows_sqlite::flows::SqliteStateStore` | a namespaced KV table in `flows.db`  |
-| `WorkflowResolver` | `sub_workflow` by id            | `OpenHumanWorkflowResolver` | the saved-flow store (`load_flow_graph`)         |
-| `MemoryProvider`   | `memory`                        | `OpenHumanMemory`           | the memory store (`tinyflows/memory_adapter.rs`) |
+| tinyflows trait    | Node(s) it backs                | OpenHuman adapter                  | Wraps                                            |
+| ------------------ | ------------------------------- | ---------------------------------- | ------------------------------------------------ |
+| `LlmProvider`      | `agent` (bare), `output_parser` | `OpenHumanLlm`                     | `inference/provider` (`create_chat_provider`)    |
+| `AgentRunner`      | `agent` (with `agent_ref`)      | `OpenHumanAgentRunner`             | the agent registry + harness `Agent`             |
+| `ToolInvoker`      | `tool_call`                     | `OpenHumanTools`                   | Composio + native `oh:` tools                    |
+| `HttpClient`       | `http_request`                  | `OpenHumanHttp`                    | `HttpRequestTool` (allowlist + DNS-rebind guard) |
+| `CodeRunner`       | `code`                          | `OpenHumanCode`                    | the sandbox (`execute_in_sandbox`)               |
+| `StateStore`       | resumable/stateful runs         | `FlowState` (`FlowStateDocuments`) | namespaced documents in the catalog              |
+| `WorkflowResolver` | `sub_workflow` by id            | `OpenHumanWorkflowResolver`        | the saved-flow store (`load_flow_graph`)         |
+| `MemoryProvider`   | `memory`                        | `OpenHumanMemory`                  | the memory store (`tinyflows/memory_adapter.rs`) |
 
 `AgentRunner` is optional in the crate (`Capabilities::agent` is
 `Option`): a host without an agent registry leaves it `None` and `agent` nodes
@@ -168,7 +174,7 @@ A flow `agent` node names a registered agent kind through a trusted
 - A harness `AgentDefinition` exists: build a full harness `Agent`
   (`Agent::from_config_for_agent`) and run the node's request through
   `run_single`. That is the same entry the builder, scout and cron
-  jobs use, and internally it drives `run_turn_via_tinyagents_shared`
+  jobs use, and internally it drives `TurnSpec::run`
   ([`crates/openhuman-core/src/agent/tinyagents/mod.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/agent/tinyagents/mod.rs)) -
   the tinyagents `AgentHarness` tool-call loop. The definition's ToolScope,
   `sandbox_mode`, and `max_iterations` govern the inner turn.
@@ -267,7 +273,7 @@ the trigger → run bridge: it subscribes to the normalized domain events a save
 flow's single trigger node can bind to and calls `flows::ops::flows_run` for each
 match:
 
-- `DomainEvent::FlowScheduleTick`: a `flow`-type cron job fired; the one
+- The schedule runtime's `TriggerSink`: a `flow`-type cron job fired; the one
   named flow is loaded, re-checked for a still-live `schedule` trigger, and
   dispatched with an empty trigger payload.
 - `DomainEvent::ComposioTriggerReceived`: every enabled flow with an
@@ -288,11 +294,11 @@ The three agents that touch flows all run on the shared agent harness:
 `Agent::from_config_for_agent` → `run_single` under a scoped origin, the same
 pattern the flow's own `agent` nodes use:
 
-| Agent                 | Registry id          | Entry point                                                                    | Tool belt                                                                                                                                                                                                                                         |
-| --------------------- | -------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Builder (copilot)     | `workflow_builder`   | `flows_build` ([`ops.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/ops.rs))    | `propose_workflow` / `revise_workflow` (validate-only), `dry_run_workflow` (compile + run vs. mocks), `save_workflow`, `run_workflow`, catalog/connection reads ([`builder_tools.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/builder_tools.rs)) |
-| Scout (discovery)     | `flow_discovery`     | `flows_discover` ([`ops.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/ops.rs)) | `suggest_workflows` ([`discovery_tools.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/discovery_tools.rs))                                                                                                                                         |
-| Executor              | (the engine)         | `flows_run` / `flows_resume`                                                   | the capability seam above                                                                                                                                                                                                                         |
+| Agent             | Registry id        | Entry point                                                                                                               | Tool belt                                                                                                                                                                                                                                                                                    |
+| ----------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Builder (copilot) | `workflow_builder` | `flows_build` ([`ops.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/ops.rs))    | `propose_workflow` / `revise_workflow` (validate-only), `dry_run_workflow` (compile + run vs. mocks), `save_workflow`, `run_workflow`, authoring tools from `tinyflows_copilot::tools`, bound by ([`builder_host.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/builder_host.rs)); Composio catalog/connection reads ([`builder_tools.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/builder_tools.rs)) |
+| Scout (discovery) | `flow_discovery`   | `flows_discover` ([`ops.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/ops.rs)) | `suggest_workflows` (`tinyflows_copilot::tools`, bound by [`builder_host.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/builder_host.rs))                                                                                                                                         |
+| Executor          | (the engine)       | `flows_run` / `flows_resume`                                                                                              | the capability seam above                                                                                                                                                                                                                                                                    |
 
 Both agents live under
 [`crates/openhuman-core/src/flows/agents/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/flows/agents) as
@@ -325,15 +331,15 @@ sequenceDiagram
 
 ## Where to look in the code
 
-| Path                                                                                                                                    | What lives there                                                                               |
-| --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [`vendor/tinyflows/crates/tinyflows/src/`](https://github.com/tinyhumansai/tinyflows/tree/main/crates/tinyflows/src)                                             | The engine: `model/`, `validate.rs`, `compiler.rs`, `engine.rs`, `expr.rs`, `caps/`, `nodes/`. |
-| [`vendor/tinyflows/crates/tinyflows/src/caps/mod.rs`](https://github.com/tinyhumansai/tinyflows/blob/main/crates/tinyflows/src/caps/mod.rs)                       | The capability traits + `Capabilities` bundle.                                                 |
+| Path                                                                                                                                                                               | What lives there                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [`vendor/tinyflows/crates/tinyflows/src/`](https://github.com/tinyhumansai/tinyflows/tree/main/crates/tinyflows/src)                                                               | The engine: `model/`, `validate.rs`, `compiler.rs`, `engine.rs`, `expr.rs`, `caps/`, `nodes/`. |
+| [`vendor/tinyflows/crates/tinyflows/src/caps/mod.rs`](https://github.com/tinyhumansai/tinyflows/blob/main/crates/tinyflows/src/caps/mod.rs)                                        | The capability traits + `Capabilities` bundle.                                                 |
 | [`crates/openhuman-core/src/flows/tinyflows/caps/`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/tinyflows/caps/mod.rs)                     | The host adapters, `build_capabilities`, `open_flow_checkpointer`, the two-layer gate helpers. |
 | [`crates/openhuman-core/src/flows/ops.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/ops.rs)                                             | `flows_run` / `flows_resume` / `flows_build` / `flows_discover` and CRUD.                      |
-| [`crates/openhuman-core/src/flows/bus.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/bus.rs)                                             | `FlowTriggerSubscriber`: the host-side multi-trigger bridge.                                  |
-| [`crates/openhuman-core/src/flows/builder_tools.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/builder_tools.rs)                         | The builder's `propose` / `revise` / `dry_run` / `save` / `run` tools.                         |
-| [`crates/openhuman-core/src/flows/agents/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/flows/agents)                                           | `workflow_builder` + `flow_discovery` agent definitions.                                       |
+| [`crates/openhuman-core/src/flows/bus.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/bus.rs)                                             | `FlowTriggerSubscriber`: the host-side multi-trigger bridge.                                   |
+| [`crates/openhuman-core/src/flows/builder_tools.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/builder_tools.rs)                         | The Composio-bound builder reads; the authoring tools are `tinyflows_copilot::tools`, bound by `flows/builder_host.rs`. |
+| [`crates/openhuman-core/src/flows/agents/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-core/src/flows/agents)                                            | `workflow_builder` + `flow_discovery` agent definitions.                                       |
 | [`crates/openhuman-core/src/flows/tinyflows/langfuse_export.rs`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-core/src/flows/tinyflows/langfuse_export.rs) | Post-run export of the durable graph observations.                                             |
 
 ## See also

@@ -66,4 +66,13 @@ describe('ComposerMessageQueue', () => {
 
     expect(remove).toHaveBeenCalledWith('q1');
   });
+
+  it('gives a queued row no icon besides the remove button (#7730)', () => {
+    renderWith([{ id: 'q1', lane: null, textPreview: 'keep me' }]);
+
+    const row = screen.getByText('keep me').closest('li');
+    expect(row).not.toBeNull();
+    // Only the remove button's X: no decorative arrow posing as "send now".
+    expect(row!.querySelectorAll('svg')).toHaveLength(1);
+  });
 });

@@ -4,7 +4,7 @@ Thank you for your interest in contributing to OpenHuman. This guide is the fast
 
 > **New to open source or coding?** Start with [`docs/CONTRIBUTING-BEGINNERS.md`](docs/CONTRIBUTING-BEGINNERS.md) — it walks you through every step from installing tools to opening your first PR.
 
-For deeper architecture and subsystem references, use the GitBook under [`gitbooks/developing/`](gitbooks/developing/). For coding-agent and repository-specific implementation rules, see [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is a symlink to the same file).
+For deeper architecture and subsystem references, use the GitBook under [`docs/gitbooks/en/developing/`](docs/gitbooks/en/developing/). For coding-agent and repository-specific implementation rules, see [`AGENTS.md`](AGENTS.md) (`CLAUDE.md` is a symlink to the same file).
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ## Getting Started
 
 - Read the [README](README.md) for product context.
-- Use [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) for the current system architecture.
+- Use [`docs/gitbooks/en/developing/architecture.md`](docs/gitbooks/en/developing/architecture.md) for the current system architecture.
 - Check [open issues](https://github.com/tinyhumansai/openhuman/issues) and [Discussions](https://github.com/tinyhumansai/openhuman/discussions) before starting work.
 - Stuck rather than fixing something? [`docs/SUPPORT.md`](docs/SUPPORT.md) routes questions, install trouble, memory behavior, and model problems to the right category; [`docs/community/discussions.md`](docs/community/discussions.md) explains how those threads are triaged.
 - For security issues, follow [SECURITY.md](SECURITY.md) and do not file public issues.
@@ -99,7 +99,7 @@ pnpm --version
 
 - **Web-only development** needs Node, pnpm, and the Rust toolchain present in the repo. You can usually ignore desktop-only system packages.
 - **Desktop development** uses Tauri with Wry as its webview on every platform (`crates/openhuman-app/Cargo.lock` resolves `tauri-runtime-wry`; there is no CEF crate). Use `pnpm --filter openhuman-app dev:app` on macOS and `pnpm dev:app:win` on native Windows.
-- **Linux desktop builds** require extra system packages beyond Node/Rust. Follow the distro-specific Tauri dependency list before running desktop commands, then use the OpenHuman scripts below. For deeper platform troubleshooting, see [`gitbooks/developing/getting-set-up.md`](gitbooks/developing/getting-set-up.md).
+- **Linux desktop builds** require extra system packages beyond Node/Rust. Follow the distro-specific Tauri dependency list before running desktop commands, then use the OpenHuman scripts below. For deeper platform troubleshooting, see [`docs/gitbooks/en/developing/getting-set-up.md`](docs/gitbooks/en/developing/getting-set-up.md).
 - **Windows 10 WSL + classic X11 forwarding** is unsupported for the desktop app. The Tauri desktop flow can hang, render blank windows, or crash before useful app logs are available. Use native Windows development, or Windows 11 WSLg if you need a Linux GUI workflow. OpenHuman logs a startup warning when it detects WSL with `DISPLAY` set but no `WAYLAND_DISPLAY`/WSLg markers.
 - **Windows desktop builds** additionally require Visual Studio C++ Build Tools (MSVC v143), CMake, and Ninja. See [Windows-specific setup](#windows-specific-setup) for the full list and install order.
 - **macOS desktop builds** require a one-time codesigning cert. After cloning, run `bash scripts/setup-dev-codesign.sh` once to create the local "OpenHuman Dev Signer" self-signed certificate that Tauri uses when bundling dev builds. Without it, `pnpm --filter openhuman-app dev:app` fails at the bundle/sign step with `OpenHuman Dev Signer: no identity found`.
@@ -247,9 +247,9 @@ Useful local paths during development:
 
 Most contributor-visible configuration and state flows are documented in:
 
-- [`gitbooks/developing/getting-set-up.md`](gitbooks/developing/getting-set-up.md)
-- [`gitbooks/developing/architecture/frontend.md`](gitbooks/developing/architecture/frontend.md)
-- [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)
+- [`docs/gitbooks/en/developing/getting-set-up.md`](docs/gitbooks/en/developing/getting-set-up.md)
+- [`docs/gitbooks/en/developing/architecture/frontend.md`](docs/gitbooks/en/developing/architecture/frontend.md)
+- [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](docs/gitbooks/en/developing/architecture/tauri-shell.md)
 
 ## Project Layout
 
@@ -266,7 +266,7 @@ openhuman/
 ├── examples/               # Embedding examples (explicit [[example]] targets)
 ├── vendor/                 # Recursive git submodules (tinyagents, tinymemory, ...)
 ├── docs/                   # Internal maintainer docs
-├── gitbooks/               # Public product and contributor docs
+├── docs/gitbooks/en/               # Public product and contributor docs
 ├── scripts/                # Dev, test, CI, and release scripts
 └── AGENTS.md               # Repo rules for contributors and coding agents (CLAUDE.md symlinks here)
 ```
@@ -283,7 +283,7 @@ Short version:
 - `app/` is the UI and desktop shell.
 - `crates/openhuman-core/` is the Rust core and JSON-RPC surface; see the
   "Rust domain structure" section of AGENTS.md.
-- `gitbooks/developing/` is the canonical place for deeper subsystem docs.
+- `docs/gitbooks/en/developing/` is the canonical place for deeper subsystem docs.
 
 ## Git Workflow
 

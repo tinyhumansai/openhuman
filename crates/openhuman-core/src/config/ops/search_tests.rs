@@ -44,7 +44,7 @@ fn switching_exa_to_its_own_key() {
         patch(json!({"providers": {"exa": {"route": "direct", "api_key": "e"}}})),
     )
     .unwrap();
-    assert_eq!(config.search.route("exa"), SearchRoute::Direct);
+    assert_eq!(config.search.route("exa"), ProviderRoute::Direct);
     assert_eq!(config.search.exa.key(), Some("e"));
 }
 
@@ -111,7 +111,7 @@ fn legacy_engine_from_an_older_client_still_works() {
     apply_search_patch(&mut config, patch(json!({"engine": "managed"}))).unwrap();
     assert!(config.search.is_enabled());
     apply_search_patch(&mut config, patch(json!({"engine": "parallel"}))).unwrap();
-    assert_eq!(config.search.route("parallel"), SearchRoute::Direct);
+    assert_eq!(config.search.route("parallel"), ProviderRoute::Direct);
     assert!(apply_search_patch(&mut config, patch(json!({"engine": "bing"}))).is_err());
 }
 
@@ -127,7 +127,7 @@ fn limits_presentation_and_allowlist_validate() {
                      "allowed_domains": ["b.com", " a.com ", "b.com"], "allow_all": false})),
     )
     .unwrap();
-    assert_eq!(config.search.presentation, SearchPresentation::AllTools);
+    assert_eq!(config.search.presentation, PresentationMode::AllTools);
     assert_eq!(config.search.max_results, 7);
     assert_eq!(
         config.http_request.allowed_domains,
@@ -204,4 +204,23 @@ fn tinyfish_takes_its_own_key() {
     assert_eq!(tinyfish["key_configured"], true);
     assert_eq!(tinyfish["route"], "direct");
     assert!(!view.to_string().contains("tf-key"));
+}
+
+#[test]
+fn settings_report_the_search_component_as_disabled() {
+    let mut config = Config::default();
+    let on = search_settings_json_with(&config, true);
+    assert_eq!(on["component_disabled"], false);
+    config.components.search = false;
+    let off = search_settings_json_with(&config, true);
+    assert_eq!(off["enabled"], false);
+    assert_eq!(off["component_disabled"], true);
+    assert!(off["component_disabled_reason"]
+        .as_str()
+        .unwrap()
+        .starts_with("COMPONENT_DISABLED:search"));
+    assert!(off["effective_roles"]["search"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }

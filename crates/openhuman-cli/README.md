@@ -205,9 +205,9 @@ release resolution, and pins that the shared chain still scrubs secrets.
 
 ## Further reading
 
-- [`gitbooks/developing/building-rust-core.md`](../../gitbooks/developing/building-rust-core.md): building the Rust core.
-- [`gitbooks/developing/testing-strategy.md`](../../gitbooks/developing/testing-strategy.md): testing strategy.
-- [`gitbooks/developing/performance.md`](../../gitbooks/developing/performance.md): performance.
+- [`docs/gitbooks/en/developing/building-rust-core.md`](../../docs/gitbooks/en/developing/building-rust-core.md): building the Rust core.
+- [`docs/gitbooks/en/developing/testing-strategy.md`](../../docs/gitbooks/en/developing/testing-strategy.md): testing strategy.
+- [`docs/gitbooks/en/developing/performance.md`](../../docs/gitbooks/en/developing/performance.md): performance.
 - [`crates/README.md`](../README.md): crates overview.
 - [`crates/openhuman-core/README.md`](../openhuman-core/README.md): the openhuman-core crate README.
 - [`tests/README.md`](../../tests/README.md): root tests.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::security::egress::EgressLedger;
 
 use crate::inference::provider::factory::cloud_slug::try_create_cloud_slug_chat_model_from_string_with_native_tools;
 
@@ -16,6 +17,7 @@ fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
         "team:private-model",
         &config,
         true,
+        &EgressLedger::none(),
     )
     .expect("configured provider")
     .expect("custom CA client should build");
@@ -94,6 +96,7 @@ fn enforce_local_only_inference_errors_on_external_when_local_only() {
                 route,
                 true,
                 Some("privacy-test-thread"),
+                &EgressLedger::none(),
             )
             .map(|(model, _)| model)
         };
@@ -131,7 +134,13 @@ async fn create_chat_model_uses_native_test_override() {
     ])));
     let config = Config::default();
 
-    let model = create_chat_model("chat", &config, 0.3).expect("create_chat_model must build");
+    let model = create_chat_model_in(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        0.3,
+    )
+    .expect("create_chat_model must build");
     let response = model
         .invoke(&(), ModelRequest::new(vec![Message::user("hi there")]))
         .await
@@ -172,7 +181,13 @@ async fn one_shot_chat_models_preserve_factory_temperature_as_request_default() 
     }));
 
     let config = Config::default();
-    let role_model = create_chat_model("chat", &config, 0.3).expect("role model");
+    let role_model = create_chat_model_in(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        0.3,
+    )
+    .expect("role model");
     role_model
         .invoke(&(), ModelRequest::new(vec![Message::user("default")]))
         .await
@@ -188,15 +203,28 @@ async fn one_shot_chat_models_preserve_factory_temperature_as_request_default() 
         .await
         .expect("explicit-temperature invoke");
 
-    let turn_model = create_turn_chat_model("chat", &config, "hint:chat", 0.2).expect("turn model");
+    let turn_model = create_turn_chat_model(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        "hint:chat",
+        0.2,
+    )
+    .expect("turn model");
     turn_model
         .invoke(&(), ModelRequest::new(vec![Message::user("turn default")]))
         .await
         .expect("turn default-temperature invoke");
 
-    let explicit_turn_model =
-        create_turn_chat_model_from_string("chat", "openhuman", &config, "hint:chat", 0.4)
-            .expect("explicit turn model");
+    let explicit_turn_model = create_turn_chat_model_from_string(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        "openhuman",
+        &config,
+        "hint:chat",
+        0.4,
+    )
+    .expect("explicit turn model");
     explicit_turn_model
         .invoke(
             &(),
@@ -236,8 +264,13 @@ fn create_chat_model_routes_managed_backend_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     // No test-provider override installed → the managed short-circuit engages.
     let config = Config::default();
-    let (model, _model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
-        .expect("managed create_chat_model must build");
+    let (model, _model_id) = create_chat_model_with_model_id_in(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        0.7,
+    )
+    .expect("managed create_chat_model must build");
     assert_eq!(
         model
             .profile()
@@ -252,8 +285,13 @@ fn create_chat_model_routes_local_runtime_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     let mut config = Config::default();
     config.chat_provider = Some("ollama:qwen2.5".to_string());
-    let (model, model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
-        .expect("local create_chat_model must build");
+    let (model, model_id) = create_chat_model_with_model_id_in(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        0.7,
+    )
+    .expect("local create_chat_model must build");
     assert_eq!(model_id, "qwen2.5");
     // Motion B (#4727): a local runtime now builds a crate-native `OpenAiModel`
     // (not a legacy model wrapper), so its profile carries the concrete
@@ -288,13 +326,16 @@ fn explicit_local_provider_string_routes_to_crate_native_model() {
 fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
     let _guard = crate::inference::inference_test_guard();
     // Default config resolves to the managed backend, not a local runtime.
-    assert!(try_create_local_runtime_chat_model("chat", &Config::default()).is_none());
+    assert!(
+        try_create_local_runtime_chat_model("chat", &Config::default(), &EgressLedger::none())
+            .is_none()
+    );
     // A BYOK cloud slug is not a local runtime either — it falls through to the
     // `Provider` path.
     let mut cloud = Config::default();
     cloud.cloud_providers.push(openai_entry("p_oai", "openai"));
     cloud.chat_provider = Some("openai:gpt-4o-mini".to_string());
-    assert!(try_create_local_runtime_chat_model("chat", &cloud).is_none());
+    assert!(try_create_local_runtime_chat_model("chat", &cloud, &EgressLedger::none()).is_none());
 }
 
 #[test]
@@ -306,8 +347,13 @@ fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
     let mut config = Config::default();
     config.cloud_providers.push(deepseek_entry("p_ds"));
     config.chat_provider = Some("deepseek:deepseek-reasoner".to_string());
-    let (model, model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
-        .expect("bearer cloud create_chat_model must build");
+    let (model, model_id) = create_chat_model_with_model_id_in(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        0.7,
+    )
+    .expect("bearer cloud create_chat_model must build");
     assert_eq!(model_id, "deepseek-reasoner");
     let profile = model
         .profile()
@@ -325,9 +371,16 @@ fn turn_model_route_metadata_uses_post_remap_cloud_model() {
     config.cloud_providers.push(deepseek_entry("p_ds"));
     config.chat_provider = Some("deepseek:hint:chat".to_string());
 
-    let (_model, provider, resolved_model) =
-        create_turn_chat_model_with_native_tools_and_route("chat", &config, "hint:chat", 0.7, true)
-            .expect("abstract BYOK tier must build");
+    let (_model, provider, resolved_model) = create_turn_chat_model_with_native_tools_and_route(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        "hint:chat",
+        0.7,
+        true,
+        &EgressLedger::none(),
+    )
+    .expect("abstract BYOK tier must build");
 
     assert_eq!(provider, "deepseek");
     assert_eq!(resolved_model, "deepseek-chat");
@@ -364,8 +417,13 @@ fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
         .cloud_providers
         .push(anthropic_entry("p_anth", "anthropic"));
     config.chat_provider = Some("anthropic:claude-sonnet-4-6".to_string());
-    let (model, model_id) = create_chat_model_with_model_id("chat", &config, 0.7)
-        .expect("anthropic cloud create_chat_model must build");
+    let (model, model_id) = create_chat_model_with_model_id_in(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &config,
+        0.7,
+    )
+    .expect("anthropic cloud create_chat_model must build");
     assert_eq!(model_id, "claude-sonnet-4-6");
     assert_eq!(
         model.profile().and_then(|p| p.provider.as_deref()),
@@ -401,6 +459,7 @@ fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
         "anthropic:claude-sonnet-4-6",
         &config,
         false,
+        &EgressLedger::none(),
     )
     .expect("anthropic slug resolves")
     .expect("build");
@@ -422,15 +481,16 @@ fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
     // the managed default, never reaches the backend verbatim.
     config.chat_provider = Some("openhuman:reasoning-v1".to_string());
 
-    let (model, model_id) = try_create_cloud_slug_chat_model("chat", &config)
-        .expect("configured OpenhumanJwt slug should be recognized")
-        .expect("managed model should build");
+    let (model, model_id) =
+        try_create_cloud_slug_chat_model("chat", &config, &EgressLedger::none())
+            .expect("configured OpenhumanJwt slug should be recognized")
+            .expect("managed model should build");
 
     assert_eq!(model_id, crate::config::MODEL_MANAGED_DEFAULT);
 
     // A concrete catalog id is forwarded verbatim.
     config.chat_provider = Some("openhuman:openrouter/deepseek/deepseek-v4-pro".to_string());
-    let (_, pinned_id) = try_create_cloud_slug_chat_model("chat", &config)
+    let (_, pinned_id) = try_create_cloud_slug_chat_model("chat", &config, &EgressLedger::none())
         .expect("configured OpenhumanJwt slug should be recognized")
         .expect("managed model should build");
     assert_eq!(pinned_id, "openrouter/deepseek/deepseek-v4-pro");
@@ -457,9 +517,14 @@ async fn openhuman_jwt_slug_discloses_pinned_model() {
     let mut config = Config::default();
     config.cloud_providers.push(oh_entry("p_oh"));
     let provider = format!("openhuman:{marker}");
-    let _ = try_create_cloud_slug_chat_model_from_string("chat", &provider, &config)
-        .expect("configured OpenhumanJwt slug should be recognized")
-        .expect("managed model should build");
+    let _ = try_create_cloud_slug_chat_model_from_string(
+        "chat",
+        &provider,
+        &config,
+        &EgressLedger::none(),
+    )
+    .expect("configured OpenhumanJwt slug should be recognized")
+    .expect("managed model should build");
 
     let sentinel = "egress-jwt-pinned-sentinel-end";
     crate::core::bus::BUS.publish(DomainEvent::ExternalTransferPending {
@@ -507,8 +572,14 @@ async fn native_claude_turn_routes_disclose_pinned_models() {
     let pinned_sdk = "egress-sdk-pinned-marker";
     let mut sdk_config = Config::default();
     sdk_config.chat_provider = Some(format!("claude_agent_sdk:{configured_sdk}"));
-    create_turn_chat_model("chat", &sdk_config, pinned_sdk, 0.0)
-        .expect("Claude Agent SDK turn model should build");
+    create_turn_chat_model(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &sdk_config,
+        pinned_sdk,
+        0.0,
+    )
+    .expect("Claude Agent SDK turn model should build");
 
     let configured_code = "egress-code-configured-marker";
     let pinned_code = "egress-code-pinned-marker";
@@ -517,7 +588,13 @@ async fn native_claude_turn_routes_disclose_pinned_models() {
     // Egress is disclosed once the effective model is selected, before the
     // environment probe. The test therefore remains valid on hosts without the
     // Claude Code CLI.
-    let _ = create_turn_chat_model("chat", &code_config, pinned_code, 0.0);
+    let _ = create_turn_chat_model(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        &code_config,
+        pinned_code,
+        0.0,
+    );
 
     let sentinel = "egress-native-claude-sentinel-end";
     BUS.publish(DomainEvent::ExternalTransferPending {
@@ -580,6 +657,7 @@ fn openhuman_jwt_slug_preserves_forced_text_mode() {
         "openhuman:reasoning-v1",
         &config,
         false,
+        &EgressLedger::none(),
     )
     .expect("configured OpenhumanJwt slug should be recognized")
     .expect("managed model should build");
@@ -598,10 +676,14 @@ fn openhuman_jwt_slug_without_model_preserves_managed_role_tier() {
     let mut config = Config::default();
     config.cloud_providers.push(oh_entry("p_oh"));
 
-    let (_model, model_id) =
-        try_create_cloud_slug_chat_model_from_string("summarization", "openhuman:", &config)
-            .expect("configured OpenhumanJwt slug should be recognized")
-            .expect("managed model should build");
+    let (_model, model_id) = try_create_cloud_slug_chat_model_from_string(
+        "summarization",
+        "openhuman:",
+        &config,
+        &EgressLedger::none(),
+    )
+    .expect("configured OpenhumanJwt slug should be recognized")
+    .expect("managed model should build");
 
     assert_eq!(model_id, crate::config::MODEL_MANAGED_DEFAULT);
 }
@@ -614,9 +696,10 @@ fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
     let mut openai = Config::default();
     openai.cloud_providers.push(openai_entry("p_oai", "openai"));
     openai.chat_provider = Some("openai:gpt-4o-mini".to_string());
-    let (model, model_id) = try_create_cloud_slug_chat_model("chat", &openai)
-        .expect("openai should flip crate-native")
-        .expect("build");
+    let (model, model_id) =
+        try_create_cloud_slug_chat_model("chat", &openai, &EgressLedger::none())
+            .expect("openai should flip crate-native")
+            .expect("build");
     assert_eq!(model_id, "gpt-4o-mini");
     assert_eq!(
         model.profile().and_then(|p| p.provider.as_deref()),
@@ -625,11 +708,16 @@ fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
 
     // Managed (default), local runtimes, and unconfigured slugs are not cloud
     // slugs — they decline and fall through to their own paths.
-    assert!(try_create_cloud_slug_chat_model("chat", &Config::default()).is_none());
+    assert!(
+        try_create_cloud_slug_chat_model("chat", &Config::default(), &EgressLedger::none())
+            .is_none()
+    );
     let mut local = Config::default();
     local.chat_provider = Some("ollama:qwen2.5".to_string());
-    assert!(try_create_cloud_slug_chat_model("chat", &local).is_none());
+    assert!(try_create_cloud_slug_chat_model("chat", &local, &EgressLedger::none()).is_none());
     let mut unconfigured = Config::default();
     unconfigured.chat_provider = Some("deepseek:deepseek-chat".to_string());
-    assert!(try_create_cloud_slug_chat_model("chat", &unconfigured).is_none());
+    assert!(
+        try_create_cloud_slug_chat_model("chat", &unconfigured, &EgressLedger::none()).is_none()
+    );
 }

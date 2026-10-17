@@ -102,5 +102,5 @@ test('App.tsx still reflects the post-CoreState/ChatRuntime provider chain', () 
   assert.ok(!names.includes('AIProvider'), 'AIProvider was removed pre-audit');
   assert.ok(!names.includes('SkillProvider'), 'SkillProvider was removed pre-audit');
   // Sanity: the doc path the gate guards actually exists.
-  assert.ok(FRONTEND_DOC.endsWith('gitbooks/developing/architecture/frontend.md'));
+  assert.ok(FRONTEND_DOC.endsWith('docs/gitbooks/en/developing/architecture/frontend.md'));
 });

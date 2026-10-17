@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CHAIN_GATES_NOT_FORWARDED,
   CHAIN_LOCAL_GATES,
+  checkLinkedModulesIsolation,
   checkProductForwarding,
   diffChainForwarding,
   diffForwarding,
@@ -919,4 +920,46 @@ test('core product builds omit host-owned OS keychain features', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.stdout.trim().split(',').includes('storage-sqlite'));
   assert.ok(!result.stdout.trim().split(',').includes('os-keyring'));
+});
+
+// ── linked-modules isolation (E0.2) ────────────────────────────────────────
+
+test('the real manifests keep linked-modules out of every shipped path', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+  const read = rel => readFileSync(join(root, rel), 'utf8');
+  assert.deepEqual(
+    checkLinkedModulesIsolation({
+      productFeatures: parseProductFeatures(read('scripts/ci/product-features.txt')),
+      shellToml: read('crates/openhuman-app/Cargo.toml'),
+      cliFeatures: parseFeatureTable(read('crates/openhuman-cli/Cargo.toml')),
+    }),
+    []
+  );
+  assert.ok('linked-modules' in CHAIN_LOCAL_GATES['openhuman-cli']);
+});
+
+test('deliberate violations of linked-modules isolation are each reported', () => {
+  const clean = { productFeatures: ['voice'], shellToml: '[dependencies]\nopenhuman-rpc = {}\n', cliFeatures: new Map() };
+  assert.deepEqual(checkLinkedModulesIsolation(clean), []);
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, productFeatures: ['voice', 'linked-modules'] }).length,
+    1
+  );
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, shellToml: 'openhuman-rpc = { features = ["linked-modules"] }\n' }).length,
+    1
+  );
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, shellToml: 'openhuman-modules-linked = { path = "x" }\n' }).length,
+    1
+  );
+  assert.equal(
+    checkLinkedModulesIsolation({ ...clean, cliFeatures: new Map([['default', ['modules', 'linked-modules']]]) }).length,
+    1
+  );
+  // A mention in a comment is not a dependency on it.
+  assert.deepEqual(
+    checkLinkedModulesIsolation({ ...clean, shellToml: '# never linked-modules here\n[dependencies]\n' }),
+    []
+  );
 });

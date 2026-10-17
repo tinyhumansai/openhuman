@@ -21,11 +21,8 @@ static OWNERS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default:
 
 /// Notes that `job_id` just completed as the current context's agent, when
 /// it ran as one. Call just before publishing `CronJobCompleted`.
-pub fn note(job_id: &str) {
-    let Some(agent) = crate::core::runtime::current_tenant()
-        .ok()
-        .and_then(|tenant| tenant.agent)
-    else {
+pub fn note(ctx: &crate::core::runtime::DispatchCtx, job_id: &str) {
+    let Some(agent) = ctx.tenant().ok().and_then(|tenant| tenant.agent) else {
         return;
     };
     let mut owners = OWNERS

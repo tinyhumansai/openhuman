@@ -38,7 +38,12 @@ impl StorageDownloadFileTool {
         }
     }
 
-    async fn run(&self, args: Value, action_dir: &Path) -> anyhow::Result<ToolResult> {
+    async fn run(
+        &self,
+        args: Value,
+        action_dir: &Path,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         if let Some(blocked) = readonly_autonomy_block(&self.security) {
             return Ok(blocked);
         }
@@ -55,7 +60,7 @@ impl StorageDownloadFileTool {
         tracing::debug!("[file_storage] downloading file_id={file_id}");
         let (body, content_type, server_name) = match self
             .client
-            .get_bytes(&file_path(&file_id, "/download"))
+            .get_bytes(approval, &file_path(&file_id, "/download"))
             .await
         {
             Ok(t) => t,
@@ -147,7 +152,7 @@ impl Tool for StorageDownloadFileTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        self.run(args, &self.action_dir).await
+        self.run(args, &self.action_dir, &Default::default()).await
     }
 
     async fn execute_with_context(
@@ -157,6 +162,7 @@ impl Tool for StorageDownloadFileTool {
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
-        self.run(args, &action_dir).await
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &action_dir, &approval).await
     }
 }

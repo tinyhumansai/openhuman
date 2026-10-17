@@ -14,7 +14,10 @@ use tinyflows::error::{EngineError, Result};
 
 use super::*;
 use crate::config::Config;
-use crate::inference::provider::{create_chat_model_with_model_id, role_for_model_tier};
+use crate::inference::provider::{
+    create_chat_model_with_model_id_in, is_raw_passthrough_model, role_for_model_tier,
+};
+use tinyflows::nodes::integration::agent_prompt;
 use tinyinference_llm::model::ModelRequest;
 
 /// [`LlmProvider`] adapter over OpenHuman's inference stack
@@ -36,6 +39,7 @@ use tinyinference_llm::model::ModelRequest;
 /// still lets the agent node's `output_parser` sub-port coerce it via the
 /// schema auto-fix path before enveloping.
 pub struct OpenHumanLlm {
+    pub ctx: crate::core::runtime::DispatchCtx,
     pub config: Arc<Config>,
 }
 
@@ -98,11 +102,13 @@ impl LlmProvider for OpenHumanLlm {
             "[flows] llm.complete: dispatching agent-node completion"
         );
 
-        let (chat_model, model) = create_chat_model_with_model_id(role, &self.config, temperature)
-            .map_err(|e| EngineError::Capability(e.to_string()))?;
+        let (chat_model, model) =
+            create_chat_model_with_model_id_in(&self.ctx, role, &self.config, temperature)
+                .map_err(|e| EngineError::Capability(e.to_string()))?;
         // `create_chat_provider` handed back the role's default model. If the node
         // pinned a raw/BYOK id, forward it verbatim instead (issue #4598).
-        let model = resolve_completion_model(node_model, model);
+        let model =
+            agent_prompt::resolve_completion_model(node_model, model, is_raw_passthrough_model);
 
         let mut model_request = ModelRequest::new(
             messages

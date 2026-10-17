@@ -13,7 +13,7 @@ cd "$(dirname "$0")/../.."
 for module in \
   vendor/tinydocs vendor/tinywallet vendor/tinymemory vendor/tinyjuice \
   vendor/tinyvoice vendor/tinymcp vendor/tinyconnectors \
-  vendor/tinysearch vendor/tinybox vendor/tinychannels vendor/tinyhosts
+  vendor/tinysearch vendor/tinybox vendor/tinychannels vendor/tinyhosts vendor/tinymemes vendor/tinyflows
 do
   if [ "$(git -C "$module" rev-parse --is-shallow-repository)" = true ]; then
     git -C "$module" fetch --quiet --no-recurse-submodules --unshallow --tags origin

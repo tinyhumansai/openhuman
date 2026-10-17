@@ -8,7 +8,7 @@ use tinytools::ToolRunContext;
 use crate::security::SecurityPolicy;
 use tinytools::ToolResult;
 
-pub(super) const FILES_PATH: &str = "/agent-integrations/file-storage/files";
+pub(crate) const FILES_PATH: &str = "/agent-integrations/file-storage/files";
 
 /// Subdirectory (under `action_dir`) where downloaded files are stored.
 /// Mirrors `media_generation`'s `generated-media/` root — the action dir is
@@ -145,7 +145,7 @@ pub(super) fn extension_for_content_type(content_type: Option<&str>) -> &'static
 /// Guess a mime type from a filename extension for the multipart upload
 /// part. Best-effort — the backend stores whatever we send and S3 doesn't
 /// care; unknown extensions fall back to `application/octet-stream`.
-pub(super) fn mime_for_path(path: &Path) -> &'static str {
+pub(crate) fn mime_for_path(path: &Path) -> &'static str {
     match path
         .extension()
         .and_then(|e| e.to_str())
@@ -187,7 +187,7 @@ pub(super) fn action_dir_for_context(
     default_action_dir.to_path_buf()
 }
 
-pub(super) fn file_path(file_id: &str, suffix: &str) -> String {
+pub(crate) fn file_path(file_id: &str, suffix: &str) -> String {
     format!("{FILES_PATH}/{file_id}{suffix}")
 }
 

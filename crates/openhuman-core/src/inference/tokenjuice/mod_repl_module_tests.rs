@@ -1,5 +1,6 @@
 //! Handle mode and the REPL tools over the real bus. Runs where CI carries the
-//! released module (`TINYJUICE_TEST_MODULE`); skipped otherwise.
+//! module (a `scripts/modules/build.mjs` build or the staged release); skipped
+//! otherwise.
 
 use super::*;
 
@@ -7,11 +8,11 @@ use super::*;
 /// `juice_find` reads the stored original through `Retrieve`.
 #[tokio::test]
 async fn a_large_result_becomes_a_handle_the_repl_tools_can_query() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
+    if crate::modules::local_artifact("tinyjuice").is_none() {
         eprintln!(
-            "SKIPPED (not run, not asserted): TINYJUICE_TEST_MODULE is not set. Build \
-             vendor/tinyjuice and export TINYJUICE_TEST_MODULE=<path to libtinyjuice_module>, \
-             or use scripts/test-rust-with-mock.sh"
+            "SKIPPED (not run, not asserted): no tinyjuice library. Run \
+             `node scripts/modules/build.mjs tinyjuice` and set OPENHUMAN_MODULE_SOURCE_DIR \
+             and OPENHUMAN_MODULE_SOURCE=source, or use scripts/test-rust-with-mock.sh"
         );
         return;
     }

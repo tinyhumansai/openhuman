@@ -26,6 +26,7 @@ import type {
 } from '../../types/turnState';
 import type { ChatThreadTodoItem, ThreadGoal } from '../chatService';
 import { callCoreRpc } from '../coreRpcClient';
+import { attachArtifactRows } from './artifactRows';
 
 interface Envelope<T> {
   data?: T;
@@ -78,7 +79,10 @@ export const threadApi = {
       params: { thread_id: threadId },
     });
     const data = unwrapEnvelope(response);
-    return { ...data, messages: data.messages.map(normalizeThreadMessage) };
+    // Artifact rows place artifact cards; they are attached to their replies
+    // here so no caller ever sees them as messages.
+    const messages = attachArtifactRows(data.messages.map(normalizeThreadMessage));
+    return { ...data, messages, count: messages.length };
   },
 
   /** Message text search across every thread, newest first. */

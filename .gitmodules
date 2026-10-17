@@ -60,3 +60,10 @@
 [submodule "vendor/tinymemes"]
 	path = vendor/tinymemes
 	url = https://github.com/tinyhumansai/tinymemes.git
+[submodule "vendor/tinystoragedrivers"]
+	path = vendor/tinystoragedrivers
+	url = https://github.com/tinyhumansai/tinystoragedrivers.git
+	branch = main
+[submodule "vendor/tiny-artifacts"]
+	path = vendor/tiny-artifacts
+	url = https://github.com/tinyhumansai/tiny-artifacts

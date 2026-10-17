@@ -9,7 +9,7 @@ standalone through the `openhuman voice`/`openhuman dictate` CLI subcommand.
 
 - Listen for a configurable hotkey and turn press/release events into audio recordings.
 - Hand each finished recording to a background pipeline that gates on minimum duration, silence, and hallucinated output, then transcribes and delivers the result.
-- Track running state (`Stopped`/`Idle`/`Recording`/`Transcribing`), a transcription counter, and the last error, exposed through `VoiceServerStatus`.
+- Mirror the running state (`Stopped`/`Idle`/`Recording`/`Transcribing`), owned by the `tinyvoice` module's recording session, plus a transcription counter, and the last error, exposed through `VoiceServerStatus`.
 - Keep a rolling buffer of recent transcripts to bias the STT engine's `initial_prompt` for continuity across consecutive recordings.
 - Provide a process-global singleton so RPC status/stop calls and the embedded auto-start path always act on the same running instance.
 
@@ -18,9 +18,10 @@ standalone through the `openhuman voice`/`openhuman dictate` CLI subcommand.
 | File | Role |
 | --- | --- |
 | [`types.rs`](./types.rs) | `ServerState`, `VoiceServerStatus`, `VoiceServerConfig` (hotkey, activation mode, skip_cleanup, context, min duration, silence threshold, custom dictionary), plus the `DEFAULT_SILENCE_THRESHOLD` (0.002 RMS, matching OpenWhispr's default), `MAX_RECENT_TRANSCRIPTS` (5), and `MAX_INITIAL_PROMPT_CHARS` (500) tunables. |
-| [`runtime.rs`](./runtime.rs) | `VoiceServer`: the hotkey event loop. Starts the platform hotkey listener, tracks in-progress and pending recordings, handles the race between a buffered release event and recording setup still in flight, and spawns `process_recording_bg` off the event loop so rapid consecutive presses are never missed. Owns `run`/`stop`/`status`. |
+| [`recorder.rs`](./recorder.rs) | `Recorder`: the host handle on the module-owned state machine (`SessionAdvance`); serialises each call with the phase mirror write. |
+| [`runtime.rs`](./runtime.rs) | `VoiceServer`: the hotkey event loop. Starts the platform hotkey listener, reports hotkey facts and setup results to the module session and performs the action it answers with (start, defer stop, stop), reports a buffered event found behind a finished setup, and spawns `process_recording_bg` off the event loop so rapid consecutive presses are never missed. Owns `run`/`stop`/`status`. |
 | [`hotkey_listener.rs`](./hotkey_listener.rs) | Picks the platform-appropriate listener. Uses `rdev` everywhere except the macOS `Fn`/Globe key, which goes through a Swift-based globe listener inside the compiled TinyComputer module, with acknowledged batches and explicit lease cleanup instead, because `rdev`'s `CGEventTap` callback calls `TSMGetInputSourceProperty` off the main thread and macOS 26 kills the process for that (#2677). Any other hotkey is rejected on macOS with a message pointing at `hotkey = "fn"`. |
-| [`pipeline.rs`](./pipeline.rs) | `process_recording_bg`: stops the recording, applies the duration/silence/hallucination gates, builds the `initial_prompt` from the custom dictionary and recent transcripts, transcribes via `crate::voice::voice_transcribe_bytes`, and delivers the text either over Socket.IO (when the focused app is OpenHuman itself) or by pasting into the external app via `text_input::insert_text`. |
+| [`pipeline.rs`](./pipeline.rs) | `process_recording_bg`: stops the recording, applies the duration/silence gates (`GateRecording`) and the hallucination gate, builds the `initial_prompt` from the custom dictionary and recent transcripts, transcribes via `crate::voice::voice_transcribe_bytes`, and delivers the text either over Socket.IO (when the focused app is OpenHuman itself) or by pasting into the external app via `text_input::insert_text`. |
 | [`singleton.rs`](./singleton.rs) | `global_server`/`try_global_server` (the process-global `OnceCell<Arc<VoiceServer>>`), `start_if_enabled` (embedded auto-start, gated on `config.voice_server.auto_start`), and `run_standalone` (the blocking CLI entry point, which deliberately does not register in the global singleton so CLI-started instances stay isolated from the core RPC lifecycle). |
 
 ## How it fits
@@ -42,6 +43,6 @@ agent-tool surface for voice generally lives in `voice/schemas/` and
 ## Further reading
 
 - [Parent module (`voice`)](../README.md)
-- [Voice tools](../../../../../gitbooks/features/native-tools/voice.md)
+- [Voice tools](../../../../../docs/gitbooks/en/features/native-tools/voice.md)
 - [tinyvoice submodule](../../../../../vendor/tinyvoice/README.md)
-- [Chat](../../../../../gitbooks/features/chat.md)
+- [Chat](../../../../../docs/gitbooks/en/features/chat.md)

@@ -19,7 +19,7 @@
 //! It is a mitigation, not a guarantee — detecting fabrication needs the
 //! tool-call record carried out to the caller.
 
-use crate::security::POLICY_BLOCKED_MARKER;
+use tinytools::status::POLICY_BLOCKED_MARKER;
 use tinytools::PermissionLevel;
 
 /// Generic workaround for a raw security-policy / autonomy block. These denials

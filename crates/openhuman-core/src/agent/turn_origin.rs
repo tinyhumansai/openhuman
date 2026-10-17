@@ -1,6 +1,6 @@
 //! Agent turn origin — the trust/routing label attached to every agent
 //! `run_turn` invocation. Read by [`crate::security::approval::ApprovalGate`]
-//! and [`crate::tools::agent_policy::ToolPolicyEngine`] to make
+//! and [`tinytools::ToolPolicyEngine`] to make
 //! consistent decisions across web, channel, cron, and background entry
 //! points without relying on the *absence* of other task-locals as a signal.
 //!
@@ -174,53 +174,43 @@ impl AgentTurnOrigin {
     }
 }
 
-/// Whether the current turn's text was written by a person — `false` outside
-/// any origin scope, matching [`AgentTurnOrigin::is_user_authored`]'s allowlist.
-pub fn current_is_user_authored() -> bool {
-    current().is_some_and(|origin| origin.is_user_authored())
-}
-
-tokio::task_local! {
-    /// Per-turn agent origin. Scoped by entry points (web channel, channel
-    /// runtime dispatch, cron scheduler, background jobs, CLI) around the
-    /// `run_turn` invocation. Read by the approval gate to make
-    /// origin-aware decisions.
-    pub static AGENT_TURN_ORIGIN: AgentTurnOrigin;
-}
-
-/// Scope `origin` for the duration of `fut`. Mirrors the existing
-/// [`crate::security::approval::APPROVAL_CHAT_CONTEXT`] scope pattern.
+/// Run `fut` as a turn labelled `origin`.
 ///
-/// The inner future is `Box::pin`-ed before being handed to the task-local
-/// scope so the combined `with_origin(... scope(... run_turn(...)))` future
-/// state machine stays heap-allocated. The agent loop downstream of this
-/// scope can be deep (tool dispatch, recursive sub-agent invocations, LLM
-/// streaming), and stacking two task-local scopes plus the agent loop on a
-/// 2 MiB worker stack reliably blows the test runtime — same shape as the
-/// fix in PR #3151. Box-pinning here is the single-point remediation that
-/// covers every caller (web channel, channel runtime, cron, background
-/// jobs, CLI).
+/// The label rides the [`CoreContext`](crate::core::runtime::CoreContext) the
+/// future runs under: a derived, immutable copy of the active context (or of
+/// the process default, or of a bare one when no core was booted) that carries
+/// `origin`. Nothing else holds it, so there is no second copy to drift from
+/// the context a spawn carries.
+///
+/// The inner future is `Box::pin`-ed before it is handed to the context scope
+/// so the combined `with_origin(... scope(... run_turn(...)))` future state
+/// machine stays heap-allocated. The agent loop downstream of this scope can be
+/// deep (tool dispatch, recursive sub-agent invocations, LLM streaming), and
+/// stacking scopes plus the agent loop on a 2 MiB worker stack reliably blows
+/// the test runtime (same shape as the fix in PR #3151). Boxing here is the
+/// single-point remediation that covers every caller (web channel, channel
+/// runtime, cron, background jobs, CLI).
 pub async fn with_origin<F: std::future::Future>(origin: AgentTurnOrigin, fut: F) -> F::Output {
-    let scoped = scope_origin(origin.clone(), fut);
-    let context = crate::core::runtime::CoreContext::current()
-        .or_else(crate::core::runtime::CoreContext::default_context);
-    if let Some(context) = context {
-        crate::core::runtime::CoreContext::scope_with_turn_origin(context, Some(origin), scoped)
-            .await
-    } else {
-        scoped.await
-    }
+    let context = crate::core::runtime::CoreContext::scoped_for_turn()
+        .or_else(crate::core::runtime::CoreContext::default_context)
+        .unwrap_or_else(crate::core::runtime::CoreContext::bare);
+    crate::core::runtime::CoreContext::scope_with_turn_origin(context, Some(origin), Box::pin(fut))
+        .await
 }
 
-async fn scope_origin<F: std::future::Future>(origin: AgentTurnOrigin, fut: F) -> F::Output {
-    AGENT_TURN_ORIGIN.scope(origin, Box::pin(fut)).await
-}
-
-/// Try to read the current origin. Returns `None` when no caller scoped one
-/// (legacy callers that haven't been migrated yet — the gate maps this to
-/// [`AgentTurnOrigin::Unknown`] / fail-closed).
+/// The origin of the turn running on this task, read from the scoped
+/// `CoreContext`. The process default never supplies authority. `None` when no
+/// caller scoped one; the gate maps that to [`AgentTurnOrigin::Unknown`]
+/// (fail closed).
+///
+/// The one place the origin is read from task state, for the library and test
+/// boundary and for [`capture`]. Production readers take the origin from the
+/// context they were handed ([`DispatchCtx::turn_origin`]) or from the tool
+/// run carrier.
+///
+/// [`DispatchCtx::turn_origin`]: crate::core::runtime::DispatchCtx::turn_origin
 pub fn current() -> Option<AgentTurnOrigin> {
-    AGENT_TURN_ORIGIN.try_with(|o| o.clone()).ok()
+    crate::core::runtime::DispatchCtx::ambient_turn().turn_origin()
 }
 
 /// Capture the ambient origin so it can be carried across a `tokio::spawn`
@@ -239,7 +229,7 @@ pub fn capture() -> Option<AgentTurnOrigin> {
 ///
 /// # Why this is inherit-only
 ///
-/// `AGENT_TURN_ORIGIN` is a `tokio` task-local, so it is **lost** the moment
+/// the scoped `CoreContext` is a `tokio` task-local, so the origin it carries is **lost** the moment
 /// work moves onto a new task via `tokio::spawn`. An async sub-agent, team
 /// member, or workflow phase therefore runs unlabelled, the approval gate reads
 /// [`AgentTurnOrigin::Unknown`], and every `external_effect` tool (shell/exec)
@@ -289,11 +279,10 @@ pub async fn with_inherited_origin<F: std::future::Future>(
 /// fresh task where [`current`] is `None`, so every external-effect tool it
 /// calls reaches the approval gate as [`AgentTurnOrigin::Unknown`] and is
 /// refused — even though the parent turn that delegated the work was properly
-/// labelled. That is the same failure mode
-/// [`fork_context::with_parent_context`](crate::agent::harness::fork_context)
-/// and an explicit [`OpenHumanRunContext`](crate::agent::tinyagents::host::OpenHumanRunContext)
-/// already re-install explicitly at those spawn sites; the origin is the third
-/// thing that has to travel with them.
+/// labelled. The parent `ParentExecutionContext` and an explicit
+/// [`OpenHumanRunContext`](crate::agent::tinyagents::host::OpenHumanRunContext)
+/// already travel explicitly to those spawn sites; the origin still has to be
+/// carried with them.
 ///
 /// **Call this on the parent task**, i.e. build the future *before* handing it
 /// to `tokio::spawn` — the origin is read when this function is called, not
@@ -308,18 +297,14 @@ pub async fn with_inherited_origin<F: std::future::Future>(
 /// This only ever *carries* a decision the parent entry point already made — it
 /// cannot manufacture trust that did not exist on the spawning task.
 pub fn propagate<F: std::future::Future>(fut: F) -> impl std::future::Future<Output = F::Output> {
-    let captured = current();
-    let context = crate::core::runtime::CoreContext::scoped();
+    // The origin is a field of the scoped context, so carrying the context
+    // carries the origin and nothing else: a task with no scoped context stays
+    // unlabelled.
+    let context = crate::core::runtime::CoreContext::scoped_for_turn();
     async move {
-        let run = async move {
-            match captured {
-                Some(origin) => with_origin(origin, fut).await,
-                None => fut.await,
-            }
-        };
         match context {
-            Some(context) => crate::core::runtime::CoreContext::scope(context, run).await,
-            None => run.await,
+            Some(context) => crate::core::runtime::CoreContext::scope(context, fut).await,
+            None => fut.await,
         }
     }
 }
@@ -358,14 +343,9 @@ pub fn propagate<F: std::future::Future>(fut: F) -> impl std::future::Future<Out
 ///
 /// # What it does not carry
 ///
-/// Only the origin. A delegated agent turn usually also needs
-/// [`turn_workspace::propagate`](super::turn_workspace) and the harness fork
-/// context; those are separate wrappers and still have to be applied around the
-/// future passed in here.
-///
-/// ```ignore
-/// let join = turn_origin::spawn(turn_workspace::propagate(async move { .. }));
-/// ```
+/// Only the origin (and the ambient `CoreContext`). A delegated agent turn
+/// usually also needs the harness fork context, a separate wrapper that still
+/// has to be applied around the future passed in here.
 pub fn spawn<F>(fut: F) -> tokio::task::JoinHandle<F::Output>
 where
     F: std::future::Future + Send + 'static,

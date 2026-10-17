@@ -31,7 +31,7 @@ use tinybus::stream::StreamRef;
 use tinydocs_bus::names::methods;
 use tinydocs_bus::OutputRef;
 
-use super::{host, ops, registry};
+use super::{ops, registry};
 use crate::config::Config;
 
 /// Registry id of the module these calls go to.
@@ -189,13 +189,19 @@ pub async fn ensure_ready(config: &Config) -> Result<(), DocumentCallError> {
 /// Ensure the module is serving and hand back what a call needs.
 async fn ready(
     config: &Config,
-) -> Result<(&'static host::ModuleRuntime, &'static super::ModuleRecord), DocumentCallError> {
+) -> Result<
+    (
+        &'static tinybus::module::ModuleRuntime,
+        &'static super::ModuleRecord,
+    ),
+    DocumentCallError,
+> {
     ops::ensure_loaded(config, MODULE_ID)
         .await
         .map_err(DocumentCallError::Unavailable)?;
     let record = registry::find(MODULE_ID)
         .ok_or_else(|| DocumentCallError::Unavailable(format!("unknown module '{MODULE_ID}'")))?;
-    let runtime = host::runtime()
+    let runtime = super::runtime::runtime()
         .await
         .map_err(|_| DocumentCallError::Unavailable("the module bus is not running".to_string()))?;
     Ok((runtime, record))
@@ -203,7 +209,7 @@ async fn ready(
 
 /// A proxy for the module's object.
 fn proxy(
-    runtime: &'static host::ModuleRuntime,
+    runtime: &'static tinybus::module::ModuleRuntime,
     record: &super::ModuleRecord,
 ) -> Result<tinybus::Proxy, DocumentCallError> {
     runtime

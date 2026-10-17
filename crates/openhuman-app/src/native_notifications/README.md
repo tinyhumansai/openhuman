@@ -83,5 +83,5 @@ The tests compile only on macOS.
 
 ## Further reading
 
-- [`gitbooks/developing/architecture/tauri-shell.md`](../../../../gitbooks/developing/architecture/tauri-shell.md): the Tauri shell.
+- [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md): the Tauri shell.
 - [`crates/openhuman-app/README.md`](../../README.md): the openhuman-app crate README.

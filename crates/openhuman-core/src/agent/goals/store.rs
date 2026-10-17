@@ -2,7 +2,7 @@
 //!
 //! **Crate-backed.** The per-thread goal now lives in the vendored `tinyagents`
 //! crate's `graph::goals` KV store
-//! (`<workspace>/tinyagents_store/kv/graph.goals/<hex(thread_id)>.json`), not
+//! (the `graph.goals` namespace of the agent's key-value store), not
 //! the legacy `<workspace>/thread_goals/` file-JSON tree. This module is a thin
 //! adapter for the harness turn loop, agent tools, and post-turn accounting. It forwards each operation to the crate
 //! store, converting the crate
@@ -19,15 +19,11 @@ use std::sync::Arc;
 use tinyagents_graph::goals::store as crate_store;
 use tinyagents_graph::goals::ThreadGoal;
 use tinyagents_harness::store::Store;
-use tinyagents_session::transcript::import::ops::open_session_stores;
 
-/// The store thread goals live in: the current agent's host session store
-/// when one is installed, else the workspace's `tinyagents_store/kv`.
+/// The store thread goals live in: the current agent's key-value store in the
+/// storage backend ([`crate::agent::session_store::stores_for`]).
 pub(crate) fn goals_store(workspace_dir: &Path) -> Arc<dyn Store> {
-    if let Some(stores) = crate::agent::session_store::current() {
-        return stores.kv;
-    }
-    Arc::new(open_session_stores(workspace_dir).kv)
+    crate::agent::session_store::stores_or_ephemeral(workspace_dir).kv
 }
 
 /// Set (create or replace) the thread's goal. A changed objective mints a fresh

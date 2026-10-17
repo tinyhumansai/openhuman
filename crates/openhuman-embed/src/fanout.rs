@@ -90,9 +90,11 @@ fn call(call: LeafCall, budget: ModelBudget, leaf: bool) -> CallFuture {
                 .map(CallOutcome::Completion)
         }),
         LeafCall::Turn(turn) => Box::pin(async move {
-            openhuman_core::agent::tinyagents::budget::with_spawn_depth_limit(
-                if leaf { 0 } else { 1 },
-                Box::pin((*turn).budget(budget).send()),
+            Box::pin(
+                (*turn)
+                    .budget(budget)
+                    .with_spawn_depth_limit(if leaf { 0 } else { 1 })
+                    .send(),
             )
             .await
             .map(CallOutcome::Turn)

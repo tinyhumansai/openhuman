@@ -67,6 +67,27 @@ impl Tool for StorageGetLinkTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl StorageGetLinkTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         if let Some(blocked) = readonly_autonomy_block(&self.security) {
             return Ok(blocked);
         }
@@ -82,7 +103,7 @@ impl Tool for StorageGetLinkTool {
         tracing::debug!("[file_storage] generating link for file_id={file_id}");
         match self
             .client
-            .post::<LinkResponse>(&file_path(&file_id, "/link"), &body)
+            .post::<LinkResponse>(approval, &file_path(&file_id, "/link"), &body)
             .await
         {
             Ok(resp) => Ok(ToolResult::success_with_markdown(

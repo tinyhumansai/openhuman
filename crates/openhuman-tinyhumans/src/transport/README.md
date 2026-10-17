@@ -124,7 +124,7 @@ cargo test -p openhuman-tinyhumans transport::
 
 ## Further reading
 
-- [`gitbooks/developing/tinyhumans-api-key.md`](../../../../gitbooks/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
-- [`gitbooks/developing/architecture.md`](../../../../gitbooks/developing/architecture.md): architecture overview.
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`docs/gitbooks/en/developing/architecture.md`](../../../../docs/gitbooks/en/developing/architecture.md): architecture overview.
 - [`crates/openhuman-tinyhumans/README.md`](../../README.md): the openhuman-tinyhumans crate README.
 - [`vendor/tinyhumans-sdk/README.md`](../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

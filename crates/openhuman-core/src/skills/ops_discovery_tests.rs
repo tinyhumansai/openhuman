@@ -244,24 +244,43 @@ async fn load_workflow_metadata_skips_user_roots_under_a_hidden_context() {
     );
 }
 
-#[test]
-fn workflow_metadata_is_reused_until_invalidated() {
+#[tokio::test]
+async fn workflow_metadata_is_reused_until_invalidated() {
+    // Scope an explicit skills-on context: the process default context other
+    // tests install may have the component off.
+    let ctx = crate::core::runtime::CoreContext::for_test_with_components(
+        crate::core::runtime::ComponentSet::all(),
+    );
+    crate::core::runtime::CoreContext::scope(ctx, async {
+        workflow_metadata_is_reused_body();
+    })
+    .await;
+}
+
+fn workflow_metadata_is_reused_body() {
     let workspace = tempfile::tempdir().unwrap();
     let skill = workspace.path().join("skills").join("cached-skill");
-    write(
-        &skill.join("SKILL.md"),
-        "---\nname: cached-skill\ndescription: first version\n---\n",
-    );
-    let first = load_workflow_metadata(workspace.path());
-    assert!(first.iter().any(|item| item.name == "cached-skill"));
-
-    std::fs::remove_dir_all(&skill).unwrap();
-    assert!(
-        load_workflow_metadata(workspace.path())
+    // The metadata cache is process-global and other tests invalidate it
+    // concurrently, so retry the prime-then-reuse phase until one attempt
+    // runs without an interleaved invalidation.
+    let mut reused = false;
+    for _ in 0..50 {
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: cached-skill\ndescription: first version\n---\n",
+        );
+        let first = load_workflow_metadata(workspace.path());
+        assert!(first.iter().any(|item| item.name == "cached-skill"));
+        std::fs::remove_dir_all(&skill).unwrap();
+        if load_workflow_metadata(workspace.path())
             .iter()
-            .any(|item| item.name == "cached-skill"),
-        "a turn reuses the startup snapshot"
-    );
+            .any(|item| item.name == "cached-skill")
+        {
+            reused = true;
+            break;
+        }
+    }
+    assert!(reused, "a turn reuses the startup snapshot");
 
     crate::skills::ops_discover::invalidate_workflow_metadata_cache();
     assert!(
@@ -270,4 +289,39 @@ fn workflow_metadata_is_reused_until_invalidated() {
             .any(|item| item.name == "cached-skill"),
         "a skill change refreshes the snapshot"
     );
+}
+
+#[tokio::test]
+async fn skills_component_off_yields_no_catalogue_and_skips_bundled_install() {
+    use crate::core::runtime::{ComponentSet, CoreContext};
+
+    let ws_dir = tempfile::tempdir().unwrap();
+    write(
+        &ws_dir
+            .path()
+            .join("skills")
+            .join("ws-only")
+            .join("SKILL.md"),
+        "---\nname: ws-only\ndescription: workspace skill\n---\n",
+    );
+    let mut off = ComponentSet::all();
+    off.skills = false;
+    let ctx = CoreContext::for_test_with_components(off);
+
+    let ws = ws_dir.path().to_path_buf();
+    let (names, installed) = CoreContext::scope(ctx, async move {
+        crate::skills::install_bundled_skills(&ws);
+        (
+            load_workflow_metadata(&ws).len(),
+            crate::skills::bundled::builtin_root(&ws).exists(),
+        )
+    })
+    .await;
+    assert_eq!(names, 0, "disabled skills expose no catalogue");
+    assert!(!installed, "disabled skills materialize no bundled skills");
+}
+
+#[test]
+fn skills_component_enabled_without_context_is_on() {
+    assert!(crate::skills::skills_component_enabled());
 }

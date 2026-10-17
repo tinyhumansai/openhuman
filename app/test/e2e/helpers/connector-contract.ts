@@ -26,7 +26,6 @@ import {
   seedComposioToolkits,
 } from './composio-helpers';
 import { callOpenhumanRpc } from './core-rpc';
-import { triggerAuthDeepLinkBypass } from './deep-link-helpers';
 import {
   clickButton,
   textExists,
@@ -34,6 +33,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from './element-helpers';
+import { triggerAuthLoopbackBypass } from './loopback-auth-helpers';
 import { completeOnboardingIfVisible, navigateToSkills } from './shared-flows';
 
 /**
@@ -84,7 +84,7 @@ export function runConnectorContract(config: ConnectorContractConfig): void {
       seedComposioConnection(slug, 'ACTIVE', activeId);
       await waitForApp();
       clearRequestLog();
-      await triggerAuthDeepLinkBypass(authToken);
+      await triggerAuthLoopbackBypass(authToken);
       await waitForWindowVisible(25_000);
       await waitForWebView(15_000);
       await completeOnboardingIfVisible(LOG);

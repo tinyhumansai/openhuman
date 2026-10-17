@@ -132,34 +132,60 @@ async fn without_a_backend_only_the_local_scope_runs() {
         return;
     }
     let agent = live_agent("agents-test-unvisited");
-    let runs = for_each_scope("test", || async {
-        CoreContext::current().and_then(|c| c.session_agent().map(str::to_string))
-    })
+    let runs = for_each_scope(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        "test",
+        |_| async { CoreContext::current().and_then(|c| c.session_agent().map(str::to_string)) },
+    )
     .await;
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].0, None);
-    assert!(for_each_agent("test", || async {}).await.is_empty());
+    assert!(for_each_agent("test", |_| async {}).await.is_empty());
     assert_eq!(
-        find_owner("test", || async { Ok(false) }).await,
+        find_owner(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            "test",
+            |_| async { Ok(false) }
+        )
+        .await,
         Ok(None),
         "nothing anywhere"
     );
     assert_eq!(
-        find_owner("test", || async { Ok(true) }).await,
+        find_owner(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            "test",
+            |_| async { Ok(true) }
+        )
+        .await,
         Ok(Some(None))
     );
     assert!(
-        find_owner("test", || async { Err("down".to_string()) })
-            .await
-            .is_err(),
+        find_owner(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            "test",
+            |_| async { Err("down".to_string()) }
+        )
+        .await
+        .is_err(),
         "a failed lookup with no match fails closed"
     );
-    let inside = within_agent(Some("agents-test-unvisited"), async {
-        CoreContext::current().and_then(|c| c.session_agent().map(str::to_string))
-    })
+    let inside = within_agent(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        Some("agents-test-unvisited"),
+        async { CoreContext::current().and_then(|c| c.session_agent().map(str::to_string)) },
+    )
     .await;
     assert_eq!(inside.flatten().as_deref(), Some("agents-test-unvisited"));
-    assert_eq!(within_agent(None, async { 7 }).await, Some(7));
+    assert_eq!(
+        within_agent(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            None,
+            async { 7 }
+        )
+        .await,
+        Some(7)
+    );
     AgentContextRegistry::deregister("agents-test-unvisited", &agent);
 }
 
@@ -169,7 +195,12 @@ async fn without_a_backend_the_live_pass_runs_only_local() {
         return;
     }
     let agent = live_agent("agents-test-live-pass");
-    let runs = for_each_live_scope("test", || async { 1 }).await;
+    let runs = for_each_live_scope(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        "test",
+        |_| async { 1 },
+    )
+    .await;
     assert_eq!(runs, vec![(None, 1)]);
     AgentContextRegistry::deregister("agents-test-live-pass", &agent);
 }
@@ -199,9 +230,13 @@ async fn the_local_pass_runs_outside_the_callers_agent() {
     }
     let agent = live_agent("agents-test-caller");
     let seen = CoreContext::scope(Arc::clone(&agent), async {
-        for_each_scope("test", || async {
-            CoreContext::current().and_then(|c| c.session_agent().map(str::to_string))
-        })
+        for_each_scope(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            "test",
+            |_| async {
+                CoreContext::current().and_then(|c| c.session_agent().map(str::to_string))
+            },
+        )
         .await
     })
     .await;

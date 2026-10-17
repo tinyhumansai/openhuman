@@ -1,4 +1,5 @@
 use super::*;
+use tinytools_agent::dialect::ToolCallFormat;
 
 #[test]
 fn prompt_builder_assembles_sections() {

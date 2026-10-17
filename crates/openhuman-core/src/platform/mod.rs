@@ -9,6 +9,7 @@ pub mod connectivity;
 pub mod cost;
 pub mod doctor;
 pub mod health;
+pub mod llm_gate;
 pub mod proc_metrics;
 pub(crate) mod resource_admission;
 pub mod service;

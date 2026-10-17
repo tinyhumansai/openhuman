@@ -14,6 +14,16 @@ Capability {
         privacy: IMAGE_TO_BACKEND,
     },
 Capability {
+        id: "conversation.reply_remix",
+        name: "Slang and Meme Replies",
+        domain: "conversation",
+        category: CapabilityCategory::Conversation,
+        description: "When the chat can take it, the assistant's final reply comes back in your own language and register with regional slang and sometimes a reaction meme. Serious chats are never touched, and the original reply goes out whenever remixing fails or runs out of time. After a reply is delivered, slang and meme research can run in the background through web search. Runs in the TinyMemes module; off unless the TinyMemes flag selects the thread.",
+        how_to: "Configured with [components] memes and [memes] in config.toml; the OPENHUMAN_TINYMEMES flag selects threads",
+        status: CapabilityStatus::Beta,
+        privacy: REMIX_TO_PROVIDERS,
+    },
+Capability {
         id: "conversation.create",
         name: "Create Conversations",
         domain: "conversation",

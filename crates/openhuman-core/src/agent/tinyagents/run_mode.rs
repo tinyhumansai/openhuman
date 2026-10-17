@@ -4,17 +4,18 @@
 //! (vendor tinyagents#211) gate side-effecting tools per-run via a live
 //! [`RunModeHandle`] the host can flip without restarting the run. OpenHuman's
 //! unit of "a run" for this purpose is a chat *thread*: the same thread is
-//! driven through many independent turns (one `assemble_turn_harness` call
+//! driven through many independent turns (one `install_turn_middleware` call
 //! each), so the mode has to live somewhere that outlives any one turn's
 //! [`crate::agent::tinyagents::host::OpenHumanRunContext`] — this process-wide,
 //! thread_id-keyed registry is that home.
 //!
 //! `plan_exit` (the tool) and the `agent.set_run_mode` / `agent.get_run_mode`
-//! RPCs both read/write through here; `turn_runner` looks the handle up by
+//! RPCs both read/write through here; `turn_exec` looks the handle up by
 //! `OpenHumanRunContext::thread_id` right before assembling each turn's
 //! harness and pushes `plan_mode_middleware(handle, ..)` when a handle exists
 //! for the thread.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,16 +27,16 @@ use crate::core::events::DomainEvent;
 
 type RunModeRegistry = Mutex<HashMap<String, RunModeHandle>>;
 
-fn registry() -> Arc<RunModeRegistry> {
-    crate::core::runtime::current_slot::<RunModeRegistry>()
+fn registry(ctx: &DispatchCtx) -> Arc<RunModeRegistry> {
+    crate::core::runtime::slot_for::<RunModeRegistry>(ctx)
 }
 
 /// Returns the [`RunModeHandle`] for `thread_id`, creating one (starting in
 /// [`RunMode::Build`]) if none exists yet. Cloning a `RunModeHandle` shares
 /// the same underlying atomic, so every clone (a live turn's middleware, this
 /// registry's own copy, a later RPC call) observes the same live value.
-pub fn handle_for_thread(thread_id: &str) -> RunModeHandle {
-    let registry = registry();
+pub fn handle_for_thread(ctx: &DispatchCtx, thread_id: &str) -> RunModeHandle {
+    let registry = registry(ctx);
     let mut map = registry.lock();
     map.entry(thread_id.to_string())
         .or_insert_with(|| RunModeHandle::new(RunMode::Build))
@@ -44,8 +45,8 @@ pub fn handle_for_thread(thread_id: &str) -> RunModeHandle {
 
 /// Returns the current mode for `thread_id` without creating a handle —
 /// `Build` (the default) when the thread has never toggled plan mode.
-pub fn get_mode(thread_id: &str) -> RunMode {
-    registry()
+pub fn get_mode(ctx: &DispatchCtx, thread_id: &str) -> RunMode {
+    registry(ctx)
         .lock()
         .get(thread_id)
         .map(|h| h.get())
@@ -56,8 +57,8 @@ pub fn get_mode(thread_id: &str) -> RunMode {
 /// `DomainEvent::ThreadRunModeChanged` so the web channel can bridge a
 /// `run_mode_changed` socket event. A no-op publish-wise when the mode is
 /// already what was requested — still safe to call unconditionally.
-pub fn set_mode(thread_id: &str, mode: RunMode) {
-    let handle = handle_for_thread(thread_id);
+pub fn set_mode(ctx: &DispatchCtx, thread_id: &str, mode: RunMode) {
+    let handle = handle_for_thread(ctx, thread_id);
     let changed = handle.get() != mode;
     handle.set(mode);
     if changed {
@@ -195,7 +196,7 @@ struct ThreadIdParams {
     thread_id: String,
 }
 
-fn handle_set_run_mode(params: Map<String, Value>) -> ControllerFuture {
+fn handle_set_run_mode(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ThreadModeParams>(params)?;
         let Some(mode) = parse_mode_label(&p.mode) else {
@@ -206,15 +207,15 @@ fn handle_set_run_mode(params: Map<String, Value>) -> ControllerFuture {
             mode = %p.mode,
             "[rpc][agent] set_run_mode entry"
         );
-        set_mode(&p.thread_id, mode);
+        set_mode(&ctx, &p.thread_id, mode);
         Ok(serde_json::json!({ "mode": mode_label(mode) }))
     })
 }
 
-fn handle_get_run_mode(params: Map<String, Value>) -> ControllerFuture {
+fn handle_get_run_mode(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<ThreadIdParams>(params)?;
-        let mode = get_mode(&p.thread_id);
+        let mode = get_mode(&ctx, &p.thread_id);
         Ok(serde_json::json!({ "mode": mode_label(mode) }))
     })
 }

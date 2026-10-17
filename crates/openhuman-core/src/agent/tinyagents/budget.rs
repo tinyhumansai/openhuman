@@ -1,4 +1,5 @@
-//! Host budget policy, scoped once at admission and carried explicitly to children.
+//! Host budget policy, handed to the turn once at admission and carried
+//! explicitly to children (`HostTurnEnv::model_budget` -> `OpenHumanRunContext`).
 use std::sync::Arc;
 
 /// Product recursion ceiling shared by native and MCP delegation.
@@ -27,31 +28,12 @@ impl ModelBudget {
     /// Apply the policy below retries and fallback selection.
     pub(crate) fn wrap(&self, model: Arc<dyn ChatModel<()>>) -> Arc<dyn ChatModel<()>> {
         Arc::new(tinyinference_llm::model::budget::BudgetedModel::new(
-            Arc::new(super::budget_charge::GatewayChargeModel::new(model)),
+            Arc::new(tinyagents_harness::cost::GatewayChargeModel::new(model)),
             self.ledger.clone(),
             self.call,
         ))
     }
 }
-tokio::task_local! { static MODEL_BUDGET: ModelBudget; }
-/// Scope host policy around turn admission; the explicit run carrier copies it.
-pub async fn with_budget<F: std::future::Future>(budget: ModelBudget, future: F) -> F::Output {
-    MODEL_BUDGET.scope(budget, Box::pin(future)).await
-}
-pub(crate) fn current() -> Option<ModelBudget> {
-    MODEL_BUDGET.try_with(Clone::clone).ok()
-}
-
-// Fanout leaves narrow the existing host depth policy at admission.
-tokio::task_local! { static SPAWN_DEPTH_LIMIT: usize; }
-/// Run a typed fanout call with a narrower model-directed child-depth ceiling.
-pub async fn with_spawn_depth_limit<F: std::future::Future>(limit: usize, future: F) -> F::Output {
-    SPAWN_DEPTH_LIMIT.scope(limit, Box::pin(future)).await
-}
-pub(crate) fn spawn_depth_limit() -> Option<usize> {
-    SPAWN_DEPTH_LIMIT.try_with(|limit| *limit).ok()
-}
-
 /// Effective host depth ceiling, never wider than product policy.
 pub(crate) fn depth(context: &super::host::OpenHumanRunContext) -> usize {
     context

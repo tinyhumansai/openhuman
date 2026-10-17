@@ -11,7 +11,7 @@ fn sidecar(
 #[test]
 fn graph_failure_persists_only_accepted_snapshot_history() {
     let snapshot = Arc::new(std::sync::Mutex::new(
-        crate::agent::tinyagents::TranscriptSnapshot {
+        crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {
             messages: vec![
                 Message::system("stable prefix"),
                 Message::user("request"),
@@ -42,11 +42,11 @@ fn graph_failure_persists_only_accepted_snapshot_history() {
 #[test]
 fn stalled_model_stream_reports_completed_evidence_instead_of_its_narration() {
     let snapshot = Arc::new(std::sync::Mutex::new(
-        crate::agent::tinyagents::TranscriptSnapshot {
+        crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {
             messages: vec![Message::user("Find information about Jev")],
             accepted_len: 1,
             request_base_len: 1,
-            tool_outcomes: vec![crate::agent::tinyagents::ToolCallOutcome {
+            tool_outcomes: vec![tinyagents_harness::turn_outcome::ToolCallOutcome {
                 call_id: "search-1".into(),
                 name: "web_search_tool".into(),
                 arguments: serde_json::json!({"query": "Jev TypeSafe"}),
@@ -82,7 +82,7 @@ fn stalled_model_stream_reports_completed_evidence_instead_of_its_narration() {
 #[test]
 fn graph_failure_copies_snapshot_usage_and_failed_tool_outcome_to_sidecar() {
     let snapshot = Arc::new(std::sync::Mutex::new(
-        crate::agent::tinyagents::TranscriptSnapshot {
+        crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {
             messages: vec![Message::user("request"), Message::tool("call-1", "denied")],
             accepted_len: 1,
             request_base_len: 1,
@@ -91,9 +91,9 @@ fn graph_failure_copies_snapshot_usage_and_failed_tool_outcome_to_sidecar() {
             cached_input_tokens: 3,
             last_call_input_tokens: 13,
             last_call_output_tokens: 5,
-            cost: crate::agent::cost::CostTally {
+            cost: tinyagents_harness::cost::CostTally {
                 known_usd: 0.004,
-                source: crate::agent::cost::CostSource::Charged,
+                source: tinyagents_harness::cost::CostSource::Charged,
             },
             resolved_route: Some(tinyinference_llm::model::ResolvedModelRoute::new(
                 "openhuman",
@@ -102,7 +102,7 @@ fn graph_failure_copies_snapshot_usage_and_failed_tool_outcome_to_sidecar() {
             )),
             pricing_model: None,
             model_calls: 2,
-            tool_outcomes: vec![crate::agent::tinyagents::ToolCallOutcome {
+            tool_outcomes: vec![tinyagents_harness::turn_outcome::ToolCallOutcome {
                 call_id: "call-1".into(),
                 name: "write_file".into(),
                 arguments: serde_json::json!({"path": "blocked.txt"}),
@@ -142,7 +142,7 @@ fn graph_failure_copies_snapshot_usage_and_failed_tool_outcome_to_sidecar() {
     assert!((observed.cost.known_usd - 0.004).abs() < f64::EPSILON);
     assert_eq!(
         observed.cost.source,
-        crate::agent::cost::CostSource::Charged
+        tinyagents_harness::cost::CostSource::Charged
     );
     let route = observed
         .resolved_route
@@ -191,7 +191,7 @@ fn tool_snapshot_with_no_executable_source_fails_closed_before_graph() {
 #[test]
 fn empty_snapshot_failure_still_carries_the_typed_terminal_outcome() {
     let snapshot = Arc::new(std::sync::Mutex::new(
-        crate::agent::tinyagents::TranscriptSnapshot::default(),
+        crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot::default(),
     ));
     let typed = driver_error_with_snapshot(
         anyhow::Error::new(tinyagents_harness::TinyAgentsError::Cancelled),
@@ -267,4 +267,92 @@ fn recorded_declarations_allow_missing_executors_without_authorizing_fresh_names
         .expect_err("historical declarations never permit an unrecorded name");
     assert!(error.error.to_string().contains("invented_tool"));
     assert!(!error.error.to_string().contains("retired_tool"));
+}
+
+/// A Stop keeps the prompt and every round the provider accepted (#7715), and
+/// nothing past the last answered request: not streamed text, and not a tool
+/// call or result still in flight, which would replay as a dangling call.
+#[test]
+fn stopped_turn_hands_back_only_its_accepted_rounds() {
+    let request = || vec![Message::user("earlier"), Message::user("stop me")];
+    let cases: [(&str, Vec<Message>, usize, &[&str]); 3] = [
+        (
+            "mid-stream text",
+            vec![
+                Message::user("stop me"),
+                Message::tool("call-1", "committed 6b75a4c"),
+                Message::assistant("streamed, never accepted"),
+            ],
+            2,
+            &["stop me", "committed 6b75a4c"],
+        ),
+        (
+            "during a tool call",
+            vec![
+                Message::user("stop me"),
+                Message::assistant("response that requested the tool"),
+                Message::tool("call-2", "half-written output"),
+            ],
+            1,
+            &["stop me"],
+        ),
+        // Before the first model call the snapshot is empty: keep the request.
+        (
+            "before the first model call",
+            vec![],
+            0,
+            &["earlier", "stop me"],
+        ),
+    ];
+    for (case, messages, accepted_len, expected) in cases {
+        let snapshot = Arc::new(std::sync::Mutex::new(
+            crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {
+                messages,
+                accepted_len,
+                request_base_len: 1,
+                model_calls: 2,
+                ..Default::default()
+            },
+        ));
+        let sidecar = sidecar();
+        let failure = driver_cancelled_with_snapshot(
+            &snapshot,
+            &sidecar,
+            std::time::Duration::from_millis(7),
+            request(),
+        );
+        assert_eq!(failure.error, RuntimeError::Cancelled, "{case}");
+        let partial = failure.partial.expect(case);
+        let texts: Vec<String> = partial.history.iter().map(|m| m.text()).collect();
+        assert_eq!(texts, expected, "{case}");
+        assert!(partial.interrupted, "{case}");
+        assert!(partial.partial.is_none(), "{case}: the mirror owns display");
+        assert_eq!(sidecar.lock().unwrap().model_calls, 2, "{case}");
+    }
+}
+
+/// A turn out of time skips the model repair (#7716); the required block is
+/// then synthesized once and becomes the durable final row.
+#[test]
+fn synthesized_block_is_appended_once_and_replaces_the_final_row() {
+    let contract = tinyagents_harness::config::RequiredOutput {
+        block_key: "result".into(),
+        required_keys: vec!["status".into()],
+    };
+    let mut output = "Done.".to_string();
+    let mut history = vec![Message::user("go"), Message::assistant("Done.")];
+
+    append_synthesized_block(&mut output, &mut history, &contract);
+    assert!(tinyagents_harness::config::output_satisfies_contract(
+        &output, &contract
+    ));
+    assert_eq!(
+        history.len(),
+        2,
+        "the final row is replaced, not duplicated"
+    );
+
+    let once = output.clone();
+    append_synthesized_block(&mut output, &mut history, &contract);
+    assert_eq!(output, once, "a satisfied output is left alone");
 }

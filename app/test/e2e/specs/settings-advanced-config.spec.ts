@@ -7,6 +7,7 @@ import {
   clickLabelContaining,
   clickText,
   textExists,
+  waitForTestId,
   waitForText,
 } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
@@ -47,7 +48,8 @@ describe('Settings - Advanced Config', function () {
       async () => (await browser.execute(() => window.location.hash)) === '#/settings/account',
       { timeout: 15_000, timeoutMsg: 'retired notifications route did not redirect to account' }
     );
-    await waitForText('Account', 15_000);
+    // The route changes before the account panel's async data has mounted.
+    await waitForTestId('account-profile', 15_000);
     await waitForText('Preferences', 15_000);
   });
 

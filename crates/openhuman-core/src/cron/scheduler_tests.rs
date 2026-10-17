@@ -1,14 +1,16 @@
+use super::agent_run::{build_agent_for_cron_job, run_agent_job, EMPTY_AGENT_OUTPUT};
 use super::*;
-use crate::agent::error::AgentError;
 use crate::config::Config;
 use crate::security::SecurityPolicy;
 use chrono::{Duration as ChronoDuration, Timelike, Utc};
 use std::sync::Arc;
 use tempfile::TempDir;
-use tinyflows_schedule::types::JobType;
-use tinyflows_schedule::types::SessionTarget;
+use tinyagents_harness::agent_error::AgentError;
+use tinyflows_bus::schedule::types::JobType;
+use tinyflows_bus::schedule::types::SessionTarget;
 use {
-    crate::cron, tinyflows_schedule::types::ActiveHours, tinyflows_schedule::types::DeliveryConfig,
+    crate::cron, tinyflows_bus::schedule::types::ActiveHours,
+    tinyflows_bus::schedule::types::DeliveryConfig,
 };
 
 async fn test_config(tmp: &TempDir) -> Config {
@@ -27,9 +29,11 @@ async fn test_config(tmp: &TempDir) -> Config {
 
 fn test_job(command: &str) -> CronJob {
     CronJob {
-        id: "test-job".into(),
+        claim_generation: 0,
+        policy: Default::default(),
+        id: format!("test-job-{}", uuid::Uuid::new_v4()),
         expression: "* * * * *".into(),
-        schedule: tinyflows_schedule::types::Schedule::Cron {
+        schedule: tinyflows_bus::schedule::types::Schedule::Cron {
             expr: "* * * * *".into(),
             tz: None,
             active_hours: None,
@@ -169,10 +173,14 @@ async fn retryable_shell_failure_consumes_the_whole_retry_budget() {
 
     let counter = tmp.path().join("retryable-attempts.log");
     let job = test_job(&counting_failure_command(&counter));
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
 
-    let (success, output) = execute_job_with_retry(&config, &security, &job).await;
+    let (success, output) = execute_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job,
+        "test-run",
+    )
+    .await;
 
     assert!(
         !success,
@@ -229,8 +237,17 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
         "fixture must be read-only, or this test does not exercise the blocked path"
     );
 
+    // The first call in a process starts the module runtime and attaches the
+    // module (seconds); warm it so the timing below measures retry sleeps only.
+    cron::list_jobs(&config).unwrap();
     let started = std::time::Instant::now();
-    let (success, output) = execute_job_with_retry(&config, &security, &job).await;
+    let (success, output) = execute_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job,
+        "test-run",
+    )
+    .await;
     let elapsed = started.elapsed();
 
     assert!(!success, "a blocked job cannot succeed; got {output}");
@@ -245,7 +262,7 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
         attempt_count(&counter)
     );
     assert!(
-        elapsed < std::time::Duration::from_secs(1),
+        elapsed < std::time::Duration::from_millis(config.reliability.provider_backoff_ms) * 2,
         "the loop slept for {elapsed:?} on a deterministic policy refusal. A security block is \
          permanent across the backoff curve and must return on the first attempt; retrying it \
          only delays the user's error by the full retry budget (here about 4 s)."
@@ -257,12 +274,12 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
 /// The spawn used to name `sh` itself, and `CreateProcessW` cannot resolve that
 /// on Windows — so every scheduled shell job failed there with `spawn error:
 /// program not found` while the identical job ran on macOS and Linux. Routing it
-/// through `agent::platform_shell`, which every other shell spawn in the crate
-/// already used, is what makes this pass.
+/// through the module's native shell member, which selects the shell per
+/// platform, is what makes this pass.
 ///
 /// `echo` and the assertion on its output are deliberately shell-agnostic: the
 /// test names neither `sh` nor `cmd`, so it keeps holding if the platform matrix
-/// in `platform_shell` changes.
+/// in the module changes.
 #[tokio::test]
 async fn a_shell_job_runs_on_this_platform() {
     let tmp = TempDir::new().unwrap();
@@ -275,7 +292,13 @@ async fn a_shell_job_runs_on_this_platform() {
 
     let job = test_job("echo tinyhumans");
 
-    let (success, output) = run_job_command(&config, &security, &job).await;
+    let (success, output) = run_job_command(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &security,
+        &job,
+    )
+    .await;
 
     assert!(success, "the shell job did not succeed: {output}");
     assert!(
@@ -300,8 +323,8 @@ async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
 
 /// A pipeline keeps the shell's own exit status, not `pipefail`'s.
 ///
-/// Regression guard for a behaviour change review caught on this branch. Routing
-/// this call site through `platform_shell::build_tokio_command` would have added
+/// Regression guard for a behaviour change review caught on this branch. Running
+/// this call site with the module's default shell semantics would have added
 /// `set -o pipefail`, and `false | true` — which a plain `-lc` reports as
 /// success, because only the last stage counts — would have started reporting
 /// failure. Any existing job ending in a tolerated pipe stage (a `… | grep -q`
@@ -325,27 +348,17 @@ async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
 
     let job = test_job("false | true");
 
-    let (success, output) = run_job_command(&config, &security, &job).await;
+    let (success, output) = run_job_command(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &security,
+        &job,
+    )
+    .await;
 
     assert!(
         success,
         "`false | true` is a success under a plain `-lc`; pipefail would make it \
          a failure and re-status every existing job with a pipeline in it: {output}"
     );
-}
-
-#[tokio::test]
-async fn without_a_backend_an_agent_needs_its_own_job_database() {
-    // The lib test binary installs no storage backend into the process slot.
-    if crate::storage::installed().is_some() {
-        return;
-    }
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let db = crate::cron::store::db_path(&config);
-    let _ = std::fs::remove_file(&db);
-    assert!(!agent_jobs_may_exist(&config));
-    std::fs::create_dir_all(db.parent().unwrap()).unwrap();
-    std::fs::write(&db, b"").unwrap();
-    assert!(agent_jobs_may_exist(&config));
 }

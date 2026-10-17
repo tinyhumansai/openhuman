@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 /// The single canonical definition of the builder hard-gate stack: the
 /// author-time gates that reject (not warn) a graph an agent must not propose
@@ -68,88 +69,82 @@ pub(crate) fn validate_upload_paths(graph: &WorkflowGraph) -> Vec<String> {
     errors
 }
 
-pub(crate) async fn run_builder_gates(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
-    let compatibility_errors = config_aware_engine_compatibility_errors(config, graph);
-    if !compatibility_errors.is_empty() {
-        return compatibility_errors;
-    }
-    // Cheap, sync: a binding guaranteed to resolve null / wrong at runtime.
-    let binding_errors = validate_binding_resolvability(graph);
-    if !binding_errors.is_empty() {
-        return binding_errors;
-    }
-    // Cheap, sync: an `oh:storage_upload_file` literal `path` that is absolute or
-    // escapes the workspace. The runtime `resolve_upload_path` rejects it, but the
-    // model reliably ignores the prompt's "use a workspace-relative path" rule and
-    // copies an absolute `/tmp/...` path from prior flows, so enforce it in code.
-    let upload_path_errors = validate_upload_paths(graph);
-    if !upload_path_errors.is_empty() {
-        return upload_path_errors;
-    }
-    // Cheap: an `agent` node's `agent_ref` that would hit the runtime's
-    // `RegistryFallback` "unknown agent_ref" hard error mid-run. Almost always a
-    // pure in-memory harness-registry lookup; only a ref that ISN'T a harness
-    // definition falls through to a local config read (custom agent registry).
-    let agent_ref_errors = validate_agent_refs(config, graph).await;
-    if !agent_ref_errors.is_empty() {
-        return agent_ref_errors;
-    }
-    // NOTE (B45 design correction, judge finding on live run 104aab90):
-    // provider-connectivity (issue B45 — signed out, or a managed-backend
-    // account with no provider API key configured) is deliberately NOT a
-    // hard author gate here. It used to reject `propose_workflow` /
-    // `edit_workflow` outright, which meant a graph whose only problem was
-    // "not runnable yet" could never even be SHOWN to the user — the copilot
-    // detected the problem, could not propose past it, and trailed off with
-    // no proposal at all. `evaluate_inference_readiness` still runs (see
-    // `build_builder_proposal` below) and surfaces `inference_status` /
-    // `inference_message` as an ADVISORY warning on the proposal payload, so
-    // authoring always succeeds and the UI can render a "connect your
-    // provider" nudge alongside the built workflow. The hard rejection moved
-    // to run time instead — see `validate_inference_readiness`'s use in
-    // `run_flow_body`, which fails a real run cleanly before the engine
-    // executes rather than blocking the author from ever seeing the graph.
+pub(crate) async fn run_builder_gates(
+    ctx: &DispatchCtx,
+    config: &Config,
+    graph: &WorkflowGraph,
+) -> Vec<String> {
+    // The stack order, short-circuiting and mock-run preflight are
+    // `tinyflows::gates::builder_failures`'; the host supplies the stages that
+    // depend on its vocabulary (agent registry, connections, tool catalog).
     //
-    // Async, live connection list: a tool_call whose `connection_ref` names the
-    // wrong toolkit for its slug, or a connection id the user doesn't actually
-    // have (WS3 — the transcript bug where a TIKTOK connection id was wired onto
-    // Twitter/Gmail nodes and every author-time gate returned ok). Cheap:
-    // one connection-list fetch, no per-node catalog round trips.
-    let connection_ref_errors = validate_connection_refs(config, graph).await;
-    if !connection_ref_errors.is_empty() {
-        return connection_ref_errors;
-    }
-    // Async, live catalog: a tool_call whose slug isn't a real Composio action
-    // or whose real required args aren't all wired.
-    let contract_errors = validate_tool_contracts(config, graph).await;
-    if !contract_errors.is_empty() {
-        return contract_errors;
-    }
-    // Async, sandbox run: a required outbound arg that looks wired but resolves
-    // null in a mock execution.
-    validate_required_arg_resolvability(graph).await
-}
-
-/// Refuses a graph whose outbound `tool_call` arguments a sandbox run proves
-/// can never carry a value.
-///
-/// Delegates to [`tinyflows::preflight::unresolvable_tool_args`]; the whole
-/// analysis is the engine's, because the mock run, the trigger-scope rule and
-/// the opaque-upstream rule are all statements about the DSL. What this host
-/// contributes is the one thing the crate cannot know: which slug prefix marks
-/// a tool of *ours*, which has no external provider to reject the call and so
-/// is skipped.
-// Named at `ops::` scope because this module's tests already reach it there,
-// and they are what proves this host's native-slug prefix reaches the gate.
-#[cfg(test)]
-pub(crate) use tinyflows::preflight::mock_opaque_tool_call_upstream_ref;
-
-pub(crate) async fn validate_required_arg_resolvability(graph: &WorkflowGraph) -> Vec<String> {
-    tinyflows::preflight::unresolvable_tool_args(
+    // Provider connectivity (B45) is deliberately NOT a stage: it is an advisory
+    // `inference_status` on the proposal payload and a run-time rejection, so a
+    // graph that is only "not runnable yet" can still be shown to the user.
+    let host = OpenHumanBuilderGateHost { ctx, config };
+    match tinyflows::gates::builder_failures(
         graph,
+        &host,
         &[crate::flows::tinyflows::caps::NATIVE_TOOL_PREFIX],
     )
     .await
+    {
+        Ok(failures) => failures,
+        Err(error) => {
+            tracing::warn!(
+                target: "flows",
+                %error,
+                "[flows] builder gates: host stage failed — reporting it as a gate failure"
+            );
+            vec![format!("builder gate could not complete: {error}")]
+        }
+    }
+}
+
+/// Host side of the builder gate stack: the four `HostGateStage`s and the
+/// saved-workflow lookup the compatibility walk needs.
+struct OpenHumanBuilderGateHost<'a> {
+    ctx: &'a DispatchCtx,
+    config: &'a Config,
+}
+
+#[async_trait::async_trait]
+impl tinyflows::caps::WorkflowResolver for OpenHumanBuilderGateHost<'_> {
+    async fn resolve(&self, workflow_id: &str) -> tinyflows::error::Result<WorkflowGraph> {
+        let config = self.config.clone();
+        let id = workflow_id.to_string();
+        let loaded = tokio::task::spawn_blocking(move || load_flow_graph(&config, &id))
+            .await
+            .map_err(|e| tinyflows::error::EngineError::Capability(e.to_string()))?;
+        match loaded {
+            Ok(Some(graph)) => Ok(graph),
+            Ok(None) => Err(tinyflows::error::EngineError::Capability(format!(
+                "no saved workflow '{workflow_id}'"
+            ))),
+            Err(e) => Err(tinyflows::error::EngineError::Capability(e.to_string())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl tinyflows::gates::BuilderGateHost for OpenHumanBuilderGateHost<'_> {
+    async fn check(
+        &self,
+        stage: tinyflows::gates::HostGateStage,
+        graph: &WorkflowGraph,
+    ) -> tinyflows::error::Result<Vec<String>> {
+        use tinyflows::gates::HostGateStage;
+        Ok(match stage {
+            HostGateStage::ToolPolicy => validate_upload_paths(graph),
+            HostGateStage::AgentReferences => {
+                validate_agent_refs(self.ctx, self.config, graph).await
+            }
+            HostGateStage::Connections => {
+                validate_connection_refs(self.ctx, self.config, graph).await
+            }
+            HostGateStage::ToolContracts => validate_tool_contracts(self.config, graph).await,
+        })
+    }
 }
 
 /// Strict-mode gate for the create/update RPC path (audit F3): validates
@@ -161,8 +156,12 @@ pub(crate) async fn validate_required_arg_resolvability(graph: &WorkflowGraph) -
 /// on the canvas may save a work-in-progress graph); passing `strict: true`
 /// opts that call into the *same* gates an agent save must pass, so the two
 /// planes converge on one definition instead of diverging.
-pub(crate) async fn strict_gate(config: &Config, graph_json: &Value) -> Result<(), String> {
-    let graph = migrate_and_deserialize_graph(graph_json.clone())?;
+pub(crate) async fn strict_gate(
+    ctx: &DispatchCtx,
+    config: &Config,
+    graph_json: &Value,
+) -> Result<(), String> {
+    let graph = tinyflows::migrate::deserialize_graph(graph_json.clone())?;
     let structural = tinyflows::validate::validate_all(&graph);
     if !structural.is_empty() {
         let messages: Vec<String> = structural.iter().map(ToString::to_string).collect();
@@ -171,7 +170,7 @@ pub(crate) async fn strict_gate(config: &Config, graph_json: &Value) -> Result<(
             messages.join("\n")
         ));
     }
-    let gate_errors = run_builder_gates(config, &graph).await;
+    let gate_errors = run_builder_gates(ctx, config, &graph).await;
     if !gate_errors.is_empty() {
         return Err(format!(
             "strict validation failed:\n{}",
@@ -185,8 +184,7 @@ pub(crate) async fn strict_gate(config: &Config, graph_json: &Value) -> Result<(
 /// `graph` and, if it passes, builds the `workflow_proposal` payload the
 /// propose/revise/edit tools all return.
 ///
-/// The single home for the gate sequence (engine compatibility →
-/// binding-resolvability → tool-contract → required-arg resolvability) plus
+/// The single home for the gate sequence (`tinyflows::gates::builder_failures`) plus
 /// summary/warning assembly,
 /// so `revise_workflow` and `edit_workflow` cannot drift. `retry_tool` names
 /// the tool in the "fix … and call `<tool>` again" guidance so each caller's
@@ -207,6 +205,7 @@ pub(crate) async fn strict_gate(config: &Config, graph_json: &Value) -> Result<(
 /// graph.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_builder_proposal(
+    ctx: &DispatchCtx,
     config: &Config,
     retry_tool: &str,
     name: &str,
@@ -219,7 +218,7 @@ pub(crate) async fn build_builder_proposal(
 ) -> Result<Value, String> {
     // The full builder hard-gate stack, run through the single canonical
     // runner so every proposal/save/strict-RPC path gates identically (F3).
-    let gate_errors = run_builder_gates(config, graph).await;
+    let gate_errors = run_builder_gates(ctx, config, graph).await;
     if !gate_errors.is_empty() {
         return Err(format!(
             "{}\n\nFix these and call {retry_tool} again.",
@@ -233,7 +232,7 @@ pub(crate) async fn build_builder_proposal(
     // Connector onboarding (Phase 5, item 18): tell the proposal card which
     // toolkits this graph needs and whether they're connected, so it can render
     // "Connect <toolkit>" CTAs instead of a bare gate error later.
-    let required_connections = compute_required_connections(config, graph).await;
+    let required_connections = compute_required_connections(ctx, config, graph).await;
     // B45 (design correction): the LLM-provider-connectivity evaluation is
     // ADVISORY here, never a rejection — `run_builder_gates` above no longer
     // includes it (that used to hard-block `propose_workflow`/`edit_workflow`
@@ -246,7 +245,7 @@ pub(crate) async fn build_builder_proposal(
     // shared, cached evaluator the run-time preflight (`validate_inference_readiness`
     // in `run_flow_body`) consumes, so a run right after this proposal reads
     // the cached result instead of re-probing the network.
-    let inference_readiness = evaluate_inference_readiness(config, graph).await;
+    let inference_readiness = evaluate_inference_readiness(ctx, config, graph).await;
     let graph_value = serde_json::to_value(graph).map_err(|e| e.to_string())?;
 
     tracing::info!(
@@ -297,37 +296,6 @@ pub(crate) async fn build_builder_proposal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Enforcing binding-resolvability gate
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// `graph_wiring_warnings` (above) is advisory — it, and `dry_run_workflow`'s
-// null-resolution check, only WARN that a binding resolves null. The gate
-// below is the HARD counterpart, run before
-// `propose_workflow`/`revise_workflow`/`save_workflow` accept a graph at all,
-// so the builder is forced to fix the wiring rather than merely being told.
-//
-// The analysis is `tinyflows::gates`': every rule in it is a statement about
-// the DSL — that agent/tool_call/http_request output is wrapped in
-// `{json, text, raw}`, that a `=`-prefixed prose string is not a jq program,
-// that an agent produces only what its `output_parser.schema` declares — and
-// none of it depends on which host is asking. This host used to carry a
-// near-identical private copy, including its own `collect_expressions` and
-// `parse_node_binding`; that copy is gone.
-//
-// Anything that DOES depend on this host's vocabulary — which agent ids
-// resolve, which tool slugs exist, which integrations are connected — stays
-// here, in the gates that follow.
-
-/// Refuses a graph whose bindings are statically proven unresolvable.
-///
-/// A non-empty `Vec` rejects; empty passes. Delegates wholesale to
-/// [`tinyflows::gates::failures`] — see the section header for why nothing in
-/// it is host-specific.
-pub(crate) fn validate_binding_resolvability(graph: &WorkflowGraph) -> Vec<String> {
-    tinyflows::gates::failures(graph)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Agent-ref resolvability gate: an `agent` node's `agent_ref` must name a
 // real agent, not the runtime's `RegistryFallback` "unknown agent_ref" case
 // ─────────────────────────────────────────────────────────────────────────────
@@ -352,7 +320,7 @@ pub(crate) fn validate_binding_resolvability(graph: &WorkflowGraph) -> Vec<Strin
 /// `RegistryFallback` "unknown agent_ref" hard error mid-run
 /// (`run_via_registry_fallback` in `tinyflows/caps.rs`) — a real ref is one
 /// that resolves via [`crate::flows::tinyflows::caps::route_for_agent_ref`]
-/// to a harness [`AgentDefinition`](crate::agent::harness::definition::AgentDefinition)
+/// to a harness [`AgentDefinition`](crate::agent::harness::host_definition::AgentDefinition)
 /// (`AgentRoute::Harness`), OR — when it routes to `AgentRoute::RegistryFallback`
 /// — resolves to an *enabled*
 /// [`AgentRegistryEntry`](crate::agent::registry::AgentRegistryEntry)
@@ -387,8 +355,12 @@ pub(crate) fn validate_binding_resolvability(graph: &WorkflowGraph) -> Vec<Strin
 /// non-harness `agent_ref`s previously triggered one `config_rpc::
 /// load_config_with_timeout` per node; an all-`Harness`/no-custom-ref graph
 /// still never reads it at all.
-pub(crate) async fn validate_agent_refs(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
-    use crate::agent::harness::AgentDefinitionRegistry;
+pub(crate) async fn validate_agent_refs(
+    ctx: &DispatchCtx,
+    config: &Config,
+    graph: &WorkflowGraph,
+) -> Vec<String> {
+    use crate::agent::harness::host_definition::AgentDefinitionRegistry;
     use crate::agent::registry::AgentRegistryEntry;
     use crate::flows::tinyflows::caps::{route_for_agent_ref, AgentRoute};
 
@@ -431,7 +403,7 @@ pub(crate) async fn validate_agent_refs(config: &Config, graph: &WorkflowGraph) 
             }
             AgentRoute::RegistryFallback => {
                 if custom_registry.is_none() {
-                    custom_registry = Some(crate::agent::registry::list_agents(true).await);
+                    custom_registry = Some(crate::agent::registry::list_agents(ctx, true).await);
                 }
                 match custom_registry.as_ref().expect("just populated") {
                     Ok(entries) => match entries.iter().find(|entry| entry.id == agent_ref) {

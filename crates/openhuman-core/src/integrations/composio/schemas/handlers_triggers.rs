@@ -2,9 +2,9 @@
 //! `create_trigger`, `list_trigger_history`, `list_available_triggers`,
 //! `list_triggers`, `enable_trigger`, `disable_trigger`.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 use crate::integrations::composio::ops;
 
@@ -14,18 +14,24 @@ use super::params::{
 };
 use super::util::{read_required_non_empty, to_json};
 
-pub(super) fn handle_list_github_repos(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_list_github_repos(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload: ListGithubReposParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         to_json(ops::composio_list_github_repos(&config, payload.connection_id).await?)
     })
 }
 
-pub(super) fn handle_create_trigger(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_create_trigger(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload: CreateTriggerParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         let slug = payload.slug.trim();
@@ -44,18 +50,24 @@ pub(super) fn handle_create_trigger(params: Map<String, Value>) -> ControllerFut
     })
 }
 
-pub(super) fn handle_list_trigger_history(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_list_trigger_history(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload: TriggerHistoryParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        to_json(ops::composio_list_trigger_history(&config, payload.limit).await?)
+        to_json(ops::composio_list_trigger_history(&ctx, &config, payload.limit).await?)
     })
 }
 
-pub(super) fn handle_list_available_triggers(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_list_available_triggers(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload: ListAvailableTriggersParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         let toolkit = payload.toolkit.trim();
@@ -68,18 +80,24 @@ pub(super) fn handle_list_available_triggers(params: Map<String, Value>) -> Cont
     })
 }
 
-pub(super) fn handle_list_triggers(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_list_triggers(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload: ListTriggersParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         to_json(ops::composio_list_triggers(&config, payload.toolkit).await?)
     })
 }
 
-pub(super) fn handle_enable_trigger(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_enable_trigger(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload: EnableTriggerParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         let connection_id = payload.connection_id.trim();
@@ -97,9 +115,12 @@ pub(super) fn handle_enable_trigger(params: Map<String, Value>) -> ControllerFut
     })
 }
 
-pub(super) fn handle_disable_trigger(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_disable_trigger(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let trigger_id = read_required_non_empty(&params, "trigger_id")?;
         to_json(ops::composio_disable_trigger(&config, &trigger_id).await?)
     })

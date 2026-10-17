@@ -2,9 +2,12 @@
 
 use super::*;
 
+/// The host's in-flight subagent runs of one agent context.
+pub(super) type HostInFlightMap = AsyncMutex<HashMap<HostLifecycleKey, Arc<HostInFlight>>>;
+
 pub(super) fn host_outcome_to_neutral(
     outcome: SubagentRunOutcome,
-    definition: &crate::agent::harness::definition::AgentDefinition,
+    definition: &crate::agent::harness::host_definition::AgentDefinition,
     options: &SubagentRunOptions,
 ) -> SubagentOutcome {
     let status = match outcome.status {

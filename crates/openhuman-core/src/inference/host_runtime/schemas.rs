@@ -1,3 +1,4 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -7,7 +8,6 @@ struct LocalAiTestConnectionParams {
     url: String,
 }
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -222,10 +222,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_agent_chat(params: Map<String, Value>) -> ControllerFuture {
+fn handle_agent_chat(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<AgentChatParams>(params)?;
-        let mut config = config_rpc::load_config_with_timeout().await?;
+        let mut config = ctx.load_config().await?;
         let target = match p.agent_id.as_deref().map(str::trim) {
             Some(id) if !id.is_empty() => {
                 crate::inference::host_runtime::ops::AgentChatTarget::AgentId(id)
@@ -242,18 +242,20 @@ fn handle_agent_chat(params: Map<String, Value>) -> ControllerFuture {
             p.cwd,
             crate::config::schema::EphemeralRoute::from_params(p.inference_url, p.api_key)
                 .map(|route| route.with_headers(p.inference_headers)),
+            crate::inference::host_runtime::ops::AgentChatEnv::default(),
         )
         .await?
         .into_rpc_json()
     })
 }
 
-fn handle_agent_chat_simple(params: Map<String, Value>) -> ControllerFuture {
+fn handle_agent_chat_simple(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<AgentChatParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(
             crate::inference::host_runtime::ops::agent_chat_simple(
+                &ctx,
                 &config,
                 &p.message,
                 p.model_override,
@@ -265,10 +267,10 @@ fn handle_agent_chat_simple(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_local_ai_transcribe(params: Map<String, Value>) -> ControllerFuture {
+fn handle_local_ai_transcribe(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<LocalAiTranscribeParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(
             crate::inference::host_runtime::ops::local_ai_transcribe(&config, p.audio_path.trim())
                 .await?,
@@ -276,10 +278,13 @@ fn handle_local_ai_transcribe(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_local_ai_transcribe_bytes(params: Map<String, Value>) -> ControllerFuture {
+fn handle_local_ai_transcribe_bytes(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<LocalAiTranscribeBytesParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(
             crate::inference::host_runtime::ops::local_ai_transcribe_bytes(
                 &config,
@@ -291,10 +296,10 @@ fn handle_local_ai_transcribe_bytes(params: Map<String, Value>) -> ControllerFut
     })
 }
 
-fn handle_local_ai_tts(params: Map<String, Value>) -> ControllerFuture {
+fn handle_local_ai_tts(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<LocalAiTtsParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(
             crate::inference::host_runtime::ops::local_ai_tts(
                 &config,
@@ -306,7 +311,10 @@ fn handle_local_ai_tts(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_local_ai_test_connection(params: Map<String, Value>) -> ControllerFuture {
+fn handle_local_ai_test_connection(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<LocalAiTestConnectionParams>(params)?;
         let result = tinyinference_local::service::test_ollama_connection(&p.url).await?;

@@ -19,8 +19,9 @@ use tinyflows::error::{EngineError, Result};
 use super::*;
 use crate::config::{Config, HttpRequestConfig};
 use crate::security::credentials::{HttpCredential, HttpCredentialsStore};
-use crate::security::{CommandClass, SecurityPolicy};
+use crate::security::SecurityPolicy;
 use crate::tools::http_request_tool;
+use tinybox_bus::CommandClass;
 use tinytools::Tool as _;
 
 /// [`HttpClient`] adapter over `HttpRequestTool`
@@ -42,9 +43,14 @@ use tinytools::Tool as _;
 /// **unknown** credential fails the request closed (`EngineError::Capability`)
 /// rather than silently sending it unauthenticated.
 pub struct OpenHumanHttp {
+    /// The context the run acts under, handed over by whoever started it.
+    pub ctx: crate::core::runtime::DispatchCtx,
     pub security: Arc<SecurityPolicy>,
     pub http_config: HttpRequestConfig,
     pub http_creds: Arc<HttpCredentialsStore>,
+    /// The run's approval context (flow run correlation), handed to the gate
+    /// with every acting dispatch.
+    pub approval: crate::security::approval::ApprovalTurnContext,
 }
 
 /// Resolves an optional HTTP `connection_ref` to the stored credential to
@@ -179,8 +185,15 @@ impl HttpClient for OpenHumanHttp {
         // audit trail. Injection happens strictly after this point.
         let summary = crate::security::approval::summarize_action(TOOL_NAME, &request);
         let redacted = crate::security::approval::redact_args(&request);
-        let (outcome, audit_id) =
-            gate_call_for_tier(tier_decision, TOOL_NAME, &summary, redacted).await;
+        let (outcome, audit_id) = gate_call_for_tier(
+            &self.ctx,
+            &self.approval,
+            tier_decision,
+            TOOL_NAME,
+            &summary,
+            redacted,
+        )
+        .await;
         if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
             return Err(EngineError::Capability(reason));
         }
@@ -193,6 +206,7 @@ impl HttpClient for OpenHumanHttp {
         }
 
         let tool = http_request_tool(
+            &self.ctx,
             self.security.clone(),
             self.http_config.allowed_domains.clone(),
             self.http_config.max_response_size,

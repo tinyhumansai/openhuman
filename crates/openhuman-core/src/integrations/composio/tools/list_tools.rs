@@ -9,17 +9,19 @@ use serde_json::Value;
 
 use super::live_config::live_composio_config;
 use super::redact::redact_composio_outcome;
+use crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool;
 use crate::config::Config;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult};
+use crate::core::runtime::DispatchCtx;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolRunContext};
 
 use super::super::client::{resolve_composio_route, ComposioRoute};
 use super::super::module_client::{self as connectors};
 use super::super::types::{
     ComposioConnectionsResponse, ComposioListToolsRequest, ComposioToolsResponse,
 };
-use super::visibility::{
-    empty_uncurated_toolkits_message, filter_list_tools_response, normalized_scope_toolkits,
-    render_tools_markdown, retain_connected_tools,
+use super::render::{
+    empty_uncurated_toolkits_message, normalized_scope_toolkits, render_tools_markdown,
+    retain_connected_tools,
 };
 use tinyconnectors_bus::names::methods;
 
@@ -73,7 +75,19 @@ impl Tool for ComposioListToolsTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        let (config, outcome) = Box::pin(self.execute_unredacted(args, options)).await;
+        let ctx = dispatch_ctx_for_tool(None);
+        let (config, outcome) = Box::pin(self.execute_unredacted(&ctx, args, options)).await;
+        redact_composio_outcome(&config, outcome)
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = dispatch_ctx_for_tool(context);
+        let (config, outcome) = Box::pin(self.execute_unredacted(&ctx, args, options)).await;
         redact_composio_outcome(&config, outcome)
     }
 
@@ -89,6 +103,7 @@ impl ComposioListToolsTool {
     /// this tool was registered.
     async fn execute_unredacted(
         &self,
+        ctx: &DispatchCtx,
         args: Value,
         options: ToolCallOptions,
     ) -> (Box<Config>, anyhow::Result<ToolResult>) {
@@ -177,14 +192,14 @@ impl ComposioListToolsTool {
             }
         };
 
-        // The module owns the proxy route's query construction; the scope
-        // preference is applied host-side below (`filter_list_tools_response`)
-        // because it is stored where only the host can read it, so the
-        // module is asked not to apply its own defaults on top.
+        // The module owns the route's query construction and applies the
+        // user's stored scope preference to the listing (the default request),
+        // so the host does not filter a second time.
+        super::super::ops::ensure_user_scopes_migrated(ctx, &live_config).await;
         let request = ComposioListToolsRequest {
             toolkits: toolkits.clone().unwrap_or_default(),
             tags: tags.clone().unwrap_or_default(),
-            apply_user_scopes: false,
+            ..ComposioListToolsRequest::default()
         };
         let outcome = match connectors::call::<_, ComposioToolsResponse>(
             &live_config,
@@ -194,7 +209,6 @@ impl ComposioListToolsTool {
         .await
         {
             Ok(mut resp) => {
-                filter_list_tools_response(&live_config, &mut resp).await;
                 let mut connected_toolkits: Option<HashSet<String>> = None;
 
                 if !include_unconnected {

@@ -9,14 +9,15 @@
 //!   [`HEARTBEAT_INTERVAL`] while the inner tool runs, naming the elapsed time;
 //! - the **video job state** ([`video_status_observer`]), the
 //!   `WaitPolicy::progress` hook the TinyInference poll loop calls on every
-//!   poll. The policy is built once per tool and shared by every call, so the
-//!   observer cannot hold a call's context; it records the state into a
-//!   task-local [`with_progress_heartbeat`] scopes around the call (the poll
-//!   loop runs inline on the tool's task), and the next heartbeat includes it.
+//!   poll. [`MediaArtifactTool`](super::artifact_tool::MediaArtifactTool)
+//!   builds a fresh video tool for each call, bound to a [`JobStateSlot`] it
+//!   owns, so the observer records into that call's slot and the next
+//!   heartbeat reads it. Nothing is ambient: two concurrent calls each have
+//!   their own slot.
 //!
-//! The host does not yet project `ToolProgressDetail` onto the web channel, so
-//! these updates reach the harness event stream and its subscribers but not the
-//! chat UI; see the module README.
+//! The host projects `ToolProgressDetail` onto the web channel as a
+//! `tool_progress` event for the parent call
+//! (`agent::tinyagents::observability`); the chat UI does not render it yet.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,26 +28,20 @@ use tinytools::{ToolProgress, ToolRunContext};
 /// How often a running media call reports that it is still working.
 pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
-tokio::task_local! {
-    /// The latest provider job state seen by [`video_status_observer`] for the
-    /// call running on this task.
-    static JOB_STATE: Arc<Mutex<Option<String>>>;
-}
+/// The latest provider job state seen by [`video_status_observer`] for one
+/// media call. Owned by that call and shared with its heartbeat.
+pub(crate) type JobStateSlot = Arc<Mutex<Option<String>>>;
 
-/// The `WaitPolicy::progress` observer: records each poll's job state for the
-/// heartbeat of the call it runs under. A poll outside a heartbeat scope (a
-/// direct `execute` with no context) is dropped.
-pub(crate) fn video_status_observer() -> ProgressFn {
-    Arc::new(|status: &VideoJobStatus| {
+/// The `WaitPolicy::progress` observer for one call: records each poll's job
+/// state into `slot` for that call's heartbeat.
+pub(crate) fn video_status_observer(slot: JobStateSlot) -> ProgressFn {
+    Arc::new(move |status: &VideoJobStatus| {
         let state = status.state.to_string();
-        let recorded = JOB_STATE.try_with(|slot| {
-            *slot
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state.clone());
-        });
+        *slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state.clone());
         tracing::trace!(
             job_state = %state,
-            recorded = recorded.is_ok(),
             "[media_generation] video job polled"
         );
     })
@@ -67,20 +62,20 @@ pub(crate) fn heartbeat_message(label: &str, elapsed: Duration, job_state: Optio
 }
 
 /// Run `fut`, reporting a heartbeat through `context` every `interval` until
-/// it finishes. Without a context there is nowhere to report, so `fut` runs
-/// as is.
+/// it finishes, naming the job state recorded in `state`. Without a context
+/// there is nowhere to report, so `fut` runs as is.
 pub(crate) async fn with_progress_heartbeat<F: std::future::Future>(
     context: Option<&dyn ToolRunContext>,
     label: &str,
     interval: Duration,
+    state: JobStateSlot,
     fut: F,
 ) -> F::Output {
     let Some(context) = context else {
         return fut.await;
     };
-    let state: Arc<Mutex<Option<String>>> = Arc::default();
     let started = tokio::time::Instant::now();
-    let work = JOB_STATE.scope(state.clone(), fut);
+    let work = fut;
     tokio::pin!(work);
     let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     loop {

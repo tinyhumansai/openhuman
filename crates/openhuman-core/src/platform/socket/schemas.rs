@@ -1,5 +1,6 @@
 //! Controller schemas and RPC handlers for the `socket` namespace.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{json, Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
@@ -183,7 +184,7 @@ fn status_slug(status: ConnectionStatus) -> String {
         .unwrap_or_else(|| format!("{status:?}").to_lowercase())
 }
 
-fn handle_connect(params: Map<String, Value>) -> ControllerFuture {
+fn handle_connect(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
         let url = params
@@ -200,7 +201,7 @@ fn handle_connect(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_disconnect(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_disconnect(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
         let state = super::ops::disconnect(mgr).await?;
@@ -208,7 +209,7 @@ fn handle_disconnect(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_state(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_state(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
         let state = mgr.get_state();
@@ -217,7 +218,7 @@ fn handle_state(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_emit(params: Map<String, Value>) -> ControllerFuture {
+fn handle_emit(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
         let event = params
@@ -232,10 +233,10 @@ fn handle_emit(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_connect_with_session(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_connect_with_session(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
-        let state = super::ops::connect_with_session(mgr).await?;
+        let state = super::ops::connect_with_session(&ctx, mgr).await?;
         Ok(status_payload(&state))
     })
 }

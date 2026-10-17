@@ -7,7 +7,7 @@
  * Minimal "docs generated from code" slice for issue #3892. Derives the
  * frontend **provider chain** from an explicit source marker in
  * `app/src/App.tsx` and renders it into a marked block in
- * `gitbooks/developing/architecture/frontend.md`, so the documented chain
+ * `docs/gitbooks/en/developing/architecture/frontend.md`, so the documented chain
  * cannot silently drift from the code (the exact drift called out in the
  * issue: the doc described `UserProvider` / `AIProvider` / `SkillProvider`
  * long after the code moved to `CoreStateProvider` / `ChatRuntimeProvider`).
@@ -32,7 +32,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..');
 
 export const APP_TSX = resolve(REPO_ROOT, 'app/src/App.tsx');
-export const FRONTEND_DOC = resolve(REPO_ROOT, 'gitbooks/developing/architecture/frontend.md');
+export const FRONTEND_DOC = resolve(REPO_ROOT, 'docs/gitbooks/en/developing/architecture/frontend.md');
 
 /** Stable tokens used to locate the generated block in the doc. */
 const BLOCK_BEGIN_TOKEN = 'BEGIN GENERATED: provider-chain';

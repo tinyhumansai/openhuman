@@ -10,7 +10,7 @@
 //
 // Rules (non-test Rust under crates/openhuman-core/src):
 //   bare-spawn      tokio::spawn / tokio::task::spawn / spawn_blocking /
-//                   std::thread::spawn — use core::runtime::spawn_scoped
+//                   std::thread::spawn — use DispatchCtx::spawn
 //   ambient-config  Config::load_or_init( — use load_config_with_timeout or
 //                   the config you were handed
 //   env-mutation    std::env::set_var / remove_var — process-wide
@@ -42,7 +42,7 @@ export const RULES = [
     rule: "bare-spawn",
     pattern:
       /\b(?:tokio::spawn|tokio::task::spawn|tokio::task::spawn_blocking|std::thread::spawn)\s*\(/,
-    hint: "spawn through core::runtime::spawn_scoped / spawn_blocking_scoped",
+    hint: "spawn through DispatchCtx::spawn / spawn_blocking, or justify a baselined bare spawn",
   },
   {
     rule: "ambient-config",

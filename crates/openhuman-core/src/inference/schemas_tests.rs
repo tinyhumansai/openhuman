@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 use crate::core::TypeSchema;
 #[test]
@@ -128,7 +129,7 @@ fn inference_openai_oauth_schemas_are_registered_with_expected_shapes() {
 #[tokio::test]
 async fn inference_openai_oauth_complete_handler_rejects_invalid_params() {
     let params = Map::from_iter([("callback_url".to_string(), Value::Bool(true))]);
-    let err = handle_inference_openai_oauth_complete(params)
+    let err = handle_inference_openai_oauth_complete(DispatchCtx::process_default(), params)
         .await
         .expect_err("invalid params");
     assert!(err.contains("invalid params"));
@@ -142,7 +143,7 @@ fn inference_unknown_schema_panics() {
 
 #[tokio::test]
 async fn inference_status_handler_returns_cli_json() {
-    let value = handle_inference_status(Map::new())
+    let value = handle_inference_status(DispatchCtx::process_default(), Map::new())
         .await
         .expect("handler value");
     assert!(value.get("result").is_some() || value.get("logs").is_some());
@@ -151,7 +152,7 @@ async fn inference_status_handler_returns_cli_json() {
 #[tokio::test]
 async fn inference_prompt_handler_rejects_invalid_shape() {
     let params = Map::from_iter([("prompt".to_string(), Value::Bool(true))]);
-    let err = handle_inference_prompt(params)
+    let err = handle_inference_prompt(DispatchCtx::process_default(), params)
         .await
         .expect_err("invalid params");
     assert!(err.contains("invalid params"));

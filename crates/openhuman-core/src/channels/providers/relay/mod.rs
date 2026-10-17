@@ -6,8 +6,9 @@
 //! For each message it calls `channel_relay_inbound` under that user's scope.
 //! The core:
 //!
-//! 1. validates the message ([`params`]) and derives its thread,
-//!    `channel:<channel>/<sender>/<chat>` (`tinychannels::channel::derive_inbound_thread_id`);
+//! 1. validates the message ([`params`]) and asks TinyChannels' confidential
+//!    `PrepareChannelIdentity` operation for its canonical thread id,
+//!    `channel:<channel>/<sender>/<chat>`;
 //! 2. records the message on that thread in the caller's workspace
 //!    ([`store`]), refusing a duplicate `message_id`;
 //! 3. runs the turn through the channel dispatch pipeline
@@ -32,15 +33,3 @@ pub use params::{
     MAX_ID_LEN, MAX_SENDER_NAME_CHARS, MAX_TEXT_BYTES, RESERVED_CHANNELS,
 };
 pub use schemas::{all_relay_controller_schemas, all_relay_registered_controllers};
-
-// The durable conversation key belongs to this inbound relay call, not a
-// process-global last sender. The dispatch future carries it to session build.
-tokio::task_local! { static RELAY_THREAD: String; }
-
-pub(crate) fn current_thread_id() -> Option<String> {
-    RELAY_THREAD.try_with(Clone::clone).ok()
-}
-
-pub(crate) async fn with_thread<F: std::future::Future>(thread: String, future: F) -> F::Output {
-    RELAY_THREAD.scope(thread, future).await
-}

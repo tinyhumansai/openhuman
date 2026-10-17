@@ -1,53 +1,5 @@
 use super::*;
-use std::sync::Mutex;
-use tinyagents_session::testkit::conformance::session_store_conformance;
-use tinyagents_session::turn_state::{TurnLifecycle, TurnState};
-
-#[tokio::test]
-async fn the_desktop_layout_meets_the_session_store_contract() {
-    let dir = tempfile::tempdir().unwrap();
-    session_store_conformance(&SqliteSessionStores::at(dir.path())).await;
-    // Everything landed in the classic layout.
-    assert!(dir.path().join("session_raw").is_dir());
-    assert!(dir.path().join("tinyagents_store").is_dir());
-}
-
-#[test]
-fn the_workspace_follows_the_resolver() {
-    let first = tempfile::tempdir().unwrap();
-    let second = tempfile::tempdir().unwrap();
-    let current = Arc::new(Mutex::new(first.path().to_path_buf()));
-    let resolver = current.clone();
-    let stores = SqliteSessionStores::resolving(move || resolver.lock().unwrap().clone());
-    assert_eq!(stores.workspace_dir().as_deref(), Some(first.path()));
-    *current.lock().unwrap() = second.path().to_path_buf();
-    assert_eq!(stores.workspace_dir().as_deref(), Some(second.path()));
-    assert_eq!(
-        stores.destination_key(),
-        Some(second.path().to_string_lossy().into_owned())
-    );
-    assert!(format!("{stores:?}").contains("SqliteSessionStores"));
-}
-
-#[test]
-fn recovery_interrupts_turns_left_in_flight() {
-    let dir = tempfile::tempdir().unwrap();
-    let stores = SqliteSessionStores::at(dir.path());
-    let agent = stores.for_agent("orchestrator");
-    agent
-        .turn_states
-        .put(&TurnState::started("t", "r", 4, "2026-01-01T00:00:00Z"))
-        .unwrap();
-    stores.recover().unwrap();
-    assert_eq!(
-        agent
-            .turn_states
-            .get("t")
-            .unwrap()
-            .map(|turn| turn.lifecycle),
-        Some(TurnLifecycle::Interrupted)
-    );
-}
+use tinyagents_session::turn_state::TurnState;
 
 /// The provider and storage slots are process-wide; these tests take turns
 /// with each other and with any test that stores a credential.
@@ -204,22 +156,6 @@ async fn the_mongodb_backend_keeps_agents_apart() {
 }
 
 #[tokio::test]
-async fn no_url_keeps_the_classic_layout() {
-    let _turn = SLOTS.lock().await;
-    let previous = crate::core_host::agent::session_store::installed();
-    let previous_backend = crate::core_host::storage::installed();
-    install_for_url(None).await.unwrap();
-    let provider = crate::core_host::agent::session_store::installed().unwrap();
-    assert!(
-        provider.workspace_dir().is_some(),
-        "the file layout is installed"
-    );
-    assert!(crate::core_host::storage::installed().is_none());
-    restore_backend(previous_backend);
-    crate::core_host::agent::session_store::restore(previous);
-}
-
-#[tokio::test]
 async fn an_unusable_url_fails_the_boot() {
     let _turn = SLOTS.lock().await;
     let previous = crate::core_host::agent::session_store::installed();
@@ -227,19 +163,6 @@ async fn an_unusable_url_fails_the_boot() {
         .await
         .unwrap_err();
     assert!(format!("{error:#}").contains("storage"), "{error:#}");
-    crate::core_host::agent::session_store::restore(previous);
-}
-
-#[tokio::test]
-async fn restoring_the_classic_layout_clears_a_previous_backend() {
-    let _turn = SLOTS.lock().await;
-    let previous = crate::core_host::agent::session_store::installed();
-    let previous_backend = crate::core_host::storage::installed();
-    install_for_url(Some("memory".into())).await.unwrap();
-    assert!(crate::core_host::storage::installed().is_some());
-    install_for_url(None).await.unwrap();
-    assert!(crate::core_host::storage::installed().is_none());
-    restore_backend(previous_backend);
     crate::core_host::agent::session_store::restore(previous);
 }
 
@@ -282,7 +205,8 @@ async fn provider_for_url_returns_the_store_without_installing_it() {
     let backend_driver = crate::core_host::storage::installed().map(|b| b.driver());
     let left_uninstalled = crate::core_host::agent::session_store::installed().is_none();
 
-    let classic = provider_for_url(None).await.unwrap();
+    // No URL: each workspace keeps its sessions in its own default database.
+    let per_workspace = provider_for_url(None).await.unwrap();
     let cleared = crate::core_host::storage::installed().is_none();
 
     restore_backend(previous_backend);
@@ -299,10 +223,7 @@ async fn provider_for_url_returns_the_store_without_installing_it() {
         left_uninstalled,
         "the provider is handed back, not installed"
     );
-    assert!(
-        classic.workspace_dir().is_some(),
-        "no URL is the file layout"
-    );
+    drop(per_workspace);
     assert!(cleared, "no URL clears an earlier backend");
 }
 

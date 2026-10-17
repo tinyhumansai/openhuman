@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::test_env::EnvVarGuard;
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use tempfile::TempDir;
 
 fn config_in(tmp: &TempDir) -> Config {
@@ -50,12 +51,12 @@ async fn session_env_is_ignored_without_a_subject_and_when_unset() {
     let _guard = EnvVarGuard::unset(BACKEND_SESSION_TOKEN_ENV);
 
     unsafe { std::env::remove_var(BACKEND_SESSION_TOKEN_ENV) };
-    seed_session_from_env(&config).await;
+    seed_session_from_env(&DispatchCtx::process_default(), &config).await;
     assert!(get_session_token(&config).unwrap().is_none());
 
     // An opaque token has no subject claim and no host to supply one, so the
     // install is refused (logged) and the store stays empty.
     unsafe { std::env::set_var(BACKEND_SESSION_TOKEN_ENV, "opaque-token") };
-    seed_session_from_env(&config).await;
+    seed_session_from_env(&DispatchCtx::process_default(), &config).await;
     assert!(get_session_token(&config).unwrap().is_none());
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{SearchProviderSettings, SEARCH_ROLES};
+use tinysearch_bus::{parse_role, role_key, ROLES};
 
 fn config_with(providers: &[(&str, SearchProviderSettings)]) -> Config {
     let mut config = Config::default();
@@ -60,7 +61,7 @@ fn a_managed_route_on_a_byok_only_provider_resolves_direct() {
     let mut config = config_with(&[("tavily", SearchProviderSettings::managed())]);
     config.search.tavily.api_key = Some("t".into());
     let tavily = find(&resolve_with(&config, false), "tavily").clone();
-    assert_eq!(tavily.route, SearchRoute::Direct);
+    assert_eq!(tavily.route, ProviderRoute::Direct);
     assert!(tavily.usable);
     assert!(!tavily.managed_capable);
 }

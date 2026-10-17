@@ -96,6 +96,7 @@ impl From<crate::AgentError> for HarnessError {
             | A::WidensRuntime(_)
             | A::ReservedId(_)
             | A::AgentLimit { .. }
+            | A::CleanupPending
             | A::UnknownId(_)
             | A::UnknownTemplate(_)
             | A::UnknownDefinition(_) => Self::Invalid(err_text(&err)),

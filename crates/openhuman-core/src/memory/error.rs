@@ -134,10 +134,9 @@ impl MemoryError {
             E::Unauthorized(message.to_string())
         } else if let Some(message) = reason.strip_prefix("unavailable: ") {
             E::Unavailable(message.to_string())
-        } else if let Some(message) = reason.strip_prefix("engine error: ") {
-            E::Engine(message.to_string())
         } else {
-            return None;
+            let message = reason.strip_prefix("engine error: ")?;
+            E::Engine(message.to_string())
         };
         Some(Self::from(error)).filter(Self::is_account_wide)
     }

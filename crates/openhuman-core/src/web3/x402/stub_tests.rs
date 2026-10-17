@@ -1,10 +1,12 @@
 use super::*;
-
 #[test]
 fn init_ledger_is_callable_noop() {
     // Must not panic — the boot path calls this unconditionally (itself
     // runtime-gated on `DomainGroup::Web3`) even in a slim build.
-    init_ledger(Path::new("/tmp/openhuman-x402-stub-test"), "session-x");
+    crate::web3::x402::init_ledger(
+        std::path::Path::new("/tmp/openhuman-x402-stub-test"),
+        "session-x",
+    );
 }
 
 #[test]

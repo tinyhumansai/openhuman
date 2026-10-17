@@ -1,0 +1,39 @@
+# A loadable cdylib that calls `ai.tinyhumans.tinystorage.Storage` on request.
+#
+# It exists so the host's storage decisions (grant, scope, refusals) are proved
+# against a REAL module over the real ABI and broker, not a host double. It
+# holds no storage implementation: it relays one raw call and returns the
+# bus's answer. Built by `modules/storage_host_cdylib_tests.rs`; excluded from
+# the root workspace.
+[package]
+name = "storage-probe-module"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+async-trait = "0.1"
+serde_json = "1"
+tinybus = { path = "../../../vendor/tinybus/crates/tinybus", default-features = false }
+tinybus-module = { path = "../../../vendor/tinybus/crates/tinybus-module" }
+# The module-side storage client, exactly what a real module links: streamed
+# blobs and watches go through `connect_storage`, not through hand-rolled calls.
+tinystoragedrivers-busproxy = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0" }
+tinystoragedrivers-core = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0" }
+tokio = { version = "1", features = ["io-util", "rt", "sync", "time"] }
+
+# The storage crates name tinybus by git rev; one copy, the in-tree one.
+[patch."https://github.com/tinyhumansai/tinybus"]
+tinybus = { path = "../../../vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "../../../vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "../../../vendor/tinybus/crates/tinybus-module" }
+
+[profile.dev]
+debug = false
+opt-level = 2

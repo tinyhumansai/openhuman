@@ -11,9 +11,9 @@ use super::*;
 fn a_thread_renamed_session_still_resolves_to_its_registry_entry() {
     // The process-global registry is not initialised in unit tests, and
     // initialising it here would leak into every other test in the binary.
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
-    let registry = crate::agent::harness::definition::AgentDefinitionRegistry::global()
+    let registry = crate::agent::harness::host_definition::AgentDefinitionRegistry::global()
         .expect("init_global_builtins publishes the registry");
 
     let exact = resolve_definition(registry, "orchestrator").expect("exact id must resolve");
@@ -39,7 +39,7 @@ fn a_thread_renamed_session_still_resolves_to_its_registry_entry() {
 /// naming a real route.
 #[test]
 fn the_withheld_block_renders_for_a_renamed_session_with_a_filter() {
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
 
     // A visible set shaped like the live one: the advertised delegates are in,
@@ -81,7 +81,7 @@ fn the_withheld_block_renders_for_a_renamed_session_with_a_filter() {
 /// The generated intro must not carry the source's line-continuation padding.
 #[test]
 fn the_generated_block_has_no_stray_whitespace_runs() {
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
     let visible: HashSet<String> = ["file_read".to_string()].into_iter().collect();
     let mut ctx = ctx_with(&[]);
@@ -126,7 +126,7 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
         pack.owners
     );
 
-    let registry = crate::agent::harness::definition::AgentDefinitionRegistry::builtins_only();
+    let registry = crate::agent::harness::host_definition::AgentDefinitionRegistry::builtins_only();
     let builder = registry
         .get("workflow_builder")
         .expect("workflow_builder is a registered agent");
@@ -137,7 +137,7 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
          workflow_builder's delegate_name, or the rule names a tool nobody has"
     );
     match &builder.tools {
-        crate::agent::harness::definition::ToolScope::Named(tools) => {
+        tinyagents_definition::ToolScope::Named(tools) => {
             for tool in ["list_flows", "get_flow"] {
                 assert!(
                     tools.contains(&tool.to_string()),
@@ -145,7 +145,7 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
                 );
             }
         }
-        crate::agent::harness::definition::ToolScope::Wildcard => {
+        tinyagents_definition::ToolScope::Wildcard => {
             panic!("workflow_builder must retain its explicit, narrow tool belt")
         }
     }
@@ -157,7 +157,7 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
 #[cfg(all(feature = "mcp", feature = "skills"))]
 #[test]
 fn skill_sections_name_the_hand_off_this_session_can_call() {
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
     let belt: HashSet<String> = ["setup_skills", "run_workflow", "file_read", "use_skill"]
         .iter()

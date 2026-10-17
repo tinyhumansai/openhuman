@@ -9,7 +9,7 @@ use super::background_completions;
 use crate::core::runtime::tenant::{self, Tenant};
 
 /// Sessions with a user turn in flight — delivery defers while busy. Keyed by
-/// [`tenant::profile_key`]: two SaaS profiles can share a session id (desktop: bare id).
+/// [`tenant::profile_key_in`]: two SaaS profiles can share a session id (desktop: bare id).
 ///
 /// Each key holds the ids of the live [`TurnBusy`] guards on it, so a replacement
 /// turn that starts before the one it interrupted has unwound stays busy when
@@ -20,8 +20,8 @@ pub(super) fn busy() -> &'static Mutex<HashMap<String, HashSet<u64>>> {
 }
 
 /// The calling task's profile, as the tenant its busy/slot keys carry.
-pub(super) fn caller() -> Tenant {
-    tenant::current_tenant_or_isolated("background_delivery").profile_only()
+pub(super) fn caller(ctx: &crate::core::runtime::DispatchCtx) -> Tenant {
+    tenant::isolated_unless_tenant(ctx.tenant(), "background_delivery").profile_only()
 }
 
 /// The session id of a busy key, when the key belongs to `me`.
@@ -40,9 +40,9 @@ pub(crate) struct TurnBusy {
 }
 
 impl TurnBusy {
-    pub(crate) fn start(session_id: &str) -> Self {
+    pub(crate) fn start(ctx: &crate::core::runtime::DispatchCtx, session_id: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let key = tenant::profile_key(session_id);
+        let key = tenant::profile_key_in(&caller(ctx), session_id);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         busy()
             .lock()
@@ -57,8 +57,11 @@ impl TurnBusy {
     /// not map to its thread: a relayed channel turn runs under the channel
     /// pipeline's own session id, which [`background_completions`] never
     /// learns, so marking that session would leave the thread looking idle.
-    pub(crate) fn start_on_thread(thread_id: &str) -> Self {
-        Self::start(&format!("{THREAD_MARK}{thread_id}"))
+    pub(crate) fn start_on_thread(
+        ctx: &crate::core::runtime::DispatchCtx,
+        thread_id: &str,
+    ) -> Self {
+        Self::start(ctx, &format!("{THREAD_MARK}{thread_id}"))
     }
 }
 
@@ -67,10 +70,10 @@ impl TurnBusy {
 const THREAD_MARK: char = '\u{2}';
 
 /// The thread a busy session id is a turn on.
-fn thread_of(session: &str) -> Option<String> {
+fn thread_of(ctx: &crate::core::runtime::DispatchCtx, session: &str) -> Option<String> {
     match session.strip_prefix(THREAD_MARK) {
         Some(thread) => Some(thread.to_string()),
-        None => background_completions::thread_for_session(session),
+        None => background_completions::thread_for_session(ctx, session),
     }
 }
 
@@ -88,14 +91,14 @@ impl Drop for TurnBusy {
 }
 
 /// Is any in-flight turn of the calling profile running on `thread_id`?
-pub(crate) fn is_busy(thread_id: &str) -> bool {
-    let me = caller();
+pub(crate) fn is_busy(ctx: &crate::core::runtime::DispatchCtx, thread_id: &str) -> bool {
+    let me = caller(ctx);
     busy()
         .lock()
         .expect("background_delivery busy poisoned")
         .keys()
         .filter_map(|key| session_of(key, &me))
-        .any(|session| thread_of(session).as_deref() == Some(thread_id))
+        .any(|session| thread_of(ctx, session).as_deref() == Some(thread_id))
 }
 
 /// Forget every in-flight turn of the calling profile on `thread_id`. A turn
@@ -103,12 +106,16 @@ pub(crate) fn is_busy(thread_id: &str) -> bool {
 /// or `AgentError`, and its session would otherwise stay "busy" and defer this
 /// thread's deliveries until restart. Another profile's turn on a thread with
 /// the same id is left alone. Returns how many sessions were cleared.
-pub(crate) fn clear_busy_for_thread(thread_id: &str) -> usize {
-    let me = caller();
+pub(crate) fn clear_busy_for_thread(
+    ctx: &crate::core::runtime::DispatchCtx,
+    thread_id: &str,
+) -> usize {
+    let me = caller(ctx);
     let mut busy = busy().lock().expect("background_delivery busy poisoned");
     let before = busy.len();
     busy.retain(|key, _| {
-        session_of(key, &me).is_none_or(|session| thread_of(session).as_deref() != Some(thread_id))
+        session_of(key, &me)
+            .is_none_or(|session| thread_of(ctx, session).as_deref() != Some(thread_id))
     });
     let cleared = before - busy.len();
     if cleared > 0 {

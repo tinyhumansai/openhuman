@@ -218,3 +218,19 @@ fn omitted_placement_leaves_the_project_context_to_the_caller() {
     assert!(!prompt.contains("conflicting workspace-root identity"));
     assert!(prompt.contains("Name: OpenHuman"));
 }
+
+#[test]
+fn build_system_prompt_tool_catalogue_is_the_harness_rendering_followed_by_the_task_section() {
+    let tmp = tempdir().unwrap();
+    let tools = [("shell", "Run a command"), ("read", "Read a file")];
+
+    let prompt = build_system_prompt(tmp.path(), "test-model", &tools, &[], None, None);
+
+    let catalogue = tinyagents_harness::catalog::render_description_catalogue(&tools);
+    assert!(
+        prompt.starts_with(&catalogue),
+        "catalogue must lead the prompt byte-for-byte (prefix-cache contract): {catalogue:?}"
+    );
+    assert!(prompt[catalogue.len()..].starts_with("## Your Task\n\n"));
+    assert!(catalogue.contains("shell") && catalogue.contains("Run a command"));
+}

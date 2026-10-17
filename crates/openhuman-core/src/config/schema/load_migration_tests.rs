@@ -346,7 +346,6 @@ fn migrate_cloud_provider_slugs_routes_cloud_to_legacy_custom_when_primary_is_op
             endpoint: "https://api.example.com/v1/".into(),
             auth_style: crate::config::schema::AuthStyle::Bearer,
             default_model: Some("gpt-4o-mini".into()),
-            ..Default::default()
         },
     ];
 

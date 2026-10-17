@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 use crate::integrations::task_sources::types::{FilterSpec, SourceTarget};
 use serde_json::json;
 
@@ -39,9 +40,23 @@ async fn a_new_connection_fires_the_matching_sources_of_the_scope() {
         )
         .unwrap();
     }
-    fire_for_connection(&config, ProviderSlug::Github, "github", "conn-1").await;
+    fire_for_connection(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        ProviderSlug::Github,
+        "github",
+        "conn-1",
+    )
+    .await;
     // A toolkit with no sources fires nothing.
-    fire_for_connection(&config, ProviderSlug::Notion, "notion", "conn-1").await;
+    fire_for_connection(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        ProviderSlug::Notion,
+        "notion",
+        "conn-1",
+    )
+    .await;
     assert_eq!(store::list_sources(&config).unwrap().len(), 2);
 }
 
@@ -57,7 +72,14 @@ async fn an_unreadable_scope_is_skipped() {
         action_dir: blocked,
         ..crate::config::Config::default()
     };
-    fire_for_connection(&config, ProviderSlug::Github, "github", "conn-1").await;
+    fire_for_connection(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        ProviderSlug::Github,
+        "github",
+        "conn-1",
+    )
+    .await;
 }
 
 /// Smoke test: the subscriber handles connection events through the scope's
@@ -73,6 +95,7 @@ async fn a_connection_event_is_handled_per_scope() {
         toolkit: toolkit.to_string(),
         connection_id: "conn-1".to_string(),
         connect_url: String::new(),
+        tenant: None,
     };
     // Not a task-source toolkit.
     TaskSourcesConnectionSubscriber
@@ -90,5 +113,11 @@ async fn a_connection_event_is_handled_per_scope() {
             connection_id: "conn-1".to_string(),
         })
         .await;
-    fire_in_scope(ProviderSlug::Github, "github", "conn-1").await;
+    fire_in_scope(
+        &DispatchCtx::process_default(),
+        ProviderSlug::Github,
+        "github",
+        "conn-1",
+    )
+    .await;
 }

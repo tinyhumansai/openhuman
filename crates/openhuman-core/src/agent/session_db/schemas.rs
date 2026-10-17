@@ -1,8 +1,8 @@
 //! Controller schemas and JSON-RPC dispatchers for the durable run ledger.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -94,11 +94,11 @@ fn new_correlation_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
-fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
+fn handle_run_ledger_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+        let config = ctx.load_config().await.inspect_err(|err| {
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.config_failed err={err}");
         })?;
         let request: AgentRunListRequest = if params.is_empty() {
@@ -110,10 +110,11 @@ fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
                 s
             })?
         };
-        let response = tinyagents_session::run_ledger::list_agent_runs(
+        let response = crate::agent::session_store::with_ledger_async(
             &config.workspace_dir,
-            &request,
+            |ledger| async move { ledger.list_agent_runs(&request).await },
         )
+        .await
         .map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] list.error err={s}");
@@ -123,18 +124,22 @@ fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_run_ledger_get(params: Map<String, Value>) -> ControllerFuture {
+fn handle_run_ledger_get(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+        let config = ctx.load_config().await.inspect_err(|err| {
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.config_failed err={err}");
         })?;
         let id = params
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing required param: id".to_string())?;
-        let run = tinyagents_session::run_ledger::get_agent_run(&config.workspace_dir, id).map_err(|e| {
+        let run = crate::agent::session_store::with_ledger_async(&config.workspace_dir, |ledger| async move {
+            ledger.get_agent_run(id).await
+        })
+        .await
+        .map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.error id={id} err={s}");
             s
@@ -143,11 +148,11 @@ fn handle_run_ledger_get(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_run_ledger_events(params: Map<String, Value>) -> ControllerFuture {
+fn handle_run_ledger_events(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
+        let config = ctx.load_config().await.inspect_err(|err| {
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.config_failed err={err}");
         })?;
         let request: RunEventListRequest =
@@ -156,10 +161,11 @@ fn handle_run_ledger_events(params: Map<String, Value>) -> ControllerFuture {
                 log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.bad_params err={s}");
                 s
             })?;
-        let response = tinyagents_session::run_ledger::list_recent_run_events(
+        let response = crate::agent::session_store::with_ledger_async(
             &config.workspace_dir,
-            &request,
+            |ledger| async move { ledger.list_recent_run_events(&request).await },
         )
+        .await
         .map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.error err={s}");

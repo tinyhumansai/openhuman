@@ -136,6 +136,11 @@ jobs:
       OPENHUMAN_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
       VITE_TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
     steps:
+      # The TinyFlows fixture tree contains paths beyond MAX_PATH. Configure
+      # Git before checkout so recursive submodule checkout can create them.
+      - name: Enable long Git paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - name: Checkout build ref
         uses: actions/checkout@v7
         with:

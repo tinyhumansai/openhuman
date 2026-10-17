@@ -93,7 +93,7 @@ Note that nothing in the production startup path currently constructs a `Webhook
 
 ## Notes / gotchas
 
-- Direct skill dispatch is not implemented: a `skill`-kind tunnel returns `501`. Real handling exists only for `echo` and `agent` kinds (the QuickJS skill runtime was removed; see `gitbooks/developing/architecture.md`).
+- Direct skill dispatch is not implemented: a `skill`-kind tunnel returns `501`. Real handling exists only for `echo` and `agent` kinds (the QuickJS skill runtime was removed; see `docs/gitbooks/en/developing/architecture.md`).
 - `route()` deliberately resolves only `target_kind == "skill"` registrations; echo/agent registrations are matched via `registration()` in the bus, not `route()`.
 - Agent tunnels respond `202` immediately and complete asynchronously: the spawned task emits the final `webhook:response` itself to avoid blocking the broadcast dispatch task during LLM calls.
 - `register_agent` stores `agent_id` for observability and rebind validation only; per the docstring the triage evaluator selects the target agent dynamically regardless of the pinned value.
@@ -104,6 +104,6 @@ Note that nothing in the production startup path currently constructs a `Webhook
 ## Further reading
 
 - [Parent module (`skills`)](../README.md)
-- [MCP servers and skills](../../../../../gitbooks/features/integrations/mcp-and-skills.md)
+- [MCP servers and skills](../../../../../docs/gitbooks/en/features/integrations/mcp-and-skills.md)
 - [tinyskills submodule](../../../../../vendor/tinyskills/README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

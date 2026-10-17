@@ -4,6 +4,8 @@ use std::time::{Duration, SystemTime};
 fn core_job(job_type: JobType, command: &str) -> CronJob {
     let now = chrono::Utc::now();
     CronJob {
+        claim_generation: 0,
+        policy: Default::default(),
         id: "job-1".into(),
         expression: String::new(),
         schedule: Schedule::Every { every_ms: 60_000 },
@@ -11,7 +13,7 @@ fn core_job(job_type: JobType, command: &str) -> CronJob {
         prompt: Some("check in".into()),
         name: Some("named".into()),
         job_type,
-        session_target: tinyflows_schedule::types::SessionTarget::Isolated,
+        session_target: tinyflows_bus::schedule::types::SessionTarget::Isolated,
         model: None,
         agent_id: Some("teeny".into()),
         enabled: true,
@@ -46,7 +48,7 @@ fn a_cron_schedule_drops_active_hours_it_cannot_express() {
     let core = Schedule::Cron {
         expr: "0 * * * *".into(),
         tz: None,
-        active_hours: Some(tinyflows_schedule::types::ActiveHours {
+        active_hours: Some(tinyflows_bus::schedule::types::ActiveHours {
             start: "09:00".into(),
             end: "17:00".into(),
         }),

@@ -32,7 +32,11 @@ pub fn try_global_server() -> Option<Arc<VoiceServer>> {
 /// This is intended for core process startup. The server runs in the background
 /// and reuses the process-global singleton so RPC status/stop calls continue to
 /// operate on the same instance.
-pub async fn start_if_enabled(app_config: &Config) {
+pub async fn start_if_enabled(ctx: &crate::core::runtime::DispatchCtx, app_config: &Config) {
+    if !app_config.components.voice {
+        info!("{LOG_PREFIX} [components].voice is off, skipping embedded voice server");
+        return;
+    }
     if !app_config.voice_server.auto_start {
         info!("{LOG_PREFIX} auto-start disabled in config, skipping embedded voice server");
         return;
@@ -70,8 +74,9 @@ pub async fn start_if_enabled(app_config: &Config) {
     let server = global_server(server_config);
     let config_for_run = app_config.clone();
     let server_for_err = server.clone();
+    let run_ctx = ctx.clone();
     tokio::spawn(async move {
-        if let Err(e) = server.run(&config_for_run).await {
+        if let Err(e) = server.run(&run_ctx, &config_for_run).await {
             warn!("{LOG_PREFIX} embedded voice server exited with error: {e}");
             server_for_err.set_last_error(&e).await;
         }
@@ -84,6 +89,7 @@ pub async fn start_if_enabled(app_config: &Config) {
 /// singleton used by `voice_server_status` RPC. This keeps CLI-started
 /// instances isolated from the core RPC lifecycle.
 pub async fn run_standalone(
+    ctx: &crate::core::runtime::DispatchCtx,
     app_config: Config,
     server_config: VoiceServerConfig,
 ) -> Result<(), String> {
@@ -107,5 +113,5 @@ pub async fn run_standalone(
 
     // This is safe because we hold the Arc and nothing else moves it.
     // The server.run() borrows &self, and we await it to completion.
-    server_arc.run(&app_config).await
+    server_arc.run(ctx, &app_config).await
 }

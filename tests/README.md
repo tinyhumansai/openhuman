@@ -94,5 +94,5 @@ flakes.
 - Frontend E2E lives in [`app/test/e2e/`](../app/test/e2e), using
   [`app/test/e2e/helpers/element-helpers.ts`](../app/test/e2e/helpers/element-helpers.ts) rather than raw platform element
   types.
-- [Testing strategy](../gitbooks/developing/testing-strategy.md) and [E2E testing](../gitbooks/developing/e2e-testing.md) for which layer a change belongs in.
+- [Testing strategy](../docs/gitbooks/en/developing/testing-strategy.md) and [E2E testing](../docs/gitbooks/en/developing/e2e-testing.md) for which layer a change belongs in.
 - [`scripts/README.md`](../scripts/README.md) for the runners, and [`CONTRIBUTING.md`](../CONTRIBUTING.md).

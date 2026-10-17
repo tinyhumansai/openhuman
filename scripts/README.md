@@ -22,10 +22,11 @@ drivers live in
 | [`test-planning/`](test-planning/README.md) | Mines GitHub issues/PRs into a test-planning backlog via an LLM CLI. |
 | [`release/`](release) | Release build, signing, packaging, and publishing scripts (macOS notarization, APT/Homebrew, npm, updater manifests). |
 | [`mock-api/`](mock-api) | The shared mock backend modules (routes, socket, admin, state) behind [`mock-api-server.mjs`](mock-api-server.mjs) / [`mock-api-core.mjs`](mock-api-core.mjs); exercised by `pnpm mock:api` and Rust/E2E test runs. |
-| [`lib/`](lib) | Small parsers shared by the CI gates (checklist, coverage matrix, feature forwarding, module pins). |
+| [`modules/`](modules) | `build.mjs <id\|all>` builds a loadable module from its vendored gitlink for local development (`SourceSpec` in the registry record; artifact plus an operator-trust `modules.toml` under `target/module-sources/<id>/`, cached by submodule tree, rustc, target, profile and features). `stage-local-modules.sh` is the helper `test-rust-with-mock.sh` and `test-rust-e2e.sh` source. With `OPENHUMAN_MODULE_SOURCE=source` those runners build modules from source; without it they use the pinned releases, same as CI. CI never calls `build.mjs`. `pin-status.mjs` is the local, advisory view of the two module pins (in sync, ahead, behind/diverged, exempt; `--print-env` emits `OPENHUMAN_MODULE_PIN_AHEAD`, which a debug core reads to warn once per id when it serves such a module; `.husky/pre-push` runs it as a hint when `vendor/**` changed). `release-and-repin.mjs <id> [--bump patch\|minor\|major] [--version X.Y.Z] [--dry-run]` dispatches the module's `Release` workflow after asking, then rewrites the registry record verbatim from the release's `checksum.toml` (never hashing anything), checks out the tag, stages the gitlink and runs the strict pin gates. |
+| [`lib/`](lib) | Small parsers shared by the CI gates (checklist, coverage matrix, feature forwarding, module pins, module source specs). |
 | [`__tests__/`](__tests__), [`tests/`](tests) | Unit tests for the scripts themselves (`node --test`, plus a PowerShell installer test). |
 | [`fixtures/`](fixtures) | `latest.json` / `release.json` release-metadata fixtures consumed by [`test_install.sh`](test_install.sh) (the [`install.sh`](install.sh) test). |
-| [`theme-codemod/`](theme-codemod) | Codemod collapsing audited `light dark:` Tailwind pairings into the semantic theme utilities (`node scripts/theme-codemod/migrate.mjs [--write]`; see [`gitbooks/developing/theming.md`](../gitbooks/developing/theming.md)). |
+| [`theme-codemod/`](theme-codemod) | Codemod collapsing audited `light dark:` Tailwind pairings into the semantic theme utilities (`node scripts/theme-codemod/migrate.mjs [--write]`; see [`docs/gitbooks/en/developing/theming.md`](../docs/gitbooks/en/developing/theming.md)). |
 | [`agent-batch/`](agent-batch) | Validates a batch spec of parallel agent branches, checks file overlap, prints per-agent launch prompts, and reports status (`pnpm agent-batch <validate\|overlap\|launch\|status> <spec.json>`). |
 | [`deep-work/`](deep-work) | Issue-to-PR workflow automation over worktrees and AI agents: `pnpm deep-work start\|pick\|continue\|status\|list\|cleanup`. |
 | [`dep-audit/`](dep-audit/README.md) | Cargo dependency audit (unused, duplicate-version, heavy, cross-repo drift) over the root workspace, `openhuman-app`, and every Cargo submodule, driven by `tinyanalyzer`. |
@@ -70,7 +71,7 @@ above.
   for the experimental mobile clients; **`ios-appstore-*`** build, export, and
   upload the iOS IPA and its App Store Connect assets/metadata.
 - **[`install.sh`](install.sh) / [`install.ps1`](install.ps1)**: the public `curl | bash` / `irm | iex`
-  installers documented in [`gitbooks/developing/getting-set-up.md`](../gitbooks/developing/getting-set-up.md); tested by
+  installers documented in [`docs/gitbooks/en/developing/getting-set-up.md`](../docs/gitbooks/en/developing/getting-set-up.md); tested by
   [`test_install.sh`](test_install.sh) / `tests/OpenHumanWindowsInstall.Tests.ps1` and smoke-checked
   by [`docs/RELEASE-MANUAL-SMOKE.md`](../docs/RELEASE-MANUAL-SMOKE.md).
 - **[`ci-cancel-aware.sh`](ci-cancel-aware.sh)**: wraps a long-running CI command, polling the
@@ -84,6 +85,6 @@ above.
 ## Further reading
 
 - [`tests/README.md`](../tests/README.md), the Rust integration targets these runners drive.
-- [Testing strategy](../gitbooks/developing/testing-strategy.md) and [E2E testing](../gitbooks/developing/e2e-testing.md).
-- [Getting set up](../gitbooks/developing/getting-set-up.md) and [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+- [Testing strategy](../docs/gitbooks/en/developing/testing-strategy.md) and [E2E testing](../docs/gitbooks/en/developing/e2e-testing.md).
+- [Getting set up](../docs/gitbooks/en/developing/getting-set-up.md) and [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - [`crates/README.md`](../crates/README.md) for the crates these scripts build.

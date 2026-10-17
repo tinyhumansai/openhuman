@@ -1,26 +1,52 @@
 //! OpenHuman-specific dispatch prompt context plus TinyChannels helpers.
 
 use crate::channels::context::CHANNEL_TYPING_REFRESH_INTERVAL_SECS;
-use crate::channels::traits;
-use std::time::Duration;
+use tinychannels_bus as traits;
 
 /// Maximum characters shown in the debug reply println.
 pub(super) const REPLY_LOG_TRUNCATE_CHARS: usize = 200;
 
-pub(super) use tinychannels::runtime::{log_worker_join_result, select_acknowledgment_reaction};
+#[cfg(test)]
+pub(super) use tinychannels::runtime::select_acknowledgment_reaction;
+
+pub(super) fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
+    if let Err(error) = result {
+        tracing::warn!("{}", traits::context::worker_crash_message(&error));
+    }
+}
 
 /// Start the portable typing lifecycle with OpenHuman's configured interval.
-pub(super) fn spawn_scoped_typing_task(
+pub(super) fn spawn_typing_task(
+    dispatch: &crate::core::runtime::DispatchCtx,
     channel: std::sync::Arc<dyn crate::channels::Channel>,
     recipient: String,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    tinychannels::runtime::spawn_scoped_typing_task(
-        channel,
-        recipient,
-        cancellation_token,
-        Duration::from_secs(CHANNEL_TYPING_REFRESH_INTERVAL_SECS),
-    )
+    let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+    // The worker retains ownership across cancellation of the caller while
+    // StartTypingRefresh is in flight, then closes the returned module handle.
+    dispatch.spawn(async move {
+        match channel
+            .begin_typing_refresh(&recipient, CHANNEL_TYPING_REFRESH_INTERVAL_SECS)
+            .await
+        {
+            Ok(Some(handle)) => {
+                cancellation_token.cancelled().await;
+                if channel.end_typing_refresh(&handle).await.is_err() {
+                    tracing::debug!(channel = channel.name(), "typing refresh cleanup failed");
+                }
+            }
+            Ok(None) => cancellation_token.cancelled().await,
+            Err(_) => tracing::debug!(channel = channel.name(), "typing refresh unavailable"),
+        }
+        if channel.stop_typing(&recipient).await.is_err() {
+            tracing::debug!(channel = channel.name(), "typing stop failed");
+        }
+        let _ = finished_tx.send(());
+    });
+    dispatch.spawn(async move {
+        let _ = finished_rx.await;
+    })
 }
 
 /// Build the `[Channel context]` block for a channel turn.
@@ -47,3 +73,7 @@ pub(super) fn build_channel_context_block(msg: &traits::ChannelMessage) -> Strin
          target.\n\n"
     )
 }
+
+#[cfg(test)]
+#[path = "helpers_tests.rs"]
+mod tests;

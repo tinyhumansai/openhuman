@@ -12,12 +12,14 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 /** Core wire status for one todo item (`DomainEvent::ThreadTodosChanged`). */
-export type CoreTodoStatus = 'pending' | 'in_progress' | 'completed';
+export type CoreTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
 /** One todo item as the core sends it — wire shape, not the element's shape. */
 export interface ThreadTodoItemView {
   content: string;
   status: CoreTodoStatus;
+  /** Why the step was cancelled; only on a `cancelled` item. */
+  reason?: string;
 }
 
 export interface ThreadTodosState {

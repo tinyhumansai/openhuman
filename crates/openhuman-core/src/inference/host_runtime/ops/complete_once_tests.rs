@@ -66,7 +66,7 @@ async fn forwards_schema_max_tokens_and_provider_options() {
     request.max_tokens = Some(321);
     request.provider_options = json!({"provider": {"order": ["fast"]}, "usage": {"include": true}});
 
-    let response = complete_once(&endpoint(&server), request)
+    let response = complete_once(&endpoint(&server), request, None)
         .await
         .expect("an injection-shaped message is data, not a refusal");
 
@@ -114,7 +114,9 @@ async fn surfaces_length_finish_reason() {
         .await;
 
     let request = ModelRequest::new(vec![Message::user("hi")]).with_model("m".to_string());
-    let response = complete_once(&endpoint(&server), request).await.unwrap();
+    let response = complete_once(&endpoint(&server), request, None)
+        .await
+        .unwrap();
     assert_eq!(response.finish_reason.as_deref(), Some("length"));
 }
 
@@ -126,7 +128,7 @@ async fn refuses_tool_declarations() {
         "run a command",
         json!({"type": "object"}),
     )];
-    let err = complete_once(&unreachable_endpoint(), request)
+    let err = complete_once(&unreachable_endpoint(), request, None)
         .await
         .unwrap_err();
     assert!(err.contains("tools are not supported"), "{err}");
@@ -135,7 +137,7 @@ async fn refuses_tool_declarations() {
 #[tokio::test]
 async fn requires_a_model() {
     let request = ModelRequest::new(vec![Message::user("hi")]);
-    let err = complete_once(&unreachable_endpoint(), request)
+    let err = complete_once(&unreachable_endpoint(), request, None)
         .await
         .unwrap_err();
     assert!(err.contains("request.model is required"), "{err}");
@@ -145,7 +147,7 @@ async fn requires_a_model() {
 async fn refuses_tools_smuggled_through_provider_options() {
     let mut request = ModelRequest::new(vec![Message::user("hi")]).with_model("m".to_string());
     request.provider_options = json!({"tools": [{"type": "function"}]});
-    let err = complete_once(&unreachable_endpoint(), request)
+    let err = complete_once(&unreachable_endpoint(), request, None)
         .await
         .expect_err("tools must not reach the provider via provider_options");
     assert!(
@@ -163,7 +165,7 @@ async fn provider_error_is_returned_as_a_prefixed_string() {
         .mount(&server)
         .await;
     let request = ModelRequest::new(vec![Message::user("hi")]).with_model("m".to_string());
-    let err = complete_once(&endpoint(&server), request)
+    let err = complete_once(&endpoint(&server), request, None)
         .await
         .expect_err("a 400 from the provider must surface as an error");
     assert!(err.starts_with("complete_once: "), "{err}");

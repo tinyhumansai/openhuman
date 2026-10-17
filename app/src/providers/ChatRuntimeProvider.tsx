@@ -1391,6 +1391,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               kind: event.kind,
               title: event.title,
               toolCallId: event.tool_call_id,
+              requestId: event.request_id,
             })
           );
         },
@@ -1410,6 +1411,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               path: event.path,
               sizeBytes: event.size_bytes,
               toolCallId: event.tool_call_id,
+              requestId: event.request_id,
             })
           );
         },
@@ -1430,6 +1432,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               kind: event.kind,
               title: event.title,
               error: event.error,
+              requestId: event.request_id,
             })
           );
         },

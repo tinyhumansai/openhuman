@@ -78,7 +78,10 @@ fn all_controller_schemas_covers_every_supported_function() {
             "list_artifacts",
             "get_artifact",
             "delete_artifact",
-            "regenerate"
+            "regenerate",
+            "save_artifact_version",
+            "share_artifact",
+            "read_artifact_body"
         ]
     );
 }
@@ -86,7 +89,7 @@ fn all_controller_schemas_covers_every_supported_function() {
 #[test]
 fn all_registered_controllers_has_handler_per_schema() {
     let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), 4);
+    assert_eq!(controllers.len(), 7);
     let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
     assert_eq!(
         names,
@@ -94,7 +97,10 @@ fn all_registered_controllers_has_handler_per_schema() {
             "list_artifacts",
             "get_artifact",
             "delete_artifact",
-            "regenerate"
+            "regenerate",
+            "save_artifact_version",
+            "share_artifact",
+            "read_artifact_body"
         ]
     );
 }

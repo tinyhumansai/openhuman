@@ -3,23 +3,44 @@ use super::*;
 #[test]
 fn defaults_to_build_mode_for_an_unseen_thread() {
     let thread_id = format!("run-mode-test-{}", uuid::Uuid::new_v4());
-    assert_eq!(get_mode(&thread_id), RunMode::Build);
+    assert_eq!(
+        get_mode(&crate::core::runtime::DispatchCtx::ambient(), &thread_id),
+        RunMode::Build
+    );
 }
 
 #[test]
 fn set_mode_is_observed_through_a_fresh_handle_lookup() {
     let thread_id = format!("run-mode-test-{}", uuid::Uuid::new_v4());
-    set_mode(&thread_id, RunMode::Plan);
-    assert_eq!(get_mode(&thread_id), RunMode::Plan);
-    set_mode(&thread_id, RunMode::Build);
-    assert_eq!(get_mode(&thread_id), RunMode::Build);
+    set_mode(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &thread_id,
+        RunMode::Plan,
+    );
+    assert_eq!(
+        get_mode(&crate::core::runtime::DispatchCtx::ambient(), &thread_id),
+        RunMode::Plan
+    );
+    set_mode(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &thread_id,
+        RunMode::Build,
+    );
+    assert_eq!(
+        get_mode(&crate::core::runtime::DispatchCtx::ambient(), &thread_id),
+        RunMode::Build
+    );
 }
 
 #[test]
 fn handle_for_thread_shares_state_with_set_mode() {
     let thread_id = format!("run-mode-test-{}", uuid::Uuid::new_v4());
-    let handle = handle_for_thread(&thread_id);
-    set_mode(&thread_id, RunMode::Plan);
+    let handle = handle_for_thread(&crate::core::runtime::DispatchCtx::ambient(), &thread_id);
+    set_mode(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &thread_id,
+        RunMode::Plan,
+    );
     assert_eq!(handle.get(), RunMode::Plan);
 }
 
@@ -41,17 +62,26 @@ async fn plan_mode_stays_with_the_agent_that_set_it() {
     let beta = test_agent_context(&root, "beta");
     let thread = "plan-mode-shared-thread";
 
-    CoreContext::scope(std::sync::Arc::clone(&alpha), async {
-        set_mode(thread, RunMode::Plan);
-    })
-    .await;
+    {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&alpha));
+
+        set_mode(&scope_ctx, thread, RunMode::Plan);
+    };
 
     assert_eq!(
-        CoreContext::scope(alpha, async { get_mode(thread) }).await,
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(alpha);
+
+            get_mode(&scope_ctx, thread)
+        },
         RunMode::Plan
     );
     assert_eq!(
-        CoreContext::scope(beta, async { get_mode(thread) }).await,
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(beta);
+
+            get_mode(&scope_ctx, thread)
+        },
         RunMode::Build
     );
 }

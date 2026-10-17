@@ -38,7 +38,9 @@ use serde_json::{json, Value};
 use tinyflows::caps::MemoryProvider;
 use tinyflows::error::{EngineError, Result};
 
-use crate::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
+#[cfg(test)]
+use crate::agent::turn_origin;
+use crate::agent::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::config::Config;
 use crate::flows::{
     cross_flow_filter, flow_filter, flow_key_of, flow_key_tag, forget_matching, remember_keyed,
@@ -49,7 +51,8 @@ use crate::memory::MemoryError;
 use crate::security::approval::{
     redact_args, summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome,
 };
-use crate::security::{CommandClass, SecurityPolicy};
+use crate::security::SecurityPolicy;
+use tinybox_bus::CommandClass;
 use tinymemory_api::wrap_untrusted_for_agent;
 use tinymemory_api::{Hit, LearningKind, MemoryMeta, MetaFilter, SourceKind};
 
@@ -64,8 +67,12 @@ const LOG_PREFIX: &str = "[memory-node-host]";
 /// security contract; see [`super::caps::OpenHumanAgentRunner`] for the
 /// sibling adapter this one's tier-gate wiring mirrors.
 pub struct OpenHumanMemory {
+    /// The context the run acts under; carries the run's trusted turn origin.
+    pub(crate) ctx: crate::core::runtime::DispatchCtx,
     pub(crate) config: Arc<Config>,
     pub(crate) security: Arc<SecurityPolicy>,
+    /// The run's approval context (flow run correlation).
+    pub(crate) approval: crate::security::approval::ApprovalTurnContext,
 }
 
 impl OpenHumanMemory {
@@ -79,7 +86,7 @@ impl OpenHumanMemory {
     /// so a `scope: "flow"` node can never be pointed at another flow's
     /// namespace by a crafted `=`-binding.
     fn trusted_flow_id(&self) -> Result<String> {
-        match turn_origin::current() {
+        match self.ctx.turn_origin() {
             Some(AgentTurnOrigin::TrustedAutomation {
                 job_id,
                 source: TrustedAutomationSource::Workflow { .. },
@@ -141,8 +148,15 @@ impl OpenHumanMemory {
         let tier_decision = enforce_node_tier_gate(&self.security, CommandClass::Write, op)?;
         let summary = summarize_action(&tool_name, action);
         let redacted = redact_args(action);
-        let (outcome, audit_id) =
-            gate_call_for_tier(tier_decision, &tool_name, &summary, redacted).await;
+        let (outcome, audit_id) = gate_call_for_tier(
+            &self.ctx,
+            &self.approval,
+            tier_decision,
+            &tool_name,
+            &summary,
+            redacted,
+        )
+        .await;
         if let GateOutcome::Deny { reason } = outcome {
             tracing::warn!(target: "flows", op, "{LOG_PREFIX} write: approval gate denied");
             return Err(EngineError::Capability(reason));
@@ -355,7 +369,7 @@ impl MemoryProvider for OpenHumanMemory {
         // up front rather than spend that approval round-trip on a write
         // that was always going to be rejected (review fix — see #5227).
         let content = value_to_content(&value);
-        if tinymemory_integrations::safety::has_likely_secret(&content) {
+        if tinyredact::has_likely_secret(&content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),

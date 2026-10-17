@@ -1,6 +1,6 @@
 /*
  * Canonical theme tokens — the single source of truth for every themeable
- * colour and font in the app. See gitbooks/developing/theming.md.
+ * colour and font in the app. See docs/gitbooks/en/developing/theming.md.
  *
  * WHY CHANNEL FORMAT: each colour is stored as a space-separated RGB triple
  * (e.g. `255 255 255`) rather than a hex string. `tailwind.config.js` wraps

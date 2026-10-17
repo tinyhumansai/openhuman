@@ -3,6 +3,7 @@
 //! budget it is left verbatim; past it TinyJuice compacts it deterministically.
 
 use super::*;
+use crate::agent::tinyagents::middleware::tool_output::ToolOutputMiddleware;
 
 /// Run one shell call with `command` through `before_tool` and `after_tool`.
 async fn run_shell(

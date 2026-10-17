@@ -74,3 +74,24 @@ for (const [description, listing, code] of [
     }
   });
 }
+
+test("released TinyHosts contract callers match the declared libtest module", () => {
+  const moduleSource = readFileSync(
+    new URL("../../crates/openhuman-core/src/hosting/mod.rs", import.meta.url),
+    "utf8",
+  );
+  const moduleName = moduleSource.match(
+    /#\[path = "hosting_tests\.rs"\]\s*mod (\w+);/,
+  )?.[1];
+  assert.ok(moduleName, "hosting contract test module is declared");
+  const filter = `hosting::${moduleName}::released_artifact_serves_providers_and_confidential_local_preparation`;
+  for (const caller of [
+    "../test-rust-with-mock.sh",
+    "../../.github/workflows/test-reusable.yml",
+  ]) {
+    assert.ok(
+      readFileSync(new URL(caller, import.meta.url), "utf8").includes(filter),
+      `${caller} must invoke the registered contract test`,
+    );
+  }
+});

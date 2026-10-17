@@ -101,7 +101,7 @@ function App() {
    * Authoritative top-level provider / gate nesting for the desktop shell,
    * outermost first. Keep this list in sync with the JSX returned below;
    * `scripts/generate-architecture-docs.mjs` renders it into
-   * `gitbooks/developing/architecture/frontend.md` and CI (`pnpm docs:check`)
+   * `docs/gitbooks/en/developing/architecture/frontend.md` and CI (`pnpm docs:check`)
    * fails if the doc drifts. Refresh the doc with `pnpm docs:generate`.
    * Format per line: `<order>. <Component> — <role>` (role must not contain " — ").
    * 1. Sentry.ErrorBoundary — Crash boundary; renders ErrorFallbackScreen

@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Copilot / scout streaming (Phase B) — bridge a builder/scout turn's live
@@ -50,11 +51,12 @@ impl FlowStreamTarget {
 /// Attach the web-channel progress bridge to `agent` for a builder/scout turn.
 /// Wires an mpsc channel into the agent's progress sink and spawns the bridge
 /// task that translates each [`AgentProgress`] into a socket event keyed by the
-/// target thread (and mirrors a `TurnStateStore` so the tool timeline replays
+/// target thread (and mirrors the `TurnStates` port so the tool timeline replays
 /// on reopen). The bridge task lives until the agent drops its progress sender
 /// (turn end). `source` is a short trace-attribution label (e.g.
 /// `"flows_build"`).
 pub(super) fn attach_flow_progress_bridge(
+    ctx: &DispatchCtx,
     agent: &mut crate::agent::OpenHumanSessionHost,
     target: &FlowStreamTarget,
     source: &str,
@@ -74,12 +76,13 @@ pub(super) fn attach_flow_progress_bridge(
         "system".to_string(),
         target.thread_id.clone(),
         target.request_id.clone(),
-        tinyagents_session::turn_state::TurnStateStore::new(config.workspace_dir.clone()),
+        crate::agent::session_store::turn_states_for(&config.workspace_dir),
         crate::web_chat::ChatRequestMetadata {
             source: Some(source.to_string()),
             ..Default::default()
         },
         config.clone(),
+        ctx.clone(),
     );
 }
 
@@ -91,6 +94,7 @@ pub(super) fn attach_flow_progress_bridge(
 /// `chat_error`. Broadcast as `"system"` so any viewer of the thread receives
 /// it (frontend keys by `thread_id`).
 pub(super) async fn finalize_flow_stream(
+    ctx: &DispatchCtx,
     target: &FlowStreamTarget,
     result: &Result<String, String>,
     prompt: &str,
@@ -98,6 +102,7 @@ pub(super) async fn finalize_flow_stream(
     match result {
         Ok(text) => {
             crate::web_chat::presentation::deliver_response(
+                ctx,
                 "system",
                 &target.thread_id,
                 &target.request_id,
@@ -140,16 +145,15 @@ pub(super) async fn finalize_flow_stream(
     // left non-terminal makes `threads_turn_state_get` report the turn as still
     // running, so re-entering the thread paints a permanent "Thinking..."
     // indicator under a reply that already landed.
-    if let Ok(config) = crate::config::rpc::load_config_with_timeout().await {
+    if let Ok(config) = ctx.load_config().await {
         let lifecycle = if result.is_ok() {
             tinyagents_session::turn_state::TurnLifecycle::Completed
         } else {
             tinyagents_session::turn_state::TurnLifecycle::Interrupted
         };
         let now = chrono::Utc::now().to_rfc3339();
-        if let Err(err) =
-            tinyagents_session::turn_state::TurnStateStore::new(config.workspace_dir.clone())
-                .settle_turn(&target.thread_id, &target.request_id, lifecycle, &now)
+        if let Err(err) = crate::agent::session_store::turn_states_for(&config.workspace_dir)
+            .settle_turn(&target.thread_id, &target.request_id, lifecycle, &now)
         {
             tracing::warn!(
                 target: "flows",

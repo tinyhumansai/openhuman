@@ -20,6 +20,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use crate::config::CostConfig;
+use crate::core::runtime::DispatchCtx;
 use crate::inference::provider::types::BilledUsage;
 
 use super::tracker::CostTracker;
@@ -195,13 +196,13 @@ pub(crate) fn tracker_in(
 /// `model` is the model identifier the request was routed to (e.g.
 /// `"anthropic/claude-sonnet-4-20250514"`) and is used as the bucket key
 /// in per-model aggregates.
-pub fn record_provider_usage(model: &str, usage: &BilledUsage) {
-    record_provider_usage_scoped(model, usage, UsageScope::ambient(None, None));
+pub fn record_provider_usage(ctx: &DispatchCtx, model: &str, usage: &BilledUsage) {
+    record_provider_usage_scoped(model, usage, UsageScope::in_ctx(ctx, None, None));
 }
 
 /// [`record_provider_usage`] with the call's attribution. The event bridge
 /// passes its provider and, for a delegated child, the sub-agent; everything
-/// else comes from the recording task (see [`UsageScope::ambient`]).
+/// else comes from the recording task (see [`UsageScope::in_ctx`]).
 pub fn record_provider_usage_scoped(model: &str, usage: &BilledUsage, scope: UsageScope) {
     let Some(mut token_usage) = build_token_usage(model, usage) else {
         return;
@@ -291,6 +292,7 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
 /// - `dimensions` — embedding vector dimensionality (logging context only).
 /// - `vector_count` — number of vectors produced (logging context only).
 pub fn record_embedding_usage(
+    ctx: &DispatchCtx,
     provider: &str,
     model: &str,
     input_tokens: u64,
@@ -328,7 +330,7 @@ pub fn record_embedding_usage(
         root_run_id: None,
         scope: UsageScope {
             origin: Some(super::report::EMBEDDING_ORIGIN.to_string()),
-            ..UsageScope::ambient(Some(provider), None)
+            ..UsageScope::in_ctx(ctx, Some(provider), None)
         },
         timestamp: chrono::Utc::now(),
     };

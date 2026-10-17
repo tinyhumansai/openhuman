@@ -150,7 +150,7 @@ async fn verb_methods_block_user_data_egress_under_local_only() {
     assert_blocked(
         "post",
         client
-            .post::<serde_json::Value>(path, &body)
+            .post::<serde_json::Value>(&Default::default(), path, &body)
             .await
             .unwrap_err()
             .to_string(),
@@ -158,7 +158,7 @@ async fn verb_methods_block_user_data_egress_under_local_only() {
     assert_blocked(
         "get",
         client
-            .get::<serde_json::Value>(path)
+            .get::<serde_json::Value>(&Default::default(), path)
             .await
             .unwrap_err()
             .to_string(),
@@ -166,7 +166,7 @@ async fn verb_methods_block_user_data_egress_under_local_only() {
     assert_blocked(
         "patch",
         client
-            .patch::<serde_json::Value>(path, &body)
+            .patch::<serde_json::Value>(&Default::default(), path, &body)
             .await
             .unwrap_err()
             .to_string(),
@@ -174,7 +174,7 @@ async fn verb_methods_block_user_data_egress_under_local_only() {
     assert_blocked(
         "delete",
         client
-            .delete::<serde_json::Value>(path)
+            .delete::<serde_json::Value>(&Default::default(), path)
             .await
             .unwrap_err()
             .to_string(),
@@ -182,14 +182,22 @@ async fn verb_methods_block_user_data_egress_under_local_only() {
     assert_blocked(
         "upload_multipart",
         client
-            .upload_multipart::<serde_json::Value>(path, reqwest::multipart::Form::new())
+            .upload_multipart::<serde_json::Value>(
+                &Default::default(),
+                path,
+                reqwest::multipart::Form::new(),
+            )
             .await
             .unwrap_err()
             .to_string(),
     );
     assert_blocked(
         "get_bytes",
-        client.get_bytes(path).await.unwrap_err().to_string(),
+        client
+            .get_bytes(&Default::default(), path)
+            .await
+            .unwrap_err()
+            .to_string(),
     );
 }
 
@@ -212,28 +220,28 @@ async fn verb_methods_never_expose_admin_or_webhook_routes() {
     assert_blocked(
         "get",
         client
-            .get::<serde_json::Value>("/coupons/admin")
+            .get::<serde_json::Value>(&Default::default(), "/coupons/admin")
             .await
             .unwrap_err(),
     );
     assert_blocked(
         "post",
         client
-            .post::<serde_json::Value>("/admin/announcements", &body)
+            .post::<serde_json::Value>(&Default::default(), "/admin/announcements", &body)
             .await
             .unwrap_err(),
     );
     assert_blocked(
         "patch",
         client
-            .patch::<serde_json::Value>("/webhooks/core/hook-1", &body)
+            .patch::<serde_json::Value>(&Default::default(), "/webhooks/core/hook-1", &body)
             .await
             .unwrap_err(),
     );
     assert_blocked(
         "delete",
         client
-            .delete::<serde_json::Value>("/webhooks/core/hook-1")
+            .delete::<serde_json::Value>(&Default::default(), "/webhooks/core/hook-1")
             .await
             .unwrap_err(),
     );
@@ -241,6 +249,7 @@ async fn verb_methods_never_expose_admin_or_webhook_routes() {
         "upload_multipart",
         client
             .upload_multipart::<serde_json::Value>(
+                &Default::default(),
                 "/webhooks/composio",
                 reqwest::multipart::Form::new(),
             )
@@ -249,7 +258,10 @@ async fn verb_methods_never_expose_admin_or_webhook_routes() {
     );
     assert_blocked(
         "get_bytes",
-        client.get_bytes("/webhooks/core").await.unwrap_err(),
+        client
+            .get_bytes(&Default::default(), "/webhooks/core")
+            .await
+            .unwrap_err(),
     );
 }
 
@@ -290,6 +302,7 @@ async fn post_400_propagates_backend_error_envelope_message() {
     let client = client_for(base);
     let err = client
         .post::<serde_json::Value>(
+            &Default::default(),
             "/agent-integrations/composio/execute",
             &json!({ "tool": "GMAIL_FETCH_EMAILS" }),
         )
@@ -318,7 +331,7 @@ async fn post_500_propagates_html_body_truncated() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .post::<serde_json::Value>("/foo", &json!({}))
+        .post::<serde_json::Value>(&Default::default(), "/foo", &json!({}))
         .await
         .expect_err("500 must surface as Err");
     let msg = format!("{err:#}");
@@ -372,6 +385,7 @@ async fn local_only_rejects_user_data_verb_before_transport() {
     //     error carries the policy message and NOT the mock's 403 body.
     let err = client
         .post::<serde_json::Value>(
+            &Default::default(),
             "/agent-integrations/composio/execute",
             &json!({ "tool": "GMAIL_FETCH_EMAILS" }),
         )
@@ -391,7 +405,10 @@ async fn local_only_rejects_user_data_verb_before_transport() {
     //     gate and DOES reach transport (surfaces the mock's 403) — proving the
     //     gate is selective, not a blanket network kill.
     let err = client
-        .get::<serde_json::Value>("/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect_err("control-plane reaches transport and surfaces the mock 403");
     let msg = format!("{err:#}");
@@ -416,7 +433,10 @@ async fn get_403_propagates_backend_error_envelope_message() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .get::<serde_json::Value>("/agent-integrations/composio/connections")
+        .get::<serde_json::Value>(
+            &Default::default(),
+            "/agent-integrations/composio/connections",
+        )
         .await
         .expect_err("403 must surface as Err");
     let msg = format!("{err:#}");
@@ -459,6 +479,7 @@ async fn post_400_user_input_failure_classifies_as_backend_user_error() {
     let client = client_for(base);
     let err = client
         .post::<serde_json::Value>(
+            &Default::default(),
             "/agent-integrations/composio/authorize",
             &json!({ "toolkit": "sharepoint" }),
         )
@@ -503,7 +524,7 @@ async fn post_500_remains_actionable() {
     let base = start_mock_backend(app).await;
     let client = client_for(base);
     let err = client
-        .post::<serde_json::Value>("/foo", &json!({}))
+        .post::<serde_json::Value>(&Default::default(), "/foo", &json!({}))
         .await
         .expect_err("500 must surface as Err");
     let msg = format!("{err:#}");
@@ -550,6 +571,7 @@ async fn jira_missing_subdomain_error_propagates_and_classifies_as_user_error() 
     let client = client_for(base);
     let err = client
         .post::<serde_json::Value>(
+            &Default::default(),
             "/agent-integrations/composio/authorize",
             &json!({ "toolkit": "jira" }),
         )
@@ -606,6 +628,7 @@ async fn jira_generic_400_classifies_as_backend_user_error() {
     let client = client_for(base);
     let err = client
         .post::<serde_json::Value>(
+            &Default::default(),
             "/agent-integrations/composio/authorize",
             &json!({ "toolkit": "jira" }),
         )

@@ -28,12 +28,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
-use crate::agent::harness::SandboxMode;
 use crate::agent::progress::AgentProgress;
-use crate::agent::tinyagents::{
-    run_root_turn_via_hosted_agent, TinyagentsTurnOutcome, TurnContextMiddleware,
-};
+use crate::agent::tinyagents::middleware::turn_context::TurnContextMiddleware;
+use crate::agent::tinyagents::{TinyagentsTurnOutcome, TurnSpec};
 use crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
+use tinyagents_definition::SandboxMode;
 use tinyagents_harness::run_queue::RunQueue;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
@@ -126,68 +125,49 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
         run_context.sandbox_mode = Some(graph.sandbox_mode);
         run_context.thread_id = graph.thread_id;
 
-        // Bound by name rather than passed as bare `true` literals.
-        // `run_root_turn_via_hosted_agent` takes eighteen positional arguments,
-        // and these two `bool`s sat eleven lines apart in the call below. While
-        // investigating #6541 that pair produced four separate misreadings —
-        // in both directions, including one that briefly discarded a correct
-        // finding — because aligning an argument against the signature by
-        // counting is the only way to tell which flag a `true` belongs to.
-        // A binding puts the name inside the expression, so a future reordering
-        // is visible here and not only in the signature.
-        //
         // Pause gracefully at the model-call cap so the turn emits a resumable
         // checkpoint instead of erroring or returning a dangling tool cycle.
-        let pause_at_cap = true;
         // The runtime's durable `after_commit` callback emits the terminal
         // event after any driver-grounded close has become part of the
-        // candidate history. A seam-level event would arrive before that
-        // close and duplicate the lifecycle projection.
-        let defer_turn_completed_to_caller = true;
-
-        run_root_turn_via_hosted_agent(
+        // candidate history, so the turn itself must not: a seam-level event
+        // would arrive before that close and duplicate the lifecycle projection.
+        TurnSpec {
             run_context,
-            hosted_base,
-            graph.agent_id,
-            graph.turn_models,
+            turn_models: graph.turn_models,
             provider_id,
-            &graph.model,
-            graph.messages,
+            model: &graph.model,
+            history: graph.messages,
             // Durable set first, synthesised second — the order `tool_specs` and
             // `OpenHumanSessionHost::all_tool_refs` use, so the name a spec was advertised
             // under resolves to the same instance here. The two sets are
             // disjoint by construction (`builder::drop_synthesized_name_collisions`),
             // so the order never decides a collision; it only keeps every
             // surface enumerating the tools in one sequence.
-            vec![graph.tools, graph.synthesized_tools],
-            visible_tool_names,
-            graph.max_iterations,
-            graph.context_window,
+            tool_sets: vec![graph.tools, graph.synthesized_tools],
+            allowed: visible_tool_names,
+            max_iterations: graph.max_iterations,
+            subagent_scope: None,
+            context_window: graph.context_window,
             // Mid-flight steering from the session's run queue.
-            graph.run_queue,
-            // `ask_user_clarification` pauses this turn: the seam returns the
+            run_queue: graph.run_queue,
+            // `ask_user_clarification` pauses this turn: the turn returns the
             // question as `outcome.text`, the caller ends the turn on it, and the
             // user's next message is the answer. No resume plumbing is needed at
             // the top level — unlike a delegated child, a chat turn's natural
             // continuation IS the next user message.
-            //
-            // This was `&[]` with a comment claiming the chat turn "surfaces
-            // clarifying questions inline". It does not, and nothing else did
-            // either: the tool's output went back to the model as a successful
-            // result, so the model read its own question as answered and carried
-            // on. Users watched an "Ask User Clarification" step succeed without
-            // ever being asked anything.
-            &["ask_user_clarification"],
-            pause_at_cap,
+            early_exit_tools: &["ask_user_clarification"],
+            pause_at_cap: true,
             // Bound the main agent's per-call output (legacy parity — the engine
             // capped every turn at `AGENT_TURN_MAX_OUTPUT_TOKENS`).
-            Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
+            max_output_tokens: Some(AGENT_TURN_MAX_OUTPUT_TOKENS),
             // Context middlewares sourced from the session's ContextManager.
-            graph.context_mw,
+            context_mw: graph.context_mw,
             // Builder-configured tool policy enforcement (session chat path).
-            graph.tool_policy,
-            defer_turn_completed_to_caller,
-        )
+            tool_policy: graph.tool_policy,
+            deterministic_cacheable: false,
+            defer_turn_completed_to_caller: true,
+        }
+        .run_hosted(hosted_base, graph.agent_id)
         .await
     }
     .await

@@ -7,12 +7,7 @@ use crate::inference::provider::factory::access_gates::verify_backend_session_ac
 #[cfg(not(test))]
 use crate::inference::provider::factory::access_gates::verify_session_active;
 use crate::inference::provider::fallback_diagnostics;
-use tinyinference_llm::providers::anthropic::{
-    build_anthropic_model, endpoint_is_anthropic_messages, AnthropicConfig,
-};
-use tinyinference_llm::providers::openai::{
-    build_openai_model, build_openai_model_with_http, endpoint_is_openrouter, OpenAiConfig,
-};
+use tinyinference_llm::providers::anthropic::endpoint_is_anthropic_messages;
 
 /// Look up a `cloud_providers` entry by slug and build the provider.
 /// The shared resolution for a `<slug>:<model>` cloud provider — the cloud
@@ -214,14 +209,16 @@ pub(super) fn resolve_cloud_slug<'a>(
 pub(super) fn try_create_cloud_slug_chat_model(
     role: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
-    try_create_cloud_slug_chat_model_with_native_tools(role, config, true)
+    try_create_cloud_slug_chat_model_with_native_tools(role, config, true, egress)
 }
 
 pub(super) fn try_create_cloud_slug_chat_model_with_native_tools(
     role: &str,
     config: &Config,
     native_tool_calling: bool,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     // Resolve the role's provider string, expanding the empty / "cloud" sentinel
     // to the primary cloud target.
@@ -234,6 +231,7 @@ pub(super) fn try_create_cloud_slug_chat_model_with_native_tools(
         &resolved,
         config,
         native_tool_calling,
+        egress,
     )
 }
 
@@ -241,8 +239,11 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
-    try_create_cloud_slug_chat_model_from_string_with_native_tools(role, provider, config, true)
+    try_create_cloud_slug_chat_model_from_string_with_native_tools(
+        role, provider, config, true, egress,
+    )
 }
 
 pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
@@ -250,6 +251,7 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
     provider: &str,
     config: &Config,
     native_tool_calling: bool,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let p = provider.trim().to_string();
 
@@ -295,13 +297,11 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         Err(e) => return Some(Err(e)),
     };
 
-    // Every configured cloud slug builds a crate-native model. OpenhumanJwt
-    // delegates to the managed backend model; Codex OAuth routes to the
-    // Responses API with its headers / UA / query; every other
-    // Bearer/Anthropic/None slug uses Chat Completions (its primary path — the
-    // legacy host's rare 404 → `/v1/responses` fallback for non-codex slugs is
-    // not replicated).
-    let mut endpoint = entry.endpoint.clone();
+    // Every configured cloud slug builds a crate-native model through the
+    // registry (`cloud_spec`). OpenhumanJwt delegates to the managed backend
+    // model; Codex OAuth routes to the Responses API with its headers / UA /
+    // query; every other Bearer/Anthropic/None slug uses Chat Completions (or
+    // the Anthropic Messages adapter for a first-party native-tools endpoint).
     let mut extra_headers: Vec<(String, String)> = config
         .ephemeral_route
         .as_ref()
@@ -313,69 +313,24 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         .unwrap_or_default();
     let mut extra_query_params: Vec<(String, String)> = Vec::new();
     let mut user_agent: Option<String> = None;
-    let mut responses_api_primary = false;
-    let mut responses_omit_max_output_tokens = false;
+    let mut codex_route: Option<&tinyinference_llm::providers::openai::codex::OpenAiCodexRouting> =
+        None;
 
-    let auth = match entry.auth_style {
-        AuthStyle::Anthropic => {
+    let anthropic_native = entry.auth_style == AuthStyle::Anthropic
+        && native_tool_calling
+        && endpoint_is_anthropic_messages(&entry.endpoint);
+    match entry.auth_style {
+        AuthStyle::Anthropic if !anthropic_native => {
             // Anthropic's OpenAI-compatibility endpoint does not support prompt
-            // caching (and reports `prompt_tokens_details` as always empty), so
-            // a BYOK Claude key served through Chat Completions re-billed the
-            // whole prefix on every call. Native tool calling is the normal
-            // case and routes to the crate's Messages API adapter, which
-            // places `cache_control` breakpoints. Text mode (prompt-guided
-            // tools) is only implemented on the Chat Completions adapter, so
-            // that rare case keeps the compat path.
-            if native_tool_calling && endpoint_is_anthropic_messages(&endpoint) {
-                crate::security::egress::emit_external_transfer(
-                    crate::security::egress::EgressDescriptor::inference(
-                        &slug,
-                        &effective_model,
-                        true,
-                    ),
-                );
-                let model = if let Some(pem) = config
-                    .cloud_provider_ca_certs
-                    .get(&slug)
-                    .filter(|pem| !pem.is_empty())
-                {
-                    let http =
-                        match crate::util::tls::client_with_ca_bundle(pem, "provider.anthropic") {
-                            Ok(http) => http,
-                            Err(error) => return Some(Err(anyhow::anyhow!(error))),
-                        };
-                    Arc::new(
-                        tinyinference_llm::providers::anthropic::AnthropicModel::with_base_url(
-                            key.as_str(),
-                            endpoint.as_str(),
-                        )
-                        .with_model(effective_model.as_str())
-                        .with_temperature_override(temperature_override)
-                        .with_temperature_unsupported_models(
-                            config.temperature_unsupported_models.iter().cloned(),
-                        )
-                        .with_client(http),
-                    )
-                } else {
-                    build_anthropic_model(AnthropicConfig {
-                        endpoint: endpoint.as_str(),
-                        api_key: key.as_str(),
-                        model: effective_model.as_str(),
-                        temperature_override,
-                        temperature_unsupported_models: config
-                            .temperature_unsupported_models
-                            .as_slice(),
-                        extra_headers: &[],
-                    })
-                };
-                return Some(Ok((model, effective_model)));
-            }
+            // caching, so native tool calling routes to the Messages adapter
+            // (which places `cache_control` breakpoints). Text mode
+            // (prompt-guided tools) is only implemented on the Chat
+            // Completions adapter, so that rare case keeps the compat path.
             log::debug!(
                 "[providers][chat-factory] slug={slug} auth_style=anthropic native_tools=false → OpenAI-compatible text-mode path (no prompt caching)"
             );
-            CompatAuthStyle::Anthropic
         }
-        AuthStyle::None => CompatAuthStyle::None,
+        AuthStyle::Anthropic | AuthStyle::None => {}
         AuthStyle::OpenhumanJwt => {
             #[cfg(not(test))]
             if let Err(error) = verify_backend_session_active(config) {
@@ -383,11 +338,15 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
             }
             let model_override =
                 (!effective_model.trim().is_empty()).then_some(effective_model.as_str());
-            let (backend, pinned_model) =
-                match resolve_managed_backend_with_model_override(role, config, model_override) {
-                    Ok(result) => result,
-                    Err(error) => return Some(Err(error)),
-                };
+            let (backend, pinned_model) = match resolve_managed_backend_with_model_override(
+                role,
+                config,
+                model_override,
+                egress,
+            ) {
+                Ok(result) => result,
+                Err(error) => return Some(Err(error)),
+            };
             return Some(Ok((
                 Arc::new(backend.with_native_tool_calling(native_tool_calling)),
                 pinned_model,
@@ -395,7 +354,6 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         }
         AuthStyle::Bearer => {
             // The codex routing may re-target the endpoint (OAuth backend).
-            endpoint = codex.endpoint.clone();
             if let Some(account_id) = codex.account_id.as_deref() {
                 extra_headers.push((
                     OPENAI_CODEX_ACCOUNT_HEADER.to_string(),
@@ -414,84 +372,52 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
                 ));
                 extra_query_params
                     .push(("client_version".to_string(), openai_codex_client_version()));
-                responses_api_primary = true;
-                responses_omit_max_output_tokens = true;
             }
-            CompatAuthStyle::Bearer
+            codex_route = Some(&codex);
         }
-    };
+    }
 
     // Egress spine (privacy epic S2, #4436): committed to a BYOK cloud slug here
     // — past the managed/bespoke returns and the access
     // gates, so this constructs. Disclose as external. Single cloud chokepoint
     // for every cloud ChatModel/turn entry.
-    crate::security::egress::emit_external_transfer(
+    crate::security::egress::emit_external_transfer_in(
+        egress,
         crate::security::egress::EgressDescriptor::inference(&slug, &effective_model, true),
     );
 
-    let unsupported = config.temperature_unsupported_models.clone();
-    let provider_config = OpenAiConfig {
-        provider_name: slug.as_str(),
-        endpoint: endpoint.as_str(),
-        api_key: key.as_str(),
-        auth_style: auth,
-        model: effective_model.as_str(),
-        temperature_unsupported_models: unsupported.as_slice(),
-        temperature_override,
-        // Cloud OpenAI-compatible providers accept a `system` role — no merge
-        // (parity with the crate-native OpenAI model defaults).
-        merge_system_into_user: false,
-        extra_headers: extra_headers.as_slice(),
-        native_tool_calling: Some(native_tool_calling),
-        vision: None,
-        default_provider_options: openrouter_default_provider_options(&endpoint),
-        responses_api_primary,
-        responses_omit_max_output_tokens,
-        extra_query_params: extra_query_params.as_slice(),
-        user_agent: user_agent.as_deref(),
-        // OpenRouter forwards explicit `cache_control` markers to Anthropic
-        // and Gemini, which cache nothing through a Chat Completions relay
-        // without them; hosted OpenAI rejects unknown part fields, so the
-        // flag is keyed on the relay, not on by default.
-        explicit_cache_control: endpoint_is_openrouter(&endpoint),
-    };
-    let chat = if let Some(pem) = config
+    let http = match config
         .cloud_provider_ca_certs
         .get(&slug)
         .filter(|pem| !pem.is_empty())
     {
-        let http = match crate::util::tls::client_with_ca_bundle(pem, "provider.compatible") {
-            Ok(http) => http,
-            Err(error) => return Some(Err(anyhow::anyhow!(error))),
-        };
-        build_openai_model_with_http(provider_config, http)
-    } else {
-        build_openai_model(provider_config)
+        Some(pem) => {
+            let label = if anthropic_native {
+                "provider.anthropic"
+            } else {
+                "provider.compatible"
+            };
+            match crate::util::tls::client_with_ca_bundle(pem, label) {
+                Ok(http) => Some(http),
+                Err(error) => return Some(Err(anyhow::anyhow!(error))),
+            }
+        }
+        None => None,
     };
-    Some(Ok((chat, effective_model)))
-}
-
-/// The `provider.sort` OpenRouter routing preference sent on every request to
-/// a direct (BYOK) OpenRouter endpoint.
-pub(crate) const OPENROUTER_PROVIDER_SORT: &str = "price";
-
-/// Baked request options for a direct OpenRouter endpoint, `None` for every
-/// other OpenAI-compatible host.
-///
-/// OpenRouter's default routing is a health-aware load balance weighted toward
-/// the cheaper endpoints of a model's pool, which spreads consecutive turns
-/// across endpoints. DeepSeek- and Z.AI-family prefix caches live per endpoint,
-/// so every hop re-pays the whole prefill. `provider.sort` orders the pool and
-/// disables the balancing (not the fallback: `allow_fallbacks` stays on and
-/// `order` is never set, so a request still moves down the sorted list when an
-/// endpoint errors), and `price` is the stable choice — cheapest first, dearer
-/// only on failure. Stickiness itself comes from the harness's derived
-/// `prompt_cache_key` (`tap-<prefix fingerprint>`), which OpenRouter honours as
-/// its sticky-routing key; measured on `z-ai/glm-5.3-flash` the same endpoint
-/// served 5/5 calls with it. The hosted backend applies the same sort
-/// server-side (tinyhumansai/backend#1370), so managed and direct routing agree.
-/// https://openrouter.ai/docs/features/provider-routing
-pub(crate) fn openrouter_default_provider_options(endpoint: &str) -> Option<serde_json::Value> {
-    endpoint_is_openrouter(endpoint)
-        .then(|| serde_json::json!({ "provider": { "sort": OPENROUTER_PROVIDER_SORT } }))
+    let auth_style = cloud_spec::registry_auth_style(entry.auth_style)
+        .expect("managed JWT entries returned above");
+    let chat = cloud_spec::build_cloud_model(cloud_spec::CloudBuild {
+        spec: cloud_spec::cloud_provider_spec(entry, &effective_model),
+        auth_style,
+        key: key.as_str(),
+        temperature_override,
+        temperature_unsupported_models: config.temperature_unsupported_models.as_slice(),
+        native_tool_calling,
+        extra_headers: extra_headers.as_slice(),
+        extra_query_params: extra_query_params.as_slice(),
+        user_agent: user_agent.as_deref(),
+        codex: codex_route,
+        http,
+    });
+    Some(chat.map(|chat| (chat, effective_model)))
 }

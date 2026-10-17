@@ -1,8 +1,9 @@
-use crate::channels::{traits, Channel, SendMessage};
+use crate::channels::{Channel, SendMessage};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
+use tinychannels_bus as traits;
 use tinyinference_llm::message::{AssistantMessage, Message};
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall;

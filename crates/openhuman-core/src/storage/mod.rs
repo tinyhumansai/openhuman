@@ -1,20 +1,23 @@
 //! The process's storage backend on the `tinystoragedrivers` ports.
 //!
-//! One URL picks where durable state that has moved onto the storage ports
-//! lives: `OPENHUMAN_STORAGE_URL`, else `[storage] url` in `config.toml`
-//! ([`crate::config::StorageConfig`]), else the default
-//! ([`config::StorageMode`]). The default installs no backend: the large
-//! stores keep their SQLite files, and the small ones (approvals, devices,
-//! notifications, task sources) keep document tables inside their own `.db`
-//! files, importing their old tables on first open ([`local`]). The value
-//! `classic` opts out to the pure legacy layout.
+//! One URL picks where all durable state lives: `OPENHUMAN_STORAGE_URL`, else
+//! `[storage] url` in `config.toml` ([`crate::config::StorageConfig`]), else
+//! the default, `sqlite:<workspace>/storage` ([`config::default_url`]). There
+//! is no second layout: the per-domain `.db` files, JSONL transcripts and JSON
+//! stores older installs wrote are imported once, read-only, by [`import`].
 //!
-//! When a URL is set, the host opens it once at startup ([`open`]) and
-//! installs it ([`install`]); domains reach it through [`installed`] and bind
-//! their records to an agent with [`scope_for_agent`]. The first consumer is
-//! the session store: the host installs TinyAgents' `DriverSessionStores`
-//! over this backend, so transcripts, turn states, records and journals live
-//! in it, one scope per agent.
+//! The host opens the URL once at startup ([`open`]) and installs it
+//! ([`install_for_url`]); domains reach it through [`installed`] and bind
+//! their records to an agent with [`scope_for_agent`]. The session store is
+//! TinyAgents' `DriverSessionStores` over this backend, so transcripts, turn
+//! states, records, the run ledger and journals live in it, one scope per
+//! agent. The default follows the workspace, so a different workspace is a
+//! different database: [`rebind`] re-resolves and reinstalls it when the
+//! desktop switches user.
+//!
+//! With nothing installed (a unit test, an embedder that skipped the host
+//! boot) a domain falls back to the same default for its own workspace,
+//! opened lazily ([`local`]); a SaaS process never does and refuses instead.
 //!
 //! Drivers are Cargo features of this crate: `storage-sqlite`,
 //! `storage-mongodb`, `storage-file` (memory is always available). A URL for a
@@ -22,19 +25,35 @@
 //! misconfigured deployment stops at boot instead of at its first write.
 
 pub mod agents;
+pub mod blob_sweep;
 pub mod config;
 pub mod documents;
 pub mod fence;
 pub mod fenced_backend;
+pub mod import;
+pub mod import_claim;
 pub mod lease;
 mod lease_documents;
 mod lease_local;
 pub mod local;
+pub mod rebind;
 pub mod secrets;
 
 use std::future::Future;
-use std::sync::{Arc, LazyLock, OnceLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 
+/// SQLite bindings re-exported by the storage driver crate, for the two
+/// consumers that open a SQLite file that is not a storage backend: the
+/// read-only legacy importers ([`import`], which open the old per-domain files
+/// on a scratch copy) and the vault watcher's per-machine mtime table
+/// (`config/workspace/state.rs`). `SqliteNative` cannot stand in for either: it
+/// opens the driver's own database with the driver's schema, not an arbitrary
+/// foreign file, and its `run_blocking` hands the closure a `rusqlite`
+/// connection anyway. The core has no `rusqlite` dependency of its own,
+/// tinystoragedrivers owns the one copy; the re-export goes when the importers
+/// do (the one-time legacy import window closes). Re-checked for #7768: both
+/// consumers are still present, so it stays.
+pub use tinystoragedrivers::sqlite::rusqlite;
 pub use tinystoragedrivers::{
     Blocking, CollectionSpec, DocumentStore, DocumentStoreExt, MemoryStorage, Precondition, Scope,
     ScopedStorage, StorageBackend, StorageConfig as StorageUrl, StorageError,
@@ -78,10 +97,30 @@ impl Slot {
 
 static BACKEND: LazyLock<Slot> = LazyLock::new(Slot::default);
 
+/// The URL the installed backend was opened from, when the host installed it
+/// by URL ([`install_for_url`]). [`rebind`] compares against it; a backend
+/// installed without one (a test's, an embedder's own) is never rebound.
+static INSTALLED_URL: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_installed_url(url: Option<String>) {
+    *INSTALLED_URL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = url;
+}
+
+/// The URL the installed backend was opened from, if the host installed it by
+/// URL.
+pub fn installed_url() -> Option<String> {
+    INSTALLED_URL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// The storage URL a host opens at startup: [`STORAGE_URL_VAR`], else
-/// `config`'s `[storage] url`. Blank values count as unset. `None` — nothing
-/// configured, or the [`config::CLASSIC`] opt-out — opens nothing; see
-/// [`config::mode`] for the default's small-store behavior.
+/// `config`'s `[storage] url`, else the default for `config`'s workspace
+/// ([`config::default_url`]). `None` only in SaaS mode with nothing
+/// configured: a SaaS process has no workspace-local state to default to.
 pub fn configured_url(config: &Config) -> Option<String> {
     url_from(std::env::var(STORAGE_URL_VAR).ok(), config)
 }
@@ -91,7 +130,18 @@ pub fn configured_url(config: &Config) -> Option<String> {
 pub fn url_from(env: Option<String>, config: &Config) -> Option<String> {
     match config::mode_from(env, config) {
         config::StorageMode::Url(url) => Some(url),
-        config::StorageMode::Default | config::StorageMode::Classic => None,
+        config::StorageMode::Default if crate::core::runtime::mode::is_saas() => None,
+        config::StorageMode::Default => Some(config::default_url(&config.workspace_dir)),
+    }
+}
+
+/// The URL the operator named (`OPENHUMAN_STORAGE_URL`, else `[storage] url`),
+/// with no default applied. For hosts with no workspace (a stateless embed)
+/// that must be told where to store things.
+pub fn explicit_url(config: &Config) -> Option<String> {
+    match config::mode(config) {
+        config::StorageMode::Url(url) => Some(url),
+        config::StorageMode::Default => None,
     }
 }
 
@@ -119,11 +169,23 @@ pub async fn open(url: &str) -> Result<Arc<dyn StorageBackend>, StorageError> {
 
 /// Makes `backend` the process's storage backend; returns the previous one.
 pub fn install(backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBackend>> {
+    set_installed_url(None);
     let previous = BACKEND.install(backend);
     // What was recorded described the previous backend.
     agents::reset_recorded();
     // Agents derived before the backend existed still need recording.
     agents::record_live();
+    previous
+}
+
+/// [`install`] for a backend [`open`]ed from `url`, remembering the URL so
+/// [`rebind`] can tell when the workspace's default has moved.
+pub fn install_for_url(
+    url: &str,
+    backend: Arc<dyn StorageBackend>,
+) -> Option<Arc<dyn StorageBackend>> {
+    let previous = install(backend);
+    set_installed_url(Some(url.to_string()));
     previous
 }
 
@@ -134,6 +196,7 @@ pub fn installed() -> Option<Arc<dyn StorageBackend>> {
 
 /// Removes the installed backend; returns whether there was one.
 pub fn clear() -> bool {
+    set_installed_url(None);
     agents::reset_recorded();
     BACKEND.clear()
 }
@@ -150,7 +213,7 @@ pub fn clear() -> bool {
 /// In SaaS mode, when the current task serves no profile.
 pub fn current_scope() -> Result<Scope, StorageError> {
     let saas = crate::core::runtime::mode::is_saas();
-    match crate::core::runtime::current_tenant() {
+    match crate::core::runtime::DispatchCtx::ambient().tenant() {
         Ok(tenant) => scope_from(tenant.profile.as_deref(), tenant.agent.as_deref(), saas),
         Err(no_tenant) => Err(StorageError::invalid_input(no_tenant.to_string())),
     }
@@ -177,8 +240,8 @@ pub fn scope_from(
     }
 }
 
-/// The installed backend bound to [`current_scope`], or `None` when the host
-/// configured no backend (the classic on-disk layout).
+/// The installed backend bound to [`current_scope`], or `None` when no backend
+/// is installed.
 ///
 /// # Errors
 ///
@@ -275,6 +338,16 @@ pub fn scope_for_profile(profile_id: &str) -> Scope {
     let digest = sha2::Sha256::digest(profile_id.as_bytes());
     Scope::new(format!("profile-sha256:{}", hex::encode(digest)))
         .unwrap_or_else(|_| unreachable!("a sha256 hex scope is always valid"))
+}
+
+/// A stable key for a legacy import source (a workspace directory), for the
+/// marker document and once-per-process key of an importer. Two workspaces
+/// that share one explicit backend and scope must each import their own legacy
+/// files, so a marker names its source.
+pub fn source_key(source: &std::path::Path) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(source.to_string_lossy().as_bytes());
+    hex::encode(&digest[..8])
 }
 
 #[cfg(test)]

@@ -74,6 +74,7 @@ fn controlled_wrapper(
         config,
         profile,
         fallback_cache: Mutex::new(Default::default()),
+        core: None,
     }
 }
 fn user_request(blocks: Vec<ContentBlock>) -> ModelRequest {

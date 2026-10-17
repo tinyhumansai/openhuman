@@ -28,6 +28,7 @@ import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/
 import Conversations from '../../features/conversations/Conversations';
 // Type-only: erased at runtime, so it does not defeat `vi.hoisted`.
 import type { FlowApprovalRequest } from '../../hooks/useFlowApprovalRequests';
+import { listArtifactsForThread } from '../../services/artifactDownloadService';
 import { chatSend } from '../../services/chatService';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import chatRuntimeReducer, {
@@ -129,8 +130,8 @@ vi.mock('../../store/socketSelectors', () => ({
 
 vi.mock('../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
-// ChatFilesChip hydrates ready artifacts through the Tauri artifact service on
-// mount; the chip under test is driven from the preloaded slice instead.
+// The thread's ready artifacts are hydrated through the Tauri artifact service
+// when the thread opens.
 vi.mock('../../services/artifactDownloadService', () => ({
   listArtifactsForThread: vi.fn().mockResolvedValue({ ok: true, artifacts: [] }),
   saveArtifactViaDialog: vi.fn(),
@@ -518,10 +519,11 @@ describe('assistant-ui chat surface — composer-adjacent cards', () => {
     expect(chatSend).not.toHaveBeenCalled();
   });
 
-  it('lists the thread files chip beside the model pill', async () => {
+  it('loads the thread artifacts without a files chip in the composer', async () => {
     await renderChat({ chatRuntime: { artifactsByThread: { [THREAD_ID]: [readyArtifact()] } } });
 
-    expect(await screen.findByTestId('chat-files-chip')).toBeInTheDocument();
+    await waitFor(() => expect(listArtifactsForThread).toHaveBeenCalledWith(THREAD_ID));
+    expect(screen.queryByTestId('chat-files-chip')).not.toBeInTheDocument();
   });
 
   it('places context usage in the right action cluster immediately before voice mode', async () => {

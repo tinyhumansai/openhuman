@@ -4,7 +4,9 @@ use tinysearch_bus::{names, ExecuteToolRequest, ExecuteToolResponse, ListToolsRe
 #[tokio::test]
 async fn pinned_search_module_serves_host_contract_and_rejects_disabled_execution() {
     use tinybus::{broker::Broker, module::ModuleHost, transport::memory::MemoryBus};
-    let file = std::env::var_os("TINYSEARCH_TEST_MODULE").expect("released artifact path");
+    let file = openhuman_core::modules::local_artifact("tinysearch").expect(
+        "build tinysearch with scripts/modules/build.mjs and set OPENHUMAN_MODULE_SOURCE_DIR",
+    );
     let bus = MemoryBus::new();
     let broker = Broker::new();
     let broker_task = broker.spawn(bus.clone());
@@ -14,13 +16,12 @@ async fn pinned_search_module_serves_host_contract_and_rejects_disabled_executio
         ..Default::default()
     };
     let info = host
-        .load_file_with_config(
-            std::path::PathBuf::from(file),
-            serde_json::to_value(config).unwrap(),
-        )
+        .load_file_with_config(file, serde_json::to_value(config).unwrap())
         .expect("published artifact is admitted by the host loader");
     assert_eq!(info.name, "tinysearch");
-    assert_eq!(info.version, "0.4.2");
+    // The registry pin is the single statement of which release is shipped.
+    let pinned = openhuman_core::modules::registry::find("tinysearch").expect("registered");
+    assert_eq!(info.version, pinned.version);
     let client = tinybus::Connection::connect(bus.connect().await.unwrap())
         .await
         .unwrap();

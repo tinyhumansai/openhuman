@@ -255,7 +255,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
         // thread CAN recover, but the exact wait is unpredictable. The limit is
         // not from a provider, so any provider name in the chain is dropped.
         classified_with_detail(C::ActionBudget, err, None, None)
-    } else if crate::agent::error::is_max_iterations_error(err) {
+    } else if tinyagents_harness::agent_error::is_max_iterations_error(err) {
         classified_with_detail(C::MaxIterations, err, provider, None)
     } else if is_turn_timeout_error(err) {
         // The web turn driver's wall-clock backstop fired (#4746): a wedged main

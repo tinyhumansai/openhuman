@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::tinyagents::middleware::repeated_failure::RepeatedToolFailureMiddleware;
 
 #[test]
 fn repeated_tool_failure_middleware_observes_outcomes_after_control_requests() {
@@ -76,52 +77,6 @@ fn compaction_and_truncation_exempt_sets_are_distinct() {
     // An arbitrary non-listed tool: exempt from neither.
     assert!(!is_compaction_exempt("some_other_tool"));
     assert!(!is_truncation_exempt("some_other_tool"));
-}
-
-// ── CostBudgetMiddleware ────────────────────────────────────────────────
-
-#[tokio::test]
-async fn cost_budget_is_a_noop_without_a_global_tracker() {
-    // No global CostTracker is installed in the unit-test process, so the
-    // gate self-disables and the model call proceeds.
-    let mw = CostBudgetMiddleware::new();
-    let mut req = ModelRequest::new(vec![TaMessage::user("hi")]);
-    assert!(mw.before_model(&mut ctx(), &(), &mut req).await.is_ok());
-}
-
-// ── CostBudgetMiddleware shadow (W2-budget-dedupe) ──────────────────────
-
-/// The shadow comparison at `after_agent` logs parity when the crate
-/// `BudgetMiddleware`'s tracker matches the runtime `AgentRun.usage`, and
-/// never fails the run — in both the matching and diverging cases. It also
-/// must be inert (no panic, `Ok`) when no shadow tracker is installed.
-#[tokio::test]
-async fn cost_budget_shadow_after_agent_never_fails_the_run() {
-    use tinyinference_llm::usage::Usage;
-
-    // No shadow tracker: after_agent is a silent no-op.
-    let plain = CostBudgetMiddleware::new();
-    let mut run = AgentRun::new();
-    run.usage.record(Usage::new(100, 40));
-    assert!(plain.after_agent(&mut ctx(), &(), &mut run).await.is_ok());
-
-    // Matching tracker (parity): the crate tracker accumulated the same
-    // single call's usage the runtime recorded into `run.usage`.
-    let tracker = BudgetTracker::new();
-    tracker.record(Usage::new(100, 40), Default::default());
-    let shadow = CostBudgetMiddleware::with_shadow(tracker.clone());
-    let mut run = AgentRun::new();
-    run.usage.record(Usage::new(100, 40));
-    assert!(shadow.after_agent(&mut ctx(), &(), &mut run).await.is_ok());
-
-    // Diverging tracker (crate missed a call): still only logs, never fails.
-    let mut diverged_run = AgentRun::new();
-    diverged_run.usage.record(Usage::new(100, 40));
-    diverged_run.usage.record(Usage::new(10, 5));
-    assert!(shadow
-        .after_agent(&mut ctx(), &(), &mut diverged_run)
-        .await
-        .is_ok());
 }
 
 #[tokio::test]

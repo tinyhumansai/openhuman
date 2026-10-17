@@ -47,8 +47,10 @@ pub struct SaasConfig {
     /// `<root>/service.token`.
     #[serde(default)]
     pub service_token_file: Option<PathBuf>,
-    /// Host tool groups the operator opts users into
+    /// Host tool groups the operator permits an embedding host to supply
     /// (`profiles::tools::SaasToolGroup`: `host_files`, `host_shell`).
+    /// This allowlist does not register tools. The standalone SaaS CLI has no
+    /// host-tool adapter, so these groups expose no file or shell tools there.
     /// Empty by default: users get no tool that reaches the host.
     #[serde(default)]
     pub tool_allowlist: Vec<String>,
@@ -384,6 +386,7 @@ impl DomainSet {
     pub fn saas() -> Self {
         Self {
             operator: true,
+            agent: true,
             threads: true,
             channels: true,
             memory: true,
@@ -413,7 +416,7 @@ pub async fn build_with_profile_capabilities(
     capabilities: Option<Arc<crate::profiles::capabilities::ProfileCapabilities>>,
 ) -> anyhow::Result<CoreRuntime> {
     crate::profiles::provider_settings::ProfileProviderSettings::from_saas(&config)?;
-    if CoreContext::current().is_some() {
+    if CoreContext::default_context().is_some() {
         anyhow::bail!(
             "[saas] a core is already running in this process; a SaaS core must be the only one"
         );
@@ -480,7 +483,7 @@ pub async fn build_with_profile_capabilities(
     // first initialiser wins, so seed it before the core builds: a lazy init
     // during the build would otherwise load one user's workspace definitions
     // for everyone.
-    crate::agent::harness::AgentDefinitionRegistry::init_global_builtins()?;
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()?;
 
     let mut builder = CoreBuilder::new(HostKind::Saas)
         .token(TokenSource::Fixed(Arc::new(bearer)))
@@ -497,7 +500,9 @@ pub async fn build_with_profile_capabilities(
     let runtime = builder.build().await?;
     // Whoever initialised first won; refuse to serve users from a registry
     // that holds anything but the built-ins.
-    verify_builtin_definitions(crate::agent::harness::AgentDefinitionRegistry::global())?;
+    verify_builtin_definitions(
+        crate::agent::harness::host_definition::AgentDefinitionRegistry::global(),
+    )?;
     // A relayed platform message (`channel_relay_inbound`) runs through the
     // channel dispatch pipeline, which asks the native bus for an
     // `agent.run_turn`. The `Agent` family stays off in SaaS (no agent RPCs
@@ -524,14 +529,17 @@ pub async fn build_with_profile_capabilities(
     );
     crate::profiles::host::install(Arc::clone(&host));
     crate::profiles::lease::heartbeat(Arc::clone(&host), runtime.context().clone());
-    crate::profiles::background::spawn(host);
+    crate::profiles::background::spawn(
+        &crate::core::runtime::DispatchCtx::new(runtime.context().clone()),
+        host,
+    );
     Ok(runtime)
 }
 
 /// Refuse boot unless the process-wide agent definition registry is seeded and
 /// holds the built-ins only.
 pub(crate) fn verify_builtin_definitions(
-    registry: Option<&crate::agent::harness::AgentDefinitionRegistry>,
+    registry: Option<&crate::agent::harness::host_definition::AgentDefinitionRegistry>,
 ) -> anyhow::Result<()> {
     let Some(registry) = registry else {
         anyhow::bail!("[saas] the agent definition registry was not seeded");

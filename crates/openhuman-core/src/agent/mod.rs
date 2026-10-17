@@ -20,12 +20,12 @@
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
 pub mod artifacts;
 pub(crate) mod attachments;
+pub use attachments::host::HostAttachment;
 pub mod bus;
 pub mod context;
 pub mod context_breakdown;
 pub(crate) mod cost;
 pub mod debug;
-pub mod error;
 pub mod goals;
 pub mod harness;
 pub mod hooks;
@@ -44,7 +44,6 @@ pub mod plan_review;
 /// and [`crate::sandbox::ops`] so all three shell-spawning sites
 /// agree on `cmd.exe` (Windows) vs `bash`/`sh` (Unix). Fixes #4705 where
 /// the sandbox paths hardcoded `sh` and failed at spawn on Windows.
-pub mod platform_shell;
 pub mod progress;
 /// Task-local [`progress::AgentProgress`] sink — how an in-process embedder
 /// observes a turn driven through an RPC that returns only a final string.
@@ -78,28 +77,19 @@ pub mod stop_hooks;
 pub mod subagent_host;
 pub mod tinyagents;
 pub mod todos;
-pub mod tool_policy;
-pub mod tool_snapshot_scope;
 pub mod tools;
 pub mod triage;
-/// Wall-clock deadline of one top-level turn: the outer backstop and the
-/// harness wind-down / hard-stop points derived from it.
-pub mod turn_deadline;
+/// Explicit per-turn host environment handed to the session an entry point runs.
+pub mod turn_env;
 /// Turn-origin task-local — explicit trust/routing label scoped by every
 /// entry point that invokes the agent (web chat, channel runtime, cron,
 /// background jobs, CLI). Read by the approval gate to make
 /// origin-aware decisions rather than inferring trust from the absence of
-/// `APPROVAL_CHAT_CONTEXT`.
+/// a chat approval context.
 pub mod turn_origin;
 /// How a turn that reached the completion path was stopped early (breaker,
 /// deadline wind-down, iteration cap), carried to traces and parent tools.
-pub mod turn_stop;
-/// Turn-workspace task-local — the per-turn filesystem root an embedder binds
-/// a single agent turn to. Read by the session builder (as the turn's default
-/// cwd) and by the path policy (as a read/write trusted root), so a host that
-/// runs one turn against a checkout it names does not have to mutate
-/// process-global state to do it.
-pub mod turn_workspace;
+pub mod turn_projection;
 pub use schemas::{
     all_controller_schemas as all_agent_controller_schemas,
     all_registered_controllers as all_agent_registered_controllers,

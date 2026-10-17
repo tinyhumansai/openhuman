@@ -23,7 +23,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::core_host::core::runtime::CoreContext;
+use crate::core_host::core::runtime::{CoreContext, DispatchCtx};
 use crate::core_host::profiles::gateway::{
     resolve_scope, GatewayRefusal, GatewayScope, PROFILE_OWNER_HEADER, USER_HEADER, USER_SIG_HEADER,
 };
@@ -127,6 +127,15 @@ fn bearer(req: &Request) -> Option<&str> {
         .map(str::trim)
 }
 
+/// Runs the request under `ctx`: attaches the [`DispatchCtx`] that
+/// `rpc_handler` hands to the dispatcher, and (until every reader has moved off
+/// the ambient context, #7801) scopes the same context onto the request task.
+pub(crate) async fn dispatch_in(ctx: Arc<CoreContext>, mut req: Request, next: Next) -> Response {
+    req.extensions_mut()
+        .insert(DispatchCtx::new(Arc::clone(&ctx)));
+    CoreContext::scope(ctx, next.run(req)).await
+}
+
 /// The SaaS request layer; `operator` is the runtime's own context.
 pub(crate) async fn saas_gateway(operator: Arc<CoreContext>, req: Request, next: Next) -> Response {
     let now = SystemTime::now()
@@ -136,7 +145,7 @@ pub(crate) async fn saas_gateway(operator: Arc<CoreContext>, req: Request, next:
     let secret = crate::core_host::core::auth::get_rpc_token();
     let (user, signature) = match decide(&req, secret) {
         Err(refused) => return refused.into_response(),
-        Ok(Admitted::Operator) => return CoreContext::scope(operator, next.run(req)).await,
+        Ok(Admitted::Operator) => return dispatch_in(operator, req, next).await,
         Ok(Admitted::User { user, signature }) => (user, signature),
     };
     let secret = secret.expect("decide admits a user only once the core has a token");
@@ -146,11 +155,11 @@ pub(crate) async fn saas_gateway(operator: Arc<CoreContext>, req: Request, next:
             let ctx = Arc::clone(profile.context());
             // Holding the state for the request keeps the profile from being
             // evicted under it.
-            let response = CoreContext::scope(ctx, next.run(req)).await;
+            let response = dispatch_in(ctx, req, next).await;
             drop(profile);
             response
         }
-        Ok(GatewayScope::Operator) => CoreContext::scope(operator, next.run(req)).await,
+        Ok(GatewayScope::Operator) => dispatch_in(operator, req, next).await,
     }
 }
 

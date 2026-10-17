@@ -203,7 +203,7 @@ fn local_only_tool_block_marks_message_and_clears_when_allowed() {
         let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
         let msg = local_only_tool_block(&desc).expect("network fetch blocked under LocalOnly");
         assert!(
-            msg.starts_with(crate::security::POLICY_BLOCKED_MARKER),
+            msg.starts_with(tinytools::status::POLICY_BLOCKED_MARKER),
             "tool block must carry the policy-blocked marker: {msg}"
         );
         assert!(msg.contains("api.example.com"), "names the host: {msg}");

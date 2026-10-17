@@ -8,17 +8,26 @@ async fn request_journal_runs_stay_with_the_agent_that_registered_them() {
     let alpha = test_agent_context(&root, "alpha");
     let beta = test_agent_context(&root, "beta");
 
-    CoreContext::scope(std::sync::Arc::clone(&alpha), async {
-        register_request_journal_run("req-shared", "run-alpha");
-    })
-    .await;
+    {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&alpha));
+
+        register_request_journal_run(&scope_ctx, "req-shared", "run-alpha");
+    };
 
     assert_eq!(
-        CoreContext::scope(beta, async { take_request_journal_run("req-shared") }).await,
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(beta);
+
+            take_request_journal_run(&scope_ctx, "req-shared")
+        },
         None
     );
     assert_eq!(
-        CoreContext::scope(alpha, async { take_request_journal_run("req-shared") }).await,
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(alpha);
+
+            take_request_journal_run(&scope_ctx, "req-shared")
+        },
         Some("run-alpha".to_string())
     );
 }

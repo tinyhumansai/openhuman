@@ -87,7 +87,15 @@ pub const EVENTS_INTERFACE: &str = "ai.tinyhumans.openhuman.Events";
 /// `1.9.0` adds an optional `agent_id` to `ApprovalRequested`,
 /// `ApprovalDecided` and `FlowApprovalRequested` (additive).
 /// `1.10.0` removes the first-run harness initialization progress events.
-pub const EVENTS_VERSION: Version = Version::new(1, 10, 0);
+/// `1.11.0` removes `FlowScheduleTick`: the cron scheduler fires a flow's
+/// schedule trigger through the schedule runtime's `TriggerSink` instead.
+/// `1.12.0` adds optional `thread_id` and `client_id` to `MemoryStored` and
+/// `MemoryRecalled` (additive): the chat routing was an ambient task-local.
+/// `1.13.0` adds an optional `tenant` to `CredentialChanged`, `CronSystemJobDue`,
+/// `ComposioConnectionCreated` and `ComposioConfigChanged` (additive): a
+/// subscriber rebuilds its dispatch context from it instead of reading an
+/// ambient one.
+pub const EVENTS_VERSION: Version = Version::new(1, 13, 0);
 
 /// The bus. Initialised once by [`init`]; safe to touch before that.
 pub static BUS: OnceBus<DomainEvent> = OnceBus::new();

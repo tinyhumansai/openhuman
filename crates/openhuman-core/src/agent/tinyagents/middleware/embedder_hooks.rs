@@ -90,8 +90,9 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
             agent_id,
             cwd,
         };
+        let dispatch = ctx.data.dispatch_ctx();
         for hook in &self.hooks {
-            match hook.before_tool_decision(&context).await {
+            match hook.before_tool_decision_in(&dispatch, &context).await {
                 crate::agent::hooks::ToolHookDecision::Proceed => {}
                 // A rewrite is applied to the live call *and* to the context
                 // handed to later hooks, so a chain of hooks each narrowing the
@@ -171,8 +172,9 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
             agent_id,
             cwd,
         };
+        let dispatch = ctx.data.dispatch_ctx();
         for hook in &self.hooks {
-            let refusal = match hook.before_tool_decision(&context).await {
+            let refusal = match hook.before_tool_decision_in(&dispatch, &context).await {
                 crate::agent::hooks::ToolHookDecision::Proceed => continue,
                 crate::agent::hooks::ToolHookDecision::ProceedWith(_) => {
                     "rewrites the call, which a nested call cannot apply".to_string()

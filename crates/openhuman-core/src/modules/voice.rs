@@ -31,7 +31,7 @@
 
 use tinyvoice_bus::names::methods;
 
-use super::{host, ops, registry};
+use super::{ops, registry};
 use crate::config::Config;
 
 /// Registry id of the module these calls go to.
@@ -87,6 +87,12 @@ fn hallucination_mode_wire(mode: HallucinationMode) -> &'static str {
 /// the agent, rather than failing to decode.
 pub use tinyvoice_bus::VoiceIntent;
 
+/// Recording-session vocabulary shared with the loaded TinyVoice module.
+pub use tinyvoice_bus::{
+    GateVerdict, RecordingGates, SessionAction, SessionAdvance, SessionInput, SessionPhase,
+    SessionStatus, UtteranceDisposition,
+};
+
 /// Native capture lease types shared with the loaded TinyVoice module.
 pub use tinyvoice_bus::capture::{
     CaptureBatch, CaptureError, CaptureFormat, CaptureHandle, CapturePollRequest, CaptureResult,
@@ -141,42 +147,50 @@ fn clamped(intent: VoiceIntent) -> VoiceIntent {
     }
 }
 
-/// Apply the wake-word gate, returning the command that followed it.
+/// Sequence a transcript through the wake-word gate.
 ///
-/// `None` means the utterance was not addressed to the agent, or the wake word
-/// arrived with nothing after it. Those are the same outcome for a caller, and
-/// the module represents both as an empty string.
+/// The module decides whether an utterance is ignored, a command with the wake
+/// phrase stripped, or a bare wake word; the host only acts on the answer.
 ///
 /// # Errors
 ///
-/// [`VoiceCallError`] when the module is unavailable or the call fails.
-pub async fn extract_command(
+/// [`VoiceCallError`] when the module is unavailable or the call fails. The
+/// caller must treat that as "ignore": this gate keeps a passing conversation
+/// out of the assistant, so it fails closed.
+pub async fn sequence_utterance(
     config: &Config,
     transcript: &str,
     wake_word: &str,
-) -> Result<Option<String>, VoiceCallError> {
-    let command: String = call(config, methods::EXTRACT_COMMAND, (transcript, wake_word)).await?;
-    Ok(if command.is_empty() {
-        None
-    } else {
-        Some(command)
-    })
+) -> Result<UtteranceDisposition, VoiceCallError> {
+    let json: String = call(config, methods::SEQUENCE_UTTERANCE, (transcript, wake_word)).await?;
+    serde_json::from_str(&json)
+        .map_err(|e| VoiceCallError::Failed(format!("could not decode disposition: {e}")))
 }
 
-/// Whether the wake word appears near the start of a transcript.
-///
-/// Distinguished from [`extract_command`] so a caller can acknowledge a bare
-/// "Hey Tiny", which otherwise reads to the user as a dead microphone.
+/// Apply the pre-transcription recording gates (minimum duration, silence).
 ///
 /// # Errors
 ///
 /// [`VoiceCallError`] when the module is unavailable or the call fails.
-pub async fn wake_word_present(
+pub async fn gate_recording(
     config: &Config,
-    transcript: &str,
-    wake_word: &str,
-) -> Result<bool, VoiceCallError> {
-    call(config, methods::WAKE_WORD_PRESENT, (transcript, wake_word)).await
+    duration_secs: f32,
+    peak_rms: f32,
+    gates: RecordingGates,
+) -> Result<GateVerdict, VoiceCallError> {
+    let json: String = call(
+        config,
+        methods::GATE_RECORDING,
+        (
+            duration_secs,
+            peak_rms,
+            gates.min_duration_secs,
+            gates.silence_threshold,
+        ),
+    )
+    .await?;
+    serde_json::from_str(&json)
+        .map_err(|e| VoiceCallError::Failed(format!("could not decode verdict: {e}")))
 }
 
 /// Whether an STT transcript looks like a hallucination rather than speech.
@@ -357,6 +371,76 @@ impl VadSession {
     /// [`VoiceCallError`] only when the module itself is unreachable.
     pub async fn close(&self, config: &Config) -> Result<(), VoiceCallError> {
         call(config, methods::VAD_CLOSE, (self.id,)).await
+    }
+}
+
+/// A hotkey-driven recording session held by the module.
+///
+/// The module owns the hotkey -> record -> finish state machine (phase,
+/// generation guard, setup / stop-intent buffering). The host reports facts as
+/// [`SessionInput`]s and performs the one [`SessionAction`] each answer names.
+///
+/// Not `Drop`-based, for the same reason as [`VadSession`]: call
+/// [`close`](Self::close) when the server stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecorderSession {
+    id: u64,
+}
+
+impl RecorderSession {
+    /// A session handle for an id no module issued, so host tests can drive
+    /// code that must survive the module being absent.
+    #[cfg(test)]
+    pub(crate) const fn unopened_for_test() -> Self {
+        Self { id: u64::MAX }
+    }
+
+    /// Open a stopped session.
+    ///
+    /// # Errors
+    ///
+    /// [`VoiceCallError`] when the module is unavailable or at its session cap.
+    pub async fn open(config: &Config) -> Result<Self, VoiceCallError> {
+        let id: u64 = call(config, methods::SESSION_OPEN, ()).await?;
+        Ok(Self { id })
+    }
+
+    /// Apply `input` and return the module's verdict and the action to take.
+    ///
+    /// # Errors
+    ///
+    /// [`VoiceCallError`] when the module is unavailable or the session is not
+    /// open (it was closed, or the process restarted the module).
+    pub async fn advance(
+        &self,
+        config: &Config,
+        input: SessionInput,
+    ) -> Result<SessionAdvance, VoiceCallError> {
+        let json = serde_json::to_string(&input)
+            .map_err(|e| VoiceCallError::Failed(format!("could not encode session input: {e}")))?;
+        let reply: String = call(config, methods::SESSION_ADVANCE, (self.id, json)).await?;
+        serde_json::from_str(&reply)
+            .map_err(|e| VoiceCallError::Failed(format!("could not decode session advance: {e}")))
+    }
+
+    /// The session's phase and latest generation.
+    ///
+    /// # Errors
+    ///
+    /// [`VoiceCallError`] when the module is unavailable or the session is not open.
+    pub async fn status(&self, config: &Config) -> Result<SessionStatus, VoiceCallError> {
+        let reply: String = call(config, methods::SESSION_STATUS, (self.id,)).await?;
+        serde_json::from_str(&reply)
+            .map_err(|e| VoiceCallError::Failed(format!("could not decode session status: {e}")))
+    }
+
+    /// Release the session. Closing one that is already gone is not an error.
+    ///
+    /// # Errors
+    ///
+    /// [`VoiceCallError`] only when the module itself is unreachable.
+    pub async fn close(&self, config: &Config) -> Result<(), VoiceCallError> {
+        call(config, methods::SESSION_CLOSE, (self.id,)).await
     }
 }
 
@@ -578,10 +662,8 @@ fn decode_samples(encoded: &str) -> Result<Vec<f32>, VoiceCallError> {
             bytes.len()
         )));
     }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
+    let (samples, _) = bytes.as_chunks::<4>();
+    Ok(samples.iter().copied().map(f32::from_le_bytes).collect())
 }
 
 /// Decode a base64 audio payload the module produced.
@@ -603,7 +685,7 @@ where
         .map_err(VoiceCallError::Unavailable)?;
     let record = registry::find(MODULE_ID)
         .ok_or_else(|| VoiceCallError::Unavailable(format!("unknown module '{MODULE_ID}'")))?;
-    let runtime = host::runtime()
+    let runtime = super::runtime::runtime()
         .await
         .map_err(|_| VoiceCallError::Unavailable("the module bus is not running".to_string()))?;
     let proxy = runtime

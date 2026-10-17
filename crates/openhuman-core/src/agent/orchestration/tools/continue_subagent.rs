@@ -8,7 +8,7 @@
 //! resume the same sub-agent from its checkpoint with the user's response
 //! appended to the conversation history.
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::orchestration::tools::dispatch::{incomplete_stop, stopped_subagent_result};
 use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
@@ -226,21 +226,13 @@ impl Tool for ContinueSubagentTool {
         _options: ToolCallOptions,
         tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        if let Some(live_parent) = super::ambient_parent_run_context("direct-continue-subagent") {
-            let run_context = live_parent.data.child();
-            return self
-                .execute_with_live_parent_context(
-                    args,
-                    tool_context,
-                    run_context,
-                    Some(&live_parent),
-                )
-                .await;
-        }
         self.execute_with_parent_context(
             args,
             tool_context,
-            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            crate::agent::tinyagents::host::OpenHumanRunContext::new().with_core(
+                crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                    .into_core(),
+            ),
         )
         .await
     }

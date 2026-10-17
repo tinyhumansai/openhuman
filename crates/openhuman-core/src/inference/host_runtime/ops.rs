@@ -14,8 +14,8 @@ mod runtime_ops;
 mod turn_guards;
 
 pub use agent_chat::{
-    agent_chat, agent_chat_for, agent_chat_reply_for, agent_chat_simple, AgentChatReply,
-    AgentChatTarget,
+    agent_chat, agent_chat_for, agent_chat_reply_for, agent_chat_simple, AgentChatEnv,
+    AgentChatReply, AgentChatTarget,
 };
 pub use complete_once::{complete_once, CompletionEndpoint};
 pub use runtime_ops::{

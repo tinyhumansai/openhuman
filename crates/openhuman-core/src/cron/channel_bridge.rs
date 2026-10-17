@@ -8,14 +8,14 @@
 //! it starts; nothing registers in a core with no channels, and every accessor
 //! then answers "unavailable" instead of failing.
 
-use crate::channels::traits::{Channel, SendMessage};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use tinyagents_session::transcript::TranscriptMessage;
+use tinychannels_bus::context::ChatMessage;
+use tinychannels_bus::{Channel, SendMessage};
 
 /// Same shape as `channels::context::ConversationHistoryMap`, spelled out so
 /// cron does not depend on the feature-gated `channels` module.
-pub type ChannelHistories = Arc<Mutex<HashMap<String, Vec<TranscriptMessage>>>>;
+pub type ChannelHistories = Arc<Mutex<HashMap<String, Vec<ChatMessage>>>>;
 
 /// How many messages a chat's history keeps; matches the channel processor's
 /// own trimming so a delivered reminder never grows it past that bound.
@@ -86,7 +86,7 @@ pub fn append_assistant_message(history_key: &str, text: &str) -> bool {
     let max = MAX_HISTORY.load(std::sync::atomic::Ordering::Relaxed);
     let mut histories = bridge.histories.lock().unwrap_or_else(|e| e.into_inner());
     let turns = histories.entry(history_key.to_string()).or_default();
-    turns.push(TranscriptMessage::assistant(text));
+    turns.push(ChatMessage::assistant(text));
     while turns.len() > max {
         turns.remove(0);
     }

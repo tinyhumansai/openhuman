@@ -9,12 +9,22 @@ use tinyagents_runtime::ToolSnapshot;
 
 use super::OpenHumanTurnPrelude;
 
+/// Module-projected catalogs and the names frozen in the resumed transcript.
+#[cfg(feature = "mcp")]
+#[derive(Default)]
+pub(super) struct McpToolCatalog {
+    pub(super) connected: Vec<tinymcp_bus::McpToolPresentation>,
+    pub(super) configured: Vec<tinymcp_bus::McpToolPresentation>,
+    pub(super) recorded_names: std::collections::HashSet<String>,
+    pub(super) recorded_specs: Vec<tinytools::ToolSpec>,
+}
+
 impl OpenHumanTurnPrelude {
     /// The session's own definition, else the catalogue's entry for its id.
     pub(super) fn session_definition(
         &self,
-        registry: &crate::agent::harness::definition::AgentDefinitionRegistry,
-    ) -> Option<crate::agent::harness::definition::AgentDefinition> {
+        registry: &crate::agent::harness::host_definition::AgentDefinitionRegistry,
+    ) -> Option<crate::agent::harness::host_definition::AgentDefinition> {
         let definition = self
             .definition
             .as_deref()
@@ -67,12 +77,17 @@ impl OpenHumanTurnPrelude {
         // knew under the pre-readable hashed name keeps resolving.
         #[cfg(feature = "mcp")]
         {
-            mutable.recorded_mcp_tool_names = recorded
+            let recorded_mcp_specs: Vec<tinytools::ToolSpec> = recorded
                 .specs()
                 .iter()
                 .filter(|spec| spec.name.starts_with("mcp_"))
+                .cloned()
+                .collect();
+            mutable.mcp_tools.recorded_names = recorded_mcp_specs
+                .iter()
                 .map(|spec| spec.name.clone())
                 .collect();
+            mutable.mcp_tools.recorded_specs = recorded_mcp_specs;
         }
     }
 
@@ -87,7 +102,7 @@ impl OpenHumanTurnPrelude {
     ///   error instead of an unknown-tool failure.
     pub(super) fn rebuilt_recorded_tools(
         &self,
-        definition: &crate::agent::harness::definition::AgentDefinition,
+        definition: &crate::agent::harness::host_definition::AgentDefinition,
         base: &[Box<dyn tinytools::Tool>],
         synthesized: &[Box<dyn tinytools::Tool>],
         integrations: &[crate::agent::prompts::ConnectedIntegration],
@@ -103,7 +118,7 @@ impl OpenHumanTurnPrelude {
         if definition.subagents.iter().any(|entry| {
             matches!(
                 entry,
-                crate::agent::harness::definition::SubagentEntry::Skills(wildcard)
+                tinyagents_definition::SubagentEntry::Skills(wildcard)
                     if wildcard.matches_all()
             )
         }) {
@@ -168,6 +183,8 @@ impl OpenHumanTurnPrelude {
         self.refresh_cold_integrations().await;
         #[cfg(feature = "mcp")]
         self.refresh_connected_mcp_tools().await;
+        #[cfg(feature = "mcp")]
+        self.refresh_configured_mcp_tools().await;
         if !cold {
             self.refresh_dynamic_announcements().await;
         }
@@ -185,26 +202,92 @@ impl OpenHumanTurnPrelude {
     /// not connected.
     #[cfg(feature = "mcp")]
     async fn refresh_connected_mcp_tools(&self) {
-        let servers = match self.runtime_config.as_deref() {
-            Some(config) => {
-                crate::mcp::registry::connections::cached_overview_for_config(config).await
+        let config = match self.runtime_config.as_deref() {
+            Some(config) => config,
+            None => {
+                self.mutable
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .mcp_tools
+                    .connected
+                    .clear();
+                return;
             }
-            None => Vec::new(),
         };
-        let count = servers
-            .iter()
-            .map(|server| server.tools.len())
-            .sum::<usize>();
+        let servers = crate::mcp::registry::connections::cached_overview_for_config(config).await;
+        let sources = servers
+            .into_iter()
+            .map(|server| tinymcp_bus::McpToolSourceSpec {
+                server_id: server.server_id.clone(),
+                label: server.qualified_name.clone(),
+                family: server.qualified_name,
+                display_name: server.display_name,
+                tools: crate::mcp::registry::tools_safe_for_agent(&server.server_id, server.tools),
+                default_exposure: tinymcp_bus::McpToolExposure::Deferred,
+                direct_tools: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let prepared = match crate::mcp::module_client::McpConfiguredClient::for_config(config) {
+            Ok(client) => client
+                .call(
+                    &crate::mcp::host::client_config(config),
+                    tinymcp_bus::names::methods::PREPARE_AGENT_TOOLS,
+                    (tinymcp_bus::PrepareAgentToolsRequest { sources },),
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::debug!(?error, "[mcp] module tool presentation unavailable");
+                    Vec::new()
+                }),
+            Err(error) => {
+                tracing::debug!(?error, "[mcp] no module for tool presentation");
+                Vec::new()
+            }
+        };
+        let count = prepared.len();
         tracing::debug!(
             agent = %self.agent_definition_id,
-            servers = servers.len(),
             tools = count,
             "[mcp] refreshed deferred tool catalogue"
         );
         self.mutable
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .connected_mcp_tools = servers;
+            .mcp_tools
+            .connected = prepared;
+    }
+
+    /// Refreshes configured static-server declarations from TinyMCP's
+    /// persistent owner cache, listing only when a server has no cached
+    /// catalog yet.
+    #[cfg(feature = "mcp")]
+    async fn refresh_configured_mcp_tools(&self) {
+        let Some(config) = self.runtime_config.as_deref() else {
+            self.mutable
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .mcp_tools
+                .configured
+                .clear();
+            return;
+        };
+        let presentations =
+            match crate::mcp::module_client::McpConfiguredClient::configured_tool_presentations(
+                config,
+            )
+            .await
+            {
+                Ok(presentations) => presentations,
+                Err(error) => {
+                    tracing::debug!(?error, "[mcp] configured tool catalog is unavailable");
+                    Vec::new()
+                }
+            };
+        self.mutable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mcp_tools
+            .configured = presentations;
     }
 
     /// Construct searchable MCP actions from the workspace's current snapshot.
@@ -214,7 +297,7 @@ impl OpenHumanTurnPrelude {
         if !self
             .definition
             .as_ref()
-            .is_some_and(|definition| definition.searches_connected_mcp)
+            .is_some_and(|definition| definition.extensions.searches_connected_mcp)
         {
             tracing::trace!(
                 agent = %self.agent_definition_id,
@@ -231,14 +314,39 @@ impl OpenHumanTurnPrelude {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             (
-                mutable.connected_mcp_tools.clone(),
-                mutable.recorded_mcp_tool_names.clone(),
+                mutable.mcp_tools.connected.clone(),
+                mutable.mcp_tools.recorded_names.clone(),
             )
         };
         crate::mcp::registry::action_tool::deferred_connected_tools_with_legacy(
             Arc::clone(config),
             &servers,
             &recorded,
+        )
+    }
+
+    /// Builds configured static MCP executors from the module-prepared cache.
+    #[cfg(feature = "mcp")]
+    pub(super) fn collect_configured_mcp_tools(&self) -> Vec<Box<dyn tinytools::Tool>> {
+        let Some(config) = self.runtime_config.as_deref() else {
+            return Vec::new();
+        };
+        let presentations = self
+            .mutable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mcp_tools
+            .configured
+            .clone();
+        let security = Arc::new(crate::security::SecurityPolicy::from_config(
+            &config.autonomy,
+            &config.workspace_dir,
+            &config.action_dir,
+        ));
+        crate::tools::implementations::network::configured_server_tools_from_presentations(
+            config,
+            presentations,
+            &security,
         )
     }
 
@@ -253,7 +361,7 @@ impl OpenHumanTurnPrelude {
         }
         let config = match self.runtime_config.clone() {
             Some(config) => Some(config),
-            None => crate::config::ops::load_current_or_init()
+            None => crate::config::ops::load_current_or_init(&self.dispatch_ctx())
                 .await
                 .ok()
                 .map(Arc::new),
@@ -275,11 +383,12 @@ impl OpenHumanTurnPrelude {
             connected.len(),
             self.agent_definition_id
         );
-        let mcp_servers = crate::mcp::registry::connections::connected_overview()
-            .await
-            .into_iter()
-            .map(|server| server.qualified_name)
-            .collect::<std::collections::HashSet<_>>();
+        let mcp_servers =
+            crate::mcp::registry::connections::connected_overview(&self.dispatch_ctx())
+                .await
+                .into_iter()
+                .map(|server| server.qualified_name)
+                .collect::<std::collections::HashSet<_>>();
         let mut mutable = self
             .mutable
             .lock()
@@ -291,7 +400,7 @@ impl OpenHumanTurnPrelude {
         let skills_changed = self.drain_host_events();
         let config = match self.runtime_config.clone() {
             Some(config) => Some(config),
-            None => crate::config::ops::load_current_or_init()
+            None => crate::config::ops::load_current_or_init(&self.dispatch_ctx())
                 .await
                 .ok()
                 .map(Arc::new),
@@ -318,11 +427,12 @@ impl OpenHumanTurnPrelude {
                 mutable.connected_integrations_authoritative = authoritative;
             }
         }
-        let connected_mcp = crate::mcp::registry::connections::connected_overview()
-            .await
-            .into_iter()
-            .map(|server| server.qualified_name)
-            .collect::<Vec<_>>();
+        let connected_mcp =
+            crate::mcp::registry::connections::connected_overview(&self.dispatch_ctx())
+                .await
+                .into_iter()
+                .map(|server| server.qualified_name)
+                .collect::<Vec<_>>();
         let mut mutable = self
             .mutable
             .lock()

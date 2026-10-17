@@ -32,7 +32,7 @@ subscriber all listen to.
              v
         tokio::spawn( run_turn_under_cancel_and_deadline(        )
                         cancel token + wall-clock backstop
-                        + WebChat origin + APPROVAL_CHAT_CONTEXT
+                        + WebChat origin + chat approval context
                         run_chat_task (run_task.rs) )
              |
              |   checkout_session_agent (session.rs)
@@ -80,8 +80,8 @@ subscriber all listen to.
    `run_task::run_chat_task` through `run_turn_under_cancel_and_deadline`
    ([`ops/turn_guards.rs`](./ops/turn_guards.rs)). That wrapper puts four things around the same
    future: a cooperative `CancellationToken`, the wall-clock backstop, the
-   `AgentTurnOrigin::WebChat` scope, and the `APPROVAL_CHAT_CONTEXT`
-   task-local.
+   `AgentTurnOrigin::WebChat` scope, and the turn's `ApprovalTurnContext`
+   (handed to `run_chat_task`, which gives it to the session turn).
 
 5. `run_chat_task` checks the session agent out of the per-thread cache
    (`session::checkout_session_agent`). The entry is removed from
@@ -98,7 +98,7 @@ subscriber all listen to.
 6. While the turn runs, `spawn_progress_bridge` turns each `AgentProgress`
    event into `WebChannelEvent`s (`text_delta`, `thinking_delta`,
    `tool_call`, `tool_result`, `chat_interim`, `turn_cost`, sub-agent events
-   and so on), mirrors turn state into `threads::turn_state::TurnStateStore`,
+   and so on), mirrors turn state into the `TurnStates` port,
    and emits an `inference_heartbeat` every `INFERENCE_HEARTBEAT_SECS` (20 s)
    so a long silent prefill does not trip the frontend's roughly 120 s
    silence timeout (#4270). Sub-agent arms live in
@@ -187,13 +187,27 @@ background sub-agents. `state::cancel_in_flight_gracefully` cancels the token
 first and only hard-aborts the task if it has not unwound after a short grace
 period.
 
-The wall-clock backstop defaults to 900 s (`DEFAULT_WEB_TURN_TIMEOUT_SECS`)
-and is set with `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` (`0` disables it). It is an
-outer safety net. The primary guard is the harness policy's
-`max_wall_clock_ms` (600 s by default), which interrupts a hung model or tool
-call and returns a proper timeout. The backstop only fires when a turn wedges
-outside the harness run, for example in session assembly, so the client still
-gets a terminal event instead of an endless heartbeat stream (#4746).
+Two guards make sure a turn always ends in a terminal event instead of an
+endless heartbeat stream (#4746):
+
+- The **idle guard** ([`turn_activity.rs`](./turn_activity.rs)) ends a turn
+  that has emitted no progress event, with no model or tool call in flight, for
+  900 s (`OPENHUMAN_WEB_TURN_IDLE_SECS`, `0` disables it). `run_chat_task` taps
+  the turn's progress stream into a per-turn activity record on its way to the
+  bridge. Every event restarts the clock, and an open model call
+  (`IterationStarted` → `ModelCallCompleted`) or tool call (`ToolCallStarted`
+  → `ToolCallCompleted`) holds it, so a silent provider retry or a long shell
+  build is never idle. What it catches is silence nothing else bounds: session
+  checkout, the persistence plumbing, or a harness that stopped with no call
+  open.
+- The **wall-clock backstop** is the fixed total ceiling, 3600 s by default
+  (`agent::turn_deadline`, `OPENHUMAN_WEB_TURN_TIMEOUT_SECS`, `0` disables it
+  and the derived deadlines). The harness winds the turn down at 3480 s and
+  writes the grounded close, and its own `max_wall_clock_ms` is clamped to
+  3540 s, so a busy turn still delivers an answer before the backstop drops it.
+
+The backstop used to be 900 s and did both jobs, so a turn that was working
+steadily was wound down at 780 s like a wedged one.
 
 ### The event bus
 
@@ -299,7 +313,7 @@ because the in-app chat is core product surface (#5002).
   This module only produces events.
 - External provider adapters (Telegram, Slack, ...) live in `channels/`.
 - Prompt-injection policy is `security::prompt_injection`; the approval gate
-  and `APPROVAL_CHAT_CONTEXT` are `security::approval`.
+  and `ApprovalTurnContext` are `security::approval`.
 - Failure copy per error class is `inference/failure_copy/`; provider
   resolution is `inference::provider`.
 - Turn-state storage is `threads::turn_state`; the conversation store that the
@@ -307,11 +321,13 @@ because the in-app chat is core product surface (#5002).
 
 ## Gotchas
 
-- `APPROVAL_CHAT_CONTEXT` is a task-local scoped around the `run_chat_task`
-  future. The wallet quote-owner gate
-  (`web3::wallet::execution::current_owner()`) relies on it staying in scope
-  through the inline `.await` chain. Moving the tool loop onto a fresh
-  `tokio::spawn` without re-scoping it would silently disable that gate.
+- The chat approval context is an explicit value on the turn
+  (`ApprovalTurnContext`, carried by the turn's run context to the gate and to
+  the tools that read it). A detached sub-agent deliberately starts without it
+  (`OpenHumanRunContext::detached_child`), so its parks route through the
+  origin and are marked detached (#5499). The wallet quote owner is taken from
+  that context by the wallet and Web3 tools; a tool dispatched without a run
+  context has none and cannot prepare or execute an owned quote.
 - Approval-reply routing runs before the `beforeSubmitPrompt` hook on
   purpose. Reordering them lets a hook strand a turn waiting on an approval.
 - Attachment staging must stay ahead of prompt scanning and persistence.
@@ -342,6 +358,6 @@ pnpm debug rust web_chat
 
 ## Further reading
 
-- [Chat](../../../../gitbooks/features/chat.md)
-- [Agent harness architecture](../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Frontend architecture](../../../../gitbooks/developing/architecture/frontend.md)
+- [Chat](../../../../docs/gitbooks/en/features/chat.md)
+- [Agent harness architecture](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Frontend architecture](../../../../docs/gitbooks/en/developing/architecture/frontend.md)

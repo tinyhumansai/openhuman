@@ -23,20 +23,18 @@ impl Turn {
     /// [`CoreError::Unavailable`] when the `inference` domain family is off —
     /// that is a build/composition fact, not a failure, and a host should hide
     /// the surface rather than report an error.
-    pub async fn send(mut self) -> Result<TurnOutcome, CoreError> {
-        let hooks = std::mem::take(&mut self.hooks);
-        let environment = self.tool_env.take();
-        let fresh_tools = self.tools.is_some();
-        let dispatch = hooks.scope(Box::pin(self.send_scoped()));
-        let dispatch = async move {
-            if fresh_tools {
-                openhuman_core::agent::tool_snapshot_scope::with_fresh_snapshot(dispatch).await
-            } else {
-                dispatch.await
-            }
-        };
+    pub async fn send(self) -> Result<TurnOutcome, CoreError> {
+        let environment = self.tool_env.clone();
+        let dispatch = Box::pin(self.send_scoped());
         match environment {
-            Some(environment) => environment.scope(dispatch).await,
+            Some(environment) => {
+                let command_environment = tinytools_std::timeout::CommandEnvironment::new(
+                    environment
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.clone())),
+                );
+                command_environment.scope(dispatch).await
+            }
             None => dispatch.await,
         }
     }
@@ -77,7 +75,11 @@ impl Turn {
                 native.cancel();
             }))
         });
-        openhuman_core::agent::host_overrides::with_cancellation(token, self.send_traced()).await
+        // The native token is minted here and travels as an explicit value:
+        // the relay above fires it, and `send_inner` hands it to the core on
+        // the turn's host environment.
+        self.native_cancellation = Some(token);
+        self.send_traced().await
     }
 
     async fn send_traced(mut self) -> Result<TurnOutcome, CoreError> {
@@ -127,7 +129,7 @@ impl Turn {
             success: false,
         };
         let forward = self.progress.take();
-        let token = openhuman_core::agent::host_overrides::current_cancellation();
+        let token = self.native_cancellation.clone().unwrap_or_default();
         let acknowledgement = self.cancellation.clone();
         let deadline = self.control_deadline;
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
@@ -194,7 +196,7 @@ impl Turn {
         Box::pin(async move {
             let deadline = self.control_deadline;
             let token = self.token_cancellation.clone();
-            let native = openhuman_core::agent::host_overrides::current_cancellation();
+            let native = self.native_cancellation.clone().unwrap_or_default();
             let cancellation = self.cancellation.take().or_else(|| {
                 (deadline.is_some() || token.is_some()).then(crate::TurnCancellation::default)
             });
@@ -270,7 +272,25 @@ impl Turn {
             .clone()
     }
 
+    /// Obtain a cloneable handle that adds messages to this turn while it
+    /// runs. Acquire it before moving the turn to `send()`.
+    ///
+    /// Each [`TurnSteering::steer`](crate::TurnSteering::steer) is applied at
+    /// the agent loop's next safe checkpoint: before the first model call,
+    /// after a tool batch, or in place of finishing when the model has just
+    /// written its final answer, which earns the turn one more model call.
+    /// Steers the turn did not apply come back on
+    /// [`TurnOutcome::unapplied_steers`] (or, when the turn fails,
+    /// [`TurnSteering::take_unapplied`](crate::TurnSteering::take_unapplied)),
+    /// and a steer sent after the turn ended is refused with its text.
+    pub fn steering_handle(&mut self) -> crate::TurnSteering {
+        self.steering.get_or_insert_with(Default::default).clone()
+    }
+
     async fn send_inner(mut self, usage: &UsageSink) -> Result<TurnOutcome, CoreError> {
+        // Declared first so it drops last, after the dispatch future: by then
+        // every steer the turn did not apply is back in the queue.
+        let steering = crate::turn_steering::SteeringScope::new(self.steering.take());
         // The core neither mints nor returns a session id, so continuing a
         // conversation would otherwise be impossible without the caller
         // inventing an id scheme — which every embedder has then done
@@ -335,55 +355,63 @@ impl Turn {
                     },
                 }
             })?;
+        let budget = self.budget.take().map(|budget| crate::budget::ModelBudget {
+            ledger: budget.ledger.child(crate::budget::SpendLimits::default()),
+            call: budget.call,
+        });
+        // Everything the core honours for this turn rides one explicit value;
+        // nothing is recovered from an ambient scope below this point.
+        let chat_env = openhuman_core::inference::host_runtime::ops::AgentChatEnv {
+            progress: self.progress.take(),
+            host: openhuman_core::agent::turn_env::HostTurnEnv {
+                command_environment: self.tool_env.take(),
+                model_budget: budget.clone(),
+                spawn_depth_limit: self.spawn_depth_limit,
+                cancellation: self.native_cancellation.clone(),
+                hooks: std::mem::take(&mut self.hooks),
+                fresh_tool_snapshot: self.tools.is_some(),
+                approval: openhuman_core::security::approval::ApprovalTurnContext {
+                    flow_run: self.flow_run.take().map(|(flow_id, run_id)| {
+                        openhuman_core::security::approval::FlowRunContext { flow_id, run_id }
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            run_queue: steering.queue(),
+        };
         let options = AgentTurnOptions {
-            shape: openhuman_core::agent::tinyagents::response_shape::ResponseShapeScope::new(
-                openhuman_core::agent::tinyagents::response_shape::ResponseShape {
+            chat_env,
+            // Captured here, before the dispatch can hop to a core worker that
+            // does not inherit task locals; the core re-establishes it around
+            // the turn.
+            observer: tinyagents_harness::observability::turn_observer::current_scope(),
+            shape: tinyagents_harness::middleware::ResponseShapeScope::new(
+                tinyagents_harness::middleware::ResponseShape {
                     response_format: self
                         .response_format
                         .take()
                         .map(crate::complete::ResponseFormat::into_wire),
                     max_output_tokens: self.max_tokens,
                     top_p: self.top_p,
-                    validator: wants_json.then(|| std::sync::Arc::new(validator) as std::sync::Arc<dyn openhuman_core::agent::tinyagents::response_shape::ResponseValidator>),
+                    validator: wants_json.then(|| {
+                        std::sync::Arc::new(validator)
+                            as std::sync::Arc<dyn tinyagents_harness::middleware::ResponseValidator>
+                    }),
                     structured_retries: self.structured_retries,
                     provider_options: self.provider_options.clone(),
                     require_tool_call: self.require_tool_call,
-                    observer: openhuman_core::agent::tinyagents::turn_observer::current_scope(),
                 },
             ),
             untrusted_input: self.untrusted_input,
             tools: self.tools.take(),
+            attachments: std::mem::take(&mut self.attachments),
         };
-        let budget = self.budget.take().map(|budget| crate::budget::ModelBudget {
-            ledger: budget.ledger.child(crate::budget::SpendLimits::default()),
-            call: budget.call,
-        });
         let dispatch = dispatch(self.target, self.request, self.seed.take(), usage, options);
-        let dispatch = async {
-            match &budget {
-                Some(budget) => {
-                    openhuman_core::agent::tinyagents::budget::with_budget(budget.clone(), dispatch)
-                        .await
-                }
-                None => dispatch.await,
-            }
-        };
 
-        let reply = match (self.origin, self.progress) {
-            (Some(origin), Some(sink)) => {
-                openhuman_core::agent::progress_sink::with_progress_sink(
-                    sink,
-                    openhuman_core::agent::turn_origin::with_origin(origin, dispatch),
-                )
-                .await
-            }
-            (Some(origin), None) => {
-                openhuman_core::agent::turn_origin::with_origin(origin, dispatch).await
-            }
-            (None, Some(sink)) => {
-                openhuman_core::agent::progress_sink::with_progress_sink(sink, dispatch).await
-            }
-            (None, None) => dispatch.await,
+        let reply = match self.origin {
+            Some(origin) => openhuman_core::agent::turn_origin::with_origin(origin, dispatch).await,
+            None => dispatch.await,
         }
         .inspect_err(|err| {
             // Log a redacted failure event so dispatch errors are visible in
@@ -435,6 +463,13 @@ impl Turn {
         );
 
         let report = report.unwrap_or_default();
+        let unapplied_steers = steering.close();
+        if !unapplied_steers.is_empty() {
+            log::debug!(
+                "[embed][agent] turn session={session_id} ended with {} unapplied steer(s)",
+                unapplied_steers.len()
+            );
+        }
         Ok(TurnOutcome {
             reply,
             session_id,
@@ -445,6 +480,7 @@ impl Turn {
             structured,
             finish_reason: report.finish_reason,
             answered_model: report.answered_model,
+            unapplied_steers,
         })
     }
 

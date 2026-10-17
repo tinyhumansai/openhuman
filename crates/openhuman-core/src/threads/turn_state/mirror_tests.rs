@@ -6,7 +6,8 @@ use tempfile::tempdir;
 
 fn fresh(thread_id: &str) -> (tempfile::TempDir, TurnStateMirror) {
     let dir = tempdir().expect("tempdir");
-    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let store =
+        std::sync::Arc::new(InMemoryTurnStates::default()) as std::sync::Arc<dyn TurnStates>;
     let mirror = TurnStateMirror::new(store, thread_id, "req-1");
     (dir, mirror)
 }

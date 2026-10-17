@@ -1,13 +1,11 @@
 //! Durable per-workspace task store plumbing and the typed lifecycle ledger
 //! that mirrors each detached sub-agent's status into it (issue #4249).
 //!
-//! The caching and the durable→memory fallback are TinyAgents'
-//! (`TaskStoreRegistry` / `open_jsonl_task_store_or_memory`): opening a second
-//! store over the same append log would give two writers with independently
-//! replayed state, and a workspace that cannot be written should degrade to an
-//! in-memory ledger rather than take orchestration down. What stays here is the
-//! path layout, the record shape, and the reconciliation of orphaned tasks on
-//! boot.
+//! The store is TinyAgents' `DriverTaskStore` over the storage backend's
+//! documents, cached per workspace and scope (`TaskStoreRegistry`); a backend
+//! that cannot be reached degrades to an in-memory ledger rather than taking
+//! orchestration down. What stays here is the record shape and the
+//! reconciliation of orphaned tasks on boot.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -18,19 +16,9 @@ use tinyagents_orchestration::subagent::{
     subagent_record_for_task, task_status_label, SpawnedSubagent, WaitError,
 };
 use tinyagents_tasks::{
-    open_jsonl_task_store_or_memory, reconcile_orphaned_tasks, InMemoryTaskStore,
-    OrchestrationTaskFilter, OrchestrationTaskRecord, TaskStore, TaskStoreRegistry,
+    reconcile_orphaned_tasks, DriverTaskStore, InMemoryTaskStore, OrchestrationTaskFilter,
+    OrchestrationTaskRecord, TaskStore, TaskStoreRegistry,
 };
-
-/// Where a workspace's detached-task ledger lives.
-///
-/// A product path, not a generic one: TinyAgents opens whatever file it is
-/// given, and this is where OpenHuman keeps it.
-fn task_store_path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir
-        .join(".openhuman")
-        .join("orchestration_tasks.jsonl")
-}
 
 #[cfg(test)]
 fn default_task_store_workspace() -> PathBuf {
@@ -39,46 +27,47 @@ fn default_task_store_workspace() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(".openhuman").join("workspace"))
 }
 
-/// One cached ledger: a workspace, and under a storage backend the storage
-/// scope it was opened for (`None` for the workspace's JSONL file).
-type LedgerKey = (PathBuf, Option<String>);
+/// One cached ledger: a workspace and the storage scope it was opened for.
+type LedgerKey = (PathBuf, String);
+
+const DOMAIN: &str = "running_subagents::task_ledger";
 
 /// Process-wide typed lifecycle ledger for detached sub-agents (issue #4249),
-/// one durable store per workspace (and per storage scope when the host
-/// configured a storage backend, where it is a document collection instead of
-/// the JSONL file).
+/// one durable store per workspace and storage scope: the `orchestration_*`
+/// document collections of the storage backend (TinyAgents' `DriverTaskStore`).
 static TASK_STORES: OnceLock<TaskStoreRegistry<LedgerKey>> = OnceLock::new();
 
 fn task_stores() -> &'static TaskStoreRegistry<LedgerKey> {
     TASK_STORES.get_or_init(|| {
         TaskStoreRegistry::new(|(workspace_dir, scope): &LedgerKey| {
-            if scope.is_some() {
-                match super::task_ledger_documents::current() {
-                    Ok(Some(repo)) => return super::task_ledger_documents::open_or_memory(repo),
-                    Ok(None) => {}
-                    Err(error) => {
-                        log::warn!("[running_subagents] task ledger scope unavailable; using memory: {error:#}");
-                        return Arc::new(InMemoryTaskStore::new());
-                    }
+            match open_driver_store(workspace_dir) {
+                Ok(store) => store,
+                Err(error) => {
+                    // A backend that cannot be reached degrades to an
+                    // in-memory ledger rather than taking orchestration down.
+                    log::warn!(
+                        "[running_subagents] task ledger unavailable for scope={scope}; using memory: {error:#}"
+                    );
+                    Arc::new(InMemoryTaskStore::new())
                 }
             }
-            open_jsonl_task_store_or_memory(&task_store_path(workspace_dir))
         })
     })
 }
 
-/// The cache key for this call: the storage scope joins it when a backend is
-/// installed, so two agents on one workspace never share a ledger.
+fn open_driver_store(workspace_dir: &Path) -> anyhow::Result<Arc<dyn TaskStore>> {
+    let opened = crate::storage::local::open(DOMAIN, workspace_dir)?;
+    let scoped = opened.scoped()?;
+    let store = DriverTaskStore::new(Arc::clone(scoped.documents()))
+        .map_err(|error| anyhow::anyhow!("start the task store bridge: {error}"))?;
+    Ok(Arc::new(store))
+}
+
+/// The cache key for this call: the storage scope joins the workspace, so two
+/// agents on one workspace never share a ledger.
 fn ledger_key(workspace_dir: &Path) -> Option<LedgerKey> {
-    #[cfg(test)]
-    let pinned = super::task_ledger_documents::overridden();
-    #[cfg(not(test))]
-    let pinned = false;
-    if crate::storage::installed().is_none() && !pinned {
-        return Some((workspace_dir.to_path_buf(), None));
-    }
     match crate::storage::current_scope() {
-        Ok(scope) => Some((workspace_dir.to_path_buf(), Some(scope.to_string()))),
+        Ok(scope) => Some((workspace_dir.to_path_buf(), scope.to_string())),
         Err(error) => {
             log::warn!("[running_subagents] task ledger has no storage scope: {error}");
             None
@@ -169,7 +158,7 @@ pub(crate) fn list_task_records(workspace_dir: &Path) -> Vec<OrchestrationTaskRe
 /// A detached sub-agent runs as a `tokio` task owned by the process that spawned
 /// it. When the core restarts, that task — and its live [`tokio::task::AbortHandle`] /
 /// [`tinyagents_harness::CancellationToken`] — is gone, but the durable
-/// `JsonlTaskStore` still holds a non-terminal (`Pending`/`Running`/`Awaiting`/
+/// task ledger still holds a non-terminal (`Pending`/`Running`/`Awaiting`/
 /// `CancelRequested`) record for it. Such a record is **orphaned**: there is no
 /// live executor to re-attach to (OpenHuman spawns child processes, so an
 /// in-flight run from a dead parent cannot be resumed), and the run-ledger

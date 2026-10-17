@@ -11,13 +11,13 @@
  *   3. Send second message in same thread: "What was the secret word?"
  *   4. Verify LLM's second call includes prior messages in context
  *   5. Final answer renders with XYZZY canary
- *   6. Thread file on disk contains both exchanges
+ *   6. Durable thread messages contain both exchanges
  *
  * Tests:
  *   H1.1 — first message and response rendered
  *   H1.2 — second LLM call includes ≥ 3 messages (user + assistant + user)
  *   H1.3 — second response with XYZZY canary renders
- *   H1.4 — thread file on disk contains both exchanges
+ *   H1.4 — durable thread messages contain both exchanges
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
@@ -25,7 +25,6 @@ import {
   clickByTitle,
   clickSend,
   getSelectedThreadId,
-  hexEncodeThreadId,
   typeIntoComposer,
   waitForSocketConnected,
 } from '../helpers/chat-harness';
@@ -47,11 +46,10 @@ const SECRET_WORD = 'XYZZY';
 const FIRST_PROMPT = `Remember: the secret word is ${SECRET_WORD}`;
 const SECOND_PROMPT = 'What was the secret word?';
 const CANARY_SECOND = `canary-memory-m1n2o3-${SECRET_WORD}`;
+const FIRST_RESPONSE = `Got it! I will remember that the secret word is ${SECRET_WORD}.`;
 
 // Two forced responses for the two turns.
-const FORCED_RESPONSES_TURN1 = [
-  { content: `Got it! I will remember that the secret word is ${SECRET_WORD}.` },
-];
+const FORCED_RESPONSES_TURN1 = [{ content: FIRST_RESPONSE }];
 const FORCED_RESPONSES_TURN2 = [
   {
     content: `The secret word you told me was ${SECRET_WORD}. Here is the confirmation: ${CANARY_SECOND}`,
@@ -193,46 +191,45 @@ describe('Chat conversation history', () => {
       { timeout: 15_000, timeoutMsg: 'IN_FLIGHT never cleared after turn 2' }
     );
 
-    // Inspect the request log for the second LLM call.
+    // Background work may issue other completions while this turn settles.
+    // Select the request that contains the user's second message.
     const log = getRequestLog() as Array<{ method: string; url: string; body?: string }>;
     const llmHits = log.filter(
       r => r.method === 'POST' && r.url.includes('/openai/v1/chat/completions')
     );
     console.log(`${LOG_PREFIX} H1.2: found ${llmHits.length} LLM request(s) in turn 2 log`);
-    expect(llmHits.length).toBeGreaterThanOrEqual(1);
+    const secondTurnHits = llmHits.filter(r => {
+      try {
+        const parsed = JSON.parse(r.body ?? '{}');
+        return (
+          Array.isArray(parsed.messages) &&
+          parsed.messages.some(
+            (message: { content?: unknown }) =>
+              typeof message.content === 'string' && message.content.includes(SECOND_PROMPT)
+          ) &&
+          parsed.messages.some(
+            (message: { content?: unknown }) =>
+              typeof message.content === 'string' && message.content.includes(FIRST_PROMPT)
+          )
+        );
+      } catch {
+        return false;
+      }
+    });
+    expect(secondTurnHits.length).toBeGreaterThan(0);
 
-    // Parse the request body to verify message history is included.
-    const secondLlmCall = llmHits[llmHits.length - 1];
-    expect(secondLlmCall).toBeDefined();
-
-    let messages: Array<{ role: string; content: string }> = [];
-    try {
-      const parsedBody =
-        typeof secondLlmCall.body === 'string'
-          ? JSON.parse(secondLlmCall.body)
-          : secondLlmCall.body;
-      messages = Array.isArray(parsedBody?.messages) ? parsedBody.messages : [];
-    } catch (e) {
-      console.log(`${LOG_PREFIX} H1.2: failed to parse LLM request body: ${e}`);
-    }
+    const parsedBody = JSON.parse(secondTurnHits.slice(-1)[0]?.body ?? '{}');
+    const messages: Array<{ role: string; content: string }> = Array.isArray(parsedBody.messages)
+      ? parsedBody.messages
+      : [];
+    expect(messages.length).toBeGreaterThan(0);
 
     console.log(`${LOG_PREFIX} H1.2: second LLM call contains ${messages.length} messages`);
-
-    if (messages.length > 0) {
-      // Context should contain: system (maybe) + user turn 1 + assistant turn 1 + user turn 2 = ≥ 3
-      expect(messages.length).toBeGreaterThanOrEqual(3);
-
-      // At least one message should mention the secret word (from the first user turn).
-      const hasSecretWord = messages.some(
-        m => typeof m.content === 'string' && m.content.includes(SECRET_WORD)
-      );
-      expect(hasSecretWord).toBe(true);
-      console.log(`${LOG_PREFIX} H1.2: secret word found in context messages`);
-    } else {
-      // If no messages were returned, the history assertion is hollow. Fail so
-      // the issue is visible rather than silently passing.
-      expect(messages.length).toBeGreaterThan(0);
-    }
+    const modelContext = messages.map(message => message.content).join('\n');
+    expect(modelContext).toContain(FIRST_PROMPT);
+    expect(modelContext).toContain(FIRST_RESPONSE);
+    expect(modelContext).toContain(SECOND_PROMPT);
+    console.log(`${LOG_PREFIX} H1.2: both turns and the first response are in context`);
 
     console.log(`${LOG_PREFIX} H1.2: passed`);
   });
@@ -245,32 +242,33 @@ describe('Chat conversation history', () => {
     console.log(`${LOG_PREFIX} H1.3: passed — "${CANARY_SECOND}" visible`);
   });
 
-  it('H1.4 — thread file on disk contains both exchanges', async () => {
-    console.log(`${LOG_PREFIX} H1.4: reading workspace thread file`);
-    const relPath = `memory/conversations/threads/${hexEncodeThreadId(threadId)}.jsonl`;
-
+  it('H1.4 — durable thread messages contain both exchanges', async () => {
+    console.log(`${LOG_PREFIX} H1.4: reading durable thread messages`);
     let content = '';
+    let messageCount = 0;
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
-      const read = await callOpenhumanRpc<{ result: { content_utf8: string } }>(
-        'openhuman.test_support_read_workspace_file',
-        { rel_path: relPath, max_bytes: 131_072 }
+      const read = await callOpenhumanRpc<{ data?: { messages?: Array<{ content?: string }> } }>(
+        'openhuman.threads_messages_list',
+        { thread_id: threadId }
       );
-      if (read.ok && read.result?.result?.content_utf8) {
-        content = read.result.result.content_utf8;
-        // Both user messages and the canary must be present.
+      if (read.ok) {
+        const messages = read.result?.data?.messages ?? [];
+        messageCount = messages.length;
+        content = messages.map(message => message.content ?? '').join('\n');
         if (
           content.includes(FIRST_PROMPT) &&
           content.includes(SECOND_PROMPT) &&
           content.includes(CANARY_SECOND)
-        ) {
+        )
           break;
-        }
       }
       await browser.pause(400);
     }
 
-    console.log(`${LOG_PREFIX} H1.4: thread file length: ${content.length}`);
+    console.log(
+      `${LOG_PREFIX} H1.4: persisted thread has ${messageCount} message(s), ${content.length} characters`
+    );
     expect(content).toContain(FIRST_PROMPT);
     expect(content).toContain(SECOND_PROMPT);
     expect(content).toContain(CANARY_SECOND);

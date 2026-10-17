@@ -54,13 +54,11 @@ fn park_as(
     let gate = Arc::clone(gate);
     tokio::spawn(CoreContext::scope(
         ctx,
-        turn_origin::with_origin(
-            web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(chat_ctx(), async move {
-                gate.intercept_audited("shell", "run it", serde_json::json!({}))
-                    .await
-            }),
-        ),
+        turn_origin::with_origin(web_origin(), async move {
+            let turn = ApprovalTurnContext::chat(chat_ctx());
+            gate.intercept_audited(&turn, "shell", "run it", serde_json::json!({}))
+                .await
+        }),
     ))
 }
 
@@ -82,12 +80,15 @@ async fn parked_for(gate: &ApprovalGate, tenant: &Tenant) -> String {
 async fn two_profiles_default_agents_park_on_one_thread_id_apart() {
     let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
-    let (alice, bob) = (profile_ctx("alice"), profile_ctx("bob"));
+    // Names no other suite uses: the process-wide lease-fence registry is keyed
+    // by profile, and a fence another test registered for "alice" would refuse
+    // this test's writes to that profile's scope.
+    let (alice, bob) = (profile_ctx("gate-alice"), profile_ctx("gate-bob"));
 
     let alice_turn = park_as(&gate, Arc::clone(&alice));
     let bob_turn = park_as(&gate, Arc::clone(&bob));
-    let alice_request = parked_for(&gate, &tenant(Some("alice"), None)).await;
-    let bob_request = parked_for(&gate, &tenant(Some("bob"), None)).await;
+    let alice_request = parked_for(&gate, &tenant(Some("gate-alice"), None)).await;
+    let bob_request = parked_for(&gate, &tenant(Some("gate-bob"), None)).await;
     assert_ne!(alice_request, bob_request);
 
     // Each profile's own lookup finds only its own request.

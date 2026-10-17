@@ -133,6 +133,7 @@ pub struct ExecutionResult {
 /// Disabled: no transfer can be prepared with the wallet compiled out.
 pub async fn prepare_transfer(
     _params: PrepareTransferParams,
+    _owner: Option<()>,
 ) -> Result<Outcome<PreparedTransaction>, String> {
     log::debug!(
         "[wallet-stub] prepare_transfer requested (web3 disabled) — returning disabled error"
@@ -143,6 +144,7 @@ pub async fn prepare_transfer(
 /// Disabled: no prepared transfer can be executed with the wallet compiled out.
 pub async fn execute_prepared(
     _params: ExecutePreparedParams,
+    _owner: Option<()>,
 ) -> Result<Outcome<ExecutionResult>, String> {
     log::debug!(
         "[wallet-stub] execute_prepared requested (web3 disabled) — returning disabled error"

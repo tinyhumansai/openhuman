@@ -1,7 +1,7 @@
 //! Turning what the reconnect supervisor observed into this application's
 //! events.
 //!
-//! `tinymcp::Supervisor::tick` hands back a [`TickReport`] and publishes
+//! TinyMCP's module-owned supervisor reports [`TickReport`] observations and publishes
 //! nothing itself: which of its observations a user should hear about is the
 //! host's call. This module makes that call once. Every non-nominal
 //! observation becomes a [`DomainEvent`] in the `mcp_client` domain, which is
@@ -23,7 +23,7 @@
 
 use std::path::Path;
 
-use tinymcp::{ProbeOutcome, SupervisorEvent, TickReport};
+use tinymcp_bus::{ProbeOutcome, SupervisorBatch, SupervisorEvent, TickReport};
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
@@ -152,6 +152,31 @@ pub fn publish(workspace: &Path, report: &TickReport) -> usize {
             observations = report.events.len(),
             published,
             "{LOG_PREFIX} supervisor tick published domain events"
+        );
+    }
+    for event in events {
+        BUS.publish(event);
+    }
+    published
+}
+
+/// Publishes events drained from TinyMCP's module-owned maintenance task.
+/// Dropped observations remain visible in logs instead of being silently lost.
+pub fn publish_batch(workspace: &Path, batch: &SupervisorBatch) -> usize {
+    if batch.dropped > 0 {
+        tracing::warn!(
+            dropped = batch.dropped,
+            workspace = ?workspace,
+            "[mcp] module supervisor event queue overflowed"
+        );
+    }
+    let events = domain_events_for(workspace, &batch.events);
+    let published = events.len();
+    if published > 0 {
+        tracing::debug!(
+            observations = batch.events.len(),
+            published,
+            "{LOG_PREFIX} module supervisor observations published"
         );
     }
     for event in events {

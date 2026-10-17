@@ -255,6 +255,6 @@ disabled build with `cargo check --no-default-features`.
 
 ## Further reading
 
-- [MCP servers and skills](../../../../gitbooks/features/integrations/mcp-and-skills.md)
+- [MCP servers and skills](../../../../docs/gitbooks/en/features/integrations/mcp-and-skills.md)
 - [tinyskills submodule](../../../../vendor/tinyskills/README.md)
-- [Agent harness architecture](../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Agent harness architecture](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

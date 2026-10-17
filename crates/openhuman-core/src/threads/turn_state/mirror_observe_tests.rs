@@ -444,8 +444,8 @@ fn text_delta_appends_streaming_text_without_flushing() {
 
 #[test]
 fn turn_completed_keeps_snapshot_as_completed_and_finish_is_noop() {
-    let dir = tempdir().expect("tempdir");
-    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let store =
+        std::sync::Arc::new(InMemoryTurnStates::default()) as std::sync::Arc<dyn TurnStates>;
     let mut mirror = TurnStateMirror::new(store.clone(), "t", "req-1");
     mirror.observe(&AgentProgress::TurnCompleted {
         iterations: 3,
@@ -468,8 +468,8 @@ fn turn_completed_keeps_snapshot_as_completed_and_finish_is_noop() {
 
 #[test]
 fn finish_without_turn_completed_marks_interrupted() {
-    let dir = tempdir().expect("tempdir");
-    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let store =
+        std::sync::Arc::new(InMemoryTurnStates::default()) as std::sync::Arc<dyn TurnStates>;
     let mut mirror = TurnStateMirror::new(store.clone(), "t", "req-1");
     mirror.observe(&AgentProgress::IterationStarted {
         iteration: 1,

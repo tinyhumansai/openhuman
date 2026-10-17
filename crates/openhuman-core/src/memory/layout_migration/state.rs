@@ -2,95 +2,52 @@
 //!
 //! Written whole after every page, through a temporary file and a rename,
 //! so a crash leaves the previous state or the new one, never a torn file.
+//! The state itself is `tinymemory_tools::layout_migration::MigrationState`.
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use tinymemory_tools::layout_migration::{Error, Result};
 
+use super::{MigrationState, MigrationStateStore};
 use crate::memory::error::{MemoryError, MemoryResult};
-
-/// Where the migration is.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Phase {
-    /// Not started.
-    #[default]
-    Idle,
-    /// Copying the legacy tree, page by page.
-    Copying,
-    /// Stopped where it was: paused by the scheduler, out of credits, or the
-    /// engine unreachable. Resumes from the cursor.
-    Paused,
-    /// Every item it could copy is copied and verified.
-    Copied,
-    /// Removing the legacy copies of what was moved.
-    Cleaning,
-    /// The legacy tree holds nothing that was moved; what is left there (if
-    /// anything) is in `failures` or `incomplete`.
-    Cleaned,
-}
-
-/// An item that could not be copied.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Failure {
-    /// Its id in the legacy tree.
-    pub id: String,
-    /// Why (an error code, never content).
-    pub reason: String,
-}
-
-/// The migration's progress.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct MigrationState {
-    /// Where it is.
-    pub phase: Phase,
-    /// The legacy export cursor of the next page; `None` before the first.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-    /// Items copied and confirmed readable in the per-user tree.
-    pub copied: u64,
-    /// Of those, items the per-user tree already held (a resumed page).
-    pub replayed: u64,
-    /// Items that could not be copied.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub failures: Vec<Failure>,
-    /// Items the legacy tree holds only part of (a chunked document missing
-    /// a piece).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub incomplete: Vec<String>,
-    /// Why it is paused.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Cleanup has started, so a pause resumes it, not the copy.
-    #[serde(default)]
-    pub cleaning: bool,
-    /// Reads and writes moved to the per-user tree.
-    #[serde(default)]
-    pub switched: bool,
-    /// The catch-up copy after the switch is done.
-    #[serde(default)]
-    pub caught_up: bool,
-    /// The user agreed to take a legacy tree other accounts may share.
-    #[serde(default)]
-    pub takeover: bool,
-    /// Extra catch-up passes made because the import ended with its last
-    /// batch not confirmed listed (see `job::run`).
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub rechecks: u32,
-    /// Those passes are over (one moved nothing new, or the most were made).
-    /// The import's flag stays set, so cleanup keeps forgetting by id.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub rechecked: bool,
-}
-
-fn is_zero(n: &u32) -> bool {
-    *n == 0
-}
 
 /// The state file of `workspace_dir`.
 #[must_use]
 pub fn path(workspace_dir: &Path) -> PathBuf {
     workspace_dir.join("memory").join("layout_migration.json")
+}
+
+/// The migration state kept in one workspace.
+#[derive(Debug, Clone)]
+pub struct FileStateStore {
+    workspace_dir: PathBuf,
+}
+
+impl FileStateStore {
+    /// The store of `workspace_dir`.
+    #[must_use]
+    pub fn new(workspace_dir: &Path) -> Self {
+        Self {
+            workspace_dir: workspace_dir.to_path_buf(),
+        }
+    }
+}
+
+impl MigrationStateStore for FileStateStore {
+    fn load(&self) -> Result<MigrationState> {
+        load(&self.workspace_dir).map_err(|error| Error::State(detail(error)))
+    }
+
+    fn save(&self, state: &MigrationState) -> Result<()> {
+        save(&self.workspace_dir, state).map_err(|error| Error::State(detail(error)))
+    }
+}
+
+fn detail(error: MemoryError) -> String {
+    match error {
+        MemoryError::Engine(message) => message,
+        other => other.to_string(),
+    }
 }
 
 /// The saved state, or a fresh one when none was saved.

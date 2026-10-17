@@ -1,9 +1,9 @@
-import { setupLocalWallet } from '../../services/walletApi';
 import {
-  deriveAesKeyFromMnemonic,
-  deriveWalletAccountsFromMnemonic,
+  deriveRecoveryMaterial,
+  setupLocalWallet,
   type WalletSetupSource,
-} from '../../utils/cryptoKeys';
+} from '../../services/walletApi';
+import { deriveAesKeyFromSeed } from '../../utils/cryptoKeys';
 import { openhumanEncryptSecret } from '../../utils/tauriCommands/auth';
 
 export async function persistLocalWalletFromMnemonic(args: {
@@ -22,7 +22,8 @@ export async function persistLocalWalletFromMnemonic(args: {
     throw new Error('Recovery phrase is required.');
   }
   const normalizedMnemonic = words.join(' ');
-  const aesKey = deriveAesKeyFromMnemonic(normalizedMnemonic);
+  const recoveryMaterial = await deriveRecoveryMaterial(normalizedMnemonic);
+  const aesKey = deriveAesKeyFromSeed(recoveryMaterial.seed);
   const encryptedMnemonic = (await openhumanEncryptSecret(normalizedMnemonic)).result?.trim();
   if (!encryptedMnemonic) {
     throw new Error('Failed to secure recovery phrase. Please try again.');
@@ -34,7 +35,7 @@ export async function persistLocalWalletFromMnemonic(args: {
     source,
     mnemonicWordCount: words.length,
     encryptedMnemonic,
-    accounts: deriveWalletAccountsFromMnemonic(normalizedMnemonic),
+    accounts: recoveryMaterial.accounts,
     force,
   });
 }

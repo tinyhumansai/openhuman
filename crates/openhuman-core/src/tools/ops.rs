@@ -1,3 +1,5 @@
+#[cfg(feature = "mcp")]
+use super::implementations::network::{McpListServersTool, McpListToolsTool};
 use super::*;
 use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::agent::tools::DelegateTool;
@@ -6,15 +8,13 @@ use crate::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tinyagents_harness::tools::{CurrentTimeTool, ResolveTimeTool};
-#[cfg(feature = "mcp")]
-use tinymcp::tools::{McpListServersTool, McpListToolsTool};
 use tinytools::Tool;
 use tinytools_std::detect_tools::DetectToolsTool;
 use tinytools_std::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, GitOperationsTool,
     GlobTool, GrepTool, ImageInfoTool, ListFilesTool, ReadDiffTool, RunLinterTool, RunTestsTool,
 };
-use tinytools_std::network::{CurlTool, PushoverTool};
+use tinytools_std::network::PushoverTool;
 
 /// Create the default tool registry
 pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
@@ -121,14 +121,6 @@ pub fn all_tools_with_runtime(
     ));
     tools.append(&mut vec![
         Box::new(CurrentTimeTool::new()),
-        // Reversibility for native tool-output compaction (Stage 1a): when a
-        // large result is compacted with a `retrieve_tool_output("<hash>")`
-        // marker, this hands the original back from the CCR store on demand.
-        Box::new(retrieve_tool_output_tool()),
-        // TokenJuice 2.0 content-router retrieval: fetches the original (full or
-        // by byte/line range) for a `⟦tj:<hash>⟧` marker from the CCR cache.
-        // Supersedes `retrieve_tool_output`; both are kept live during migration.
-        Box::new(crate::inference::tokenjuice::TokenjuiceRetrieveTool::new()),
         // Deterministic time-expression → timestamp resolver. `current_time`
         // only returns *now*, leaving the model to do epoch arithmetic by hand
         // (a real incident had an agent compute "24h ago" ~10 months off, then
@@ -143,7 +135,7 @@ pub fn all_tools_with_runtime(
     #[cfg(feature = "flows")]
     tools.extend(crate::flows::registration::tools(config.clone(), security));
     #[cfg(feature = "web3")]
-    tools.extend(crate::web3::wallet::registration::tools());
+    tools.extend(crate::web3::wallet::tools::all_agent_tools());
     tools.append(&mut vec![
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
@@ -171,13 +163,16 @@ pub fn all_tools_with_runtime(
     tools.append(&mut vec![
         // Task & productivity tools (issue: agent-tool expansion).
         // Read/observe + bounded-write tools are registered here; the
-        // destructive/overextending siblings (artifact_delete,
+        // destructive/overextending siblings (delete_artifact,
         // task_source_add/update/remove) are registered too but ship
         // default-OFF via `tools::user_filter` (their toggle IDs default off
         // in onboarding). The per-call permission ladder still gates them.
     ]);
-    tools.extend(crate::agent::artifacts::tools::registered_tools(
-        config.clone(),
+    tools.extend(crate::agent::artifacts::tiny_store::registered_tools(
+        &config.workspace_dir,
+        crate::agent::artifacts::FileRoots::from_config(&config),
+        action_dir,
+        crate::integrations::file_storage::artifact_publisher(&config),
     ));
     tools.extend(crate::integrations::task_sources::tools::registered_tools(
         config.clone(),
@@ -197,10 +192,13 @@ pub fn all_tools_with_runtime(
     tools.extend(crate::desktop::dashboard::tools::registered_tools(
         config.clone(),
     ));
+    // `[components] computer = false` unregisters the desktop and browser tools.
     #[cfg(feature = "modules")]
-    tools.extend(crate::desktop::control::tools::registered_tools(
-        config.clone(),
-    ));
+    if config.components.computer {
+        tools.extend(crate::desktop::control::tools::registered_tools(
+            config.clone(),
+        ));
+    }
     tools.extend(crate::security::tools::registered_tools(config.clone()));
     tools.extend(crate::platform::service::tools::registered_tools(
         config.clone(),
@@ -248,6 +246,19 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[tools::ops] memory off; memory tool not registered");
     }
 
+    // Recovery tools for compacted output (`retrieve_tool_output` for the
+    // Stage 1a marker, `juice_retrieve` for `⟦tj:<hash>⟧`; both live during
+    // migration): only while `[components] juice` is on, since with it off
+    // nothing is compacted and nothing can hand out a marker.
+    if crate::inference::tokenjuice::enabled(root_config) {
+        tools.push(Box::new(retrieve_tool_output_tool()));
+        tools.push(Box::new(
+            crate::inference::tokenjuice::TokenjuiceRetrieveTool::new(),
+        ));
+    } else {
+        tracing::debug!("[tools::ops] juice component off; recovery tools not registered");
+    }
+
     // `juice_find` / `juice_extract` / `juice_summarize`: only while a handle can name them.
     tools.extend(crate::inference::tokenjuice::repl_tools_for(root_config));
 
@@ -277,7 +288,7 @@ pub fn all_tools_with_runtime(
     tools.extend(crate::agent::goals::goal_tools(&root_config.workspace_dir));
 
     #[cfg(feature = "modules")]
-    if browser_config.enabled {
+    if browser_config.enabled && config.components.computer {
         // BrowserClient enforces the shared `http_request.allowed_domains`
         // policy for both browser tools.
         let browser_client = Arc::new(crate::modules::browser::BrowserClient::new(config.clone()));
@@ -296,7 +307,7 @@ pub fn all_tools_with_runtime(
     // + `security` still gate which hosts are reachable; there is no
     // enable flag because every session needs basic HTTP as a baseline
     // capability.
-    tools.push(Box::new(http_request_tool(
+    tools.push(Box::new(routed_http_request_tool(
         security.clone(),
         http_config.allowed_domains.clone(),
         http_config.max_response_size,
@@ -308,16 +319,18 @@ pub fn all_tools_with_runtime(
     // or SPL payment signing, and ledger recording. Gated with the `web3`
     // feature (the x402 domain is compiled out when web3 is disabled).
     #[cfg(feature = "web3")]
-    tools.push(Box::new(crate::web3::x402::request_tool(
+    tools.push(Box::new(crate::tools::x402_request_tool(
         security.clone(),
         http_config.allowed_domains.clone(),
+        http_config.max_response_size,
+        http_config.timeout_secs,
     )));
 
     // Coding-harness baseline `web_fetch` (issue #1205) — single-purpose
     // GET-and-read primitive that reuses the same allowed-domains gate
     // as `http_request`. Use this for docs/READMEs; reach for
     // `http_request` only when you need richer HTTP semantics.
-    tools.push(Box::new(web_fetch_tool(
+    tools.push(Box::new(routed_web_fetch_tool(
         security.clone(),
         http_config.allowed_domains.clone(),
         Some(http_config.max_response_size),
@@ -327,7 +340,7 @@ pub fn all_tools_with_runtime(
     // curl — always registered. Shares `http_request.allowed_domains`,
     // adds streaming-to-disk with a hard byte ceiling. Writes land
     // under `<workspace>/<curl.dest_subdir>`.
-    tools.push(Box::new(CurlTool::new(
+    tools.push(Box::new(routed_curl_tool(
         security.clone(),
         http_config.allowed_domains.clone(),
         action_dir.to_path_buf(),
@@ -347,10 +360,12 @@ pub fn all_tools_with_runtime(
             GitbooksSearchTool::new(
                 root_config.gitbooks.endpoint.clone(),
                 root_config.gitbooks.timeout_secs,
+                root_config.clone(),
             ),
             GitbooksGetPageTool::new(
                 root_config.gitbooks.endpoint.clone(),
                 root_config.gitbooks.timeout_secs,
+                root_config.clone(),
             ),
         ) {
             (Ok(search), Ok(get_page)) => {
@@ -373,46 +388,17 @@ pub fn all_tools_with_runtime(
     // `mcp::registry` domain gated above. Both are compiled out by the `mcp`
     // feature; see the static-vs-dynamic note in AGENTS.md.
     #[cfg(feature = "mcp")]
-    {
-        let mcp_registry = {
-            // Built from the converted configuration, which is the one place
-            // the two vocabularies meet. A registry that cannot be built is
-            // logged and treated as empty: a malformed proxy or TLS setting
-            // must not take the whole tool surface down with it.
-            let base = crate::mcp::host::static_registry(root_config);
-            Arc::new(base)
-        };
-        log::debug!(
-            "[tools::ops][mcp_client] static servers={}",
-            mcp_registry.list().len()
-        );
-        if !mcp_registry.is_empty() {
-            tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
-            tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
-            tools.push(Box::new(mcp_call_tool(
-                Arc::clone(&mcp_registry),
-                security.clone(),
-            )));
-            tracing::debug!(
-                count = mcp_registry.list().len(),
-                "[mcp_client] registered generic MCP bridge tools"
-            );
-            // And every cached server tool as its own `mcp_<server>_<tool>`,
-            // deferred unless the server asks for direct exposure. Names
-            // already taken keep their owner.
-            let reserved: std::collections::HashSet<String> =
-                tools.iter().map(|tool| tool.name().to_string()).collect();
-            tools.extend(
-                crate::tools::implementations::network::configured_server_tools(
-                    root_config,
-                    &mcp_registry,
-                    security,
-                    &reserved,
-                ),
-            );
-        } else {
-            tracing::debug!("[mcp_client] no MCP servers registered — bridge tools skipped");
-        }
+    tools.push(crate::mcp::ui::show_ui_tool(root_config));
+    #[cfg(feature = "mcp")]
+    if root_config.mcp_client.enabled && !root_config.mcp_client.servers.is_empty() {
+        // Catalog retrieval runs in the async turn prelude. This synchronous
+        // baseline contributes only the generic bridge; per-tool executors
+        // are projected from the module-prepared snapshot there.
+        let mcp_config = Arc::new(root_config.clone());
+        tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_config))));
+        tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_config))));
+        let call = Box::new(mcp_call_tool(Arc::clone(&mcp_config), security.clone()));
+        tools.push(crate::mcp::ui::ui_aware_call(call, &mcp_config));
     }
 
     tools.extend(crate::search::build_search_tools(root_config));
@@ -422,10 +408,18 @@ pub fn all_tools_with_runtime(
     // Gated by the `media` compile-time feature (#4804); absent from slim
     // builds. Runtime `DomainSet::media` (#4796) still gates it when compiled.
     #[cfg(feature = "media")]
-    tools.extend(crate::media::generation::build_media_tools(
-        root_config,
-        action_dir,
-    ));
+    {
+        *security
+            .media_files_roots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(crate::agent::artifacts::FileRoots::from_config(root_config));
+        tools.extend(crate::media::generation::build_media_tools_with_allowlist(
+            root_config,
+            action_dir,
+            Arc::clone(&security.media_artifact_paths),
+        ));
+    }
 
     // Managed cloud file storage (S3 via the backend). Skipped when no
     // integration client is configured; downloads land under `action_dir`.

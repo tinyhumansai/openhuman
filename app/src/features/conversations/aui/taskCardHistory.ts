@@ -9,7 +9,7 @@ export interface TurnTask {
 export const taskFinished = (task: TurnTask) =>
   Boolean(task.goal || task.todos.length) &&
   (!task.goal || task.goal.status === 'complete') &&
-  task.todos.every(item => item.status === 'completed');
+  task.todos.every(item => item.status === 'completed' || item.status === 'cancelled');
 
 export const taskState = (task: TurnTask, running = true): 'done' | 'working' | 'waiting' =>
   taskFinished(task)

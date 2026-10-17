@@ -35,7 +35,9 @@ const LOG_PREFIX: &str = "[embeddings::rpc]";
 /// Build an embedding provider from the live config — the same construction
 /// [`embed`] uses, exposed so other domains (e.g. `codegraph`) can obtain a
 /// provider for `signature()` + direct embedding without a JSON-RPC round-trip.
-pub fn provider_from_config(config: &Config) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
+pub fn provider_from_config(
+    config: &Config,
+) -> anyhow::Result<Box<dyn tinyinference_embeddings::EmbeddingModel>> {
     build_embedder(
         config,
         &config.memory.embedding_provider,
@@ -54,7 +56,7 @@ fn build_embedder(
     provider_name: &str,
     model: &str,
     dims: usize,
-) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
+) -> anyhow::Result<Box<dyn tinyinference_embeddings::EmbeddingModel>> {
     let api_key = resolve_api_key(config, provider_name);
     let custom_endpoint = provider_name.strip_prefix("custom:").map(|s| s.to_string());
     let provider_slug = if provider_name.starts_with("custom:") {

@@ -32,12 +32,6 @@
       "type": "object",
       "description": "recall/fetch: metadata filter, e.g. {\"kinds\": [\"learning\"], \"workspace\": \"/path\", \"repo\": \"owner/name\"}."
     },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 100,
-      "description": "recall/fetch: most results."
-    },
     "cursor": {
       "type": "string",
       "description": "fetch: next-page cursor."

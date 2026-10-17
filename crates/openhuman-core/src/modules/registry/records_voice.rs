@@ -1,7 +1,9 @@
 //! Registry record for the `tinyvoice` module.
 
-use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset};
+#[cfg(feature = "voice")]
+use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset, SourceSpec};
 
+#[cfg(feature = "voice")]
 /// The `tinyvoice` module: the host-agnostic half of the voice pipeline.
 ///
 /// Wake-word gating, fast-path command routing, STT hallucination detection,
@@ -17,66 +19,73 @@ use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset};
 pub(crate) const TINYVOICE: ModuleRecord = ModuleRecord {
     id: "tinyvoice",
     description: "Wake-word gating, command routing, hallucination detection, capture audio",
-    bus_name: "ai.tinyhumans.tinyvoice.Voice",
-    object_path: "/ai/tinyhumans/tinyvoice/Voice",
-    version: "0.1.16",
-    release_url: "https://github.com/tinyhumansai/tinyvoice/releases/tag/v0.1.16",
+    bus_name: tinyvoice_bus::names::BUS_NAME,
+    object_path: tinyvoice_bus::names::OBJECT_PATH,
+    version: "0.3.2",
+    release_url: "https://github.com/tinyhumansai/tinyvoice/releases/tag/v0.3.2",
     assets: &[
         PlatformAsset {
             host_key: "ubuntu-24.04-x86_64",
-            archive: "tinyvoice-module-0.1.16-ubuntu-24.04-x86_64.tar.gz",
-            sha256: "90de2c9dce82e9d8e3864e9e0f827f1110599a3b5148d905a2841492145a1015",
+            archive: "tinyvoice-module-0.3.2-ubuntu-24.04-x86_64.tar.gz",
+            sha256: "6ee278898d33f3b3ca7a9bf8a313dc4ab4e207eabf970608d37f56d825587519",
         },
         PlatformAsset {
             host_key: "ubuntu-24.04-arm64",
-            archive: "tinyvoice-module-0.1.16-ubuntu-24.04-arm64.tar.gz",
-            sha256: "620167d61a331ad1260f3f432552cca57af4a0696b51b3e7d8d62ad1f0337a06",
+            archive: "tinyvoice-module-0.3.2-ubuntu-24.04-arm64.tar.gz",
+            sha256: "f2145cd4bf729b5b6ad563687b061557d502c786ba935a65433e4338adf75a7a",
         },
         PlatformAsset {
             host_key: "ubuntu-22.04-x86_64",
-            archive: "tinyvoice-module-0.1.16-ubuntu-22.04-x86_64.tar.gz",
-            sha256: "9a43aedb59617d6322537c411f91710ffe31c9595066592e0abc6086aca13a1a",
+            archive: "tinyvoice-module-0.3.2-ubuntu-22.04-x86_64.tar.gz",
+            sha256: "d173a63a6b20e0441d18d639906ec9c74f96178c50e274ebd32bf94abbf5260b",
         },
         PlatformAsset {
             host_key: "ubuntu-22.04-arm64",
-            archive: "tinyvoice-module-0.1.16-ubuntu-22.04-arm64.tar.gz",
-            sha256: "be42ffdf401d10bdaac083b05c42ebbeeca4f25649286cd0ada608fa02045c23",
+            archive: "tinyvoice-module-0.3.2-ubuntu-22.04-arm64.tar.gz",
+            sha256: "533a3715f5efad9911e7768e8280bbe724c60785e0ff67939867ae21a20f690e",
         },
         PlatformAsset {
             host_key: "macos-26-arm64",
-            archive: "tinyvoice-module-0.1.16-macos-26-arm64.tar.gz",
-            sha256: "8003a988fdc2eb4a6be724caf6d1ba16a97d3bbf7372921630bb180f02dfeb28",
+            archive: "tinyvoice-module-0.3.2-macos-26-arm64.tar.gz",
+            sha256: "2a4ee8f87229422019adfd28f07ac26d5e2e78165550b04f0e563764a66a429e",
         },
         PlatformAsset {
             host_key: "macos-26-x86_64",
-            archive: "tinyvoice-module-0.1.16-macos-26-x86_64.tar.gz",
-            sha256: "20142bb6bb285b863b626d2d49c4879331de1f34cfc2847755d038adf5664abe",
+            archive: "tinyvoice-module-0.3.2-macos-26-x86_64.tar.gz",
+            sha256: "4199913e36c12987a82606f98c93e2a85e086aaa17380469a9aa68b719c853d9",
         },
         PlatformAsset {
             host_key: "macos-15-arm64",
-            archive: "tinyvoice-module-0.1.16-macos-15-arm64.tar.gz",
-            sha256: "72c75b371e72c22da9a149b0962395d74131b41910e2ed735d127667f9f38c1d",
+            archive: "tinyvoice-module-0.3.2-macos-15-arm64.tar.gz",
+            sha256: "316cb2b9b9a1630f2c815744121e3bbc1d0df58364bb012dd6f11f78978ba947",
         },
         PlatformAsset {
             host_key: "macos-15-x86_64",
-            archive: "tinyvoice-module-0.1.16-macos-15-x86_64.tar.gz",
-            sha256: "a293f24b14570ac551be300d1aac28eddb0339066ab4ec0a231b6831fade4734",
+            archive: "tinyvoice-module-0.3.2-macos-15-x86_64.tar.gz",
+            sha256: "51045754d67386db5b09a19714ec8b1f319ad9896bb3f936325d7935ce5dce0e",
         },
         PlatformAsset {
             host_key: "windows-2025-x86_64",
-            archive: "tinyvoice-module-0.1.16-windows-2025-x86_64.zip",
-            sha256: "271ba8c8476c22535f9fba0086b0aa0a253f9d228cd6f6a73e91cbe24dfa8a2a",
+            archive: "tinyvoice-module-0.3.2-windows-2025-x86_64.zip",
+            sha256: "04cf6b21ed7d73375181c6cf5a18fa52a50fb09049031f0926cd46c3bcf33431",
         },
         PlatformAsset {
             host_key: "windows-2022-x86_64",
-            archive: "tinyvoice-module-0.1.16-windows-2022-x86_64.zip",
-            sha256: "89fc25bdddbcb77393f8618aa4f7f00f9cd9abd27dd1e35ad184aafb4fe4fb9d",
+            archive: "tinyvoice-module-0.3.2-windows-2022-x86_64.zip",
+            sha256: "7b7a8a8e04a57adc306b2b840bff43ea6a27090e2b089b74cfcf451f18172456",
         },
         PlatformAsset {
             host_key: "windows-11-arm64",
-            archive: "tinyvoice-module-0.1.16-windows-11-arm64.zip",
-            sha256: "8272daea789109e6034ee3af5ad9a46e5559b511f9cf6c965c14225e1c59c69e",
+            archive: "tinyvoice-module-0.3.2-windows-11-arm64.zip",
+            sha256: "b3cbff9b477495027839b0266201299b0db5cb585a9e41b3110cf46f16c35c99",
         },
     ],
     load: LoadPolicy::Lazy,
+    source: SourceSpec {
+        submodule: "tinyvoice",
+        manifest: "crates/tinyvoice-module/Cargo.toml",
+        package: "tinyvoice-module",
+        lib_name: "tinyvoice_module",
+        features: &[],
+    },
 };

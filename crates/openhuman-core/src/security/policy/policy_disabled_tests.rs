@@ -7,6 +7,7 @@
 
 use super::*;
 use std::path::PathBuf;
+use tinybox_bus::CommandClass;
 
 fn disabled_policy() -> SecurityPolicy {
     SecurityPolicy {

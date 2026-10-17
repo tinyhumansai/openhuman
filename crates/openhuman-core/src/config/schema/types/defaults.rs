@@ -103,6 +103,8 @@ impl Default for Config {
             embeddings_provider: None,
             custom_embeddings: None,
             tokenjuice: TokenjuiceConfig::default(),
+            memes: MemesConfig::default(),
+            components: ComponentsConfig::default(),
             hosting: HostingConfig::default(),
             storage: StorageConfig::default(),
             voice_server: VoiceServerConfig::default(),

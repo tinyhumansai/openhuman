@@ -12,26 +12,52 @@ fn outbound_body_has_stable_idempotency_key() {
 }
 
 #[tokio::test]
-async fn sender_methods_report_unavailable_without_a_hosted_session() {
+async fn transport_captures_no_local_or_missing_hosted_credential() {
     let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let workspace = tempfile::tempdir().expect("temporary workspace");
     let _workspace_env = EnvVarGuard::workspace_unlocked(workspace.path());
-    let sender = BackendProgressiveSender;
+    assert!(ManagedTransport::capture(
+        &crate::config::Config::default(),
+        "telegram".into(),
+        tokio_util::sync::CancellationToken::new()
+    )
+    .is_err());
+}
 
-    assert!(matches!(
-        sender.send("telegram", "hello").await,
-        Err(ProgressiveSendError::Unavailable)
-    ));
-    assert!(matches!(
-        sender.edit("telegram", "message", "hello").await,
-        Err(ProgressiveSendError::Unavailable)
-    ));
-    assert!(matches!(
-        sender.delete("telegram", "message").await,
-        Err(ProgressiveSendError::Unavailable)
-    ));
-    assert!(matches!(
-        sender.typing("telegram").await,
-        Err(ProgressiveSendError::Unavailable)
-    ));
+#[test]
+fn every_transport_operation_carries_the_channel_scoped_by_the_host() {
+    for request in [
+        ProgressiveTransportRequest::Send {
+            channel: "discord:fixture".into(),
+            message: json!({"text":"hello"}),
+        },
+        ProgressiveTransportRequest::Edit {
+            channel: "discord:fixture".into(),
+            message_id: "message".into(),
+            text: "edited".into(),
+        },
+        ProgressiveTransportRequest::Delete {
+            channel: "discord:fixture".into(),
+            message_id: "message".into(),
+        },
+        ProgressiveTransportRequest::Typing {
+            channel: "discord:fixture".into(),
+        },
+    ] {
+        assert_eq!(request_channel(&request), "discord:fixture");
+    }
+}
+
+#[test]
+fn a_cancelled_identity_cannot_capture_a_replacement_credential() {
+    let session = tokio_util::sync::CancellationToken::new();
+    session.cancel();
+    let error = ManagedTransport::capture(
+        &crate::config::Config::default(),
+        "telegram".into(),
+        session,
+    )
+    .err()
+    .expect("closed identities must fail before credential reads");
+    assert_eq!(error.to_string(), "Channel session closed");
 }

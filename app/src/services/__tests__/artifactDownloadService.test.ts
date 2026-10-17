@@ -301,6 +301,19 @@ describe('downloadArtifact', () => {
     });
   });
 
+  it('appends the extension to a title that only looks like it has one', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      absolute_path: '/workspace/files/release-v1.2.md',
+      meta: { title: 'Release v1.2' },
+    });
+    hoisted.invoke.mockResolvedValueOnce('/dest/Release v1.2.md');
+    await downloadArtifact('art-1', 'Release v1.2', 'md');
+    expect(hoisted.invoke).toHaveBeenCalledWith('download_artifact_to_downloads', {
+      artifactId: 'art-1',
+      filename: 'Release v1.2.md',
+    });
+  });
+
   it('does NOT double-append when the title already has any trailing extension', async () => {
     // Title says .pdf but caller asked for pptx — defensive: keep the
     // user-visible title untouched rather than synthesising deck.pdf.pptx.
@@ -457,7 +470,7 @@ describe('revealArtifact', () => {
   });
 });
 
-describe('saveArtifactViaDialog (dialog removed with rfd)', () => {
+describe('saveArtifactViaDialog (OS save dialog)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.isTauri.mockReturnValue(true);
@@ -482,20 +495,25 @@ describe('saveArtifactViaDialog (dialog removed with rfd)', () => {
     expect(callCoreRpc).not.toHaveBeenCalled();
   });
 
-  it('routes to the Downloads copy rather than a dialog command', async () => {
+  it('opens the save dialog prefilled with the artifact filename', async () => {
     resolveOk();
-    hoisted.invoke.mockResolvedValueOnce('/Users/me/Downloads/Deck.pptx');
+    hoisted.invoke.mockResolvedValueOnce('/Users/me/Desktop/Deck.pptx');
     const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
-    expect(outcome).toEqual({ ok: true, path: '/Users/me/Downloads/Deck.pptx' });
-    expect(hoisted.invoke).toHaveBeenCalledWith('download_artifact_to_downloads', {
+    expect(outcome).toEqual({ ok: true, path: '/Users/me/Desktop/Deck.pptx' });
+    expect(hoisted.invoke).toHaveBeenCalledWith('save_artifact_as', {
       artifactId: 'a-1',
       filename: 'Deck.pptx',
     });
-    // The removed `rfd` command must never be invoked again.
-    expect(hoisted.invoke).not.toHaveBeenCalledWith('save_artifact_via_dialog', expect.anything());
   });
 
-  it('surfaces a copy failure as DOWNLOAD_FAILED', async () => {
+  it('reports a closed dialog as CANCELLED', async () => {
+    resolveOk();
+    hoisted.invoke.mockResolvedValueOnce(null);
+    const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');
+    expect(outcome).toEqual({ ok: false, code: 'CANCELLED' });
+  });
+
+  it('surfaces a save failure as DOWNLOAD_FAILED', async () => {
     resolveOk();
     hoisted.invoke.mockRejectedValueOnce(new Error('disk full'));
     const outcome = await saveArtifactViaDialog('a-1', 'Deck', 'pptx');

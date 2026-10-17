@@ -129,6 +129,23 @@ pub(crate) fn discovery_policy() -> ToolDiscoveryPolicy {
     policy
 }
 
+/// What a turn's `tool_search` tells its ranker about the search: the chat the
+/// turn runs in, so a ranker that discloses the query off the machine (a cloud
+/// embedder) can show the disclosure in that chat. A turn with no chat behind
+/// it (CLI, cron, a detached sub-agent) gets an empty context.
+pub(crate) fn rank_context_for(
+    chat: Option<&crate::security::approval::ApprovalChatContext>,
+) -> tinytools::RankContext {
+    let Some(chat) = chat else {
+        return tinytools::RankContext::empty();
+    };
+    let mut routed = tinytools::RankChat::new(chat.thread_id.clone(), chat.client_id.clone());
+    if let Some(request_id) = &chat.request_id {
+        routed = routed.with_request_id(request_id.clone());
+    }
+    tinytools::RankContext::empty().with_chat(routed)
+}
+
 /// The `tool_search` bridge, rendered for a TEXT dialect's prompt catalogue.
 ///
 /// The harness mints this schema onto `request.tools` whenever a run has a
@@ -218,7 +235,9 @@ impl ToolRanker for OverlapRanker {
 
 mod embedding_ranker;
 
-pub use embedding_ranker::{embedding_provider_is_usable, embedding_tool_ranker};
+pub use embedding_ranker::{
+    embedding_provider_is_usable, embedding_tool_ranker, embedding_tool_ranker_in,
+};
 
 #[cfg(test)]
 #[path = "discovery_tests.rs"]

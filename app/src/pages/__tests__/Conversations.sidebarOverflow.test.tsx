@@ -22,6 +22,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SidebarSlotOutlet, SidebarSlotProvider } from '../../components/layout/shell/SidebarSlot';
+import Conversations from '../../features/conversations/Conversations';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
 import layoutReducer from '../../store/layoutSlice';
 import runModeReducer from '../../store/runModeSlice';
@@ -173,7 +174,6 @@ function socketState(status: 'connected' | 'disconnected') {
 
 async function renderSidebar(preload: Record<string, unknown> = {}) {
   const store = buildStore(preload);
-  const { default: Conversations } = await import('../../features/conversations/Conversations');
 
   let container!: HTMLElement;
   await act(async () => {
@@ -220,7 +220,6 @@ describe('Conversations — sidebar composer footer overflow (#3785)', () => {
 
   it('keeps the assistant-ui page composer in flow (no legacy floating footer)', async () => {
     const store = buildStore({ thread: emptyThreadState });
-    const { default: Conversations } = await import('../../features/conversations/Conversations');
 
     let container!: HTMLElement;
     await act(async () => {

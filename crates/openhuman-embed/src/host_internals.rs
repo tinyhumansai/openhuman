@@ -80,7 +80,7 @@ pub mod core {
     }
     pub mod runtime {
         pub use openhuman_core::core::runtime::{
-            current_tenant, is_saas, CoreContext, CoreRuntime, Mode, SaasConfig,
+            current_tenant, is_saas, CoreContext, CoreRuntime, DispatchCtx, Mode, SaasConfig,
         };
         pub mod saas {
             pub use openhuman_core::core::runtime::saas::build;
@@ -128,7 +128,7 @@ pub mod config {
         };
     }
     pub mod ops {
-        pub use openhuman_core::config::ops::load_config_with_timeout;
+        pub use openhuman_core::config::ops::{load_config_in, load_config_with_timeout};
     }
     pub mod rpc {
         pub use openhuman_core::config::rpc::load_config_with_timeout;
@@ -147,8 +147,8 @@ pub mod agent {
     pub mod tinyagents {
         pub mod discovery {
             pub use openhuman_core::agent::tinyagents::discovery::{
-                embedding_provider_is_usable, embedding_tool_ranker, install_tool_ranker,
-                installed_tool_ranker,
+                embedding_provider_is_usable, embedding_tool_ranker, embedding_tool_ranker_in,
+                install_tool_ranker, installed_tool_ranker,
             };
         }
         // rpc: Socket.IO run-mode toggles.
@@ -167,7 +167,8 @@ pub mod agent {
     }
     pub mod session_store {
         pub use openhuman_core::agent::session_store::{
-            context_workspace_dir, install, installed, restore,
+            context_workspace_dir, install, installed, restore, ReboundSessionStores,
+            WorkspaceSessionStores,
         };
     }
 }
@@ -183,7 +184,10 @@ pub mod channels {
 /// OpenAI-compatible HTTP router.
 pub mod inference {
     pub mod embedding_host {
-        pub use openhuman_core::inference::embedding_host::default_embedding_provider_with_config;
+        pub use openhuman_core::inference::embedding_host::{
+            default_embedding_provider_for_chat, default_embedding_provider_with_config,
+            SharedEmbeddingModel,
+        };
     }
     pub mod provider {
         pub mod factory {
@@ -234,7 +238,7 @@ pub mod security {
         }
     }
     pub mod approval {
-        pub use openhuman_core::security::approval::ApprovalGate;
+        pub use openhuman_core::security::approval::{ApprovalChatContext, ApprovalGate};
     }
     pub mod pairing {
         pub use openhuman_core::security::pairing::is_public_bind;
@@ -292,8 +296,8 @@ pub mod platform {
 
 pub mod storage {
     pub use openhuman_core::storage::{
-        block_on, block_on_anyhow, clear, configured_url, driver_is_shared, install, installed,
-        open, url_from, StorageBackend, STORAGE_URL_VAR,
+        block_on, block_on_anyhow, clear, configured_url, driver_is_shared, install,
+        install_for_url, installed, open, url_from, StorageBackend, STORAGE_URL_VAR,
     };
 }
 
@@ -324,7 +328,7 @@ pub mod voice {
             #[cfg(all(feature = "voice", feature = "http-server"))]
             pub use openhuman_core::voice::live::ws::handle_live_voice_ws;
             #[cfg(not(all(feature = "voice", feature = "http-server")))]
-            pub async fn handle_live_voice_ws<S, C>(_socket: S, _config: C) {}
+            pub async fn handle_live_voice_ws<S, X, C>(_socket: S, _ctx: X, _config: C) {}
         }
     }
     pub mod streaming {

@@ -11,15 +11,14 @@ fn context() -> RunContext<crate::agent::tinyagents::host::OpenHumanRunContext> 
 #[tokio::test]
 async fn same_tool_calls_persist_artifacts_under_distinct_call_ids() {
     let temp = tempfile::tempdir().expect("temporary artifact root");
+    let store = crate::agent::harness::tool_result_artifacts::in_memory_tool_result_store(
+        temp.path().to_path_buf(),
+        "identity-session",
+    );
     let middleware = ToolOutputMiddleware {
         budget_bytes: 8,
         payload_summarizer: None,
-        artifact_store: Some(
-            crate::agent::harness::tool_result_artifacts::new_tool_result_store(
-                temp.path().to_path_buf(),
-                "identity-session",
-            ),
-        ),
+        artifact_store: Some(store.clone()),
         tokenjuice_compaction_enabled: false,
         tokenjuice_compression: AgentTokenjuiceCompression::Off,
         runtime_config: None,
@@ -46,13 +45,20 @@ async fn same_tool_calls_persist_artifacts_under_distinct_call_ids() {
         .await
         .expect("second artifact is persisted");
 
-    let root = temp.path().join("tool-results/identity-session/echo");
     assert_eq!(
-        std::fs::read_to_string(root.join("echo-1.txt")).expect("first artifact"),
+        store
+            .read("tool-results/identity-session/echo/echo-1.txt")
+            .await
+            .unwrap()
+            .expect("first artifact"),
         "first result is deliberately oversized"
     );
     assert_eq!(
-        std::fs::read_to_string(root.join("echo-2.txt")).expect("second artifact"),
+        store
+            .read("tool-results/identity-session/echo/echo-2.txt")
+            .await
+            .unwrap()
+            .expect("second artifact"),
         "second result is deliberately oversized"
     );
 }
@@ -118,4 +124,59 @@ fn a_raw_fetch_wrapped_in_use_skill_is_still_a_raw_fetch() {
         &json!({"skill": "files", "tool": "file_read", "args": {"raw": true}})
     ));
     assert!(!is_raw_fetch("use_skill", &json!({"raw": true})));
+}
+
+fn policy_mw(budget: usize, caps: &[(&str, usize)]) -> ToolOutputMiddleware {
+    let mut tool_policies = HashMap::new();
+    for (name, cap) in caps {
+        let mut policy = TaToolPolicy::default();
+        policy.runtime.max_result_bytes = Some(*cap);
+        tool_policies.insert((*name).to_string(), policy);
+    }
+    ToolOutputMiddleware {
+        budget_bytes: budget,
+        payload_summarizer: None,
+        artifact_store: None,
+        tokenjuice_compaction_enabled: false,
+        tokenjuice_compression: AgentTokenjuiceCompression::Full,
+        runtime_config: None,
+        tool_policies,
+        artifact_reads: Default::default(),
+        focus_by_call: Default::default(),
+        summary_focus_tools: Default::default(),
+        raw_fetches: Default::default(),
+        file_reads: Default::default(),
+    }
+}
+
+#[test]
+fn a_tools_declared_cap_wins_over_the_shared_budget_in_the_stage_plan() {
+    let mw = policy_mw(16_000, &[("web_fetch", 50_000)]);
+    let declared = plan_output_stages(&mw, "web_fetch", 10, false);
+    assert_eq!(declared.budget_bytes, 50_000);
+    assert!(declared.tool_declared_cap);
+    let shared = plan_output_stages(&mw, "shell", 10, false);
+    assert_eq!(shared.budget_bytes, 16_000);
+    assert!(!shared.tool_declared_cap);
+}
+
+#[test]
+fn proposal_and_discovery_tools_are_exempt_from_the_byte_cap() {
+    let mw = policy_mw(100, &[]);
+    for tool in ["propose_workflow", "mcp_list_tools"] {
+        assert!(plan_output_stages(&mw, tool, 10_000, true).truncation_exempt);
+    }
+    // A sampling tool skips compaction but stays under the byte cap.
+    let sampling = plan_output_stages(&mw, "get_tool_contract", 10_000, true);
+    assert!(sampling.compaction_exempt && !sampling.truncation_exempt);
+}
+
+#[test]
+fn the_untouched_output_is_kept_only_when_it_could_spill_and_be_read_back() {
+    let mw = policy_mw(100, &[]);
+    assert!(plan_output_stages(&mw, "shell", 101, true).keep_full_output);
+    assert!(!plan_output_stages(&mw, "shell", 101, false).keep_full_output);
+    assert!(!plan_output_stages(&mw, "shell", 100, true).keep_full_output);
+    let too_big = tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES as usize + 1;
+    assert!(!plan_output_stages(&mw, "shell", too_big, true).keep_full_output);
 }

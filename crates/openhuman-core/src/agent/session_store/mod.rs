@@ -14,30 +14,25 @@
 //! OpenHuman runs one runtime per process. With nothing installed, the core
 //! keeps today's on-disk layout.
 
-use std::sync::{Arc, LazyLock, PoisonError, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock};
 
-pub use agent_transcripts::{agent_transcript_root, AgentTranscriptFiles};
 use tinyagents_session::port::{AgentStores, SessionStoreProvider};
 
-mod agent_transcripts;
+pub mod ledger_sync;
+mod rebound;
+mod workspace;
+
+pub use rebound::{rebind_all, ReboundSessionStores, StoreRegistry};
+pub use workspace::{
+    artifact_blobs_for, attachment_stash_for, current_documents_for, default_turn_states_for,
+    ledger_for, provider_for_workspace, release_workspace, release_workspace_defaults,
+    require_ledger, status_store_for, stores_for, stores_or_ephemeral, turn_states_for,
+    with_ledger, with_ledger_async, WorkspaceSessionStores,
+};
 
 static PROVIDER: LazyLock<RwLock<Option<Arc<dyn SessionStoreProvider>>>> =
     LazyLock::new(|| RwLock::new(None));
-
-tokio::task_local! {
-    /// A provider for one task tree only, ahead of the process-wide one; how
-    /// tests in a shared binary use a store without touching each other.
-    static SCOPED: Arc<dyn SessionStoreProvider>;
-}
-
-/// Runs `future` with `provider` as the session store, for that task only.
-/// Tasks it spawns do not inherit it.
-pub async fn scope<F: std::future::Future>(
-    provider: Arc<dyn SessionStoreProvider>,
-    future: F,
-) -> F::Output {
-    SCOPED.scope(provider, future).await
-}
 
 /// Routes every agent's session state through `provider`, replacing any
 /// earlier one.
@@ -87,17 +82,21 @@ pub fn restore(provider: Option<Arc<dyn SessionStoreProvider>>) {
     *PROVIDER.write().unwrap_or_else(PoisonError::into_inner) = provider;
 }
 
-/// The provider in effect: the task's [`scope`]d one, else the installed
-/// one, if any.
+/// The provider in effect for the calling task's ambient context: see
+/// [`installed_in`].
 #[must_use]
 pub fn installed() -> Option<Arc<dyn SessionStoreProvider>> {
-    SCOPED
-        .try_with(Arc::clone)
-        .ok()
-        .or_else(|| {
-            crate::core::runtime::CoreContext::current_host_overrides()
-                .and_then(|local| local.session_store.clone())
-        })
+    installed_in(&crate::core::runtime::DispatchCtx::ambient())
+}
+
+/// The provider in effect for `ctx`: the host-override one of the agent it
+/// runs for, else the installed one, if any.
+#[must_use]
+pub fn installed_in(
+    ctx: &crate::core::runtime::DispatchCtx,
+) -> Option<Arc<dyn SessionStoreProvider>> {
+    ctx.host_overrides()
+        .and_then(|local| local.session_store.clone())
         .or_else(|| {
             PROVIDER
                 .read()
@@ -138,44 +137,110 @@ pub fn transcripts_for(
     Some(stores.transcripts)
 }
 
-/// [`transcripts_for`] `agent_id`, or the transcript files under
-/// `workspace_dir` when no store is in effect — the session host's resolution.
+/// [`transcripts_for`] `agent_id`, or the workspace's own transcript store
+/// ([`workspace_transcripts`]) when no host store is in effect — the session
+/// host's resolution.
 #[must_use]
 pub fn transcripts_or_files(
     agent_id: &str,
     workspace_dir: &std::path::Path,
 ) -> Arc<dyn tinyagents_session::transcript::TranscriptLocator> {
-    transcripts_for(agent_id).unwrap_or_else(|| match current_embedded_agent() {
-        Some(embedded) => {
-            log::debug!("[session_store] transcripts under the agent's directory agent={embedded}");
-            Arc::new(AgentTranscriptFiles::new(workspace_dir, &embedded))
-        }
-        None => Arc::new(tinyagents_session::transcript::FileTranscriptLocator::new(
-            workspace_dir,
-        )),
-    })
+    transcripts_for(agent_id).unwrap_or_else(|| workspace_transcripts(agent_id, workspace_dir))
 }
 
-/// The workspace root transcripts are written under: the agent's own
-/// directory under an embedded agent's context, else `workspace_dir` — which
-/// for a SaaS profile's default agent is that profile's own workspace.
+/// [`transcripts_or_files`] for the store `core` selects, never the ambient
+/// context's: `core`'s own host-override provider, else the installed one,
+/// else the workspace's store. For work that carries its context explicitly
+/// (a detached sub-agent on a bare `tokio::spawn`, which has no ambient one).
 #[must_use]
-pub fn transcript_root(workspace_dir: &std::path::Path) -> std::path::PathBuf {
-    match current_embedded_agent() {
-        Some(agent) => agent_transcript_root(workspace_dir, &agent),
-        None => workspace_dir.to_path_buf(),
+pub fn transcripts_or_files_in(
+    core: &crate::core::runtime::CoreContext,
+    agent_id: &str,
+    workspace_dir: &std::path::Path,
+) -> Arc<dyn tinyagents_session::transcript::TranscriptLocator> {
+    let provider = core
+        .host_overrides()
+        .and_then(|overrides| overrides.session_store.clone())
+        .or_else(|| {
+            PROVIDER
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        });
+    match provider {
+        Some(provider) => {
+            log::debug!(
+                "[session_store] transcripts via the carried context's store agent={agent_id}"
+            );
+            provider.for_agent(agent_id).transcripts
+        }
+        None => workspace_transcripts(agent_id, workspace_dir),
     }
 }
 
-/// The embedded agent the calling tenant runs as, if any. A SaaS profile's
-/// default agent has none: its transcripts live at its workspace root, which
-/// no other profile shares. A SaaS task with no scope has none either; the
-/// workspace it was handed is the only one it touches.
+/// The workspace stores this process holds open, so repeat lookups share one
+/// backend ([`release_workspace_stores`] drops them for a data reset).
+static OPEN_WORKSPACE_STORES: LazyLock<
+    Mutex<HashMap<(std::path::PathBuf, String), tinyagents_session::port::WorkspaceStores>>,
+> = LazyLock::new(Mutex::default);
+
+/// Drops the workspace transcript stores held open by [`workspace_transcripts`].
+pub fn release_workspace_stores() {
+    OPEN_WORKSPACE_STORES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+}
+
+/// Drops the workspace transcript stores held open for `workspace_dir` (every
+/// agent's), leaving other workspaces' alone.
+pub fn release_workspace_stores_for(workspace_dir: &std::path::Path) {
+    OPEN_WORKSPACE_STORES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .retain(|(dir, _), _| dir != workspace_dir);
+}
+
+/// `agent_id`'s transcripts for a host that only has a workspace directory:
+/// TinyAgents' `WorkspaceStores` (the driver ports over a SQLite store under
+/// the workspace). It imports the workspace's classic `session_raw/*.jsonl`
+/// files once, read-only, so no file API is involved.
+///
+/// A workspace whose store cannot be opened (read-only disk) degrades to an
+/// in-memory locator for the process rather than failing the turn.
 #[must_use]
-pub fn current_embedded_agent() -> Option<String> {
-    crate::core::runtime::current_tenant()
-        .ok()
-        .and_then(|tenant| tenant.agent)
+pub fn workspace_transcripts(
+    agent_id: &str,
+    workspace_dir: &std::path::Path,
+) -> Arc<dyn tinyagents_session::transcript::TranscriptLocator> {
+    let key = (workspace_dir.to_path_buf(), agent_id.to_string());
+    let mut open = OPEN_WORKSPACE_STORES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(stores) = open.get(&key) {
+        return stores.transcripts();
+    }
+    match tinyagents_session::port::WorkspaceStores::open(workspace_dir, agent_id) {
+        Ok(stores) => {
+            log::debug!(
+                "[session_store] transcripts via the workspace store agent={agent_id} import={:?}",
+                stores.import_outcome()
+            );
+            let transcripts = stores.transcripts();
+            open.insert(key, stores);
+            transcripts
+        }
+        Err(error) => {
+            log::error!(
+                "[session_store] workspace store unavailable agent={agent_id} workspace={}: {error:#}; \
+                 transcripts are not kept",
+                workspace_dir.display()
+            );
+            tinyagents_session::port::InMemorySessionStores::new()
+                .for_agent(agent_id)
+                .transcripts
+        }
+    }
 }
 
 /// The stores of the tenant the current [`CoreContext`] works for, keyed by
@@ -192,9 +257,9 @@ pub fn current_embedded_agent() -> Option<String> {
 /// [`CoreContext`]: crate::core::runtime::CoreContext
 /// [`CoreContext::session_agent`]: crate::core::runtime::CoreContext::session_agent
 #[must_use]
-pub fn current() -> Option<AgentStores> {
+pub fn current(ctx: &crate::core::runtime::DispatchCtx) -> Option<AgentStores> {
     let provider = installed()?;
-    let tenant = match crate::core::runtime::current_tenant() {
+    let tenant = match ctx.tenant() {
         Ok(tenant) => tenant,
         Err(no_tenant) => {
             log::warn!("[session_store] current: {no_tenant}");
@@ -209,12 +274,25 @@ pub fn current() -> Option<AgentStores> {
 /// serves a SaaS profile, else the context's agent, else `fallback` (the
 /// session's own definition id), as before profiles existed.
 #[must_use]
-pub fn current_agent_key_or(fallback: &str) -> String {
-    let tenant = crate::core::runtime::tenant::current_tenant_or_isolated("session_locator");
+pub fn current_agent_key_or(ctx: &crate::core::runtime::DispatchCtx, fallback: &str) -> String {
+    agent_key_for(
+        &crate::core::runtime::tenant::isolated_unless_tenant(ctx.tenant(), "session_locator"),
+        fallback,
+    )
+}
+
+/// The agent id `tenant`'s transcripts are kept under, for a caller that
+/// already holds the request's tenant (an RPC handler's context): the
+/// [`session_key`](crate::core::runtime::session_key) when it serves a SaaS
+/// profile, else its agent, else `fallback` (the session's definition id).
+/// [`current_agent_key_or`] is this over a context's tenant, so a reader that
+/// passes its tenant here resolves the same store the session host wrote to.
+#[must_use]
+pub fn agent_key_for(tenant: &crate::core::runtime::Tenant, fallback: &str) -> String {
     if tenant.profile.is_some() {
-        return crate::core::runtime::session_key(&tenant);
+        return crate::core::runtime::session_key(tenant);
     }
-    tenant.agent.unwrap_or_else(|| fallback.to_string())
+    tenant.agent.clone().unwrap_or_else(|| fallback.to_string())
 }
 
 /// The workspace the current [`CoreContext`](crate::core::runtime::CoreContext)
@@ -235,6 +313,9 @@ pub fn context_workspace_dir() -> std::path::PathBuf {
 /// the desktop app have no per-user agent; a single shared bucket keeps them
 /// together, as the shared workspace always did.
 pub const DEFAULT_AGENT: &str = "default";
+
+#[cfg(test)]
+pub(crate) mod splice_fixture;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

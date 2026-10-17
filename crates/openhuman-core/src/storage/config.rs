@@ -5,95 +5,87 @@
 //!
 //! 1. `OPENHUMAN_STORAGE_URL`;
 //! 2. `[storage] url` in `config.toml`;
-//! 3. the default, `sqlite:<workspace_dir>`.
+//! 3. the default, `sqlite:<workspace_dir>/storage` ([`default_url`]).
 //!
-//! The first two name a backend the host opens once at startup and installs
-//! ([`super::install`]); every domain that has moved onto the ports then uses
-//! it, and the session store follows (`DriverSessionStores`). That is
-//! [`StorageMode::Url`].
+//! Every host opens the resolved URL once at startup and installs it
+//! ([`super::install`]); every domain then reaches storage through it, and the
+//! session store follows (`DriverSessionStores`). There is no second layout:
+//! the per-domain `.db` files, JSONL transcripts and JSON stores older
+//! installs wrote are read once, read-only, by [`super::import`] and never
+//! consulted again.
 //!
-//! The default is [`StorageMode::Default`]: no backend is installed and
-//! nothing about the large stores changes (`sessions.db`, `flows.db`,
-//! `jobs.db` and `graph_checkpoints.db` are already SQLite files served as
-//! they are). The small stores (approvals, devices, notifications, task
-//! sources) keep their rows as document tables inside their own `.db` files,
-//! `<workspace>/<domain>/<name>.db`, importing the rows of their old tables
-//! once ([`super::local`]). The workspace directory is therefore the default's
-//! root, but each database is placed at its established path instead of
-//! `<workspace>/<name>.db`, so an existing install keeps one file per store.
+//! The default is rooted at the **workspace**, so a different workspace is a
+//! different database. When the desktop rebinds its workspace (a different
+//! user signs in) the host re-resolves the URL for the new workspace and
+//! reinstalls the backend ([`super::rebind`]). An explicit URL does not follow
+//! the workspace.
 //!
-//! The value `classic` (alias `legacy`) opts out: no backend, the pure
-//! pre-storage layout with the legacy tables. It is the escape hatch for a
-//! process that must not import its small-store files. The tables of a
-//! database that was already imported are kept as `_legacy_<name>` for one
-//! release so their rows can be recovered by hand; an older build looks for
-//! the original names, so it starts from empty tables, not from those rows.
+//! A SaaS process has no workspace-local state to default to: with no explicit
+//! URL it resolves none, and its host refuses to start without one.
 
 use std::path::Path;
 
 use crate::config::Config;
 
-/// The `OPENHUMAN_STORAGE_URL` / `[storage] url` value that opts out of the
-/// default and keeps the pure legacy layout.
-pub const CLASSIC: &str = "classic";
+/// The directory under the workspace the default backend lives in.
+pub const DEFAULT_DIR: &str = "storage";
 
-/// The value spellings that mean [`CLASSIC`].
-const CLASSIC_ALIASES: [&str; 2] = [CLASSIC, "legacy"];
+/// The retired opt-out values (`classic`, `legacy`). They are no longer a mode:
+/// a URL set to one of them is read as unset, with a warning.
+const RETIRED_OPT_OUTS: [&str; 2] = ["classic", "legacy"];
 
-/// What the process's configuration asks for.
+/// Where the URL came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageMode {
     /// A backend named by `OPENHUMAN_STORAGE_URL` or `[storage] url`.
     Url(String),
-    /// Nothing configured: SQLite document tables inside the small stores'
-    /// own database files, everything else as it was.
+    /// Nothing configured: the default for the workspace
+    /// ([`default_url`]).
     Default,
-    /// Opted out ([`CLASSIC`]): the pure legacy layout.
-    Classic,
 }
 
 /// The mode `env` and `config` ask for. Blank values count as unset, a blank
-/// override falls through to the file, and [`CLASSIC`] in either is the
-/// opt-out.
+/// override falls through to the file, and a retired opt-out value
+/// (`classic`) is skipped with a warning.
 pub fn mode_from(env: Option<String>, config: &Config) -> StorageMode {
     let chosen = env
         .into_iter()
         .chain(config.storage.url.clone())
         .map(|url| url.trim().to_string())
-        .find(|url| !url.is_empty());
+        .filter(|url| !url.is_empty())
+        .find(|url| {
+            let retired = RETIRED_OPT_OUTS.iter().any(|a| url.eq_ignore_ascii_case(a));
+            if retired {
+                tracing::warn!(
+                    target: "openhuman::storage",
+                    "[storage] the `classic` storage mode was retired; using the default backend"
+                );
+            }
+            !retired
+        });
     match chosen {
         None => StorageMode::Default,
-        Some(url) if CLASSIC_ALIASES.iter().any(|a| url.eq_ignore_ascii_case(a)) => {
-            StorageMode::Classic
-        }
         Some(url) => StorageMode::Url(url),
     }
 }
 
-/// [`mode_from`] with the environment read, and a SaaS process (which has no
-/// workspace-local files to default to, and whose storage is always an
-/// explicit backend) never in [`StorageMode::Default`].
+/// [`mode_from`] with the environment read.
 pub fn mode(config: &Config) -> StorageMode {
-    let mode = mode_from(std::env::var(super::STORAGE_URL_VAR).ok(), config);
-    if mode == StorageMode::Default && crate::core::runtime::mode::is_saas() {
-        return StorageMode::Classic;
-    }
-    mode
+    mode_from(std::env::var(super::STORAGE_URL_VAR).ok(), config)
 }
 
-/// The default URL for `workspace_dir`: SQLite in directory mode, one file
-/// per named database.
+/// The default URL for `workspace_dir`: SQLite in directory mode under
+/// `<workspace>/storage`, one file per named database.
 pub fn default_url(workspace_dir: &Path) -> String {
-    format!("sqlite:{}", workspace_dir.display())
+    format!("sqlite:{}", workspace_dir.join(DEFAULT_DIR).display())
 }
 
-/// The URL in effect for `mode`: the configured one, the default under
-/// `workspace_dir`, or none for the legacy layout.
-pub fn effective_url(mode: &StorageMode, workspace_dir: &Path) -> Option<String> {
+/// The URL in effect for `mode`: the configured one, or the default under
+/// `workspace_dir`.
+pub fn effective_url(mode: &StorageMode, workspace_dir: &Path) -> String {
     match mode {
-        StorageMode::Url(url) => Some(url.clone()),
-        StorageMode::Default => Some(default_url(workspace_dir)),
-        StorageMode::Classic => None,
+        StorageMode::Url(url) => url.clone(),
+        StorageMode::Default => default_url(workspace_dir),
     }
 }
 

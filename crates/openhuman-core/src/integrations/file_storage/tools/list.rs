@@ -41,8 +41,33 @@ impl Tool for StorageListFilesTool {
     }
 
     async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+        self.run(_args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        _args: Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(_args, &approval).await
+    }
+}
+
+impl StorageListFilesTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        _args: Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         tracing::debug!("[file_storage] listing files");
-        match self.client.get::<ListFilesResponse>(FILES_PATH).await {
+        match self
+            .client
+            .get::<ListFilesResponse>(approval, FILES_PATH)
+            .await
+        {
             Ok(resp) => {
                 let mut lines = vec![format!(
                     "{} file(s), using {} of {} bytes:",

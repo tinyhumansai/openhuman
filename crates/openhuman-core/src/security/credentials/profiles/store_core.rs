@@ -9,10 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 #[cfg(test)]
 use std::sync::Arc;
 
-use super::{
-    is_lock_create_unwritable_fs, AuthProfile, AuthProfilesData, AuthProfilesStore,
-    PROFILES_FILENAME,
-};
+use super::{is_lock_create_unwritable_fs, AuthProfile, AuthProfilesData, AuthProfilesStore};
 use crate::security::secret_storage::SecretStore;
 
 use super::LOCK_FILENAME;
@@ -51,7 +48,7 @@ impl AuthProfilesStore {
             }
         }
         Self {
-            path: state_dir.join(PROFILES_FILENAME),
+            path: super::profiles_file(state_dir),
             lock_path: state_dir.join(LOCK_FILENAME),
             secret_store: SecretStore::new(state_dir, encrypt_secrets),
             user_id,

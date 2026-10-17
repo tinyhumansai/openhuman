@@ -45,7 +45,8 @@ fn extract_inline_prompt_returns_body_for_trigger_triage_builtin() {
         .find(|b| b.id == TRIGGER_TRIAGE_AGENT_ID)
         .expect("trigger_triage built-in must be registered");
     let mut def: AgentDefinition = toml::from_str(builtin.toml).expect("TOML must parse");
-    def.system_prompt = PromptSource::Dynamic(builtin.prompt_fn);
+    def.system_prompt = PromptSource::Dynamic(());
+    def.extensions.prompt_builder = Some(builtin.prompt_fn);
     let body = extract_inline_prompt(&def).expect("body should be present");
     assert!(
         body.to_lowercase().contains("trigger"),

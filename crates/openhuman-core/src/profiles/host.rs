@@ -116,6 +116,7 @@ impl std::fmt::Debug for ProfileHost {
 /// methods on [`USER_METHODS`](super::surface::USER_METHODS) are reachable.
 pub fn user_domains() -> DomainSet {
     DomainSet {
+        agent: true,
         threads: true,
         channels: true,
         memory: true,
@@ -371,6 +372,7 @@ impl ProfileHost {
         // so recover them in this profile's scope (on every open): the drains then run as this profile, on its tables alone.
         CoreContext::sync_scope(Arc::clone(&context), || {
             crate::agent::orchestration::background_delivery::recover_on_open(
+                &crate::core::runtime::DispatchCtx::new(Arc::clone(&context)),
                 &layout.workspace_dir,
                 crate::agent::orchestration::delivery_drain::DrainFence::of(Arc::clone(&fence)),
             )
@@ -430,6 +432,18 @@ impl ProfileHost {
 
     pub fn open_count(&self) -> usize {
         self.lock().len()
+    }
+
+    /// The id of every provisioned profile, open here or not, sorted. Cheaper
+    /// than [`list`](Self::list): no per-profile credential probe.
+    pub async fn ids(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .registry
+            .list()
+            .await?
+            .into_iter()
+            .map(|meta| meta.profile_id.to_string())
+            .collect())
     }
 
     /// Every provisioned profile, open here or not.
@@ -557,7 +571,9 @@ impl ProfileHost {
         );
         let stopped = CoreContext::scope(
             Arc::clone(state.context()),
-            crate::web_chat::cancel_all_turns(),
+            crate::web_chat::cancel_all_turns(&crate::core::runtime::DispatchCtx::new(Arc::clone(
+                state.context(),
+            ))),
         )
         .await;
         log::info!("[profiles] fenced profile={id}: stopped {stopped} thread(s)");
@@ -655,8 +671,8 @@ pub fn host() -> Option<Arc<ProfileHost>> {
 }
 
 /// The profile the current work runs for, if any.
-pub fn current() -> Option<Arc<Profile>> {
-    let profile = crate::core::runtime::current_tenant().ok()?.profile?;
+pub fn current(ctx: &crate::core::runtime::DispatchCtx) -> Option<Arc<Profile>> {
+    let profile = ctx.tenant().ok()?.profile?;
     let id = ProfileId::parse(&profile).ok()?;
     host()?.get(&id)
 }
@@ -664,14 +680,11 @@ pub fn current() -> Option<Arc<Profile>> {
 /// Refuse to start work for a profile this node no longer hosts: one whose
 /// lease was lost (fenced) or that was closed under a request still running
 /// for it. `Ok` outside SaaS, and for work that serves no profile.
-pub fn ensure_hosted() -> Result<(), String> {
+pub fn ensure_hosted(ctx: &crate::core::runtime::DispatchCtx) -> Result<(), String> {
     let Some(host) = host() else {
         return Ok(());
     };
-    let Some(profile) = crate::core::runtime::current_tenant()
-        .ok()
-        .and_then(|tenant| tenant.profile)
-    else {
+    let Some(profile) = ctx.tenant().ok().and_then(|tenant| tenant.profile) else {
         return Ok(());
     };
     // The latch, and the grant's expiry by this node's clock: a node whose

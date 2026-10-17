@@ -38,7 +38,12 @@ impl StorageUploadFileTool {
         }
     }
 
-    async fn run(&self, args: Value, action_dir: &Path) -> anyhow::Result<ToolResult> {
+    async fn run(
+        &self,
+        args: Value,
+        action_dir: &Path,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         if let Some(blocked) = readonly_autonomy_block(&self.security) {
             return Ok(blocked);
         }
@@ -109,7 +114,7 @@ impl StorageUploadFileTool {
 
         match self
             .client
-            .upload_multipart::<UploadResponse>(FILES_PATH, form)
+            .upload_multipart::<UploadResponse>(approval, FILES_PATH, form)
             .await
         {
             Ok(resp) => {
@@ -181,7 +186,7 @@ impl Tool for StorageUploadFileTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        self.run(args, &self.action_dir).await
+        self.run(args, &self.action_dir, &Default::default()).await
     }
 
     async fn execute_with_context(
@@ -191,6 +196,7 @@ impl Tool for StorageUploadFileTool {
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
-        self.run(args, &action_dir).await
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &action_dir, &approval).await
     }
 }

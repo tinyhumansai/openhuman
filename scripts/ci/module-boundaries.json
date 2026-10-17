@@ -7,6 +7,7 @@
     "tinychannels",
     "tinychannels-runtime",
     "tinyhosts",
+    "tinymemes",
     "tinybox-core",
     "tinybox-jail",
     "tinybox-docker",
@@ -27,7 +28,8 @@
     "tinydocs-extract",
     "tinysearch",
     "tinysearch-core",
-    "cpal"
+    "cpal",
+    "tinyflows-module"
   ],
   "implementationPrefixes": [
     "tinyjuice-",
@@ -35,6 +37,7 @@
     "tinymcp-",
     "tinychannels-",
     "tinyhosts-",
+    "tinymemes-",
     "tinybox-",
     "tinywallet-",
     "tinycomputer-",
@@ -94,42 +97,58 @@
       "owner": "https://github.com/tinyhumansai/tinyhosts"
     },
     {
+      "name": "tinymemes-bus",
+      "manifest": "vendor/tinymemes/crates/tinymemes-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinymemes"
+    },
+    {
       "name": "tinybox-bus",
       "manifest": "vendor/tinybox/crates/tinybox-bus/Cargo.toml",
       "owner": "https://github.com/tinyhumansai/tinybox"
+    },
+    {
+      "name": "tinyflows-bus",
+      "manifest": "vendor/tinyflows/crates/tinyflows-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyflows"
     }
   ],
+  "linkedHost": {
+    "package": "openhuman-modules-linked",
+    "allowedParents": [
+      "openhuman-cli"
+    ]
+  },
   "pendingContracts": [],
   "exceptions": [
     {
-      "scope": "hosts",
-      "package": "tinymcp",
-      "reason": "Protocol servers and supervisor operations still call the implementation."
+      "scope": "tinychannels-bus",
+      "package": "anyhow",
+      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
     },
     {
-      "scope": "hosts",
-      "package": "tinychannels",
-      "reason": "Providers, relay, pairing and delivery lifecycles still call the implementation."
+      "scope": "tinychannels-bus",
+      "package": "async-trait",
+      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
     },
     {
-      "scope": "hosts",
-      "package": "tinychannels-runtime",
-      "reason": "Providers, relay, pairing and delivery lifecycles still call the implementation."
+      "scope": "tinychannels-bus",
+      "package": "tokio",
+      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
     },
     {
-      "scope": "hosts",
-      "package": "tinywallet-crypto",
-      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+      "scope": "tinyconnectors-bus",
+      "package": "hmac",
+      "reason": "TinyConnectors #72 adds optional pure Composio webhook verification helpers to the bus contract for hosts that own the endpoint; this edge is enabled only by its opt-in webhook feature and is recorded for contract-boundary review."
     },
     {
-      "scope": "hosts",
-      "package": "tinywallet-web3",
-      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+      "scope": "tinyconnectors-bus",
+      "package": "sha2",
+      "reason": "TinyConnectors #72 adds optional pure Composio webhook verification helpers to the bus contract for hosts that own the endpoint; this edge is enabled only by its opt-in webhook feature and is recorded for contract-boundary review."
     },
     {
-      "scope": "hosts",
-      "package": "tinywallet-x402",
-      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+      "scope": "tinyflows-bus",
+      "package": "chrono",
+      "reason": "tinyflows-bus schedule contract v3 carries the job, run and schedule records (CronJob, CronRun, Schedule, DeliveryConfig, ...) with their DateTime<Utc> fields so hosts redeclare none of them. chrono is time arithmetic and RFC3339 serde only, with no I/O or runtime; the schedule maths themselves (cron expressions, time zones) run in the module. Recorded for contract-boundary review (tinyflows#143, openhuman cron cutover #7397)."
     }
   ],
   "excludedSubsystems": [

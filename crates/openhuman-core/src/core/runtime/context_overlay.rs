@@ -45,7 +45,7 @@ pub struct ContextOverlay {
     /// Turn the interactive approval gate off for this agent.
     pub approvals_disabled: bool,
     /// The agent's own sub-agent catalogue. `None` keeps the parent's.
-    pub definitions: Option<Arc<crate::agent::harness::definition::AgentDefinitionRegistry>>,
+    pub definitions: Option<Arc<crate::agent::harness::host_definition::AgentDefinitionRegistry>>,
 }
 
 impl ContextOverlay {
@@ -106,7 +106,7 @@ impl ContextOverlay {
     /// Give the derived context its own sub-agent catalogue.
     pub fn definitions(
         mut self,
-        definitions: Arc<crate::agent::harness::definition::AgentDefinitionRegistry>,
+        definitions: Arc<crate::agent::harness::host_definition::AgentDefinitionRegistry>,
     ) -> Self {
         self.definitions = Some(definitions);
         self

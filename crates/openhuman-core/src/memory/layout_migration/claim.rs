@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
+use tinymemory_tools::layout_migration::{LegacyClaim, Result as ModuleResult};
+
+use super::app_host::to_module;
 use crate::memory::error::{MemoryError, MemoryResult};
 
 /// Where a legacy tree's marker lives and who would own it.
@@ -121,6 +124,16 @@ pub fn take(key: &ClaimKey) -> MemoryResult<bool> {
         Err(error) => Err(MemoryError::Engine(format!(
             "legacy tree claim not saved: {error}"
         ))),
+    }
+}
+
+impl LegacyClaim for ClaimKey {
+    fn held_by_other(&self) -> ModuleResult<bool> {
+        held_by_other(self).map_err(to_module)
+    }
+
+    fn take(&self) -> ModuleResult<bool> {
+        take(self).map_err(to_module)
     }
 }
 

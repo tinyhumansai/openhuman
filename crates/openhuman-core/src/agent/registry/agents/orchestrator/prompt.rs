@@ -10,17 +10,18 @@
 //! delegate to any more. That prose lives here (not in the shared prompts
 //! module) so nobody has to branch on `agent_id` in a shared section impl.
 
-use crate::agent::harness::definition::SubagentEntry;
-use crate::agent::harness::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::prompts::{
     render_datetime, render_identity, render_tools, render_workspace, ConnectedIntegration,
-    PromptContext, ToolCallFormat,
+    PromptContext,
 };
 use crate::tools::orchestrator_tools::sanitise_slug;
 use crate::tools::toolpacks;
 use anyhow::Result;
 use std::fmt::Write;
+use tinyagents_definition::SubagentEntry;
 use tinyskills::Skill as Workflow;
+use tinytools_agent::dialect::ToolCallFormat;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
 
@@ -296,7 +297,7 @@ fn run_workflow_route(ctx: &PromptContext<'_>) -> Option<String> {
 /// a named one only what it names. The prompt has no policy session, and a pack
 /// is callable for an agent only when its belt mentions one of the pack's tools.
 fn belt_lists(ctx: &PromptContext<'_>, tool: &str) -> bool {
-    use crate::agent::harness::definition::ToolScope;
+    use tinyagents_definition::ToolScope;
     let Some(registry) = AgentDefinitionRegistry::current() else {
         return false;
     };
@@ -360,7 +361,7 @@ fn strip_route_lines(archetype: &str, skills: bool, mcp: bool, composio: bool) -
 fn resolve_definition<'r>(
     registry: &'r AgentDefinitionRegistry,
     agent_id: &str,
-) -> Option<&'r crate::agent::harness::definition::AgentDefinition> {
+) -> Option<&'r crate::agent::harness::host_definition::AgentDefinition> {
     if let Some(found) = registry.get(agent_id) {
         return Some(found);
     }
@@ -445,7 +446,11 @@ fn render_connected_mcp_servers() -> String {
     use crate::mcp::registry::connections;
     let servers = match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(|| handle.block_on(connections::connected_overview()))
+            tokio::task::block_in_place(|| {
+                handle.block_on(connections::connected_overview(
+                    &crate::core::runtime::DispatchCtx::ambient(),
+                ))
+            })
         }
         _ => Vec::new(),
     };
@@ -469,7 +474,11 @@ fn format_connected_mcp_block(
         "## Connected MCP Servers\n\n\
          Their actions are searchable through `tool_search`. Search for the \
          action in plain words, then call the matching MCP tool with the \
-         schema the search returns.\n\n",
+         schema the search returns.\n\n\
+         A tool's own UI (a cart, a QR code, a checkout) appears inline in its \
+         tool card. Always repeat any payment, confirmation or sign-in link a \
+         tool result contains in your reply, and never say a QR code or widget \
+         is visible unless the tool card shows one.\n\n",
     );
     for s in servers {
         let name = if s.display_name.trim().is_empty() {

@@ -1,5 +1,5 @@
 //! Forwards a running turn's `AgentProgress` stream into `WebChannelEvent`
-//! socket events and mirrors it into `TurnStateStore`. Also emits the
+//! socket events and mirrors it into the `TurnStates` port. Also emits the
 //! `inference_heartbeat` liveness beat (see [`INFERENCE_HEARTBEAT_SECS`])
 //! so a long silent prefill can't trip the frontend's ~120s silence timeout.
 
@@ -7,15 +7,20 @@ use serde_json::json;
 
 use crate::threads::turn_state::mirror::ObserveProgress;
 use crate::web_chat::{SubagentProgressDetail, WebChannelEvent};
-use tinyagents_session::turn_state::{TurnStateMirror, TurnStateStore};
+use tinyagents_session::{port::TurnStates, turn_state::TurnStateMirror};
 
-use super::event_bus::publish_web_channel_event;
+use super::event_bus::publish_web_channel_event_in;
 use super::types::ChatRequestMetadata;
+use crate::core::runtime::DispatchCtx;
 
 #[path = "progress_bridge_subagent_events.rs"]
 mod subagent_events;
 #[path = "progress_bridge_text_events.rs"]
 mod text_events;
+#[path = "progress_bridge_tool_progress.rs"]
+mod tool_progress;
+#[path = "progress_bridge_trace.rs"]
+mod trace;
 use subagent_events::BridgeCtx;
 
 /// Cadence of the `inference_heartbeat` liveness beat the bridge emits while a
@@ -91,6 +96,7 @@ impl ProgressBridgeHandle {
 /// vanishing when the turn settles. Clears `buffer` unconditionally; emits
 /// nothing for narration that is empty or too short to stand alone.
 fn flush_interim_narration(
+    ctx: &crate::core::runtime::DispatchCtx,
     buffer: &mut String,
     round: u32,
     client_id: &str,
@@ -109,6 +115,7 @@ fn flush_interim_narration(
         request_id,
     );
     publish_seq_stamped(
+        ctx,
         emit_seq,
         WebChannelEvent {
             event: "chat_interim".to_string(),
@@ -129,10 +136,10 @@ fn flush_interim_narration(
 /// identically to the persisted turn-state snapshot
 /// (conversations-timeline-refactor, Phase 4). The counter advances once per
 /// emitted event so each `(request_id, seq)` pair is unique within a turn.
-fn publish_seq_stamped(next_seq: &mut u64, mut event: WebChannelEvent) {
+fn publish_seq_stamped(ctx: &DispatchCtx, next_seq: &mut u64, mut event: WebChannelEvent) {
     event.seq = Some(*next_seq);
     *next_seq = next_seq.saturating_add(1);
-    publish_web_channel_event(event);
+    publish_web_channel_event_in(ctx, event);
 }
 
 /// The trimmed narration to surface as an interim bubble, or `None` when it is
@@ -165,13 +172,13 @@ mod wire_caps;
 use wire_caps::MAX_WIRE_SUBAGENT_OUTPUT;
 use wire_caps::{cap_wire_args, cap_wire_output};
 
+use crate::agent::session_store::ledger_sync;
+
 pub(super) fn ledger_upsert_agent_run(
     config: &crate::config::Config,
     upsert: tinyagents_session::run_ledger::AgentRunUpsert,
 ) {
-    if let Err(err) =
-        tinyagents_session::run_ledger::upsert_agent_run(&config.workspace_dir, upsert)
-    {
+    if let Err(err) = ledger_sync::upsert_agent_run(&config.workspace_dir, upsert) {
         log::warn!("[run_ledger][web_channel] failed to upsert run: {err}");
     }
 }
@@ -180,8 +187,7 @@ pub(super) fn ledger_append_event(
     config: &crate::config::Config,
     event: tinyagents_session::run_ledger::RunEventAppend,
 ) {
-    if let Err(err) = tinyagents_session::run_ledger::append_run_event(&config.workspace_dir, event)
-    {
+    if let Err(err) = ledger_sync::append_run_event(&config.workspace_dir, event) {
         log::warn!("[run_ledger][web_channel] failed to append event: {err}");
     }
 }
@@ -190,9 +196,7 @@ pub(super) fn ledger_upsert_telemetry(
     config: &crate::config::Config,
     telemetry: tinyagents_session::run_ledger::RunTelemetryUpsert,
 ) {
-    if let Err(err) =
-        tinyagents_session::run_ledger::upsert_run_telemetry(&config.workspace_dir, telemetry)
-    {
+    if let Err(err) = ledger_sync::upsert_run_telemetry(&config.workspace_dir, telemetry) {
         log::warn!("[run_ledger][web_channel] failed to upsert telemetry: {err}");
     }
 }
@@ -201,7 +205,7 @@ pub(super) fn ledger_get_telemetry(
     config: &crate::config::Config,
     run_id: &str,
 ) -> Option<tinyagents_session::run_ledger::RunTelemetry> {
-    match tinyagents_session::run_ledger::get_agent_run(&config.workspace_dir, run_id) {
+    match ledger_sync::get_agent_run(&config.workspace_dir, run_id) {
         Ok(Some(run)) => {
             let telemetry = run.telemetry;
             log::debug!(
@@ -275,9 +279,10 @@ pub(crate) fn spawn_progress_bridge(
     client_id: String,
     thread_id: String,
     request_id: String,
-    turn_state_store: TurnStateStore,
+    turn_state_store: std::sync::Arc<dyn TurnStates>,
     metadata: ChatRequestMetadata,
     config: crate::config::Config,
+    dispatch_ctx: crate::core::runtime::DispatchCtx,
 ) -> ProgressBridgeHandle {
     use crate::agent::progress::AgentProgress;
     use std::collections::HashMap;
@@ -290,7 +295,7 @@ pub(crate) fn spawn_progress_bridge(
         std::sync::Mutex<Option<super::turn_timing::TurnTimingSnapshot>>,
     > = std::sync::Arc::new(std::sync::Mutex::new(None));
     let timing_snapshot_for_task = timing_snapshot.clone();
-    crate::core::runtime::spawn_scoped(async move {
+    dispatch_ctx.clone().spawn(async move {
         log::debug!(
             "[web_channel][bridge] spawned client_id={} thread_id={} request_id={} speak_reply={:?} source={:?} session_id={:?} hold_text_stream={}",
             client_id,
@@ -328,69 +333,9 @@ pub(crate) fn spawn_progress_bridge(
         let mut turn_state =
             TurnStateMirror::new(turn_state_store, thread_id.clone(), request_id.clone());
 
-        // #3886: structured tracing export. When enabled, fold the same
-        // progress stream into OTel/Langfuse-style spans correlated by session
-        // id (falling back to the thread id for headless/autonomous runs).
-        // `None` (both remote and local exporters disabled) is zero-cost.
-        let mut journal_trace_ctx = None;
-        let mut span_collector = if config.observability.share_usage_data
-            || config.observability.agent_tracing.enabled
-        {
-            use crate::agent::progress_tracing::SpanCollector;
-            use tinyagents_harness::observability::trace_export as te;
-            // One trace per turn: the trace id is unique per request, while the
-            // thread id rides along as the Langfuse `sessionId` so a
-            // conversation's per-turn traces still group under one session.
-            let base = te::trace_session_id(metadata.session_id, &thread_id);
-            let trace_id = format!("{base}:{request_id}");
-            // Attribute the trace to the *real* authenticated user (cached
-            // stored credential identity: id, else email) — the transport client
-            // id (socket client / "system") is NOT a user; it rides along as
-            // the separate `client.id` metadata attribute. The backend stamps
-            // the authenticated JWT user on every accepted trace.
-            let identity = crate::security::credentials::identity::peek_credential_user_identity();
-            let user_id = identity
-                .and_then(|i| i.id.or(i.email))
-                .or_else(|| session_profile_user_attribution(&config));
-            let user_attributed = user_id.is_some();
-            // Run origin for trace metadata: the request's source tag
-            // ("ptt"/"dictation"/"type"/"autonomous"/…), else a
-            // plain interactive chat turn.
-            let run_type = te::RunType::from_source(metadata.source.as_deref());
-            let channel_source = metadata
-                .source
-                .clone()
-                .unwrap_or_else(|| "chat".to_string());
-            // Storage-level privacy gate (#4454): capture_content (off by
-            // default) rides on the TraceContext so the collector only attaches
-            // prompt/reply content to spans when the operator opted in — no
-            // exporter can serialize prompt/reply text otherwise.
-            let capture_content = config.observability.agent_tracing.capture_content;
-            log::debug!(
-                "[web_channel][bridge] trace context trace_id={} user_attributed={} \
-                 agent_id={:?} channel_source={} run_type={} capture_content={} request_id={}",
-                trace_id,
-                user_attributed,
-                metadata.agent_id,
-                channel_source,
-                run_type.as_str(),
-                capture_content,
-                request_id,
-            );
-            let mut trace_ctx = te::TraceContext::new(trace_id, user_id)
-                .with_session_group(thread_id.clone())
-                .with_client_id(client_id.clone())
-                .with_channel_source(channel_source)
-                .with_run_type(run_type)
-                .with_capture_content(capture_content);
-            if let Some(agent_id) = metadata.agent_id.clone() {
-                trace_ctx = trace_ctx.with_agent_id(agent_id);
-            }
-            journal_trace_ctx = Some(trace_ctx.clone());
-            Some(SpanCollector::new(trace_ctx))
-        } else {
-            None
-        };
+        // #3886: structured tracing export (`progress_bridge_trace.rs`).
+        let (mut span_collector, mut journal_trace_ctx) =
+            trace::span_collector(&config, &metadata, &client_id, &thread_id, &request_id).unzip();
 
         // #4270: emit a periodic liveness beat for the whole in-flight turn so
         // the frontend silence timer never false-fires during a long prefill or
@@ -406,6 +351,8 @@ pub(crate) fn spawn_progress_bridge(
         // real beat lands one full interval after the turn begins.
         heartbeat.tick().await;
         let mut turn_active = false;
+        let bridge_ctx =
+            BridgeCtx::new(&client_id, &thread_id, &request_id, &config, &dispatch_ctx);
 
         loop {
             let event = tokio::select! {
@@ -423,7 +370,7 @@ pub(crate) fn spawn_progress_bridge(
                             thread_id,
                             request_id,
                         );
-                        publish_seq_stamped(&mut emit_seq, WebChannelEvent {
+                        publish_seq_stamped(&dispatch_ctx, &mut emit_seq, WebChannelEvent {
                             event: "inference_heartbeat".to_string(),
                             client_id: client_id.clone(),
                             thread_id: thread_id.clone(),
@@ -558,6 +505,7 @@ pub(crate) fn spawn_progress_bridge(
                         },
                     );
                     publish_seq_stamped(
+                        &dispatch_ctx,
                         &mut emit_seq,
                         WebChannelEvent {
                             event: "inference_start".to_string(),
@@ -575,6 +523,7 @@ pub(crate) fn spawn_progress_bridge(
                     round = iteration;
                     parent_max_iterations = max_iterations;
                     publish_seq_stamped(
+                        &dispatch_ctx,
                         &mut emit_seq,
                         WebChannelEvent {
                             event: "iteration_start".to_string(),
@@ -600,6 +549,7 @@ pub(crate) fn spawn_progress_bridge(
                     // once it calls a tool — flush it as an interim bubble so it
                     // persists interleaved with the tool activity.
                     flush_interim_narration(
+                        &dispatch_ctx,
                         &mut pending_narration,
                         iteration,
                         &client_id,
@@ -629,6 +579,7 @@ pub(crate) fn spawn_progress_bridge(
                         },
                     );
                     publish_seq_stamped(
+                        &dispatch_ctx,
                         &mut emit_seq,
                         WebChannelEvent {
                             event: "tool_call".to_string(),
@@ -690,6 +641,7 @@ pub(crate) fn spawn_progress_bridge(
                         request_id
                     );
                     publish_seq_stamped(
+                        &dispatch_ctx,
                         &mut emit_seq,
                         WebChannelEvent {
                             event: "tool_result".to_string(),
@@ -735,14 +687,8 @@ pub(crate) fn spawn_progress_bridge(
                     parent_call_id,
                     ..
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_spawned(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         &mut subagent_parent_call_ids,
                         round,
@@ -769,14 +715,8 @@ pub(crate) fn spawn_progress_bridge(
                     dirty_status,
                     ..
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_completed(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         &mut subagent_parent_call_ids,
                         &child_tool_counts,
@@ -798,14 +738,8 @@ pub(crate) fn spawn_progress_bridge(
                     task_id,
                     error,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_failed(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         &mut subagent_parent_call_ids,
                         &child_tool_counts,
@@ -822,14 +756,8 @@ pub(crate) fn spawn_progress_bridge(
                     worker_thread_id,
                     checkpoint_path,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_awaiting_user(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         &subagent_parent_call_ids,
                         round,
@@ -847,14 +775,8 @@ pub(crate) fn spawn_progress_bridge(
                     max_iterations,
                     extended_policy,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_iteration_started(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         round,
                         agent_id,
@@ -874,14 +796,8 @@ pub(crate) fn spawn_progress_bridge(
                     display_label,
                     display_detail,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_tool_call_started(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         &mut child_tool_counts,
                         round,
@@ -911,14 +827,8 @@ pub(crate) fn spawn_progress_bridge(
                     display_detail,
                     structured,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_tool_call_completed(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         round,
                         agent_id,
@@ -943,14 +853,8 @@ pub(crate) fn spawn_progress_bridge(
                     delta,
                     iteration,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_text_delta(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         round,
                         agent_id,
@@ -965,14 +869,8 @@ pub(crate) fn spawn_progress_bridge(
                     delta,
                     iteration,
                 } => {
-                    let ctx = BridgeCtx {
-                        client_id: &client_id,
-                        thread_id: &thread_id,
-                        request_id: &request_id,
-                        config: &config,
-                    };
                     subagent_events::on_subagent_thinking_delta(
-                        &ctx,
+                        &bridge_ctx,
                         &mut emit_seq,
                         round,
                         agent_id,
@@ -988,6 +886,7 @@ pub(crate) fn spawn_progress_bridge(
                     pending_narration.push_str(&delta);
                     if !metadata.hold_text_stream {
                         text_events::publish_text_delta(
+                            &dispatch_ctx,
                             &mut emit_seq,
                             &client_id,
                             &thread_id,
@@ -999,6 +898,7 @@ pub(crate) fn spawn_progress_bridge(
                 }
                 AgentProgress::ThinkingDelta { delta, iteration } => {
                     publish_seq_stamped(
+                        &dispatch_ctx,
                         &mut emit_seq,
                         WebChannelEvent {
                             event: "thinking_delta".to_string(),
@@ -1019,6 +919,7 @@ pub(crate) fn spawn_progress_bridge(
                     iteration,
                 } => {
                     publish_seq_stamped(
+                        &dispatch_ctx,
                         &mut emit_seq,
                         WebChannelEvent {
                             event: "tool_args_delta".to_string(),
@@ -1129,6 +1030,7 @@ pub(crate) fn spawn_progress_bridge(
                     // sub-agent attribution shows up.
                     if turn_cost_throttle.should_emit() {
                         publish_seq_stamped(
+                            &dispatch_ctx,
                             &mut emit_seq,
                             WebChannelEvent {
                                 event: "turn_cost".to_string(),
@@ -1144,7 +1046,7 @@ pub(crate) fn spawn_progress_bridge(
                                     // the turn's final figure (or `null`)
                                     // arrives on `chat_done`.
                                     cost_usd: Some(total_usd),
-                                    cost_source: crate::agent::cost::CostSource::Charged,
+                                    cost_source: tinyagents_harness::cost::CostSource::Charged,
                                     context_window: 0,
                                     context_tokens: 0,
                                     subagents: Vec::new(),
@@ -1153,6 +1055,10 @@ pub(crate) fn spawn_progress_bridge(
                             },
                         );
                     }
+                }
+                AgentProgress::ToolCallProgress { call_id, message } => {
+                    let ids = (client_id.as_str(), thread_id.as_str(), request_id.as_str());
+                    tool_progress::publish(&dispatch_ctx, &mut emit_seq, ids, call_id, message);
                 }
                 AgentProgress::TurnContent { .. } => {
                     // Prompt/reply content is attached to the trace span by the
@@ -1219,6 +1125,7 @@ pub(crate) fn spawn_progress_bridge(
             let live_spans = collector.spans().to_vec();
             let journal_export = if let Some(trace_ctx) = journal_trace_ctx.take() {
                 super::journal_shadow::shadow_compare_journal_projection(
+                    &dispatch_ctx,
                     &request_id,
                     trace_ctx.clone(),
                     parent_max_iterations,

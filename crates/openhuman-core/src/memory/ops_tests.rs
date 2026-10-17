@@ -432,9 +432,13 @@ async fn erase_all_needs_its_confirmation() {
     let config = config_in(&tmp);
     let engine = bind_reference(&config);
     learn(&config, learn_params("a fact"), None).await.unwrap();
-    let error = erase_all(&config, EraseAllParams { confirm: false })
-        .await
-        .unwrap_err();
+    let error = erase_all(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        EraseAllParams { confirm: false },
+    )
+    .await
+    .unwrap_err();
     assert_eq!(error.code(), INVALID_REQUEST);
     assert_eq!(stored(&engine, MetaFilter::default()).await.len(), 1);
 }
@@ -448,9 +452,13 @@ async fn erase_all_erases_everything_the_engine_holds() {
     learn(&config, learn_params("another fact"), None)
         .await
         .unwrap();
-    let view = erase_all(&config, EraseAllParams { confirm: true })
-        .await
-        .unwrap();
+    let view = erase_all(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        EraseAllParams { confirm: true },
+    )
+    .await
+    .unwrap();
     assert!(view.erased_scopes >= 1, "{view:?}");
     assert!(stored(&engine, MetaFilter::default()).await.is_empty());
 }
@@ -459,9 +467,13 @@ async fn erase_all_erases_everything_the_engine_holds() {
 async fn erase_all_reports_memory_off_without_an_engine() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
-    let error = erase_all(&config, EraseAllParams { confirm: true })
-        .await
-        .unwrap_err();
+    let error = erase_all(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        EraseAllParams { confirm: true },
+    )
+    .await
+    .unwrap_err();
     assert_eq!(error.code(), MEMORY_OFF);
 }
 
@@ -481,9 +493,13 @@ async fn erasing_memory_cancels_queued_learning_so_restart_cannot_restore_it() {
     )
     .unwrap();
     assert!(queued["status"].as_str().unwrap().starts_with("queued"));
-    erase_all(&config, EraseAllParams { confirm: true })
-        .await
-        .unwrap();
+    erase_all(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        EraseAllParams { confirm: true },
+    )
+    .await
+    .unwrap();
     let restarted = config.clone();
     crate::memory::tool_writes::drain(&restarted).await;
     assert!(stored(&engine, MetaFilter::default()).await.is_empty());

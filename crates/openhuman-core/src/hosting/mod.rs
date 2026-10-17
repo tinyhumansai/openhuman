@@ -19,18 +19,23 @@ mod tools;
 /// traversal, escapes through symlinks, and non-directories.
 pub use tools::resolve_in_workspace;
 
+/// Test double for the module call: `(member, args, confidential)` to reply text.
+#[cfg(test)]
+type CallFixture =
+    Arc<dyn Fn(&str, serde_json::Value, bool) -> anyhow::Result<String> + Send + Sync>;
+
 /// One configured hosting account and its authorized workspace.
 #[derive(Clone)]
 pub struct Account {
-    client: crate::modules::client::ModuleClient,
+    client: tinybus::module::ModuleClient,
     provider: String,
     api_key: String,
     team: Option<String>,
+    env_credential: bool,
     workspace_dir: PathBuf,
     providers_loaded: Arc<tokio::sync::OnceCell<()>>,
     #[cfg(test)]
-    call_fixture:
-        Option<Arc<dyn Fn(&str, serde_json::Value, bool) -> anyhow::Result<String> + Send + Sync>>,
+    call_fixture: Option<CallFixture>,
 }
 
 impl std::fmt::Debug for Account {
@@ -47,7 +52,8 @@ impl std::fmt::Debug for Account {
 impl Account {
     /// Resolve the enabled provider and credential without loading its module.
     pub fn from_config(config: &Config) -> anyhow::Result<Option<Self>> {
-        if !config.hosting.enabled {
+        if !crate::core::runtime::ComponentSet::from_config(&config.components).hosting {
+            tracing::debug!("[hosting] component disabled; tools not registered");
             return Ok(None);
         }
         let provider = config.hosting.provider.trim().to_ascii_lowercase();
@@ -77,14 +83,11 @@ impl Account {
             return Ok(None);
         }
         Ok(Some(Self {
-            client: crate::modules::client::ModuleClient::new(config.clone()),
+            client: crate::modules::client(config.clone()),
             provider,
             api_key,
-            team: config
-                .hosting
-                .team()
-                .map(str::to_owned)
-                .or_else(|| uses_environment_credential.then(env_team).flatten()),
+            team: config.hosting.team().map(str::to_owned),
+            env_credential: uses_environment_credential && config.hosting.team().is_none(),
             workspace_dir: config.workspace_dir.clone(),
             providers_loaded: Arc::new(tokio::sync::OnceCell::new()),
             #[cfg(test)]
@@ -112,7 +115,7 @@ impl Account {
         team: Option<&str>,
         config: Config,
     ) -> anyhow::Result<Self> {
-        if provider.trim().to_ascii_lowercase() != "vercel" {
+        if !provider.trim().eq_ignore_ascii_case("vercel") {
             anyhow::bail!("unknown hosting provider `{provider}`");
         }
         if api_key.trim().is_empty() {
@@ -120,13 +123,14 @@ impl Account {
         }
         let workspace_dir = config.workspace_dir.clone();
         Ok(Self {
-            client: crate::modules::client::ModuleClient::new(config),
+            client: crate::modules::client(config),
             provider: "vercel".to_owned(),
             api_key: api_key.trim().to_owned(),
             team: team
                 .map(str::trim)
                 .filter(|team| !team.is_empty())
                 .map(str::to_owned),
+            env_credential: false,
             workspace_dir,
             providers_loaded: Arc::new(tokio::sync::OnceCell::new()),
             #[cfg(test)]
@@ -144,55 +148,51 @@ impl Account {
         tools::hosting_tools(self.clone())
     }
 
-    async fn execute(&self, operation: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    async fn execute(
+        &self,
+        operation: tinyhosts_bus::rpc::Operation,
+    ) -> anyhow::Result<tinyhosts_bus::rpc::Outcome> {
         use serde_json::json;
         self.providers_loaded
             .get_or_try_init(|| async {
                 let response = self.call_providers().await?;
-                let providers: Vec<String> =
-                    serde_json::from_str(&response).map_err(|_| {
-                        crate::modules::client::ModuleClient::report_malformed_reply("tinyhosts");
-                        anyhow::anyhow!(
-                            crate::modules::client::ModuleCallError::ModuleFault.to_string()
-                        )
-                    })?;
+                let providers: Vec<String> = serde_json::from_str(&response).map_err(|_| {
+                    crate::modules::report::malformed_reply("tinyhosts");
+                    anyhow::anyhow!(tinybus::module::ModuleCallError::ModuleFault.to_string())
+                })?;
                 if !providers.iter().any(|provider| provider == &self.provider) {
-                    crate::modules::client::ModuleClient::report_unavailable("tinyhosts");
-                    anyhow::bail!(crate::modules::client::ModuleCallError::Unavailable.to_string());
+                    crate::modules::report::unavailable("tinyhosts");
+                    anyhow::bail!(tinybus::module::ModuleCallError::Unavailable.to_string());
                 }
                 Ok::<(), anyhow::Error>(())
             })
             .await?;
-        let mut request = operation;
+        let mut request = serde_json::to_value(&operation)?;
         let object = request
             .as_object_mut()
             .ok_or_else(|| anyhow::anyhow!("hosting operation must be an object"))?;
         object.insert("provider".into(), json!(self.provider));
-        object.insert(
-            "credentials".into(),
-            json!({"api_key": self.api_key, "team": self.team}),
-        );
-        let operation_name = request
-            .get("operation")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
+        // An environment credential is left for the module to read itself
+        // (it owns the variable names, token and team), so only a configured
+        // key travels in the request.
+        if !self.env_credential {
+            object.insert(
+                "credentials".into(),
+                json!({"api_key": self.api_key, "team": self.team}),
+            );
+        }
         let request = serde_json::to_string(&request)?;
-        let outcome: tinyhosts_bus::rpc::Outcome = self
+        let outcome = self
             .call_execute_json(&request)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if !outcome_matches(&operation_name, &outcome) {
-            crate::modules::client::ModuleClient::report_malformed_reply("tinyhosts");
+        if !outcome.matches(&operation) {
+            crate::modules::report::malformed_reply("tinyhosts");
             return Err(anyhow::anyhow!(
-                crate::modules::client::ModuleCallError::ModuleFault.to_string()
+                tinybus::module::ModuleCallError::ModuleFault.to_string()
             ));
         }
-        let value = serde_json::to_value(outcome)?;
-        Ok(value
-            .get("value")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null))
+        Ok(outcome)
     }
 
     async fn call_providers(&self) -> anyhow::Result<String> {
@@ -209,7 +209,7 @@ impl Account {
     async fn call_execute_json(
         &self,
         request: &str,
-    ) -> Result<tinyhosts_bus::rpc::Outcome, crate::modules::client::ModuleCallError> {
+    ) -> Result<tinyhosts_bus::rpc::Outcome, tinybus::module::ModuleCallError> {
         #[cfg(test)]
         if let Some(fixture) = &self.call_fixture {
             let response = fixture(
@@ -217,10 +217,10 @@ impl Account {
                 serde_json::json!([request]),
                 true,
             )
-            .map_err(|_| crate::modules::client::ModuleCallError::ModuleFault)?;
+            .map_err(|_| tinybus::module::ModuleCallError::ModuleFault)?;
             return serde_json::from_str(&response).map_err(|_| {
-                crate::modules::client::ModuleClient::report_malformed_reply("tinyhosts");
-                crate::modules::client::ModuleCallError::ModuleFault
+                crate::modules::report::malformed_reply("tinyhosts");
+                tinybus::module::ModuleCallError::ModuleFault
             });
         }
         self.client
@@ -231,35 +231,4 @@ impl Account {
             )
             .await
     }
-}
-
-fn outcome_matches(operation: &str, outcome: &tinyhosts_bus::rpc::Outcome) -> bool {
-    use tinyhosts_bus::rpc::Outcome;
-    match operation {
-        "prepare_bundle" => matches!(outcome, Outcome::PreparedBundle(_)),
-        "launch" => matches!(outcome, Outcome::Launch(_)),
-        "create_site" => matches!(outcome, Outcome::Site(_)),
-        "find_site" => matches!(outcome, Outcome::Site(_) | Outcome::NoSite),
-        "list_sites" => matches!(outcome, Outcome::Sites(_)),
-        "set_env" | "attach_database" | "promote" => matches!(outcome, Outcome::Done),
-        "list_env" => matches!(outcome, Outcome::Env(_)),
-        "provision_database" => matches!(outcome, Outcome::Database(_)),
-        "deploy" | "deployment" => matches!(outcome, Outcome::Deployment(_)),
-        "list_deployments" => matches!(outcome, Outcome::Deployments(_)),
-        "deployment_logs" => matches!(outcome, Outcome::DeploymentLogs(_)),
-        "add_domain" => matches!(outcome, Outcome::Domain(_)),
-        "list_domains" => matches!(outcome, Outcome::Domains(_)),
-        "analytics" => matches!(outcome, Outcome::Analytics(_)),
-        _ => false,
-    }
-}
-
-fn env_team() -> Option<String> {
-    ["TINYHOSTS_VERCEL_TEAM_ID", "VERCEL_TEAM_ID"]
-        .into_iter()
-        .find_map(|name| {
-            std::env::var(name)
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
 }

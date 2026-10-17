@@ -9,21 +9,23 @@ use crate::inference::provider::factory::access_gates::verify_provider_session;
 pub(super) fn try_create_claude_agent_sdk_chat_model(
     role: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let resolved = provider_for_role(role, config);
-    try_create_claude_agent_sdk_chat_model_from_string(role, &resolved, config)
+    try_create_claude_agent_sdk_chat_model_from_string(role, &resolved, config, egress)
 }
 
 pub(super) fn try_create_claude_agent_sdk_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let model = match prepare_claude_agent_sdk_chat_model(role, provider, config)? {
         Ok(model) => model,
         Err(error) => return Some(Err(error)),
     };
-    emit_inference_egress(role, &format!("{CLAUDE_AGENT_SDK_PREFIX}{model}"));
+    emit_inference_egress(role, &format!("{CLAUDE_AGENT_SDK_PREFIX}{model}"), egress);
     let chat: Arc<dyn ChatModel<()>> = Arc::new(ClaudeAgentSdkProvider::for_model(
         (&config.claude_agent_sdk).into(),
         model.clone(),
@@ -53,10 +55,9 @@ pub(super) fn claude_agent_sdk_model_from_string(
     let provider = provider.trim();
     let model = if provider == CLAUDE_AGENT_SDK_PROVIDER {
         config.claude_agent_sdk.default_model.clone()
-    } else if let Some(model) = provider.strip_prefix(CLAUDE_AGENT_SDK_PREFIX) {
-        model.trim().to_string()
     } else {
-        return None;
+        let model = provider.strip_prefix(CLAUDE_AGENT_SDK_PREFIX)?;
+        model.trim().to_string()
     };
     Some(model)
 }
@@ -65,9 +66,10 @@ pub(super) fn try_create_claude_code_chat_model(
     role: &str,
     config: &Config,
     model_override: Option<&str>,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let resolved = provider_for_role(role, config);
-    try_create_claude_code_chat_model_from_string(role, &resolved, config, model_override)
+    try_create_claude_code_chat_model_from_string(role, &resolved, config, model_override, egress)
 }
 
 pub(super) fn try_create_claude_code_chat_model_from_string(
@@ -75,6 +77,7 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
     provider: &str,
     config: &Config,
     model_override: Option<&str>,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let provider = provider.trim();
     let model_with_temp =
@@ -112,6 +115,7 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
             "{}{effective_model}",
             tinyagents_harness::providers::claude_code::PROVIDER_PREFIX
         ),
+        egress,
     );
     let chat = match tinyagents_harness::providers::claude_code::ClaudeCodeProvider::from_env(
         effective_model,

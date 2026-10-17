@@ -662,6 +662,32 @@ fn a_profile_holds_web_and_relayed_channel_threads() {
     );
     assert_eq!(status, 200, "{body}");
 
+    // The web chat and relay share Alice's profile turn gate. Let the offline
+    // web turn reach a terminal snapshot before queuing the channel turn; this
+    // test covers profile/thread isolation, not same-profile turn scheduling.
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let mut lifecycle = None;
+    while Instant::now() < deadline {
+        let (_, state) = call(
+            "alice",
+            "openhuman.threads_turn_state_get",
+            json!({ "thread_id": "web-1" }),
+        );
+        lifecycle = state
+            .pointer("/result/data/turnState/lifecycle")
+            .or_else(|| state.pointer("/result/result/data/turnState/lifecycle"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if matches!(lifecycle.as_deref(), Some("completed" | "interrupted")) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        matches!(lifecycle.as_deref(), Some("completed" | "interrupted")),
+        "Alice's web turn did not settle before relay: {lifecycle:?}"
+    );
+
     // ...and the gateway relays a Telegram message of hers.
     let relayed = json!({
         "channel": "telegram",

@@ -56,10 +56,25 @@ fn tool_group_classifies_gate_and_harness_families() {
         );
     }
     assert_eq!(tool_group("media_generate_image"), DomainGroup::Media);
+    // Sharing uploads through cloud file storage, so it gates with `storage_*`.
+    assert_eq!(tool_group("share_artifact"), DomainGroup::Integrations);
+    assert_eq!(tool_group("storage_upload_file"), DomainGroup::Integrations);
     // Harness-mapped families → kept under harness().
     assert_eq!(tool_group("memory"), DomainGroup::Memory);
     assert_eq!(tool_group("goal_get"), DomainGroup::Threads);
-    assert_eq!(tool_group("artifact_list"), DomainGroup::Agent);
+    for name in [
+        "create_artifact",
+        "read_artifact",
+        "update_artifact",
+        "list_artifacts",
+        "delete_artifact",
+    ] {
+        assert_eq!(
+            tool_group(name),
+            DomainGroup::Agent,
+            "{name} is harness-kept"
+        );
+    }
     assert_eq!(tool_group("learning_list_facets"), DomainGroup::Agent);
     assert_eq!(tool_group("spawn_subagent"), DomainGroup::Agent);
     for name in [
@@ -112,7 +127,7 @@ fn tool_group_gate_families_dropped_under_harness_not_full() {
     }
     // Harness keeps memory/threads, drops gate families AND platform.
     assert!(harness.allows(tool_group("memory")));
-    assert!(harness.allows(tool_group("artifact_list")));
+    assert!(harness.allows(tool_group("list_artifacts")));
     assert!(harness.allows(tool_group("config_snapshot")));
     assert!(harness.allows(tool_group("security_policy_info")));
     assert!(!harness.allows(tool_group("wallet_status")));
@@ -297,6 +312,41 @@ fn memory_tool_is_registered_once_memory_is_on() {
         1,
         "got: {names:?}"
     );
+}
+
+/// `[components] memory = false` unregisters the tool even with an engine
+/// installed, and the component's own RPC family answers `COMPONENT_DISABLED`.
+#[test]
+fn memory_tool_is_absent_when_the_memory_component_is_off() {
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = test_config(&tmp);
+    crate::memory::test_fixtures::bind_reference(&cfg);
+    cfg.components.memory = false;
+    let security = Arc::new(SecurityPolicy::default());
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::config::HttpRequestConfig::default();
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert!(
+        !names.iter().any(|n| n == crate::memory::MEMORY_TOOL_NAME),
+        "got: {names:?}"
+    );
+    let off = crate::core::runtime::ComponentSet::from_config(&cfg.components);
+    assert!(off.require("memory").is_err());
 }
 
 /// The memory tool classifies as the Memory family (kept under `harness()`),

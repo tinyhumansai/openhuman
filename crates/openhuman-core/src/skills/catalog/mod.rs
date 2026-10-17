@@ -19,6 +19,8 @@ pub mod ops;
 mod registry;
 #[cfg(feature = "skills")]
 pub mod schemas;
+#[cfg(feature = "skills")]
+mod store;
 #[cfg(all(test, feature = "skills"))]
 pub(crate) mod test_fixtures;
 #[cfg(feature = "skills")]

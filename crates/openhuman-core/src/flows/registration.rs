@@ -1,22 +1,30 @@
 //! Registration of the flow authoring, execution, discovery, and memory tools.
 
+use super::builder_host::{FlowsHost, OverlayNodeKinds};
 use super::builder_tools::{
-    CancelFlowRunTool, CreateWorkflowTool, DryRunWorkflowTool, DuplicateFlowTool, EditWorkflowTool,
-    GetFlowHistoryTool, GetFlowRunTool, GetFlowTool, GetNodeKindContractTool, GetToolContractTool,
-    GetToolOutputSampleTool, ListAgentDefinitionsTool, ListConnectableToolkitsTool,
-    ListFlowConnectionsTool, ListFlowRunsTool, ListFlowsTool, ListNodeKindsTool, ResumeFlowRunTool,
-    ReviseWorkflowTool, SaveWorkflowTool, SearchToolCatalogTool, ValidateWorkflowTool,
+    GetToolContractTool, GetToolOutputSampleTool, ListConnectableToolkitsTool,
+    ListFlowConnectionsTool, SearchToolCatalogTool,
 };
-use super::discovery_tools::SuggestWorkflowsTool;
 use super::memory_tools::{FlowMemoryRecallTool, FlowMemoryRememberTool};
 use super::tools::{ProposeWorkflowTool, RunFlowTool};
 use crate::config::Config;
 use crate::security::SecurityPolicy;
 use std::sync::Arc;
+use tinyflows_copilot::tools::{
+    CancelFlowRunTool, CreateWorkflowTool, DryRunWorkflowTool, DuplicateFlowTool, EditWorkflowTool,
+    GetFlowHistoryTool, GetFlowRunTool, GetFlowTool, GetNodeKindContractTool,
+    ListAgentDefinitionsTool, ListFlowRunsTool, ListFlowsTool, ListNodeKindsTool,
+    ResumeFlowRunTool, ReviseWorkflowTool, SaveWorkflowTool, SuggestWorkflowsTool,
+    ValidateWorkflowTool,
+};
 use tinytools::Tool;
 
 /// Build the flow tool family in its persisted catalogue order.
 pub(crate) fn tools(config: Arc<Config>, security: &Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
+    // One host binds every copilot port (drafts, flows, gates, agents,
+    // suggestions) to this workspace.
+    let host = FlowsHost::new(config.clone());
+    let kinds = Arc::new(OverlayNodeKinds);
     vec![
         // Agent-first Workflow authoring (issue B4): validates a candidate
         // graph and returns a proposal summary — never creates/enables a
@@ -30,32 +38,40 @@ pub(crate) fn tools(config: Arc<Config>, security: &Arc<SecurityPolicy>) -> Vec<
         // or enable a flow (only the user's own `flows_create` click does); the
         // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
         // autonomy-tier gated + wired to deterministic mock capabilities.
-        Box::new(ReviseWorkflowTool::new(config.clone())),
+        Box::new(ReviseWorkflowTool::new(host.clone())),
         // Structured incremental edits (F1): apply a small ops[] list to a base
         // graph (saved flow or inline) instead of re-emitting the whole graph,
         // then validate + gate + return a proposal (same contract as revise).
         // Proposal-only — never persists.
-        Box::new(EditWorkflowTool::new(config.clone())),
+        Box::new(EditWorkflowTool::new(
+            host.clone(),
+            host.clone(),
+            host.clone(),
+        )),
         // Standalone validate (F3): run the SAME structural + hard-gate stack
         // the propose/save tools use, without emitting a proposal — a pure
         // check so the agent can self-verify a draft mid-build. Read-only.
-        Box::new(ValidateWorkflowTool::new(config.clone())),
+        Box::new(ValidateWorkflowTool::new(
+            host.clone(),
+            host.clone(),
+            host.clone(),
+        )),
         // Read a saved flow's revision history (F6) — prior graph snapshots the
         // agent can inspect / pick a rollback target from. Read-only.
-        Box::new(GetFlowHistoryTool::new(config.clone())),
+        Box::new(GetFlowHistoryTool::new(host.clone())),
         // Phase 4 self-debug loop (F4): find a failing run, resume a parked
         // run (approval-gated), or cancel a runaway one.
-        Box::new(ListFlowRunsTool::new(config.clone())),
-        Box::new(ResumeFlowRunTool::new(config.clone())),
-        Box::new(CancelFlowRunTool::new(config.clone())),
+        Box::new(ListFlowRunsTool::new(host.clone())),
+        Box::new(ResumeFlowRunTool::new(host.clone())),
+        Box::new(CancelFlowRunTool::new(host.clone())),
         // Gated create (F4/F12): create a NEW flow — born disabled, approval
         // gated — and duplicate an existing one (disabled copy) for
         // clone-then-edit. Behind the Phase 3 safety rails.
-        Box::new(CreateWorkflowTool::new(config.clone())),
-        Box::new(DuplicateFlowTool::new(config.clone())),
-        Box::new(ListFlowsTool::new(config.clone())),
-        Box::new(GetFlowTool::new(config.clone())),
-        Box::new(GetFlowRunTool::new(config.clone())),
+        Box::new(CreateWorkflowTool::new(host.clone(), host.clone())),
+        Box::new(DuplicateFlowTool::new(host.clone())),
+        Box::new(ListFlowsTool::new(host.clone())),
+        Box::new(GetFlowTool::new(host.clone())),
+        Box::new(GetFlowRunTool::new(host.clone())),
         Box::new(ListFlowConnectionsTool::new(config.clone())),
         Box::new(SearchToolCatalogTool::new(config.clone())),
         // Full live contract (schemas, real required_args/output_fields,
@@ -75,7 +91,7 @@ pub(crate) fn tools(config: Arc<Config>, security: &Arc<SecurityPolicy>) -> Vec<
         // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
         // (code_executor / critic / …) — the agent analogue of
         // search_tool_catalog. Read-only.
-        Box::new(ListAgentDefinitionsTool::new()),
+        Box::new(ListAgentDefinitionsTool::new(host.clone())),
         // Steer toolkit choice toward what's already connected + surface which
         // toolkits a flow still needs (Phase 5, item 19). Read-only.
         Box::new(ListConnectableToolkitsTool::new(config.clone())),
@@ -83,9 +99,13 @@ pub(crate) fn tools(config: Arc<Config>, security: &Arc<SecurityPolicy>) -> Vec<
         // kind's full config-field/port/example/gotcha contract — the DSL
         // analogue of search_tool_catalog + get_tool_contract, so an agent need
         // not rely on prompt prose or memory for node config shapes. Read-only.
-        Box::new(ListNodeKindsTool::new()),
-        Box::new(GetNodeKindContractTool::new()),
-        Box::new(DryRunWorkflowTool::new(config.clone())),
+        Box::new(ListNodeKindsTool::new(kinds.clone())),
+        Box::new(GetNodeKindContractTool::new(kinds)),
+        Box::new(DryRunWorkflowTool::new(
+            host.clone(),
+            host.clone(),
+            host.clone(),
+        )),
         // Real end-to-end test run of a SAVED flow (Write / external-effect). The
         // workflow-builder prompt requires it to ask the user for confirmation
         // first, and the flow's own approval gate still pauses outbound nodes.
@@ -95,13 +115,17 @@ pub(crate) fn tools(config: Arc<Config>, security: &Arc<SecurityPolicy>) -> Vec<
         // turn from the Flows prompt bar is propose-only (see #4596) — Accept
         // + the canvas's own Save persist the graph. The tool itself can
         // never create a flow or change enabled/require_approval.
-        Box::new(SaveWorkflowTool::new(config.clone())),
+        Box::new(SaveWorkflowTool::new(
+            host.clone(),
+            host.clone(),
+            host.clone(),
+        )),
         // Flow Scout discovery: the `flow_discovery` agent's terminal emit
         // sink. Read-only reasoning over the user's data ends by calling
         // `suggest_workflows`, which persists workflow ideas for the Flows page
         // "Suggested for you" section. `PermissionLevel::None`, no external
         // effect — writes only to the agent's own suggestions store.
-        Box::new(SuggestWorkflowsTool::new(config.clone())),
+        Box::new(SuggestWorkflowsTool::new(host)),
         // Per-flow sandboxed memory (issue #5173): lets a running flow
         // (e.g. a scheduled newsletter-digest) remember what it already did
         // — dedupe across runs — without ever touching the user's own
@@ -117,3 +141,7 @@ pub(crate) fn tools(config: Arc<Config>, security: &Arc<SecurityPolicy>) -> Vec<
         Box::new(FlowMemoryRememberTool::new(security.clone())),
     ]
 }
+
+#[cfg(test)]
+#[path = "registration_tests.rs"]
+mod tests;

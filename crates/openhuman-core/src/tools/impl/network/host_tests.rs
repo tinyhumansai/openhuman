@@ -5,6 +5,7 @@ use tinytools::Tool;
 
 fn fetch() -> WebFetchTool {
     web_fetch_tool(
+        &crate::core::runtime::DispatchCtx::ambient(),
         Arc::new(SecurityPolicy::default()),
         vec!["example.com".into()],
         None,
@@ -87,19 +88,43 @@ fn zero_limits_fall_back_to_the_http_request_config_defaults() {
 
 #[tokio::test]
 async fn tinyjuice_detects_and_converts_html() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
-        eprintln!("SKIPPED: released module fixture is not configured");
+    if crate::modules::local_artifact("tinyjuice").is_none() {
+        eprintln!("SKIPPED: no tinyjuice library (node scripts/modules/build.mjs tinyjuice)");
         return;
     }
     let page = "<!DOCTYPE html><html><body><p>hi</p></body></html>";
-    assert!(TinyJuiceHtml.looks_like_html(page).await.unwrap());
-    assert!(!TinyJuiceHtml
-        .looks_like_html("# Just a README\n\nSome prose.\n")
-        .await
-        .unwrap());
-    assert!(TinyJuiceHtml
-        .to_markdown(page)
-        .await
-        .unwrap()
-        .contains("hi"));
+    assert!(TinyJuiceHtml {
+        ctx: crate::core::runtime::DispatchCtx::ambient(),
+    }
+    .looks_like_html(page)
+    .await
+    .unwrap());
+    assert!(!TinyJuiceHtml {
+        ctx: crate::core::runtime::DispatchCtx::ambient(),
+    }
+    .looks_like_html("# Just a README\n\nSome prose.\n")
+    .await
+    .unwrap());
+    assert!(TinyJuiceHtml {
+        ctx: crate::core::runtime::DispatchCtx::ambient(),
+    }
+    .to_markdown(page)
+    .await
+    .unwrap()
+    .contains("hi"));
+}
+
+#[cfg(feature = "web3")]
+#[test]
+fn x402_hook_declines_payment_when_wallet_component_is_off() {
+    let mut config = crate::config::Config::default();
+    assert!(x402::declined_when_wallet_off(&config).is_ok());
+    assert!(config.components.set("wallet", false));
+    assert_eq!(
+        x402::declined_when_wallet_off(&config).unwrap_err(),
+        "COMPONENT_DISABLED:wallet"
+    );
+    // Re-enabling needs no restart of the hook: it reads the config per call.
+    assert!(config.components.set("wallet", true));
+    assert!(x402::declined_when_wallet_off(&config).is_ok());
 }

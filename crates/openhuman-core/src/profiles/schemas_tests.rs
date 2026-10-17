@@ -39,6 +39,8 @@ async fn outside_saas_the_controllers_refuse() {
         .iter()
         .find(|c| c.schema.function == "list")
         .unwrap();
-    let err = (list.handler)(Default::default()).await.unwrap_err();
+    let err = (list.handler)(DispatchCtx::process_default(), Default::default())
+        .await
+        .unwrap_err();
     assert!(err.contains("SaaS"), "{err}");
 }

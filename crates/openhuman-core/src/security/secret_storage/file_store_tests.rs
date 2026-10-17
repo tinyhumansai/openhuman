@@ -4,9 +4,42 @@ use std::collections::VecDeque;
 use std::path::Path;
 
 use super::{
-    lock_for_write, lock_path_for, quarantine_corrupt, reserve_temp_file, temp_path_for,
-    write_atomic,
+    fingerprint, lock_for_write, lock_path_for, quarantine_corrupt, reserve_temp_file,
+    temp_path_for, write_atomic,
 };
+
+#[test]
+fn fingerprint_tracks_the_file_contents_and_missing_files() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("secrets.enc");
+    assert_eq!(fingerprint(&path).unwrap(), None);
+
+    write_atomic(&path, b"first ciphertext").unwrap();
+    let first = fingerprint(&path).unwrap();
+    assert!(first.is_some());
+
+    write_atomic(&path, b"replacement ciphertext").unwrap();
+    assert_ne!(fingerprint(&path).unwrap(), first);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_lock_is_private_and_repairs_an_existing_lock() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("secrets.enc");
+    let lock_path = lock_path_for(&path);
+    std::fs::write(&lock_path, b"").unwrap();
+    std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let lock = lock_for_write(&path).unwrap();
+    assert_eq!(
+        std::fs::metadata(lock_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    drop(lock);
+}
 
 #[cfg(unix)]
 #[test]

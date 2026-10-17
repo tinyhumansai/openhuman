@@ -57,6 +57,26 @@ pub fn offline_config() -> Config {
     config
 }
 
+/// Serve the tinyflows module (scheduler runtime, job store, schedule maths)
+/// from the test binary instead of a downloaded release. The factory goes in
+/// through the core's `register_linked` seam and the module is resolved once,
+/// here, with a config that asks for `linked`: the resolution slot is
+/// process-wide, so every later caller (a profile's own config included) sees
+/// the linked module. Only this module changes source.
+pub fn link_tinyflows(runtime: &tokio::runtime::Runtime) {
+    use openhuman_core::config::schema::{ModuleOverride, ModuleSourceMode};
+    openhuman_embed::modules::register_linked("tinyflows", tinyflows_module::linked_module);
+    let mut config = Config::default();
+    config.modules.allow_download = false;
+    config.modules.overrides.push(ModuleOverride::with_source(
+        "tinyflows",
+        ModuleSourceMode::Linked,
+    ));
+    runtime
+        .block_on(openhuman_core::modules::ensure_loaded(&config, "tinyflows"))
+        .expect("the linked tinyflows module is admitted");
+}
+
 /// The tuned runtime the harness documents as the caller's responsibility.
 ///
 /// A default 2 MiB worker stack overflows on a turn that delegates to a
@@ -68,12 +88,14 @@ pub fn runtime() -> tokio::runtime::Runtime {
 
 /// A tuned async runtime for profile hosts which initialize keys after choosing their root.
 pub fn runtime_without_master_key() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(AGENT_WORKER_STACK_BYTES)
         .max_blocking_threads(MAX_BLOCKING_THREADS)
         .build()
-        .expect("tokio runtime")
+        .expect("tokio runtime");
+    link_tinyflows(&runtime);
+    runtime
 }
 
 /// A stub backend that answers every incidental non-inference call.
@@ -364,4 +386,12 @@ impl wiremock::Respond for EchoCompletion {
             wiremock::ResponseTemplate::new(200).set_body_json(chat_completion(&reply))
         }
     }
+}
+
+/// Sleep until the wall clock passes `instant` (plus a beat for the store's
+/// millisecond ordering). Scheduled jobs now run on the tinyflows module's own
+/// clock, which a test cannot move, so a job due "later" is waited for.
+pub async fn wait_until(instant: chrono::DateTime<chrono::Utc>) {
+    let remaining = (instant - chrono::Utc::now()).to_std().unwrap_or_default();
+    tokio::time::sleep(remaining + std::time::Duration::from_millis(250)).await;
 }

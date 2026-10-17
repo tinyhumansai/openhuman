@@ -16,7 +16,8 @@ use tinytools_std::filesystem::{
     GitOperationsTool, GlobTool, GrepTool, ListFilesTool,
 };
 
-use crate::security::{AutonomyLevel, SecurityPolicy, POLICY_BLOCKED_MARKER};
+use crate::security::{AutonomyLevel, SecurityPolicy};
+use tinytools::status::POLICY_BLOCKED_MARKER;
 
 fn policy(dir: &Path, autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy {

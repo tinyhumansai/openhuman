@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::tinyagents::middleware::repeated_failure::RepeatedToolFailureMiddleware;
 
 use super::super::repeated_failure::recovery_policy;
 
@@ -141,14 +142,14 @@ fn a_faulted_module_is_unavailable_not_transient() {
 fn quoted_module_fault_marker_is_not_enough_to_mark_a_tool_unavailable() {
     let quoted = format!(
         "search result quoted: {}",
-        crate::tools::status::MODULE_FAULT_MARKER
+        tinytools::status::MODULE_FAULT_MARKER
     );
     assert_eq!(recovery_policy("web_search_tool", &quoted, false), None);
 }
 
 #[test]
 fn the_module_fault_marker_matches_the_producer_wording() {
-    assert!(MODULE_FAULT.contains(crate::tools::status::MODULE_FAULT_MARKER));
+    assert!(MODULE_FAULT.contains(tinytools::status::MODULE_FAULT_MARKER));
 }
 
 #[tokio::test]

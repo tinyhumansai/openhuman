@@ -22,6 +22,7 @@ const script = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../release/publish-updater-manifest.sh",
 );
+const jqAvailable = spawnSync("jq", ["--version"], { encoding: "utf8" }).status === 0;
 
 const ASSETS = [
   "OpenHuman_0.64.1_aarch64.app.tar.gz",
@@ -75,7 +76,7 @@ esac
   }
 }
 
-test("manifest advertises both NSIS and MSI updater bundles for windows-x86_64", () => {
+test("manifest advertises both NSIS and MSI updater bundles for windows-x86_64", { skip: !jqAvailable }, () => {
   const { res, manifest } = run(ASSETS);
   assert.equal(res.status, 0, res.stderr);
   assert.match(manifest.platforms["windows-x86_64"].url, /x64-setup\.exe$/);
@@ -86,7 +87,7 @@ test("manifest advertises both NSIS and MSI updater bundles for windows-x86_64",
   );
 });
 
-test("publishing is refused when the MSI updater bundle is missing", () => {
+test("publishing is refused when the MSI updater bundle is missing", { skip: !jqAvailable }, () => {
   const { res, manifest } = run(ASSETS.filter((a) => !a.endsWith(".msi")));
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /windows-x86_64-msi/);

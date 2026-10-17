@@ -65,7 +65,7 @@ pub(super) fn project_managed_usage(mut response: ModelResponse) -> ModelRespons
         }
     }
 
-    response.raw = crate::agent::tinyagents::model::merge_openhuman_usage_meta(
+    response.raw = tinyinference_llm::usage::merge_usage_meta(
         response.raw,
         charged_amount_usd,
         context_window,

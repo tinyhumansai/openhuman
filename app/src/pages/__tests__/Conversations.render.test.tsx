@@ -1534,7 +1534,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(textarea).toHaveTextContent('a fresh follow-up');
   });
 
-  it('renders a Stopped marker on a stopped partial reply (#4862)', async () => {
+  it('renders a stopped partial reply as markdown with a Stopped marker (#4862, #7729)', async () => {
     const thread = makeThread({ id: 'stopped-marker-thread', title: 'Stopped' });
     const messages: ThreadMessage[] = [
       {
@@ -1549,7 +1549,12 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         id: 'a',
         sender: 'agent',
         type: 'text',
-        content: 'partial reply that got cut off',
+        content: [
+          '## Verification',
+          'First paragraph.',
+          'Second paragraph.',
+          '| Check | Result |\n|---|---|\n| npm test | pass |',
+        ].join('\n\n'),
         extraMetadata: { stopped: true },
         createdAt: '2026-01-01T00:01:00.000Z',
       },
@@ -1568,7 +1573,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       });
     });
 
-    expect(screen.getByTestId('stopped-marker')).toHaveTextContent('Stopped');
+    const marker = screen.getByTestId('stopped-marker');
+    expect(marker).toHaveTextContent('Stopped');
+    // The partial keeps its structure instead of one flattened paragraph, and
+    // renders once: the marker holds only the reason and actions.
+    expect(screen.getByRole('heading', { level: 2, name: 'Verification' })).toBeInTheDocument();
+    expect(screen.getByText('First paragraph.').tagName).toBe('P');
+    expect(screen.getByText('Second paragraph.').tagName).toBe('P');
+    expect(screen.getByRole('table')).toHaveTextContent('npm test');
+    expect(marker).not.toHaveTextContent('First paragraph.');
   });
 
   it('shows no Stop button while the thread is idle (#4862)', async () => {
@@ -2046,7 +2059,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     }
   });
 
-  it('words the silence warning for a running step when a tool is in flight', async () => {
+  it('warns the turn may be stuck when nothing is running past the window', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { textarea, store, thread } = await renderSelectedConversation();
@@ -2074,7 +2087,73 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
       const warning = await screen.findByTestId('chat-stall-warning');
       expect(warning).toHaveAttribute('data-chat-stall-phase', 'tool_use');
-      expect(warning).toHaveTextContent('Still working');
+      expect(warning).toHaveTextContent('No new output for');
+      expect(store!.getState().thread.activeThreadIds[thread.id]).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('names a still-running tool instead of warning the turn is stuck', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+      await act(async () => {
+        setComposerText(textarea, 'run a slow shell loop');
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: thread.id,
+            status: { phase: 'tool_use', iteration: 2, maxIterations: 8 },
+          })
+        );
+      });
+
+      await act(async () => {
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: thread.id,
+            entries: [
+              {
+                id: 'tl-shell',
+                name: 'shell',
+                round: 2,
+                seq: 0,
+                status: 'running',
+                argsBuffer: '{"command":"cargo build"}',
+              },
+              // A detached run from an earlier turn, hydrated from the run
+              // ledger after this turn's call: issued later, still running,
+              // but not this turn's work.
+              {
+                id: 'subagent:run-old',
+                name: 'subagent:researcher',
+                round: 0,
+                seq: 1,
+                status: 'running',
+                sourceToolName: 'run_ledger',
+              },
+            ],
+          })
+        );
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      const warning = await screen.findByTestId('chat-stall-warning');
+      expect(warning).toHaveAttribute('data-chat-stall-phase', 'tool_use');
+      expect(warning).toHaveAttribute('data-chat-stall-state', 'tool');
+      expect(warning).toHaveTextContent('Running command.');
+      expect(warning).not.toHaveTextContent('may be stuck');
       expect(store!.getState().thread.activeThreadIds[thread.id]).toBe(true);
     } finally {
       vi.useRealTimers();

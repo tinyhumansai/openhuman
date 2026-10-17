@@ -267,10 +267,7 @@ async fn uppercase_max_tokens_retries_the_same_rung_and_counts_buyer_charges() {
         .await
         .unwrap();
     assert_eq!(outcome.attempts.len(), 2);
-    assert_eq!(
-        outcome.attempts[0].finish_reason.as_deref(),
-        Some("MAX_TOKENS")
-    );
+    assert_eq!(outcome.attempts[0].finish_reason.as_deref(), Some("length"));
     assert_eq!(outcome.attempts[1].max_tokens, Some(32));
     assert_eq!(outcome.response.usage.unwrap().cost_usd, Some(0.000004));
     assert!((outcome.total_usage.unwrap().cost_usd.unwrap() - 0.000007).abs() < 1e-12);

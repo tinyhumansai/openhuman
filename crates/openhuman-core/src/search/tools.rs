@@ -8,12 +8,14 @@
 //! agent's config carries host-pinned search keys, which make it the config
 //! the call runs under.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tinysearch_bus::errors::Category;
 use tinysearch_bus::{errors, ExecuteToolRequest, ToolSpec};
 use tinytools::{Tool, ToolCallOptions, ToolCategory, ToolExposure, ToolResult};
 
@@ -106,7 +108,7 @@ impl TinySearchTool {
             provider.usable.hash(&mut hasher);
             provider.key_configured.hash(&mut hasher);
             provider.managed_available.hash(&mut hasher);
-            matches!(provider.route, crate::config::SearchRoute::Managed).hash(&mut hasher);
+            matches!(provider.route, crate::config::ProviderRoute::Backend).hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -115,10 +117,11 @@ impl TinySearchTool {
         &self.spec
     }
 
-    async fn live_config(&self) -> anyhow::Result<Config> {
+    async fn live_config(&self, ctx: &DispatchCtx) -> anyhow::Result<Config> {
         match &self.config {
             Some(config) => Ok(config.as_ref().clone()),
-            None => crate::config::rpc::load_config_with_timeout()
+            None => ctx
+                .load_config()
                 .await
                 .map_err(|error| anyhow::anyhow!(error)),
         }
@@ -129,33 +132,36 @@ impl TinySearchTool {
 /// classified failures with `tinysearch.<code>:`; the detail after the prefix
 /// may echo the query, so it is not logged.
 pub fn user_facing_error(error: &str) -> String {
-    match error_code(error) {
-        Some(code) if code == errors::INSUFFICIENT_BALANCE => {
+    let code = errors::code_of(error);
+    match errors::classify(error) {
+        Category::InsufficientBalance => {
             "Web search is unavailable: the TinyHumans balance is too low for managed search. \
              Top up the balance, or add your own provider key under Connections → Search."
                 .to_string()
         }
-        Some(code) if code == errors::RATE_LIMITED => {
+        Category::RateLimited => {
             "Web search is rate limited right now. Wait a moment and try again.".to_string()
         }
-        Some(code) if code == errors::UNAVAILABLE => SEARCH_EXHAUSTED_MESSAGE.to_string(),
-        Some(code) if code == errors::PROVIDER_UNAUTHORIZED => {
+        Category::Exhausted => SEARCH_EXHAUSTED_MESSAGE.to_string(),
+        Category::Unauthorized if code == Some(errors::BACKEND_UNAUTHORIZED) => {
+            backend_unauthorized_message(false)
+        }
+        Category::Unauthorized => {
             // The detail names the provider and its HTTP status; the module
             // never puts the key or the query in it.
             format!(
                 "Web search is unavailable: {}. Update the key under Connections → Search, or \
                  remove it to use managed search.",
-                code_detail(error, code)
+                code_detail(error, code.unwrap_or_default())
             )
         }
-        Some(code) if code == errors::BACKEND_UNAUTHORIZED => backend_unauthorized_message(false),
-        Some(code) if code == errors::INVALID_ARGUMENTS => {
+        Category::InvalidArguments => {
             format!(
                 "The search request was rejected: {}",
-                code_detail(error, code)
+                code_detail(error, code.unwrap_or_default())
             )
         }
-        _ => format!("Web search failed: {error}"),
+        Category::Unclassified => format!("Web search failed: {error}"),
     }
 }
 
@@ -191,28 +197,13 @@ pub(crate) fn backend_unauthorized_message(api_key: bool) -> String {
 /// token. A rejected API key has no session to expire, so it never signs the
 /// user out (`API_KEY_REJECTED` semantics).
 fn on_backend_unauthorized(tool: &str, api_key: bool) {
-    if api_key || crate::cron::scheduler_gate::is_signed_out() {
+    if api_key || crate::platform::llm_gate::is_signed_out() {
         return;
     }
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
         source: format!("search.{tool}"),
         reason: "managed search backend rejected the session (401)".to_string(),
     });
-}
-
-/// The classified error code in a module error message, if any.
-pub fn error_code(error: &str) -> Option<&'static str> {
-    errors::code_of(error)
-}
-
-/// Whether this failure means no provider can answer for the rest of the
-/// session, rather than something a later call could get past.
-///
-/// Only the "every provider is unavailable" verdict qualifies. A rate limit
-/// clears on its own, and a low balance or a rejected argument has its own
-/// message telling the caller what to change, so neither latches.
-pub(crate) fn exhausts_providers(error: &str) -> bool {
-    error_code(error) == Some(errors::UNAVAILABLE)
 }
 
 #[async_trait]
@@ -255,7 +246,17 @@ impl Tool for TinySearchTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        let config = self.live_config().await?;
+        self.execute_with_context(args, options, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
+        let config = self.live_config(&ctx).await?;
         // Re-read per call, so a key added or a provider switched mid-session
         // clears an earlier refusal instead of outliving it.
         let signature = self.provider_signature(&config);
@@ -287,7 +288,7 @@ impl Tool for TinySearchTool {
         if let Some(message) = local_only_search_block(&request.name) {
             return Ok(ToolResult::error(message));
         }
-        match crate::modules::search::execute_tool(&config, request).await {
+        match crate::modules::search::execute_tool(&ctx, &config, request).await {
             Ok(response) => {
                 tracing::debug!(
                     tool = %self.spec.name,
@@ -304,10 +305,10 @@ impl Tool for TinySearchTool {
                 ))
             }
             Err(error) => {
-                if exhausts_providers(&error) {
+                if errors::exhausts_providers(&error) {
                     self.mark_exhausted_for(signature);
                 }
-                if error_code(&error) == Some(errors::BACKEND_UNAUTHORIZED) {
+                if errors::code_of(&error) == Some(errors::BACKEND_UNAUTHORIZED) {
                     let api_key = crate::security::credentials::api_key::has_api_key(&config);
                     on_backend_unauthorized(&self.spec.name, api_key);
                     tracing::warn!(
@@ -319,11 +320,11 @@ impl Tool for TinySearchTool {
                 }
                 tracing::warn!(
                     tool = %self.spec.name,
-                    code = error_code(&error).unwrap_or("unclassified"),
+                    code = errors::code_of(&error).unwrap_or("unclassified"),
                     exhausted = self.is_exhausted_for(signature),
                     "[search][tool] failed"
                 );
-                Ok(if exhausts_providers(&error) {
+                Ok(if errors::exhausts_providers(&error) {
                     ToolResult::failed(user_facing_error(&error))
                 } else {
                     ToolResult::error(user_facing_error(&error))

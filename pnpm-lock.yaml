@@ -9,7 +9,7 @@ overrides:
 
 patchedDependencies:
   '@assistant-ui/react-lexical@0.2.10':
-    hash: d57b1feffe8c1dbf9359c98eaa00a72f6fd7f92cc4686f1517e1e7b5b03f0054
+    hash: 006331c5bcacf7a003ec83e5083d53a38094c3474842bb7812a025819bcaab8f
     path: app/patches/@assistant-ui__react-lexical@0.2.10.patch
   mdast-util-gfm-autolink-literal@2.0.1:
     hash: 9710fb84b470cf502f9292ed2b12e64dbe6d3570126481308ca3d32fced73a3f
@@ -46,7 +46,7 @@ importers:
         version: 0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
       '@assistant-ui/react-lexical':
         specifier: ^0.2.10
-        version: 0.2.10(patch_hash=d57b1feffe8c1dbf9359c98eaa00a72f6fd7f92cc4686f1517e1e7b5b03f0054)(@assistant-ui/core@0.3.20(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(assistant-cloud@0.2.2)(react@19.2.5))(@assistant-ui/react@0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3)(yjs@13.6.32)
+        version: 0.2.10(patch_hash=006331c5bcacf7a003ec83e5083d53a38094c3474842bb7812a025819bcaab8f)(@assistant-ui/core@0.3.20(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(assistant-cloud@0.2.2)(react@19.2.5))(@assistant-ui/react@0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3)(yjs@13.6.32)
       '@assistant-ui/react-markdown':
         specifier: ^0.14.12
         version: 0.14.12(@assistant-ui/react@0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -62,9 +62,6 @@ importers:
       '@noble/hashes':
         specifier: ^2.0.1
         version: 2.2.0
-      '@noble/secp256k1':
-        specifier: ^3.0.0
-        version: 3.1.0
       '@radix-ui/react-collapsible':
         specifier: ^1.1.20
         version: 1.1.20(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -74,15 +71,6 @@ importers:
       '@rive-app/react-webgl2':
         specifier: ^4.28.6
         version: 4.28.6(react@19.2.5)
-      '@scure/base':
-        specifier: ^2.2.0
-        version: 2.2.0
-      '@scure/bip32':
-        specifier: ^2.0.1
-        version: 2.2.0
-      '@scure/bip39':
-        specifier: ^2.0.1
-        version: 2.2.0
       '@sentry/react':
         specifier: ^10.38.0
         version: 10.50.0(react@19.2.5)
@@ -1295,9 +1283,6 @@ packages:
   '@noble/hashes@2.2.0':
     resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
     engines: {node: '>= 20.19.0'}
-
-  '@noble/secp256k1@3.1.0':
-    resolution: {integrity: sha512-+F7iS7tUMaNGXcc9X3PjmjvuQnXEuSjCRNzVVA2xAcKXgCaP0dHYz4SFyt4FKNHef7sOP//xihowcySSS7PK9g==}
 
   '@nodable/entities@2.1.0':
     resolution: {integrity: sha512-nyT7T3nbMyBI/lvr6L5TyWbFJAI9FTgVRakNoBqCD+PmID8DzFrrNdLLtHMwMszOtqZa8PAOV24ZqDnQrhQINA==}
@@ -2545,15 +2530,6 @@ packages:
 
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
-
-  '@scure/base@2.2.0':
-    resolution: {integrity: sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg==}
-
-  '@scure/bip32@2.2.0':
-    resolution: {integrity: sha512-zFr7t2F+a9+5tB7QbarF2HQNYrgjCNaoLAupZdKkrFMYMozJf5zqH2WJCQibMzm1qQ0QogrxVGO3qXfQDYMaQg==}
-
-  '@scure/bip39@2.2.0':
-    resolution: {integrity: sha512-T/Bj/YvYMNkIPq6EENO6/rcs2e7qTNuyoUXf0KBFDmp0ZDu0H2X4Lq6yC3i0c8PcWkov5EbW+yQZZbdMmk154A==}
 
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
@@ -7188,7 +7164,7 @@ snapshots:
       - ioredis
       - redis
 
-  '@assistant-ui/react-lexical@0.2.10(patch_hash=d57b1feffe8c1dbf9359c98eaa00a72f6fd7f92cc4686f1517e1e7b5b03f0054)(@assistant-ui/core@0.3.20(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(assistant-cloud@0.2.2)(react@19.2.5))(@assistant-ui/react@0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3)(yjs@13.6.32)':
+  '@assistant-ui/react-lexical@0.2.10(patch_hash=006331c5bcacf7a003ec83e5083d53a38094c3474842bb7812a025819bcaab8f)(@assistant-ui/core@0.3.20(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(assistant-cloud@0.2.2)(react@19.2.5))(@assistant-ui/react@0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3)(yjs@13.6.32)':
     dependencies:
       '@assistant-ui/core': 0.3.20(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(react@19.2.5))(@assistant-ui/tap@0.9.18(@types/react@19.2.14)(react@19.2.5))(@types/react@19.2.14)(assistant-cloud@0.2.2)(react@19.2.5)
       '@assistant-ui/react': 0.15.21(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(immer@11.1.4)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
@@ -8084,8 +8060,6 @@ snapshots:
       '@noble/hashes': 2.2.0
 
   '@noble/hashes@2.2.0': {}
-
-  '@noble/secp256k1@3.1.0': {}
 
   '@nodable/entities@2.1.0': {}
 
@@ -9196,19 +9170,6 @@ snapshots:
     optional: true
 
   '@rtsao/scc@1.1.0': {}
-
-  '@scure/base@2.2.0': {}
-
-  '@scure/bip32@2.2.0':
-    dependencies:
-      '@noble/curves': 2.2.0
-      '@noble/hashes': 2.2.0
-      '@scure/base': 2.2.0
-
-  '@scure/bip39@2.2.0':
-    dependencies:
-      '@noble/hashes': 2.2.0
-      '@scure/base': 2.2.0
 
   '@sec-ant/readable-stream@0.4.1': {}
 

@@ -2,12 +2,48 @@ use super::*;
 
 #[test]
 fn all_schemas_lists_every_controller() {
-    assert_eq!(all_wallet_controller_schemas().len(), 13);
+    assert_eq!(all_wallet_controller_schemas().len(), 16);
 }
 
 #[test]
 fn all_controllers_lists_every_handler() {
-    assert_eq!(all_wallet_registered_controllers().len(), 13);
+    assert_eq!(all_wallet_registered_controllers().len(), 16);
+}
+
+#[test]
+fn recovery_phrase_controllers_are_registered_with_the_expected_inputs() {
+    let generate = wallet_schemas("generate_mnemonic");
+    assert_eq!(generate.namespace, "wallet");
+    assert_eq!(
+        generate
+            .inputs
+            .iter()
+            .map(|field| field.name)
+            .collect::<Vec<_>>(),
+        vec!["wordCount"]
+    );
+
+    let validate = wallet_schemas("validate_mnemonic");
+    assert_eq!(validate.namespace, "wallet");
+    assert_eq!(
+        validate
+            .inputs
+            .iter()
+            .map(|field| field.name)
+            .collect::<Vec<_>>(),
+        vec!["phrase"]
+    );
+    assert!(validate.inputs[0].required);
+
+    let derive = wallet_schemas("derive_recovery_material");
+    assert_eq!(
+        derive
+            .inputs
+            .iter()
+            .map(|field| field.name)
+            .collect::<Vec<_>>(),
+        vec!["phrase"]
+    );
 }
 
 #[test]

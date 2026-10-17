@@ -8,7 +8,6 @@
 use serde_json::Value;
 
 use crate::agent::session_host::OpenHumanSessionHost;
-use crate::agent::subagent_host::with_autonomous_iter_cap;
 use crate::config::Config;
 use crate::skills::{preflight, registry, run_log};
 
@@ -39,8 +38,10 @@ pub struct WorkflowRunStarted {
 /// missing required inputs) surface as `Err(String)` *before* the spawn so
 /// callers can reject malformed invocations synchronously.
 pub async fn spawn_workflow_run_background(
+    ctx: &crate::core::runtime::DispatchCtx,
     skill_id_param: String,
     inputs_param: Option<Value>,
+    parent_origin: Option<crate::agent::turn_origin::AgentTurnOrigin>,
 ) -> Result<WorkflowRunStarted, String> {
     let workspace = resolve_workspace_dir().await;
     let skill = registry::get_workflow(&workspace, &skill_id_param)
@@ -126,7 +127,7 @@ pub async fn spawn_workflow_run_background(
     // the task prompt as guidelines + the resolved inputs; the
     // orchestrator's own system prompt and full tool access are kept.
     let guidelines = match &skill.definition.system_prompt {
-        crate::agent::harness::definition::PromptSource::Inline(s) => s.clone(),
+        tinyagents_definition::PromptSource::Inline(s) => s.clone(),
         _ => String::new(),
     };
     let inputs_block = registry::render_inputs_block(&skill.inputs, &inputs);
@@ -149,14 +150,15 @@ pub async fn spawn_workflow_run_background(
     // toolchain are loaded fresh per run; the parent returns the handle
     // immediately. Same flow handle_skills_run used to inline — extracted
     // so the `run_workflow` agent tool can re-use it for skill chaining.
-    let inherited_origin = crate::agent::turn_origin::current()
-        .unwrap_or(crate::agent::turn_origin::AgentTurnOrigin::Unknown);
+    let inherited_origin =
+        parent_origin.unwrap_or(crate::agent::turn_origin::AgentTurnOrigin::Unknown);
     {
         let run_id = run_id.clone();
         let workflow_id = workflow_id.clone();
         let inputs = inputs.clone();
         let log_path = log_path.clone();
         let inherited_origin = inherited_origin.clone();
+        let ctx = ctx.clone();
         tokio::spawn(async move {
             if let Err(e) =
                 run_log::write_header(&log_path, &workflow_id, &run_id, &inputs, &task_prompt).await
@@ -183,7 +185,7 @@ pub async fn spawn_workflow_run_background(
                 config.http_request.allowed_domains = vec!["*".to_string()];
             }
             let mut agent =
-                match OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator") {
+                match OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator") {
                     Ok(a) => a,
                     Err(e) => {
                         let _ = run_log::write_footer(
@@ -203,6 +205,7 @@ pub async fn spawn_workflow_run_background(
             // a post-construction override rather than a pre-set on `config`
             // (which the builder would otherwise clobber).
             agent.set_max_tool_iterations(WORKFLOW_RUN_MAX_ITERATIONS);
+            agent.set_autonomous_iter_cap(Some(WORKFLOW_RUN_MAX_ITERATIONS));
             tracing::debug!(
                 run_id = %run_id,
                 max_tool_iterations = WORKFLOW_RUN_MAX_ITERATIONS,
@@ -212,7 +215,7 @@ pub async fn spawn_workflow_run_background(
             agent.set_event_context(run_id.clone(), "skill");
             agent.set_agent_definition_name(format!(
                 "orchestrator-skill-{}",
-                &run_id.get(..8).unwrap_or(&run_id)
+                run_id.get(..8).unwrap_or(&run_id)
             ));
             let (tx, rx) = tokio::sync::mpsc::channel(256);
             agent.set_on_progress(Some(tx));
@@ -238,10 +241,7 @@ pub async fn spawn_workflow_run_background(
                 _ = cancel_token.cancelled() => None,
                 r = crate::agent::turn_origin::with_origin(
                     inherited_origin,
-                    with_autonomous_iter_cap(
-                        WORKFLOW_RUN_MAX_ITERATIONS,
-                        agent.run_single(&task_prompt),
-                    ),
+                    agent.run_single(&task_prompt),
                 ) => Some(r),
             };
             agent.set_on_progress(None);

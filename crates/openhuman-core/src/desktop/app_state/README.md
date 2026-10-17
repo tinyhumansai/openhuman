@@ -53,5 +53,5 @@ The signed-in identity for prompts and Sentry is `security::credentials::identit
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Tauri shell](../../../../../gitbooks/developing/architecture/tauri-shell.md)
-- [Frontend](../../../../../gitbooks/developing/architecture/frontend.md)
+- [Tauri shell](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Frontend](../../../../../docs/gitbooks/en/developing/architecture/frontend.md)

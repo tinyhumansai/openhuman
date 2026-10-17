@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 use crate::{
     config::Config,
     flows::{
@@ -63,10 +64,15 @@ fn repair_backend_failure_returns_no_proposal_before_starting_the_builder() {
             failing_node_ids: vec!["fetch".to_string()],
         };
 
-        let outcome =
-            flows_build_with_extra_hidden_tools(&Config::default(), req.clone(), None, &[])
-                .await
-                .expect("backend failure should short-circuit before the builder starts");
+        let outcome = flows_build_with_extra_hidden_tools(
+            &DispatchCtx::process_default(),
+            &Config::default(),
+            req.clone(),
+            None,
+            &[],
+        )
+        .await
+        .expect("backend failure should short-circuit before the builder starts");
 
         assert_eq!(outcome.value["proposal"], Value::Null);
         assert_eq!(outcome.value["error"], Value::Null);
@@ -82,9 +88,15 @@ fn repair_backend_failure_returns_no_proposal_before_starting_the_builder() {
         };
         let mut events = crate::web_chat::subscribe_web_channel_events();
 
-        flows_build_with_extra_hidden_tools(&Config::default(), req, Some(stream), &[])
-            .await
-            .expect("streamed backend failure should short-circuit before the builder starts");
+        flows_build_with_extra_hidden_tools(
+            &DispatchCtx::process_default(),
+            &Config::default(),
+            req,
+            Some(stream),
+            &[],
+        )
+        .await
+        .expect("streamed backend failure should short-circuit before the builder starts");
 
         let done = loop {
             match events.try_recv() {

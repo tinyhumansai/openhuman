@@ -23,15 +23,21 @@ const INSTRUCTION: &str = "Return the calendar date range (local dates) that the
 /// Not bounded here: the caller owns the deadline (`hooks::pre_turn` wraps
 /// it in the turn's pre-turn timeout), as tinymemory's `pre_turn_dated`
 /// requires of its hint.
-pub async fn extract(config: &Config, user_text: &str, zone: &str) -> Option<TimeHint> {
-    let (model, model_id) =
-        match crate::inference::provider::create_chat_model_with_model_id("chat", config, 0.0) {
-            Ok(model) => model,
-            Err(error) => {
-                tracing::debug!(%error, "[memory:date_hint] no chat model");
-                return None;
-            }
-        };
+pub async fn extract(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    user_text: &str,
+    zone: &str,
+) -> Option<TimeHint> {
+    let (model, model_id) = match crate::inference::provider::create_chat_model_with_model_id_in(
+        ctx, "chat", config, 0.0,
+    ) {
+        Ok(model) => model,
+        Err(error) => {
+            tracing::debug!(%error, "[memory:date_hint] no chat model");
+            return None;
+        }
+    };
     let system = format!(
         "{}\n\n{INSTRUCTION}",
         crate::agent::prompts::current_datetime_line(Some(zone))

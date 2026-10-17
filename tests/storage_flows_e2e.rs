@@ -85,48 +85,146 @@ async fn a_configured_backend_holds_cron_flows_and_flow_state(case: Case) {
     // A job's scheduling policy lives on the backend too.
     let policy_config = config.clone();
     tokio::task::spawn_blocking(move || {
-        use openhuman_core::cron::policy::{self, JobPolicy};
+        use openhuman_core::cron::{CronJobPatch, JobPolicy};
+        let set_policy = |config: &_, id: &str, policy: JobPolicy| {
+            cron::update_job(
+                config,
+                id,
+                CronJobPatch {
+                    policy: Some(policy),
+                    ..CronJobPatch::default()
+                },
+            )
+            .unwrap()
+            .policy
+        };
+        let job = cron::add_shell_job(
+            &policy_config,
+            Some("policy".to_string()),
+            Schedule::Every { every_ms: 60_000 },
+            "echo hi",
+        )
+        .unwrap();
         let wanted = JobPolicy {
             retries: Some(0),
             single_flight: true,
         };
-        policy::set_policy(&policy_config, "job-1", wanted).unwrap();
-        assert_eq!(policy::get_policy(&policy_config, "job-1").unwrap(), wanted);
-        policy::clear_policy(&policy_config, "job-1").unwrap();
+        assert_eq!(set_policy(&policy_config, &job.id, wanted), wanted);
         assert_eq!(
-            policy::get_policy(&policy_config, "job-1").unwrap(),
+            cron::get_job(&policy_config, &job.id).unwrap().policy,
+            wanted
+        );
+        assert_eq!(
+            set_policy(&policy_config, &job.id, JobPolicy::default()),
             JobPolicy::default()
         );
     })
     .await
     .unwrap();
 
-    for path in ["cron/jobs.db", "flows/flows.db", "graph_checkpoints.db"] {
+    for path in [
+        "cron/jobs.db",
+        "cron/schedule.db",
+        "flows/flows.db",
+        "flows/catalog.db",
+        "graph_checkpoints.db",
+    ] {
         assert!(
             !workspace.path().join(path).exists(),
             "{path} was not written"
         );
     }
 
-    // Without a backend the classic databases are back in use.
+    // Without a backend the workspace's own databases are used.
     assert!(openhuman_core::storage::clear());
     let fallback = config.clone();
     tokio::task::spawn_blocking(move || {
         assert!(matches!(
             FlowState::open(&fallback, "flow:digest"),
-            FlowState::Sqlite(_)
+            FlowState::Documents(_)
         ));
     })
     .await
     .unwrap();
-    // The flow written to the backend is not in the classic catalog.
+    assert!(workspace.path().join("storage/storage.db").exists());
+    // The flow written to the backend is not in the workspace's catalog.
     assert!(flows::ops::flows_list(&config)
         .await
         .unwrap()
         .value
         .is_empty());
     openhuman_core::agent::orchestration::open_delegation_checkpointer(&config).unwrap();
-    assert!(workspace.path().join("graph_checkpoints.db").exists());
 }
 
-driver_cases!(async a_configured_backend_holds_cron_flows_and_flow_state);
+/// The stores tinyflows used to write (`jobs.db`, `flows.db`, `checkpoints.db`,
+/// `drafts/`) are copied into a configured backend by the boot-time import,
+/// read-only: the legacy files are byte-identical afterwards.
+async fn legacy_tinyflows_files_are_imported_into_a_configured_backend(case: Case) {
+    let workspace = tempfile::tempdir().unwrap();
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../openhuman-core/src/storage/import/fixtures/tinyflows/workspace");
+    copy_tree(&fixtures, workspace.path());
+    let config = Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        ..Config::default()
+    };
+    let digest = |root: &std::path::Path| {
+        ["cron/jobs.db", "flows/flows.db", "flows/checkpoints.db"]
+            .map(|file| std::fs::read(root.join(file)).unwrap())
+    };
+    let before = digest(workspace.path());
+    case.install();
+
+    for report in openhuman_core::storage::import::run(
+        &openhuman_core::core::runtime::DispatchCtx::process_default(),
+        &config,
+    )
+    .await
+    {
+        report.outcome.unwrap();
+    }
+
+    let listed = flows::ops::flows_list(&config).await.unwrap().value;
+    let mut ids: Vec<_> = listed.iter().map(|flow| flow.id.clone()).collect();
+    ids.sort();
+    assert_eq!(ids, ["flow-alpha", "flow-beta"]);
+    let cron_config = config.clone();
+    tokio::task::spawn_blocking(move || {
+        assert_eq!(cron::list_jobs(&cron_config).unwrap().len(), 3);
+    })
+    .await
+    .unwrap();
+
+    // Run again: the markers say it is done, and nothing is rewritten.
+    for report in openhuman_core::storage::import::run(
+        &openhuman_core::core::runtime::DispatchCtx::process_default(),
+        &config,
+    )
+    .await
+    {
+        report.outcome.unwrap();
+    }
+    assert_eq!(
+        digest(workspace.path()),
+        before,
+        "a legacy file was modified"
+    );
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+driver_cases!(
+    async a_configured_backend_holds_cron_flows_and_flow_state,
+    legacy_tinyflows_files_are_imported_into_a_configured_backend
+);

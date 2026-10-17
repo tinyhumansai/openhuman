@@ -52,12 +52,10 @@ async fn agent_memory_needs_an_engine_and_follows_the_identity() {
     assert_eq!(memory.agent_id(), "writer");
     assert_eq!(memory.namespace().to_string(), "team:acme/agent:writer");
 
-    let (named, _) = named_agent_memory(&config, Some("auditor")).unwrap();
+    let (named, _) = named_agent_memory(&config, &MemoryIdentity::root(), Some("auditor")).unwrap();
     assert_eq!(named.namespace().to_string(), "agent:auditor");
-    let (current, resolved) = crate::memory::scope::within_agent("planner", async {
-        current_agent_memory(&config).unwrap()
-    })
-    .await;
+    let (current, resolved) =
+        current_agent_memory(&config, &MemoryIdentity::root().child("planner")).unwrap();
     assert_eq!(current.agent_id(), "planner");
     assert_eq!(resolved.agent_id, "planner");
 }

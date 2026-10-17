@@ -303,8 +303,10 @@ pub struct InFlightResult {
     pub entries: Vec<InFlightEntryView>,
 }
 
-pub async fn in_flight_chats() -> Result<Outcome<InFlightResult>, String> {
-    let entries: Vec<InFlightEntryView> = in_flight_entries_for_test()
+pub async fn in_flight_chats(
+    ctx: &crate::core::runtime::DispatchCtx,
+) -> Result<Outcome<InFlightResult>, String> {
+    let entries: Vec<InFlightEntryView> = in_flight_entries_for_test(ctx)
         .await
         .into_iter()
         .map(|(key, request_id)| InFlightEntryView { key, request_id })

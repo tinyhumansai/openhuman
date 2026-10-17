@@ -38,7 +38,7 @@ Two controllers in the `referral` namespace, registered into the global registry
 | `referral_get_stats` (`referral.get_stats`) | none | `stats` (JSON) | `GET /referral/stats` |
 | `referral_claim` (`referral.claim`) | `code` (string, required), `deviceFingerprint` (string, optional) | `result` (JSON) | `POST /referral/claim` |
 
-An unrecognized `function` name returns an `unknown` placeholder schema with an `error` output. Handlers load `Config` via `config_rpc::load_config_with_timeout()` and return CLI-compatible JSON through `Outcome::into_cli_compatible_json()`.
+An unrecognized `function` name returns an `unknown` placeholder schema with an `error` output. Handlers load `Config` via `DispatchCtx::load_config()` and return CLI-compatible JSON through `Outcome::into_cli_compatible_json()`.
 
 ## Persistence
 
@@ -67,6 +67,6 @@ None of its own. The domain is stateless: it reads the backend credential throug
 
 ## Further reading
 
-- [`gitbooks/developing/tinyhumans-api-key.md`](../../../../../gitbooks/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
 - [`crates/openhuman-tinyhumans/src/hosted/README.md`](../README.md): hosted proxies.
 - [`vendor/tinyhumans-sdk/README.md`](../../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

@@ -179,6 +179,31 @@ fn stop_notes_map_to_their_reason() {
     }
 }
 
+/// A policy refusal has its own ledger class (`blocked_by_policy`, one
+/// narrower alternative allowed), separate from the user's denial (`policy`).
+/// Its halt is still a security-settings block, never "not getting anywhere".
+#[test]
+fn a_policy_refusal_class_halt_names_the_security_settings() {
+    let note = "Stopping after 2 attempt(s): failure class `blocked_by_policy` still blocks \
+                operation `shell` on `shell`. Resolve this blocker before retrying.";
+    assert_eq!(StopReasonKind::from_stop_note(note), StopReasonKind::Policy);
+    let out = render_stop_summary(
+        &[result(
+            "shell",
+            false,
+            "[policy-blocked] Tool 'shell' was blocked by the security policy.",
+        )],
+        note,
+    );
+    assert!(
+        out.starts_with(
+            "I stopped this turn early because a step this needs is blocked by your security \
+             settings."
+        ),
+        "{out}"
+    );
+}
+
 /// When more distinct results precede the stop than fit, the list keeps the
 /// most recent ones so the failure that stopped the turn stays visible.
 #[test]

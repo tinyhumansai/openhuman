@@ -52,7 +52,7 @@ route, so the initial attempt never depends on a local model being up.
 `local_ai.runtime_enabled` is set and a `chat_model_id` is configured;
 otherwise the chain skips straight to `Deferred`.
 
-Only the local arm takes the `cron::scheduler_gate::wait_for_capacity`
+Only the local arm takes the `platform::llm_gate::wait_for_capacity`
 permit (held for the duration of that turn); cloud attempts do not wait on
 the gate. Tests use a `_for_test` variant that skips the permit.
 
@@ -108,11 +108,11 @@ Re-exported from [`mod.rs`](./mod.rs):
   `decision.rs` parses.
 - [`crates/openhuman-core/src/agent/registry/agents/trigger_reactor/`](../registry/agents/trigger_reactor/): the
   single-step sub-agent `react` decisions dispatch to.
-- [`crates/openhuman-core/src/cron/scheduler_gate/README.md`](../../cron/scheduler_gate/README.md): the LLM-permit
+- [`crates/openhuman-core/src/platform/llm_gate/README.md`](../../platform/llm_gate/README.md): the LLM-permit
   gate the local arm waits on.
 - [Parent module README](../README.md)
-- [Triggers](../../../../../gitbooks/features/integrations/triggers.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Triggers](../../../../../docs/gitbooks/en/features/integrations/triggers.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
 
 ## Tests
 

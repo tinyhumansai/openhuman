@@ -269,7 +269,7 @@ async fn managed_stream_carries_the_backend_charge_to_the_cost_accounting() {
     assert_eq!(billed.cached_input_tokens(), 800);
     assert_eq!(
         crate::agent::cost::call_cost("openrouter/z-ai/glm-5.3-flash", &billed),
-        crate::agent::cost::CallCost::Charged(0.0000634)
+        tinyagents_harness::cost::CallCost::Charged(0.0000634)
     );
 }
 
@@ -286,7 +286,7 @@ async fn managed_stream_keeps_a_zero_charge_as_known() {
         .expect("usage reported");
     assert_eq!(
         crate::agent::cost::call_cost("openrouter/z-ai/glm-5.3-flash", &billed),
-        crate::agent::cost::CallCost::Charged(0.0)
+        tinyagents_harness::cost::CallCost::Charged(0.0)
     );
 }
 
@@ -304,6 +304,6 @@ async fn managed_stream_without_a_billing_frame_has_no_charge() {
     assert!(!billed.charge_reported);
     assert_eq!(
         crate::agent::cost::call_cost("openrouter/z-ai/glm-5.3-flash", &billed),
-        crate::agent::cost::CallCost::Unknown
+        tinyagents_harness::cost::CallCost::Unknown
     );
 }

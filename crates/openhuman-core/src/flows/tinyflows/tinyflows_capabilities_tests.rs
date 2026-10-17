@@ -1,4 +1,5 @@
 use super::*;
+use crate::flows::tinyflows::caps::OpenHumanCode;
 
 // ── build_capabilities smoke ────────────────────────────────────────────
 
@@ -6,7 +7,12 @@ use super::*;
 fn build_capabilities_constructs_every_slot_without_panicking() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let caps = build_capabilities(config, "test:build");
+    let caps = build_capabilities(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        "test:build",
+        None,
+    );
     assert!(caps.tasks.is_some(), "Tinyflows task nodes need a runner");
     assert!(
         caps.approvals.is_none(),
@@ -54,7 +60,12 @@ async fn http_adapter_rejects_host_outside_strict_allowlist() {
 async fn engine_run_drives_trigger_to_http_request_through_the_real_seam() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let caps = build_capabilities(config, "test:smoke");
+    let caps = build_capabilities(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        "test:smoke",
+        None,
+    );
 
     // A deterministically-blocked loopback URL with `on_error: continue` so
     // the run completes even though the (real, SSRF-guarded) HTTP adapter
@@ -88,10 +99,12 @@ async fn engine_run_drives_trigger_to_http_request_through_the_real_seam() {
 // ── Code adapter ──────────────────────────────────────────────────────────
 
 /// Requires `node` on `PATH` (the code node runs the host's Node under the
-/// sandbox). Runs by default; on a host without Node it prints a `SKIPPED`
-/// line instead of failing.
+/// sandbox). TinyBox's native backend only provides the required isolation on
+/// Linux; macOS Seatbelt and other fallback backends deliberately do not meet
+/// the untrusted-code floor.
+#[cfg(target_os = "linux")]
 #[tokio::test]
-async fn code_adapter_javascript_passthrough_round_trips_json() {
+async fn code_adapter_javascript_runs_when_isolated_and_refuses_when_isolation_is_unavailable() {
     if std::process::Command::new("node")
         .arg("--version")
         .output()
@@ -107,14 +120,26 @@ async fn code_adapter_javascript_passthrough_round_trips_json() {
         &config.workspace_dir,
         &config.action_dir,
     ));
-    let runner = OpenHumanCode { config, security };
+    let runner = OpenHumanCode {
+        ctx: crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        security,
+        approval: Default::default(),
+    };
 
     let input = json!([{ "json": { "n": 7 } }]);
-    let result = runner
+    match runner
         .run(CodeLanguage::JavaScript, "return input;", input.clone())
         .await
-        .expect("javascript passthrough should succeed when node is present");
-    assert_eq!(result, input);
+    {
+        Ok(result) => assert_eq!(result, input),
+        Err(error) => assert!(
+            error
+                .to_string()
+                .contains("TinyBox native jail cannot meet the required isolation floor"),
+            "unexpected JavaScript code-runner failure: {error}"
+        ),
+    }
 }
 
 #[tokio::test]
@@ -438,7 +463,7 @@ fn harness_model_default_override_forwards_raw_byok_models_verbatim() {
 fn route_for_agent_ref_selects_harness_for_definitions_else_fallback() {
     // Ensure the global registry is populated (idempotent no-op if another test
     // already initialised it; builtins are always present either way).
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     // A shipped harness definition → full-loop harness path.
     assert_eq!(route_for_agent_ref("workflow_builder"), AgentRoute::Harness);
@@ -481,4 +506,49 @@ fn route_custom_entry_lookup_falls_back_when_no_entry_exists() {
         "an agent_ref unknown to both the harness registry and the custom config registry \
          must still resolve through the fallback (which reports \"unknown agent_ref\")"
     );
+}
+
+// ── Handed context ───────────────────────────────────────────────────────
+
+/// An adapter acts for the context its run was started with, never for the
+/// scope of whichever task happens to poll it: two runs under two contexts do
+/// not cross, even when a third context is ambient.
+#[tokio::test]
+async fn adapters_act_for_the_context_they_were_handed_not_the_ambient_one() {
+    use crate::core::runtime::{context::CoreContext, ComponentSet, DispatchCtx, DomainSet};
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+    let sandbox_off = ComponentSet {
+        sandbox: false,
+        ..ComponentSet::default()
+    };
+    let handed_off = DispatchCtx::new(CoreContext::for_test_with_components(sandbox_off));
+    let handed_on = DispatchCtx::new(CoreContext::for_test_with_components(
+        ComponentSet::default(),
+    ));
+    let ambient = CoreContext::for_test(DomainSet::full(), None);
+
+    let build = |ctx: &DispatchCtx| OpenHumanCode {
+        ctx: ctx.clone(),
+        config: config.clone(),
+        security: security.clone(),
+        approval: Default::default(),
+    };
+    let (off, on) = (build(&handed_off), build(&handed_on));
+
+    CoreContext::scope(ambient, async {
+        assert!(!off.ctx.components().sandbox, "the run's own switch wins");
+        assert!(on.ctx.components().sandbox, "two runs do not cross");
+        assert!(
+            DispatchCtx::ambient().components().sandbox,
+            "the ambient scope is a third, unrelated context"
+        );
+    })
+    .await;
 }

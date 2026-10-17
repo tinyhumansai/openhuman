@@ -212,47 +212,52 @@ fn docker_handle_for_status(available: bool) -> SandboxBackendHandle {
             SandboxStatus::Error
         },
         backend_id: None,
+        isolation: None,
     }
 }
 
-/// Validate that a sandbox policy's Docker configuration doesn't have
-/// dangerous settings (host network, privileged mounts, etc.).
-pub fn validate_docker_policy(policy: &SandboxPolicy) -> Result<(), Vec<String>> {
-    let mut issues = Vec::new();
-
-    if let Some(overrides) = &policy.docker_overrides {
-        if overrides.network.as_deref() == Some("host") {
-            issues.push("Docker sandbox uses host network — defeats network isolation".into());
-        }
+/// The parts of a sandbox policy the module's Docker run policy judges.
+#[cfg(feature = "modules")]
+pub(crate) fn policy_request(policy: &SandboxPolicy) -> contract::DockerPolicyRequest {
+    contract::DockerPolicyRequest {
+        network: policy
+            .docker_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.network.clone()),
+        workspace: Some(policy.workspace_root.to_string_lossy().into_owned()),
+        read_only_mounts: policy
+            .read_only_mounts
+            .iter()
+            .map(|mount| mount.to_string_lossy().into_owned())
+            .collect(),
     }
+}
 
-    // Check for dangerous mount paths.
-    let dangerous_mounts = ["/", "/etc", "/var/run/docker.sock", "/proc", "/sys"];
-    for mount in &policy.read_only_mounts {
-        let path_str = mount.to_string_lossy();
-        for &dangerous in &dangerous_mounts {
-            if path_str == dangerous {
-                issues.push(format!(
-                    "Dangerous read-only mount: {path_str} — could leak host secrets"
-                ));
-            }
-        }
-    }
+/// Ask TinyBox whether a sandbox policy's Docker configuration has dangerous
+/// settings (host network, privileged mounts, ...).
+///
+/// The verdict is the module's: the same check `RunDocker` enforces before it
+/// creates a container. `Ok` carries the findings (empty means safe); an `Err`
+/// means no verdict could be obtained, which callers must not read as safe.
+#[cfg(feature = "modules")]
+pub async fn validate_docker_policy(
+    config: &Config,
+    policy: &SandboxPolicy,
+) -> Result<Vec<String>, String> {
+    let report = tinybox::validate_docker_policy(config, policy_request(policy)).await?;
+    tracing::debug!(
+        issues = report.issues.len(),
+        "[sandbox:docker] TinyBox validated the policy"
+    );
+    Ok(report.issues)
+}
 
-    let workspace_str = policy.workspace_root.to_string_lossy();
-    for &dangerous in &dangerous_mounts {
-        if workspace_str == dangerous {
-            issues.push(format!(
-                "Workspace root is a dangerous path: {workspace_str}"
-            ));
-        }
-    }
-
-    if issues.is_empty() {
-        Ok(())
-    } else {
-        Err(issues)
-    }
+#[cfg(not(feature = "modules"))]
+pub async fn validate_docker_policy(
+    _config: &Config,
+    _policy: &SandboxPolicy,
+) -> Result<Vec<String>, String> {
+    Err("TinyBox module support is disabled; policy validation is unavailable".to_owned())
 }
 
 #[cfg(test)]

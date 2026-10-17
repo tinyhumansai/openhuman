@@ -36,10 +36,10 @@ The internals are in
   unknown method.
 - **Their own events.** `GET /events?client_id=` streams only that user's
   chat progress, final replies and relayed `channel_outbound` replies.
-- **Closed tools by default.** No shell or file tool reaches the host unless
-  the operator opts users into `host_files` or `host_shell`; `host_shell`
-  runs every command in a locked-down Docker container whose only writable
-  mount is the user's `sandbox/`.
+- **Closed host tools.** The standalone SaaS CLI exposes no file or shell
+  tools, even when `host_files` or `host_shell` is in `tool_allowlist`.
+  Embedding hosts can supply profile tool adapters; the allowlist limits
+  which host tool groups those adapters may expose.
 
 ## Operator config
 
@@ -57,7 +57,7 @@ max_profiles_open = 256              # profiles open at once on this node
 idle_evict_secs = 1800               # close a profile idle this long
 profile_ids = "raw"                  # or "hashed"
 require_user_signature = true        # X-OpenHuman-User-Sig on every user request
-tool_allowlist = []                  # "host_files", "host_shell"
+tool_allowlist = []                  # admission only; CLI has no host-tool adapter
 shared_backend_api_key = true        # let every user ride OPENHUMAN_BACKEND_API_KEY
 custom_definitions = false
 
@@ -68,12 +68,19 @@ custom_definitions = false
 # lease_ttl_secs = 30
 # operator_dir = "/var/lib/openhuman/node-a"        # default <root>/operator
 
-[sandbox]                            # only used with host_shell
+[sandbox]                            # policy for host_shell supplied by an embedding host
 image = "alpine:3.20"
 network = "none"
 memory_limit_mb = 512
 cpu_limit = 1.0
 ```
+
+`tool_allowlist` is an admission policy, not a tool installer. Its recognized
+groups are `host_files` and `host_shell`. To expose those tools, use an
+embedding host with profile tool adapters and a permission callback. Adding
+either group to the standalone CLI configuration does not make those tools
+available. The `host_shell` Docker boot check still applies when that group is
+allowlisted.
 
 Unknown keys are refused. The boot guard refuses to start, listing every
 problem at once, when the root is relative, missing, world-writable or inside

@@ -46,6 +46,6 @@ live in `vendor/tinyagents/crates/tinyagents-session/src/threads/`.
 ## Further reading
 
 - [Parent module (`threads`)](../README.md)
-- [Chat](../../../../../gitbooks/features/chat.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Frontend architecture](../../../../../gitbooks/developing/architecture/frontend.md)
+- [Chat](../../../../../docs/gitbooks/en/features/chat.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Frontend architecture](../../../../../docs/gitbooks/en/developing/architecture/frontend.md)

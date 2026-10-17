@@ -16,7 +16,7 @@
 //! `env_lock()` across `.await` on purpose, as there.
 #![allow(clippy::await_holding_lock)]
 
-use crate::env_guard::env_lock_async as env_lock_async;
+use crate::env_guard::env_lock_async;
 use crate::env_guard::EnvVarGuard;
 use crate::rpc_auth::{ensure_rpc_auth, rpc_token};
 use crate::scripted_stack::{
@@ -34,7 +34,7 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
-use openhuman_core::agent::harness::AgentDefinitionRegistry;
+use openhuman_core::agent::harness::host_definition::AgentDefinitionRegistry;
 use openhuman_rpc::server::build_core_http_router;
 
 // ─── Env serialization ──────────────────────────────────────────────────────
@@ -640,7 +640,9 @@ async fn run_case_inner(case: Case) {
     match case.entry {
         Entry::Summarizer => {
             use openhuman_core::inference::host_runtime::ops::{agent_chat_for, AgentChatTarget};
-            let mut config = openhuman_core::config::Config::load_or_init().await.unwrap();
+            let mut config = openhuman_core::config::Config::load_or_init()
+                .await
+                .unwrap();
             agent_chat_for(
                 &mut config,
                 AgentChatTarget::AgentId("summarizer"),
@@ -650,6 +652,7 @@ async fn run_case_inner(case: Case) {
                 None,
                 None,
                 None,
+                openhuman_core::inference::host_runtime::ops::AgentChatEnv::default(),
             )
             .await
             .expect("summarizer turn must finish");
@@ -790,11 +793,15 @@ async fn run_case_inner(case: Case) {
         );
     }
     if matches!(case.entry, Entry::WebChatNoAutomaticSummary) {
-        assert!(requests.len() >= 2, "the tool result must reach a subsequent model request");
-        assert!(requests.iter().all(|request| !system_text(request)
-            .contains("You compress a single oversized tool result")));
+        assert!(
+            requests.len() >= 2,
+            "the tool result must reach a subsequent model request"
+        );
+        assert!(requests
+            .iter()
+            .all(|request| !system_text(request)
+                .contains("You compress a single oversized tool result")));
     }
-
 }
 
 // ─── Cases ──────────────────────────────────────────────────────────────────
@@ -1159,7 +1166,11 @@ fn the_interface_locale_reaches_the_model_on_every_turn() {
         }
 
         let requests = captured().clone();
-        assert_eq!(requests.len(), 4, "one model request per turn: {requests:#?}");
+        assert_eq!(
+            requests.len(),
+            4,
+            "one model request per turn: {requests:#?}"
+        );
         let turn = |words: &str| {
             requests
                 .iter()
@@ -1179,6 +1190,9 @@ fn the_interface_locale_reaches_the_model_on_every_turn() {
         assert!(hindi.contains("Respond in Hindi"), "{hindi}");
         let none = turn("no locale here");
         assert!(!none.contains("User language:"), "{none}");
-        assert!(none.contains("Current Date & Time:"), "fixture: the clock line is there: {none}");
+        assert!(
+            none.contains("Current Date & Time:"),
+            "fixture: the clock line is there: {none}"
+        );
     });
 }

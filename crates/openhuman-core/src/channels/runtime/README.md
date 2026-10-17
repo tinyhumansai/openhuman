@@ -1,60 +1,65 @@
-# Runtime
+# Channel runtime
 
-Boots every enabled channel, keeps their listeners alive, and dispatches inbound messages into the agent loop. [`mod.rs`](./mod.rs) exports `start_channels` and a crate-internal startup entry with a captured session lifetime; `dispatch` and `supervision` internals are `pub(crate)` for [`channels/tests/`](../tests/) under `#[cfg(test)]`.
+OpenHuman owns channel configuration, account lifetime, host policy, and the
+agent-turn pipeline. The TinyChannels module owns provider construction,
+listener supervision, relay transport, and channel-side interaction behavior.
+This directory adapts those two sides through the typed TinyBus contract.
 
-## Files
+## Startup and ownership
 
-| Path                                                                                                            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                            |
-| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`startup.rs`](./startup.rs) (+ `startup/`: `start_channels.rs`, `credentials.rs`, `chat_workload.rs`, `prompt.rs`, `relay.rs`, `turn_parts.rs`) | `start_channels` builds the `channels::host` capability surface, hydrates secrets that live outside `config.toml` (`hydrate_channel_credentials`: email password, Yuanbao app secret, via `security::credentials::AuthService`), calls `tinychannels::build_channels`, registers the startup bus subscribers, spawns a supervised listener per channel and the optional relay runtime, then runs the dispatch loop. `turn_parts.rs` (`build_channel_turn_parts`, `runtime_context`) builds the model, tools, prompt and `ChannelRuntimeContext` from a config without installing any process-global state; `start_channels` and the hosted-channel relay (`providers/relay/`) share it |
-| [`supervision.rs`](./supervision.rs)                                                                                                | `spawn_supervised_listener` re-runs `Channel::listen` in a loop with exponential backoff plus full jitter, publishing `DomainEvent::ChannelConnected` / `ChannelDisconnected` / `HealthRestarted`; re-exports `tinychannels::runtime::compute_max_in_flight_messages`                                                                                                                                              |
-| `dispatch/`                                                                                                     | The inbound pipeline that turns a `RuntimeChannelMessage` into an agent turn and a reply                                                                                                                                                                                                                                                                                                                           |
-| [`test_support.rs`](./test_support.rs)                                                                                               | `#[cfg(any(test, debug_assertions))]` dispatch harness (`run_dispatch_harness`, `DispatchHarnessOptions`) used by `channels/tests/` and raw coverage                                                                                                                                                                                                                                                               |
+[`startup/start_channels.rs`](./startup/start_channels.rs) captures the
+session cancellation token, prepares the module runtime limits, hydrates
+credentials from the host credential store, and opens a private
+`ChannelRuntimeLease`. The module describes configured providers and starts
+listeners and the optional relay using the captured configuration. The host
+serves typed callbacks for operations it owns, including voice transcription,
+allowlist persistence, event publication, and remote-control access. A
+malformed or unavailable module response fails closed; there is no local
+provider-construction fallback.
 
-## Account lifetime
-
-Model authentication and account lifetime are separate. A local or CLI model can run without an OpenHuman backend session, but explicit logout cancels the old account's channel runtime. `spawn_channels_service` captures the channel lifetime before awaiting config loading, so logout also cancels a partially started runtime. [`session.rs`](./session.rs) holds the process's `tinychannels::runtime::ChannelSession` and stops the runtime on invalidation; owned listener/bridge tasks, dispatch workers, draft updaters, typing tasks, and relay reconnect supervision terminate when their owners drop. A runtime explicitly started again obtains a fresh lifetime; logout does not automatically start listeners for another account.
+Startup registers host event subscribers before accepting inbound work. The
+dispatch queue is bounded, and its concurrency limit comes from the module's
+`PrepareChannelControl::RuntimeLimits` response. Session cancellation closes
+the lease, which asks the module to stop its resources before the host drops
+the captured callbacks.
 
 ## Inbound path
 
-1. Each provider listener (`spawn_supervised_listener`, one per channel from `tinychannels::build_channels`) sends `traits::ChannelMessage`s on a bounded `mpsc` (capacity 100). A bridge task in [`startup/start_channels.rs`](./startup/start_channels.rs) wraps each into `RuntimeChannelMessage` and forwards it to the dispatch queue (also capacity 100). The relay runtime (`start_relay_runtime`) writes `RuntimeChannelMessage`s to that queue directly so relay inbound keeps its original TinyChannels envelope.
-2. `run_message_dispatch_loop` ([`dispatch/processor.rs`](./dispatch/processor.rs), over `tinychannels::runtime::run_dispatch_loop`) drains the queue under a semaphore sized by `compute_max_in_flight_messages(listener_count)` and spawns a worker per message that calls `process_channel_runtime_message` (`processor/turn.rs`). `process_channel_message` is the `traits::ChannelMessage` wrapper for the same pipeline.
-3. `process_channel_runtime_message` publishes `DomainEvent::ChannelMessageReceived`, then: if `channel_has_approval_surface` and `try_route_approval_reply` claims the message as a yes/no answer to a parked approval, stops there; otherwise, when the channel is bound to a host agent (`agent.channel_agents`) whose agent no host answers for, replies `AGENT_UNAVAILABLE_REPLY` and stops there; otherwise starts typing, sends the ACK reaction (`select_acknowledgment_reaction`, threaded messages only), opens a streaming draft when the channel supports it, runs the turn (a channel bound to a host agent runs as that agent, `host_agent::run_host_agent_turn`, below; any other channel resolves scoping with `resolve_target_agent` + `build_visible_tool_set` and dispatches over `BUS.native()` to the `agent.run_turn` handler, `agent::bus::register_agent_handlers`, in `processor/bus_turn.rs`), sends the reply, and publishes `DomainEvent::ChannelMessageProcessed`.
+Native listener and gateway-relayed messages enter the same host dispatch
+pipeline. The host preserves authenticated relay provenance separately from
+serialized message data. It prepares inbound identity and policy facts through
+the module, then applies OpenHuman's routing, approval, and agent-turn policy.
+Replies and interactions are sent through the module's typed channel objects;
+the host does not reconstruct provider-specific outbound behavior.
 
-## `dispatch/`
+The always-on `ChannelInboundSubscriber` handles hosted-channel messages
+published by the backend socket. It prepares the caller's identity, opens a
+private module runtime, and executes progressive delivery against the captured
+backend callback. Drafts, typing refreshes, idempotency, and final delivery are
+owned by the module. The host callback supplies only the managed REST transport
+and credential captured for that turn.
 
-| Path                                                      | Purpose                                                                                                                                                                                                                                                       |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `helpers.rs`                                              | Stateless helpers: per-turn context block for non-web channels, deterministic ACK-emoji picker, worker join logging, scoped typing task                                                                                                                       |
-| `routing.rs`                                              | `AgentScoping`, `resolve_target_agent`, `build_visible_tool_set`, `connected_with_fallback`: picks the active agent for the channel and its visible/delegation tool surface from `Config`, `AgentDefinitionRegistry`, and the connected-integrations snapshot |
-| `processor.rs` (+ `processor/`: `approval.rs`, `turn.rs`, `bus_turn.rs`) | `RuntimeChannelMessage` (re-exported from `tinychannels::runtime`), `channel_has_approval_surface`, `try_route_approval_reply`, `process_channel_message`, `process_channel_runtime_message`, `run_message_dispatch_loop`; `bus_turn.rs` is the orchestrator path over the bus |
-| `host_agent/` (`mod.rs`, `turn.rs`, `posture.rs`, `guard_tool.rs`) | Channels bound to a host-registered agent: `bound_agent_id`, `route` (`HostRoute::{Unbound, Agent, Missing}`), `refuse_missing_agent`, `run_host_agent_turn`, `seed_rows`, and the external-channel posture (`tool_ceiling`, `cap_channel`, `guard_host_tools`, `CeilingGuard`) |
-| `mod.rs`                                                  | Declares the three submodules and the `#[cfg(test)]` / `#[cfg(any(test, debug_assertions))]` re-exports the test modules reach through `super::*`                                                                                                             |
+## Account lifetime
 
-Two policy points here: `channel_has_approval_surface` follows the provider's `chat_approvals` capability (every chat provider; not email, the CLI or webhooks, which keep the "no chat context, silently allow" behaviour); and scoping is per channel (`resolve_target_agent(&msg.channel)`), falling back to `AgentScoping::unscoped()` (every registered tool visible) when the registry is not initialised or the target agent is unknown.
+Model authentication and channel account lifetime are separate. A local model
+can run without a backend session, while logout cancels the channel runtime
+captured for the old account. The session owner explicitly closes the runtime
+even when shared channel handles remain alive. Provider listeners, dispatch
+workers, typing refreshes, and relay tasks stop with their owning module
+resources.
 
-## Channels bound to a host agent
+## Files
 
-`config.agent.channel_agents` maps a channel name to an agent id (`telegram = "teeny-chat"`). It is keyed by channel name rather than set on each provider's config because those structs belong to `tinychannels`; which agent answers a channel is host policy. A message on a bound channel is resolved through `agent::host_agents` and runs as that `HostAgent`: its definition (system prompt, tool scope, iteration cap), its host tools, its config (provider model and route) and its `CoreContext` (`HostAgent::scope`). The channel keeps what it owns: the per-chat history in `conversation_histories` seeds the session (`seed_resume_from_messages`, transcript autoload suppressed, so no other chat's transcript is resumed), and typing, drafts (progress is wired with `set_on_progress`), the reply, history compaction on overflow and `ChannelMessageProcessed` work as for the orchestrator. The channel's `/models` route does not apply: the agent's own provider answers.
-
-- **A missing agent is refused, never widened.** When the binding names an agent no host answers for (not created yet, or dropped), the message gets `AGENT_UNAVAILABLE_REPLY`, `ChannelMessageProcessed` records `success: false`, and an error is logged. It is not sent to the orchestrator, which holds the operator's full tool belt.
-- **The turn runs as `ExternalChannel`, capped at read-only.** The origin is passed down as a parameter (`run_single_with_origin`), not read from a task-local. `posture::tool_ceiling` maps it to `PermissionLevel::ReadOnly`, and the turn applies it twice. `cap_channel` sets `agent.channel_permissions[<channel>] = "readonly"` in the turn's config clone (never widening an operator's `none`), so the session's tool policy withholds every tool above read-only, built-in or host, and a call by name is refused at once. `guard_host_tools` wraps each host tool in a `CeilingGuard` that refuses, with a tool error, any call whose `permission_level_with_args` exceeds the ceiling or that has an external effect. It reports no external effect itself, so the approval gate never parks an approval that only the outside sender could answer.
-- An unbound channel takes the orchestrator path unchanged.
-
-## Called by
-
-`channels::start_channels` is re-exported from [`channels/mod.rs`](../mod.rs) and spawned by `spawn_channels_service` in [`crates/openhuman-core/src/core/runtime/services.rs`](../../core/runtime/services.rs), unless `OPENHUMAN_DISABLE_CHANNEL_LISTENERS` is set or `channels_config.has_listening_integrations()` is false. Web-chat-only desktop cores therefore never run it; `bus::ChannelInboundSubscriber` and the web-only proactive subscriber are registered on the always-on boot path in [`core/runtime/subscribers.rs`](../../core/runtime/subscribers.rs) instead.
+| Path | Purpose |
+| --- | --- |
+| [`startup.rs`](./startup.rs) and `startup/` | Captures configuration and callbacks, opens the module lease, prepares runtime limits, registers subscribers, and starts the dispatch loop. |
+| [`dispatch/`](./dispatch/) | Applies OpenHuman's inbound routing, approval, agent, and reply policy. |
+| [`session.rs`](./session.rs) | Tracks the process channel-session cancellation lifetime. |
+| [`test_support.rs`](./test_support.rs) | Test/debug dispatch harness; it does not provide a production provider fallback. |
 
 ## Tests
 
-- [`startup_tests.rs`](./startup_tests.rs), [`startup_email_secret_tests_tests.rs`](./startup_email_secret_tests_tests.rs), [`startup_yuanbao_secret_tests_tests.rs`](./startup_yuanbao_secret_tests_tests.rs) (secret hydration precedence).
-- [`supervision_tests.rs`](./supervision_tests.rs).
-- [`dispatch_tests.rs`](./dispatch_tests.rs) (helpers: ACK reaction categories, context block shape), [`dispatch/mod_scoping_tests_tests.rs`](./dispatch/mod_scoping_tests_tests.rs) (`build_visible_tool_set` / `AgentScoping`), [`dispatch/mod_approval_surface_gating_tests_tests.rs`](./dispatch/mod_approval_surface_gating_tests_tests.rs) (`channel_has_approval_surface`), [`dispatch/routing_connected_fallback_tests_tests.rs`](./dispatch/routing_connected_fallback_tests_tests.rs) (`connected_with_fallback`: authoritative snapshot vs cached fallback on unavailable/timeout).
-- `dispatch/host_agent/mod_tests.rs` (binding lookup, `seed_rows`), `posture_tests.rs` (ceiling, `cap_channel`, `CeilingGuard`), `dispatch_tests.rs` (a missing agent is refused without reaching the bus; an unbound channel still reaches the orchestrator; a bound channel runs its host agent against a mock provider with its prompt and read-only host tool, under the channel's origin, with the write tool withheld and refused). The embed crate's `tests/channel_agents.rs` covers the same path end to end through a mocked Telegram Bot API.
-- End-to-end dispatch coverage lives in `channels/tests/` (`runtime_dispatch`, `runtime_tool_calls`, `discord_integration`, `telegram_integration`, `health`).
-
-## Further reading
-
-- [Parent module README](../README.md)
-- [Messaging channels](../../../../../gitbooks/features/channels.md)
-- [tinychannels](../../../../../vendor/tinychannels/README.md)
+Startup and dispatch tests live beside their modules. `module_fixture_tests.rs`
+exercises the typed bus callbacks against an in-process TinyChannels module
+fixture. The separately maintained released-artifact fixture verifies the
+same public bus contract through the pinned module loader.

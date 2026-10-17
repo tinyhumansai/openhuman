@@ -7,11 +7,12 @@
 //! session runs under can neither delegate nor act.
 
 use super::*;
-use crate::agent::harness::definition::{SandboxMode, ToolScope};
-use crate::agent::tool_policy::{
-    ToolCallContext, ToolPolicy, ToolPolicyDecision, ToolPolicyRequest,
-};
+use crate::agent::tinyagents::host::OpenHumanRunContext;
 use std::sync::Arc;
+use tinyagents_definition::{SandboxMode, ToolScope};
+use tinyagents_harness::context::{RunConfig, RunContext};
+use tinyagents_harness::middleware::{PolicyDecision, ToolCallPolicy};
+use tinyinference_llm::tool::ToolCall;
 
 #[derive(Debug)]
 struct Marker(&'static str);
@@ -50,18 +51,17 @@ fn sorted(names: impl IntoIterator<Item = String>) -> Vec<String> {
     names
 }
 
-fn request(tool: &str) -> ToolPolicyRequest {
-    ToolPolicyRequest::new(
-        tool,
-        serde_json::json!({}),
-        ToolCallContext::session("session", "chat", "reviewer", "call-1", 1),
+fn request(tool: &str) -> (RunContext<OpenHumanRunContext>, ToolCall) {
+    (
+        RunContext::new(RunConfig::new("host-only-test"), OpenHumanRunContext::new()),
+        ToolCall::new("call-1", tool, serde_json::json!({})),
     )
 }
 
 /// The orchestrator's definition is the embed default, and the widest one:
 /// every registered tool, delegation and memory. Host-only must narrow it.
-fn orchestrator_def() -> crate::agent::harness::definition::AgentDefinition {
-    let mut def = crate::agent::harness::definition::AgentDefinitionRegistry::builtins_only()
+fn orchestrator_def() -> crate::agent::harness::host_definition::AgentDefinition {
+    let mut def = crate::agent::harness::host_definition::AgentDefinitionRegistry::builtins_only()
         .get("orchestrator")
         .cloned()
         .expect("built-in orchestrator");
@@ -76,6 +76,7 @@ fn a_host_only_session_registers_and_advertises_only_the_host_belt() {
     let config = test_config(&tmp);
 
     let agent = crate::agent::OpenHumanSessionHost::from_config_host_only(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &orchestrator_def(),
         Some(&host_belt()),
@@ -106,6 +107,7 @@ fn a_host_only_session_without_a_belt_has_no_tools() {
     let config = test_config(&tmp);
 
     let agent = crate::agent::OpenHumanSessionHost::from_config_host_only(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &orchestrator_def(),
         None,
@@ -123,6 +125,7 @@ fn a_host_only_session_runs_a_definition_that_cannot_delegate_or_act() {
     let config = test_config(&tmp);
 
     let agent = crate::agent::OpenHumanSessionHost::from_config_host_only(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &orchestrator_def(),
         Some(&host_belt()),
@@ -134,7 +137,7 @@ fn a_host_only_session_runs_a_definition_that_cannot_delegate_or_act() {
     assert!(def.subagents.is_empty(), "no delegation surface");
     assert!(def.deferred_tools.is_empty());
     assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
-    assert!(def.omit_memory_context);
+    assert!(def.extensions.omit_memory_context);
 }
 
 #[tokio::test]
@@ -145,14 +148,20 @@ async fn the_host_only_policy_admits_only_host_names() {
     );
 
     assert_eq!(
-        policy.check(&request("read_file")).await,
-        ToolPolicyDecision::Allow
+        {
+            let (ctx, call) = request("read_file");
+            policy.check(&ctx, &call).await
+        },
+        PolicyDecision::Allow
     );
     for refused in ["shell", "write_file", "spawn_subagent", "memory_store"] {
         assert!(
             matches!(
-                policy.check(&request(refused)).await,
-                ToolPolicyDecision::Deny { .. }
+                {
+                    let (ctx, call) = request(refused);
+                    policy.check(&ctx, &call).await
+                },
+                PolicyDecision::Deny { .. }
             ),
             "{refused} must be denied"
         );
@@ -163,12 +172,12 @@ async fn the_host_only_policy_admits_only_host_names() {
 async fn the_host_only_policy_still_consults_the_hosts_own_gate() {
     struct DenyAll;
     #[async_trait::async_trait]
-    impl ToolPolicy for DenyAll {
+    impl ToolCallPolicy<OpenHumanRunContext> for DenyAll {
         fn name(&self) -> &str {
             "deny_all"
         }
-        async fn check(&self, _: &ToolPolicyRequest) -> ToolPolicyDecision {
-            ToolPolicyDecision::deny("host says no")
+        async fn check(&self, _: &RunContext<OpenHumanRunContext>, _: &ToolCall) -> PolicyDecision {
+            PolicyDecision::deny("host says no")
         }
     }
     let policy = super::super::host_only::HostOnlyToolPolicy::new(
@@ -177,8 +186,11 @@ async fn the_host_only_policy_still_consults_the_hosts_own_gate() {
     );
 
     assert!(matches!(
-        policy.check(&request("read_file")).await,
-        ToolPolicyDecision::Deny { .. }
+        {
+            let (ctx, call) = request("read_file");
+            policy.check(&ctx, &call).await
+        },
+        PolicyDecision::Deny { .. }
     ));
 }
 
@@ -187,6 +199,7 @@ fn only_a_host_only_session_accepts_untrusted_input() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
     let mut host_only = crate::agent::OpenHumanSessionHost::from_config_host_only(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &orchestrator_def(),
         Some(&host_belt()),
@@ -194,6 +207,7 @@ fn only_a_host_only_session_accepts_untrusted_input() {
     )
     .expect("host-only session");
     let mut normal = crate::agent::OpenHumanSessionHost::from_config_with_host_tools(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &orchestrator_def(),
         &host_belt(),
@@ -214,6 +228,7 @@ async fn a_host_only_session_enforces_the_deny_by_default_gate() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
     let agent = crate::agent::OpenHumanSessionHost::from_config_host_only(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &orchestrator_def(),
         Some(&host_belt()),
@@ -223,14 +238,20 @@ async fn a_host_only_session_enforces_the_deny_by_default_gate() {
 
     assert_eq!(agent.tool_policy.name(), "host_only");
     assert_eq!(
-        agent.tool_policy.check(&request("read_file")).await,
-        ToolPolicyDecision::Allow
+        {
+            let (ctx, call) = request("read_file");
+            agent.tool_policy.check(&ctx, &call).await
+        },
+        PolicyDecision::Allow
     );
     for built_in in ["shell", "write_file", "spawn_subagent", "tool_search"] {
         assert!(
             matches!(
-                agent.tool_policy.check(&request(built_in)).await,
-                ToolPolicyDecision::Deny { .. }
+                {
+                    let (ctx, call) = request(built_in);
+                    agent.tool_policy.check(&ctx, &call).await
+                },
+                PolicyDecision::Deny { .. }
             ),
             "{built_in} must be refused by the session's gate"
         );

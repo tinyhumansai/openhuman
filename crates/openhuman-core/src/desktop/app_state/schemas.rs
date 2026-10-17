@@ -1,3 +1,4 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::{self, DeserializeOwned};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -92,23 +93,26 @@ pub fn app_state_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_snapshot(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_snapshot(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        crate::desktop::app_state::snapshot()
+        crate::desktop::app_state::snapshot(&ctx)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_update_local_state(params: Map<String, Value>) -> ControllerFuture {
+fn handle_update_local_state(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: UpdateLocalStateParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        crate::desktop::app_state::update_local_state(StoredAppStatePatch {
-            encryption_key: payload.encryption_key,
-            onboarding_tasks: payload.onboarding_tasks,
-            keyring_consent: payload.keyring_consent,
-        })
+        crate::desktop::app_state::update_local_state(
+            &ctx,
+            StoredAppStatePatch {
+                encryption_key: payload.encryption_key,
+                onboarding_tasks: payload.onboarding_tasks,
+                keyring_consent: payload.keyring_consent,
+            },
+        )
         .await?
         .into_cli_compatible_json()
     })

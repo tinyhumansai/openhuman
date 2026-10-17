@@ -1,6 +1,5 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { callOpenhumanRpc, expectRpcOk } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   clickText,
   textExists,
@@ -8,6 +7,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { triggerAuthLoopbackBypass } from '../helpers/loopback-auth-helpers';
 import { supportsExecuteScript } from '../helpers/platform';
 import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
@@ -70,7 +70,7 @@ describe('Agent teams live coordination surface', () => {
     stepLog('waiting for app');
     await waitForApp();
     stepLog('triggering auth bypass deep link');
-    await triggerAuthDeepLinkBypass('e2e-agent-teams-live');
+    await triggerAuthLoopbackBypass('e2e-agent-teams-live');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await waitForAppReady(15_000);

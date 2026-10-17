@@ -7,6 +7,7 @@
 //! [`HookEngine::has_hooks`](super::engine::HookEngine::has_hooks) first and
 //! returns without building an envelope.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -23,7 +24,7 @@ use tinyagents_runtime::command_hooks::types::{
 ///
 /// Safe to call again — a reload replaces the whole config and re-registers the
 /// bridge by name rather than appending a second copy.
-pub async fn init(config: &crate::config::schema::Config) {
+pub async fn init(ctx: &DispatchCtx, config: &crate::config::schema::Config) {
     let settings = &config.hooks;
     set_host_context(HostContext {
         workspace_roots: workspace_roots(config),
@@ -43,6 +44,7 @@ pub async fn init(config: &crate::config::schema::Config) {
         .set_default_timeout(Duration::from_secs(settings.default_timeout_secs))
         .await;
     let loaded = super::host::reload(
+        ctx,
         Some(config.action_dir.clone()),
         Some(config.workspace_dir.clone()),
     )
@@ -57,13 +59,7 @@ pub async fn init(config: &crate::config::schema::Config) {
 }
 
 fn workspace_roots(config: &crate::config::schema::Config) -> Vec<PathBuf> {
-    let mut roots = vec![config.action_dir.clone()];
-    if let Some(turn_root) = crate::agent::turn_workspace::current() {
-        if !roots.contains(&turn_root) {
-            roots.push(turn_root);
-        }
-    }
-    roots
+    vec![config.action_dir.clone()]
 }
 
 /// Fire `sessionStart`, returning context the caller should append to the

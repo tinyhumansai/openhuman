@@ -27,23 +27,13 @@
 
 use std::sync::Arc;
 
-use tinyflows::observability::{ExecutionStep, Run, RunObserver, StepStatus};
+use tinyflows::observability::{ExecutionStep, Run, RunObserver};
+use tinyflows::observe::step_status_str;
 
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use {crate::flows::upsert_flow_run_step, tinyflows_catalog::FlowRunStep};
-
-/// Maps a live [`StepStatus`] to the stable `"success"`/`"error"` string
-/// persisted on [`FlowRunStep::status`] and published on
-/// [`DomainEvent::FlowRunProgress`]. `StepStatus` does not derive `PartialEq`,
-/// so this matches rather than compares.
-fn step_status_str(status: &StepStatus) -> &'static str {
-    match status {
-        StepStatus::Success => "success",
-        StepStatus::Error => "error",
-    }
-}
 
 /// The durable-run observer (issue G2): persists each finished step
 /// incrementally and streams a progress event to the frontend.

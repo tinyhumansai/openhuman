@@ -6,6 +6,9 @@
 //! its reply `2n + 1`, at the main agent's node (`agent:<id>` under the
 //! layout root) — plus a [`BACKFILL_TAG`] so they can be told apart.
 //!
+//! The turn builder is `tinymemory_tools::backfill`; this file keeps the thread-store
+//! reading, the state file, consent and the run.
+//!
 //! - **Turns.** A thread's messages become turns the way the chat shows them:
 //!   each user message opens a turn and the replies after it, up to the next
 //!   user message, are its answer. Replies before any user message form a turn
@@ -17,40 +20,32 @@
 //!   in `<workspace>/memory/conversations_backfill.json`, so an interrupted run
 //!   resumes and a later run sends only what is new. A re-sent item is a
 //!   replay (its id is a content digest), never a duplicate.
+//! - **Accepted, then visible.** Every batch but the last goes in with
+//!   accepted writes: the engine returns once it holds them durably, and
+//!   indexes them after. The last waits until it is visible, and the scope's
+//!   log is ordered, so a `done` run is searchable. An engine without
+//!   accepted writes stores every batch as before.
 //! - **Consent.** It uploads chat history to the selected engine, so
 //!   [`start`] refuses without `consent`.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tinymemory_api::{
-    ItemKind, ListRequest, MemoryMeta, MetaFilter, Role, SourceKind, SourceRef, StoreItem, Turn,
-    TurnRange,
-};
 
 use crate::config::Config;
 use crate::memory::engine::{self, BoundEngine};
 use crate::memory::error::{MemoryError, MemoryResult};
-use crate::memory::ops::store_many_on;
+use crate::memory::ops::store_many_on_with;
 use crate::memory::scope::{MemoryIdentity, ResolvedIdentity};
 use crate::memory::types::ImportPhase;
 use crate::threads::store::blocking as threads;
-use crate::threads::store::ConversationMessage;
 
-/// The tag every backfilled conversation item carries.
-pub const BACKFILL_TAG: &str = "backfill";
-
-/// The agent definition past chats belong to: the main chat agent.
-pub const MAIN_AGENT: &str = "orchestrator";
-
-/// Conversation items per bulk store (`MemoryEngine::store_many`).
-const STORE_GROUP: usize = 50;
-
-/// Items a thread lookup lists to find where live logging began.
-const LIVE_SCAN_LIMIT: usize = 200;
+use tinymemory_tools::backfill::{first_live_turn, group_items, turn_groups, ThreadMessage};
+pub use tinymemory_tools::backfill::{pending_range, turns_of, PastTurn, BACKFILL_TAG, MAIN_AGENT};
 
 /// Backfills running now, per workspace.
 static RUNNING: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -134,144 +129,6 @@ fn write_file(workspace_dir: &Path, file: &BackfillFile) {
     }
 }
 
-fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(raw)
-        .ok()
-        .map(|at| at.with_timezone(&Utc))
-}
-
-/// One past turn: what the user said and what came back.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PastTurn {
-    /// The user's message; empty for replies before any user message.
-    pub user: String,
-    /// The replies, joined.
-    pub assistant: String,
-    /// When the turn last changed.
-    pub at: DateTime<Utc>,
-}
-
-/// A thread's messages as turns, oldest first.
-#[must_use]
-pub fn turns_of(messages: &[ConversationMessage]) -> Vec<PastTurn> {
-    let mut turns: Vec<PastTurn> = Vec::new();
-    for message in messages {
-        let text = message.content.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let at = parse_time(&message.created_at);
-        if message.sender.eq_ignore_ascii_case("user") {
-            turns.push(PastTurn {
-                user: text.to_string(),
-                assistant: String::new(),
-                at: at.unwrap_or_else(Utc::now),
-            });
-            continue;
-        }
-        if turns.is_empty() {
-            turns.push(PastTurn {
-                user: String::new(),
-                assistant: String::new(),
-                at: at.unwrap_or_else(Utc::now),
-            });
-        }
-        if let Some(turn) = turns.last_mut() {
-            if !turn.assistant.is_empty() {
-                turn.assistant.push_str("\n\n");
-            }
-            turn.assistant.push_str(text);
-            if let Some(at) = at {
-                turn.at = at;
-            }
-        }
-    }
-    turns
-}
-
-/// Which turns of a thread with `total` turns the backfill should store:
-/// from what it already stored up to (not including) the first turn live
-/// logging took, if any.
-#[must_use]
-pub fn pending_range(
-    total: usize,
-    first_live: Option<usize>,
-    already_stored: u32,
-) -> std::ops::Range<usize> {
-    let end = first_live.map_or(total, |first| first.min(total));
-    let start = (already_stored as usize).min(end);
-    start..end
-}
-
-/// The conversation items for turn `index` of `thread_id`, shaped as the
-/// lifecycle logs them (one per message), tagged [`BACKFILL_TAG`].
-#[must_use]
-pub fn turn_items(
-    identity: &ResolvedIdentity,
-    thread_id: &str,
-    index: usize,
-    turn: &PastTurn,
-) -> Vec<StoreItem> {
-    let Ok(node) = identity.layout.conversations(&identity.agent_id) else {
-        return Vec::new();
-    };
-    let base = u32::try_from(index.saturating_mul(2)).unwrap_or(u32::MAX - 1);
-    [
-        (Role::User, &turn.user, base),
-        (Role::Assistant, &turn.assistant, base + 1),
-    ]
-    .into_iter()
-    .filter(|(_, text, _)| !text.trim().is_empty())
-    .map(|(role, text, at_index)| StoreItem::Conversation {
-        meta: MemoryMeta {
-            namespace: node.clone(),
-            thread_id: Some(thread_id.to_string()),
-            turns: Some(TurnRange {
-                first: at_index,
-                last: at_index,
-            }),
-            agent_id: Some(identity.agent_id.clone()),
-            source: SourceRef {
-                kind: SourceKind::Conversation,
-                id: Some(thread_id.to_string()),
-            },
-            observed_at: Some(turn.at),
-            tags: vec![BACKFILL_TAG.to_string()],
-            ..MemoryMeta::default()
-        },
-        turns: vec![Turn {
-            at: Some(turn.at),
-            ..Turn::new(role, text.as_str())
-        }],
-    })
-    .collect()
-}
-
-/// The first turn of `thread_id` the lifecycle logged (not a backfill), as a
-/// turn number; `None` when none was.
-async fn first_live_turn(bound: &BoundEngine, thread_id: &str) -> Option<usize> {
-    let page = bound
-        .engine
-        .list(ListRequest {
-            filter: MetaFilter {
-                thread_id: Some(thread_id.to_string()),
-                ..MetaFilter::kinds([ItemKind::Conversation])
-            },
-            limit: LIVE_SCAN_LIMIT,
-            cursor: None,
-        })
-        .await
-        .map_err(|error| {
-            tracing::debug!(%error, "[memory:backfill] live turn lookup failed");
-        })
-        .ok()?;
-    page.items
-        .iter()
-        .filter(|hit| !hit.meta.tags.iter().any(|tag| tag == BACKFILL_TAG))
-        .filter_map(|hit| hit.meta.turns.map(|turns| turns.first as usize / 2))
-        .min()
-}
-
 /// One thread's plan: its turns and the range still to store.
 struct ThreadPlan {
     thread_id: String,
@@ -280,17 +137,22 @@ struct ThreadPlan {
 }
 
 async fn plan(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
     bound: Option<&BoundEngine>,
     stored: &BTreeMap<String, u32>,
 ) -> MemoryResult<Vec<ThreadPlan>> {
-    let listed = threads::list_threads(workspace_dir.to_path_buf())
+    let listed = threads::list_threads(ctx.clone(), workspace_dir.to_path_buf())
         .await
         .map_err(|error| MemoryError::Engine(format!("reading chat threads failed: {error}")))?;
     let mut plans = Vec::new();
     for thread in listed {
-        let messages = match threads::get_messages(workspace_dir.to_path_buf(), thread.id.clone())
-            .await
+        let messages = match threads::get_messages(
+            ctx.clone(),
+            workspace_dir.to_path_buf(),
+            thread.id.clone(),
+        )
+        .await
         {
             Ok(messages) => messages,
             Err(error) => {
@@ -298,9 +160,13 @@ async fn plan(
                 continue;
             }
         };
+        let messages: Vec<ThreadMessage> = messages
+            .into_iter()
+            .map(|m| ThreadMessage::new(m.sender, m.content, m.created_at))
+            .collect();
         let turns = turns_of(&messages);
         let first_live = match bound {
-            Some(bound) => first_live_turn(bound, &thread.id).await,
+            Some(bound) => first_live_turn(bound.engine.as_ref(), &thread.id).await,
             None => None,
         };
         let range = pending_range(
@@ -327,7 +193,7 @@ fn is_running(workspace_dir: &Path) -> bool {
 }
 
 /// `memory_conversations_backfill_status`.
-pub async fn status(config: &Config) -> MemoryResult<BackfillView> {
+pub async fn status(ctx: &DispatchCtx, config: &Config) -> MemoryResult<BackfillView> {
     let workspace_dir = &config.workspace_dir;
     let file = read_file(workspace_dir);
     let mut state = file.state;
@@ -336,7 +202,7 @@ pub async fn status(config: &Config) -> MemoryResult<BackfillView> {
         state.error = Some("the sync was interrupted; start it again to resume".to_string());
     }
     let bound = engine::resolve(config).engine().ok();
-    let plans = plan(workspace_dir, bound.as_ref(), &file.stored).await?;
+    let plans = plan(ctx, workspace_dir, bound.as_ref(), &file.stored).await?;
     Ok(BackfillView {
         state,
         pending_threads: plans.len() as u64,
@@ -345,7 +211,11 @@ pub async fn status(config: &Config) -> MemoryResult<BackfillView> {
 }
 
 /// `memory_conversations_backfill_start`: requires `consent` and memory on.
-pub async fn start(config: &Config, params: BackfillStartParams) -> MemoryResult<BackfillView> {
+pub async fn start(
+    ctx: &DispatchCtx,
+    config: &Config,
+    params: BackfillStartParams,
+) -> MemoryResult<BackfillView> {
     if !params.consent {
         return Err(MemoryError::invalid(
             "storing past chats uploads them to the selected engine; pass consent: true",
@@ -358,10 +228,10 @@ pub async fn start(config: &Config, params: BackfillStartParams) -> MemoryResult
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(workspace_dir.clone());
     if !claimed {
-        return status(config).await;
+        return status(ctx, config).await;
     }
     let mut file = read_file(&workspace_dir);
-    let plans = match plan(&workspace_dir, Some(&bound), &file.stored).await {
+    let plans = match plan(ctx, &workspace_dir, Some(&bound), &file.stored).await {
         Ok(plans) => plans,
         Err(error) => {
             release(&workspace_dir);
@@ -407,17 +277,31 @@ async fn run(
     mut file: BackfillFile,
     plans: Vec<ThreadPlan>,
 ) {
-    for plan in plans {
-        let indices: Vec<usize> = plan.range.clone().collect();
+    let last = last_batch(identity, &plans);
+    for (thread, plan) in plans.into_iter().enumerate() {
         // Groups of whole turns, so the stored counter never splits a turn.
-        for group in indices.chunks(STORE_GROUP / 2) {
-            let items: Vec<StoreItem> = group
-                .iter()
-                .flat_map(|&index| turn_items(identity, &plan.thread_id, index, &plan.turns[index]))
-                .collect();
+        for (index, group) in turn_groups(plan.range.clone()).into_iter().enumerate() {
+            let items = group_items(
+                &identity.layout,
+                &identity.agent_id,
+                &plan.thread_id,
+                &plan.turns,
+                &group,
+            );
             let count = items.len() as u64;
             if count > 0 {
-                if let Err(error) = store_many_on(bound, items).await {
+                // Accepted, not indexed: waiting on the engine to index every
+                // batch made a few thousand messages take hours on CortexDB.
+                // The last batch waits until it is visible: the scope's log
+                // is ordered, so everything stored before it is then too, and
+                // `done` still means searchable.
+                let options = if last == Some((thread, index)) {
+                    tinymemory_api::WriteOptions::visible()
+                } else {
+                    tinymemory_api::WriteOptions::accepted()
+                };
+                let stored = store_many_on_with(bound, items, options).await;
+                if let Err(error) = stored {
                     tracing::warn!(
                         code = error.code(),
                         "[memory:backfill] storing a batch failed; stopping"
@@ -449,6 +333,28 @@ async fn run(
         turns = file.state.turns_stored,
         "[memory:backfill] done"
     );
+}
+
+/// The last batch of the run that stores anything, as (thread, group): the
+/// one the run waits on until it is visible.
+fn last_batch(identity: &ResolvedIdentity, plans: &[ThreadPlan]) -> Option<(usize, usize)> {
+    plans.iter().enumerate().rev().find_map(|(thread, plan)| {
+        turn_groups(plan.range.clone())
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, group)| {
+                !group_items(
+                    &identity.layout,
+                    &identity.agent_id,
+                    &plan.thread_id,
+                    &plan.turns,
+                    group,
+                )
+                .is_empty()
+            })
+            .map(|(index, _)| (thread, index))
+    })
 }
 
 #[cfg(test)]

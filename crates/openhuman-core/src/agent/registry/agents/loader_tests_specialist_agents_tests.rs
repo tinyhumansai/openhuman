@@ -238,7 +238,7 @@ fn specialist_agents_are_registered_with_narrow_tools() {
         }
         // `omit_memory_context = false` opens the deck builder's session
         // with the compiled memory context.
-        assert!(!presentation.omit_memory_context);
+        assert!(!presentation.extensions.omit_memory_context);
     }
 }
 
@@ -264,9 +264,9 @@ fn morning_briefing_is_read_only() {
         ToolScope::Wildcard => panic!("morning_briefing must have a named belt"),
     }
     // The brief grounds itself in the compiled memory context.
-    assert!(!def.omit_memory_context);
-    assert!(def.omit_identity);
-    assert!(def.omit_safety_preamble);
+    assert!(!def.extensions.omit_memory_context);
+    assert!(def.extensions.omit_identity);
+    assert!(def.extensions.omit_safety_preamble);
     assert_eq!(def.max_iterations, 8);
 }
 

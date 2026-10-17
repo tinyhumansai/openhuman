@@ -28,7 +28,7 @@ pub(super) async fn provision(
 ) -> Result<Provisioned, String> {
     // This is intentionally loaded through the curated facade: gateway
     // activation happens before the embedded RPC server may exist.
-    let config = openhuman_rpc::embed::config::load_config_with_timeout().await?;
+    let config = openhuman_rpc::embed::config::load_host_config().await?;
     let token = crate::core_process::generate_rpc_token();
 
     progress("reserving the box");

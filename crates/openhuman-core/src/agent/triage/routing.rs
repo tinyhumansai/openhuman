@@ -27,7 +27,7 @@ pub struct ResolvedProvider {
     /// Kept for telemetry / observability compat with the previous two-path design.
     pub provider_name: String,
     /// Model identifier — the concrete string the turn
-    /// (`run_turn_via_tinyagents_shared`) will hand to the provider.
+    /// (`TurnSpec::run`) will hand to the provider.
     pub model: String,
     /// Always `false` — local AI is never used for triage.
     /// Preserved so existing telemetry subscribers that read this field do not
@@ -39,12 +39,15 @@ pub struct ResolvedProvider {
 
 /// Inner half of [`resolve_provider`] that takes an already-loaded
 /// [`Config`]. Exposed for tests and for the evaluator's retry path.
-pub async fn resolve_provider_with_config(config: &Config) -> anyhow::Result<ResolvedProvider> {
+pub async fn resolve_provider_with_config(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) -> anyhow::Result<ResolvedProvider> {
     tracing::debug!(
         runtime_enabled = config.local_ai.runtime_enabled,
         "[triage::routing] resolving provider (always remote)"
     );
-    build_remote_provider(config)
+    build_remote_provider(ctx, config)
 }
 
 /// Build the local-arm provider for the tiered fallback chain (issue
@@ -55,7 +58,10 @@ pub async fn resolve_provider_with_config(config: &Config) -> anyhow::Result<Res
 /// The returned source is crate-native and targets the configured local
 /// inference base (Ollama by default, overridable via
 /// `OPENHUMAN_LOCAL_INFERENCE_URL`).
-pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvider> {
+pub fn build_local_provider_with_config(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) -> Option<ResolvedProvider> {
     let local_cfg = &config.local_ai;
     if !local_cfg.runtime_enabled {
         tracing::debug!("[triage::routing] local arm disabled (runtime_enabled=false)");
@@ -94,6 +100,7 @@ pub fn build_local_provider_with_config(config: &Config) -> Option<ResolvedProvi
     );
     Some(ResolvedProvider {
         turn_model_source: crate::agent::tinyagents::TurnModelSource::new_crate_native_from_string(
+            ctx,
             TRIAGE_ROLE,
             provider_string,
             Arc::new(config.clone()),
@@ -133,7 +140,10 @@ fn is_local_cli_route(provider_string: &str) -> bool {
 /// BYOK-incomplete sentinel, we force the managed backend so a trigger never
 /// errors because a local model is down. Only a concrete BYOK **cloud** route is
 /// honoured as-is. A build failure also falls back to the managed backend.
-fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
+fn build_remote_provider(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) -> anyhow::Result<ResolvedProvider> {
     use crate::inference::provider::factory::{
         create_chat_model_from_string_with_model_id, PROVIDER_OPENHUMAN,
     };
@@ -183,6 +193,7 @@ fn build_remote_provider(config: &Config) -> anyhow::Result<ResolvedProvider> {
         Ok(ResolvedProvider {
             turn_model_source:
                 crate::agent::tinyagents::TurnModelSource::new_crate_native_from_string(
+                    ctx,
                     TRIAGE_ROLE,
                     provider_string,
                     Arc::new(config.clone()),

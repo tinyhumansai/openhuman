@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[test]
 fn registered_controllers_match_schemas() {
@@ -30,7 +31,9 @@ async fn cancel_unknown_task_is_a_noop_false() {
     let _lock = crate::config::TEST_ENV_LOCK.lock().await;
     let mut params = Map::new();
     params.insert("taskId".into(), json!("sub-does-not-exist"));
-    let out = handle_subagent_cancel(params).await.expect("handler ok");
+    let out = handle_subagent_cancel(DispatchCtx::process_default(), params)
+        .await
+        .expect("handler ok");
     // Outcome wraps the payload under `data`.
     let cancelled = out
         .get("data")
@@ -63,11 +66,33 @@ async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
     let _lock = crate::config::TEST_ENV_LOCK.lock().await;
     let workspace = tempfile::tempdir().expect("tempdir");
     // Snapshot the durable session store before and after: a real cancel
-    // would `mark_failed` the session and rewrite this file.
+    // would `mark_failed` the session and rewrite it.
     let store = SubagentSessionStore::new(workspace.path().to_path_buf());
-    std::fs::create_dir_all(store.path().parent().expect("store has a parent")).expect("mkdir");
-    let before = "[]";
-    std::fs::write(store.path(), before).expect("seed store");
+    let seeded: Vec<crate::agent::orchestration::subagent_sessions::DurableSubagentSession> =
+        serde_json::from_value(json!([{
+            "subagentSessionId": "subsess-sub-rpc-done",
+            "parentSession": "session-rpc",
+            "parentThreadId": "thread-rpc",
+            "workerThreadId": null,
+            "agentId": "agent_memory",
+            "displayName": null,
+            "model": null,
+            "sandboxMode": "workspace",
+            "actionRoot": null,
+            "taskKey": "task",
+            "taskTitle": "Task",
+            "currentTaskId": "sub-rpc-done",
+            "status": "running",
+            "reusable": true,
+            "latestHistory": null,
+            "latestError": null,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+            "lastUsedAt": "2026-01-01T00:00:00Z"
+        }]))
+        .expect("session fixture");
+    store.save(&seeded).expect("seed store");
+    let before = serde_json::to_string(&store.load().expect("load seeded")).expect("encode");
     for (task_id, status, outcome) in [
         (
             "sub-rpc-done",
@@ -87,6 +112,7 @@ async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
     ] {
         let (tx, rx) = status_channel();
         register(
+            &crate::core::runtime::DispatchCtx::ambient(),
             task_id.into(),
             "agent_memory".into(),
             "session-rpc".into(),
@@ -97,17 +123,20 @@ async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
             Arc::new(RunQueue::new()),
             tokio::spawn(async {}).abort_handle(),
             rx,
-        );
+        )
+        .expect("fixture registration admitted");
         tx.send(status).expect("status channel open");
 
         let mut params = Map::new();
         params.insert("taskId".into(), json!(task_id));
-        let out = handle_subagent_cancel(params).await.expect("handler ok");
+        let out = handle_subagent_cancel(DispatchCtx::process_default(), params)
+            .await
+            .expect("handler ok");
         assert_eq!(field(&out, "cancelled"), Some(json!(false)), "{task_id}");
         assert_eq!(field(&out, "outcome"), Some(json!(outcome)), "{task_id}");
     }
     assert_eq!(
-        std::fs::read_to_string(store.path()).expect("store still readable"),
+        serde_json::to_string(&store.load().expect("store still readable")).expect("encode"),
         before,
         "a finished run's session must not be rewritten as cancelled"
     );
@@ -119,7 +148,9 @@ async fn steer_unknown_task_is_a_noop_false() {
     let mut params = Map::new();
     params.insert("taskId".into(), json!("sub-does-not-exist"));
     params.insert("message".into(), json!("redirect"));
-    let out = handle_subagent_steer(params).await.expect("handler ok");
+    let out = handle_subagent_steer(DispatchCtx::process_default(), params)
+        .await
+        .expect("handler ok");
     let data = out.get("data").unwrap_or(&out);
     assert_eq!(data.get("steered").and_then(Value::as_bool), Some(false));
     assert_eq!(data.get("reason").and_then(Value::as_str), Some("unknown"));

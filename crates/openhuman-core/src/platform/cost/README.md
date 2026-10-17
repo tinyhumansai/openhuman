@@ -23,7 +23,7 @@ Local API-usage cost tracking for the agent. Records per-call token usage and co
 | `crates/openhuman-core/src/platform/cost/rpc.rs`           | RPC-facing handlers (`dashboard`, `daily_history`, `summary`) returning `Outcome<Value>`; DTO types; `resolve_tracker` with a cached fallback tracker + error-replay TTL.                                            |
 | `crates/openhuman-core/src/platform/cost/schemas.rs`       | Controller schemas + `handle_*` JSON-RPC dispatchers; `all_controller_schemas` / `all_registered_controllers`.                                                                                                          |
 | `crates/openhuman-core/src/platform/cost/tracker_tests.rs` | Sibling test suite for [`tracker.rs`](./tracker.rs) (`#[path]`-included).                                                                                                                                                               |
-| [`catalog.rs`](./catalog.rs) | Product configuration enrichment, source attribution and runtime/local model overlays over the published pricing and windows owned by [TinyAgents registry](../../../../../vendor/tinyagents/crates/tinyagents-registry/src/pricing/mod.rs). The owner exposes `ModelPrice`, `lookup`, `estimate_cost_usd` and `PRICING_AS_OF`; this adapter exposes the default registry and unified model catalog. |
+| `crates/openhuman-core/src/platform/cost/catalog.rs` | Product configuration enrichment, source attribution, flat catalog projection, and discovered local-model overlays. Published prices, context windows, ID matching, and estimation belong to [`tinyagents_registry::pricing`](https://github.com/tinyhumansai/tinyagents/blob/a55f25a924a673c812c7aa95e562488dd0d0f3b3/crates/tinyagents-registry/src/pricing/README.md). |
 | `crates/openhuman-core/src/platform/cost/route.rs` | `CostRoute` / `route_for_model`: derives from the model id whether a record counts against OpenHuman-managed credits or is BYOK/local (#5016). |
 | `crates/openhuman-core/src/platform/cost/scope.rs` | `UsageScope::ambient`: a record's attribution (thread, origin, agent definition, sub-agent task, embedded/SaaS user agent, provider) read from the recording task's turn origin, memory identity and `CoreContext`. |
 | `crates/openhuman-core/src/platform/cost/report.rs` | Pure usage reports over ledger records: `build_report` (group by day/week/month/model/provider/route/agent/thread/origin/session_agent; tokens, charged vs estimated cost, cache-hit ratio) and `build_cache_report` (per-call hits, cold calls, uncached premium). |
@@ -135,5 +135,5 @@ Before every model call, the agent's budget gate (`OpenHumanBudgetGate::acquire`
 ## Further reading
 
 - [Parent module (`platform`)](../README.md)
-- [Billing and usage](../../../../../gitbooks/features/billing-and-usage.md)
-- [Platform and availability](../../../../../gitbooks/features/platform.md)
+- [Billing and usage](../../../../../docs/gitbooks/en/features/billing-and-usage.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)

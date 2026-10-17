@@ -4,12 +4,13 @@ import { useNavigate } from 'react-router-dom';
 import { persistLocalWalletFromMnemonic } from '../../../features/wallet/setupLocalWalletFromMnemonic';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
-import { fetchWalletStatus, type WalletStatus } from '../../../services/walletApi';
 import {
-  generateMnemonicPhrase,
-  MNEMONIC_GENERATE_WORD_COUNT,
-  validateMnemonicPhrase,
-} from '../../../utils/cryptoKeys';
+  fetchWalletStatus,
+  generateRecoveryPhrase,
+  validateRecoveryPhrase,
+  type WalletStatus,
+} from '../../../services/walletApi';
+import { MNEMONIC_GENERATE_WORD_COUNT } from '../../../utils/cryptoKeys';
 import { Alert } from '../../ui/Alert';
 import Button from '../../ui/Button';
 import { CheckIcon, Spinner } from '../../ui/icons';
@@ -78,8 +79,8 @@ const RecoveryPhrasePanel = () => {
           setMode('view');
         } else {
           // No configured wallet — generate mode. Generate phrase now.
-          const phrase = generateMnemonicPhrase();
-          setMnemonic(phrase);
+          const generated = await generateRecoveryPhrase();
+          setMnemonic(generated.phrase);
           setMode('generate');
         }
       } catch (e) {
@@ -99,15 +100,19 @@ const RecoveryPhrasePanel = () => {
   }, []);
 
   // ── Transition into generate mode after replace confirmation ─────────────
-  const handleConfirmReplace = useCallback(() => {
-    const phrase = generateMnemonicPhrase();
-    setMnemonic(phrase);
-    setIsReplace(true);
-    setConfirmed(false);
-    setRevealed(false);
-    setError(null);
-    setMode('generate');
-  }, []);
+  const handleConfirmReplace = useCallback(async () => {
+    try {
+      const generated = await generateRecoveryPhrase();
+      setMnemonic(generated.phrase);
+      setIsReplace(true);
+      setConfirmed(false);
+      setRevealed(false);
+      setError(null);
+      setMode('generate');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('mnemonic.somethingWentWrong'));
+    }
+  }, [t]);
 
   // ── Transition into import mode after replace confirmation ────────────────
   const handleImportReplace = useCallback(() => {
@@ -219,7 +224,7 @@ const RecoveryPhrasePanel = () => {
     [importWords]
   );
 
-  const handleValidateImport = useCallback(() => {
+  const handleValidateImport = useCallback(async () => {
     const phrase = importWords.join(' ').trim();
     const filledWords = importWords.filter(w => w.trim());
     const n = filledWords.length;
@@ -230,7 +235,7 @@ const RecoveryPhrasePanel = () => {
       return false;
     }
 
-    const isValid = validateMnemonicPhrase(phrase);
+    const isValid = await validateRecoveryPhrase(phrase);
     setImportValid(isValid);
 
     if (!isValid) {
@@ -250,7 +255,7 @@ const RecoveryPhrasePanel = () => {
       let phraseToUse: string;
 
       if (mode === 'import') {
-        if (!handleValidateImport()) {
+        if (!(await handleValidateImport())) {
           setLoading(false);
           return;
         }
@@ -395,14 +400,7 @@ const RecoveryPhrasePanel = () => {
                   <Button
                     type="button"
                     variant="tertiary"
-                    onClick={() => {
-                      const phrase = generateMnemonicPhrase();
-                      setMnemonic(phrase);
-                      setConfirmed(false);
-                      setRevealed(false);
-                      setError(null);
-                      setMode('generate');
-                    }}
+                    onClick={() => void handleConfirmReplace()}
                     className="w-full mb-3">
                     {t('mnemonic.createANewWallet')}
                   </Button>

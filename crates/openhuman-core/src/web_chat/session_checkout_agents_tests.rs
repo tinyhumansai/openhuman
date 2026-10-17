@@ -13,7 +13,11 @@ use crate::web_chat::ops::{key_for, thread_sessions};
 #[tokio::test]
 async fn two_agents_with_the_same_thread_id_get_their_own_cache_slots() {
     let thread_id = unique_thread("agents");
-    assert_eq!(key_for(&thread_id), thread_id, "no agent scope: bare id");
+    assert_eq!(
+        key_for(&crate::core::runtime::DispatchCtx::ambient(), &thread_id),
+        thread_id,
+        "no agent scope: bare id"
+    );
 
     let parent = CoreContext::for_test(DomainSet::full(), None);
     let agent_ctx = |agent: &str| {
@@ -24,8 +28,14 @@ async fn two_agents_with_the_same_thread_id_get_their_own_cache_slots() {
     };
     let asha = agent_ctx("asha");
     let ravi = agent_ctx("ravi");
-    let key_a = CoreContext::scope(asha.clone(), async { key_for(&thread_id) }).await;
-    let key_b = CoreContext::scope(ravi.clone(), async { key_for(&thread_id) }).await;
+    let key_a = key_for(
+        &crate::core::runtime::DispatchCtx::new(asha.clone()),
+        &thread_id,
+    );
+    let key_b = key_for(
+        &crate::core::runtime::DispatchCtx::new(ravi.clone()),
+        &thread_id,
+    );
     assert_ne!(key_a, key_b);
     assert_ne!(key_a, thread_id);
     // Delimiter-looking input cannot forge another scope's key.
@@ -44,32 +54,39 @@ async fn two_agents_with_the_same_thread_id_get_their_own_cache_slots() {
             agent: host_seeded_with(&config, "x"),
             fingerprint: fingerprint.clone(),
         };
-        CoreContext::scope(Arc::clone(ctx), async {
-            thread_sessions()
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(Arc::clone(ctx));
+
+            thread_sessions(&scope_ctx)
                 .lock_owned()
                 .await
                 .insert(key.clone(), entry);
-        })
-        .await;
+        };
     }
     let cached = |ctx: &Arc<CoreContext>, key: &String| {
         let (ctx, key) = (Arc::clone(ctx), key.clone());
         async move {
-            CoreContext::scope(ctx, async move {
-                thread_sessions().lock_owned().await.contains_key(&key)
-            })
-            .await
+            {
+                let scope_ctx = crate::core::runtime::DispatchCtx::new(ctx);
+
+                thread_sessions(&scope_ctx)
+                    .lock_owned()
+                    .await
+                    .contains_key(&key)
+            }
         }
     };
     // Under one agent's scope only that agent's slot goes.
     CoreContext::scope(asha.clone(), async {
-        crate::web_chat::ops::invalidate_thread_sessions(&thread_id).await;
+        let ctx = crate::core::runtime::DispatchCtx::new(asha.clone());
+        crate::web_chat::ops::invalidate_thread_sessions(&ctx, &thread_id).await;
     })
     .await;
     assert!(!cached(&asha, &key_a).await, "asha's slot is evicted");
     assert!(cached(&ravi, &key_b).await, "ravi's slot survives");
     CoreContext::scope(ravi.clone(), async {
-        crate::web_chat::ops::invalidate_thread_sessions(&thread_id).await;
+        let ctx = crate::core::runtime::DispatchCtx::new(ravi.clone());
+        crate::web_chat::ops::invalidate_thread_sessions(&ctx, &thread_id).await;
     })
     .await;
     assert!(!cached(&ravi, &key_b).await, "ravi's slot is evicted");

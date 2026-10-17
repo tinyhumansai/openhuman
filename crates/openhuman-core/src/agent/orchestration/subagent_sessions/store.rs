@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::types::{DurableSubagentSession, SubagentSessionStore};
 
@@ -8,48 +7,53 @@ impl SubagentSessionStore {
         Self { workspace_dir }
     }
 
-    pub fn path(&self) -> PathBuf {
+    /// The pre-documents `<workspace>/.openhuman/subagent_sessions.json`.
+    fn legacy_path(&self) -> PathBuf {
         self.workspace_dir
             .join(".openhuman")
             .join("subagent_sessions.json")
     }
 
-    pub fn load(&self) -> Result<Vec<DurableSubagentSession>, String> {
-        if let Some(docs) = super::store_documents::current().map_err(|err| format!("{err:#}"))? {
-            return docs.load().map_err(|err| format!("{err:#}"));
+    /// Imports the pre-documents session file once: its sessions are written
+    /// (an already stored newer copy wins) and a marker document records that
+    /// the import finished. The file is only read, never renamed or rewritten,
+    /// so it stays byte-identical. A missing file is the common case and a
+    /// no-op.
+    fn import_legacy(&self, docs: &super::store_documents::Docs) -> Result<(), String> {
+        if docs
+            .legacy_imported(&self.workspace_dir)
+            .map_err(|err| format!("{err:#}"))?
+        {
+            return Ok(());
         }
-        load_from_path(&self.path())
+        let path = self.legacy_path();
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(format!("failed to read legacy subagent sessions: {err}")),
+        };
+        let sessions: Vec<DurableSubagentSession> = serde_json::from_str(&raw)
+            .map_err(|err| format!("failed to parse legacy subagent sessions: {err}"))?;
+        docs.import_legacy(&self.workspace_dir, &sessions)
+            .map_err(|err| format!("{err:#}"))?;
+        log::debug!(
+            "[subagent_sessions] imported legacy sessions count={}",
+            sessions.len()
+        );
+        Ok(())
+    }
+
+    pub fn load(&self) -> Result<Vec<DurableSubagentSession>, String> {
+        let docs = super::store_documents::current(&self.workspace_dir)
+            .map_err(|err| format!("{err:#}"))?;
+        self.import_legacy(&docs)?;
+        docs.load().map_err(|err| format!("{err:#}"))
     }
 
     pub fn save(&self, sessions: &[DurableSubagentSession]) -> Result<(), String> {
-        if let Some(docs) = super::store_documents::current().map_err(|err| format!("{err:#}"))? {
-            return docs.save(sessions).map_err(|err| format!("{err:#}"));
-        }
-        save_to_path(&self.path(), sessions)
+        let docs = super::store_documents::current(&self.workspace_dir)
+            .map_err(|err| format!("{err:#}"))?;
+        self.import_legacy(&docs)?;
+        docs.save(sessions).map_err(|err| format!("{err:#}"))
     }
-}
-
-pub(crate) fn load_from_path(path: &Path) -> Result<Vec<DurableSubagentSession>, String> {
-    match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw)
-            .map_err(|err| format!("failed to parse subagent session store: {err}")),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(err) => Err(format!("failed to read subagent session store: {err}")),
-    }
-}
-
-pub(crate) fn save_to_path(path: &Path, sessions: &[DurableSubagentSession]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create subagent session dir: {err}"))?;
-    }
-    let raw = serde_json::to_string_pretty(sessions)
-        .map_err(|err| format!("failed to encode subagent session store: {err}"))?;
-    let tmp_path = path.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4().simple()));
-    fs::write(&tmp_path, raw)
-        .map_err(|err| format!("failed to write temporary subagent session store: {err}"))?;
-    fs::rename(&tmp_path, path).map_err(|err| {
-        let _ = fs::remove_file(&tmp_path);
-        format!("failed to commit subagent session store: {err}")
-    })
 }

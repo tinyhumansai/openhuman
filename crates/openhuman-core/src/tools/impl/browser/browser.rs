@@ -13,7 +13,6 @@ use crate::agent::turn_origin::AgentTurnOrigin;
 use crate::modules::browser::BrowserClient;
 use crate::security::approval::{ApprovalGate, GateOutcome};
 use crate::security::SecurityPolicy;
-use crate::tools::schema_cache::static_schema;
 use async_trait::async_trait;
 use pending::{approval_target, needs_host_confirmation, Pending};
 use serde_json::{json, Value};
@@ -31,7 +30,7 @@ use std::{
     time::Instant,
 };
 use task_actions::{
-    approve_task_action, host_hint, parse_action, required, task_inputs, task_outcome,
+    approve_task_action, direct_action, host_hint, required, task_inputs, task_outcome,
 };
 use tinycomputer_bus::agent::{ContinueTaskRequest, TaskId, TaskStatus, TaskView};
 use tinycomputer_bus::browser::{
@@ -81,7 +80,7 @@ async fn approve_browser_action(
     let input_detail = match action {
         Action::Fill { value, .. } => format!(" ({} input characters)", value.chars().count()),
         Action::Type { text, .. } => format!(" ({} input characters)", text.chars().count()),
-        Action::Press { key } => format!(" ({key})"),
+        Action::Press { key, .. } => format!(" ({key})"),
         _ => String::new(),
     };
     let digest_hex = format!("{digest:x}");
@@ -257,7 +256,7 @@ impl BrowserTool {
         let mut goal = required(args, "goal")?.to_owned();
         let site = args["url"]
             .as_str()
-            .and_then(crate::modules::browser_sites::site_of);
+            .and_then(crate::modules::site_memory_host::site_of);
         let origins = match args["url"].as_str().filter(|url| !url.trim().is_empty()) {
             Some(url) => {
                 self.client.check_url(url)?;
@@ -284,6 +283,16 @@ impl BrowserTool {
             flow,
             site,
         };
+        // The browser this conversation keeps open holds the persistent
+        // profile, which the task's own browser needs: it is let go first.
+        if self.client.config().browser.profile_mode == "persistent" {
+            if let Err(error) = self.close().await {
+                tracing::debug!(
+                    error = %error,
+                    "[tool.browser] could not close this conversation's browser before a task"
+                );
+            }
+        }
         let view = crate::modules::browser_task::start(self.client.config(), &task)
             .await
             .map_err(anyhow::Error::msg)?;
@@ -479,7 +488,7 @@ impl BrowserTool {
                 Ok(serde_json::to_value(d)?)
             }
             _ => {
-                let action = parse_action(args)?;
+                let action = direct_action(args)?;
                 approve_browser_action(&self.client, &id, &action, false, origin).await?;
                 Ok(serde_json::to_value(
                     self.client.perform(&id, action).await?,
@@ -522,7 +531,7 @@ impl Tool for BrowserTool {
         )
     }
     fn parameters_schema(&self) -> Value {
-        static_schema!(include_str!("parameters/browser.json"))
+        tinycomputer_bus::browser::tool::parameters_schema()
     }
     /// Direct consequential actions park on the approval gate *inside*
     /// `execute` (`intercept_forced`), which waits up to the gate's TTL. The
@@ -539,22 +548,10 @@ impl Tool for BrowserTool {
         false
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only",
-            ));
-        }
-        // A task counts once here; its own steps are bounded by max_actions.
-        if !self.security.record_action() {
-            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
-        }
-        // The typed origin bound to this turn's immutable CoreContext by its
-        // entry point (cron, background job, workflow, chat).
-        let origin = crate::core::runtime::CoreContext::current_turn_origin();
-        match self.run(&args, origin.as_ref()).await {
-            Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
-            Err(e) => Ok(ToolResult::error(e.to_string())),
-        }
+        // Direct dispatch has no run: the turn's origin is whatever the calling
+        // task's scope carries.
+        let origin = crate::core::runtime::DispatchCtx::ambient_turn().turn_origin();
+        self.execute_with_origin(args, origin).await
     }
 
     async fn execute_with_context(
@@ -570,17 +567,38 @@ impl Tool for BrowserTool {
                 *held = Some(key);
             }
         }
-        self.execute(args).await
+        let origin = crate::agent::tinyagents::host::run_context::turn_origin_for_tool(context);
+        self.execute_with_origin(args, origin).await
+    }
+}
+
+impl BrowserTool {
+    /// Runs the tool for a turn running under `origin` (cron, background job,
+    /// workflow, chat), the typed authority its entry point supplied.
+    async fn execute_with_origin(
+        &self,
+        args: Value,
+        origin: Option<crate::agent::turn_origin::AgentTurnOrigin>,
+    ) -> anyhow::Result<ToolResult> {
+        if !self.security.can_act() {
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
+        }
+        // A task counts once here; its own steps are bounded by max_actions.
+        if !self.security.record_action() {
+            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
+        }
+        match self.run(&args, origin.as_ref()).await {
+            Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
+            Err(e) => Ok(ToolResult::error(e.to_string())),
+        }
     }
 }
 
 #[cfg(test)]
 #[path = "browser_computer_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "browser_schema_tests.rs"]
-mod schema_tests;
 
 #[cfg(test)]
 #[path = "browser_task_outcome_tests.rs"]

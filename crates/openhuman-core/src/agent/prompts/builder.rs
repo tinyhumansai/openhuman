@@ -131,7 +131,7 @@ impl SystemPromptBuilder {
     ///
     /// The sub-agent's archetype prompt is registered as a dedicated
     /// section that always renders first. The remaining sections respect
-    /// the `omit_*` flags from the [`crate::agent::harness::definition::AgentDefinition`]:
+    /// the `omit_*` flags from the [`crate::agent::harness::host_definition::AgentDefinition`]:
     /// `omit_identity` skips the project-context dump, `omit_safety_preamble`
     /// skips the safety rules, and so on. The `WorkspaceSection` is always
     /// included so the sub-agent knows its working directory.
@@ -198,7 +198,7 @@ impl SystemPromptBuilder {
 
     /// Exactly `body`: no section, grounding contract or writing-style block
     /// is composed around it. For a host that owns its whole prompt
-    /// ([`PromptSource::Verbatim`](crate::agent::harness::definition::PromptSource::Verbatim)).
+    /// ([`PromptSource::Verbatim`](tinyagents_definition::PromptSource::Verbatim)).
     pub fn verbatim(body: String) -> Self {
         Self {
             sections: vec![Box::new(ArchetypePromptSection::new(body))],
@@ -219,7 +219,7 @@ impl SystemPromptBuilder {
     /// rendered bytes are then frozen for the rest of the session the
     /// same way `from_final_body` freezes them — the difference is just
     /// *when* the freeze happens.
-    pub fn from_dynamic(builder: crate::agent::harness::definition::PromptBuilder) -> Self {
+    pub fn from_dynamic(builder: crate::agent::harness::host_definition::PromptBuilder) -> Self {
         Self {
             sections: vec![
                 Box::new(DynamicPromptSection::new(builder)),

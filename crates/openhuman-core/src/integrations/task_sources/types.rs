@@ -2,173 +2,43 @@
 //!
 //! A [`TaskSource`] is a user-configured pull of work items from an
 //! external tool (GitHub, Notion, Linear, ClickUp) with a per-provider
-//! [`FilterSpec`]. The periodic poll fetches matching items, normalizes
+//! [`FilterSpec`] (the provider, filter, target and reason types are the
+//! connector contract's). The periodic poll fetches matching items, normalizes
 //! them ([`super::NormalizedTask`]), enriches them ([`EnrichedTask`]),
 //! and routes them onto the agent's todo board.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-/// External tool a [`TaskSource`] pulls from. The string form matches
-/// the Composio toolkit slug, so it keys directly into the provider
-/// registry (`get_provider`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderSlug {
-    Github,
-    Notion,
-    Linear,
-    Clickup,
-}
+pub use tinyconnectors_bus::vocabulary::{FetchReason, FilterSpec, ProviderSlug, SourceTarget};
 
-impl ProviderSlug {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Github => "github",
-            Self::Notion => "notion",
-            Self::Linear => "linear",
-            Self::Clickup => "clickup",
-        }
-    }
-
-    /// Parse a toolkit slug into a `ProviderSlug`. Case-insensitive.
-    pub fn parse(raw: &str) -> Result<Self, String> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "github" => Ok(Self::Github),
-            "notion" => Ok(Self::Notion),
-            "linear" => Ok(Self::Linear),
-            "clickup" => Ok(Self::Clickup),
-            other => Err(format!(
-                "unknown task source provider '{other}' (expected github|notion|linear|clickup)"
-            )),
-        }
-    }
-
-    /// Whether this provider has a working task-fetch path today.
-    ///
-    /// **This is the single place that answers the question**, so the
-    /// periodic scheduler and the RPC surface cannot drift apart on it.
-    ///
-    /// Every provider returns `false` right now: the pipeline's fetch step
-    /// (`pipeline::fetch_tasks_unavailable`) is an unconditional `Err` for
-    /// every toolkit, because tinymemory v1.13.4 deleted
-    /// `ComposioProvider::fetch_tasks` with no replacement. Nothing
-    /// downstream of the fetch is broken — dedup, enrichment, routing and
-    /// reconciliation all still work — so the moment a provider grows a real
-    /// fetch again this flips to `true` for that variant and the scheduler
-    /// starts polling it, with no other change.
-    ///
-    /// It is deliberately a per-variant `match` rather than a blanket
-    /// `false`: the restoration lands one toolkit at a time, and a
-    /// wholesale constant would have to be redesigned on the first one
-    /// instead of edited.
-    pub fn can_fetch(self) -> bool {
-        match self {
-            Self::Github | Self::Notion | Self::Linear | Self::Clickup => false,
-        }
-    }
-}
-
-/// Per-provider, user-configured filter. Tagged by `provider` on the
-/// wire so the frontend can render typed pickers; each variant carries a
-/// free-form `extra` object as an advanced escape hatch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "provider", rename_all = "snake_case")]
-pub enum FilterSpec {
-    Github {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        repo: Option<String>,
-        #[serde(default)]
-        labels: Vec<String>,
-        #[serde(default)]
-        assignee_is_me: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        state: Option<String>,
-        /// How to fetch: Composio connection, local `gh`/REST, or `auto`
-        /// (Composio-first with local fallback). Defaults to `auto`.
-        #[serde(default)]
-        fetch_mode: crate::integrations::composio::contract::GithubFetchMode,
-        #[serde(default)]
-        extra: Value,
-    },
-    Notion {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        database_id: Option<String>,
-        #[serde(default)]
-        assigned_to_me: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        status: Option<String>,
-        #[serde(default)]
-        extra: Value,
-    },
-    Linear {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        team_id: Option<String>,
-        #[serde(default)]
-        assignee_is_me: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        state: Option<String>,
-        #[serde(default)]
-        extra: Value,
-    },
-    Clickup {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        team_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        list_id: Option<String>,
-        #[serde(default)]
-        assignee_is_me: bool,
-        #[serde(default)]
-        extra: Value,
-    },
-}
-
-impl FilterSpec {
-    /// The provider this filter targets — must match the owning
-    /// [`TaskSource::provider`].
-    pub fn provider(&self) -> ProviderSlug {
-        match self {
-            Self::Github { .. } => ProviderSlug::Github,
-            Self::Notion { .. } => ProviderSlug::Notion,
-            Self::Linear { .. } => ProviderSlug::Linear,
-            Self::Clickup { .. } => ProviderSlug::Clickup,
-        }
-    }
-}
-
-/// How enriched tasks are routed once fetched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum SourceTarget {
-    /// Append a todo card AND dispatch a triage turn so an agent may
-    /// start working immediately (triage still gates noise).
-    #[default]
-    AgentTodoProactive,
-    /// Collect into the ingestion ledger only; never auto-start an agent turn.
-    TodoOnly,
-}
-
-/// Why a fetch ran — mirrors the provider `SyncReason` semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FetchReason {
-    /// First fetch right after an OAuth connection is created.
-    ConnectionCreated,
-    /// Periodic background poll.
-    Periodic,
-    /// Explicit user / RPC trigger.
-    Manual,
-}
-
-impl FetchReason {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ConnectionCreated => "connection_created",
-            Self::Periodic => "periodic",
-            Self::Manual => "manual",
-        }
+/// Whether `provider` has a working task-fetch path today.
+///
+/// **This is the single place that answers the question**, so the
+/// periodic scheduler and the RPC surface cannot drift apart on it.
+///
+/// Every provider returns `false` right now: the pipeline's fetch step
+/// (`pipeline::fetch_tasks_unavailable`) is an unconditional `Err` for
+/// every toolkit, because tinymemory v1.13.4 deleted
+/// `ComposioProvider::fetch_tasks` with no replacement. Nothing
+/// downstream of the fetch is broken — dedup, enrichment, routing and
+/// reconciliation all still work — so the moment a provider grows a real
+/// fetch again this flips to `true` for that variant and the scheduler
+/// starts polling it, with no other change.
+///
+/// It is deliberately a per-variant `match` rather than a blanket
+/// `false`: the restoration lands one toolkit at a time, and a
+/// wholesale constant would have to be redesigned on the first one
+/// instead of edited. The provider and filter types themselves are the
+/// connector contract's (`tinyconnectors_bus::vocabulary`); whether the host
+/// can poll one is the host's call.
+#[must_use]
+pub fn provider_can_fetch(provider: ProviderSlug) -> bool {
+    match provider {
+        ProviderSlug::Github
+        | ProviderSlug::Notion
+        | ProviderSlug::Linear
+        | ProviderSlug::Clickup => false,
     }
 }
 

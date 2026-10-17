@@ -20,7 +20,7 @@ mod tools_tests;
 
 mod delete;
 mod download;
-mod helpers;
+pub(crate) mod helpers;
 mod link;
 mod list;
 mod registry;

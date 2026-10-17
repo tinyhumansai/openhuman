@@ -4,9 +4,9 @@ use super::*;
 
 #[tokio::test]
 async fn a_resumed_thread_keeps_recorded_juice_specs_and_executors_when_repl_is_off() {
-    use crate::inference::tokenjuice::{repl_tools_for, REPL_TOOL_NAMES};
+    use crate::inference::tokenjuice::repl_tools_for;
 
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin definitions");
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut active_config = crate::config::Config {
@@ -29,7 +29,7 @@ async fn a_resumed_thread_keeps_recorded_juice_specs_and_executors_when_repl_is_
             .iter()
             .map(|spec| spec.name.as_str())
             .collect::<Vec<_>>(),
-        REPL_TOOL_NAMES
+        tinyjuice_bus::tools::REPL_TOOLS
     );
     for spec in &mut recorded_specs {
         spec.description = format!("frozen declaration for {}", spec.name);
@@ -55,9 +55,12 @@ async fn a_resumed_thread_keeps_recorded_juice_specs_and_executors_when_repl_is_
     current_config.tokenjuice.ccr_enabled = false;
     current_config.tokenjuice.repl_handle_enabled = false;
     assert!(repl_tools_for(&current_config).is_empty());
-    let mut host =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&current_config, "summarizer")
-            .expect("summarizer session");
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &current_config,
+        "summarizer",
+    )
+    .expect("summarizer session");
     host.ensure_runtime_session().expect("runtime session");
     let prelude = host
         .runtime_state
@@ -127,11 +130,16 @@ async fn a_resumed_thread_keeps_recorded_juice_specs_and_executors_when_repl_is_
         );
     }
     let unavailable = {
-        let surface = prelude.tool_surface.lock().expect("tool surface");
-        let tool = surface
-            .tools
+        let (tools, synthesized_tools) = {
+            let surface = prelude.tool_surface.lock().expect("tool surface");
+            (
+                Arc::clone(&surface.tools),
+                Arc::clone(&surface.synthesized_tools),
+            )
+        };
+        let tool = tools
             .iter()
-            .chain(surface.synthesized_tools.iter())
+            .chain(synthesized_tools.iter())
             .find(|tool| tool.name() == "juice_find")
             .expect("recorded executor remains registered");
         tool.execute(serde_json::json!({"handle":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}))
@@ -147,9 +155,9 @@ async fn a_resumed_thread_keeps_recorded_juice_specs_and_executors_when_repl_is_
 
 #[tokio::test]
 async fn resumed_juice_snapshot_does_not_add_live_repl_declarations() {
-    use crate::inference::tokenjuice::{repl_tools_for, REPL_TOOL_NAMES};
+    use crate::inference::tokenjuice::repl_tools_for;
 
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin definitions");
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::config::Config {
@@ -165,15 +173,19 @@ async fn resumed_juice_snapshot_does_not_add_live_repl_declarations() {
     config.tokenjuice.repl_handle_enabled = true;
     let mut recorded_spec = repl_tools_for(&config)
         .into_iter()
-        .find(|tool| tool.name() == REPL_TOOL_NAMES[0])
+        .find(|tool| tool.name() == tinyjuice_bus::tools::REPL_TOOLS[0])
         .expect("juice_find")
         .spec();
     recorded_spec.description = "frozen juice_find declaration".into();
     recorded_spec.parameters = serde_json::json!({"type":"object","frozen":true});
     let recorded = ToolSnapshot::new(vec![recorded_spec.clone()]).expect("recorded snapshot");
 
-    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "summarizer")
-        .expect("summarizer session");
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "summarizer",
+    )
+    .expect("summarizer session");
     host.ensure_runtime_session().expect("runtime session");
     let prelude = host
         .runtime_state
@@ -197,7 +209,7 @@ async fn resumed_juice_snapshot_does_not_add_live_repl_declarations() {
         .filter(|spec| crate::inference::tokenjuice::is_repl_tool(&spec.name))
         .map(|spec| spec.name.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(juice_names, [REPL_TOOL_NAMES[0]]);
+    assert_eq!(juice_names, [tinyjuice_bus::tools::REPL_TOOLS[0]]);
     let frozen = prepared
         .specs()
         .iter()
@@ -225,4 +237,107 @@ async fn resumed_juice_snapshot_does_not_add_live_repl_declarations() {
             .all(|spec| !crate::inference::tokenjuice::is_repl_tool(&spec.name)),
         "an empty frozen transcript must not gain Juice declarations from the live catalog"
     );
+}
+
+/// `[components] juice = false` end to end through a turn's wiring: the
+/// session builds its tool-output middleware with compaction and the summary
+/// stage off, the tinyjuice module is never claimed, and a large compressible
+/// tool result enters the transcript uncompressed.
+#[tokio::test]
+async fn juice_off_turn_loads_no_module_and_passes_tool_output_through() {
+    use crate::agent::tinyagents::middleware::tool_output::ToolOutputMiddleware;
+    use tinyagents_harness::context::{RunConfig, RunContext};
+    use tinyagents_harness::middleware::{Middleware, ToolInvocationIdentity};
+
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("builtin definitions");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        modules: crate::config::schema::ModulesConfig {
+            enabled: true,
+            allow_download: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
+    config.context.compaction_enabled = true;
+    config.tokenjuice.router_enabled = true;
+    assert!(config.components.set("juice", false));
+
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "summarizer",
+    )
+    .expect("summarizer session");
+    host.ensure_runtime_session().expect("runtime session");
+    let context_mw = host
+        .runtime_state
+        .lock()
+        .expect("runtime state")
+        .context_middleware
+        .clone()
+        .expect("context middleware");
+    assert!(
+        !context_mw.tokenjuice_compaction_enabled,
+        "juice off must switch tool-output compaction off"
+    );
+    assert!(
+        context_mw.payload_summarizer.is_none(),
+        "juice off must drop the summary stage"
+    );
+
+    // Run the middleware exactly as the turn would, on a result that
+    // compaction would otherwise rewrite (a large uniform JSON array).
+    let rows: Vec<serde_json::Value> = (0..200)
+        .map(|i| serde_json::json!({"id": i, "name": format!("row-{i}"), "status": "ok"}))
+        .collect();
+    let payload = serde_json::to_string(&rows).expect("payload");
+    assert!(payload.len() >= config.tokenjuice.min_bytes_to_compress);
+    let mw = ToolOutputMiddleware {
+        budget_bytes: 1_000_000,
+        payload_summarizer: context_mw.payload_summarizer.clone(),
+        artifact_store: None,
+        tokenjuice_compaction_enabled: context_mw.tokenjuice_compaction_enabled,
+        tokenjuice_compression: context_mw.tokenjuice_compression,
+        runtime_config: context_mw.runtime_config.clone(),
+        tool_policies: Default::default(),
+        artifact_reads: Default::default(),
+        focus_by_call: Default::default(),
+        summary_focus_tools: Default::default(),
+        raw_fetches: Default::default(),
+        file_reads: Default::default(),
+    };
+    let mut ctx = RunContext::new(
+        RunConfig::new("juice-off-turn"),
+        crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+    );
+    let mut result = tinytools::ToolResult::success(&payload);
+    mw.after_tool(
+        &mut ctx,
+        &(),
+        &ToolInvocationIdentity::new(
+            tinyagents_harness::ids::CallId::new("juice-off-1"),
+            "some_other_tool",
+        ),
+        &mut result,
+    )
+    .await
+    .expect("after_tool");
+    assert_eq!(result.output(), payload, "tool output must pass through");
+
+    // The module was never asked for: the refusal is typed and nothing was
+    // downloaded (downloads are off, so a claim would have ended in Failed).
+    // The loader only exists with the `modules` feature.
+    #[cfg(feature = "modules")]
+    {
+        let err = crate::modules::ensure_loaded_within(&config, "tinyjuice", None)
+            .await
+            .unwrap_err();
+        assert_eq!(err, tinybus::module::LoadError::Disabled("juice"));
+    }
 }

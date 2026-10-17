@@ -356,7 +356,7 @@ async fn image_inspection_does_not_fall_back_when_modules_are_disabled() {
     .expect("parse presentation input");
     validate_input(&input).expect("valid presentation input");
 
-    let (resolved, warnings) = tool.resolve_images(&input).await;
+    let (resolved, warnings) = tool.resolve_images(&input, &DispatchCtx::ambient()).await;
     assert!(resolved.iter().all(Vec::is_empty));
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("disabled"), "{warnings:?}");
@@ -380,7 +380,7 @@ async fn execute_skips_oversize_image_with_warning() {
         }]
     });
     let input: GeneratePresentationInput = serde_json::from_value(args).expect("args parse");
-    let (resolved, warnings) = tool.resolve_images(&input).await;
+    let (resolved, warnings) = tool.resolve_images(&input, &DispatchCtx::ambient()).await;
     assert!(
         resolved.iter().all(Vec::is_empty),
         "a rejected image must not reach the deck"
@@ -406,7 +406,7 @@ async fn execute_skips_missing_artifact_with_warning() {
         }]
     });
     let input: GeneratePresentationInput = serde_json::from_value(args).expect("args parse");
-    let (resolved, warnings) = tool.resolve_images(&input).await;
+    let (resolved, warnings) = tool.resolve_images(&input, &DispatchCtx::ambient()).await;
     assert!(
         resolved.iter().all(Vec::is_empty),
         "a rejected image must not reach the deck"

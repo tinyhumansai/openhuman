@@ -428,12 +428,32 @@ async fn direct_connected_integrations_fetches_schemas_without_backend_composio_
             .base_urls(direct_url.clone(), direct_url),
     );
 
-    let integrations = crate::integrations::composio::fetch_connected_integrations(&config).await;
+    // The operator scope's cache epoch is process-wide: any other test that
+    // invalidates it while this (slow, module-backed) fetch is in flight fences
+    // the result to `Unavailable`. Retry a fenced fetch; the assertion that the
+    // backend route is never asked still covers every attempt.
+    let mut integrations = Vec::new();
+    for attempt in 1..=5 {
+        match crate::integrations::composio::fetch_connected_integrations_status(&config).await {
+            crate::integrations::composio::FetchConnectedIntegrationsStatus::Authoritative(
+                found,
+            ) => {
+                integrations = found;
+                break;
+            }
+            crate::integrations::composio::FetchConnectedIntegrationsStatus::Unavailable => {
+                tracing::debug!(
+                    attempt,
+                    "[composio][test] fetch fenced or unavailable; retrying"
+                );
+            }
+        }
+    }
 
     let gmail = integrations
         .iter()
         .find(|integration| integration.toolkit == "gmail")
-        .expect("direct connection should be represented");
+        .unwrap_or_else(|| panic!("direct connection should be represented: {integrations:?}"));
     assert_eq!(gmail.tools.len(), 1);
     assert_eq!(gmail.tools[0].name, "GMAIL_SEND_EMAIL");
     assert_eq!(backend_tool_requests.load(Ordering::SeqCst), 0);

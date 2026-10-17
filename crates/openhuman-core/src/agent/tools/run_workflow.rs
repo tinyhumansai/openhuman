@@ -53,6 +53,7 @@ const MAX_WAIT_SECONDS: u64 = 600;
 /// Coarse, process-global spawn/await guardrails. See the module doc for why
 /// these are global rather than per-lineage.
 mod guard {
+    use crate::core::runtime::DispatchCtx;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
@@ -73,8 +74,8 @@ mod guard {
         active_keys: Mutex<HashSet<String>>,
     }
 
-    fn state() -> Arc<GuardState> {
-        crate::core::runtime::current_slot::<GuardState>()
+    fn state(ctx: &DispatchCtx) -> Arc<GuardState> {
+        crate::core::runtime::slot_for::<GuardState>(ctx)
     }
 
     /// RAII guard held while a call awaits a run. Dropping it frees the
@@ -96,8 +97,8 @@ mod guard {
     /// Account a spawn against the agent's backstop. Returns `Err`
     /// once the cap trips. Called by both the awaited and the fire-and-forget
     /// paths so neither can loop forever.
-    pub fn account_spawn() -> Result<(), String> {
-        let n = state().total_spawns.fetch_add(1, Ordering::SeqCst) + 1;
+    pub fn account_spawn(ctx: &DispatchCtx) -> Result<(), String> {
+        let n = state(ctx).total_spawns.fetch_add(1, Ordering::SeqCst) + 1;
         if n > TOTAL_SPAWN_BACKSTOP {
             return Err(format!(
                 "refused — spawn backstop hit ({TOTAL_SPAWN_BACKSTOP} workflow runs \
@@ -111,16 +112,16 @@ mod guard {
     /// regression test that asserts a rejected spawn (e.g. unknown workflow
     /// id) doesn't consume a backstop slot.
     #[cfg(test)]
-    pub fn total_spawns() -> u64 {
-        state().total_spawns.load(Ordering::SeqCst)
+    pub fn total_spawns(ctx: &DispatchCtx) -> u64 {
+        state(ctx).total_spawns.load(Ordering::SeqCst)
     }
 
     /// Acquire an await slot + re-entrancy lock for `key` (a workflow-id +
     /// inputs fingerprint, or `await:<run_id>` for re-attach). `Err` if too
     /// many awaits are in flight (nesting/fan-out cap) or the same key is
     /// already being awaited up the stack (re-entrant tight loop).
-    pub fn acquire_await(key: String) -> Result<AwaitGuard, String> {
-        let state = state();
+    pub fn acquire_await(ctx: &DispatchCtx, key: String) -> Result<AwaitGuard, String> {
+        let state = state(ctx);
         let mut keys = state
             .active_keys
             .lock()
@@ -311,6 +312,18 @@ impl Tool for RunWorkflowTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let dispatch = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
+        let origin = crate::agent::tinyagents::host::run_context::turn_origin_for_tool(context);
         // Accept `workflow_id`, falling back to the legacy `skill_id` alias so
         // any in-flight caller from before the rename still works.
         let workflow_id = match args
@@ -331,13 +344,20 @@ impl Tool for RunWorkflowTool {
         // Fire-and-forget: only the spawn backstop applies — no await, so no
         // re-entrancy/nesting slot to take.
         if wait_seconds == 0 {
-            return match spawn_workflow_run_background(workflow_id.clone(), inputs).await {
+            return match spawn_workflow_run_background(
+                &dispatch,
+                workflow_id.clone(),
+                inputs,
+                origin,
+            )
+            .await
+            {
                 // Count only spawns that actually start against the backstop —
                 // unknown-workflow / bad-input rejections (the Err arm) must not
                 // burn the budget, or rejected calls accumulate and trip the
                 // guard for legitimate ones.
                 Ok(started) => {
-                    if let Err(e) = guard::account_spawn() {
+                    if let Err(e) = guard::account_spawn(&dispatch) {
                         return Ok(ToolResult::error(format!("run_workflow: {e}")));
                     }
                     Ok(ToolResult::success(
@@ -360,20 +380,23 @@ impl Tool for RunWorkflowTool {
         // loop is rejected before we even spawn), then account the spawn —
         // but only once it actually starts, so a rejected spawn doesn't burn
         // the backstop.
-        let _guard = match guard::acquire_await(reentrancy_key(&workflow_id, &inputs)) {
+        let _guard = match guard::acquire_await(&dispatch, reentrancy_key(&workflow_id, &inputs)) {
             Ok(g) => g,
             Err(e) => return Ok(ToolResult::error(format!("run_workflow: {e}"))),
         };
 
-        let started = match spawn_workflow_run_background(workflow_id.clone(), inputs).await {
-            Ok(s) => {
-                if let Err(e) = guard::account_spawn() {
-                    return Ok(ToolResult::error(format!("run_workflow: {e}")));
+        let started =
+            match spawn_workflow_run_background(&dispatch, workflow_id.clone(), inputs, origin)
+                .await
+            {
+                Ok(s) => {
+                    if let Err(e) = guard::account_spawn(&dispatch) {
+                        return Ok(ToolResult::error(format!("run_workflow: {e}")));
+                    }
+                    s
                 }
-                s
-            }
-            Err(e) => return Ok(ToolResult::error(format!("run_workflow: {e}"))),
-        };
+                Err(e) => return Ok(ToolResult::error(format!("run_workflow: {e}"))),
+            };
         tracing::debug!(
             workflow_id = %started.workflow_id,
             run_id = %started.run_id,
@@ -446,6 +469,17 @@ impl Tool for AwaitWorkflowTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let dispatch = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
         let run_id = match args.get("run_id").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.to_string(),
             _ => {
@@ -470,7 +504,7 @@ impl Tool for AwaitWorkflowTool {
 
         // Take an await slot so the LLM can't stack unbounded waits or
         // double-await the same run; keyed by run_id.
-        let _guard = match guard::acquire_await(format!("await:{run_id}")) {
+        let _guard = match guard::acquire_await(&dispatch, format!("await:{run_id}")) {
             Ok(g) => g,
             Err(e) => return Ok(ToolResult::error(format!("await_workflow: {e}"))),
         };

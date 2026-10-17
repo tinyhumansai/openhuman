@@ -5,8 +5,9 @@
 //! handful of fail-closed invariants that must hold for *all* inputs, not just
 //! the hand-enumerated cases in `policy_tests.rs`.
 
-use super::types::{CommandClass, SecurityPolicy};
+use super::types::SecurityPolicy;
 use proptest::prelude::*;
+use tinybox_bus::CommandClass;
 
 proptest! {
     #![proptest_config(ProptestConfig {

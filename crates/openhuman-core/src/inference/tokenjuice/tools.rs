@@ -31,7 +31,7 @@ impl Default for TokenjuiceRetrieveTool {
 #[async_trait]
 impl Tool for TokenjuiceRetrieveTool {
     fn name(&self) -> &str {
-        super::RETRIEVE_TOOL_NAME
+        tinyjuice_bus::tools::RETRIEVE
     }
 
     fn description(&self) -> &str {
@@ -79,7 +79,7 @@ impl Tool for TokenjuiceRetrieveTool {
         let Some(token) = token else {
             return Ok(ToolResult::error(format!(
                 "{}: missing required 'token' argument",
-                super::RETRIEVE_TOOL_NAME
+                tinyjuice_bus::tools::RETRIEVE
             )));
         };
 
@@ -137,7 +137,7 @@ fn miss_message(token: &str) -> String {
          again. Proceed using the compacted summary already shown above; only if a \
          specific missing detail is essential, retry with narrower arguments (a tighter \
          query, filter, or smaller limit) so the result is small enough to keep in full.",
-        tool = super::RETRIEVE_TOOL_NAME
+        tool = tinyjuice_bus::tools::RETRIEVE
     )
 }
 

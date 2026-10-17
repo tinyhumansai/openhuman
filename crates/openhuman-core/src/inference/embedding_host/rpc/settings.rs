@@ -2,6 +2,7 @@
 //! update, including the save-time verification of a custom endpoint.
 
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::security::credentials::AuthService;
 
@@ -193,16 +194,16 @@ pub async fn get_settings(config: &Config) -> Result<Outcome<serde_json::Value>,
 /// the embedding signature any more (memory v2 engines embed server-side), so a
 /// change applies directly.
 pub async fn update_settings(
+    ctx: &DispatchCtx,
     provider: Option<String>,
     model: Option<String>,
     dimensions: Option<usize>,
     custom_endpoint: Option<String>,
     rate_limit_per_min: Option<u32>,
 ) -> Result<Outcome<serde_json::Value>, String> {
-    use crate::config::ops as config_rpc;
-    use crate::inference::embedding_host::format_embedding_signature;
+    use tinyinference_embeddings::format_embedding_signature;
 
-    let mut config = config_rpc::load_config_with_timeout().await?;
+    let mut config = ctx.load_config().await?;
 
     // Upgrade-in-place for users whose endpoint predates the retained Custom
     // profile: if they disable or switch away now, capture the active profile

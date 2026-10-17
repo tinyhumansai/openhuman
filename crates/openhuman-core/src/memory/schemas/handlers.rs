@@ -1,6 +1,7 @@
 //! Thin JSON-RPC handlers: parse params, load config, delegate to the ops,
 //! and persist config for the setters.
 
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -11,6 +12,7 @@ use crate::core::Outcome;
 use crate::memory::error::{MemoryError, MemoryResult};
 use crate::memory::explore::{ExploreParams, ItemsGetParams};
 use crate::memory::lifecycle::views::{self, JobsRunParams, PackPreviewParams, PolicySetParams};
+use crate::memory::scope::MemoryIdentity;
 use crate::memory::types::{
     EmptyParams, EngineSetParams, EraseAllParams, FetchParams, ForgetParams, ImportStartParams,
     ImportStateView, ItemsListParams, LearnParams, RecallParams, SourceAddedView,
@@ -32,8 +34,8 @@ fn finish<T: Serialize>(result: MemoryResult<T>) -> Result<Value, String> {
     to_json(result.map_err(String::from)?)
 }
 
-async fn load() -> Result<Config, String> {
-    crate::config::rpc::load_config_with_timeout().await
+async fn load(ctx: &DispatchCtx) -> Result<Config, String> {
+    ctx.load_config().await
 }
 
 async fn save(config: &Config) -> MemoryResult<()> {
@@ -43,24 +45,24 @@ async fn save(config: &Config) -> MemoryResult<()> {
         .map_err(|error| MemoryError::Engine(format!("saving config failed: {error:#}")))
 }
 
-pub(super) fn engines_list(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn engines_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        to_json(ops::engines_list(&load().await?))
+        to_json(ops::engines_list(&load(&ctx).await?))
     })
 }
 
-pub(super) fn engine_get(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn engine_get(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        to_json(ops::engine_get(&load().await?).await)
+        to_json(ops::engine_get(&load(&ctx).await?).await)
     })
 }
 
-pub(super) fn engine_set(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn engine_set(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<EngineSetParams>(params)?;
-        let mut config = load().await?;
+        let mut config = load(&ctx).await?;
         let result = async {
             ops::apply_engine_set(&mut config, &params)?;
             save(&config).await
@@ -72,162 +74,168 @@ pub(super) fn engine_set(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn recall(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn recall(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<RecallParams>(params)?;
-        finish(confine::recall(&load().await?, params).await)
+        finish(confine::recall(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn fetch(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn fetch(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<FetchParams>(params)?;
-        finish(confine::fetch(&load().await?, params).await)
+        finish(confine::fetch(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn learn(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn learn(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<LearnParams>(params)?;
-        finish(confine::learn(&load().await?, params).await)
+        finish(confine::learn(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn forget(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn forget(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<ForgetParams>(params)?;
-        finish(confine::forget(&load().await?, params).await)
+        finish(confine::forget(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn erase_all(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn erase_all(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<EraseAllParams>(params)?;
-        finish(ops::erase_all(&load().await?, params).await)
+        finish(ops::erase_all(&ctx, &load(&ctx).await?, params).await)
     })
 }
 
-pub(super) fn items_list(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn items_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<ItemsListParams>(params)?;
-        finish(confine::items_list(&load().await?, params).await)
+        finish(confine::items_list(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn explore(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn explore(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<ExploreParams>(params)?;
-        finish(confine::explore(&load().await?, params).await)
+        finish(confine::explore(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn items_get(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn items_get(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<ItemsGetParams>(params)?;
-        finish(confine::items_get(&load().await?, params).await)
+        finish(confine::items_get(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn policy_get(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn policy_get(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        to_json(views::policy_view(&load().await?))
+        to_json(views::policy_view(&load(&ctx).await?))
     })
 }
 
-pub(super) fn policy_set(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn policy_set(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<PolicySetParams>(params)?;
-        let mut config = load().await?;
+        let mut config = load(&ctx).await?;
         views::apply_policy_set(&mut config, &params).map_err(String::from)?;
         save(&config).await.map_err(String::from)?;
         to_json(views::policy_view(&config))
     })
 }
 
-pub(super) fn pack_preview(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn pack_preview(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<PackPreviewParams>(params)?;
-        finish(views::pack_preview(&load().await?, params).await)
+        finish(views::pack_preview(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn agents_list(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn agents_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(views::agents_list(&load().await?).await)
+        finish(views::agents_list(&load(&ctx).await?, &MemoryIdentity::root()).await)
     })
 }
 
-pub(super) fn conversations_backfill_status(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn conversations_backfill_status(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(backfill::status(&load().await?).await)
+        finish(backfill::status(&ctx, &load(&ctx).await?).await)
     })
 }
 
-pub(super) fn conversations_backfill_start(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn conversations_backfill_start(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<backfill::BackfillStartParams>(params)?;
-        finish(backfill::start(&load().await?, params).await)
+        finish(backfill::start(&ctx, &load(&ctx).await?, params).await)
     })
 }
 
-pub(super) fn brain_sources(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn brain_sources(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(brain::sources(&load().await?).await)
+        finish(brain::sources(&load(&ctx).await?, &MemoryIdentity::root()).await)
     })
 }
 
-pub(super) fn brain_search(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn brain_search(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<brain::BrainSearchParams>(params)?;
-        finish(brain::search(&load().await?, params).await)
+        finish(brain::search(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn brain_ingest(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn brain_ingest(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<brain::BrainIngestParams>(params)?;
-        finish(brain::ingest(&load().await?, params).await)
+        finish(brain::ingest(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn brain_forget(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn brain_forget(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<brain::BrainForgetParams>(params)?;
-        finish(brain::forget(&load().await?, params).await)
+        finish(brain::forget(&load(&ctx).await?, &MemoryIdentity::root(), params).await)
     })
 }
 
-pub(super) fn jobs_list(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn jobs_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        to_json(views::jobs_list(&load().await?).await)
+        to_json(views::jobs_list(&load(&ctx).await?).await)
     })
 }
 
-pub(super) fn jobs_run(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn jobs_run(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<JobsRunParams>(params)?;
-        finish(views::jobs_run(&load().await?, params).await)
+        finish(views::jobs_run(&load(&ctx).await?, params).await)
     })
 }
 
-pub(super) fn sources_list(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn sources_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
         to_json(SourcesListView {
-            sources: sources::list(&load().await?),
+            sources: sources::list(&load(&ctx).await?),
         })
     })
 }
 
-pub(super) fn sources_add(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn sources_add(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<SourcesAddParams>(params)?;
-        let mut config = load().await?;
+        let mut config = load(&ctx).await?;
         let source = sources::apply_add(&mut config, &params).map_err(String::from)?;
         save(&config).await.map_err(String::from)?;
         to_json(SourceAddedView {
@@ -236,10 +244,10 @@ pub(super) fn sources_add(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn sources_remove(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn sources_remove(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<SourcesRemoveParams>(params)?;
-        let mut config = load().await?;
+        let mut config = load(&ctx).await?;
         let Some(removed) = sources::apply_remove(&mut config, &params.id) else {
             return to_json(SourceRemovedView { removed: false });
         };
@@ -254,70 +262,75 @@ pub(super) fn sources_remove(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn sources_sync(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn sources_sync(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<SourcesSyncParams>(params)?;
-        let config = load().await?;
-        let started = sources::start_sync(&config, params.id.as_deref()).map_err(String::from)?;
+        let config = load(&ctx).await?;
+        let started =
+            sources::start_sync(&ctx, &config, params.id.as_deref()).map_err(String::from)?;
         to_json(SourcesSyncView { started })
     })
 }
 
-pub(super) fn import_scan(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn import_scan(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(import::scan(&load().await?).await)
+        finish(import::scan(&load(&ctx).await?).await)
     })
 }
 
-pub(super) fn import_start(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn import_start(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<ImportStartParams>(params)?;
-        let config = load().await?;
+        let config = load(&ctx).await?;
         finish(
-            import::start(&config, params.consent)
+            import::start(&ctx, &config, params.consent)
                 .await
                 .map(|state| ImportStateView { state }),
         )
     })
 }
 
-pub(super) fn import_status(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn import_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        let config = load().await?;
+        let config = load(&ctx).await?;
         to_json(json!(ImportStateView {
             state: import::status(&config)
         }))
     })
 }
 
-pub(super) fn import_retry_failed(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn import_retry_failed(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        let config = load().await?;
+        let config = load(&ctx).await?;
         finish(
-            import::retry_failed(&config)
+            import::retry_failed(&ctx, &config)
                 .await
                 .map(|state| ImportStateView { state }),
         )
     })
 }
 
-pub(super) fn migration_scan(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn migration_scan(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(layout_migration::scan(&load().await?, &layout_migration::AppHost).await)
+        finish(layout_migration::scan(&layout_migration::AppHost::new(load(&ctx).await?)).await)
     })
 }
 
-pub(super) fn migration_start(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn migration_start(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params = parse::<layout_migration::StartParams>(params)?;
-        let config = load().await?;
+        let config = load(&ctx).await?;
         let started = layout_migration::start(
+            &ctx,
             config.clone(),
-            std::sync::Arc::new(layout_migration::AppHost),
+            std::sync::Arc::new(layout_migration::AppHost::new(config.clone())),
             layout_migration::Trigger::Manual {
                 takeover: params.takeover,
             },
@@ -328,16 +341,16 @@ pub(super) fn migration_start(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn migration_status(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn migration_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(layout_migration::status(&load().await?))
+        finish(layout_migration::status(&load(&ctx).await?))
     })
 }
 
-pub(super) fn migration_retry(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn migration_retry(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         parse::<EmptyParams>(params)?;
-        finish(layout_migration::retry(&load().await?))
+        finish(layout_migration::retry(&load(&ctx).await?))
     })
 }

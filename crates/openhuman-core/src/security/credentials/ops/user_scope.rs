@@ -11,6 +11,7 @@ use crate::config::{
     default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
     write_active_user_id, Config,
 };
+use crate::core::runtime::DispatchCtx;
 use crate::threads::store as conversations;
 
 use super::gated_services::is_embedder_host;
@@ -51,7 +52,7 @@ mod tests;
 /// anonymous pre-login conversation store is purged so a fresh account never
 /// inherits demo or scratch threads from the pre-login bucket (#1157).
 /// Returns human-readable log lines for the RPC outcome.
-pub(super) fn activate_user_scope(user_id: &str) -> Result<Vec<String>, String> {
+pub(super) fn activate_user_scope(ctx: &DispatchCtx, user_id: &str) -> Result<Vec<String>, String> {
     let mut logs = Vec::new();
     if !operator_user_activation_allowed() {
         log::debug!("{LOG_PREFIX} embedder host; skipping global user activation for {user_id}");
@@ -73,7 +74,7 @@ pub(super) fn activate_user_scope(user_id: &str) -> Result<Vec<String>, String> 
         // concurrent thread RPC in this process cannot interleave.
         let pre_ws = pre_login_user_dir(&root_dir).join("workspace");
         let pre_ws_log = pre_ws.display().to_string();
-        match conversations::purge_threads(pre_ws) {
+        match conversations::purge_threads(ctx, pre_ws) {
             Ok(stats) => {
                 tracing::info!(
                     pre_login_workspace = %pre_ws_log,
@@ -109,10 +110,11 @@ pub(super) fn deactivate_user_scope() -> Result<(), String> {
 /// The config that reflects the current `active_user.toml` — reloaded after an
 /// activation so credentials, keys and workspaces land in the user-scoped
 /// location — or `fallback` when the reload fails.
-pub(super) async fn reload_config_or(_fallback: &Config) -> Result<Config, String> {
-    crate::config::load_config_with_timeout()
-        .await
-        .map_err(|error| error.to_string())
+pub(super) async fn reload_config_or(
+    ctx: &DispatchCtx,
+    _fallback: &Config,
+) -> Result<Config, String> {
+    ctx.load_config().await.map_err(|error| error.to_string())
 }
 
 /// Point every process-global store at `config`'s workspace after a
@@ -124,6 +126,19 @@ pub(super) fn rebind_after_credential_change(
     _reason: &str,
 ) -> Result<Vec<String>, String> {
     let mut logs = Vec::new();
+    // Storage first: the default backend belongs to the workspace, and every
+    // store below reaches it through the installed slot, so a different user's
+    // workspace must have its own backend installed before any of them runs.
+    // A failed reopen is an error, never a quiet continue on the previous
+    // user's backend.
+    if let Some(rebound) =
+        crate::storage::rebind::rebind(config).map_err(|error| format!("{error:#}"))?
+    {
+        logs.push(format!(
+            "storage moved from {} to {}",
+            rebound.from, rebound.to
+        ));
+    }
     crate::cron::seed::prune_retired_jobs(config).map_err(|error| error.to_string())?;
     crate::core::runtime::context::CoreContext::rebind_default_workspace(&config.workspace_dir)
         .map_err(|error| error.to_string())?;

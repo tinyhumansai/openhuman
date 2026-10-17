@@ -12,9 +12,14 @@ async fn prepare_messages_rejects_too_many_images() {
         allow_remote_fetch: false,
     };
 
-    let error = prepare_messages_for_provider(&messages, &config, &MultimodalFileConfig::default())
-        .await
-        .expect_err("should reject image count overflow");
+    let error = prepare_messages_for_provider(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &messages,
+        &config,
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .expect_err("should reject image count overflow");
 
     assert!(error
         .to_string()
@@ -32,6 +37,7 @@ async fn prepare_messages_extracts_text_from_pdf() {
         file_path.display()
     ))];
     let prepared = prepare_messages_for_provider(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &messages,
         &MultimodalConfig::default(),
         &MultimodalFileConfig::default(),
@@ -65,9 +71,14 @@ async fn prepare_messages_rejects_oversized_file() {
         ..Default::default()
     };
 
-    let err = prepare_messages_for_provider(&messages, &MultimodalConfig::default(), &file_config)
-        .await
-        .expect_err("oversized file must be rejected");
+    let err = prepare_messages_for_provider(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &messages,
+        &MultimodalConfig::default(),
+        &file_config,
+    )
+    .await
+    .expect_err("oversized file must be rejected");
 
     assert!(err
         .to_string()

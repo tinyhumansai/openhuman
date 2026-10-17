@@ -38,54 +38,6 @@ fn list_configured_models_accepts_slug() {
     assert!(found_by_id.is_some(), "id lookup must still work");
 }
 
-#[test]
-fn openrouter_detection_matches_builtin_slug_or_host() {
-    let provider = |slug: &str, endpoint: &str| CloudProviderCreds {
-        id: format!("p_{slug}"),
-        slug: slug.to_string(),
-        label: slug.to_string(),
-        endpoint: endpoint.to_string(),
-        auth_style: AuthStyle::Bearer,
-        default_model: None,
-    };
-
-    assert!(is_openrouter_provider(&provider(
-        "openrouter",
-        "http://127.0.0.1:1234"
-    )));
-    assert!(is_openrouter_provider(&provider(
-        "custom-router",
-        "https://openrouter.ai/api/v1"
-    )));
-    assert!(is_openrouter_provider(&provider(
-        "custom-router",
-        "https://oauth.openrouter.ai/api/v1"
-    )));
-    assert!(!is_openrouter_provider(&provider(
-        "custom-openai",
-        "https://api.openai.com/v1"
-    )));
-}
-
-#[test]
-fn openai_codex_models_url_includes_client_version_query() {
-    let url = append_query_param(
-        "https://chatgpt.com/backend-api/codex/models",
-        "client_version",
-        &openai_codex_client_version(),
-    );
-    let parsed = reqwest::Url::parse(&url).expect("url");
-
-    assert_eq!(parsed.path(), "/backend-api/codex/models");
-    assert_eq!(
-        parsed
-            .query_pairs()
-            .find(|(key, _)| key == "client_version")
-            .map(|(_, value)| value.into_owned()),
-        Some(openai_codex_client_version().to_string())
-    );
-}
-
 #[tokio::test]
 async fn openrouter_invalid_key_fails_before_models_catalog_probe() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -249,96 +201,7 @@ fn backend_error_code_owned_gates_managed_errors_except_malformed_bad_request() 
     ));
 }
 
-// Confirm the budget-exhausted suppression predicate is scoped correctly.
-// These tests exercise the real production function, not a duplicate.
-mod budget_exhausted_suppression {
-    use super::super::*;
-
-    const BUDGET_BODY: &str = "Insufficient budget";
-    const UNRELATED_BODY: &str = "Invalid request: model not found";
-
-    #[test]
-    fn budget_exhausted_400_is_suppressed() {
-        assert!(is_budget_exhausted_http_400(
-            reqwest::StatusCode::BAD_REQUEST,
-            BUDGET_BODY,
-        ));
-    }
-
-    #[test]
-    fn budget_exhausted_400_is_case_insensitive() {
-        assert!(is_budget_exhausted_http_400(
-            reqwest::StatusCode::BAD_REQUEST,
-            "budget exceeded — ADD credits to continue",
-        ));
-    }
-
-    #[test]
-    fn budget_exhausted_500_is_not_suppressed() {
-        // A 500 is a server bug, not expected user-state — keep reporting.
-        assert!(!is_budget_exhausted_http_400(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            BUDGET_BODY,
-        ));
-    }
-
-    #[test]
-    fn budget_exhausted_400_unrelated_body_is_not_suppressed() {
-        assert!(!is_budget_exhausted_http_400(
-            reqwest::StatusCode::BAD_REQUEST,
-            UNRELATED_BODY,
-        ));
-    }
-
-    #[test]
-    fn budget_exhausted_402_is_not_suppressed() {
-        assert!(!is_budget_exhausted_http_400(
-            reqwest::StatusCode::PAYMENT_REQUIRED,
-            BUDGET_BODY,
-        ));
-    }
-
-    #[test]
-    fn budget_exhausted_empty_body_is_not_suppressed() {
-        assert!(!is_budget_exhausted_http_400(
-            reqwest::StatusCode::BAD_REQUEST,
-            "",
-        ));
-    }
-}
-
-mod provider_access_policy_suppression {
-    use super::super::*;
-
-    const ACCESS_TERMINATED_BODY: &str =
-        "{\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents.\",\"type\":\"access_terminated_error\"}}";
-
-    #[test]
-    fn access_terminated_403_is_suppressed() {
-        assert!(is_provider_access_policy_denied_http_403(
-            reqwest::StatusCode::FORBIDDEN,
-            ACCESS_TERMINATED_BODY,
-        ));
-    }
-
-    #[test]
-    fn access_terminated_non_403_is_not_suppressed() {
-        assert!(!is_provider_access_policy_denied_http_403(
-            reqwest::StatusCode::BAD_REQUEST,
-            ACCESS_TERMINATED_BODY,
-        ));
-    }
-
-    #[test]
-    fn unrelated_403_is_not_suppressed() {
-        assert!(!is_provider_access_policy_denied_http_403(
-            reqwest::StatusCode::FORBIDDEN,
-            "{\"error\":{\"message\":\"forbidden\"}}",
-        ));
-    }
-}
-
-// Exercises the real `is_provider_config_rejection_http` decision used
+// Exercises the real `config_rejection_demoted` decision used
 // by `api_error`, including the inverted provider-aware polarity.
 mod provider_config_rejection_suppression {
     use super::super::*;
@@ -352,21 +215,30 @@ mod provider_config_rejection_suppression {
 
     #[test]
     fn custom_provider_4xx_config_rejection_is_suppressed() {
-        assert!(is_provider_config_rejection_http(
-            reqwest::StatusCode::BAD_REQUEST,
-            "custom_openai",
-            TIER_LEAK_BODY,
+        assert!(config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                "custom_openai",
+                reqwest::StatusCode::BAD_REQUEST.as_u16(),
+                TIER_LEAK_BODY
+            ),
+            "custom_openai"
         ));
-        assert!(is_provider_config_rejection_http(
-            reqwest::StatusCode::BAD_REQUEST,
-            "custom_openai",
-            TEMP_BODY,
+        assert!(config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                "custom_openai",
+                reqwest::StatusCode::BAD_REQUEST.as_u16(),
+                TEMP_BODY
+            ),
+            "custom_openai"
         ));
         // 404 "model does not exist" is the same user-config class.
-        assert!(is_provider_config_rejection_http(
-            reqwest::StatusCode::NOT_FOUND,
-            "custom_openai",
-            "The model `gpt-5.5` does not exist or you do not have access to it.",
+        assert!(config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                "custom_openai",
+                reqwest::StatusCode::NOT_FOUND.as_u16(),
+                "The model `gpt-5.5` does not exist or you do not have access to it."
+            ),
+            "custom_openai"
         ));
     }
 
@@ -378,15 +250,21 @@ mod provider_config_rejection_suppression {
         // mean we sent it a bad request — a real regression that
         // must still reach Sentry. (Mirror of the 401/403 backend
         // rule.)
-        assert!(!is_provider_config_rejection_http(
-            reqwest::StatusCode::BAD_REQUEST,
-            openhuman_backend_model::PROVIDER_LABEL,
-            TIER_LEAK_BODY,
+        assert!(!config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                openhuman_backend_model::PROVIDER_LABEL,
+                reqwest::StatusCode::BAD_REQUEST.as_u16(),
+                TIER_LEAK_BODY
+            ),
+            openhuman_backend_model::PROVIDER_LABEL
         ));
-        assert!(!is_provider_config_rejection_http(
-            reqwest::StatusCode::BAD_REQUEST,
-            openhuman_backend_model::PROVIDER_LABEL,
-            TEMP_BODY,
+        assert!(!config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                openhuman_backend_model::PROVIDER_LABEL,
+                reqwest::StatusCode::BAD_REQUEST.as_u16(),
+                TEMP_BODY
+            ),
+            openhuman_backend_model::PROVIDER_LABEL
         ));
     }
 
@@ -408,10 +286,13 @@ mod provider_config_rejection_suppression {
             r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Model 'custom:MiniMax-M2.7' is not available. Use GET /openai/v1/models to list available models."}"#,
         ] {
             assert!(
-                is_provider_config_rejection_http(
-                    reqwest::StatusCode::BAD_REQUEST,
-                    openhuman_backend_model::PROVIDER_LABEL,
-                    body,
+                config_rejection_demoted(
+                    &tinyinference_llm::failure::http::classify_http_failure(
+                        openhuman_backend_model::PROVIDER_LABEL,
+                        reqwest::StatusCode::BAD_REQUEST.as_u16(),
+                        body
+                    ),
+                    openhuman_backend_model::PROVIDER_LABEL
                 ),
                 "TAURI-RUST-2Z1 body must be suppressed for openhuman backend: {body:?}"
             );
@@ -421,10 +302,13 @@ mod provider_config_rejection_suppression {
     #[test]
     fn server_error_is_not_suppressed() {
         // A 5xx is a server bug, not user-config — keep reporting.
-        assert!(!is_provider_config_rejection_http(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            "custom_openai",
-            TIER_LEAK_BODY,
+        assert!(!config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                "custom_openai",
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                TIER_LEAK_BODY
+            ),
+            "custom_openai"
         ));
     }
 
@@ -432,19 +316,25 @@ mod provider_config_rejection_suppression {
     fn transient_429_is_not_suppressed_here() {
         // 429 is transient; handled by should_report_provider_http_failure,
         // not this classifier (must not be swallowed as user-config).
-        assert!(!is_provider_config_rejection_http(
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            "custom_openai",
-            TIER_LEAK_BODY,
+        assert!(!config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                "custom_openai",
+                reqwest::StatusCode::TOO_MANY_REQUESTS.as_u16(),
+                TIER_LEAK_BODY
+            ),
+            "custom_openai"
         ));
     }
 
     #[test]
     fn unrelated_4xx_body_is_not_suppressed() {
-        assert!(!is_provider_config_rejection_http(
-            reqwest::StatusCode::BAD_REQUEST,
-            "custom_openai",
-            "Bad request: missing required field 'messages'",
+        assert!(!config_rejection_demoted(
+            &tinyinference_llm::failure::http::classify_http_failure(
+                "custom_openai",
+                reqwest::StatusCode::BAD_REQUEST.as_u16(),
+                "Bad request: missing required field 'messages'"
+            ),
+            "custom_openai"
         ));
     }
 
@@ -460,11 +350,7 @@ mod provider_config_rejection_suppression {
         // Verbatim wire body from TAURI-RUST-4XK Sentry issue 5338.
         let body = r#"ollama API error (403 Forbidden): {"error":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade (ref: bc48f3c8-fba1-40b6-93a9-786a167d16f9)"}"#;
         assert!(
-            is_provider_config_rejection_http(
-                reqwest::StatusCode::FORBIDDEN,
-                "ollama",
-                body,
-            ),
+            config_rejection_demoted(&tinyinference_llm::failure::http::classify_http_failure("ollama", reqwest::StatusCode::FORBIDDEN.as_u16(), body), "ollama"),
             "TAURI-RUST-4XK: ollama 403 subscription-gate must be classified as provider config-rejection"
         );
     }
@@ -477,41 +363,15 @@ mod provider_config_rejection_suppression {
         // expected backend body, so this is purely defensive.
         let body = r#"{"error":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade (ref: test)"}"#;
         assert!(
-            !is_provider_config_rejection_http(
-                reqwest::StatusCode::FORBIDDEN,
-                openhuman_backend_model::PROVIDER_LABEL,
-                body,
+            !config_rejection_demoted(
+                &tinyinference_llm::failure::http::classify_http_failure(
+                    openhuman_backend_model::PROVIDER_LABEL,
+                    reqwest::StatusCode::FORBIDDEN.as_u16(),
+                    body
+                ),
+                openhuman_backend_model::PROVIDER_LABEL
             ),
             "backend 403 subscription phrase must NOT be suppressed (polarity guard)"
-        );
-    }
-
-    #[test]
-    fn log_helper_runs_without_panicking() {
-        // Covers the demotion log path taken by `api_error` when a
-        // custom provider rejects the user's model/param config. No
-        // tracing subscriber in unit tests, so this is a pure smoke.
-        log_provider_config_rejection(
-            "api_error",
-            "custom_openai",
-            Some("reasoning-v1"),
-            reqwest::StatusCode::BAD_REQUEST,
-        );
-    }
-}
-
-mod context_window_exceeded_suppression {
-    use super::super::*;
-
-    #[test]
-    fn log_helper_runs_without_panicking() {
-        // Smoke for the demotion path taken by `api_error` — no tracing
-        // subscriber in unit tests.
-        log_context_window_exceeded(
-            "api_error",
-            "custom_openai",
-            None,
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
         );
     }
 }

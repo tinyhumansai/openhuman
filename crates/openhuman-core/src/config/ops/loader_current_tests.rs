@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::schema::{EphemeralRoute, EPHEMERAL_ROUTE_SLUG};
+use crate::core::runtime::DispatchCtx;
 use crate::core::runtime::{context::CoreContext, DomainSet};
 
 fn context_with(config: Config) -> std::sync::Arc<CoreContext> {
@@ -21,7 +22,7 @@ async fn a_context_route_follows_every_load_of_the_context_config() {
         headers: Vec::new(),
     });
 
-    let loaded = CoreContext::scope(context_with(config), load_current_or_init())
+    let loaded = load_current_or_init(&DispatchCtx::new(context_with(config)))
         .await
         .expect("context config loads");
 
@@ -40,7 +41,7 @@ async fn a_context_route_follows_every_load_of_the_context_config() {
 
 #[tokio::test]
 async fn a_context_without_a_route_loads_unchanged_providers() {
-    let loaded = CoreContext::scope(context_with(base_config()), load_current_or_init())
+    let loaded = load_current_or_init(&DispatchCtx::new(context_with(base_config())))
         .await
         .expect("context config loads");
 
@@ -53,4 +54,18 @@ async fn a_context_without_a_route_loads_unchanged_providers() {
         loaded.chat_provider.as_deref(),
         Some(format!("{EPHEMERAL_ROUTE_SLUG}:ctx-model").as_str())
     );
+}
+
+#[tokio::test]
+async fn the_explicit_context_wins_over_the_tasks_scope_and_tenants_do_not_cross() {
+    let mut other = base_config();
+    other.default_model = Some("other-model".to_string());
+    let scoped = context_with(other);
+    let explicit = DispatchCtx::new(context_with(base_config()));
+
+    let loaded = CoreContext::scope(scoped, async { load_current_or_init(&explicit).await })
+        .await
+        .expect("explicit context config loads");
+
+    assert_eq!(loaded.default_model.as_deref(), Some("ctx-model"));
 }

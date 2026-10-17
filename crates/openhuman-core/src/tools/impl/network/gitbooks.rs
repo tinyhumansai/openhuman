@@ -1,33 +1,43 @@
-//! `gitbooks` — answer questions about OpenHuman by talking to the
-//! GitBook MCP server through the shared `crate::mcp::http_client` path.
+//! `gitbooks` — answer questions about OpenHuman through the TinyMCP module's
+//! confidential one-shot tool-call contract.
 
-use crate::mcp::http_client::{redact_endpoint, McpHttpClient};
+use crate::{config::Config, inference::provider::factory::redact_endpoint};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::time::Duration;
+use tinybus::module::ModuleClient;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 pub struct GitbooksSearchTool {
-    client: Arc<McpHttpClient>,
+    endpoint: String,
+    timeout_secs: u64,
+    client: ModuleClient,
 }
 
 impl GitbooksSearchTool {
     /// Builds the tool.
     ///
-    /// Fallible because the client is: a malformed proxy URL or an unusable
-    /// TLS setting stops one being built. It used to panic on that; a
-    /// documentation tool taking the process down over a proxy setting is not
-    /// a trade anyone would choose.
+    /// The endpoint and timeout are retained as one-shot server configuration;
+    /// TinyMCP owns the HTTP client and transport lifecycle.
     ///
     /// # Errors
     ///
-    /// Returns the reason the client could not be built.
-    pub fn new(endpoint: String, timeout_secs: u64) -> Result<Self, String> {
+    /// Returns the reason the tool configuration could not be built.
+    pub fn new(endpoint: String, timeout_secs: u64, config: Config) -> Result<Self, String> {
         Ok(Self {
-            client: Arc::new(
-                McpHttpClient::new(endpoint, timeout_secs).map_err(|error| error.to_string())?,
-            ),
+            endpoint,
+            timeout_secs,
+            client: crate::modules::client(config).with_timeout(Duration::from_secs(timeout_secs)),
         })
+    }
+
+    #[cfg(test)]
+    fn with_client(endpoint: String, timeout_secs: u64, client: ModuleClient) -> Self {
+        Self {
+            endpoint,
+            timeout_secs,
+            client,
+        }
     }
 }
 
@@ -76,43 +86,51 @@ impl Tool for GitbooksSearchTool {
 
         tracing::debug!(
             target: "[gitbooks]",
-            endpoint = %redact_endpoint(self.client.endpoint()),
+            endpoint = %redact_endpoint(&self.endpoint),
             tool = "searchDocumentation",
             "dispatching via shared MCP client"
         );
 
-        match self
-            .client
-            .call_tool("searchDocumentation", json!({ "query": query }))
-            .await
-        {
-            Ok(result) => Ok(tinymcp::tools::tool_result(result.rendered)),
-            Err(e) => Ok(ToolResult::error(format!("gitbooks_search failed: {e}"))),
-        }
+        Ok(self
+            .call(
+                "searchDocumentation",
+                json!({ "query": query }),
+                "gitbooks_search",
+            )
+            .await)
     }
 }
 
 pub struct GitbooksGetPageTool {
-    client: Arc<McpHttpClient>,
+    endpoint: String,
+    timeout_secs: u64,
+    client: ModuleClient,
 }
 
 impl GitbooksGetPageTool {
     /// Builds the tool.
     ///
-    /// Fallible because the client is: a malformed proxy URL or an unusable
-    /// TLS setting stops one being built. It used to panic on that; a
-    /// documentation tool taking the process down over a proxy setting is not
-    /// a trade anyone would choose.
+    /// The endpoint and timeout are retained as one-shot server configuration;
+    /// TinyMCP owns the HTTP client and transport lifecycle.
     ///
     /// # Errors
     ///
-    /// Returns the reason the client could not be built.
-    pub fn new(endpoint: String, timeout_secs: u64) -> Result<Self, String> {
+    /// Returns the reason the tool configuration could not be built.
+    pub fn new(endpoint: String, timeout_secs: u64, config: Config) -> Result<Self, String> {
         Ok(Self {
-            client: Arc::new(
-                McpHttpClient::new(endpoint, timeout_secs).map_err(|error| error.to_string())?,
-            ),
+            endpoint,
+            timeout_secs,
+            client: crate::modules::client(config).with_timeout(Duration::from_secs(timeout_secs)),
         })
+    }
+
+    #[cfg(test)]
+    fn with_client(endpoint: String, timeout_secs: u64, client: ModuleClient) -> Self {
+        Self {
+            endpoint,
+            timeout_secs,
+            client,
+        }
     }
 }
 
@@ -160,19 +178,101 @@ impl Tool for GitbooksGetPageTool {
 
         tracing::debug!(
             target: "[gitbooks]",
-            endpoint = %redact_endpoint(self.client.endpoint()),
+            endpoint = %redact_endpoint(&self.endpoint),
             tool = "getPage",
             "dispatching via shared MCP client"
         );
 
-        match self
-            .client
-            .call_tool("getPage", json!({ "url": url }))
-            .await
-        {
-            Ok(result) => Ok(tinymcp::tools::tool_result(result.rendered)),
-            Err(e) => Ok(ToolResult::error(format!("gitbooks_get_page failed: {e}"))),
-        }
+        Ok(self
+            .call("getPage", json!({ "url": url }), "gitbooks_get_page")
+            .await)
+    }
+}
+
+impl GitbooksSearchTool {
+    async fn call(&self, tool: &str, arguments: Value, label: &str) -> ToolResult {
+        configured_call(
+            &self.client,
+            &self.endpoint,
+            self.timeout_secs,
+            tool,
+            arguments,
+            label,
+        )
+        .await
+    }
+}
+
+impl GitbooksGetPageTool {
+    async fn call(&self, tool: &str, arguments: Value, label: &str) -> ToolResult {
+        configured_call(
+            &self.client,
+            &self.endpoint,
+            self.timeout_secs,
+            tool,
+            arguments,
+            label,
+        )
+        .await
+    }
+}
+
+async fn configured_call(
+    client: &ModuleClient,
+    endpoint: &str,
+    timeout_secs: u64,
+    tool: &str,
+    arguments: Value,
+    label: &str,
+) -> ToolResult {
+    let request = tinymcp_bus::ConfiguredToolCallRequest {
+        server: tinymcp_bus::McpServerConfig {
+            name: "openhuman-gitbooks".to_owned(),
+            endpoint: endpoint.to_owned(),
+            timeout_secs,
+            ..Default::default()
+        },
+        tool: tool.to_owned(),
+        arguments,
+    };
+    match client
+        .call_confidential::<tinymcp_bus::ClassifiedStaticToolCall>(
+            "tinymcp",
+            tinymcp_bus::names::methods::CONFIGURED_TOOL_CALL,
+            (request,),
+        )
+        .await
+    {
+        Ok(call) if call.outcome.ok => call
+            .rendered
+            .map(|rendered| map_module_rendered_result(rendered, call.envelope))
+            .unwrap_or_else(|| ToolResult::error(format!("{label} failed: empty module result"))),
+        Ok(_) => ToolResult::error(format!("{label} failed: MCP server call failed")),
+        Err(error) => ToolResult::error(format!("{label} failed: {error}")),
+    }
+}
+
+fn map_module_rendered_result(
+    rendered: tinymcp_bus::McpToolResult,
+    envelope: Option<tinymcp_bus::McpResultEnvelope>,
+) -> ToolResult {
+    ToolResult {
+        content: rendered
+            .content
+            .into_iter()
+            .map(|block| match block {
+                tinymcp_bus::McpToolContent::Text { text } => tinytools::ToolContent::Text { text },
+                tinymcp_bus::McpToolContent::Json { data } => tinytools::ToolContent::Json { data },
+                other => {
+                    let data = serde_json::to_value(other).unwrap_or(Value::Null);
+                    tinytools::ToolContent::Json { data }
+                }
+            })
+            .collect(),
+        is_error: rendered.is_error,
+        markdown_formatted: rendered.markdown_formatted,
+        metadata: envelope.map(|value| value.to_metadata()),
+        ..ToolResult::default()
     }
 }
 

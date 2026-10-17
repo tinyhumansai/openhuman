@@ -27,17 +27,21 @@ pub(super) type OptionalChatModelResult = Option<anyhow::Result<ResolvedChatMode
 pub(super) fn try_create_local_runtime_chat_model(
     role: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let resolved = provider_for_role(role, config);
-    try_create_local_runtime_chat_model_from_string(role, &resolved, config)
+    try_create_local_runtime_chat_model_from_string(role, &resolved, config, egress)
 }
 
 pub(super) fn try_create_local_runtime_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> OptionalChatModelResult {
-    use tinyinference_local::profile::{LOCAL_OPENAI_PROFILE, MLX_PROFILE, OMLX_PROFILE};
+    use tinyinference_local::local_runtime::{
+        resolve_local_runtime, LocalRuntimeAuth, LocalRuntimeInputs,
+    };
 
     // Use the same classifier as privacy and session policy. Canonicalize only
     // the provider prefix: model IDs (including tags and temperature suffixes)
@@ -63,134 +67,44 @@ pub(super) fn try_create_local_runtime_chat_model_from_string(
     // NON-external — local inference never leaves the device, so
     // `emit_external_transfer` records it without firing a pending event. This
     // is the single local chokepoint for every ChatModel/turn entry.
-    emit_inference_egress(role, &p);
+    emit_inference_egress(role, &p, egress);
 
-    let unsupported = config.temperature_unsupported_models.clone();
-    let empty_model_err = |p: &str, form: &str| {
-        anyhow::anyhow!("[chat-factory] provider string '{p}' has an empty model — use '{form}'")
+    // Endpoint, auth, model and `@temp` resolution is the module's pure
+    // `resolve_local_runtime`; the host only supplies config + env.
+    let inputs = LocalRuntimeInputs {
+        base_url: config.local_ai.base_url.as_deref(),
+        api_key: config.local_ai.api_key.as_deref(),
+        num_ctx: config.local_ai.num_ctx,
+        env: host_env,
     };
+    let resolved = match resolve_local_runtime(provider, &inputs)? {
+        Ok(r) => r,
+        Err(e) => return Some(Err(anyhow::anyhow!("{e}"))),
+    };
+    let auth = match resolved.auth {
+        LocalRuntimeAuth::None => CompatAuthStyle::None,
+        LocalRuntimeAuth::Bearer => CompatAuthStyle::Bearer,
+    };
+    log::debug!(
+        "[chat-factory] local runtime resolved slug={}",
+        resolved.kind.as_str()
+    );
+    let chat = build_local_runtime_chat_model(
+        resolved.kind.as_str(),
+        &resolved.endpoint,
+        &resolved.api_key,
+        auth,
+        &resolved.model,
+        &config.temperature_unsupported_models,
+        resolved.temperature,
+        resolved.num_ctx,
+    );
+    Some(Ok((chat, resolved.model)))
+}
 
-    // Resolve the local `api_key` + auth style shared by lmstudio/omlx/local-openai
-    // (Bearer when a key is configured, else no auth — same as the host builders).
-    let keyed_auth = || {
-        let api_key = config.local_ai.api_key.as_deref().unwrap_or("").to_string();
-        let auth = if api_key.trim().is_empty() {
-            CompatAuthStyle::None
-        } else {
-            CompatAuthStyle::Bearer
-        };
-        (api_key, auth)
-    };
-    // First env override, else `local_ai.base_url`, else the profile default.
-    let env_or_config_url = |env: &str, default: &str| {
-        std::env::var("OPENHUMAN_LOCAL_INFERENCE_URL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var(env).ok().filter(|s| !s.trim().is_empty()))
-            .or_else(|| config.local_ai.base_url.clone())
-            .unwrap_or_else(|| default.to_string())
-    };
-
-    if let Some(rest) = p.strip_prefix(OLLAMA_PROVIDER_PREFIX) {
-        let (model, temp) = split_model_and_temperature(rest);
-        if model.is_empty() {
-            return Some(Err(empty_model_err(&p, "ollama:<model-id>")));
-        }
-        // Ollama exposes the OpenAI-compatible endpoint at `/v1`.
-        let base_url = tinyinference_local::ollama::ollama_base_url_from_override(
-            config.local_ai.base_url.as_deref(),
-        );
-        let normalized = base_url.trim_end_matches('/').trim_end_matches("/v1");
-        let endpoint = format!("{normalized}/v1");
-        let chat = build_local_runtime_chat_model(
-            "ollama",
-            &endpoint,
-            "",
-            CompatAuthStyle::None,
-            &model,
-            &unsupported,
-            temp,
-            config.local_ai.num_ctx,
-        );
-        return Some(Ok((chat, model)));
-    }
-    if let Some(rest) = p.strip_prefix(LM_STUDIO_PROVIDER_PREFIX) {
-        let (model, temp) = split_model_and_temperature(rest);
-        if model.is_empty() {
-            return Some(Err(empty_model_err(&p, "lmstudio:<model-id>")));
-        }
-        let endpoint =
-            tinyinference_local::lm_studio::lm_studio_base_url(config.local_ai.base_url.as_deref());
-        let (api_key, auth) = keyed_auth();
-        let chat = build_local_runtime_chat_model(
-            "lmstudio",
-            &endpoint,
-            &api_key,
-            auth,
-            &model,
-            &unsupported,
-            temp,
-            None,
-        );
-        return Some(Ok((chat, model)));
-    }
-    if let Some(rest) = p.strip_prefix(MLX_PROVIDER_PREFIX) {
-        let (model, temp) = split_model_and_temperature(rest);
-        if model.is_empty() {
-            return Some(Err(empty_model_err(&p, "mlx:<model-id>")));
-        }
-        let endpoint = env_or_config_url("MLX_SERVER_URL", MLX_PROFILE.default_base_url);
-        let chat = build_local_runtime_chat_model(
-            "mlx",
-            &endpoint,
-            "",
-            CompatAuthStyle::None,
-            &model,
-            &unsupported,
-            temp,
-            None,
-        );
-        return Some(Ok((chat, model)));
-    }
-    if let Some(rest) = p.strip_prefix(OMLX_PROVIDER_PREFIX) {
-        let (model, temp) = split_model_and_temperature(rest);
-        if model.is_empty() {
-            return Some(Err(empty_model_err(&p, "omlx:<model-id>")));
-        }
-        let endpoint = env_or_config_url("OMLX_SERVER_URL", OMLX_PROFILE.default_base_url);
-        let (api_key, auth) = keyed_auth();
-        let chat = build_local_runtime_chat_model(
-            "omlx",
-            &endpoint,
-            &api_key,
-            auth,
-            &model,
-            &unsupported,
-            temp,
-            None,
-        );
-        return Some(Ok((chat, model)));
-    }
-    if let Some(rest) = p.strip_prefix(LOCAL_OPENAI_PROVIDER_PREFIX) {
-        let (model, temp) = split_model_and_temperature(rest);
-        if model.is_empty() {
-            return Some(Err(empty_model_err(&p, "local-openai:<model-id>")));
-        }
-        let endpoint = env_or_config_url("LOCAL_OPENAI_URL", LOCAL_OPENAI_PROFILE.default_base_url);
-        let (api_key, auth) = keyed_auth();
-        let chat = build_local_runtime_chat_model(
-            "local-openai",
-            &endpoint,
-            &api_key,
-            auth,
-            &model,
-            &unsupported,
-            temp,
-            None,
-        );
-        return Some(Ok((chat, model)));
-    }
-    None
+/// Environment lookup handed to the module's pure resolver.
+fn host_env(name: &str) -> Option<String> {
+    std::env::var(name).ok()
 }
 
 /// Build a crate-native local-runtime model for setup/probe calls that run
@@ -199,6 +113,6 @@ pub(crate) fn create_local_chat_model_from_string(
     provider: &str,
     config: &Config,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
-    try_create_local_runtime_chat_model_from_string("chat", provider, config)
+    try_create_local_runtime_chat_model_from_string("chat", provider, config, &EgressLedger::none())
         .ok_or_else(|| anyhow::anyhow!("unsupported local provider string '{provider}'"))?
 }

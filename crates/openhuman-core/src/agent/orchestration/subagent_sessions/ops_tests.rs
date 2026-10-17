@@ -163,7 +163,6 @@ fn legacy_session_with_toolkit_key_still_loads_and_reuses() {
     // longer take part in reuse matching.
     let dir = tempfile::tempdir().unwrap();
     let store = SubagentSessionStore::new(dir.path().to_path_buf());
-    std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
     let legacy = serde_json::json!([{
         "subagentSessionId": "subsess-legacy",
         "parentSession": "parent-a",
@@ -186,7 +185,9 @@ fn legacy_session_with_toolkit_key_still_loads_and_reuses() {
         "updatedAt": "2026-01-01T00:00:00Z",
         "lastUsedAt": "2026-01-01T00:00:00Z"
     }]);
-    std::fs::write(store.path(), legacy.to_string()).unwrap();
+    let parsed: Vec<DurableSubagentSession> =
+        serde_json::from_value(legacy).expect("legacy toolkit key is ignored");
+    store.save(&parsed).unwrap();
 
     let sessions = store.load().expect("legacy toolkit key is ignored");
     assert_eq!(sessions.len(), 1);

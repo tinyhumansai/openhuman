@@ -1,6 +1,7 @@
 use super::*;
-use crate::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
+use crate::security::AutonomyLevel;
 use tempfile::TempDir;
+use tinytools::status::POLICY_BLOCKED_MARKER;
 
 fn security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy {
@@ -28,8 +29,10 @@ fn adapter(autonomy: AutonomyLevel) -> (TempDir, OpenHumanMemory) {
     (
         tmp,
         OpenHumanMemory {
+            ctx: crate::core::runtime::DispatchCtx::unbound(),
             config,
             security: security(autonomy),
+            approval: Default::default(),
         },
     )
 }
@@ -221,9 +224,17 @@ fn workflow_origin(flow_id: &str) -> AgentTurnOrigin {
     }
 }
 
+/// The adapter of a run for `flow_id`: its context carries the run's origin.
+fn adapter_for_run(flow_id: &str) -> (TempDir, OpenHumanMemory) {
+    let (tmp, mut adapter) = adapter(AutonomyLevel::Full);
+    adapter.ctx =
+        crate::core::runtime::DispatchCtx::unbound().with_turn_origin(workflow_origin(flow_id));
+    (tmp, adapter)
+}
+
 #[tokio::test]
 async fn remember_search_and_forget_round_trip_in_the_flows_own_scope() {
-    let (_tmp, adapter) = adapter(AutonomyLevel::Full);
+    let (_tmp, adapter) = adapter_for_run("f1");
     turn_origin::with_origin(workflow_origin("f1"), async {
         adapter
             .remember("flow", "sent", json!("newsletter item 42"))
@@ -267,7 +278,7 @@ async fn remember_search_and_forget_round_trip_in_the_flows_own_scope() {
 
 #[tokio::test]
 async fn flow_scope_never_sees_another_flows_items() {
-    let (_tmp, adapter) = adapter(AutonomyLevel::Full);
+    let (_tmp, mut adapter) = adapter_for_run("f-other");
     turn_origin::with_origin(workflow_origin("f-other"), async {
         adapter
             .remember("flow", "k", json!("other flow note"))
@@ -275,6 +286,8 @@ async fn flow_scope_never_sees_another_flows_items() {
             .unwrap();
     })
     .await;
+    adapter.ctx =
+        crate::core::runtime::DispatchCtx::unbound().with_turn_origin(workflow_origin("f-mine"));
     turn_origin::with_origin(workflow_origin("f-mine"), async {
         let found = adapter
             .recall("flow", "other flow note", json!({"operation": "search"}))
@@ -317,4 +330,29 @@ fn plain_agent_learnings_are_trusted_and_everything_else_is_not() {
         SourceKind::Import,
         None
     )));
+}
+
+// ── the run's origin comes from its context, not the task's scope ────
+
+#[tokio::test]
+async fn flow_id_comes_from_the_runs_context_not_the_calling_tasks_scope() {
+    let (_tmp, mut adapter) = adapter(AutonomyLevel::Full);
+    let own = workflow_origin("flow-own");
+    let other = workflow_origin("flow-other");
+    adapter.ctx = crate::core::runtime::DispatchCtx::unbound().with_turn_origin(own);
+
+    // A different flow's origin scoped on the task must not win.
+    let id = crate::agent::turn_origin::with_origin(other, async { adapter.trusted_flow_id() })
+        .await
+        .unwrap();
+    assert_eq!(id, "flow-own");
+}
+
+#[tokio::test]
+async fn a_context_without_a_workflow_origin_refuses_flow_scope_even_inside_a_workflow_scope() {
+    let (_tmp, adapter) = adapter(AutonomyLevel::Full);
+    let other = workflow_origin("flow-other");
+    let result =
+        crate::agent::turn_origin::with_origin(other, async { adapter.trusted_flow_id() }).await;
+    assert!(result.is_err());
 }

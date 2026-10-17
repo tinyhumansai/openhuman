@@ -90,10 +90,8 @@ async fn deferred_memory_commit_survives_the_turn_scope_without_pinning_the_prof
     let id = ProfileId::parse("deferred-memory").unwrap();
     host.provision(&id).await.unwrap();
     let profile = host.open(&id).await.unwrap();
-    let captured = CoreContext::scope_with_turn_origin(profile.context().clone(), None, async {
-        capture_profile_context(Some(&host))
-    })
-    .await;
+    let captured =
+        capture_profile_context(&DispatchCtx::new(profile.context().clone()), Some(&host));
     // The entire temporary turn context is gone before this callback is polled.
     let config = profile.config.clone();
     let work = async {
@@ -161,8 +159,7 @@ async fn missing_profile_owner_refuses_deferred_memory_instead_of_running_unscop
         )
         .profile("missing-owner"),
     );
-    let captured =
-        CoreContext::scope(missing, async { capture_profile_context(Some(&host)) }).await;
+    let captured = capture_profile_context(&DispatchCtx::new(missing), Some(&host));
     deferred_memory_work(captured, async {
         panic!("a failed profile owner capture must not run under the configured external engine")
     })
@@ -183,14 +180,14 @@ async fn failed_profile_capture_is_denied_but_ordinary_desktop_work_still_runs()
             )
             .profile(id),
         );
-        let captured = CoreContext::scope(profile, async { capture_profile_context(None) }).await;
+        let captured = capture_profile_context(&DispatchCtx::new(profile), None);
         assert!(matches!(captured, ProfileMemoryContext::Denied));
         deferred_memory_work(captured, async {
             panic!("a profile without its host cannot resolve an external engine")
         })
         .await;
     }
-    let captured = CoreContext::scope(operator, async { capture_profile_context(None) }).await;
+    let captured = capture_profile_context(&DispatchCtx::new(operator), None);
     assert!(matches!(captured, ProfileMemoryContext::NonProfile));
     let mut ran = false;
     deferred_memory_work(captured, async {

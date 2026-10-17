@@ -164,7 +164,15 @@ pub(crate) fn parse_start(message: &Message) -> Result<LiveStartRequest, LiveVoi
 }
 
 /// Runs one live voice WebSocket to completion.
-pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
+///
+/// `ctx` is the context the accepting request ran under: an upgraded socket
+/// outlives (and is spawned off) its request task, so it cannot be read back
+/// from the task.
+pub async fn handle_live_voice_ws(
+    socket: WebSocket,
+    ctx: crate::core::runtime::DispatchCtx,
+    config: Arc<Config>,
+) {
     let session_id = uuid::Uuid::new_v4().to_string();
     let (mut sink, mut stream) = socket.split();
 
@@ -185,7 +193,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
         }
     };
 
-    let started = match session::start(config.clone(), request, &session_id).await {
+    let started = match session::start(&ctx, config.clone(), request, &session_id).await {
         Ok(started) => started,
         Err(error) => {
             tracing::warn!(
@@ -211,6 +219,7 @@ pub async fn handle_live_voice_ws(socket: WebSocket, config: Arc<Config>) {
     tracing::info!(session_id, provider = %provider, "{LOG_PREFIX} session started");
     let sender = session.sender();
     let mut persister = TranscriptPersister::new(
+        ctx.clone(),
         config.workspace_dir.clone(),
         thread_id.clone(),
         session_id.clone(),

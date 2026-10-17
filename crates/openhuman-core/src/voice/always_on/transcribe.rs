@@ -62,17 +62,15 @@ pub(super) async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32
                 log::info!("{LOG_PREFIX} empty transcript dropped");
                 return;
             }
-            // Wake-word gate: only act on utterances addressed to the agent
-            // ("Hey Tiny, …"). Strip the wake phrase and deliver the command.
-            // A module failure here must not deliver an unaddressed utterance
-            // to the agent: this gate is what keeps a passing conversation out
-            // of the assistant, so it fails CLOSED — the opposite of the
-            // hallucination filter, where the risk runs the other way.
-            let gated =
-                match tinyvoice::extract_command(config, &text, &config.voice_server.wake_word)
+            // Wake-word sequencing is owned by the tinyvoice module. A module
+            // failure must not deliver an unaddressed utterance to the agent:
+            // this gate fails CLOSED.
+            use crate::modules::voice::UtteranceDisposition as UD;
+            let disposition =
+                match tinyvoice::sequence_utterance(config, &text, &config.voice_server.wake_word)
                     .await
                 {
-                    Ok(gated) => gated,
+                    Ok(d) => d,
                     Err(error) => {
                         log::warn!(
                         "{LOG_PREFIX} wake-word gate unavailable ({error}); dropping the utterance"
@@ -80,35 +78,26 @@ pub(super) async fn transcribe_and_deliver(config: &Config, samples_16k: Vec<f32
                         return;
                     }
                 };
-            match gated {
-                Some(cmd) => {
+            match disposition {
+                UD::Command { command } => {
                     // Redacted: never log the raw spoken command (always-on mic PII).
-                    log::info!("{LOG_PREFIX} wake word matched → cmd_len={}", cmd.len());
+                    log::info!("{LOG_PREFIX} wake word matched → cmd_len={}", command.len());
                     notch_status("Processing", 12000); // pill: running the command
-                    deliver_command(config, cmd).await;
+                    deliver_command(config, command).await;
                 }
-                None => {
-                    // Presence is only used to choose between acknowledging and
-                    // staying silent, so an error here degrades to silence.
-                    let present =
-                        tinyvoice::wake_word_present(config, &text, &config.voice_server.wake_word)
-                            .await
-                            .unwrap_or(false);
-                    if present {
-                        // Wake word spoken with no trailing command ("Hey Tiny").
-                        // Acknowledge with an agent turn so the user gets a reply
-                        // instead of silence, then they can follow up.
-                        log::info!("{LOG_PREFIX} bare wake word → acknowledging");
-                        notch_status("Listening…", 8000);
-                        deliver_command(config, "hello".to_string()).await;
-                    } else {
-                        // Visible at info so the user can see WHAT was heard when the
-                        // wake word didn't match (diagnoses "Hey Tiny not responding").
-                        log::info!(
-                            "{LOG_PREFIX} no wake word ({:?}) in transcript={text:?}; ignored",
-                            config.voice_server.wake_word
-                        );
-                    }
+                UD::BareWake => {
+                    // Wake word spoken with no trailing command ("Hey Tiny").
+                    // Acknowledge with an agent turn so the user gets a reply.
+                    log::info!("{LOG_PREFIX} bare wake word → acknowledging");
+                    notch_status("Listening…", 8000);
+                    deliver_command(config, "hello".to_string()).await;
+                }
+                UD::Ignored => {
+                    log::info!(
+                        "{LOG_PREFIX} no wake word ({:?}) in transcript_len={}; ignored",
+                        config.voice_server.wake_word,
+                        text.len()
+                    );
                 }
             }
         }

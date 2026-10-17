@@ -9,11 +9,11 @@ icon: file-zipper
 
 LLM tokens cost money, and verbose tool output wastes most of them. A `git status` in a busy repo, a `cargo build` log, a 600-message email thread and a `docker ps -a` against a real cluster can each fill a context window for almost no information.
 
-OpenHuman ships with TokenJuice, a compression router built into the agent's tool-execution path. Before a tool result reaches a model, TokenJuice classifies it, sends it to a specialized compressor, optionally stores the full original in a recoverable cache, and records how many tokens and dollars it saved. The compression engine is the TinyJuice library, vendored in OpenHuman. The command and log rules come from [vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice).
+OpenHuman ships with TokenJuice, a compression router in the agent's tool-execution path. Before a tool result reaches a model, the compiled TinyJuice module classifies it, selects a compressor, stores recoverable originals in its CCR cache when needed, and returns the compacted result. The module owns compression, CCR retrieval and querying, HTML extraction, and the schemas and request/result types in `tinyjuice-bus`. OpenHuman supplies configuration, filesystem authorization, turn-bound model calls, and savings attribution. The command and log rules come from [vincentkoc/tokenjuice](https://github.com/vincentkoc/tokenjuice).
 
 ## The pipeline
 
-Every tool result takes the same path through the TinyJuice router (`vendor/tinyjuice/src/compress.rs`):
+Every tool result takes the same path through the TinyJuice module's router:
 
 ```text
 raw tool result
@@ -70,7 +70,7 @@ Multi-byte text (CJK, emoji, combining marks) is handled grapheme by grapheme an
 
 ## Handle preview and the juice tools (default)
 
-Compaction is on by default. For a result of at least `ccr_min_tokens`, the router does not compress to one blob. It stores the original in the CCR cache and shows the model a small preview instead:
+Compaction is on by default. For a result of at least `ccr_min_tokens`, the module stores the original in its CCR cache and shows the model a small preview instead of compressing to one blob:
 
 - a one-line stats description of the shape (estimated tokens, bytes, lines, JSON keys or a Markdown outline, never values),
 - the first 500 characters,
@@ -85,15 +85,17 @@ The model then queries the stored original with three read-only tools, none of w
 | `juice_extract` | Links or headings from HTML or Markdown output. |
 | `juice_summarize` | Size, outline or JSON shape, then head and tail, or the parts most relevant to a `hint`. |
 
-Answers are size-capped, and an unknown or evicted handle is an error. `juice_retrieve` still returns the whole original. A handle preview is built without a model call, so it also replaces the LLM summary for results big enough to get one. A slow summarizer cannot stall the turn. The three tools are registered (about 1.5 KB of schema) only while this mode is on.
+Answers are size-capped, and an unknown or evicted handle is an error. `juice_retrieve` still returns the whole original. A handle preview is built without a model call, so it also replaces the LLM summary for results big enough to get one. A slow summarizer cannot stall the turn. The three read-only tools are declared by `tinyjuice-bus` and registered for new sessions while this mode is on; resumed sessions keep the declarations recorded in their transcript. Their host adapters send typed queries to the module; they do not read the module cache or repeat its query algorithms locally. For an artifact path, OpenHuman first applies its normal path and size checks, then sends the authorized content to the module without sending the path.
+
+The model's tool catalogue is recorded with each conversation and stays frozen when that thread resumes. If the transcript contains Juice tools, OpenHuman restores their recorded names and schemas even when current settings would not create new handles. The restored tools still use current host path authorization and module policy. A disabled or unavailable module returns an explicit unavailable result for a query; OpenHuman does not substitute a local CCR store or query implementation. Optional output compaction keeps its existing fail-open behavior and returns the unmodified result when the module cannot compact it.
 
 To turn off the whole feature, set `context.compaction_enabled = false` or `OPENHUMAN_COMPACTION=0`. To keep compaction but go back to one-blob compression and `juice_retrieve`, set `tokenjuice.repl_handle_enabled = false` (`OPENHUMAN_TOKENJUICE_REPL_HANDLE_ENABLED=0`). Set `tokenjuice.repl_save_enabled = true` to also write each stored original to `<workspace>/.tokenjuice/repl/<handle>.txt` (mode 0600) so an agent can script over it. That puts raw tool output on disk, and nothing prunes it.
 
 ## Nothing is lost: the CCR cache
 
-Lossy compression normally throws data away. TokenJuice instead stores the full original in the CCR store and leaves a breadcrumb (`vendor/tinyjuice/src/cache/`).
+Lossy compression normally throws data away. TinyJuice instead stores the full original in the module-owned CCR store and leaves a breadcrumb.
 
-- **In-memory tier** (always on): a process-wide store keyed by SHA-256 hash, bounded by entry count (`max_cache_entries`, default 256) and total bytes (`max_cache_bytes`, default 64 MiB), with FIFO eviction.
+- **In-memory tier** (always on): the module's store is keyed by SHA-256 hash and bounded by entry count (`max_cache_entries`, default 256) and total bytes (`max_cache_bytes`, default 64 MiB), with FIFO eviction.
 - **On-disk tier** (optional): `<workspace>/.tokenjuice/ccr/`, enabled with `ccr_disk_enabled`. It survives memory eviction. Set an optional TTL with `ccr_ttl_secs`.
 - **The marker:** compacted output ends with a footer like `[compacted tool output: PARTIAL view; full original available via juice_retrieve with token "…"]` carrying the `⟦tj:<hash>⟧` token.
 - **Retrieval tool:** the agent calls the read-only `juice_retrieve` tool with that token (optionally a byte or line `range`) to get the full original or a slice. The token is an unguessable SHA-256 digest.

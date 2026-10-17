@@ -1,7 +1,7 @@
 ---
 description: >-
   Ask for an image or a video and dedicated media agents generate it, with
-  image editing and animation of a reference image, saved into your workspace.
+  image editing and animation of a reference image, saved in your Files folder.
 icon: clapperboard
 ---
 
@@ -19,7 +19,7 @@ OpenHuman can make media, not just read it. Ask for "an image of…", "edit this
 
 The `media_generation` domain (`crates/openhuman-core/src/media/generation/`) gives the agent three tools: generate image, generate video and list models. They use the OpenHuman backend's media-generation provider. The backend owns the provider keys, billing and rate limiting, and your subscription covers it like any other model call.
 
-The tools submit a job and then poll every 4 seconds, for up to 180 seconds for images and 420 seconds for video. You and the agent see live progress instead of a hung call. Finished files are downloaded into the `generated-media/` folder of your workspace and returned as local file paths, ready to attach, post or edit further.
+Images poll every 4 seconds for up to 180 seconds; video polls every 5 seconds for up to 600 seconds. You and the agent see live progress instead of a hung call. Finished files are filed in the Files folder and returned as local file paths, ready to attach, post or edit further.
 
 ## Privacy
 

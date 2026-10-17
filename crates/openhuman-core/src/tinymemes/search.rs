@@ -1,24 +1,25 @@
-//! OpenHuman's web search as tinymemes' research backend.
+//! OpenHuman's web search as the module's `Search` callback.
 //!
 //! Runs the same checks the `web_search` tool does before calling the search
 //! module: search enabled in settings, the LocalOnly egress block, and at
 //! least one provider able to serve the search role.
 
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 
 const TOOL: &str = tinysearch_bus::tools::WEB_SEARCH;
 
 pub(crate) struct OpenHumanSearch {
+    ctx: DispatchCtx,
     config: Config,
 }
 
 impl OpenHumanSearch {
     /// A search backend, or `None` when OpenHuman cannot search right now.
-    pub(crate) fn available(config: &Config) -> Option<Self> {
-        if !config.search.is_enabled() {
+    pub(crate) fn available(ctx: &DispatchCtx, config: &Config) -> Option<Self> {
+        if !crate::search::is_active(config) {
             return None;
         }
         if crate::search::tools::local_only_search_block(TOOL).is_some() {
@@ -30,29 +31,30 @@ impl OpenHumanSearch {
             return None;
         }
         Some(Self {
+            ctx: ctx.clone(),
             config: config.clone(),
         })
     }
 }
 
-#[async_trait]
-impl tinymemes::WebSearch for OpenHumanSearch {
-    async fn search(
+impl OpenHumanSearch {
+    /// Run one search through the search module.
+    pub(crate) async fn search(
         &self,
         query: &str,
         max_results: usize,
-    ) -> Result<Vec<tinymemes::SearchHit>, tinymemes::BoxError> {
+    ) -> Result<Vec<tinymemes_bus::SearchResult>, String> {
         let request = tinysearch_bus::ExecuteToolRequest {
             name: TOOL.to_string(),
             arguments: json!({ "query": query, "max_results": max_results.clamp(1, 20) }),
         };
-        let response = crate::modules::search::execute_tool(&self.config, request)
+        let response = crate::modules::search::execute_tool(&self.ctx, &self.config, request)
             .await
             .map_err(|e| crate::search::tools::user_facing_error(&e))?;
         Ok(response
             .results
             .into_iter()
-            .map(|r| tinymemes::SearchHit {
+            .map(|r| tinymemes_bus::SearchResult {
                 title: r.title,
                 url: r.url,
                 snippet: r.snippet,

@@ -233,6 +233,6 @@ what the harness exposes to the child.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
-- [The orchestrator](../../../../../gitbooks/features/orchestration.md)
-- [Agent coordination tools](../../../../../gitbooks/features/native-tools/agent-coordination.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [The orchestrator](../../../../../docs/gitbooks/en/features/orchestration.md)
+- [Agent coordination tools](../../../../../docs/gitbooks/en/features/native-tools/agent-coordination.md)

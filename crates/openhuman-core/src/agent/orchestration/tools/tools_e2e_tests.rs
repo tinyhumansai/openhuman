@@ -1,7 +1,7 @@
 use super::{ArchetypeDelegationTool, DelegationTarget, SpawnSubagentTool, SpawnWorkerThreadTool};
-use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::agent::harness::{with_parent_context, ParentExecutionContext};
-use crate::agent::prompts::{ConnectedIntegration, ToolCallFormat};
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
+use crate::agent::harness::ParentExecutionContext;
+use crate::agent::prompts::ConnectedIntegration;
 use crate::threads::store as conversations;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -12,7 +12,7 @@ use tinyagents_harness::context::RunConfig;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinytools::Tool;
+use tinytools_agent::dialect::ToolCallFormat;
 
 const SPAWN_SUBAGENT_CANARY: &str = "tool-e2e-spawn-subagent-canary";
 const ARCHETYPE_DELEGATION_CANARY: &str = "tool-e2e-archetype-delegation-canary";
@@ -27,20 +27,23 @@ async fn spawn_subagent_tool_runs_child_agent_e2e() {
         "spawn-subagent-child-answer",
     )]));
 
-    let result = with_parent_context(
+    let live = super::live_parent_run_context(
+        "spawn-subagent-e2e",
         parent_context(workspace.path(), provider.clone(), vec![]),
-        async {
-            SpawnSubagentTool::new()
-                .execute(json!({
-                    "agent_id": "task_manager_agent",
-                    "prompt": format!("Investigate {SPAWN_SUBAGENT_CANARY}"),
-                    "context": "parent supplied context",
-                    "model": "test-model",
-                    "blocking": true
-                }))
-                .await
-        },
-    )
+    );
+    // Boxed: the inline spawn future is too large for a test thread's stack.
+    let result = Box::pin(SpawnSubagentTool::new().execute_with_live_parent_context(
+        json!({
+            "agent_id": "task_manager_agent",
+            "prompt": format!("Investigate {SPAWN_SUBAGENT_CANARY}"),
+            "context": "parent supplied context",
+            "model": "test-model",
+            "blocking": true
+        }),
+        None,
+        live.data.child(),
+        Some(&live),
+    ))
     .await
     .expect("tool execution");
 
@@ -60,28 +63,25 @@ async fn spawn_subagent_reports_a_stopped_child_as_a_failed_tool_result() {
     let workspace = tempfile::TempDir::new().expect("workspace");
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(512);
     let parent = parent_context(workspace.path(), Arc::new(LoopingToolModel), vec![]);
-    let result = with_parent_context(parent, async move {
-        // The live parent run a real turn hands the tool, with the turn's
-        // progress channel on the child's run context.
-        let live = super::ambient_parent_run_context("stopped-child-test").expect("parent");
-        let mut run_context = live.data.child();
-        run_context.progress = Some(progress_tx);
-        // Boxed: the inline spawn future is too large for a test thread's
-        // stack (the trait `execute` path boxes it the same way).
-        let tool = SpawnSubagentTool::new();
-        Box::pin(tool.execute_with_live_parent_context(
-            json!({
-                "agent_id": "task_manager_agent",
-                "prompt": "List the task sources",
-                "model": "test-model",
-                "blocking": true
-            }),
-            None,
-            run_context,
-            Some(&live),
-        ))
-        .await
-    })
+    // The live parent run a real turn hands the tool, with the turn's
+    // progress channel on the child's run context.
+    let live = super::live_parent_run_context("stopped-child-test", parent);
+    let mut run_context = live.data.child();
+    run_context.progress = Some(progress_tx);
+    // Boxed: the inline spawn future is too large for a test thread's
+    // stack (the trait `execute` path boxes it the same way).
+    let tool = SpawnSubagentTool::new();
+    let result = Box::pin(tool.execute_with_live_parent_context(
+        json!({
+            "agent_id": "task_manager_agent",
+            "prompt": "List the task sources",
+            "model": "test-model",
+            "blocking": true
+        }),
+        None,
+        run_context,
+        Some(&live),
+    ))
     .await
     .expect("tool execution");
 
@@ -107,8 +107,8 @@ async fn spawn_subagent_reports_a_stopped_child_as_a_failed_tool_result() {
         .expect("SubagentCompleted carries the child's stop");
     assert!(matches!(
         stop.kind,
-        crate::agent::turn_stop::TurnStopKind::Breaker
-            | crate::agent::turn_stop::TurnStopKind::IterationCap
+        tinyagents_harness::turn_stop::TurnStopKind::Breaker
+            | tinyagents_harness::turn_stop::TurnStopKind::IterationCap
     ));
 }
 
@@ -126,15 +126,20 @@ async fn archetype_delegation_tool_runs_child_agent_e2e() {
         tool_description: "Delegate research work.".to_string(),
     };
 
-    let result = with_parent_context(
+    let live = super::live_parent_run_context(
+        "archetype-delegation-e2e",
         parent_context(workspace.path(), provider.clone(), vec![]),
-        async {
-            tool.execute(json!({
-                "prompt": format!("Research {ARCHETYPE_DELEGATION_CANARY}"),
-                "model": "test-model"
-            }))
-            .await
-        },
+    );
+    let result = super::archetype_delegation::execute_archetype_delegation_with_live_parent(
+        &tool.agent_id.0,
+        &tool.tool_name,
+        json!({
+            "prompt": format!("Research {ARCHETYPE_DELEGATION_CANARY}"),
+            "model": "test-model"
+        }),
+        None,
+        live.data.child(),
+        Some(&live),
     )
     .await
     .expect("tool execution");
@@ -182,20 +187,17 @@ async fn archetype_delegation_defaults_to_async_with_durable_session_e2e() {
     let parent_run = parent_data
         .with_parent(ctx.clone())
         .into_tinyagents(RunConfig::new("archetype-async-e2e").with_thread("thread-async-parent"));
-    let result = with_parent_context(ctx, async {
-        super::archetype_delegation::execute_archetype_delegation_with_live_parent(
-            &tool.agent_id.0,
-            &tool.tool_name,
-            json!({
-                "prompt": format!("Research {ARCHETYPE_DELEGATION_CANARY} in the background"),
-                "model": "test-model"
-            }),
-            None,
-            parent_run.data.child(),
-            Some(&parent_run),
-        )
-        .await
-    })
+    let result = super::archetype_delegation::execute_archetype_delegation_with_live_parent(
+        &tool.agent_id.0,
+        &tool.tool_name,
+        json!({
+            "prompt": format!("Research {ARCHETYPE_DELEGATION_CANARY} in the background"),
+            "model": "test-model"
+        }),
+        None,
+        parent_run.data.child(),
+        Some(&parent_run),
+    )
     .await
     .expect("tool execution");
 
@@ -328,7 +330,7 @@ async fn continue_subagent_resumes_idle_durable_session_e2e() {
         RunConfig::new("continue-async-e2e").with_thread("thread-continue-parent"),
     );
     let session_id = session.subagent_session_id.clone();
-    let (wrong_agent, result) = with_parent_context(ctx, async {
+    let (wrong_agent, result) = (async {
         let tool = ContinueSubagentTool::new();
         let wrong_agent = tool
             .execute_with_live_parent_context(
@@ -403,17 +405,20 @@ async fn continue_subagent_without_checkpoint_or_durable_session_names_the_roste
 
     let mut ctx = parent_context(workspace.path(), provider, vec![]);
     ctx.session_id = "tools-e2e-continue-missing".into();
-    let result = with_parent_context(ctx, async {
-        ContinueSubagentTool::new()
-            .execute(json!({
+    let live = super::live_parent_run_context("continue-missing-e2e", ctx);
+    let result = ContinueSubagentTool::new()
+        .execute_with_live_parent_context(
+            json!({
                 "task_id": "sub-does-not-exist",
                 "agent_id": "task_manager_agent",
                 "message": "hello?"
-            }))
-            .await
-    })
-    .await
-    .expect("tool execution");
+            }),
+            None,
+            live.data.child(),
+            Some(&live),
+        )
+        .await
+        .expect("tool execution");
 
     assert!(result.is_error);
     let out = result.output();
@@ -436,37 +441,47 @@ async fn spawn_worker_thread_tool_persists_worker_thread_e2e() {
         "worker-thread-child-answer",
     )]));
 
-    let result = with_parent_context(
+    let live = super::live_parent_run_context(
+        "worker-thread-e2e",
         parent_context(workspace.path(), provider.clone(), vec![]),
-        async {
-            SpawnWorkerThreadTool::new()
-                .execute(json!({
-                    "agent_id": "task_manager_agent",
-                    "prompt": format!("Handle long task {WORKER_THREAD_CANARY}"),
-                    "task_title": "Long delegated task",
-                    "model": "test-model"
-                }))
-                .await
-        },
-    )
-    .await
-    .expect("tool execution");
+    );
+    let result = SpawnWorkerThreadTool::new()
+        .execute_with_live_parent_context(
+            json!({
+                "agent_id": "task_manager_agent",
+                "prompt": format!("Handle long task {WORKER_THREAD_CANARY}"),
+                "task_title": "Long delegated task",
+                "model": "test-model"
+            }),
+            None,
+            live.data.child(),
+            Some(&live),
+        )
+        .await
+        .expect("tool execution");
 
     assert!(!result.is_error, "{}", result.output());
     assert!(result.output().contains("[worker_thread_ref]"));
     assert!(result.output().contains("\"status\":\"completed\""));
     assert!(provider.saw(WORKER_THREAD_CANARY));
 
-    let threads =
-        conversations::list_threads(workspace.path().to_path_buf()).expect("worker threads");
+    let threads = conversations::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        workspace.path().to_path_buf(),
+    )
+    .expect("worker threads");
     let worker = threads
         .iter()
         .find(|thread| thread.labels.contains(&"tasks".to_string()))
         .expect("worker thread was persisted");
     assert_eq!(worker.title, "Long delegated task");
 
-    let messages = conversations::get_messages(workspace.path().to_path_buf(), &worker.id)
-        .expect("worker messages");
+    let messages = conversations::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        workspace.path().to_path_buf(),
+        &worker.id,
+    )
+    .expect("worker messages");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].sender, "user");
     assert!(messages[0].content.contains(WORKER_THREAD_CANARY));
@@ -503,6 +518,7 @@ fn parent_context(
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 

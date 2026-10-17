@@ -208,7 +208,7 @@ pub fn closed_by_direct_handoff(agent_id: &str, tools: &[&dyn Tool]) -> Vec<&'st
 /// closed tool becomes `Deny`, so the `use_skill` gate, the pack listing and the
 /// bare-call router all refuse it from one decision.
 pub fn close_handed_off_packs(
-    session: &mut crate::tools::agent_policy::ToolPolicySession,
+    session: &mut tinytools::ToolPolicySession,
     agent_id: &str,
     tools: &[&dyn Tool],
 ) {

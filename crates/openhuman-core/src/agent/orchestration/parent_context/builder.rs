@@ -3,20 +3,20 @@
 //!
 //! The workflow-run engine ([`workflow_runs::engine`]) and the agent-team
 //! runtime ([`agent_teams::runtime`]) both need to spawn real sub-agents from a
-//! background task that has **no** enclosing agent turn on the stack. Those
-//! spawns read their parent execution context from a task-local
-//! ([`current_parent`]) that is only set inside an agent turn — so a naive spawn
+//! background task that has **no** enclosing agent turn on the stack, so there is
+//! no live parent execution context for the spawn to inherit — a naive spawn
 //! fails with `NoParentContext` (the TAURI-RUST-HMW regression, #4337).
 //!
 //! The fix (proven in `triage::escalation::dispatch_target_agent`) is to build a
-//! *root* [`ParentExecutionContext`] from a config-built [`Agent`] and run the
-//! whole loop inside [`with_parent_context`]. Every nested `spawn_agent` then
-//! resolves `current_parent()` to this root, inheriting a real provider, tool
-//! registry, memory, and model — the same construction path `agent_chat` uses.
+//! *root* [`ParentExecutionContext`] from a config-built [`Agent`] and hand it,
+//! explicitly, to the loop that spawns. Every `spawn_agent` call then names this
+//! root, inheriting a real provider, tool registry, memory, and model — the same
+//! construction path `agent_chat` uses.
 //!
-//! [`with_root_parent`] is the single blessed entry point that folds the build +
-//! install into one call, so a surface can neither hand-roll the parent nor
-//! forget to install it. Every background orchestration surface goes through it.
+//! [`with_root_parent`] is the single blessed entry point that builds the root
+//! and passes it to the surface's closure, so a surface can neither hand-roll the
+//! parent nor forget to supply one. Every background orchestration surface goes
+//! through it.
 //!
 //! This was originally inlined in the workflow engine; #3374 PR4 lifted it here
 //! so each surface reuses the exact same construction (and the single
@@ -28,9 +28,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use crate::agent::harness::fork_context::{
-    current_parent, with_parent_context, ParentExecutionContext,
-};
+use crate::agent::harness::fork_context::ParentExecutionContext;
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 
@@ -52,6 +50,7 @@ const LOG_TARGET: &str = "agent_orchestration::parent_context";
 /// Every other field is inherited verbatim from the config-built agent, so the
 /// spawned children behave exactly like a normal sub-agent dispatch.
 pub(crate) async fn build_root_parent(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     agent_definition_id: &str,
     channel: &str,
@@ -63,16 +62,18 @@ pub(crate) async fn build_root_parent(
     // engines can also be reached from contexts that only built the HTTP router
     // (e.g. the JSON-RPC e2e harness) — so init defensively here. `OnceLock`
     // makes this idempotent: a no-op when the registry is already loaded.
-    if crate::agent::harness::AgentDefinitionRegistry::global().is_none() {
+    if crate::agent::harness::host_definition::AgentDefinitionRegistry::global().is_none() {
         if let Err(err) =
-            crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
+            crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global(
+                &config.workspace_dir,
+            )
         {
             // A concurrent init may have won the race and populated the registry,
             // in which case the `AlreadyInitialized`-style error is benign. But if
             // the registry is *still* `None`, init genuinely failed — fail fast
             // here rather than letting every downstream `spawn_agent` fail later
             // with `NoParentContext` after orchestration state has advanced.
-            if crate::agent::harness::AgentDefinitionRegistry::global().is_none() {
+            if crate::agent::harness::host_definition::AgentDefinitionRegistry::global().is_none() {
                 return Err(err)
                     .context("initialize AgentDefinitionRegistry for orchestration root parent");
             }
@@ -83,7 +84,7 @@ pub(crate) async fn build_root_parent(
         }
     }
 
-    let mut agent = OpenHumanSessionHost::from_config(config)
+    let mut agent = OpenHumanSessionHost::from_config(ctx, config)
         .context("build Agent from config for orchestration root parent")?;
 
     let integrations = crate::integrations::composio::fetch_connected_integrations(config).await;
@@ -112,61 +113,55 @@ pub(crate) async fn build_root_parent(
         session_id: format!("{session_prefix}-{}", uuid::Uuid::new_v4()),
         channel: channel.to_string(),
         connected_integrations: agent.connected_integrations().to_vec(),
-        tool_call_format: crate::agent::prompts::ToolCallFormat::PFormat,
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::PFormat,
         session_key: agent.session_key().to_string(),
         session_parent_prefix: agent.session_parent_prefix().map(str::to_string),
         on_progress: None,
         run_queue: None,
+        host_env: agent.host_env().clone(),
     })
 }
 
-/// Ensure a parent execution context is installed for `fut`, then run it — the
-/// single blessed entry point for **controller-spawned background orchestration
-/// surfaces** that have no enclosing agent turn (the workflow-run engine, the
-/// agent-team runtime, cron jobs).
+/// Build (or accept) the parent execution context for a **controller-spawned
+/// background orchestration surface** that has no enclosing agent turn (the
+/// workflow-run engine, the agent-team runtime, cron jobs), then run
+/// `run(parent)` with it.
 ///
-/// Folds [`build_root_parent`] + [`with_parent_context`] into one call so a
-/// surface cannot install a hand-rolled parent, and — the TAURI-RUST-HMW
-/// failure mode — cannot *forget* to install one at all and have every nested
-/// `spawn_subagent` die at runtime with
+/// Folds [`build_root_parent`] and the hand-off into one call so a surface
+/// cannot supply a hand-rolled parent, and cannot *forget* to supply one and
+/// have every nested `spawn_subagent` die at runtime with
 /// [`SubagentRunError::NoParentContext`](crate::agent::subagent_host::SubagentRunError::NoParentContext).
-/// Running a background surface and establishing its root context become the
-/// same act.
+/// The parent is a value the closure receives and passes to the spawns it makes
+/// (`AgentOrchestrationSession::spawn_agent`); nothing reads it ambiently.
 ///
-/// When an ambient [`current_parent`] is already installed, `fut` runs under it
-/// unchanged rather than building a second root. In production these surfaces
-/// run on freshly-spawned tasks where task-locals never cross the `tokio::spawn`
-/// boundary, so the ambient parent is always absent and a root is built from
-/// `config` — but reusing an installed parent keeps the helper correct if it is
-/// ever nested inside a turn, and lets tests drive a surface under a mock
-/// parent (and thus a mock provider) hermetically.
+/// `parent_override` is the explicit injection point for a parent the caller
+/// already has (a test driving a surface under a mock parent, and thus a mock
+/// provider, hermetically): when `Some`, it is used unchanged and no root is
+/// built. Production surfaces pass `None` and a root is built from `config`.
 ///
-/// Returns the future's output on success, or the [`build_root_parent`] error
+/// Returns the closure's output on success, or the [`build_root_parent`] error
 /// when the root context can't be constructed — the caller decides how to
 /// degrade (fail the run, or fall back to an un-grounded path).
-///
-/// Only for surfaces that build their parent *from `Config`* because there is
-/// no ambient parent. Spawn sites that re-install an **inherited**
-/// `current_parent()` across a `tokio::spawn` boundary (e.g.
-/// `spawn_async_subagent`, `spawn_worker_thread`, the orchestration `ops` task)
-/// are a different pattern and call [`with_parent_context`] directly.
-pub(crate) async fn with_root_parent<F>(
+pub(crate) async fn with_root_parent<F, Fut>(
+    ctx: &crate::core::runtime::DispatchCtx,
+    parent_override: Option<ParentExecutionContext>,
     config: &Config,
     agent_definition_id: &str,
     channel: &str,
     session_prefix: &str,
-    fut: F,
-) -> Result<F::Output>
+    run: F,
+) -> Result<Fut::Output>
 where
-    F: std::future::Future,
+    F: FnOnce(ParentExecutionContext) -> Fut,
+    Fut: std::future::Future,
 {
-    // Already inside a turn (nested call, or a test harness installed a mock
-    // parent): reuse it rather than building a second root.
-    if current_parent().is_some() {
-        return Ok(fut.await);
-    }
-    let parent = build_root_parent(config, agent_definition_id, channel, session_prefix).await?;
-    Ok(with_parent_context(parent, fut).await)
+    let parent = match parent_override {
+        Some(parent) => parent,
+        None => {
+            build_root_parent(ctx, config, agent_definition_id, channel, session_prefix).await?
+        }
+    };
+    Ok(run(parent).await)
 }
 
 #[cfg(test)]

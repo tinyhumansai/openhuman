@@ -22,8 +22,8 @@ use crate::memory::lifecycle::jobs::{BACKGROUND_INTERVAL_MINS, BACKGROUND_JOB};
 
 use {
     super::add_flow_schedule_job, super::list_jobs, super::remove_job, super::update_job,
-    tinyflows_schedule::types::CronJob, tinyflows_schedule::types::CronJobPatch,
-    tinyflows_schedule::types::JobType, tinyflows_schedule::types::Schedule,
+    tinyflows_bus::schedule::types::CronJob, tinyflows_bus::schedule::types::CronJobPatch,
+    tinyflows_bus::schedule::types::JobType, tinyflows_bus::schedule::types::Schedule,
 };
 
 /// Command prefix that marks a `flow` row as a system job.
@@ -38,7 +38,13 @@ pub fn system_job_name(job: &CronJob) -> Option<&str> {
     if !matches!(job.job_type, JobType::Flow) {
         return None;
     }
-    job.command
+    system_command_name(&job.command)
+}
+
+/// The system job a `flow` row's command names, when it names one.
+#[must_use]
+pub fn system_command_name(command: &str) -> Option<&str> {
+    command
         .strip_prefix(SYSTEM_COMMAND_PREFIX)
         .filter(|name| !name.is_empty())
 }

@@ -16,4 +16,4 @@ The `gen/` directory is `.gitignore`d (Tauri regenerates it from
 [`tauri.conf.json`](../tauri.conf.json) on every `init`), so the canonical source for icons
 must live here, not under `gen/`.
 
-See also the [iOS companion](../../../gitbooks/features/ios-companion.md) page and [`app/README.md`](../../README.md).
+See also the [iOS companion](../../../docs/gitbooks/en/features/ios-companion.md) page and [`app/README.md`](../../README.md).

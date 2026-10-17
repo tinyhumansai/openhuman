@@ -61,6 +61,7 @@ pub(super) fn turn_iterations(sidecar_model_calls: usize, history: &[Message]) -
 /// return its handle. The caller can fence later work on the handle. Returns
 /// whether the completion was delivered.
 pub(super) async fn complete_then_defer<P, T>(
+    dispatch: &crate::core::runtime::DispatchCtx,
     publish: P,
     tail: T,
 ) -> (bool, tokio::task::JoinHandle<()>)
@@ -75,7 +76,7 @@ where
         elapsed_ms = elapsed_ms(started),
         "[session-runtime] post-commit: turn completion published"
     );
-    let handle = crate::core::runtime::spawn_scoped(async move {
+    let handle = dispatch.spawn(async move {
         let started = Instant::now();
         tail.await;
         tracing::debug!(
@@ -132,9 +133,11 @@ pub(super) async fn finalize_committed_turn(
     receipt: tinyagents_runtime::CommitReceipt<crate::agent::tinyagents::host::OpenHumanRunContext>,
 ) {
     let commit_started = std::time::Instant::now();
+    // The turn's own context, taken before the receipt is dropped.
+    let dispatch = receipt.options.context.dispatch_ctx();
     let output = receipt.outcome.output.clone().unwrap_or_default();
     // Skips compaction checkpoints (user-role, not the user's words).
-    let input = crate::agent::tinyagents::last_user_message(&receipt.outcome.history)
+    let input = tinyagents_harness::summarization::last_user_message(&receipt.outcome.history)
         .map(crate::agent::message_convert::user_text_with_markers)
         .unwrap_or_default();
     let sidecar = receipt
@@ -211,6 +214,7 @@ pub(super) async fn finalize_committed_turn(
         }
     };
     let (_, pending) = complete_then_defer(
+        &receipt.options.context.dispatch_ctx(),
         super::progress::send_receipt_progress(&receipt, &input, &output, iterations),
         goal_accounting,
     )
@@ -235,6 +239,7 @@ pub(super) async fn finalize_committed_turn(
     }
     crate::agent::hooks::fire_hooks(
         post_turn_hooks,
+        &dispatch,
         crate::agent::hooks::TurnContext {
             user_message: input,
             assistant_response: output,

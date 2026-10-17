@@ -31,6 +31,7 @@ SHARDS=(
   "foundation:auth,navigation,system"
   "chat:chat,skills,journeys"
   "providers:providers,notifications"
+  "provider-web:provider-web"
   "webhooks:webhooks"
   "connectors:connectors"
   "payments:payments"

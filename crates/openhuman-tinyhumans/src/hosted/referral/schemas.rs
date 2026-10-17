@@ -1,8 +1,8 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use openhuman_embed::__host::config::rpc as config_rpc;
 use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
 use openhuman_embed::__host::core::Outcome;
 use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -87,16 +87,16 @@ pub fn referral_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_referral_get_stats(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_referral_get_stats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::referral::get_stats(&config).await?)
     })
 }
 
-fn handle_referral_claim(params: Map<String, Value>) -> ControllerFuture {
+fn handle_referral_claim(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<ReferralClaimParams>(params)?;
         let fp = payload
             .device_fingerprint

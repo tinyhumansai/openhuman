@@ -70,6 +70,13 @@ changed_paths_for_push() {
 
 PUSHED_PATHS="$(printf '%s\n' "$PUSH_REFS" | changed_paths_for_push)"
 
+# Non-blocking hint: a vendor/ change may leave a gitlink ahead of (or behind)
+# its registry pin, which only CI's strict check-module-pins.mjs would catch.
+# Never fails the push; see scripts/modules/pin-status.mjs.
+if printf '%s\n' "$PUSHED_PATHS" | grep -q '^vendor/'; then
+  node scripts/modules/pin-status.mjs --hint || true
+fi
+
 # Does this push touch anything clippy would have an opinion about?
 #
 # `pnpm rust:clippy` compiles three crates plus the Tauri shell with

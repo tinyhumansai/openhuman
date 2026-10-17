@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_env::env_lock;
 use openhuman_rpc::embed::artifacts::FileRoots;
 
 #[test]
@@ -29,16 +30,23 @@ async fn ready_artifact(workspace: &Path, files_dir: &Path) -> String {
         ArtifactKind::Presentation,
         "Deck",
         "pptx",
+        None,
     )
     .await
     .unwrap();
     std::fs::write(&path, b"deck").unwrap();
-    finalize_artifact(workspace, &meta.id, 4).await.unwrap();
+    finalize_artifact(workspace, &meta.id, 4, None)
+        .await
+        .unwrap();
     meta.id
 }
 
 #[tokio::test]
 async fn resolve_source_returns_the_file_in_the_files_folder() {
+    // Core-process tests can install a process-global storage backend while
+    // the artifact API resolves the record. Keep both operations on the same
+    // stable host context, as in the other workspace-bound shell tests.
+    let _env_lock = env_lock();
     let temp = tempfile::tempdir().unwrap();
     let files_dir = temp.path().join("Files");
     let id = ready_artifact(temp.path(), &files_dir).await;
@@ -239,4 +247,59 @@ async fn download_rejects_invalid_inputs() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn save_as_refuses_before_the_dialog_opens() {
+    let temp = tempfile::tempdir().unwrap();
+    let files_dir = temp.path().join("Files");
+    let id = ready_artifact(temp.path(), &files_dir).await;
+    let roots = FileRoots::new(&files_dir);
+    let never = |_: String| async { panic!("the dialog must not open") };
+
+    for (bad_id, filename) in [
+        ("", "Deck.pptx"),
+        ("   ", "Deck.pptx"),
+        ("no-such-id", "Deck.pptx"),
+    ] {
+        assert!(
+            save_to_chosen_path(temp.path(), &roots, bad_id, filename, never)
+                .await
+                .is_err(),
+            "id {bad_id:?} must be refused"
+        );
+    }
+    for bad_name in ["../escape.pptx", "a/b.pptx", ""] {
+        assert!(
+            save_to_chosen_path(temp.path(), &roots, &id, bad_name, never)
+                .await
+                .is_err(),
+            "filename {bad_name:?} must be refused"
+        );
+    }
+}
+
+#[tokio::test]
+async fn save_as_copies_to_the_chosen_path_and_reports_a_cancel() {
+    let temp = tempfile::tempdir().unwrap();
+    let files_dir = temp.path().join("Files");
+    let id = ready_artifact(temp.path(), &files_dir).await;
+    let roots = FileRoots::new(&files_dir);
+
+    let cancelled = save_to_chosen_path(temp.path(), &roots, &id, "Deck.pptx", |_| async { None })
+        .await
+        .unwrap();
+    assert_eq!(cancelled, None);
+
+    let dest = temp.path().join("chosen").join("Deck.pptx");
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    let chosen = dest.clone();
+    let saved = save_to_chosen_path(temp.path(), &roots, &id, "Deck.pptx", |name| async move {
+        assert_eq!(name, "Deck.pptx");
+        Some(chosen)
+    })
+    .await
+    .unwrap();
+    assert_eq!(saved.as_deref(), Some(dest.display().to_string().as_str()));
+    assert_eq!(std::fs::read(&dest).unwrap(), b"deck");
 }

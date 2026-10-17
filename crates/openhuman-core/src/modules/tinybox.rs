@@ -11,47 +11,50 @@ pub use tinybox_bus as contract;
 
 use crate::config::Config;
 
-use super::client::{ModuleCallError, ModuleClient};
+use tinybus::module::{ModuleCallError, ModuleClient};
 
 /// Registry id for the TinyBox module.
 pub const MODULE_ID: &str = "tinybox";
 
 const MODULE_CALL_TIMEOUT: Duration = Duration::from_secs(300);
 
-// `tinybox_bus::METHODS` is the canonical method catalogue. Its original
-// members retain their positions and additions are append-only; indexing here
-// avoids maintaining a second set of wire strings in the host.
-const DESCRIBE: &str = contract::METHODS[0];
-const CREATE: &str = contract::METHODS[1];
-const EXEC: &str = contract::METHODS[2];
-const INSPECT: &str = contract::METHODS[3];
-const CLOSE: &str = contract::METHODS[4];
-const SPAWN: &str = contract::METHODS[5];
-const IS_RUNNING: &str = contract::METHODS[6];
-const CANCEL: &str = contract::METHODS[7];
-const ANALYZE_SHELL: &str = contract::METHODS[8];
-const RESERVE: &str = contract::METHODS[9];
-const CAPABILITIES: &str = contract::METHODS[10];
-const SHUTDOWN: &str = contract::METHODS[11];
-const FORWARD: &str = contract::METHODS[12];
-const CLOSE_FORWARD: &str = contract::METHODS[13];
-const JAIL_STATUS: &str = contract::METHODS[14];
-const ANALYZE_COMMAND: &str = contract::METHODS[15];
-const BEGIN_FILE_READ: &str = contract::METHODS[16];
-const READ_FILE_CHUNK: &str = contract::METHODS[17];
-const FINISH_FILE_READ: &str = contract::METHODS[18];
-const BEGIN_FILE_WRITE: &str = contract::METHODS[19];
-const WRITE_FILE_CHUNK: &str = contract::METHODS[20];
-const FINISH_FILE_WRITE: &str = contract::METHODS[21];
-const ABORT_FILE_WRITE: &str = contract::METHODS[22];
-const START_EXEC: &str = contract::METHODS[23];
-const READ_OUTPUT: &str = contract::METHODS[24];
-const RELEASE_OUTPUT: &str = contract::METHODS[25];
-const START_JAILED_EXEC: &str = contract::METHODS[26];
-const RUN_DOCKER: &str = contract::METHODS[27];
-const DOCKER_STATUS: &str = contract::METHODS[28];
-const CLEANUP_DOCKER: &str = contract::METHODS[29];
-const RUN_DOCKER_WITHOUT_WORKSPACE: &str = contract::METHODS[30];
+// `tinybox_bus::names` carries one named constant per bus member; the host
+// never indexes `METHODS` positionally nor keeps a second set of wire strings.
+const DESCRIBE: &str = contract::names::DESCRIBE;
+const CREATE: &str = contract::names::CREATE;
+const EXEC: &str = contract::names::EXEC;
+const INSPECT: &str = contract::names::INSPECT;
+const CLOSE: &str = contract::names::CLOSE;
+const SPAWN: &str = contract::names::SPAWN;
+const IS_RUNNING: &str = contract::names::IS_RUNNING;
+const CANCEL: &str = contract::names::CANCEL;
+const ANALYZE_SHELL: &str = contract::names::ANALYZE_SHELL;
+const RESERVE: &str = contract::names::RESERVE;
+const CAPABILITIES: &str = contract::names::CAPABILITIES;
+const SHUTDOWN: &str = contract::names::SHUTDOWN;
+const FORWARD: &str = contract::names::FORWARD;
+const CLOSE_FORWARD: &str = contract::names::CLOSE_FORWARD;
+const JAIL_STATUS: &str = contract::names::JAIL_STATUS;
+const ANALYZE_COMMAND: &str = contract::names::ANALYZE_COMMAND;
+const BEGIN_FILE_READ: &str = contract::names::BEGIN_FILE_READ;
+const READ_FILE_CHUNK: &str = contract::names::READ_FILE_CHUNK;
+const FINISH_FILE_READ: &str = contract::names::FINISH_FILE_READ;
+const BEGIN_FILE_WRITE: &str = contract::names::BEGIN_FILE_WRITE;
+const WRITE_FILE_CHUNK: &str = contract::names::WRITE_FILE_CHUNK;
+const FINISH_FILE_WRITE: &str = contract::names::FINISH_FILE_WRITE;
+const ABORT_FILE_WRITE: &str = contract::names::ABORT_FILE_WRITE;
+const START_EXEC: &str = contract::names::START_EXEC;
+const READ_OUTPUT: &str = contract::names::READ_OUTPUT;
+const RELEASE_OUTPUT: &str = contract::names::RELEASE_OUTPUT;
+const START_JAILED_EXEC: &str = contract::names::START_JAILED_EXEC;
+const RUN_DOCKER: &str = contract::names::RUN_DOCKER;
+const DOCKER_STATUS: &str = contract::names::DOCKER_STATUS;
+const CLEANUP_DOCKER: &str = contract::names::CLEANUP_DOCKER;
+const RUN_DOCKER_WITHOUT_WORKSPACE: &str = contract::names::RUN_DOCKER_WITHOUT_WORKSPACE;
+const SELECT_SHELL: &str = contract::names::SELECT_SHELL;
+const RESOLVE_LOCAL_GRANTS: &str = contract::names::RESOLVE_LOCAL_GRANTS;
+const START_NATIVE_SHELL_EXEC: &str = contract::names::START_NATIVE_SHELL_EXEC;
+const VALIDATE_DOCKER_POLICY: &str = contract::names::VALIDATE_DOCKER_POLICY;
 const DOCKER_CALL_GRACE: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
@@ -73,7 +76,7 @@ fn require_compatible(version: (u32, u32)) -> Result<(), ModuleCallError> {
     if contract::is_compatible(version) {
         return Ok(());
     }
-    ModuleClient::report_incompatible_contract(MODULE_ID);
+    crate::modules::report::incompatible_contract(MODULE_ID);
     Err(ModuleCallError::IncompatibleContract)
 }
 
@@ -165,6 +168,49 @@ pub async fn start_jailed_exec(
     call(config, START_JAILED_EXEC, (request, jail), true).await
 }
 
+/// Ask TinyBox which shell it would spawn for a command on its machine.
+///
+/// The reply is discovery only: the host never spawns the plan itself, it
+/// executes through [`start_native_shell_exec`].
+pub async fn select_shell(
+    config: &Config,
+    request: contract::SelectShellRequest,
+) -> Result<contract::ShellInvocation, String> {
+    call(config, SELECT_SHELL, (request,), false).await
+}
+
+/// Start a local shell under module-owned supervision and output replay.
+///
+/// The caller has already authorized the command; the module owns shell
+/// selection, the safe child environment and cleanup.
+pub async fn start_native_shell_exec(
+    config: &Config,
+    request: contract::ShellExecRequest,
+) -> Result<contract::ProcessRef, String> {
+    call(config, START_NATIVE_SHELL_EXEC, (request,), true).await
+}
+
+/// Ask TinyBox whether a Docker run would weaken isolation, without starting
+/// one. This is the same check `RunDocker` enforces before creating a container.
+pub async fn validate_docker_policy(
+    config: &Config,
+    request: contract::DockerPolicyRequest,
+) -> Result<contract::DockerPolicyReport, String> {
+    call(config, VALIDATE_DOCKER_POLICY, (request,), false).await
+}
+
+/// Ask TinyBox to resolve the existing toolchain and configured grants for the
+/// local jail.
+///
+/// The request carries the host's protected-path floor as input; the reply is
+/// a candidate set the host must still pass through its own floor.
+pub async fn resolve_local_grants(
+    config: &Config,
+    request: contract::ResolveLocalGrantsRequest,
+) -> Result<contract::LocalGrants, String> {
+    call(config, RESOLVE_LOCAL_GRANTS, (request,), false).await
+}
+
 /// Run one bounded Docker-isolated command through TinyBox.
 ///
 /// The caller applies authorization and Docker policy before sending this
@@ -175,7 +221,7 @@ pub async fn run_docker(
     request: contract::DockerRunRequest,
 ) -> Result<contract::DockerRunOutput, String> {
     let timeout = Duration::from_millis(request.timeout_ms).saturating_add(DOCKER_CALL_GRACE);
-    let client = ModuleClient::new(config.clone()).with_timeout(timeout);
+    let client = crate::modules::client(config.clone()).with_timeout(timeout);
     call_run_docker_with_client(&client, request).await
 }
 
@@ -188,7 +234,7 @@ pub async fn run_docker_without_workspace(
     request: contract::DockerRunRequest,
 ) -> Result<contract::DockerRunOutput, String> {
     let timeout = Duration::from_millis(request.timeout_ms).saturating_add(DOCKER_CALL_GRACE);
-    let client = ModuleClient::new(config.clone()).with_timeout(timeout);
+    let client = crate::modules::client(config.clone()).with_timeout(timeout);
     call_run_docker_without_workspace_with_client(&client, request).await
 }
 
@@ -387,11 +433,18 @@ where
     Request: Serialize + Send,
     Reply: DeserializeOwned,
 {
+    // A registry index from before the storage contract moves into the
+    // module's storage before its first call. Once per workspace, best effort.
+    super::import_legacy_tinybox(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config.workspace_dir,
+    )
+    .await;
     call_with_client(&module_client(config), member, request, confidential).await
 }
 
 fn module_client(config: &Config) -> ModuleClient {
-    ModuleClient::new(config.clone()).with_timeout(MODULE_CALL_TIMEOUT)
+    crate::modules::client(config.clone()).with_timeout(MODULE_CALL_TIMEOUT)
 }
 
 fn message(error: ModuleCallError) -> String {

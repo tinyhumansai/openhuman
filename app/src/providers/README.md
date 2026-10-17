@@ -31,6 +31,6 @@ Manages the Socket.IO connection to the Rust core, providing the underlying tran
 
 ## Further reading
 
-- [Frontend architecture](../../../gitbooks/developing/architecture/frontend.md), including the provider chain generated from [`App.tsx`](../App.tsx).
-- [Chat](../../../gitbooks/features/chat.md), the feature these providers drive.
+- [Frontend architecture](../../../docs/gitbooks/en/developing/architecture/frontend.md), including the provider chain generated from [`App.tsx`](../App.tsx).
+- [Chat](../../../docs/gitbooks/en/features/chat.md), the feature these providers drive.
 - [`app/README.md`](../../README.md).

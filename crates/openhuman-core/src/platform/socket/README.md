@@ -107,5 +107,5 @@ None of its own. State (`status`, `socket_id`, `error`, attached `WebhookRouter`
 ## Further reading
 
 - [Parent module (`platform`)](../README.md)
-- [Architecture overview](../../../../../gitbooks/developing/architecture.md)
-- [Platform and availability](../../../../../gitbooks/features/platform.md)
+- [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)

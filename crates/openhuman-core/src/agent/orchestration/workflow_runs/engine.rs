@@ -14,18 +14,17 @@
 //! ## Root parent context (the one real unknown)
 //!
 //! Child agents are spawned via [`AgentOrchestrationSession::spawn_agent`],
-//! which reads the *parent execution context* from a task-local
-//! ([`current_parent`]). The engine runs from a controller-spawned background
-//! task — there is **no** agent turn on the stack, so the task-local is unset
-//! and a naive spawn would fail with `NoParentContext`.
+//! which takes the *parent execution context* as an argument. The engine runs
+//! from a controller-spawned background task — there is **no** agent turn on
+//! the stack to supply one, and a spawn without one would fail with
+//! `NoParentContext`.
 //!
 //! The fix mirrors the production blueprint in
 //! [`crate::agent::triage::escalation`]: build a *root*
-//! [`ParentExecutionContext`] from a real [`Agent`] (`OpenHumanSessionHost::from_config`) and
-//! run the whole phase loop inside [`with_parent_context`]. Every
-//! `spawn_agent` call nested in that scope then resolves `current_parent()` to
-//! the root, inheriting a real provider, tool registry, memory, and model — the
-//! same construction path `agent_chat` uses.
+//! [`ParentExecutionContext`] from a real [`Agent`] (`OpenHumanSessionHost::from_config`)
+//! with `with_root_parent` and hand it to the workflow executor, which passes it
+//! to every `spawn_agent` call — inheriting a real provider, tool registry,
+//! memory, and model, the same construction path `agent_chat` uses.
 //!
 //! ## TODO(#4249, 08.3): human-review phases as durable interrupts
 //!

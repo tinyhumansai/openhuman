@@ -79,23 +79,3 @@ fn merge_has_no_overlay_and_stays_portable() {
         tinyflows::catalog::contract_for("merge").unwrap()
     );
 }
-
-#[test]
-fn rendered_line_covers_every_kind_and_required_field() {
-    let line = render_node_kinds_line();
-    for c in all_node_kind_contracts() {
-        assert!(
-            line.contains(&c.kind),
-            "rendered line missing kind {}",
-            c.kind
-        );
-        for f in c.config_fields.iter().filter(|f| f.required) {
-            assert!(
-                line.contains(&format!("config.{}", f.name)),
-                "rendered line missing required field config.{} for {}",
-                f.name,
-                c.kind
-            );
-        }
-    }
-}

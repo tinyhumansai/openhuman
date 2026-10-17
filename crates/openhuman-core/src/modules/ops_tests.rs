@@ -5,11 +5,13 @@
 //! reachable without touching the network, which is what keeps them in the unit
 //! suite instead of behind an ignore.
 
-use super::*;
 use crate::config::Config;
 use crate::modules::ops::{self, install_dir, list};
 use crate::modules::registry;
 use crate::modules::types::ModuleState;
+#[cfg(feature = "crash-reporting")]
+use tinybus::module::Reason;
+use tinybus::module::{LoadError, Resolver};
 
 fn test_bundled_record() -> &'static crate::modules::types::ModuleRecord {
     use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset};
@@ -34,6 +36,13 @@ fn test_bundled_record() -> &'static crate::modules::types::ModuleRecord {
         release_url: "https://github.com/tinyhumansai/tinydocs/releases/tag/v0.1.16",
         assets,
         load: LoadPolicy::Lazy,
+        source: crate::modules::types::SourceSpec {
+            submodule: "tinydocs",
+            manifest: "Cargo.toml",
+            package: "test-bundled-module",
+            lib_name: "test_bundled_module",
+            features: &[],
+        },
     }))
 }
 
@@ -52,12 +61,12 @@ async fn invalid_installer_bundle_is_reported_without_falling_back_to_the_cache(
     std::fs::create_dir_all(&bundle_dir).unwrap();
     std::fs::write(bundle_dir.join(record.assets[0].archive), b"").unwrap();
 
-    let runtime = crate::modules::host::runtime().await.unwrap();
-    let error = ops::load_cached(
+    let runtime = crate::modules::runtime::runtime().await.unwrap();
+    let error = Resolver::load_cached(
         runtime,
-        record,
+        &record.release(),
         user_cache.path(),
-        serde_json::json!({}),
+        &serde_json::json!({}),
         false,
         Some(bundled.path()),
     )
@@ -73,12 +82,12 @@ async fn absent_installer_bundle_uses_the_existing_cache_miss_path() {
     let record = test_bundled_record();
     let bundled = tempfile::tempdir().unwrap();
     let user_cache = tempfile::tempdir().unwrap();
-    let runtime = crate::modules::host::runtime().await.unwrap();
-    let error = ops::load_cached(
+    let runtime = crate::modules::runtime::runtime().await.unwrap();
+    let error = Resolver::load_cached(
         runtime,
-        record,
+        &record.release(),
         user_cache.path(),
-        serde_json::json!({}),
+        &serde_json::json!({}),
         false,
         Some(bundled.path()),
     )
@@ -109,7 +118,7 @@ fn the_default_config_enables_modules_and_downloads() {
 fn list_reports_every_registry_entry() {
     let statuses = list(&offline_config());
     assert_eq!(statuses.len(), registry::ALL.len());
-    assert!(statuses.iter().any(|status| status.id == "tinydocs"));
+    assert!(statuses.iter().any(|status| status.id == "tinymcp"));
     for status in &statuses {
         assert!(!status.version.is_empty());
         assert!(!status.bus_name.is_empty());
@@ -223,6 +232,7 @@ fn errors_never_leak_a_path_or_a_url() {
     }
 }
 
+#[cfg(feature = "documents")]
 #[tokio::test]
 async fn a_bounded_wait_with_nothing_cached_and_downloads_off_fails_rather_than_loading() {
     // An isolated install directory: this machine's real cache may hold the
@@ -263,14 +273,14 @@ async fn a_bounded_wait_with_nothing_cached_and_downloads_off_fails_rather_than_
             assert_eq!(state, ModuleState::Ready);
             assert_eq!(status.state, ModuleState::Ready);
         }
-        Err(ops::LoadError::Failed(reason)) => assert!(
+        Err(LoadError::Failed(reason)) => assert!(
             reason.contains("downloads are disabled")
                 || reason.contains("not available for this platform"),
             "unhelpful message: {reason}"
         ),
         other => panic!("expected a terminal failure or an already-serving module, got {other:?}"),
     }
-    if matches!(&outcome, Err(ops::LoadError::Failed(_))) {
+    if matches!(&outcome, Err(LoadError::Failed(_))) {
         assert_eq!(state, ModuleState::Failed);
         assert_eq!(status.state, ModuleState::Failed);
         assert!(status.detail.is_some());
@@ -289,7 +299,12 @@ fn terminal_resolution_cached_failure_is_reported_when_a_client_becomes_availabl
     let hub = std::sync::Arc::new(sentry::Hub::new_from_top(sentry::Hub::current()));
     hub.bind_client(None);
     sentry::Hub::run(hub, || {
-        ops::report_resolution_failure(MODULE, "private token /home/private-user/module.so");
+        let record = registry::find(MODULE).unwrap();
+        crate::modules::report::reporter().report(
+            record.id,
+            record.version,
+            Reason::ResolutionFailed,
+        );
     });
     let sender = table.mark_in_flight(MODULE);
     table.complete(
@@ -312,12 +327,12 @@ fn terminal_resolution_cached_failure_is_reported_when_a_client_becomes_availabl
                 ops::ensure_loaded_within(&config, MODULE, None),
             );
             for result in [first, second] {
-                assert!(matches!(result, Err(ops::LoadError::Failed(_))));
+                assert!(matches!(result, Err(LoadError::Failed(_))));
             }
             let repeated = ops::ensure_loaded_within(&config, MODULE, None)
                 .await
                 .expect_err("the same cached failure remains terminal");
-            assert!(matches!(repeated, ops::LoadError::Failed(_)));
+            assert!(matches!(repeated, LoadError::Failed(_)));
         });
     });
     table.forget(MODULE);
@@ -350,7 +365,7 @@ fn terminal_resolution_wait_timeout_is_not_reported_as_terminal() {
                 Some(std::time::Duration::ZERO),
             )
             .await;
-            assert!(matches!(result, Err(ops::LoadError::StillLoading)));
+            assert!(matches!(result, Err(LoadError::StillLoading)));
         });
     });
     table.forget(MODULE);
@@ -386,27 +401,26 @@ fn a_module_nobody_asked_for_is_available_not_loading() {
 #[test]
 fn load_errors_render_for_callers_that_cannot_wait_again() {
     assert_eq!(
-        ops::LoadError::Failed("refused".to_string()).into_message(),
+        LoadError::Failed("refused".to_string()).into_message(),
         "refused"
     );
-    let message = ops::LoadError::StillLoading.into_message();
+    let message = LoadError::StillLoading.into_message();
     assert!(message.contains("still loading"), "{message}");
 }
 
-#[tokio::test]
-async fn a_loader_error_carries_the_terminal_marker_exactly_once() {
-    // `blocking` marks a loader error terminal, but tinybus' release-cache path
+#[test]
+fn a_loader_error_carries_the_terminal_marker_exactly_once() {
+    // The resolver marks a loader error terminal, but tinybus' release-cache path
     // and `load_local` already say so; appending again doubled the sentence.
     // The failure policy keys on both phrases, so each must stay, once.
-    let marker = crate::tools::status::MODULE_FAULT_MARKER;
+    let marker = tinytools::status::MODULE_FAULT_MARKER;
     for loader_error in [
         "module 'tinydocs' could not be loaded: digest mismatch. This is terminal for the \
          running process; restart the app to try again",
         "module 'tinydocs' could not be loaded from the installer bundle: refused. Restart the \
          app after repairing the installation",
     ] {
-        let owned = loader_error.to_string();
-        let error = ops::blocking(move || Err(owned)).await.unwrap_err();
+        let error = ops::resolver(&Config::default()).mark_terminal(loader_error.to_string());
         assert_eq!(error.matches(marker).count(), 1, "{error}");
         assert_eq!(
             error.matches("restart the app to try again").count(),
@@ -430,9 +444,11 @@ fn a_failed_resolution_is_reported_once_with_the_module_id() {
     // report is the one Sentry event per broken install. Every later caller's
     // re-report is demoted as `ModuleUnavailable`; this one must not be.
     let events = sentry::test::with_captured_events(|| {
-        ops::report_resolution_failure(
-            "tinyconnectors",
-            "private-test-token /home/private-user/document.txt",
+        let record = registry::find("tinyconnectors").unwrap();
+        crate::modules::report::reporter().report(
+            record.id,
+            record.version,
+            Reason::ResolutionFailed,
         );
     });
     assert_eq!(events.len(), 1, "{events:?}");
@@ -531,13 +547,17 @@ fn bundled_dir_skips_a_missing_candidate_for_a_valid_later_one() {
 /// carry the terminal marker the observability classifier demotes on.
 #[test]
 fn a_marked_bus_startup_failure_is_classified_as_module_unavailable() {
-    let marked = ops::mark_terminal("the module bus could not start: no runtime".to_string());
+    let marked = ops::resolver(&Config::default())
+        .mark_terminal("the module bus could not start: no runtime".to_string());
     assert!(marked.ends_with("restart the app to try again"), "{marked}");
     assert!(crate::core::observability::is_module_unavailable_message(
         &marked
     ));
     // Idempotent: an already-marked error is not annotated twice.
-    assert_eq!(ops::mark_terminal(marked.clone()), marked);
+    assert_eq!(
+        ops::resolver(&Config::default()).mark_terminal(marked.clone()),
+        marked
+    );
 }
 
 #[tokio::test]
@@ -551,23 +571,137 @@ async fn disabled_modules_are_reported_then_demoted_at_product_boundaries() {
 }
 
 #[test]
-fn native_juice_fixture_is_resolved_without_a_unit_test_adapter() {
-    let fixture = std::path::PathBuf::from("fixture/libtinyjuice_module.so");
-    let _env = crate::config::test_env::EnvVarGuard::locked_set("TINYJUICE_TEST_MODULE", &fixture);
-    assert_eq!(
-        local_override(&Config::default(), "tinyjuice"),
-        Some(fixture)
-    );
-    let mut configured = Config::default();
-    configured
+fn status_reports_the_source_that_serves_a_module() {
+    use crate::config::schema::ModuleSourceMode;
+    use crate::modules::types::ModuleSource;
+
+    let mut config = Config::default();
+    let status = |config: &Config| {
+        list(config)
+            .into_iter()
+            .find(|m| m.id == "tinyjuice")
+            .expect("tinyjuice is registered")
+    };
+    if let Some(source) = status(&config).source {
+        assert_eq!(source, ModuleSource::Release);
+    }
+    assert_eq!(status(&config).detail, None);
+
+    // A linked request in a binary with no linked factory is served by the
+    // release, and the status says why without naming a path.
+    config.modules.source = ModuleSourceMode::Linked;
+    let fallback = status(&config);
+    assert_ne!(fallback.source, Some(ModuleSource::Linked));
+    let detail = fallback.detail.expect("fallback is visible in detail");
+    assert!(detail.contains("release"), "{detail}");
+    assert!(!detail.contains('/'), "{detail}");
+
+    // A path override is reported as a local file.
+    let mut config = Config::default();
+    config
         .modules
         .overrides
-        .push(crate::config::schema::ModuleOverride {
-            id: "tinyjuice".into(),
-            path: "explicit/libtinyjuice_module.so".into(),
-        });
-    assert_eq!(
-        local_override(&configured, "tinyjuice"),
-        Some("explicit/libtinyjuice_module.so".into())
+        .push(crate::config::schema::ModuleOverride::with_path(
+            "tinyjuice",
+            "/dev/libtinyjuice_module.so",
+        ));
+    let local = status(&config);
+    assert_ne!(local.source, Some(ModuleSource::Release));
+    if let Some(source) = local.source {
+        assert_eq!(source, ModuleSource::LocalFile);
+    }
+}
+
+#[tokio::test]
+// The tinychannels fixture compiles only with `channels` (channels/mod.rs).
+#[cfg(all(feature = "e2e-test-support", feature = "channels"))]
+async fn a_registered_linked_factory_serves_the_module_and_status_says_so() {
+    use crate::config::schema::ModuleSourceMode;
+    use crate::modules::types::ModuleSource;
+
+    let _storage = crate::channels::module_fixture::install_memory_storage();
+    crate::modules::linked::register_linked("tinychannels", tinychannels_module::linked_module);
+    let mut config = Config::default();
+    config.modules.source = ModuleSourceMode::Linked;
+    ops::ensure_loaded(&config, "tinychannels")
+        .await
+        .expect("the linked module is admitted through the seam");
+
+    let status = list(&config)
+        .into_iter()
+        .find(|m| m.id == "tinychannels")
+        .expect("tinychannels is registered");
+    assert_eq!(status.state, ModuleState::Ready);
+    assert_eq!(status.source, Some(ModuleSource::Linked));
+    assert_eq!(status.detail, None);
+}
+
+#[tokio::test]
+async fn attaching_a_linked_module_without_a_factory_fails_with_a_static_reason() {
+    let runtime = crate::modules::runtime::runtime()
+        .await
+        .expect("module host");
+    let error = Resolver::load_linked(
+        runtime,
+        &registry::find("tinychannels").unwrap().release(),
+        None,
+        serde_json::json!({}),
+    )
+    .expect_err("no factory is registered for this id");
+    assert!(error.contains("no linked factory"), "{error}");
+    assert!(!error.contains('/'), "{error}");
+}
+
+#[tokio::test]
+async fn a_failing_linked_factory_is_reported_without_its_error_detail() {
+    fn failing() -> tinybus::Result<tinybus::module::LinkedModule> {
+        Err(tinybus::Error::failed("secret-token /home/user/path"))
+    }
+    let runtime = crate::modules::runtime::runtime()
+        .await
+        .expect("module host");
+    let error = Resolver::load_linked(
+        runtime,
+        &registry::find("tinychannels").unwrap().release(),
+        Some(failing),
+        serde_json::json!({}),
+    )
+    .expect_err("the factory fails");
+    assert!(
+        error.contains("linked factory could not be started"),
+        "{error}"
     );
+    assert!(!error.contains("secret-token"), "{error}");
+    assert!(!error.contains("/home"), "{error}");
+}
+
+#[test]
+fn a_debug_build_warns_when_a_local_build_is_served_ahead_of_its_pin() {
+    use crate::modules::source::pin_ahead_warning;
+    use crate::modules::types::ModuleSource;
+
+    for served in [ModuleSource::Linked, ModuleSource::Source] {
+        let line = pin_ahead_warning("tinydocs", served, Some("tinysearch, tinydocs"), true)
+            .expect("an ahead id served locally warns");
+        assert!(line.contains("id=tinydocs"));
+        assert!(line.contains("gitlink ahead of released pin"));
+        assert!(line.contains("release-and-repin"));
+    }
+}
+
+#[test]
+fn the_ahead_warning_is_silent_for_released_modules_other_ids_and_release_builds() {
+    use crate::modules::source::pin_ahead_warning;
+    use crate::modules::types::ModuleSource;
+
+    // Released and explicit-file modules are not a locally compiled pin.
+    for served in [ModuleSource::Release, ModuleSource::LocalFile] {
+        assert!(pin_ahead_warning("tinydocs", served, Some("tinydocs"), true).is_none());
+    }
+    // Not in the list, an id that merely contains the name, no list at all.
+    assert!(pin_ahead_warning("tinydocs", ModuleSource::Source, Some("tinydocs2"), true).is_none());
+    assert!(pin_ahead_warning("tinydocs", ModuleSource::Source, Some(""), true).is_none());
+    assert!(pin_ahead_warning("tinydocs", ModuleSource::Source, None, true).is_none());
+    // A release build never warns.
+    assert!(pin_ahead_warning("tinydocs", ModuleSource::Source, Some("tinydocs"), false).is_none());
 }

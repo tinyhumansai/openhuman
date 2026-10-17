@@ -1,5 +1,5 @@
 //! Thin confidential adapter for TinyChannels' provider health checks.
-use super::client::{ModuleCallError, ModuleClient};
+use tinybus::module::{ModuleCallError, ModuleClient};
 use tinychannels_bus::{ChannelHealthReport, ChannelsConfig, HttpProxyPolicy};
 
 pub(crate) async fn check(
@@ -16,6 +16,6 @@ pub(crate) async fn check(
         .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "modules"))]
 #[path = "channel_health_tests.rs"]
 mod tests;

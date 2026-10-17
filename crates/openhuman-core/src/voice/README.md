@@ -406,6 +406,6 @@ Tests sit beside their modules as `<module>_tests.rs` (for example
 
 ## Further reading
 
-- [Voice tools](../../../../gitbooks/features/native-tools/voice.md)
+- [Voice tools](../../../../docs/gitbooks/en/features/native-tools/voice.md)
 - [tinyvoice submodule](../../../../vendor/tinyvoice/README.md)
-- [Chat](../../../../gitbooks/features/chat.md)
+- [Chat](../../../../docs/gitbooks/en/features/chat.md)

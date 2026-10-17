@@ -3,7 +3,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use tempfile::TempDir;
 use {
     crate::cron::add_agent_job_with_definition, crate::cron::list_jobs,
-    tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget,
+    tinyflows_bus::schedule::types::Schedule, tinyflows_bus::schedule::types::SessionTarget,
 };
 
 fn test_config(tmp: &TempDir) -> Config {
@@ -43,7 +43,7 @@ fn seeds_morning_briefing_disabled_and_idempotent() {
     let jobs = list_jobs(&config).unwrap();
     assert!(
         jobs.iter()
-            .filter(|j| matches!(j.job_type, tinyflows_schedule::types::JobType::Agent))
+            .filter(|j| matches!(j.job_type, tinyflows_bus::schedule::types::JobType::Agent))
             .all(|j| !j.enabled),
         "fresh onboarding seed must not create enabled billable agent cron jobs: {jobs:?}"
     );

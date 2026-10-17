@@ -108,6 +108,23 @@ impl Repo {
         Self::on(&backend, &scope, domain, collections).map(Some)
     }
 
+    /// The repo for a store keyed by a workspace: the process's backend (or the
+    /// workspace's own default when none is installed,
+    /// [`super::local::backend_for`]) under the acting scope.
+    ///
+    /// # Errors
+    ///
+    /// When the backend cannot be had or the scope cannot be resolved (SaaS mode
+    /// with no acting profile).
+    pub fn current_for(
+        workspace_dir: &std::path::Path,
+        domain: &'static str,
+        collections: fn() -> Vec<CollectionSpec>,
+    ) -> Result<Self> {
+        let opened = super::local::open(domain, workspace_dir)?;
+        Self::on(&opened.backend, &opened.scope, domain, collections)
+    }
+
     /// The repo over `backend` under `scope`, declaring its collections once
     /// per process.
     ///

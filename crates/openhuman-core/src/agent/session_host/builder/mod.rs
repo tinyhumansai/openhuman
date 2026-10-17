@@ -10,12 +10,10 @@
 pub(crate) use factory::provider_role_for_definition;
 
 mod builder_build;
-mod dispatcher;
 mod factory;
 mod host_only;
 mod host_tools;
 mod iteration_cap;
-mod permanent_tool;
 mod profile_factory;
 mod setters;
 
@@ -25,9 +23,10 @@ pub use host_tools::{HostTools, HostTurnTools, TurnContext};
 #[cfg(test)]
 mod builder_tests;
 
-use crate::agent::harness::definition::{AgentDefinition, ToolScope};
-use crate::tools::agent_policy::ToolPolicySession;
+use crate::agent::harness::host_definition::AgentDefinition;
 use std::sync::Arc;
+use tinyagents_definition::ToolScope;
+use tinytools::ToolPolicySession;
 use tinytools::{Tool, ToolSpec};
 
 /// Drop entries with duplicate `name` fields, first occurrence wins.
@@ -209,7 +208,7 @@ pub(super) fn ensure_recovery_tool_visible(
     // recovery tool has nothing to recover for one — there are no tool outputs
     // to truncate. Adding it would turn "no tools" into "one tool" and put a
     // schema back on a turn whose whole point is that it stays flat.
-    if !crate::agent::harness::definition::is_empty_tool_scope(visible) {
+    if !crate::agent::harness::host_definition::is_empty_tool_scope(visible) {
         for name in crate::inference::tokenjuice::RECOVERY_TOOL_VISIBLE {
             visible.insert((*name).to_string());
         }
@@ -224,7 +223,8 @@ pub(super) fn ensure_tinyjuice_tools_visible(
 ) {
     ensure_recovery_tool_visible(
         visible,
-        config.context.compaction_enabled || summarizes_tool_output(agent_id, config),
+        crate::inference::tokenjuice::enabled(config)
+            && (config.context.compaction_enabled || summarizes_tool_output(agent_id, config)),
     );
     ensure_repl_tools_visible(
         visible,
@@ -245,8 +245,8 @@ pub(super) fn ensure_repl_tools_visible(
     if !handle_mode_active {
         return;
     }
-    if !crate::agent::harness::definition::is_empty_tool_scope(visible) {
-        for name in crate::inference::tokenjuice::REPL_TOOL_NAMES {
+    if !crate::agent::harness::host_definition::is_empty_tool_scope(visible) {
+        for name in tinyjuice_bus::tools::REPL_TOOLS {
             visible.insert((*name).to_string());
         }
     }
@@ -261,15 +261,7 @@ pub(super) fn summarizes_tool_output(agent_id: &str, config: &crate::config::Con
 pub(super) fn should_synthesize_delegation_tools(def: &AgentDefinition) -> bool {
     match &def.tools {
         ToolScope::Wildcard => !def.subagents.is_empty(),
-        ToolScope::Named(names) => names.iter().any(|name| {
-            matches!(
-                name.as_str(),
-                "spawn_subagent"
-                    | "spawn_async_subagent"
-                    | "spawn_parallel_agents"
-                    | "spawn_worker_thread"
-            )
-        }),
+        ToolScope::Named(_) => def.tools.names_a_spawn_tool(),
     }
 }
 
@@ -280,7 +272,8 @@ pub(super) fn should_synthesize_delegation_tools(def: &AgentDefinition) -> bool 
 /// the name extends at an `_` boundary. Empty when the registry is not up or
 /// the id resolves to nothing, which leaves the schema untouched.
 fn allowed_subagent_ids_for(agent_id: &str) -> Vec<String> {
-    let Some(registry) = crate::agent::harness::AgentDefinitionRegistry::current() else {
+    let Some(registry) = crate::agent::harness::host_definition::AgentDefinitionRegistry::current()
+    else {
         return Vec::new();
     };
     let definition = registry.get(agent_id).or_else(|| {

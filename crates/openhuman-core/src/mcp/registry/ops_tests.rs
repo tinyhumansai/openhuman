@@ -7,23 +7,14 @@
 
 use super::*;
 use crate::mcp::module_client::{McpConfiguredClient, McpModulePort};
-use crate::modules::client::ModuleCallError;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use tinymcp_bus::{OpenConfiguredResponse, TransitionStatus};
-
-#[test]
-fn a_blank_identifier_is_refused_with_the_field_name() {
-    // The frontend surfaces this text, so it has to name what was missing.
-    let error = require("   ", "server_id").expect_err("a blank identifier");
-    assert_eq!(error, "server_id must not be empty");
-}
-
-#[test]
-fn an_identifier_is_trimmed_before_it_is_used() {
-    assert_eq!(require("  srv-1  ", "server_id").unwrap(), "srv-1");
-}
+use tinybus::module::ModuleCallError;
+use tinymcp_bus::{
+    OpenConfiguredResponse, ServerArgumentsValidation, TransitionStatus,
+    ValidateServerArgumentsRequest,
+};
 
 // ── list_tools refusals (#6313) ─────────────────────────────────────────────
 //
@@ -120,6 +111,20 @@ impl McpModulePort for RegistryPort {
             _ => Err(ModuleCallError::IncompatibleContract),
         }
     }
+
+    async fn prepare_agent_tools(
+        &self,
+        _: tinymcp_bus::PrepareAgentToolsRequest,
+    ) -> Result<Vec<tinymcp_bus::McpToolPresentation>, ModuleCallError> {
+        Ok(Vec::new())
+    }
+
+    async fn validate_server_arguments(
+        &self,
+        _: ValidateServerArgumentsRequest,
+    ) -> Result<ServerArgumentsValidation, ModuleCallError> {
+        std::future::ready(Err(ModuleCallError::IncompatibleContract)).await
+    }
 }
 
 fn status(server_id: &str, qualified_name: &str) -> tinymcp_bus::ConnStatus {
@@ -168,11 +173,11 @@ async fn agent_refusal_names_no_rpc_method() {
 /// belt. The read-only planner has no `mcp_registry_connect`.
 #[test]
 fn refusals_name_only_tools_on_every_listing_belt() {
-    let install = tinymcp::ConnStatus {
+    let install = tinymcp_bus::ConnStatus {
         server_id: "srv-1".into(),
         qualified_name: QUALIFIED.into(),
         display_name: "uuid".into(),
-        status: tinymcp::ServerStatus::Disconnected,
+        status: tinymcp_bus::ServerStatus::Disconnected,
         tool_count: 0,
         last_error: None,
         auth_hint: None,
@@ -180,9 +185,13 @@ fn refusals_name_only_tools_on_every_listing_belt() {
     let refusals: Vec<String> = ["srv-1", "io.github.other/absent"]
         .into_iter()
         .map(|requested| {
-            match explain_not_connected(requested, std::slice::from_ref(&install), Caller::Agent) {
-                NotConnected::Refused(message) => message,
-                NotConnected::Resolved(id) => panic!("{requested} resolved to {id}"),
+            match explain_not_connected(
+                requested,
+                std::slice::from_ref(&install),
+                Caller::Agent.remedy(),
+            ) {
+                NotConnectedExplanation::Refused(message) => message,
+                other => panic!("{requested} was not refused: {other:?}"),
             }
         })
         .collect();
@@ -200,7 +209,7 @@ fn refusals_name_only_tools_on_every_listing_belt() {
         .expect("built-ins load")
         .into_iter()
         .filter_map(|def| {
-            let crate::agent::harness::definition::ToolScope::Named(tools) = &def.tools else {
+            let tinyagents_definition::ToolScope::Named(tools) = &def.tools else {
                 return None;
             };
             let belt: Vec<String> = tools.iter().chain(&def.deferred_tools).cloned().collect();
@@ -291,23 +300,4 @@ async fn a_qualified_name_lists_the_tools_of_its_connected_install() {
         "{}",
         listed.value
     );
-}
-
-#[test]
-fn a_registry_name_installed_twice_is_refused_with_both_ids() {
-    let install = |server_id: &str| tinymcp::ConnStatus {
-        server_id: server_id.into(),
-        qualified_name: QUALIFIED.into(),
-        display_name: "uuid".into(),
-        status: tinymcp::ServerStatus::Disconnected,
-        tool_count: 0,
-        last_error: None,
-        auth_hint: None,
-    };
-    let installs = [install("srv-a"), install("srv-b")];
-    let NotConnected::Refused(message) = explain_not_connected(QUALIFIED, &installs, Caller::Agent)
-    else {
-        panic!("an ambiguous name must not resolve");
-    };
-    assert!(message.contains("srv-a, srv-b"), "{message}");
 }

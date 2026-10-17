@@ -246,6 +246,8 @@ pub(super) fn handle_sio_event(
             } else {
                 #[cfg(feature = "voice")]
                 tokio::spawn(crate::voice::realtime_harness::handle_voice_harness_turn(
+                    // A relay socket event carries no context of its own.
+                    crate::core::runtime::DispatchCtx::host_default(),
                     correlation_id,
                     messages,
                 ));

@@ -11,6 +11,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use std::sync::LazyLock;
+
+use tinyinference_providers::builtin::{
+    BuiltinAuthStyle, BUILTIN_CLOUD_PROVIDERS as UPSTREAM_BUILTINS,
+};
+
+/// A built-in cloud provider preset in the host's [`AuthStyle`] vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltinCloudProvider {
     pub slug: &'static str,
@@ -19,178 +26,39 @@ pub struct BuiltinCloudProvider {
     pub auth_style: AuthStyle,
 }
 
-pub const BUILTIN_CLOUD_PROVIDERS: &[BuiltinCloudProvider] = &[
-    BuiltinCloudProvider {
-        slug: "openhuman",
-        label: "OpenHuman",
-        endpoint: "https://api.openhuman.ai/v1",
-        auth_style: AuthStyle::OpenhumanJwt,
-    },
-    BuiltinCloudProvider {
-        slug: "openai",
-        label: "OpenAI",
-        endpoint: "https://api.openai.com/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "anthropic",
-        label: "Anthropic",
-        endpoint: "https://api.anthropic.com/v1",
-        auth_style: AuthStyle::Anthropic,
-    },
-    BuiltinCloudProvider {
-        slug: "openrouter",
-        label: "OpenRouter",
-        endpoint: "https://openrouter.ai/api/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "orcarouter",
-        label: "OrcaRouter",
-        endpoint: "https://api.orcarouter.ai/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "gmi",
-        label: "GMI",
-        endpoint: "https://api.gmi-serving.com/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "fireworks",
-        label: "Fireworks",
-        endpoint: "https://api.fireworks.ai/inference/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "moonshot",
-        label: "Kimi (Moonshot)",
-        endpoint: "https://api.moonshot.ai/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "groq",
-        label: "Groq",
-        endpoint: "https://api.groq.com/openai/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "mistral",
-        label: "Mistral",
-        endpoint: "https://api.mistral.ai/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "deepseek",
-        label: "DeepSeek",
-        endpoint: "https://api.deepseek.com/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "together",
-        label: "Together AI",
-        endpoint: "https://api.together.xyz/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "google",
-        label: "Google Gemini",
-        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "cerebras",
-        label: "Cerebras",
-        endpoint: "https://api.cerebras.ai/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "xai",
-        label: "xAI",
-        endpoint: "https://api.x.ai/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "huggingface",
-        label: "Hugging Face",
-        endpoint: "https://router.huggingface.co/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "nvidia",
-        label: "NVIDIA",
-        endpoint: "https://integrate.api.nvidia.com/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "zai",
-        label: "Z.AI",
-        endpoint: "https://api.z.ai/api/paas/v4",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "minimax",
-        label: "MiniMax",
-        // MiniMax exposes a full OpenAI-compatible surface at `/v1`
-        // (`/v1/chat/completions`, `/v1/models`). The previous `/anthropic`
-        // base + Anthropic auth pointed at MiniMax's Messages-protocol API,
-        // which OpenHuman does not speak — it only builds OpenAI-style
-        // `/chat/completions` and `/models` — so both chat and model-listing
-        // 404'd (`/anthropic/chat/completions`, `/anthropic/models`). The
-        // 404 on model-listing was Sentry TAURI-RUST-8X3. Use the `/v1`
-        // OpenAI surface with Bearer auth so both paths resolve.
-        endpoint: "https://api.minimax.io/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "stepfun",
-        label: "StepFun",
-        endpoint: "https://api.stepfun.ai/step_plan/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "kilocode",
-        label: "Kilo Code",
-        endpoint: "https://api.kilo.ai/api/gateway",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "deepinfra",
-        label: "DeepInfra",
-        endpoint: "https://api.deepinfra.com/v1/openai",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "novita",
-        label: "Novita",
-        endpoint: "https://api.novita.ai/v3/openai",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "venice",
-        label: "Venice",
-        endpoint: "https://api.venice.ai/api/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "vercel-ai-gateway",
-        label: "Vercel AI Gateway",
-        endpoint: "https://ai-gateway.vercel.sh/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "sumopod",
-        label: "SumoPod",
-        endpoint: "https://ai.sumopod.com/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-    BuiltinCloudProvider {
-        slug: "modelscope",
-        label: "ModelScope",
-        endpoint: "https://api-inference.modelscope.cn/v1",
-        auth_style: AuthStyle::Bearer,
-    },
-];
+/// The managed OpenHuman route. It is the one preset `tinyinference-providers`
+/// deliberately omits: managed gateway policy is host-owned.
+const OPENHUMAN_PRESET: BuiltinCloudProvider = BuiltinCloudProvider {
+    slug: "openhuman",
+    label: "OpenHuman",
+    endpoint: "https://api.openhuman.ai/v1",
+    auth_style: AuthStyle::OpenhumanJwt,
+};
+
+impl From<&'static tinyinference_providers::builtin::BuiltinCloudProvider>
+    for BuiltinCloudProvider
+{
+    fn from(preset: &'static tinyinference_providers::builtin::BuiltinCloudProvider) -> Self {
+        Self {
+            slug: preset.slug,
+            label: preset.label,
+            endpoint: preset.endpoint,
+            auth_style: match preset.auth_style {
+                BuiltinAuthStyle::Bearer => AuthStyle::Bearer,
+                BuiltinAuthStyle::Anthropic => AuthStyle::Anthropic,
+            },
+        }
+    }
+}
+
+/// Every built-in preset: the managed OpenHuman route followed by the
+/// provider-neutral catalog from `tinyinference-providers`
+/// ([`UPSTREAM_BUILTINS`]), mapped onto the host's [`AuthStyle`].
+pub static BUILTIN_CLOUD_PROVIDERS: LazyLock<Vec<BuiltinCloudProvider>> = LazyLock::new(|| {
+    std::iter::once(OPENHUMAN_PRESET)
+        .chain(UPSTREAM_BUILTINS.iter().map(BuiltinCloudProvider::from))
+        .collect()
+});
 
 pub(crate) fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvider> {
     BUILTIN_CLOUD_PROVIDERS
@@ -303,7 +171,7 @@ pub fn endpoint_host_is_chat_completions_only(endpoint: &str) -> bool {
         return false;
     };
     let mut matched_chat_only = false;
-    for provider in BUILTIN_CLOUD_PROVIDERS {
+    for provider in BUILTIN_CLOUD_PROVIDERS.iter() {
         if endpoint_host(provider.endpoint).as_deref() == Some(host.as_str()) {
             if builtin_cloud_supports_responses_api(provider.slug) {
                 // A Responses-capable built-in lives at this host → not chat-only.

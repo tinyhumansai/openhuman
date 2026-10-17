@@ -1,10 +1,59 @@
 use std::path::{Path, PathBuf};
 
-use super::types::{SecurityPolicy, TrustedAccess, POLICY_BLOCKED_MARKER};
+use super::types::{SecurityPolicy, TrustedAccess};
 use super::types::{
     ACCOUNT_CONFIG_FILE, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS,
     WORKSPACE_INTERNAL_FILES,
 };
+use tinytools::status::POLICY_BLOCKED_MARKER;
+
+/// Credential-store path segments, matched case-insensitively at any depth.
+pub(crate) const SENSITIVE_COMPONENTS: &[&str] =
+    &[".ssh", ".gnupg", ".aws", ".azure", ".kube", "keychains"];
+/// Single-file credential stores have no protected parent directory.
+pub(crate) const SENSITIVE_FILES: &[&str] = &[".netrc", ".git-credentials", ".pgpass", ".npmrc"];
+/// Consecutive segment pairs that mark a credential store. Windows DPAPI
+/// stores live under `...\Microsoft\{Protect,Credentials,Crypto,Vault}`; the
+/// pair keeps the generic second name from matching an unrelated directory.
+pub(crate) const SENSITIVE_PAIRS: &[[&str; 2]] = &[
+    [".docker", "config.json"],
+    [".cargo", "credentials.toml"],
+    ["microsoft", "protect"],
+    ["microsoft", "credentials"],
+    ["microsoft", "crypto"],
+    ["microsoft", "vault"],
+];
+/// The credential stores above as absolute paths under `home`, for a jail that
+/// denies reads by path rather than by segment. macOS keeps keychains in
+/// `~/Library/Keychains`. The Windows DPAPI pairs have no fixed place under a
+/// home folder, so they stay with the segment check alone.
+#[cfg(any(feature = "modules", test))]
+pub(crate) fn home_credential_stores(home: &Path) -> Vec<PathBuf> {
+    let components = SENSITIVE_COMPONENTS.iter().map(|segment| match *segment {
+        "keychains" => home.join("Library").join("Keychains"),
+        segment => home.join(segment),
+    });
+    let files = SENSITIVE_FILES.iter().map(|file| home.join(file));
+    let pairs = SENSITIVE_PAIRS
+        .iter()
+        .filter(|[dir, _]| dir.starts_with('.'))
+        .map(|[dir, file]| home.join(dir).join(file));
+    components.chain(files).chain(pairs).collect()
+}
+/// Core OS directories matched by absolute (lower-cased) prefix. `/private` is
+/// intentionally absent: macOS temp dirs canonicalize under `/private/var`.
+pub(crate) const ALWAYS_FORBIDDEN_PREFIXES: &[&str] = &[
+    "/etc",
+    "/root",
+    "/boot",
+    "/proc",
+    "/sys",
+    "/system",
+    "c:/windows",
+    "c:/program files",
+    "c:/program files (x86)",
+    "c:/programdata",
+];
 
 impl SecurityPolicy {
     /// Expand a leading `~/` to the user's home directory. Delegates to
@@ -62,6 +111,21 @@ impl SecurityPolicy {
         // rule `enabled = false` keeps.
         if Self::is_always_forbidden(expanded_path) {
             return false;
+        }
+
+        // Media outputs live in the configured Files folder, which can be
+        // outside the action/workspace roots. Let those candidates reach the
+        // asynchronous Ready-artifact check in `validate_path`; a Files-root
+        // match alone never grants the read.
+        if self.is_media_artifact_path_cached(expanded_path)
+            || self
+                .media_files_roots
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .is_some_and(|roots| roots.contains_path(expanded_path))
+        {
+            return true;
         }
 
         // With the policy disabled, containment (`workspace_only`,
@@ -295,14 +359,17 @@ impl SecurityPolicy {
         let resolved = tokio::fs::canonicalize(&full_path)
             .await
             .map_err(|e| format!("Failed to resolve path '{path}': {e}"))?;
-        if !self.is_resolved_path_allowed_for(&resolved, false) {
+        let is_allowed_root = self.is_resolved_path_allowed_for(&resolved, false);
+        let is_ready_media_artifact =
+            !is_allowed_root && self.authorize_ready_media_artifact_path(&resolved).await;
+        if !is_allowed_root && !is_ready_media_artifact {
             return Err(format!(
                 "{POLICY_BLOCKED_MARKER} Resolved path escapes workspace: {}",
                 resolved.display()
             ));
         }
         let workspace_root = self.workspace_root().await;
-        self.check_resolved_against_forbidden(&resolved, &workspace_root)?;
+        self.check_resolved_against_forbidden(&resolved, &workspace_root, is_ready_media_artifact)?;
         log::debug!(
             "[security] validate_path: '{}' resolved to '{}'",
             path,
@@ -369,8 +436,8 @@ impl SecurityPolicy {
         let result = resolved_parent.join(file_name);
 
         let workspace_root = self.workspace_root().await;
-        self.check_resolved_against_forbidden(&canonical_ancestor, &workspace_root)?;
-        self.check_resolved_against_forbidden(&result, &workspace_root)?;
+        self.check_resolved_against_forbidden(&canonical_ancestor, &workspace_root, false)?;
+        self.check_resolved_against_forbidden(&result, &workspace_root, false)?;
 
         log::debug!(
             "[security] validate_parent_path: '{}' resolved parent to '{}'",
@@ -470,53 +537,22 @@ impl SecurityPolicy {
 
         // (a) Credential stores — matched by path segment, location-independent
         // (catches e.g. `C:\Users\x\.ssh` and `~/Library/Keychains`).
-        const SENSITIVE_COMPONENTS: &[&str] =
-            &[".ssh", ".gnupg", ".aws", ".azure", ".kube", "keychains"];
         if segments.iter().any(|s| SENSITIVE_COMPONENTS.contains(s)) {
             return true;
         }
         // Single-file credential stores have no protected parent directory.
-        const SENSITIVE_FILES: &[&str] = &[".netrc", ".git-credentials", ".pgpass", ".npmrc"];
         if segments.iter().any(|s| SENSITIVE_FILES.contains(s)) {
-            return true;
-        }
-        if segments.windows(2).any(|w| w == [".docker", "config.json"]) {
             return true;
         }
         if segments
             .windows(2)
-            .any(|w| w == [".cargo", "credentials.toml"])
+            .any(|w| SENSITIVE_PAIRS.iter().any(|pair| w == *pair))
         {
             return true;
         }
-        // Windows DPAPI / credential stores live under `…\Microsoft\{Protect,
-        // Credentials,Crypto,Vault}` — match the pair so the generic second
-        // name can't false-positive an unrelated project directory.
-        if segments.windows(2).any(|w| {
-            w[0] == "microsoft" && matches!(w[1], "protect" | "credentials" | "crypto" | "vault")
-        }) {
-            return true;
-        }
-
         // (b) Core OS directories — matched by absolute prefix. Unconditional,
         // unlike the user-overridable `forbidden_paths`.
-        const SYSTEM_PREFIXES: &[&str] = &[
-            // POSIX
-            "/etc",
-            "/root",
-            "/boot",
-            "/proc",
-            "/sys",
-            // macOS (note: /private is intentionally NOT blocked — macOS temp
-            // dirs and /etc canonicalize under /private/var and /private/etc).
-            "/system",
-            // Windows
-            "c:/windows",
-            "c:/program files",
-            "c:/program files (x86)",
-            "c:/programdata",
-        ];
-        SYSTEM_PREFIXES
+        ALWAYS_FORBIDDEN_PREFIXES
             .iter()
             .any(|p| lc_path == *p || lc_path.starts_with(&format!("{p}/")))
     }
@@ -526,21 +562,6 @@ impl SecurityPolicy {
     pub fn is_within_trusted_root(&self, path: &Path, require_write: bool) -> bool {
         if Self::is_always_forbidden(path) {
             return false;
-        }
-        // Per-turn grant (see `agent::turn_workspace`): an embedder that scoped
-        // a workspace root for this turn — a workflow run's checkout — trusts
-        // it read/write for the turn's duration. Checked alongside the
-        // configured roots rather than instead of them, and *after*
-        // `is_always_forbidden` above, so a per-turn grant is exactly as strong
-        // as a user-configured `TrustedRoot` and no stronger: credential stores
-        // and workspace-internal state stay unreachable through it.
-        if let Some(turn_root) = crate::agent::turn_workspace::current() {
-            let canonical_turn_root = turn_root
-                .canonicalize()
-                .unwrap_or_else(|_| turn_root.clone());
-            if path.starts_with(&turn_root) || path.starts_with(&canonical_turn_root) {
-                return true;
-            }
         }
         self.trusted_roots.iter().any(|root| {
             if require_write && root.access != TrustedAccess::ReadWrite {
@@ -582,6 +603,7 @@ impl SecurityPolicy {
         &self,
         resolved: &Path,
         workspace_root: &Path,
+        ready_media_artifact: bool,
     ) -> Result<(), String> {
         // Credential stores are never reachable, even via a trusted-root grant.
         if Self::is_always_forbidden(resolved) {
@@ -600,6 +622,9 @@ impl SecurityPolicy {
                 "{POLICY_BLOCKED_MARKER} Resolved path is workspace-internal application state: {}",
                 resolved.display()
             ));
+        }
+        if ready_media_artifact {
+            return Ok(());
         }
         // A trusted-root grant takes precedence over forbidden_paths for its subtree.
         if self.is_within_trusted_root(resolved, false) {
@@ -623,5 +648,87 @@ impl SecurityPolicy {
             }
         }
         Ok(())
+    }
+
+    fn is_media_artifact_path_cached(&self, path: &Path) -> bool {
+        self.media_artifact_paths
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(path)
+    }
+
+    /// Resolve a candidate outside the normal tool roots through the durable
+    /// artifact store. Only Ready image/video files in configured Files roots
+    /// are cached for the read-only file inspection tools.
+    async fn authorize_ready_media_artifact_path(&self, path: &Path) -> bool {
+        if Self::is_always_forbidden(path) || self.is_workspace_internal_path(path) {
+            return false;
+        }
+        let Some(roots) = self
+            .media_files_roots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        else {
+            self.forget_media_artifact_path(path);
+            return false;
+        };
+        if !roots.contains_path(path) {
+            self.forget_media_artifact_path(path);
+            return false;
+        }
+
+        let artifacts = match crate::agent::artifacts::store::list_artifacts(
+            &self.workspace_dir,
+            0,
+            usize::MAX,
+            None,
+        )
+        .await
+        {
+            Ok((artifacts, _)) => artifacts,
+            Err(error) => {
+                tracing::warn!(
+                    target: "security",
+                    %error,
+                    "[security] could not resolve a media artifact read"
+                );
+                return false;
+            }
+        };
+
+        for meta in artifacts.iter().filter(|meta| {
+            matches!(
+                &meta.kind,
+                crate::agent::artifacts::ArtifactKind::Image
+                    | crate::agent::artifacts::ArtifactKind::Video
+            ) && matches!(&meta.status, crate::agent::artifacts::ArtifactStatus::Ready)
+        }) {
+            let Ok(ready_path) =
+                crate::agent::artifacts::resolve_ready_file_meta(&self.workspace_dir, &roots, meta)
+                    .await
+            else {
+                continue;
+            };
+            let Ok(ready_path) = tokio::fs::canonicalize(ready_path).await else {
+                continue;
+            };
+            if ready_path == path {
+                self.media_artifact_paths
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(ready_path);
+                return true;
+            }
+        }
+        self.forget_media_artifact_path(path);
+        false
+    }
+
+    fn forget_media_artifact_path(&self, path: &Path) {
+        self.media_artifact_paths
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(path);
     }
 }

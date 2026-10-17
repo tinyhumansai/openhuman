@@ -21,10 +21,11 @@ mod tests;
 
 pub use credential::DirectCredential;
 pub use direct::direct_list_connections;
+#[cfg(test)]
 pub(crate) use direct::direct_list_tools;
 pub(crate) use factory::create_direct_client_for_api_key;
 pub use factory::{resolve_composio_route, ComposioRoute};
-pub(crate) use network::module_transport;
+pub(crate) use network::module_transport_with_proxy;
 
 // Brought into this module's own namespace (private `use`, not `pub use`)
 // so `client_tests.rs` — declared as a direct child module of `client`

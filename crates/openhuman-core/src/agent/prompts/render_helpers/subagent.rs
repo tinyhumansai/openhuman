@@ -10,6 +10,7 @@ use super::super::types::*;
 use super::workspace_files::{inject_workspace_file, write_agents_md_blocks};
 use std::fmt::Write;
 use std::path::Path;
+use tinytools_agent::dialect::ToolCallFormat;
 use tinytools_agent::dialect::{CodeDialect, NativeDialect, PFormatDialect, ToolDialect};
 
 // ─────────────────────────────────────────────────────────────────────────────

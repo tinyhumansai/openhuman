@@ -251,6 +251,7 @@ fn a_turn_outcome_carries_what_the_turn_spent() {
         structured: None,
         finish_reason: None,
         answered_model: None,
+        unapplied_steers: Vec::new(),
     };
 
     let metered = outcome.usage.as_ref().expect("a metered turn");

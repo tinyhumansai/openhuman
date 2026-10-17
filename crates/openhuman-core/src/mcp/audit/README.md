@@ -68,5 +68,5 @@ appears never to have happened, rather than erroring.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [MCP registry](../../../../../gitbooks/developing/architecture/mcp-registry.md)
-- [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
+- [MCP registry](../../../../../docs/gitbooks/en/developing/architecture/mcp-registry.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)

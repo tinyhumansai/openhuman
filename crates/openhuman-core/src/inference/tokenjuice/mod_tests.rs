@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn recovery_tool_aliases_remain_stable() {
-    assert!(is_recovery_tool(RETRIEVE_TOOL_NAME));
+    assert!(is_recovery_tool(tinyjuice_bus::tools::RETRIEVE));
     assert!(is_recovery_tool(LEGACY_RETRIEVE_TOOL_NAME));
     assert!(!is_recovery_tool("shell"));
 }
@@ -10,14 +10,15 @@ fn recovery_tool_aliases_remain_stable() {
 /// Exercise the configured on-demand mode through the real module bus. Even
 /// with a registered model callback and a result above the summary threshold,
 /// ingest must return a recovery handle without calling the model.
-/// Runs where CI builds the module (`TINYJUICE_TEST_MODULE`).
+/// Runs where a tinyjuice library is provided (`scripts/modules/build.mjs`
+/// or the staged release on `OPENHUMAN_MODULE_PATH`).
 #[tokio::test]
 async fn the_module_defers_a_summary_until_requested() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
+    if crate::modules::local_artifact("tinyjuice").is_none() {
         eprintln!(
-            "SKIPPED (not run, not asserted): TINYJUICE_TEST_MODULE is not set. Build \
-             vendor/tinyjuice and export TINYJUICE_TEST_MODULE=<path to libtinyjuice_module>, \
-             or use scripts/test-rust-with-mock.sh"
+            "SKIPPED (not run, not asserted): no tinyjuice library. Run \
+             `node scripts/modules/build.mjs tinyjuice` and set OPENHUMAN_MODULE_SOURCE_DIR \
+             and OPENHUMAN_MODULE_SOURCE=source, or use scripts/test-rust-with-mock.sh"
         );
         return;
     }
@@ -52,7 +53,7 @@ async fn the_module_defers_a_summary_until_requested() {
         .text
         .contains("the rate limit is 60 requests a minute"));
     assert!(
-        output.text.contains(RETRIEVE_TOOL_NAME),
+        output.text.contains(tinyjuice_bus::tools::RETRIEVE),
         "the original stays retrievable: {}",
         output.text
     );
@@ -66,7 +67,7 @@ async fn the_module_defers_a_summary_until_requested() {
 /// still says it is unsummarized, exactly as a module-side failure would.
 #[tokio::test]
 async fn an_unreachable_module_discloses_a_wanted_summary() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_some() {
+    if crate::modules::local_artifact("tinyjuice").is_some() {
         return; // A fixture forces the module on; this pins the host path.
     }
     let mut config = crate::config::Config::default();
@@ -134,12 +135,11 @@ async fn an_off_profile_still_discloses_a_registered_summary() {
 }
 
 /// A module disabled in configuration cannot install, even when the process
-/// also carries a `TINYJUICE_TEST_MODULE` fixture: the config check runs
+/// also carries a tinyjuice library: the config check runs
 /// first. Exercises the config-driven passthrough independent of whatever
 /// module happens to be installed for other tests in this binary.
 #[tokio::test]
 async fn a_module_disabled_in_configuration_discloses_a_wanted_summary() {
-    let _lock = crate::config::TEST_ENV_LOCK.lock().await;
     let mut config = crate::config::Config::default();
     config.modules.enabled = false;
     let fixture_aware_call = client(&config)
@@ -149,21 +149,6 @@ async fn a_module_disabled_in_configuration_discloses_a_wanted_summary() {
         fixture_aware_call.is_err(),
         "a test module artifact must not override modules.enabled=false"
     );
-
-    let previous = std::env::var_os("TINYJUICE_TEST_MODULE");
-    // SAFETY: serialized by TEST_ENV_LOCK; restored below for every exit path.
-    unsafe { std::env::remove_var("TINYJUICE_TEST_MODULE") };
-    struct RestoreEnv(Option<std::ffi::OsString>);
-    impl Drop for RestoreEnv {
-        fn drop(&mut self) {
-            // SAFETY: still under TEST_ENV_LOCK for the guarded test's scope.
-            match self.0.take() {
-                Some(value) => unsafe { std::env::set_var("TINYJUICE_TEST_MODULE", value) },
-                None => unsafe { std::env::remove_var("TINYJUICE_TEST_MODULE") },
-            }
-        }
-    }
-    let _restore = RestoreEnv(previous);
 
     let config = std::sync::Arc::new(config);
 
@@ -262,8 +247,8 @@ fn install_request_summarizes_only_on_request_under_a_64k_cap() {
 /// Run against the verified release with the host's pinned TinyBus loader.
 #[tokio::test]
 async fn released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content() {
-    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
-        eprintln!("SKIPPED: released TinyJuice artifact not configured");
+    if crate::modules::local_artifact("tinyjuice").is_none() {
+        eprintln!("SKIPPED: no TinyJuice library provided");
         return;
     }
     use tinyjuice_bus::{
@@ -333,4 +318,43 @@ async fn released_queries_keep_cached_originals_in_the_module_and_accept_artifac
     let markdown = reply.unwrap();
     assert!(markdown.contains("hello"));
     assert!(!markdown.contains("secret_script"));
+}
+
+// ── [components] juice ────────────────────────────────────────────────
+
+fn juice_off() -> crate::config::Config {
+    let mut config = crate::config::Config::default();
+    config.components.juice = false;
+    config
+}
+
+#[test]
+fn juice_off_drops_handles_summaries_and_companion_tools() {
+    let on = crate::config::Config::default();
+    assert!(enabled(&on));
+    assert!(repl_handle_active(&on));
+    assert!(!companion_tool_names("orchestrator", &on).is_empty());
+
+    let off = juice_off();
+    assert!(!enabled(&off));
+    assert!(!repl_handle_active(&off));
+    assert!(!summarizes_tool_output("orchestrator", &off));
+    assert!(companion_tool_names("orchestrator", &off).is_empty());
+}
+
+// The module listing only exists with the `modules` feature.
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn juice_off_install_never_touches_the_module() {
+    let off = juice_off();
+    install_from_config(&off).await.expect("no-op");
+    // The resolution slot is process-global and other tests legitimately load
+    // tinyjuice into it, so its absolute state (`Available`) cannot be asserted
+    // here. The listing for a juice-off config reports `Disabled` with no
+    // source whatever the slot holds, which is what "never touches the module"
+    // means to a caller.
+    let statuses = crate::modules::ops::list(&off);
+    let status = statuses.iter().find(|s| s.id == "tinyjuice").unwrap();
+    assert_eq!(status.state, crate::modules::types::ModuleState::Disabled);
+    assert!(status.source.is_none());
 }

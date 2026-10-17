@@ -113,7 +113,10 @@ impl Tool for ArchetypeDelegationTool {
         _options: ToolCallOptions,
         tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+        let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new().with_core(
+            crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                .into_core(),
+        );
         run_context.thread_id = tool_context
             .and_then(ToolRunContext::thread_id)
             .map(ToOwned::to_owned);
@@ -136,18 +139,6 @@ pub(crate) async fn execute_archetype_delegation(
     tool_context: Option<&dyn ToolRunContext>,
     run_context: crate::agent::tinyagents::host::OpenHumanRunContext,
 ) -> anyhow::Result<ToolResult> {
-    if let Some(live_parent) = super::ambient_parent_run_context("direct-archetype-delegation") {
-        let run_context = live_parent.data.child();
-        return execute_archetype_delegation_with_live_parent(
-            agent_id,
-            tool_name,
-            args,
-            tool_context,
-            run_context,
-            Some(&live_parent),
-        )
-        .await;
-    }
     execute_archetype_delegation_with_live_parent(
         agent_id,
         tool_name,
@@ -188,6 +179,7 @@ pub(crate) async fn execute_archetype_delegation_with_live_parent(
     }
     let prompt = render_structured_handoff(&raw_prompt, &args);
     let prompt = match crate::agent::attachments::delegation_prompt(
+        &run_context.dispatch_ctx(),
         &prompt,
         &args,
         tool_context

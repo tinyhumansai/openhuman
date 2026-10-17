@@ -18,9 +18,9 @@
 //! the value. [`TurnRequest`] pins the spelling in one place, next to a test
 //! that decodes it as the controller does.
 //!
-//! # The two ambient scopes, and why they are not optional
+//! # The ambient origin scope, and why it is not optional
 //!
-//! A turn reads two `tokio` task-locals that no parameter can carry:
+//! A turn reads one `tokio` task-local that no parameter can carry yet:
 //!
 //! - **origin** ([`turn_origin`](openhuman_core::agent::turn_origin)) — the
 //!   caller's statement of authority. The approval gate is *fail-closed*: an
@@ -28,17 +28,19 @@
 //!   else — a workflow's blanket automation grant, say — must scope it around
 //!   the dispatch. Miss it and the turn still succeeds while every acting tool
 //!   quietly refuses, which reads as a bad model rather than a missing scope.
-//! - **progress** ([`progress_sink`](openhuman_core::agent::progress_sink)) —
-//!   the call resolves to one final string, so an embedder that wants tool
-//!   calls and deltas has to have installed the sink *before* awaiting.
 //!
-//! Both are established by [`Turn::send`], so a host never has to know they
-//! exist. That is the whole reason this facade is worth having over `invoke`.
+//! Everything else a turn needs rides explicit values handed to the core
+//! (`AgentChatEnv`): the **progress** sink
+//! ([`progress_sink`](openhuman_core::agent::progress_sink)) and the host
+//! environment (shared budget, delegation depth, cancellation, hooks, tool-belt
+//! authority).
+//!
+//! The origin is established by [`Turn::send`], so a host never has to know it
+//! exists. That is the whole reason this facade is worth having over `invoke`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::call::call;
 use super::error::CoreError;
 use openhuman_core::agent::progress::AgentProgress;
 use openhuman_core::agent::turn_origin::AgentTurnOrigin;
@@ -68,12 +70,19 @@ pub(crate) enum TurnTarget {
 /// on, so a host can build it in one place and send it from another.
 pub struct Turn {
     budget: Option<crate::budget::ModelBudget>,
+    /// A narrower model-directed delegation depth for this turn (fanout leaves).
+    spawn_depth_limit: Option<usize>,
+    /// The native token this turn's run tree observes, minted by `send` and
+    /// handed to the core on the turn's host environment.
+    native_cancellation: Option<crate::CancellationToken>,
     target: TurnTarget,
     request: TurnRequest,
     session_id: Option<String>,
     origin: Option<AgentTurnOrigin>,
+    flow_run: Option<(String, String)>,
     progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     seed: Option<Vec<(String, String)>>,
+    attachments: Vec<openhuman_core::agent::HostAttachment>,
     meter: Option<Box<dyn FnOnce(Option<LastTurnUsage>) + Send>>,
     response_format: Option<crate::complete::ResponseFormat>,
     structured_retries: u8,
@@ -84,13 +93,14 @@ pub struct Turn {
     require_tool_call: bool,
     untrusted_input: bool,
     cancellation: Option<crate::TurnCancellation>,
+    steering: Option<crate::TurnSteering>,
     timeout: Option<std::time::Duration>,
     control_deadline: Option<tokio::time::Instant>,
     observer: Option<Arc<dyn crate::observe::TurnObserver>>,
     trace_content: crate::observe::TraceContent,
     hooks: openhuman_core::agent::hooks::HookScope,
     tools: Option<openhuman_core::agent::HostTools>,
-    tool_env: Option<openhuman_core::tools::timeout::CommandEnvironment>,
+    tool_env: Option<Arc<std::collections::BTreeMap<String, String>>>,
 }
 
 impl Turn {
@@ -98,11 +108,15 @@ impl Turn {
         Self {
             target,
             budget: None,
+            spawn_depth_limit: None,
+            native_cancellation: None,
             request: TurnRequest::new(message),
             session_id: None,
             origin: None,
+            flow_run: None,
             progress: None,
             seed: None,
+            attachments: Vec::new(),
             meter: None,
             response_format: None,
             structured_retries: 0,
@@ -113,6 +127,7 @@ impl Turn {
             require_tool_call: false,
             untrusted_input: false,
             cancellation: None,
+            steering: None,
             timeout: None,
             control_deadline: None,
             observer: None,
@@ -161,7 +176,7 @@ impl Turn {
     /// Interpreter pools are bypassed so a pooled process cannot carry another
     /// turn's environment. Independently spawned host tasks must carry the scope.
     pub fn tool_env(mut self, env: impl IntoIterator<Item = (String, String)>) -> Self {
-        self.tool_env = Some(openhuman_core::tools::timeout::CommandEnvironment::new(env));
+        self.tool_env = Some(Arc::new(env.into_iter().collect()));
         self
     }
 
@@ -254,6 +269,46 @@ impl Turn {
     /// ```
     pub fn seed(mut self, history: Vec<(String, String)>) -> Self {
         self.seed = Some(history);
+        self
+    }
+
+    /// Attach a file to this turn's message, after any already attached.
+    ///
+    /// The host hands over the bytes; the file is staged into the agent's
+    /// acting workspace and reaches the model ahead of the message, as an
+    /// image block (`image/*`) or a document block (anything else). A model
+    /// that cannot take the file natively gets the core's fallback instead:
+    /// extracted text for documents, a vision readout for images. The
+    /// configured multimodal count and size limits apply, and a turn over
+    /// them fails before it runs. No local path is read, so attachments are
+    /// accepted whatever the turn's [`origin`](Self::origin).
+    ///
+    /// Only a runtime-owned [`Agent`](crate::Agent) can honour this; a turn on
+    /// a caller-built runtime's orchestrator is refused rather than run
+    /// without its files.
+    ///
+    /// ```no_run
+    /// # use openhuman_embed::{Agent, HostAttachment};
+    /// # async fn go(agent: &Agent, photo: Vec<u8>) -> anyhow::Result<()> {
+    /// agent.turn("what is in this picture?")
+    ///     .attach(HostAttachment::new(photo, "image/jpeg").named("photo.jpg"))
+    ///     .send()
+    ///     .await?;
+    /// # Ok(()) }
+    /// ```
+    #[must_use]
+    pub fn attach(mut self, attachment: openhuman_core::agent::HostAttachment) -> Self {
+        self.attachments.push(attachment);
+        self
+    }
+
+    /// Attach every file in `attachments`, in order; see [`attach`](Self::attach).
+    #[must_use]
+    pub fn attachments(
+        mut self,
+        attachments: impl IntoIterator<Item = openhuman_core::agent::HostAttachment>,
+    ) -> Self {
+        self.attachments.extend(attachments);
         self
     }
 
@@ -360,6 +415,12 @@ impl Turn {
         self
     }
 
+    /// Narrow the model-directed delegation depth for this turn tree.
+    pub(crate) fn with_spawn_depth_limit(mut self, limit: usize) -> Self {
+        self.spawn_depth_limit = Some(limit);
+        self
+    }
+
     /// Set the sampling temperature for this turn.
     pub fn temperature(mut self, temperature: f64) -> Self {
         self.request.temperature = Some(temperature);
@@ -388,6 +449,17 @@ impl Turn {
     /// gate applies the narrower grant the caller actually meant.
     pub fn origin(mut self, origin: AgentTurnOrigin) -> Self {
         self.origin = Some(origin);
+        self
+    }
+
+    /// Binds the turn to one run of a saved flow, so an approval a tool call
+    /// parks on this turn is correlated back to that exact flow and run. Pair
+    /// it with a [`TrustedAutomationSource::Workflow`] [`origin`](Self::origin):
+    /// the origin only names the flow, not the run.
+    ///
+    /// [`TrustedAutomationSource::Workflow`]: crate::TrustedAutomationSource::Workflow
+    pub fn flow_run(mut self, flow_id: impl Into<String>, run_id: impl Into<String>) -> Self {
+        self.flow_run = Some((flow_id.into(), run_id.into()));
         self
     }
 
@@ -439,7 +511,7 @@ use openhuman_core::agent::tinyagents::host::LastTurnUsage;
 
 use crate::turn_meter::UsageSink;
 
-use openhuman_core::agent::tinyagents::response_shape::{FinalResponse, ResponseShapeScope};
+use tinyagents_harness::middleware::{FinalResponse, ResponseShapeScope};
 
 /// A turn's reply text and, for an agent target, its final-response report.
 type AgentReply = (String, Option<FinalResponse>);
@@ -455,7 +527,13 @@ mod futures_box {
 struct AgentTurnOptions {
     tools: Option<openhuman_core::agent::HostTools>,
     shape: std::sync::Arc<ResponseShapeScope>,
+    observer:
+        Option<std::sync::Arc<tinyagents_harness::observability::turn_observer::ObserverScope>>,
     untrusted_input: bool,
+    attachments: Vec<openhuman_core::agent::HostAttachment>,
+    /// The explicit per-turn values the core honours: live progress and the
+    /// host environment (budget, depth, cancellation, hooks, tool-belt authority).
+    chat_env: openhuman_core::inference::host_runtime::ops::AgentChatEnv,
 }
 
 async fn dispatch(
@@ -488,9 +566,65 @@ async fn dispatch(
                     expected_user_state: true,
                 });
             }
-            call::<_, String>(&rt, AGENT_CHAT, &request)
-                .await
-                .map(|reply| (reply, None))
+            // Refused for the same reason: `AGENT_CHAT` carries a string, and
+            // a turn that silently ran without its files would answer about
+            // something it never saw.
+            if !options.attachments.is_empty() {
+                return Err(CoreError::Domain {
+                    method: AGENT_CHAT,
+                    message: "attachments are not supported on a caller-built runtime's \
+                              orchestrator; run the turn on a runtime-owned Agent"
+                        .to_owned(),
+                    kind: Some("attachments_unsupported".to_owned()),
+                    data: None,
+                    expected_user_state: true,
+                });
+            }
+            // Native, like the `Agent` arm: the progress sink and host
+            // environment are non-serializable values that ride the call as
+            // explicit arguments, which the JSON-RPC envelope could not carry.
+            // Gated and scoped exactly as the RPC dispatch would be.
+            if !rt.context().domains().inference {
+                return Err(CoreError::Unavailable { method: AGENT_CHAT });
+            }
+            let ctx = std::sync::Arc::clone(rt.context());
+            let chat_env = options.chat_env;
+            let dispatch =
+                openhuman_core::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&ctx));
+            let turn: futures_box::BoxFuture<'_, Result<AgentReply, CoreError>> =
+                Box::pin(async move {
+                    use openhuman_core::inference::host_runtime::ops::{
+                        agent_chat_reply_for, AgentChatTarget,
+                    };
+                    let mut config = dispatch
+                        .load_config()
+                        .await
+                        .map_err(|raw| CoreError::from_rpc_string(AGENT_CHAT, raw))?;
+                    let target = match request.agent_id.as_deref().map(str::trim) {
+                        Some(id) if !id.is_empty() => AgentChatTarget::AgentId(id),
+                        _ => AgentChatTarget::Orchestrator,
+                    };
+                    let route = openhuman_core::config::schema::EphemeralRoute::from_params(
+                        request.inference_url.clone(),
+                        request.api_key.clone(),
+                    )
+                    .map(|route| route.with_headers(request.inference_headers.clone()));
+                    agent_chat_reply_for(
+                        &mut config,
+                        target,
+                        &request.message,
+                        request.model_override.clone(),
+                        request.temperature,
+                        request.thread_id.clone(),
+                        request.cwd.clone(),
+                        route,
+                        chat_env,
+                    )
+                    .await
+                    .map(|reply| (reply.text, None))
+                    .map_err(|raw| CoreError::from_rpc_string(AGENT_CHAT, raw))
+                });
+            rt.run_in(ctx, turn).await
         }
         TurnTarget::Agent(agent) => {
             if !agent.ctx.domains().inference {
@@ -523,6 +657,8 @@ async fn dispatch(
                         host_only: inner.host_only,
                         untrusted_input: options.untrusted_input,
                         shape: Some(&options.shape),
+                        observer: options.observer.as_ref(),
+                        attachments: &options.attachments,
                     };
                     let outcome = agent_chat_for(
                         &mut config,
@@ -533,6 +669,7 @@ async fn dispatch(
                         request.thread_id,
                         request.cwd,
                         route,
+                        options.chat_env,
                     )
                     .await;
                     // The shape preserves provider charges and root-call totals

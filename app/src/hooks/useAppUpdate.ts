@@ -14,7 +14,7 @@
  *    "Restart to apply" prompt — never a "click to start downloading" one
  *
  * Pairs with the Rust side in `crates/openhuman-app/src/lib.rs` (`check_app_update`,
- * `download_app_update`, `install_app_update`). See `gitbooks/overview/auto-update.md`.
+ * `download_app_update`, `install_app_update`). See `docs/gitbooks/en/overview/auto-update.md`.
  */
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';

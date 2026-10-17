@@ -66,7 +66,7 @@ const DOMAIN_BADGE_KEYS: Record<string, string> = {
  * takes the neutral variant already used. Danger is deliberately left
  * unassigned: nothing here means "failure", and painting an ordinary domain in
  * the danger ramp would make routine events read as errors. The badge prints
- * the domain name either way. See `gitbooks/developing/theming.md`.
+ * the domain name either way. See `docs/gitbooks/en/developing/theming.md`.
  */
 const DOMAIN_BADGE_VARIANT: Record<string, BadgeVariant> = {
   tool: 'primary',

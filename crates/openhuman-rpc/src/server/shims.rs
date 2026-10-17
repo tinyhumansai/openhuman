@@ -60,10 +60,10 @@ pub async fn run_server_headless(host: Option<&str>, port: Option<u16>) -> anyho
 /// Runs a SaaS core: many users behind a trusted gateway, booted from the
 /// operator's config file and refused unless its boot guard passes.
 ///
-/// The session store is installed before boot. With no storage URL it is the
-/// on-disk store, which resolves the workspace of the context each call runs
-/// under, so every profile keeps its sessions, transcripts and turn states in
-/// its own workspace. With one (`OPENHUMAN_STORAGE_URL`, else the operator's
+/// The session store is installed before boot. With no storage URL every
+/// profile keeps its sessions, transcripts and turn states in the default
+/// database of its own workspace (the store resolves the workspace of the
+/// context each call runs under). With one (`OPENHUMAN_STORAGE_URL`, else the operator's
 /// `storage_url`) the backend is opened and installed — the profile registry
 /// and leases live there too — and its session store never recovers on open:
 /// recovery follows the profile lease instead.
@@ -82,7 +82,7 @@ pub async fn run_server_saas(
         if storage_url.is_some() {
             "storage backend"
         } else {
-            "on-disk"
+            "one database per profile workspace"
         }
     );
     crate::session_store::install_for_saas(storage_url).await?;
@@ -168,9 +168,10 @@ pub(crate) async fn build_and_serve(
         ready_tx.is_some()
     );
 
-    // The desktop app and the CLI keep conversations in the classic on-disk
-    // layout unless a storage URL is configured; the core itself carries no
-    // storage. Installed before boot so its recovery sweep runs. A builder
+    // The desktop app and the CLI keep conversations in the storage backend
+    // the host's configuration names (by default `sqlite:<workspace>/storage`);
+    // the core itself carries no storage. Installed before boot so its
+    // recovery sweep runs. A builder
     // that brings its own session store skips this: its provider is installed
     // by `build()`, and an unrelated host storage URL must not block it.
     if summary.has_session_store {

@@ -21,50 +21,21 @@
 //! [`TurnContextMiddleware`] bundles the config and installs whichever hooks are
 //! enabled onto a harness.
 //!
-//! Each middleware lives in its own submodule below; this file only wires and
-//! re-exports them so `tinyagents::middleware::*` paths stay stable.
+//! Each middleware lives in its own submodule below; callers import from the
+//! owning submodule directly (no re-export facade).
 
-mod approval;
-mod call_effect;
-mod cli_rpc_only;
-mod cost_budget;
-mod credential_scrub;
-mod embedder_hooks;
-mod failure_policy;
-mod fetched_site;
-mod loop_guards;
-mod memory_pack;
-mod packed_tool_route;
-mod repeated_failure;
-mod research_budget;
-mod shell_turn_budget;
-mod tool_exposure;
-mod tool_outcome_capture;
-mod tool_output;
-mod tool_output_file_read;
-mod tool_policy;
-mod turn_context;
-mod unmet_deliverable;
-
-pub(crate) use approval::ApprovalSecurityMiddleware;
-pub(crate) use call_effect::tool_sets_lookup;
-pub(crate) use cli_rpc_only::CliRpcOnlyMiddleware;
-pub(crate) use cost_budget::CostBudgetMiddleware;
-pub(crate) use credential_scrub::credential_scrub_middleware;
-pub(crate) use embedder_hooks::EmbedderToolHooksMiddleware;
-pub(crate) use loop_guards::is_repeat_call_exempt;
-pub(crate) use memory_pack::MemoryPackMiddleware;
-pub(crate) use packed_tool_route::PackedToolRouteMiddleware;
-pub(crate) use repeated_failure::RepeatedToolFailureMiddleware;
-pub(crate) use research_budget::ResearchBudgetMiddleware;
-pub(crate) use shell_turn_budget::install_time_notes;
-pub(crate) use tool_exposure::OpenHumanToolExposureShadowMiddleware;
-pub(crate) use tool_outcome_capture::ToolOutcomeCaptureMiddleware;
-pub(crate) use tool_policy::ToolPolicyMiddleware;
-pub(crate) use turn_context::{
-    render_unanswered_steps, TranscriptSnapshot, TranscriptSnapshotSink, TurnContextMiddleware,
-};
-pub(super) use unmet_deliverable::install as install_unmet_deliverable;
+pub(crate) mod approval;
+pub(crate) mod credential_scrub;
+pub(crate) mod embedder_hooks;
+pub(crate) mod failure_policy;
+pub(crate) mod fetched_site;
+pub(crate) mod memory_pack;
+pub(crate) mod packed_tool_route;
+pub(crate) mod repeated_failure;
+pub(crate) mod tool_outcome_capture;
+pub(crate) mod tool_output;
+pub(crate) mod tool_policy;
+pub(crate) mod turn_context;
 
 /// Render the canonical TinyTools content blocks at the OpenHuman boundary.
 /// Middleware that used the retired string-shaped harness result must not
@@ -89,4 +60,4 @@ pub(crate) fn append_tool_result_text(result: &mut tinytools::ToolResult, text: 
 
 #[cfg(test)]
 #[path = "middleware_tests.rs"]
-mod tests;
+pub(crate) mod tests;

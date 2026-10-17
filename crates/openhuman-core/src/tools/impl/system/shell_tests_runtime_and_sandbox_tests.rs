@@ -21,11 +21,11 @@ async fn shell_uses_host_node_and_python_from_path() {
         ("node", "node -e 'console.log(1)'", "1"),
         ("python3", "python3 -c 'print(1)'", "1"),
     ] {
-        if std::process::Command::new(binary)
+        let available = std::process::Command::new(binary)
             .arg("--version")
             .output()
-            .is_err()
-        {
+            .is_ok_and(|version| version.status.success());
+        if !available {
             continue;
         }
 

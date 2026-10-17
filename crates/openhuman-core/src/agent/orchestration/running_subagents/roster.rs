@@ -3,13 +3,19 @@
 
 use tinyagents_orchestration::subagent::{snapshot_for_owner, SubagentSnapshot};
 
-use super::registry::registry;
+use super::registry::{admit_workspace, owner_key, registry};
 use crate::agent::orchestration::fleet_tools::FleetToolSet;
 
 /// Snapshot the sub-agents registered under `parent_session`, with each status
 /// read live from its watch channel (ordered by `agent_id` then `task_id`).
-pub(crate) fn snapshot_for_parent(parent_session: &str) -> Vec<SubagentSnapshot> {
-    snapshot_for_owner(registry(), parent_session).unwrap_or_else(|err| {
+pub(crate) fn snapshot_for_parent(
+    ctx: &crate::core::runtime::DispatchCtx,
+    parent_session: &str,
+) -> Vec<SubagentSnapshot> {
+    let Ok(owner) = owner_key(ctx, parent_session) else {
+        return Vec::new();
+    };
+    snapshot_for_owner(registry(), &owner).unwrap_or_else(|err| {
         log::warn!(
             "[running_subagents] roster unavailable parent_session={parent_session} err={err:?}"
         );
@@ -76,11 +82,13 @@ const DURABLE_ROSTER_CAP: usize = 12;
 /// `wait_subagent` / `steer_subagent` / `close_subagent` since #5701, and
 /// telling it otherwise cost an iteration of confused reasoning per turn).
 pub(crate) fn active_subagents_context_block(
+    ctx: &crate::core::runtime::DispatchCtx,
     parent_session: &str,
     workspace_dir: &std::path::Path,
     fleet: &FleetToolSet,
 ) -> Option<String> {
-    let workers = snapshot_for_parent(parent_session);
+    admit_workspace(ctx, workspace_dir).ok()?;
+    let workers = snapshot_for_parent(ctx, parent_session);
 
     // Durable sessions not already represented by a live registry entry.
     let live_session_ids: std::collections::HashSet<String> = workers

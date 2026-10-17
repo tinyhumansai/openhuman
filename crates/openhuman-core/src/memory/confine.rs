@@ -7,8 +7,9 @@
 //! every namespace, so an RPC or MCP caller could list, read and forget
 //! another root's memory (another team's, or another host-bound agent's).
 //!
-//! Every RPC now resolves the identity in scope ([`super::scope::resolve_current`]:
-//! the agent of a running turn, else the config's own root identity) and:
+//! Every RPC resolves the identity the caller passes ([`MemoryIdentity`]; the
+//! RPC handlers pass [`MemoryIdentity::root`], the config's own root
+//! identity) and:
 //!
 //! - fills an unset `reach` with that identity's subtree ([`allowed_reach`]);
 //! - keeps a caller's reach only when it is [`Reach::within`] the allowed
@@ -23,17 +24,17 @@ use crate::config::Config;
 use super::error::{MemoryError, MemoryResult};
 use super::explore::{self, ExploreParams, ItemsGetParams, ItemsGetView};
 use super::ops;
-use super::scope;
+use super::scope::MemoryIdentity;
 use super::types::{
     FetchParams, FetchView, ForgetParams, ForgetView, ItemsListParams, ItemsListView, LearnParams,
     LearnView, RecallParams, RecallView,
 };
 
-/// What the caller under `config` may read and forget: the subtree of the
-/// identity in scope's layout root.
+/// What `identity` under `config` may read and forget: the subtree of its
+/// layout root.
 #[must_use]
-pub fn allowed_reach(config: &Config) -> Reach {
-    Reach::subtree(scope::resolve_current(config).root().clone())
+pub fn allowed_reach(config: &Config, identity: &MemoryIdentity) -> Reach {
+    Reach::subtree(identity.resolve(config).root().clone())
 }
 
 /// `reach` confined to `allowed`: unset becomes `allowed`, a reach within it
@@ -73,15 +74,19 @@ pub fn confine_filter(filter: Option<MetaFilter>, allowed: &Reach) -> MemoryResu
 }
 
 /// The metadata a `memory_learn` caller sent, with its namespace inside the
-/// identity in scope's layout: an unset namespace (the root) lands at the
+/// `identity`'s layout: an unset namespace (the root) lands at the
 /// layout's learnings node when that is not the root itself.
 ///
 /// # Errors
 ///
 /// [`MemoryError::InvalidRequest`] when the namespace is outside the
 /// layout's subtree.
-pub fn confine_learn_meta(config: &Config, meta: Option<MemoryMeta>) -> MemoryResult<MemoryMeta> {
-    let resolved = scope::resolve_current(config);
+pub fn confine_learn_meta(
+    config: &Config,
+    identity: &MemoryIdentity,
+    meta: Option<MemoryMeta>,
+) -> MemoryResult<MemoryMeta> {
+    let resolved = identity.resolve(config);
     let allowed = Reach::subtree(resolved.root().clone());
     let mut meta = meta.unwrap_or_default();
     if meta.namespace == Namespace::ROOT {
@@ -106,8 +111,15 @@ pub fn confine_learn_meta(config: &Config, meta: Option<MemoryMeta>) -> MemoryRe
 /// # Errors
 ///
 /// A reach outside the caller's root, or what [`ops::recall`] returns.
-pub async fn recall(config: &Config, mut params: RecallParams) -> MemoryResult<RecallView> {
-    params.filter = Some(confine_filter(params.filter, &allowed_reach(config))?);
+pub async fn recall(
+    config: &Config,
+    identity: &MemoryIdentity,
+    mut params: RecallParams,
+) -> MemoryResult<RecallView> {
+    params.filter = Some(confine_filter(
+        params.filter,
+        &allowed_reach(config, identity),
+    )?);
     ops::recall(config, params).await
 }
 
@@ -116,8 +128,15 @@ pub async fn recall(config: &Config, mut params: RecallParams) -> MemoryResult<R
 /// # Errors
 ///
 /// A reach outside the caller's root, or what [`ops::fetch`] returns.
-pub async fn fetch(config: &Config, mut params: FetchParams) -> MemoryResult<FetchView> {
-    params.filter = Some(confine_filter(params.filter, &allowed_reach(config))?);
+pub async fn fetch(
+    config: &Config,
+    identity: &MemoryIdentity,
+    mut params: FetchParams,
+) -> MemoryResult<FetchView> {
+    params.filter = Some(confine_filter(
+        params.filter,
+        &allowed_reach(config, identity),
+    )?);
     ops::fetch(config, params).await
 }
 
@@ -126,8 +145,12 @@ pub async fn fetch(config: &Config, mut params: FetchParams) -> MemoryResult<Fet
 /// # Errors
 ///
 /// A namespace outside the caller's root, or what [`ops::learn`] returns.
-pub async fn learn(config: &Config, mut params: LearnParams) -> MemoryResult<LearnView> {
-    params.meta = Some(confine_learn_meta(config, params.meta)?);
+pub async fn learn(
+    config: &Config,
+    identity: &MemoryIdentity,
+    mut params: LearnParams,
+) -> MemoryResult<LearnView> {
+    params.meta = Some(confine_learn_meta(config, identity, params.meta)?);
     ops::learn(config, params, None).await
 }
 
@@ -137,8 +160,15 @@ pub async fn learn(config: &Config, mut params: LearnParams) -> MemoryResult<Lea
 /// # Errors
 ///
 /// A reach outside the caller's root, or what [`ops::forget`] returns.
-pub async fn forget(config: &Config, mut params: ForgetParams) -> MemoryResult<ForgetView> {
-    params.reach = Some(confine_reach(params.reach, &allowed_reach(config))?);
+pub async fn forget(
+    config: &Config,
+    identity: &MemoryIdentity,
+    mut params: ForgetParams,
+) -> MemoryResult<ForgetView> {
+    params.reach = Some(confine_reach(
+        params.reach,
+        &allowed_reach(config, identity),
+    )?);
     ops::forget(config, params).await
 }
 
@@ -151,10 +181,14 @@ pub async fn forget(config: &Config, mut params: ForgetParams) -> MemoryResult<F
 /// [`ops::items_list`] returns.
 pub async fn items_list(
     config: &Config,
+    identity: &MemoryIdentity,
     mut params: ItemsListParams,
 ) -> MemoryResult<ItemsListView> {
     let narrowed = explore::narrowed(params.filter.take(), &params.path)?;
-    params.filter = Some(confine_filter(Some(narrowed), &allowed_reach(config))?);
+    params.filter = Some(confine_filter(
+        Some(narrowed),
+        &allowed_reach(config, identity),
+    )?);
     params.path = Vec::new();
     ops::items_list(config, params).await
 }
@@ -165,9 +199,16 @@ pub async fn items_list(
 ///
 /// A reach outside the caller's root, an invalid path, or what
 /// [`explore::explore`] returns.
-pub async fn explore(config: &Config, mut params: ExploreParams) -> MemoryResult<ExplorePage> {
+pub async fn explore(
+    config: &Config,
+    identity: &MemoryIdentity,
+    mut params: ExploreParams,
+) -> MemoryResult<ExplorePage> {
     let narrowed = explore::narrowed(params.filter.take(), &params.path)?;
-    params.filter = Some(confine_filter(Some(narrowed), &allowed_reach(config))?);
+    params.filter = Some(confine_filter(
+        Some(narrowed),
+        &allowed_reach(config, identity),
+    )?);
     params.path = Vec::new();
     explore::explore(config, params).await
 }
@@ -179,8 +220,15 @@ pub async fn explore(config: &Config, mut params: ExploreParams) -> MemoryResult
 ///
 /// A reach outside the caller's root, or what [`explore::items_get`]
 /// returns.
-pub async fn items_get(config: &Config, mut params: ItemsGetParams) -> MemoryResult<ItemsGetView> {
-    params.reach = Some(confine_reach(params.reach, &allowed_reach(config))?);
+pub async fn items_get(
+    config: &Config,
+    identity: &MemoryIdentity,
+    mut params: ItemsGetParams,
+) -> MemoryResult<ItemsGetView> {
+    params.reach = Some(confine_reach(
+        params.reach,
+        &allowed_reach(config, identity),
+    )?);
     explore::items_get(config, params).await
 }
 

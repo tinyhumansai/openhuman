@@ -172,7 +172,7 @@ pub async fn renew_once(host: &ProfileHost) -> HeartbeatReport {
 /// the operator context. Runs until the process exits.
 pub fn heartbeat(host: Arc<ProfileHost>, operator: Arc<crate::core::runtime::CoreContext>) {
     let every = renew_interval(host.saas().lease_ttl());
-    let renewals = crate::core::runtime::CoreContext::scope(operator, async move {
+    crate::core::runtime::DispatchCtx::new(operator).spawn(async move {
         log::info!(
             "[profiles][lease] heartbeat started every_ms={}",
             every.as_millis()
@@ -191,7 +191,6 @@ pub fn heartbeat(host: Arc<ProfileHost>, operator: Arc<crate::core::runtime::Cor
             }
         }
     });
-    crate::core::runtime::spawn_scoped(renewals);
 }
 
 #[cfg(test)]

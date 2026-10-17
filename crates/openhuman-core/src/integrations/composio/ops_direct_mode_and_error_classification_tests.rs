@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[tokio::test]
 async fn composio_set_api_key_rejects_invalid_direct_key_before_persisting() {
@@ -23,9 +24,14 @@ async fn composio_set_api_key_rejects_invalid_direct_key_before_persisting() {
     let config = direct_mode_no_key_config(&tmp);
     let _auth_guard = DirectAuthFailureGuard::new("ck_invalid_direct");
 
-    let err = composio_set_api_key(&config, "ck_invalid_direct", false)
-        .await
-        .expect_err("invalid direct-mode key must be rejected before persistence");
+    let err = composio_set_api_key(
+        &DispatchCtx::process_default(),
+        &config,
+        "ck_invalid_direct",
+        false,
+    )
+    .await
+    .expect_err("invalid direct-mode key must be rejected before persistence");
     assert!(
         err.contains("Invalid Composio API key"),
         "unexpected error: {err}"
@@ -79,9 +85,14 @@ async fn composio_set_api_key_validates_candidate_key_even_when_stored_key_exist
         .expect("seed old stored composio key");
     let _new_key_guard = DirectAuthFailureGuard::new("ck_new_invalid");
 
-    let err = composio_set_api_key(&config, "ck_new_invalid", false)
-        .await
-        .expect_err("candidate invalid key must be rejected even if old stored key is valid");
+    let err = composio_set_api_key(
+        &DispatchCtx::process_default(),
+        &config,
+        "ck_new_invalid",
+        false,
+    )
+    .await
+    .expect_err("candidate invalid key must be rejected even if old stored key is valid");
     assert!(
         err.contains("Invalid Composio API key"),
         "unexpected error: {err}"
@@ -123,7 +134,13 @@ async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
-    let result = composio_list_tools(&config, None, None).await;
+    let result = composio_list_tools(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        None,
+        None,
+    )
+    .await;
     match result {
         Ok(outcome) => {
             // If the prefetch returns empty connections (test env may
@@ -166,9 +183,14 @@ async fn composio_authorize_routes_through_direct_mode() {
     // "composio unavailable / no backend session" instead.
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
-    let err = composio_authorize(&config, "gmail", None)
-        .await
-        .unwrap_err();
+    let err = composio_authorize(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        "gmail",
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(
         !err.contains("no backend session"),
         "direct mode must not surface backend-auth errors, got: {err}"
@@ -473,7 +495,12 @@ async fn enrich_does_nothing_when_no_cached_identities() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
     let resp = make_connections_response(&[("c1", "gmail", "ACTIVE")]);
-    let enriched = enrich_connections_with_identity(&config, resp).await;
+    let enriched = enrich_connections_with_identity(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        resp,
+    )
+    .await;
     assert_eq!(enriched.connections.len(), 1);
     assert!(enriched.connections[0].account_email.is_none());
     assert!(enriched.connections[0].workspace.is_none());
@@ -490,7 +517,12 @@ async fn enrich_skips_connection_already_having_identity() {
     let mut resp = make_connections_response(&[("c-preloaded", "gmail", "ACTIVE")]);
     resp.connections[0].account_email = Some("preloaded@example.com".to_string());
 
-    let enriched = enrich_connections_with_identity(&config, resp).await;
+    let enriched = enrich_connections_with_identity(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        resp,
+    )
+    .await;
     assert_eq!(
         enriched.connections[0].account_email.as_deref(),
         Some("preloaded@example.com"),
@@ -510,6 +542,7 @@ async fn enrich_leaves_unmatched_connection_unchanged() {
 
     // Persist a profile for a DIFFERENT connection id.
     persist_provider_profile(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &ProviderUserProfile {
             toolkit: "gmail".to_string(),
@@ -522,7 +555,12 @@ async fn enrich_leaves_unmatched_connection_unchanged() {
     .expect("persist provider profile");
 
     let resp = make_connections_response(&[("no-profile-conn", "gmail", "ACTIVE")]);
-    let enriched = enrich_connections_with_identity(&config, resp).await;
+    let enriched = enrich_connections_with_identity(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        resp,
+    )
+    .await;
 
     assert!(
         enriched.connections[0].account_email.is_none(),

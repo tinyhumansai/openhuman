@@ -10,6 +10,8 @@ pub mod rpc;
 pub mod schemas;
 pub mod store;
 mod store_documents;
+mod store_import;
+pub(crate) use store_documents::import_source;
 pub mod tunnel_client;
 pub mod types;
 

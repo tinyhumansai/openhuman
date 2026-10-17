@@ -409,6 +409,37 @@ agents) and `toolPhrases.ts` (phrases, served as
 app's logo. The server's `tool_display_label` is used only for tools the
 registry cannot describe.
 
+### assistant-ui composition
+
+The conversation UI uses `@assistant-ui/react` for interaction and runtime
+state, `@assistant-ui/react-lexical` for the rich composer, and
+`@assistant-ui/react-markdown` for message rendering. The visual components
+under `components/assistant-ui/` are assistant-ui registry source installed
+through the app's shadcn configuration (`base-nova`), with OpenHuman tokens,
+translations and product slots. Registry components are editable source; they
+are not separately exported components from the npm runtime package.
+
+| Surface                                        | assistant-ui owner                                                                   | OpenHuman adapter                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Message list, scrolling and scroll-anchor pill | `ThreadPrimitive.Viewport`, `Messages`, `ScrollToBottom`                             | Real thread identity through `adapters.threadList.threadId`; run-start jumps disabled to preserve readers in history |
+| Main composer, send and cancel                 | `ComposerPrimitive`, `LexicalComposerInput`                                          | Draft persistence, model selection, product voice mode and core-backed file ingestion                                |
+| Message editing                                | Message-scoped `ComposerPrimitive.Root`, `Input`, `Send`, `Cancel`                   | Edit RPC and translated warning about subsequent turns                                                               |
+| Message actions and branches                   | `ActionBarPrimitive`, `BranchPickerPrimitive`                                        | Adapter capability gates and core-backed regeneration, speech and feedback                                           |
+| Queued follow-ups                              | `ComposerPrimitive.Queue`, `QueueItemPrimitive.Text`, `Remove`                       | Core run-queue adapter and translated registry row captions                                                          |
+| Markdown, code and citations                   | `MarkdownTextPrimitive` and registry elements                                        | Source projection, app links, math and artifact access                                                               |
+| Reasoning and tool groups                      | `MessagePrimitive.GroupedParts`, registry tool-group/reasoning elements              | Core timing and grouping interleaved reasoning with calls                                                            |
+| Tasks and subagents                            | Registry task-card/subagent-list, `ReadonlyThreadProvider`                           | Delegation state, awaiting-user replies and worktree actions                                                         |
+| Approvals, questions and plans                 | Registry approval-card, elicitation-form and agent-plan                              | Core decision RPCs, security policy and plan/workflow lifecycle                                                      |
+| Todos and goals                                | Registry todo-list and agent-status                                                  | Durable harness progress and remembered disclosure state                                                             |
+| Images, documents and tool results             | Registry image, artifact-card, web-search, terminal-block, code-diff and web-preview | Core artifact and tool-result projection                                                                             |
+| Sources, conversation map and context          | Registry sources, conversation-map and context elements                              | Core sources, search, token usage and context breakdown RPC                                                          |
+
+Keep runtime behavior in the library. New product functionality should use a
+runtime adapter or component slot rather than a second scroll controller,
+message store, editor or queue implementation. Presentation-only registry
+components can remain local; OpenHuman owns the meaning and execution of its
+RPC-backed controls.
+
 Rendering uses assistant-ui's elements, vendored under
 `app/src/components/assistant-ui/elements/` (tool-call, tool-timeline,
 web-search, terminal-block, code-diff, web-preview) with the `tw-shimmer`

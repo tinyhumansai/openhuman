@@ -7,37 +7,6 @@ use crate::config::Config;
 use crate::core::Outcome;
 use crate::security::credentials::session_support::resolve_backend_credential;
 
-/// Send a rich message to a channel via the backend API.
-pub async fn channel_send_message(
-    config: &Config,
-    channel: &str,
-    message: Value,
-) -> Result<Outcome<Value>, String> {
-    let api_url = crate::backend::require_base_url(&config.api_url)?;
-    let jwt = resolve_backend_credential(config)?;
-
-    log::debug!(
-        "[channels] sending message to channel '{}' via {}",
-        channel,
-        api_url
-    );
-
-    let client = BackendClient::new(&api_url).map_err(|e| e.to_string())?;
-    let result = client
-        .send_channel_message(channel, &jwt, message)
-        .await
-        .map_err(|e| {
-            format!(
-                "failed to send channel message: {}",
-                crate::backend::flatten_authed_error(e)
-            )
-        })?;
-
-    log::debug!("[channels] send_message response: {:?}", result);
-
-    Ok(Outcome::new(result, vec![]))
-}
-
 /// Send a reaction to a message in a channel via the backend API.
 pub async fn channel_send_reaction(
     config: &Config,

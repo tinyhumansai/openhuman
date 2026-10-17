@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use crate::agent::session_store::splice_fixture::{head_of, memory_locator, replace_head};
+use tinyagents_session::transcript::{TranscriptMessage, TranscriptToolCall};
 use tinyinference_llm::message::Message;
 
 /// #6721: a head persisted by the old unpaired `trim_history` opens
@@ -31,8 +33,9 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
     // definitions (core/jsonrpc.rs), which routes a root turn through the
     // hosted harness. Without this the result depended on whether another test
     // in the process had installed them first.
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
     let root = tempfile::tempdir().expect("tempdir");
+    let locator = memory_locator();
     // The native dialect resolves from the model's profile (`Native` means
     // "native if the model supports it"); a profile-less scripted model would
     // be treated as text-only, like no production model is.
@@ -46,6 +49,8 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
     let chat_model: Arc<dyn tinyinference_llm::model::ChatModel<()>> = model.clone();
     let new_host = || {
         crate::agent::SessionHostBuilder::new()
+            // Splices rows into the head: the host writes through this store.
+            .with_session_history_locator(Arc::clone(&locator))
             .chat_model(chat_model.clone())
             .tools(Vec::new())
             .workspace_dir(root.path().join("workspace"))
@@ -60,50 +65,41 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
     drop(host);
 
     // Splice the stuck head into the transcript the real writer produced.
-    let transcripts: Vec<_> = walkdir::WalkDir::new(root.path().join("workspace/session_raw"))
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
-        .map(|entry| entry.into_path())
-        .collect();
-    assert_eq!(transcripts.len(), 1, "one head transcript: {transcripts:?}");
-    let rows: Vec<serde_json::Value> = std::fs::read_to_string(&transcripts[0])
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
+    let head = head_of(&locator, "thread-orphaned-head");
+    let rows = &head.messages;
     let head_end = rows
         .iter()
-        .position(|row| row.get("_meta").is_none() && row["role"] != "system")
+        .position(|row| row.role != "system")
         .expect("turn 1 wrote a non-system row");
-    assert!(head_end >= 2, "fixture needs the persisted system prefix");
+    assert!(head_end >= 1, "fixture needs the persisted system prefix");
+    let failed = TranscriptMessage::tool("ra").with_id("call_orphan_a");
+    let call = TranscriptToolCall {
+        id: "call_kept".into(),
+        name: "search".into(),
+        arguments: "{}".into(),
+        extra_content: None,
+    };
     let stuck = [
-        serde_json::json!({"id": "call_orphan_a", "role": "tool", "content": "ra", "failure": true}),
-        serde_json::json!({"id": "call_orphan_b", "role": "tool", "content": "rb"}),
-        serde_json::json!({"role": "system", "content": NUDGE}),
-        // The writer's native form: the calls live in a `{content, tool_calls}`
-        // envelope serialised into `content`, mirrored at the top level.
-        serde_json::json!({"role": "assistant", "content": serde_json::json!({
-            "content": "", "tool_calls": [{"id": "call_kept", "name": "search", "arguments": "{}"}]
-        }).to_string(), "tool_calls": [
-            {"id": "call_kept", "name": "search", "arguments": "{}"}
-        ]}),
-        serde_json::json!({"id": "call_kept", "role": "tool", "content": "rk"}),
-        serde_json::json!({"role": "assistant", "content": "done"}),
+        failed,
+        TranscriptMessage::tool("rb").with_id("call_orphan_b"),
+        TranscriptMessage::system(NUDGE),
+        TranscriptMessage::assistant_with_calls("", vec![call]),
+        TranscriptMessage::tool_result("call_kept", "rk"),
+        TranscriptMessage::assistant("done"),
     ];
-    let spliced: Vec<String> = rows[..head_end]
+    let spliced: Vec<TranscriptMessage> = rows[..head_end]
         .iter()
         .chain(stuck.iter())
         .chain(rows[head_end..].iter())
-        .map(|row| row.to_string())
+        .cloned()
         .collect();
-    std::fs::write(&transcripts[0], spliced.join("\n") + "\n").unwrap();
+    replace_head(&locator, &head, &spliced);
 
     let mut host = new_host();
     host.set_thread_id(Some("thread-orphaned-head"));
     // The raw durable source still contains both leading orphans; the codec
     // must heal only its model-visible replay view before strict validation.
-    let raw = tinyagents_session::transcript::read_transcript(&transcripts[0]).unwrap();
+    let raw = head_of(&locator, "thread-orphaned-head");
     let raw_prefix = raw
         .messages
         .iter()
@@ -127,8 +123,8 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
         |message| matches!(message, Message::Tool(tool) if tool.tool_call_id.starts_with("call_orphan"))
     ));
     assert_eq!(
-        std::fs::read_to_string(&transcripts[0]).unwrap(),
-        spliced.join("\n") + "\n",
+        head_of(&locator, "thread-orphaned-head").messages,
+        spliced,
         "adoption must not rewrite the durable source merely on resume",
     );
     assert_eq!(host.turn("second message").await.unwrap(), "second reply");

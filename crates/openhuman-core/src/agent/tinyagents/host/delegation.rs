@@ -21,7 +21,7 @@
 //! # The sink is the reason these are wrappers, not plain re-exports
 //!
 //! Every delegation run is journalled onto OpenHuman's `tracing` diagnostics
-//! through [`GraphTracingSink`](super::observability::GraphTracingSink), which
+//! through [`GraphTracingSink`](tinyagents_graph::GraphTracingSink), which
 //! lives in [`super::observability`] alongside the cost catalog, the tool-status
 //! classifier and the provider usage tables — host surface that must not follow
 //! the graph upstream. The crate instead takes an optional
@@ -45,7 +45,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use super::super::observability::GraphTracingSink;
+use tinyagents_graph::GraphTracingSink;
 
 use tinyagents_graph::delegation::{
     DelegationConfig, DelegationOutcome, DelegationStage, DelegationStageOutput, DelegationState,

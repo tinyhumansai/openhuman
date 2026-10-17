@@ -72,18 +72,17 @@ impl std::fmt::Debug for AgentScopedState {
 /// Slots used when no context exists at all.
 static UNSCOPED: LazyLock<AgentScopedState> = LazyLock::new(AgentScopedState::default);
 
-/// The ambient context's slot of type `T`, or the unscoped one when no
-/// context exists.
+/// The slot of type `T` in the context `ctx` resolves to, or the unscoped
+/// one when it resolves to none.
 ///
-/// In SaaS only the task's own scope counts, and a task without one gets a
-/// throwaway slot: never the shared unscoped one (which every user's lost
-/// work would meet in) and never the operator's.
-pub fn current_slot<T: Default + Send + Sync + 'static>() -> Arc<T> {
-    let saas = super::is_saas();
-    slot_in::<T>(saas, super::tenant::context_in(saas).as_deref())
+/// In SaaS a call with no bound context gets a throwaway slot: never the
+/// shared unscoped one (which every user's lost work would meet in) and never
+/// the operator's.
+pub fn slot_for<T: Default + Send + Sync + 'static>(ctx: &super::DispatchCtx) -> Arc<T> {
+    slot_in::<T>(super::is_saas(), ctx.resolved().as_deref())
 }
 
-/// [`current_slot`] as a function of the mode and the resolved context.
+/// [`slot_for`] as a function of the mode and the resolved context.
 pub fn slot_in<T: Default + Send + Sync + 'static>(
     saas: bool,
     ctx: Option<&CoreContext>,

@@ -11,6 +11,8 @@ use tinyagents_session::transcript::TranscriptMessage;
 
 /// One channel message, as a host agent's turn needs it.
 pub(crate) struct HostChannelTurn {
+    /// Durable thread supplied explicitly by a hosted relay.
+    pub(crate) relay_thread: Option<String>,
     /// The channel the message came in on (`"telegram"`).
     pub(crate) channel: String,
     /// The chat's history key: the session the host belt is told about and
@@ -26,6 +28,9 @@ pub(crate) struct HostChannelTurn {
     pub(crate) origin: AgentTurnOrigin,
     /// Live progress for the channel's draft updates.
     pub(crate) progress: Option<mpsc::Sender<AgentProgress>>,
+    /// Where this turn's parked approvals surface; default for a channel
+    /// without an approval surface.
+    pub(crate) approval: crate::security::approval::ApprovalTurnContext,
 }
 
 /// Run `turn` as `host`: its definition and host tools, inside its context,
@@ -35,12 +40,14 @@ pub(crate) async fn run_host_agent_turn(
     turn: HostChannelTurn,
 ) -> anyhow::Result<AgentTurnResponse> {
     let HostChannelTurn {
+        relay_thread,
         channel,
         history_key,
         prior_turns,
         message,
         origin,
         progress,
+        approval,
     } = turn;
     let mut config = host.config.clone();
     let profile_ceiling = host
@@ -68,7 +75,9 @@ pub(crate) async fn run_host_agent_turn(
         "[channels::dispatch::host_agent] running channel turn as host agent"
     );
 
-    let relay_thread = crate::channels::providers::relay::current_thread_id();
+    host.context = host
+        .context
+        .derive_channel_turn(relay_thread.clone(), Some(origin.clone()));
     let mut session = host.session_host(
         &config,
         Some(relay_thread.as_deref().unwrap_or(&history_key)),
@@ -88,10 +97,7 @@ pub(crate) async fn run_host_agent_turn(
     session.set_on_progress(progress);
 
     let text = host
-        .scope(crate::agent::turn_origin::with_origin(
-            origin.clone(),
-            session.run_single_with_origin(&message, Some(origin)),
-        ))
+        .scope(session.run_single_with_approval(&message, Some(origin), approval))
         .await?;
     Ok(AgentTurnResponse::with_resolved_route(
         text,

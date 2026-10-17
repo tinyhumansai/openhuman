@@ -3,6 +3,24 @@
 
 use super::*;
 
+#[cfg(not(windows))]
+fn process_is_running(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        return false;
+    }
+
+    // A killed orphan can remain as a zombie when a container's PID 1 does
+    // not reap it. It cannot execute, so treat that kernel state as stopped.
+    #[cfg(target_os = "linux")]
+    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        if let Some((_, fields)) = stat.rsplit_once(") ") {
+            return !matches!(fields.split_whitespace().next(), Some("Z" | "X" | "x"));
+        }
+    }
+
+    true
+}
+
 /// Exit 124 is what coreutils `timeout` returns when its limit expires. The
 /// tool's own deadline did not fire, and the model must be told which one did
 /// — otherwise `Command failed (exit code 124) [stdout] ok` reads like a bug.
@@ -99,7 +117,7 @@ async fn the_tools_deadline_kills_the_commands_grandchildren_too() {
         .unwrap();
     let mut gone = false;
     for _ in 0..100 {
-        if unsafe { libc::kill(grandchild, 0) } != 0 {
+        if !process_is_running(grandchild) {
             gone = true;
             break;
         }

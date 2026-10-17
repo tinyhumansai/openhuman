@@ -173,6 +173,6 @@ cargo test --manifest-path crates/openhuman-app/Cargo.toml gateway::
 
 ## Further reading
 
-- [`gitbooks/developing/architecture/tauri-shell.md`](../../../../gitbooks/developing/architecture/tauri-shell.md): the Tauri shell.
+- [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md): the Tauri shell.
 - [`crates/openhuman-app/README.md`](../../README.md): the openhuman-app crate README.
 - [`crates/openhuman-rpc/README.md`](../../../openhuman-rpc/README.md): the openhuman-rpc crate README.

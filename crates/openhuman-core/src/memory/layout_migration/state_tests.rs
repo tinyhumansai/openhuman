@@ -1,3 +1,5 @@
+use tinymemory_tools::layout_migration::{Failure, Phase};
+
 use super::*;
 
 #[test]
@@ -38,4 +40,19 @@ fn a_damaged_file_is_an_error_not_a_fresh_start() {
     std::fs::create_dir_all(tmp.path().join("memory")).unwrap();
     std::fs::write(path(tmp.path()), b"{ not json").unwrap();
     assert!(load(tmp.path()).is_err());
+    // Through the port the host hands the module, too.
+    assert!(FileStateStore::new(tmp.path()).load().is_err());
+}
+
+#[test]
+fn the_port_saves_where_the_status_reads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = FileStateStore::new(tmp.path());
+    let state = MigrationState {
+        phase: Phase::Copying,
+        copied: 3,
+        ..MigrationState::default()
+    };
+    store.save(&state).unwrap();
+    assert_eq!(load(tmp.path()).unwrap(), state);
 }

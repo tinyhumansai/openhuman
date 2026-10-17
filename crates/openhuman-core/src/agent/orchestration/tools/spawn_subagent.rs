@@ -12,12 +12,13 @@
 //! Sub-agents always run in "typed" mode: a narrow archetype-specific
 //! prompt with a filtered tool list, on a cheaper model where applicable.
 //!
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::orchestration::tools::dispatch::{incomplete_stop, stopped_subagent_result};
 use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
     run_subagent_with_parent, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
 };
+use crate::core::runtime::DispatchCtx;
 use crate::threads::store::{self as conversations, ConversationMessage, CreateConversationThread};
 use async_trait::async_trait;
 use serde_json::json;
@@ -130,6 +131,7 @@ fn build_worker_thread_title(prompt: &str) -> String {
 }
 
 fn persist_worker_thread(
+    ctx: &DispatchCtx,
     workspace_dir: &std::path::Path,
     agent_id: &str,
     prompt: &str,
@@ -140,6 +142,7 @@ fn persist_worker_thread(
     let now = chrono::Utc::now().to_rfc3339();
 
     conversations::ensure_thread(
+        ctx,
         workspace_dir.to_path_buf(),
         CreateConversationThread {
             id: thread_id.clone(),
@@ -154,6 +157,7 @@ fn persist_worker_thread(
     .map_err(|err| format!("ensure_thread: {err}"))?;
 
     conversations::append_message(
+        ctx,
         workspace_dir.to_path_buf(),
         &thread_id,
         ConversationMessage {
@@ -172,6 +176,7 @@ fn persist_worker_thread(
     .map_err(|err| format!("append user message: {err}"))?;
 
     conversations::append_message(
+        ctx,
         workspace_dir.to_path_buf(),
         &thread_id,
         ConversationMessage {

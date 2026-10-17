@@ -2,7 +2,7 @@
 //!
 //! Parser fixtures only: no real IMAP or SMTP traffic is performed.
 
-use openhuman_core::channels::providers::email_channel::{
+use tinychannels::providers::email_channel::{
     test_support as email_support, EmailChannel, EmailConfig,
 };
 

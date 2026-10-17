@@ -13,8 +13,8 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use openhuman_core::channels::providers::telegram::TelegramChannel;
-use openhuman_core::channels::traits::{Channel, SendMessage};
+use tinychannels::providers::telegram::TelegramChannel;
+use tinychannels::{Channel, SendMessage};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 

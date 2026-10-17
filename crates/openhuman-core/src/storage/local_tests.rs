@@ -1,144 +1,66 @@
 use super::*;
 use crate::storage::documents::Repo;
 use serde_json::json;
-use tempfile::TempDir;
+use tinystoragedrivers::{CollectionSpec, Precondition};
 
-const TABLES: &[&str] = &["old_things"];
-
-fn collections() -> Vec<CollectionSpec> {
+fn things() -> Vec<CollectionSpec> {
     vec![CollectionSpec::new("things")]
 }
 
-fn legacy_file(dir: &TempDir) -> std::path::PathBuf {
-    let path = dir.path().join("things.db");
-    let conn = Connection::open(&path).unwrap();
-    conn.execute_batch(
-        "CREATE TABLE old_things (id TEXT PRIMARY KEY, n INTEGER);
-         INSERT INTO old_things VALUES ('a', 1), ('b', 2);",
-    )
-    .unwrap();
-    path
-}
-
-fn config(url: Option<&str>) -> Config {
-    let mut config = Config::default();
-    config.storage.url = url.map(str::to_string);
-    config
-}
-
-fn plan(path: &std::path::Path) -> Vec<ImportDoc> {
-    let conn = Connection::open(path).unwrap();
-    let mut stmt = conn
-        .prepare("SELECT id, n FROM old_things ORDER BY id")
-        .unwrap();
-    stmt.query_map([], |row| {
-        Ok(ImportDoc {
-            collection: "things",
-            id: row.get(0)?,
-            doc: json!({ "n": row.get::<_, i64>(1)? }),
-        })
+fn put_thing(opened: &Opened, id: &'static str, n: i64) {
+    let repo = Repo::on(&opened.backend, &opened.scope, "things", things).unwrap();
+    repo.run(move |docs| async move {
+        docs.put("things", id, json!({ "n": n }), Precondition::None)
+            .await
+            .map(|_| ())
     })
-    .unwrap()
-    .map(Result::unwrap)
-    .collect()
-}
-
-fn open_things(config: &Config, path: &std::path::Path) -> Option<Opened> {
-    let read = || Ok(plan(path));
-    open(
-        config,
-        path,
-        collections,
-        &ImportPlan {
-            domain: "things",
-            tables: TABLES,
-            read: &read,
-        },
-    )
-    .unwrap()
-}
-
-#[test]
-fn the_default_imports_then_retires_the_old_table() {
-    let dir = TempDir::new().unwrap();
-    let path = legacy_file(&dir);
-    let opened = open_things(&config(None), &path).expect("default mode opens the file");
-    assert_eq!(opened.scope, Scope::local());
-    let repo = Repo::on(&opened.backend, &opened.scope, "things", collections).unwrap();
-    let got = repo
-        .run(|docs| async move { docs.get("things", "b").await })
-        .unwrap()
-        .unwrap();
-    assert_eq!(got.doc, json!({ "n": 2 }));
-    let tables = table_names(&path);
-    assert!(tables.contains(&"_legacy_old_things".to_string()));
-    assert!(!tables.contains(&"old_things".to_string()));
-}
-
-#[test]
-fn a_retired_name_already_taken_gets_a_numeric_suffix() {
-    let dir = TempDir::new().unwrap();
-    let path = legacy_file(&dir);
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch("CREATE TABLE _legacy_old_things (x)")
-        .unwrap();
-    open_things(&config(None), &path).unwrap();
-    let tables = table_names(&path);
-    assert!(tables.contains(&"_legacy_old_things".to_string()));
-    assert!(tables.contains(&"_legacy_old_things_2".to_string()));
-}
-
-#[test]
-fn classic_and_the_empty_file_do_not_import() {
-    let dir = TempDir::new().unwrap();
-    let path = legacy_file(&dir);
-    assert!(open_things(&config(Some("classic")), &path).is_none());
-    assert!(table_names(&path).contains(&"old_things".to_string()));
-    // An explicit URL that nothing installed keeps the legacy tables too.
-    assert!(open_things(&config(Some("memory")), &path).is_none());
-
-    let empty = dir.path().join("empty.db");
-    assert!(open_things(&config(None), &empty).is_some());
-}
-
-#[test]
-fn an_import_that_cannot_read_is_an_error_and_is_retried() {
-    let dir = TempDir::new().unwrap();
-    let path = legacy_file(&dir);
-    let fails = || -> Result<Vec<ImportDoc>> { Err(anyhow!("boom")) };
-    let failing = ImportPlan {
-        domain: "things",
-        tables: TABLES,
-        read: &fails,
-    };
-    let error = open(&config(None), &path, collections, &failing)
-        .err()
-        .expect("a failed import is reported, not hidden behind the legacy tables");
-    assert!(format!("{error:#}").contains("boom"), "{error:#}");
-    assert!(
-        table_names(&path).contains(&"old_things".to_string()),
-        "the old table is untouched"
-    );
-    // The next call imports properly.
-    assert!(open_things(&config(None), &path).is_some());
-    assert!(table_names(&path).contains(&"_legacy_old_things".to_string()));
-}
-
-#[test]
-fn retiring_a_table_releases_its_index_names() {
-    let dir = TempDir::new().unwrap();
-    let path = legacy_file(&dir);
-    Connection::open(&path)
-        .unwrap()
-        .execute_batch("CREATE INDEX idx_old_things_n ON old_things(n)")
-        .unwrap();
-    open_things(&config(None), &path).unwrap();
-    let conn = Connection::open(&path).unwrap();
-    // A recreated legacy table can index itself under the same name again.
-    conn.execute_batch(
-        "CREATE TABLE old_things (id TEXT PRIMARY KEY, n INTEGER);
-         CREATE INDEX idx_old_things_n ON old_things(n)",
-    )
     .unwrap();
+}
+
+fn get_thing(opened: &Opened, id: &'static str) -> Option<i64> {
+    let repo = Repo::on(&opened.backend, &opened.scope, "things", things).unwrap();
+    repo.run(move |docs| async move { docs.get("things", id).await })
+        .unwrap()
+        .map(|stored| stored.doc["n"].as_i64().unwrap())
+}
+
+#[test]
+fn an_uninstalled_call_opens_the_default_for_its_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let opened = open("things", dir.path()).unwrap();
+    assert_eq!(opened.backend.driver(), "sqlite");
+    put_thing(&opened, "a", 1);
+    assert!(
+        dir.path().join("storage").is_dir(),
+        "the default lives in <workspace>/storage"
+    );
+    // The same workspace reuses the one backend.
+    let again = open("things", dir.path()).unwrap();
+    assert!(Arc::ptr_eq(&opened.backend, &again.backend));
+    assert_eq!(get_thing(&again, "a"), Some(1));
+}
+
+#[test]
+fn workspaces_do_not_share_a_default() {
+    let one = tempfile::tempdir().unwrap();
+    let two = tempfile::tempdir().unwrap();
+    let a = open("things", one.path()).unwrap();
+    let b = open("things", two.path()).unwrap();
+    put_thing(&a, "only-in-one", 7);
+    assert_eq!(get_thing(&b, "only-in-one"), None);
+}
+
+#[test]
+fn forgetting_a_workspace_reopens_the_same_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = open("things", dir.path()).unwrap();
+    put_thing(&first, "kept", 3);
+    forget(dir.path());
+    let second = open("things", dir.path()).unwrap();
+    assert!(!Arc::ptr_eq(&first.backend, &second.backend));
+    assert_eq!(
+        get_thing(&second, "kept"),
+        Some(3),
+        "a restart keeps the data"
+    );
 }

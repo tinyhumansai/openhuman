@@ -4,7 +4,9 @@ use super::tool_output::{
     is_compaction_exempt, is_truncation_exempt, COMPACTION_EXEMPT_TOOLS, SAMPLING_TOOLS,
 };
 use super::turn_context::DEFAULT_TOOL_RESULT_BUDGET_BYTES;
-use super::*;
+use crate::agent::tinyagents::middleware::embedder_hooks::EmbedderToolHooksMiddleware;
+use crate::agent::tinyagents::middleware::repeated_failure::RepeatedToolFailureMiddleware;
+use crate::agent::tinyagents::middleware::tool_outcome_capture::ToolOutcomeCaptureMiddleware;
 use crate::agent::tinyagents::middleware::tool_output::ToolOutputMiddleware;
 use serde_json::json;
 use std::collections::HashMap;
@@ -12,14 +14,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use tinyagents_harness::middleware::{AgentRun, BudgetTracker, Middleware, ToolInvocationIdentity};
+use tinyagents_harness::middleware::{AgentRun, Middleware, ToolInvocationIdentity};
 use tinyagents_harness::steering::{SteeringCommand, SteeringHandle};
 use tinyinference_llm::message::Message as TaMessage;
-use tinyinference_llm::tool::{ToolCall as TaToolCall, ToolSchema};
+use tinyinference_llm::tool::ToolCall as TaToolCall;
 use tinytools::{ToolPolicy as TaToolPolicy, ToolResult as TaToolResult};
 
 use crate::agent::context::CLEARED_PLACEHOLDER;
-use crate::agent::tinyagents::payload_summarizer::PayloadSummarizer;
+use crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer;
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyinference_llm::model::ModelRequest;
 use tinyjuice_bus::types::AgentTokenjuiceCompression;
@@ -62,7 +64,14 @@ impl StubSummarizer {
     }
 }
 
-impl PayloadSummarizer for StubSummarizer {
+impl
+    tinyagents_harness::summarization::payload_summarizer::PayloadSummarizer<
+        crate::agent::tinyagents::host::OpenHumanRunContext,
+    > for StubSummarizer
+{
+    type Prepared = crate::inference::tokenjuice::generate::PreparedGenerate;
+    type Error = anyhow::Error;
+
     fn prepare(
         &self,
         _parent_ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
@@ -86,7 +95,7 @@ fn summarizing_config() -> Arc<crate::config::Config> {
     Arc::new(config)
 }
 
-fn summarizer_mw(ps: Arc<dyn PayloadSummarizer>) -> ToolOutputMiddleware {
+fn summarizer_mw(ps: Arc<DynPayloadSummarizer>) -> ToolOutputMiddleware {
     ToolOutputMiddleware {
         // Large enough that the byte-budget backstop never fires, so these
         // tests observe the summary stage alone.
@@ -402,16 +411,15 @@ mod failure_effect_tests;
 mod failure_policy_class_tests;
 #[path = "middleware_loop_guard_tests.rs"]
 mod loop_guard_tests;
-
-#[path = "middleware_research_budget_tests.rs"]
-mod research_budget_tests;
+#[path = "middleware_memory_budget_tests.rs"]
+mod memory_budget_tests;
+#[path = "middleware_stop_cause_tests.rs"]
+mod stop_cause_tests;
 
 #[path = "middleware_memory_and_hooks_tests.rs"]
 mod memory_and_hooks_tests;
 #[path = "middleware_tool_output_artifact_tests.rs"]
 mod tool_output_artifact_tests;
-#[path = "middleware_tool_output_file_read_tests.rs"]
-mod tool_output_file_read_tests;
 #[path = "middleware_tool_output_tests.rs"]
 mod tool_output_tests;
 #[path = "middleware_tool_policy_tests.rs"]

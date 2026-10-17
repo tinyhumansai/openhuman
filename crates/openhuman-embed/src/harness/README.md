@@ -6,7 +6,7 @@ inputs. This folder also defines the input types that `Runtime` and
 `AgentSpec` share with it: `Access`, `Provider`, `Workspace` and `McpServer`.
 Reach for `Runtime` and `AgentSpec` directly once a host needs more than one
 agent. See
-[`gitbooks/developing/embedding.md`](../../../../gitbooks/developing/embedding.md)
+[`docs/gitbooks/en/developing/embedding.md`](../../../../docs/gitbooks/en/developing/embedding.md)
 for the walkthrough.
 
 ## How it works
@@ -121,7 +121,7 @@ A harness identifies as `HostKind::Library` by default, so a `Provider` is
 enough for inference: the library host brings its own endpoint and
 credentials, without an OpenHuman app login. Managed TinyHumans inference
 needs the runtime's API key instead (`RuntimeBuilder::api_key`; see
-[`gitbooks/developing/tinyhumans-api-key.md`](../../../../gitbooks/developing/tinyhumans-api-key.md)).
+[`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md)).
 The core can still make non-inference backend calls; `backend_url` points
 them at the embedding product's backend, and `session` installs a backend
 identity when one is required.
@@ -177,6 +177,6 @@ cargo test -p openhuman-embed --features inference,mcp,skills --test harness_emb
 
 ## Further reading
 
-- [`gitbooks/developing/embedding.md`](../../../../gitbooks/developing/embedding.md): embedding the core in another product.
-- [`gitbooks/developing/architecture/agent-harness.md`](../../../../gitbooks/developing/architecture/agent-harness.md): the agent harness.
+- [`docs/gitbooks/en/developing/embedding.md`](../../../../docs/gitbooks/en/developing/embedding.md): embedding the core in another product.
+- [`docs/gitbooks/en/developing/architecture/agent-harness.md`](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md): the agent harness.
 - [`crates/openhuman-embed/README.md`](../../README.md): the openhuman-embed crate README.

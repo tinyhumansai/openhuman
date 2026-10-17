@@ -42,7 +42,6 @@ mod hooks;
 // Tool surface for live voice sessions (`voice::live`).
 #[cfg(feature = "voice")]
 mod live_tools;
-mod managed_tools;
 mod prefix_snapshot;
 mod recorded_tools;
 mod runtime;
@@ -57,6 +56,7 @@ mod turn;
 // harness-assembly site has to name it. It stays the one definition — the whole
 // point is that the in-loop conclusion and the out-of-band fallback ask for the
 // same thing.
+pub(crate) mod turn_backstop;
 pub(crate) mod turn_checkpoint;
 mod types;
 
@@ -76,8 +76,13 @@ mod artifact_wiring;
 #[cfg(test)]
 mod orphaned_head_resume_tests;
 #[cfg(test)]
+mod response_shape_turn_tests;
+#[cfg(test)]
 mod runtime_adapter_tests;
 #[cfg(test)]
 mod transcript_compat_tests;
+#[cfg(test)]
+#[path = "transcript_resume_stable_tests.rs"]
+mod transcript_resume_stable_tests;
 #[cfg(test)]
 mod typed_transcript_compat_tests;

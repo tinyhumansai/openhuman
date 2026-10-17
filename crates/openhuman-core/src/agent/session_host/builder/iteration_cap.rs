@@ -1,6 +1,6 @@
 //! The single resolution point for a turn's tool-iteration cap.
 
-use crate::agent::harness::definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::config::AgentConfig;
 
 /// The tool-iteration cap a turn built from `agent` runs under.

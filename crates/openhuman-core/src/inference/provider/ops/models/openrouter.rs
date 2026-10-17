@@ -2,19 +2,6 @@
 
 use super::*;
 
-pub fn is_openrouter_provider(
-    entry: &crate::config::schema::cloud_providers::CloudProviderCreds,
-) -> bool {
-    if entry.slug.eq_ignore_ascii_case("openrouter") {
-        return true;
-    }
-
-    reqwest::Url::parse(&entry.endpoint)
-        .ok()
-        .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
-        .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
-}
-
 pub(super) async fn validate_openrouter_api_key(
     client: &reqwest::Client,
     base: &str,

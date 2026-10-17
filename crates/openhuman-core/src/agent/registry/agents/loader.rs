@@ -29,12 +29,12 @@
 //! into the global registry, where they replace built-ins on `id`
 //! collision.
 
-use crate::agent::harness::definition::{
-    validate_tier_transition, AgentDefinition, AgentTier, DefinitionSource, PromptBuilder,
-    PromptSource, SubagentEntry,
-};
+use crate::agent::harness::host_definition::{AgentDefinition, PromptBuilder};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use tinyagents_definition::{
+    validate_tier_transition, AgentTier, DefinitionSource, PromptSource, SubagentEntry,
+};
 
 /// A single built-in agent: its id plus the metadata TOML and a
 /// function-driven prompt builder.
@@ -204,7 +204,7 @@ fn builtin_enabled(_b: &BuiltinAgent) -> bool {
 /// untouched: they name no agent, so there is no tier pair to check.
 ///
 /// Called from [`load_builtins`] for the bundled archetype set and from
-/// [`crate::agent::harness::definition::AgentDefinitionRegistry::load`]
+/// [`crate::agent::harness::host_definition::AgentDefinitionRegistry::load`]
 /// after workspace-local TOML overrides are merged, so custom user
 /// agents that violate the contract fail the boot rather than crashing
 /// at spawn time.
@@ -269,7 +269,8 @@ fn parse_builtin(b: &BuiltinAgent) -> Result<AgentDefinition> {
         .with_context(|| format!("parsing built-in agent `{}` TOML", b.id))?;
 
     // Install the function-driven prompt builder and stamp the source.
-    def.system_prompt = PromptSource::Dynamic(b.prompt_fn);
+    def.system_prompt = PromptSource::Dynamic(());
+    def.extensions.prompt_builder = Some(b.prompt_fn);
     def.source = DefinitionSource::Builtin;
 
     // Sanity check: file layout id must match declared TOML id. This

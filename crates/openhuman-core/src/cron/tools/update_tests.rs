@@ -110,7 +110,7 @@ fn cron_update_permission_level_is_execute() {
 
 #[tokio::test]
 async fn rejects_tightening_an_agent_job_below_five_minutes() {
-    use {tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget};
+    use {tinyflows_bus::schedule::types::Schedule, tinyflows_bus::schedule::types::SessionTarget};
 
     let tmp = TempDir::new().unwrap();
     let cfg = test_config(&tmp).await;

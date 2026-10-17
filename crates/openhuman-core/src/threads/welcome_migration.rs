@@ -15,6 +15,7 @@
 //! The migration is idempotent and guarded by a marker file under
 //! `state/migrations/`.
 
+use crate::core::runtime::DispatchCtx;
 use std::fs;
 use std::path::Path;
 
@@ -36,6 +37,7 @@ pub struct WelcomeMigrationResult {
 }
 
 pub fn migrate_welcome_agent_artifacts(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
 ) -> Result<WelcomeMigrationResult, String> {
     let marker = workspace_dir.join(MIGRATION_MARKER);
@@ -51,7 +53,7 @@ pub fn migrate_welcome_agent_artifacts(
     }
 
     let mut result = WelcomeMigrationResult::default();
-    let thread_result = migrate_welcome_thread_labels(workspace_dir)?;
+    let thread_result = migrate_welcome_thread_labels(ctx, workspace_dir)?;
     result.threads_updated = thread_result.threads_updated;
     let transcript_result = migrate_welcome_transcripts(workspace_dir)?;
     result.transcripts_updated = transcript_result.transcripts_updated;
@@ -84,6 +86,7 @@ struct ThreadLabelMigrationResult {
 }
 
 fn migrate_welcome_thread_labels(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
 ) -> Result<ThreadLabelMigrationResult, String> {
     log::debug!(
@@ -92,7 +95,7 @@ fn migrate_welcome_thread_labels(
         WELCOME_THREAD_LABEL
     );
 
-    let threads = conversations::list_threads(workspace_dir.to_path_buf())
+    let threads = conversations::list_threads(ctx, workspace_dir.to_path_buf())
         .map_err(|e| format!("[migration::welcome-to-orchestrator] list_threads failed: {e}"))?;
 
     let mut threads_updated = 0usize;
@@ -115,6 +118,7 @@ fn migrate_welcome_thread_labels(
 
         let updated_at = chrono::Utc::now().to_rfc3339();
         match conversations::update_thread_labels(
+            ctx,
             workspace_dir.to_path_buf(),
             &thread.id,
             new_labels,

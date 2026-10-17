@@ -53,7 +53,7 @@ pub struct TokenUsage {
 /// Attribution of one recorded model call (see [`TokenUsage::scope`]).
 ///
 /// Every field is optional: each is filled from what the recording site knows
-/// (`super::scope::UsageScope::ambient`), and a record from an older build
+/// (`super::scope::UsageScope::in_ctx`), and a record from an older build
 /// has none of them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsageScope {

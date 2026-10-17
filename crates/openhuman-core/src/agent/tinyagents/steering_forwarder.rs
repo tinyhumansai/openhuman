@@ -1,26 +1,26 @@
-//! Host adapter over the upstream abort-on-drop steering forwarder
-//! (`tinyagents_harness::run_queue::SteeringForwarderGuard`, issue #4456).
+//! Host seams for the runtime turn driver's steering (issue #4456).
 //!
-//! `run_turn_via_tinyagents_shared` bridges OpenHuman's session-owned
-//! [`RunQueue`] into a running TinyAgents turn by spawning a poll loop that
-//! drains queued **steer**/**collect** messages into the run's
-//! `SteeringHandle`. The loop, the drop-safe cleanup, and the residual-steer
-//! requeue are upstream; this module supplies the host seams:
+//! The turn driver bridges OpenHuman's session-owned [`RunQueue`] into a running
+//! turn: it drains queued **steer**/**collect** messages into the run's
+//! `SteeringHandle`, forwards mid-flight ones from a poll loop, and cleans up on
+//! every exit path (normal return, error, drop-cancellation), requeueing steers
+//! the run never applied. The loop is upstream; this module supplies the host
+//! seams:
 //!
 //! - [`QueuedMessage`] for [`QueuedTurn`] (text/id accessors and how a recovered
 //!   steer is re-created),
-//! - an event sink that publishes [`DomainEvent::RunQueueMessageDelivered`] /
+//! - [`queue_feed`], whose event sink publishes
+//!   [`DomainEvent::RunQueueMessageDelivered`] /
 //!   [`DomainEvent::RunQueueSteerRequeued`] on the event bus,
-//! - the cleanup hook that deregisters a sub-agent's handle from the shared
-//!   steering registry.
+//! - [`SharedSteeringRegistrar`], which publishes a sub-agent's handle in the
+//!   shared steering registry for `steer_subagent` and removes it afterwards.
 
 use std::sync::Arc;
 
 use tinyagents_harness::ids::TaskId;
-use tinyagents_harness::run_queue::{
-    self, ForwardEvent, ForwardEventSink, QueuedMessage, RunQueue, SteeringForwarderGuard,
-};
+use tinyagents_harness::run_queue::{ForwardEvent, ForwardEventSink, QueuedMessage, RunQueue};
 use tinyagents_harness::steering::SteeringHandle;
+use tinyagents_runtime::turn_driver::{RunQueueFeed, SteeringFeed, SteeringRegistrar};
 
 use crate::agent::queued_turn::{text_preview, QueuedTurn};
 use crate::core::bus::BUS;
@@ -81,45 +81,49 @@ fn event_bus_sink() -> ForwardEventSink {
     })
 }
 
-/// Drain the queue's pending **steer** messages into `handle` (pre-run drain
-/// and poll-loop body). See `tinyagents_harness::run_queue::forward_steers`.
-pub(super) async fn forward_steers(
-    queue: &RunQueue<QueuedTurn>,
-    handle: &SteeringHandle,
-    thread_label: &str,
-) {
-    run_queue::forward_steers(queue, handle, thread_label, &event_bus_sink()).await;
+/// The driver feed over the session's run queue.
+pub(super) fn queue_feed(queue: Arc<RunQueue<QueuedTurn>>) -> Arc<dyn SteeringFeed> {
+    Arc::new(RunQueueFeed::new(queue, event_bus_sink()))
 }
 
-/// Drain the queue's pending **collect** messages into `handle`. See
-/// `tinyagents_harness::run_queue::forward_collects`.
-pub(super) async fn forward_collects(
-    queue: &RunQueue<QueuedTurn>,
-    handle: &SteeringHandle,
-    thread_label: &str,
-) {
-    run_queue::forward_collects(queue, handle, thread_label, &event_bus_sink()).await;
+/// Publishes a delegated child's steering handle in the process-wide registry.
+pub(super) struct SharedSteeringRegistrar;
+
+impl SteeringRegistrar for SharedSteeringRegistrar {
+    fn register(&self, task_id: &str, handle: &SteeringHandle) {
+        shared_steering_registry().register(TaskId::new(task_id), handle.clone());
+        tracing::debug!(task_id, "[tinyagents] registered subagent steering handle");
+    }
+
+    fn deregister(&self, task_id: &str) {
+        shared_steering_registry().deregister(&TaskId::new(task_id));
+        tracing::debug!(
+            task_id,
+            "[tinyagents] deregistered subagent steering handle"
+        );
+    }
 }
 
-/// Arm the abort-on-drop guard. `registry_task_id` is `Some` for sub-agent runs
-/// (whose handle is registered in the shared steering registry and deregistered
-/// on every exit path) and `None` for the interactive parent turn.
-pub(super) fn arm_guard(
-    handle: SteeringHandle,
-    run_queue: Option<Arc<RunQueue<QueuedTurn>>>,
-    registry_task_id: Option<TaskId>,
-    thread_label: String,
-) -> SteeringForwarderGuard<QueuedTurn> {
-    let cleanup: Option<run_queue::ForwarderCleanup> = registry_task_id.map(|task_id| {
-        Box::new(move || {
-            shared_steering_registry().deregister(&task_id);
-            tracing::debug!(
-                task_id = task_id.as_str(),
-                "[tinyagents] deregistered subagent steering handle (guard drop)"
-            );
-        }) as run_queue::ForwarderCleanup
-    });
-    SteeringForwarderGuard::new(handle, run_queue, cleanup, thread_label, event_bus_sink())
+/// Best-effort thread label for the delivery/requeue observability events and
+/// the metadata on any requeued steer: a sub-agent uses its task id; the
+/// interactive/channel parent turn reads the turn origin.
+pub(super) fn thread_label(
+    subagent_scope: Option<&crate::agent::tinyagents::observability::SubagentScope>,
+    origin: Option<&crate::agent::turn_origin::AgentTurnOrigin>,
+) -> String {
+    subagent_scope
+        .map(|s| s.task_id.clone())
+        .or_else(|| match origin {
+            Some(crate::agent::turn_origin::AgentTurnOrigin::WebChat { thread_id, .. }) => {
+                Some(thread_id.clone())
+            }
+            Some(crate::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
+                reply_target,
+                ..
+            }) => Some(reply_target.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

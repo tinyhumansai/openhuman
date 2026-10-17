@@ -416,6 +416,7 @@ async fn flows_resume_continues_a_paused_run_to_completion() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -429,9 +430,16 @@ async fn flows_resume_continues_a_paused_run_to_completion() {
         serde_json::from_value(run.value["pending_approvals"].clone()).unwrap();
     assert_eq!(pending, vec!["gate".to_string()]);
 
-    let resumed = flows_resume(&config, &created.value.id, &thread_id, pending, vec![])
-        .await
-        .unwrap();
+    let resumed = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        pending,
+        vec![],
+    )
+    .await
+    .unwrap();
     assert_eq!(resumed.value["pending_approvals"], json!([]));
     assert!(
         !resumed.value["output"]["nodes"]["downstream"]["items"].is_null(),
@@ -473,6 +481,7 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -512,6 +521,7 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
     .unwrap();
 
     let error = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         &thread_id,
@@ -545,7 +555,15 @@ async fn flows_resume_refuses_when_the_graph_changed_after_park() {
 
     // A second resume attempt must not succeed either — the checkpoint was
     // dropped, and the row is now terminal, not `pending_approval`.
-    let second = flows_resume(&config, &created.value.id, &thread_id, pending, vec![]).await;
+    let second = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        pending,
+        vec![],
+    )
+    .await;
     assert!(
         second.is_err(),
         "a settled/refused run must not be resumable again"

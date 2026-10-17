@@ -3,26 +3,66 @@
 use std::{collections::HashMap, ffi::OsString, path::Path, time::Duration};
 
 #[cfg(feature = "modules")]
-use std::{collections::BTreeMap, ffi::OsStr};
+use std::collections::BTreeMap;
 
-use super::types::{SandboxExecResult, SandboxPolicy, SandboxStatus};
-use crate::{agent::platform_shell, config::Config};
+use super::types::{SandboxExecResult, SandboxIsolation, SandboxPolicy, SandboxStatus};
+use crate::config::Config;
 
 #[cfg(feature = "modules")]
 use crate::modules::tinybox::{self, contract};
 
-/// Report whether the selected module-owned jail can meet the host's security floor.
+/// TinyBox's macOS backend: `sandbox-exec` with a write-deny profile.
+#[cfg(any(feature = "modules", test))]
+const SEATBELT: &str = "seatbelt";
+
+/// The confinement a native jail gives a command, or `None` when the host must
+/// refuse to run it.
+///
+/// Untrusted code (an explicitly requested Landlock jail, a SaaS tenant) needs
+/// kernel process isolation. The local desktop sandbox only has to keep the
+/// agent inside the selected folder, which Seatbelt does by denying writes
+/// everywhere else, so it is accepted there as folder confinement.
+#[cfg(any(feature = "modules", test))]
+pub(crate) fn jail_isolation(
+    backend: &str,
+    available: bool,
+    suitable_for_untrusted_code: bool,
+    untrusted: bool,
+) -> Option<SandboxIsolation> {
+    if !available {
+        None
+    } else if suitable_for_untrusted_code {
+        Some(SandboxIsolation::Isolated)
+    } else if !untrusted && backend == SEATBELT {
+        Some(SandboxIsolation::FolderConfined)
+    } else {
+        None
+    }
+}
+
+/// Report what the selected module-owned jail provides for this host.
 #[cfg(feature = "modules")]
-pub(crate) async fn status(config: &Config) -> Result<(String, SandboxStatus), String> {
+pub(crate) async fn status(
+    config: &Config,
+) -> Result<(String, SandboxStatus, Option<SandboxIsolation>), String> {
     let status = tinybox::jail_status(config).await?;
+    let isolation = jail_isolation(
+        &status.backend,
+        status.available,
+        status.suitable_for_untrusted_code,
+        crate::core::runtime::is_saas(),
+    );
     Ok((
         status.backend,
-        super::ops::local_status_for_jail(status.available, status.suitable_for_untrusted_code),
+        super::ops::local_status_for_jail(isolation),
+        isolation,
     ))
 }
 
 #[cfg(not(feature = "modules"))]
-pub(crate) async fn status(_config: &Config) -> Result<(String, SandboxStatus), String> {
+pub(crate) async fn status(
+    _config: &Config,
+) -> Result<(String, SandboxStatus, Option<SandboxIsolation>), String> {
     Err("TinyBox module support is disabled; native jail status is unavailable".to_owned())
 }
 
@@ -32,7 +72,13 @@ pub(crate) async fn require_backend(config: &Config, expected: &str) -> anyhow::
     let status = tinybox::jail_status(config)
         .await
         .map_err(|_| anyhow::anyhow!("TinyBox native jail status is unavailable"))?;
-    if !status.available || !status.suitable_for_untrusted_code || status.backend != expected {
+    let isolation = jail_isolation(
+        &status.backend,
+        status.available,
+        status.suitable_for_untrusted_code,
+        true,
+    );
+    if isolation != Some(SandboxIsolation::Isolated) || status.backend != expected {
         anyhow::bail!("requested native jail backend is unavailable");
     }
     Ok(())
@@ -45,6 +91,7 @@ pub(crate) async fn require_backend(_config: &Config, _expected: &str) -> anyhow
 
 /// Run a command inside TinyBox's native jail and keep its resource lifecycle module-owned.
 pub(crate) async fn execute(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     policy: &SandboxPolicy,
     command: &str,
@@ -52,9 +99,11 @@ pub(crate) async fn execute(
     extra_env: &HashMap<OsString, OsString>,
     timeout: Duration,
     explicitly_requested: bool,
+    meter: Option<super::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<SandboxExecResult> {
     #[cfg(feature = "modules")]
     {
+        let ctx = ctx.clone();
         let config = config.clone();
         let policy = policy.clone();
         let command = command.to_owned();
@@ -63,6 +112,7 @@ pub(crate) async fn execute(
         // The worker owns cancellation and resource cleanup if the caller drops its wait.
         tokio::spawn(async move {
             execute_owned(
+                &ctx,
                 &config,
                 &policy,
                 &command,
@@ -70,6 +120,7 @@ pub(crate) async fn execute(
                 &extra_env,
                 timeout,
                 explicitly_requested,
+                meter,
             )
             .await
         })
@@ -79,6 +130,7 @@ pub(crate) async fn execute(
     #[cfg(not(feature = "modules"))]
     {
         let _ = (
+            ctx,
             config,
             policy,
             command,
@@ -86,95 +138,15 @@ pub(crate) async fn execute(
             extra_env,
             timeout,
             explicitly_requested,
+            meter,
         );
         anyhow::bail!("TinyBox module support is disabled; native jail execution is unavailable")
     }
 }
 
-/// Run a host-authorized command through TinyBox's supervised passthrough
-/// process lifecycle. This is used by cron, whose existing execution surface
-/// runs on the host rather than inside a jail.
-pub(crate) async fn execute_passthrough(
-    config: &Config,
-    command: &str,
-    working_dir: &Path,
-    timeout: Duration,
-) -> anyhow::Result<SandboxExecResult> {
-    #[cfg(feature = "modules")]
-    {
-        let config = config.clone();
-        let command = command.to_owned();
-        let working_dir = working_dir.to_path_buf();
-        tokio::spawn(async move {
-            execute_passthrough_owned(&config, &command, &working_dir, timeout).await
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox passthrough worker did not finish"))?
-    }
-    #[cfg(not(feature = "modules"))]
-    {
-        let _ = (config, command, working_dir, timeout);
-        anyhow::bail!("TinyBox module support is disabled; command execution is unavailable")
-    }
-}
-
-#[cfg(feature = "modules")]
-async fn execute_passthrough_owned(
-    config: &Config,
-    command: &str,
-    working_dir: &Path,
-    timeout: Duration,
-) -> anyhow::Result<SandboxExecResult> {
-    let resource = tinybox::reserve(config, contract::ReserveRequest::Resource)
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not reserve a command resource"))?;
-    let result = async {
-        let workspace = path_string(working_dir, "command working directory")?;
-        tinybox::create(
-            config,
-            contract::CreateRequest {
-                resource: resource.clone(),
-                backend: "passthrough".to_owned(),
-                host: contract::HostConfig::Local,
-                workspace: contract::Workspace::Directory(workspace),
-                // Cron's existing host command inherits network access; this
-                // passthrough resource does not add a sandbox restriction.
-                network: contract::NetworkPolicy::Open,
-                resources: contract::ResourceLimits::default(),
-                ports: Vec::new(),
-                env: BTreeMap::new(),
-            },
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not create a command resource"))?;
-
-        let request = shell_request(&resource, command, working_dir, BTreeMap::new(), true)?;
-        let process = tinybox::reserve(config, contract::ReserveRequest::Process(resource.clone()))
-            .await
-            .map_err(|_| anyhow::anyhow!("TinyBox could not reserve a command process"))?;
-        let process = tinybox::start_exec(
-            config,
-            contract::SpawnRequest {
-                process,
-                command: request,
-            },
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not start a command process"))?;
-        collect_process(config, process, timeout).await
-    }
-    .await;
-    let close = tinybox::close(config, resource).await;
-    match (result, close) {
-        (Ok(output), Ok(())) => Ok(output),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(_)) => anyhow::bail!("TinyBox did not acknowledge command cleanup"),
-        (Err(error), Err(_)) => Err(error),
-    }
-}
-
 #[cfg(feature = "modules")]
 async fn execute_owned(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     policy: &SandboxPolicy,
     command: &str,
@@ -182,255 +154,157 @@ async fn execute_owned(
     extra_env: &HashMap<OsString, OsString>,
     timeout: Duration,
     explicitly_requested: bool,
+    meter: Option<super::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<SandboxExecResult> {
     let status = tinybox::jail_status(config)
         .await
         .map_err(|_| anyhow::anyhow!("TinyBox native jail status is unavailable"))?;
-    if !status.available || !status.suitable_for_untrusted_code {
+    let untrusted = explicitly_requested || crate::core::runtime::is_saas();
+    let Some(isolation) = jail_isolation(
+        &status.backend,
+        status.available,
+        status.suitable_for_untrusted_code,
+        untrusted,
+    ) else {
         anyhow::bail!("TinyBox native jail cannot meet the required isolation floor");
-    }
+    };
     if explicitly_requested && status.backend != "landlock" {
         anyhow::bail!("requested Landlock sandbox is unavailable");
     }
-
-    let resource = tinybox::reserve(config, contract::ReserveRequest::Resource)
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not reserve a native jail resource"))?;
-    let result = async {
-        let workspace = path_string(&policy.workspace_root, "sandbox workspace")?;
-        tinybox::create(
-            config,
-            contract::CreateRequest {
-                resource: resource.clone(),
-                backend: "passthrough".to_owned(),
-                host: contract::HostConfig::Local,
-                workspace: contract::Workspace::Directory(workspace),
-                network: contract::NetworkPolicy::default(),
-                resources: contract::ResourceLimits::default(),
-                ports: Vec::new(),
-                env: BTreeMap::new(),
-            },
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not create a native jail resource"))?;
-
-        let scratch = super::ops::CallDir::create(
-            super::ops::sandbox_scratch_root(&policy.state_dir),
-            "scratch",
-        )?;
-        let (env, read_write) = execution_environment(policy, extra_env, &scratch.path)?;
-        let exec = shell_request(&resource, command, working_dir, env, false)?;
-        let jail = jail_request(policy, read_write)?;
-        let process = tinybox::reserve(config, contract::ReserveRequest::Process(resource.clone()))
-            .await
-            .map_err(|_| anyhow::anyhow!("TinyBox could not reserve a native jail process"))?;
-        let process = tinybox::start_jailed_exec(
-            config,
-            contract::SpawnRequest {
-                process,
-                command: exec,
-            },
-            jail,
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not start the native jailed process"))?;
-
-        collect_process(config, process, timeout).await
-    }
-    .await;
-    let close = tinybox::close(config, resource).await;
-    match (result, close) {
-        (Ok(output), Ok(())) => Ok(output),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(_)) => anyhow::bail!("TinyBox did not acknowledge native jail cleanup"),
-        (Err(error), Err(_)) => Err(error),
-    }
-}
-
-#[cfg(feature = "modules")]
-fn execution_environment(
-    policy: &SandboxPolicy,
-    extra_env: &HashMap<OsString, OsString>,
-    scratch: &Path,
-) -> anyhow::Result<(BTreeMap<String, String>, Vec<String>)> {
-    let mut env = BTreeMap::new();
-    for name in super::ops::SANDBOX_ENV_PASSTHROUGH {
-        if let Some(value) = std::env::var_os(name) {
-            env.insert(
-                (*name).to_owned(),
-                value
-                    .into_string()
-                    .map_err(|_| anyhow::anyhow!("sandbox environment is not UTF-8"))?,
-            );
-        }
-    }
-    for (name, value) in extra_env {
-        let name = name
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("sandbox environment name is not UTF-8"))?;
-        let value = value
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("sandbox environment value is not UTF-8"))?;
-        env.insert(name.to_owned(), value.to_owned());
-    }
-
-    let scratch = path_string(scratch, "sandbox scratch directory")?;
-    let read_write = policy
-        .read_write_mounts
-        .iter()
-        .map(|path| path_string(path, "read-write grant"))
-        .chain(std::iter::once(Ok(scratch.clone())))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    if !extra_env.contains_key(OsStr::new("TMPDIR")) {
-        env.insert("TMPDIR".to_owned(), scratch.clone());
-    }
-    if !extra_env.contains_key(OsStr::new("TEMP")) {
-        env.insert("TEMP".to_owned(), scratch.clone());
-    }
-    if !extra_env.contains_key(OsStr::new("TMP")) {
-        env.insert("TMP".to_owned(), scratch);
-    }
-    Ok((env, read_write))
-}
-
-#[cfg(feature = "modules")]
-fn shell_request(
-    resource: &contract::ResourceId,
-    command: &str,
-    working_dir: &Path,
-    env: BTreeMap<String, String>,
-    preserve_pipe_status: bool,
-) -> anyhow::Result<contract::ExecRequest> {
-    let shell = if preserve_pipe_status {
-        platform_shell::build_std_command_preserving_pipe_status(command)
-    } else {
-        platform_shell::build_std_command(command)
-    };
-    let program = shell
-        .get_program()
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("platform shell name is not UTF-8"))?;
-    let mut argv = vec![program.to_owned()];
-    argv.extend(
-        shell
-            .get_args()
-            .map(|arg| {
-                arg.to_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| anyhow::anyhow!("platform shell argument is not UTF-8"))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?,
+    tracing::debug!(
+        backend = %status.backend,
+        ?isolation,
+        "[sandbox:local] running in the native jail"
     );
-    Ok(contract::ExecRequest {
-        resource: resource.clone(),
-        argv,
-        cwd: Some(path_string(working_dir, "sandbox working directory")?),
-        env,
-        stdin: None,
-    })
+
+    let mut run =
+        super::shell_exec::NativeShellRun::new(command, working_dir, &policy.state_dir, timeout);
+    run.workspace = policy.workspace_root.clone();
+    run.env = approved_environment(extra_env)?;
+    // The jail's `allow_net` is what confines the command; keep the resource's
+    // declared policy in step with it.
+    run.isolate_network = !policy.allow_network;
+    run.meter = meter;
+    // TinyBox adds its own per-call scratch directory to the writable grants and
+    // points TMPDIR, TMP and TEMP at it unless the caller overrides them.
+    run.jail = Some(jail_request(config, policy, isolation)?);
+    super::shell_exec::run(ctx, config, run).await
+}
+
+/// The caller's environment overrides, which must be UTF-8 to cross the bus.
+#[cfg(feature = "modules")]
+fn approved_environment(
+    extra_env: &HashMap<OsString, OsString>,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    extra_env
+        .iter()
+        .map(|(name, value)| {
+            let name = name
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("sandbox environment name is not UTF-8"))?;
+            let value = value
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("sandbox environment value is not UTF-8"))?;
+            Ok((name.to_owned(), value.to_owned()))
+        })
+        .collect()
 }
 
 #[cfg(feature = "modules")]
 fn jail_request(
+    config: &Config,
     policy: &SandboxPolicy,
-    read_write: Vec<String>,
+    isolation: SandboxIsolation,
 ) -> anyhow::Result<contract::NativeJailConfig> {
+    let isolated = isolation == SandboxIsolation::Isolated;
     Ok(contract::NativeJailConfig {
         read_only: policy
             .read_only_mounts
             .iter()
             .map(|path| path_string(path, "read-only grant"))
             .collect::<anyhow::Result<Vec<_>>>()?,
-        read_write,
+        read_write: policy
+            .read_write_mounts
+            .iter()
+            .map(|path| path_string(path, "read-write grant"))
+            .collect::<anyhow::Result<Vec<_>>>()?,
         allow_net: policy.allow_network,
         allow_subprocess: true,
-        enforcement: contract::JailEnforcement::Enforced,
-        require_process_isolation: true,
-    })
-}
-
-#[cfg(feature = "modules")]
-async fn collect_process(
-    config: &Config,
-    process: contract::ProcessRef,
-    timeout: Duration,
-) -> anyhow::Result<SandboxExecResult> {
-    use contract::{ExecutionFailure, ExecutionState, OutputStream};
-
-    let deadline = tokio::time::Instant::now() + timeout;
-    let mut cursor = 0;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut requested_cancel = false;
-    let timed_out = loop {
-        if !requested_cancel && tokio::time::Instant::now() >= deadline {
-            tinybox::cancel(config, process.clone())
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!("TinyBox could not acknowledge process cancellation")
-                })?;
-            requested_cancel = true;
-        }
-        let batch = tinybox::read_output(config, process.clone(), cursor)
-            .await
-            .map_err(|_| anyhow::anyhow!("TinyBox could not read native jail output"))?;
-        if !batch.chunks.is_empty() && batch.next_sequence <= cursor {
-            anyhow::bail!("TinyBox returned an invalid native jail output cursor");
-        }
-        let has_chunks = !batch.chunks.is_empty();
-        let state = batch.state;
-        for chunk in batch.chunks {
-            match chunk.stream {
-                OutputStream::Stdout => stdout.extend_from_slice(&chunk.bytes),
-                OutputStream::Stderr => stderr.extend_from_slice(&chunk.bytes),
-            }
-        }
-        cursor = batch.next_sequence;
-        match state {
-            ExecutionState::Running => tokio::time::sleep(Duration::from_millis(20)).await,
-            ExecutionState::Exited { .. } if has_chunks => continue,
-            ExecutionState::Exited { exit_code } => {
-                tinybox::release_output(config, process)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("TinyBox could not release native jail output"))?;
-                return Ok(SandboxExecResult {
-                    exit_code,
-                    stdout: String::from_utf8_lossy(&stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
-                    timed_out: false,
-                });
-            }
-            ExecutionState::Cancelled if has_chunks => continue,
-            ExecutionState::Cancelled => break requested_cancel,
-            ExecutionState::Failed {
-                code: ExecutionFailure::CleanupFailed,
-            } => anyhow::bail!("TinyBox retained native process cleanup for retry"),
-            ExecutionState::Failed { .. } => {
-                anyhow::bail!("TinyBox native jailed execution failed")
-            }
-        }
-    };
-    tinybox::release_output(config, process)
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox could not release native jail output"))?;
-    Ok(SandboxExecResult {
-        exit_code: -1,
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: if timed_out {
-            format!("Command timed out after {}s", timeout.as_secs())
+        // Seatbelt enforces its profile best-effort; TinyBox still refuses a
+        // constraint it cannot apply at all.
+        enforcement: if isolated {
+            contract::JailEnforcement::Enforced
         } else {
-            String::from_utf8_lossy(&stderr).into_owned()
+            contract::JailEnforcement::Declared
         },
-        timed_out,
+        require_process_isolation: isolated,
+        // Landlock denies every path it is not granted; Seatbelt reads
+        // allow-default, so folder confinement names the credential stores:
+        // the user's, and OpenHuman's own credential files.
+        deny_read: if isolated {
+            Vec::new()
+        } else {
+            let home =
+                super::local_grants::grant_home(crate::core::runtime::is_saas(), dirs::home_dir);
+            let stores = home
+                .as_deref()
+                .map(crate::security::policy::home_credential_stores)
+                .unwrap_or_default()
+                .into_iter()
+                .chain(crate::security::credentials::credential_files(config))
+                .collect();
+            credential_denials(stores, &policy.workspace_root, &policy.read_write_mounts)?
+        },
     })
 }
 
-#[cfg(feature = "modules")]
-fn path_string(path: &Path, label: &str) -> anyhow::Result<String> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("{label} path is not UTF-8"))
+/// The credential `stores` a folder-confined jail must not read, as existing
+/// canonical paths (TinyBox drops absent ones anyway).
+///
+/// # Errors
+///
+/// Refuses the jail when its root or a writable grant sits inside a store:
+/// TinyBox cannot deny a store that holds the command's workspace, and running
+/// without that denial would leave the rest of the store readable. A store
+/// inside a grant is fine; Seatbelt carves it out.
+#[cfg(any(feature = "modules", test))]
+fn credential_denials(
+    stores: Vec<std::path::PathBuf>,
+    root: &Path,
+    read_write: &[std::path::PathBuf],
+) -> anyhow::Result<Vec<String>> {
+    let granted: Vec<std::path::PathBuf> = std::iter::once(root)
+        .chain(read_write.iter().map(std::path::PathBuf::as_path))
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
+    let mut denied = Vec::new();
+    for store in stores {
+        let Ok(real) = store.canonicalize() else {
+            continue;
+        };
+        if granted.iter().any(|path| path.starts_with(&real)) {
+            // The store's name only: the full path carries the user's login.
+            let name = store
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            tracing::warn!(
+                store = %name,
+                "[sandbox:local] refusing the folder-confined jail: its workspace or a writable grant is inside a credential store"
+            );
+            anyhow::bail!(
+                "the sandbox workspace or a writable folder is inside the credential store `{name}`; \
+                 choose a working folder outside it"
+            );
+        }
+        if let Some(real) = real.to_str() {
+            denied.push(real.to_owned());
+        }
+    }
+    Ok(denied)
 }
+
+#[cfg(feature = "modules")]
+use super::shell_exec::path_string;
 
 #[cfg(test)]
 #[path = "native_jail_tests.rs"]

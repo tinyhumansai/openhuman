@@ -4,8 +4,39 @@ import { persistLocalWalletFromMnemonic } from './setupLocalWalletFromMnemonic';
 
 const mockSetupLocalWallet = vi.fn();
 const mockEncryptSecret = vi.fn();
+const mockDeriveRecoveryMaterial = vi.fn();
+
+const canonicalSeed = Uint8Array.from(
+  '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4'.match(
+    /.{2}/g
+  ) ?? [],
+  byte => Number.parseInt(byte, 16)
+);
+const canonicalAccounts = [
+  {
+    chain: 'evm' as const,
+    address: '0x9858EfFD232B4033E47d90003D41EC34EcaEda94',
+    derivationPath: "m/44'/60'/0'/0/0",
+  },
+  {
+    chain: 'btc' as const,
+    address: '1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA',
+    derivationPath: "m/44'/0'/0'/0/0",
+  },
+  {
+    chain: 'solana' as const,
+    address: 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk',
+    derivationPath: "m/44'/501'/0'/0'",
+  },
+  {
+    chain: 'tron' as const,
+    address: 'TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH',
+    derivationPath: "m/44'/195'/0'/0/0",
+  },
+];
 
 vi.mock('../../services/walletApi', () => ({
+  deriveRecoveryMaterial: (...args: unknown[]) => mockDeriveRecoveryMaterial(...args),
   setupLocalWallet: (...args: unknown[]) => mockSetupLocalWallet(...args),
 }));
 
@@ -14,8 +45,12 @@ vi.mock('../../utils/tauriCommands/auth', () => ({
 }));
 
 describe('persistLocalWalletFromMnemonic', () => {
-  it('derives multi-chain wallet metadata and persists it after storing the AES key', async () => {
+  it('uses module-derived seed and accounts before persisting the wallet', async () => {
     const setEncryptionKey = vi.fn(async () => undefined);
+    mockDeriveRecoveryMaterial.mockResolvedValueOnce({
+      seed: new Uint8Array(canonicalSeed),
+      accounts: canonicalAccounts,
+    });
     mockSetupLocalWallet.mockResolvedValueOnce({
       configured: true,
       onboardingCompleted: true,
@@ -33,6 +68,10 @@ describe('persistLocalWalletFromMnemonic', () => {
 
     await persistLocalWalletFromMnemonic({ mnemonic, source: 'generated', setEncryptionKey });
 
+    expect(mockDeriveRecoveryMaterial).toHaveBeenCalledWith(
+      'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+    );
+
     expect(setEncryptionKey).toHaveBeenCalledWith(
       'dce707ee483afb0a70cb2e076295f9f914e0c62cc097895eabda1c0c1f2f0cb1'
     );
@@ -41,28 +80,7 @@ describe('persistLocalWalletFromMnemonic', () => {
       source: 'generated',
       mnemonicWordCount: 12,
       encryptedMnemonic: 'enc2:wallet-secret',
-      accounts: [
-        {
-          chain: 'evm',
-          address: '0x9858EfFD232B4033E47d90003D41EC34EcaEda94',
-          derivationPath: "m/44'/60'/0'/0/0",
-        },
-        {
-          chain: 'btc',
-          address: '1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA',
-          derivationPath: "m/44'/0'/0'/0/0",
-        },
-        {
-          chain: 'solana',
-          address: 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk',
-          derivationPath: "m/44'/501'/0'/0'",
-        },
-        {
-          chain: 'tron',
-          address: 'TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH',
-          derivationPath: "m/44'/195'/0'/0/0",
-        },
-      ],
+      accounts: canonicalAccounts,
     });
   });
 
@@ -77,12 +95,18 @@ describe('persistLocalWalletFromMnemonic', () => {
     expect(setEncryptionKey).not.toHaveBeenCalled();
     expect(mockEncryptSecret).not.toHaveBeenCalled();
     expect(mockSetupLocalWallet).not.toHaveBeenCalled();
+    expect(mockDeriveRecoveryMaterial).not.toHaveBeenCalled();
   });
 
   it('rejects empty encrypted mnemonic output before persisting wallet state', async () => {
     const setEncryptionKey = vi.fn(async () => undefined);
     mockSetupLocalWallet.mockReset();
     mockEncryptSecret.mockReset();
+    mockDeriveRecoveryMaterial.mockReset();
+    mockDeriveRecoveryMaterial.mockResolvedValueOnce({
+      seed: new Uint8Array(canonicalSeed),
+      accounts: canonicalAccounts,
+    });
     mockEncryptSecret.mockResolvedValueOnce({ result: '   ' });
 
     await expect(

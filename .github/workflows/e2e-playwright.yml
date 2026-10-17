@@ -67,7 +67,7 @@ jobs:
         run: |
           # Keep fixtures in a trusted tree and resolve their verified releases
           # from the same registry the product uses.
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          module_root="/root/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           bash scripts/ci/self-hosted/install-test-modules.sh \
             "$module_root" "$module_root/modules.env"
           cat "$module_root/modules.env" >> "$GITHUB_ENV"
@@ -84,6 +84,7 @@ jobs:
       - name: Run Playwright web E2E suite
         env:
           OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+          OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1"
         run: |
           mkdir -p "$OPENHUMAN_WORKSPACE"
           workspace_root="$OPENHUMAN_WORKSPACE"

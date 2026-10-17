@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    LegacySearchInputs, SearchConfig, SearchProviderSettings, SearchRoute, SEARCH_ENGINE_BRAVE,
+    LegacySearchInputs, ProviderRoute, SearchConfig, SearchProviderSettings, SEARCH_ENGINE_BRAVE,
     SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
     SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS, SEARCH_ROLE_SEARCH,
     SEARCH_SCHEMA_PROVIDERS, SEARCH_SCHEMA_VERSION,
@@ -46,7 +46,7 @@ impl SearchConfig {
         }
         let has_key = self.tinyfish.has_key();
         if let Some(settings) = self.providers.get_mut("tinyfish") {
-            settings.route = SearchRoute::Direct;
+            settings.route = ProviderRoute::Direct;
             if settings.enabled && !has_key {
                 tracing::info!(
                     "[config][migrate][search] TinyFish needs your own key now; turned it off"
@@ -65,11 +65,11 @@ impl SearchConfig {
     /// routed names until the turn aborted. Router and one-provider choices
     /// were never forced by a migration, so they are left alone.
     fn migrate_presentation_to_roles(&mut self) {
-        if self.presentation == super::SearchPresentation::AllTools {
+        if self.presentation == super::PresentationMode::AllTools {
             tracing::info!(
                 "[config][migrate][search] presentation all_tools -> roles (routed web tools)"
             );
-            self.presentation = super::SearchPresentation::Roles;
+            self.presentation = super::PresentationMode::Roles;
         }
     }
 
@@ -92,12 +92,15 @@ impl SearchConfig {
         let gemini_route = self
             .gemini_route
             .as_deref()
-            .and_then(SearchRoute::parse)
-            .unwrap_or(SearchRoute::Managed);
+            .and_then(ProviderRoute::parse)
+            .unwrap_or(ProviderRoute::Backend);
         let mut providers = BTreeMap::new();
         let parallel_key = self.parallel.has_key();
-        let managed_parallel = self.parallel_route.as_deref().and_then(SearchRoute::parse)
-            == Some(SearchRoute::Managed);
+        let managed_parallel = self
+            .parallel_route
+            .as_deref()
+            .and_then(ProviderRoute::parse)
+            == Some(ProviderRoute::Backend);
         let mut dropped_parallel = false;
 
         match self.enabled_providers.take() {
@@ -150,9 +153,9 @@ impl SearchConfig {
             }
             None => {
                 let exa_route = if engine == SEARCH_ENGINE_EXA && self.exa.has_key() {
-                    SearchRoute::Direct
+                    ProviderRoute::Direct
                 } else {
-                    SearchRoute::Managed
+                    ProviderRoute::Backend
                 };
                 providers.insert(
                     "exa".into(),
@@ -164,7 +167,7 @@ impl SearchConfig {
                 let gemini_route = if self.gemini.has_key() && self.gemini_route.is_some() {
                     gemini_route
                 } else {
-                    SearchRoute::Managed
+                    ProviderRoute::Backend
                 };
                 providers.insert(
                     "gemini".into(),

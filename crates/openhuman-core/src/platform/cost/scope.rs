@@ -2,30 +2,34 @@
 //!
 //! Usage is recorded deep in the agent loop, where no caller passes thread or
 //! agent ids down. They are already in scope as task-locals, though: the turn
-//! origin (thread, channel or job, bound on the turn's `CoreContext`), the memory identity (the agent definition
-//! acting) and the [`CoreContext`] (the embedded or SaaS user agent). The
-//! recording site adds what only it knows — the provider, and the sub-agent
-//! when a delegated child made the call.
+//! origin (thread, channel or job, bound on the turn's `CoreContext`) and the
+//! [`CoreContext`] (the embedded or SaaS user agent). The recording site adds
+//! what only it knows — the provider, the sub-agent when a delegated child made
+//! the call, and the agent definition acting when it holds the run
+//! ([`UsageScope::with_definition`]); the memory identity is not ambient.
 //!
 //! [`CoreContext`]: crate::core::runtime::CoreContext
 
 use crate::agent::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::core::runtime::DispatchCtx;
 
 use super::types::UsageScope;
 
 impl UsageScope {
-    /// The scope of the calling task, with `provider` and the sub-agent (its
-    /// definition and task id) supplied by the recording site.
-    pub fn ambient(provider: Option<&str>, subagent: Option<(&str, &str)>) -> Self {
-        let origin = crate::core::runtime::CoreContext::current_turn_origin();
+    /// The scope of a call running under `ctx`, with `provider` and the
+    /// sub-agent (its definition and task id) supplied by the recording site.
+    /// The user agent comes from `ctx`'s tenant, not from task state.
+    pub fn in_ctx(
+        ctx: &DispatchCtx,
+        provider: Option<&str>,
+        subagent: Option<(&str, &str)>,
+    ) -> Self {
+        let origin = ctx.turn_origin_or_scoped();
         let (thread_id, origin) = describe_origin(origin.as_ref());
-        let definition = crate::memory::scope::current().and_then(|identity| identity.agent_id);
-        let session_agent = crate::core::runtime::current_tenant()
-            .ok()
-            .and_then(|tenant| tenant.agent);
+        let session_agent = ctx.tenant().ok().and_then(|tenant| tenant.agent);
         let (agent_id, subagent_task_id) = match subagent {
             Some((agent, task)) => (Some(agent.to_string()), Some(task.to_string())),
-            None => (definition, None),
+            None => (None, None),
         };
         Self {
             thread_id,
@@ -35,6 +39,20 @@ impl UsageScope {
             session_agent,
             provider: provider.filter(|p| !p.is_empty()).map(str::to_owned),
         }
+    }
+}
+
+impl UsageScope {
+    /// This scope attributed to the agent definition `definition` acting,
+    /// unless a sub-agent already names the agent.
+    #[must_use]
+    pub fn with_definition(mut self, definition: Option<&str>) -> Self {
+        if self.agent_id.is_none() {
+            self.agent_id = definition
+                .filter(|definition| !definition.is_empty())
+                .map(str::to_owned);
+        }
+        self
     }
 }
 

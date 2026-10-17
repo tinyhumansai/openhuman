@@ -12,7 +12,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::agent::harness::host_definition::AgentDefinition;
+use tinyagents_definition::PromptSource;
 use tinyskills::Skill as Workflow;
 
 /// One declared input — a parameter the skill needs, with a human description.

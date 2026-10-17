@@ -13,8 +13,8 @@ fn recovered_steer_becomes_a_queued_turn_on_the_forwarders_thread() {
 }
 
 #[tokio::test]
-async fn forwarders_drain_their_lane_into_the_steering_handle() {
-    let queue = RunQueue::<QueuedTurn>::new();
+async fn the_feed_drains_both_lanes_into_the_steering_handle() {
+    let queue = Arc::new(RunQueue::<QueuedTurn>::new());
     queue
         .push(
             QueueLane::Steer,
@@ -28,21 +28,20 @@ async fn forwarders_drain_their_lane_into_the_steering_handle() {
         )
         .await;
     let handle = SteeringHandle::allow_all();
-    forward_steers(&queue, &handle, "t").await;
-    forward_collects(&queue, &handle, "t").await;
+    queue_feed(queue.clone()).prime(&handle, "t").await;
     assert_eq!(handle.drain().len(), 2);
     assert_eq!(queue.status().await.total, 0);
 }
 
-#[tokio::test]
-async fn arm_guard_deregisters_the_subagent_handle_on_drop() {
-    let task_id = TaskId::new("guard-task");
+#[test]
+fn the_registrar_publishes_and_removes_the_subagent_handle() {
+    let task_id = TaskId::new("registrar-task");
     let handle = SteeringHandle::allow_all();
-    shared_steering_registry().register(task_id.clone(), handle.clone());
-    let guard = arm_guard(handle, None, Some(task_id.clone()), "t".into());
-    drop(guard);
+    SharedSteeringRegistrar.register(task_id.as_str(), &handle);
+    assert!(shared_steering_registry().get(&task_id).is_some());
+    SharedSteeringRegistrar.deregister(task_id.as_str());
     assert!(
         shared_steering_registry().get(&task_id).is_none(),
-        "the guard must deregister the sub-agent handle"
+        "deregister must remove the sub-agent handle"
     );
 }

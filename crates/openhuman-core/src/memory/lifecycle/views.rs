@@ -8,7 +8,7 @@ use tinymemory_tools::{ContextPack, SessionStart};
 use crate::config::schema::MemoryRecallConfig;
 use crate::config::Config;
 use crate::memory::error::{MemoryError, MemoryResult};
-use crate::memory::scope;
+use crate::memory::scope::{self, MemoryIdentity};
 
 use super::jobs::{self, JobQueue, JobRun, Selection};
 
@@ -163,9 +163,11 @@ pub struct PackPreviewView {
 /// (without one) would be given. Reads only; nothing is logged.
 pub async fn pack_preview(
     config: &Config,
+    identity: &MemoryIdentity,
     params: PackPreviewParams,
 ) -> MemoryResult<PackPreviewView> {
-    let (memory, identity) = super::named_agent_memory(config, params.agent_id.as_deref())?;
+    let (memory, identity) =
+        super::named_agent_memory(config, identity, params.agent_id.as_deref())?;
     let query = params.query.filter(|query| !query.trim().is_empty());
     let (mode, pack) = match query {
         Some(query) => ("turn", memory.recall(&query).await?),
@@ -207,8 +209,8 @@ pub struct AgentsView {
 }
 
 /// `memory_agents_list`: the agents with conversations under the root.
-pub async fn agents_list(config: &Config) -> MemoryResult<AgentsView> {
-    let (memory, identity) = super::current_agent_memory(config)?;
+pub async fn agents_list(config: &Config, identity: &MemoryIdentity) -> MemoryResult<AgentsView> {
+    let (memory, identity) = super::current_agent_memory(config, identity)?;
     let page = memory
         .engine()
         .explore(ExploreRequest {

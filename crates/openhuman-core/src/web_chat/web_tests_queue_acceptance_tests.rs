@@ -1,9 +1,11 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 use serde_json::json;
 
 async fn start_parked_turn(thread_id: &str, block: &TestRunChatTaskBlock) -> String {
     let request_id = start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "queue-test-client",
         thread_id,
         "primary turn",
@@ -22,6 +24,7 @@ async fn start_parked_turn(thread_id: &str, block: &TestRunChatTaskBlock) -> Str
 
 async fn queue_message(thread_id: &str, text: &str, mode: &str) -> serde_json::Value {
     let response = start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "queue-test-client",
         thread_id,
         text,
@@ -37,9 +40,14 @@ async fn queue_message(thread_id: &str, text: &str, mode: &str) -> serde_json::V
 }
 
 async fn cancel_parked_turn(thread_id: &str, block: &TestRunChatTaskBlock) {
-    cancel_chat_scoped("queue-test-client", thread_id, None)
-        .await
-        .expect("parked turn should cancel");
+    cancel_chat_scoped(
+        &DispatchCtx::ambient(),
+        "queue-test-client",
+        thread_id,
+        None,
+    )
+    .await
+    .expect("parked turn should cancel");
     wait_for_in_flight(|entries| !entries.iter().any(|(key, _)| key == thread_id)).await;
     wait_for_flag(&block.dropped, "parked turn dropped during cleanup").await;
     set_test_run_chat_task_block(None).await;
@@ -59,7 +67,12 @@ async fn web_queue_retains_typed_queued_turn_metadata() {
 
     // This drains the actual in-flight host queue, not a standalone
     // RunQueue<String>, proving the concrete public DTO survives admission.
-    let queued = drain_queued_turns_for_test(thread_id, QueueLane::Followup).await;
+    let queued = drain_queued_turns_for_test(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread_id,
+        QueueLane::Followup,
+    )
+    .await;
     assert_eq!(queued.len(), 1);
     let queued = &queued[0];
     assert_eq!(queued.text, "defer this exact payload");
@@ -82,6 +95,7 @@ async fn interrupt_and_parallel_bypass_the_active_turn_queue() {
     let initial_request_id = start_parked_turn(thread_id, &block).await;
 
     let replacement_request_id = start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "queue-test-client",
         thread_id,
         "replace the active turn",
@@ -102,6 +116,7 @@ async fn interrupt_and_parallel_bypass_the_active_turn_queue() {
     .await;
 
     start_chat(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "queue-test-client",
         thread_id,
         "run alongside the replacement",
@@ -115,7 +130,7 @@ async fn interrupt_and_parallel_bypass_the_active_turn_queue() {
     .expect("parallel should start a forked turn");
     wait_for_parallel(|entries| entries.iter().any(|(_, key)| key == thread_id)).await;
 
-    let status = channel_web_queue_status(thread_id)
+    let status = channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
         .await
         .expect("queue status should be available");
     assert_eq!(status.value["request_id"], replacement_request_id);
@@ -174,7 +189,7 @@ async fn cancellation_discards_pending_lanes_before_a_replacement_turn() {
         assert_eq!(queue_message(thread_id, text, mode).await["queued"], true);
     }
     assert_eq!(
-        channel_web_queue_status(thread_id)
+        channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
             .await
             .expect("queued status should be available")
             .value["total"],
@@ -183,9 +198,14 @@ async fn cancellation_discards_pending_lanes_before_a_replacement_turn() {
 
     // Exercise the RPC-facing cancellation path used by the host, rather than
     // reaching into the queue or clearing it first.
-    let cancelled = channel_web_cancel("queue-test-client", thread_id, Some(&cancelled_request_id))
-        .await
-        .expect("host cancellation should succeed");
+    let cancelled = channel_web_cancel(
+        &DispatchCtx::ambient(),
+        "queue-test-client",
+        thread_id,
+        Some(&cancelled_request_id),
+    )
+    .await
+    .expect("host cancellation should succeed");
     assert_eq!(cancelled.value["cancelled"], true);
     assert_eq!(cancelled.value["request_id"], cancelled_request_id);
     wait_for_in_flight(|entries| !entries.iter().any(|(key, _)| key == thread_id)).await;
@@ -203,19 +223,31 @@ async fn cancellation_discards_pending_lanes_before_a_replacement_turn() {
     set_test_run_chat_task_block(Some(replacement_block.clone())).await;
     let replacement_request_id = start_parked_turn(thread_id, &replacement_block).await;
     assert_ne!(replacement_request_id, cancelled_request_id);
-    let replacement = channel_web_queue_status(thread_id)
+    let replacement = channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
         .await
         .expect("replacement queue status should be available");
     assert_eq!(replacement.value["total"], 0);
-    assert!(drain_queued_turns_for_test(thread_id, QueueLane::Followup)
-        .await
-        .is_empty());
-    assert!(drain_queued_turns_for_test(thread_id, QueueLane::Steer)
-        .await
-        .is_empty());
-    assert!(drain_queued_turns_for_test(thread_id, QueueLane::Collect)
-        .await
-        .is_empty());
+    assert!(drain_queued_turns_for_test(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread_id,
+        QueueLane::Followup
+    )
+    .await
+    .is_empty());
+    assert!(drain_queued_turns_for_test(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread_id,
+        QueueLane::Steer
+    )
+    .await
+    .is_empty());
+    assert!(drain_queued_turns_for_test(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread_id,
+        QueueLane::Collect
+    )
+    .await
+    .is_empty());
 
     cancel_parked_turn(thread_id, &replacement_block).await;
 }
@@ -236,7 +268,7 @@ async fn web_queue_status_wire_shape_and_clear_cleanup_remain_stable() {
         assert_eq!(queue_message(thread_id, text, mode).await["queued"], true);
     }
 
-    let active = channel_web_queue_status(thread_id)
+    let active = channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
         .await
         .expect("active queue status should be available");
     let active_json = active
@@ -282,7 +314,7 @@ async fn web_queue_status_wire_shape_and_clear_cleanup_remain_stable() {
             .ends_with("payload"));
     }
 
-    let cleared = channel_web_queue_clear(thread_id)
+    let cleared = channel_web_queue_clear(&DispatchCtx::ambient(), thread_id)
         .await
         .expect("queue clear should be available");
     assert_eq!(
@@ -295,7 +327,7 @@ async fn web_queue_status_wire_shape_and_clear_cleanup_remain_stable() {
         })
     );
     assert_eq!(
-        channel_web_queue_status(thread_id)
+        channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
             .await
             .expect("empty queue status should be available")
             .into_cli_compatible_json()
@@ -317,7 +349,7 @@ async fn web_queue_status_wire_shape_and_clear_cleanup_remain_stable() {
 
     cancel_parked_turn(thread_id, &block).await;
     assert_eq!(
-        channel_web_queue_status(thread_id)
+        channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
             .await
             .expect("inactive queue status should be available")
             .into_cli_compatible_json()
@@ -356,7 +388,7 @@ async fn web_queue_remove_retracts_one_item_and_emits_event() {
         true
     );
 
-    let status = channel_web_queue_status(thread_id)
+    let status = channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
         .await
         .expect("status")
         .into_cli_compatible_json()
@@ -371,11 +403,16 @@ async fn web_queue_remove_retracts_one_item_and_emits_event() {
         .expect("id")
         .to_string();
 
-    let removed = channel_web_queue_remove("queue-test-client", thread_id, &target_id)
-        .await
-        .expect("remove")
-        .into_cli_compatible_json()
-        .expect("remove json");
+    let removed = channel_web_queue_remove(
+        &DispatchCtx::ambient(),
+        "queue-test-client",
+        thread_id,
+        &target_id,
+    )
+    .await
+    .expect("remove")
+    .into_cli_compatible_json()
+    .expect("remove json");
     assert_eq!(
         removed,
         json!({
@@ -388,7 +425,7 @@ async fn web_queue_remove_retracts_one_item_and_emits_event() {
         })
     );
 
-    let status_after = channel_web_queue_status(thread_id)
+    let status_after = channel_web_queue_status(&DispatchCtx::ambient(), thread_id)
         .await
         .expect("status after remove")
         .into_cli_compatible_json()
@@ -398,11 +435,16 @@ async fn web_queue_remove_retracts_one_item_and_emits_event() {
     assert_eq!(items_after[0]["lane"], "followup");
 
     // Removing an id that no longer exists is a no-op, not an error.
-    let removed_again = channel_web_queue_remove("queue-test-client", thread_id, &target_id)
-        .await
-        .expect("remove again")
-        .into_cli_compatible_json()
-        .expect("remove again json");
+    let removed_again = channel_web_queue_remove(
+        &DispatchCtx::ambient(),
+        "queue-test-client",
+        thread_id,
+        &target_id,
+    )
+    .await
+    .expect("remove again")
+    .into_cli_compatible_json()
+    .expect("remove again json");
     assert_eq!(removed_again["result"]["removed"], false);
 
     cancel_parked_turn(thread_id, &block).await;
@@ -430,7 +472,9 @@ async fn chat_done_is_published_only_after_the_in_flight_slot_is_released() {
         event.event == "chat_done" && event.request_id == request_id
     };
 
-    let held = crate::web_chat::ops::in_flight().lock_owned().await;
+    let held = crate::web_chat::ops::in_flight(&crate::core::runtime::DispatchCtx::ambient())
+        .lock_owned()
+        .await;
     block.release.notify_one();
     let early = timeout(Duration::from_millis(500), async {
         loop {
@@ -460,7 +504,7 @@ async fn chat_done_is_published_only_after_the_in_flight_slot_is_released() {
     .await
     .expect("chat_done after the slot is released");
     assert!(
-        !in_flight_entries_for_test()
+        !in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient())
             .await
             .iter()
             .any(|(key, _)| key == thread_id),

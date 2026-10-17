@@ -1,20 +1,20 @@
 //! RPC accessors over persisted in-flight turn snapshots.
 
 use super::support::{counts, envelope, workspace_dir};
+use crate::agent::session_store::turn_states_for;
 use crate::core::Outcome;
 use crate::threads::turn_state::{
     ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateForRequestRequest,
     GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
 use crate::threads::{ApiEnvelope, EmptyRequest};
-use tinyagents_session::turn_state;
 
 /// Returns the persisted in-flight turn snapshot for a thread, if any.
 pub async fn turn_state_get(
     request: GetTurnStateRequest,
 ) -> Result<Outcome<ApiEnvelope<GetTurnStateResponse>>, String> {
     let dir = workspace_dir().await?;
-    let turn_state = turn_state::store::get(dir, &request.thread_id)?;
+    let turn_state = turn_states_for(&dir).get(&request.thread_id)?;
     let present = turn_state.is_some();
     Ok(envelope(
         GetTurnStateResponse { turn_state },
@@ -29,7 +29,7 @@ pub async fn turn_state_list(
     _request: EmptyRequest,
 ) -> Result<Outcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
     let dir = workspace_dir().await?;
-    let turn_states = turn_state::store::list(dir)?;
+    let turn_states = turn_states_for(&dir).list()?;
     let count = turn_states.len();
     Ok(envelope(
         ListTurnStatesResponse { turn_states, count },
@@ -44,7 +44,7 @@ pub async fn turn_state_history(
     request: GetTurnStateRequest,
 ) -> Result<Outcome<ApiEnvelope<ListTurnStatesResponse>>, String> {
     let dir = workspace_dir().await?;
-    let turn_states = turn_state::store::list_thread(dir, &request.thread_id)?;
+    let turn_states = turn_states_for(&dir).list_thread(&request.thread_id)?;
     let count = turn_states.len();
     Ok(envelope(
         ListTurnStatesResponse { turn_states, count },
@@ -60,7 +60,7 @@ pub async fn turn_state_get_turn(
     request: GetTurnStateForRequestRequest,
 ) -> Result<Outcome<ApiEnvelope<GetTurnStateResponse>>, String> {
     let dir = workspace_dir().await?;
-    let turn_state = turn_state::store::get_turn(dir, &request.thread_id, &request.request_id)?;
+    let turn_state = turn_states_for(&dir).get_turn(&request.thread_id, &request.request_id)?;
     let present = turn_state.is_some();
     Ok(envelope(
         GetTurnStateResponse { turn_state },
@@ -75,6 +75,6 @@ pub async fn turn_state_clear(
     request: ClearTurnStateRequest,
 ) -> Result<Outcome<ApiEnvelope<ClearTurnStateResponse>>, String> {
     let dir = workspace_dir().await?;
-    let cleared = turn_state::store::delete(dir, &request.thread_id)?;
+    let cleared = turn_states_for(&dir).delete(&request.thread_id)?;
     Ok(envelope(ClearTurnStateResponse { cleared }, None, None))
 }

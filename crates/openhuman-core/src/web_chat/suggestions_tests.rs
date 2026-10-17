@@ -123,6 +123,7 @@ async fn emits_chat_suggestions_for_a_well_formed_reply() {
 
     let thread_id = "sugg-thread-ok";
     generate_and_emit(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "client-1",
         thread_id,
         "req-1",
@@ -150,6 +151,7 @@ async fn drops_silently_when_the_model_returns_garbage() {
 
     let thread_id = "sugg-thread-garbage";
     generate_and_emit(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "client-1",
         thread_id,
         "req-2",
@@ -173,6 +175,7 @@ async fn skips_when_the_user_message_is_too_short() {
     }));
 
     generate_and_emit(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "client-1",
         "sugg-thread-short",
         "req-3",

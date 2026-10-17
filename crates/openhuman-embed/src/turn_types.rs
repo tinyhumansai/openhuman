@@ -8,7 +8,7 @@ mod usage_tests;
 /// Overlay root provider accounting while retaining session context and children.
 pub(super) fn overlay_response_usage(
     captured: &mut Option<openhuman_core::agent::tinyagents::host::LastTurnUsage>,
-    reported: &openhuman_core::agent::tinyagents::response_shape::ResponseUsage,
+    reported: &tinyagents_harness::middleware::ResponseUsage,
 ) {
     let usage = captured.get_or_insert_with(Default::default);
     // A session may have a legitimate catalog estimate when every provider
@@ -16,7 +16,7 @@ pub(super) fn overlay_response_usage(
     let preserve_host_cost = reported.cost_usd.is_none() && !reported.has_cost_receipt;
     let host_cost = usage.cost_usd;
     let host_source = usage.cost_source;
-    let root = reported.failure_usage();
+    let root = openhuman_core::agent::turn_projection::failure_usage(reported);
     usage.input_tokens = root.input_tokens;
     usage.output_tokens = root.output_tokens;
     usage.cached_input_tokens = root.cached_input_tokens;
@@ -241,4 +241,9 @@ pub struct TurnOutcome {
     /// The model the provider says answered the final call. `None` when the
     /// provider did not say, or on a caller-built runtime's orchestrator.
     pub answered_model: Option<String>,
+    /// Messages sent through [`Turn::steering_handle`](crate::Turn::steering_handle)
+    /// that the turn ended without applying, in the order they were sent. The
+    /// turn's reply never saw them; run them as the next turn if they still
+    /// matter. Empty when every steer was applied or none was sent.
+    pub unapplied_steers: Vec<String>,
 }

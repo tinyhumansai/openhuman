@@ -112,7 +112,11 @@ async fn fifo_attachment_is_rejected_without_waiting_for_a_writer() {
     config.action_dir = temp.path().to_path_buf();
     config.workspace_dir = temp.path().join("internal");
     let model = Arc::new(NeverCalled::default());
-    let wrapped = wrap_injected(model.clone(), Arc::new(config));
+    let wrapped = wrap_injected(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        model.clone(),
+        Arc::new(config),
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Image(ImageRef {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{SearchEngineCredentials, SearchPresentation, SearchProviderSettings};
+use crate::config::{PresentationMode, SearchEngineCredentials, SearchProviderSettings};
 use tinysearch_bus::Role;
 
 fn deployment(exa: Option<&str>, gemini: Option<&str>) -> crate::core::runtime::SaasConfig {
@@ -118,7 +118,7 @@ fn rejects_managed_routes_extra_providers_and_provider_native_presentation() {
         .insert("brave".into(), SearchProviderSettings::direct());
     assert!(ProfileProviderSettings::from_saas(&extra).is_err());
     let mut native = deployment(Some("key"), None);
-    native.search.as_mut().unwrap().presentation = SearchPresentation::AllTools;
+    native.search.as_mut().unwrap().presentation = PresentationMode::AllTools;
     assert!(ProfileProviderSettings::from_saas(&native).is_err());
 }
 

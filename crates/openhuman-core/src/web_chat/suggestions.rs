@@ -34,11 +34,10 @@ use serde::Deserialize;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::ModelRequest;
 
-use crate::config::rpc as config_rpc;
 use crate::inference::provider;
 use crate::web_chat::{ChatSuggestion, WebChannelEvent};
 
-use super::publish_web_channel_event;
+use super::publish_web_channel_event_in;
 
 /// Upper bound on the whole suggestions round-trip. A cheap `summarization`
 /// role call should complete in well under this; if it doesn't, the turn has
@@ -78,6 +77,7 @@ struct RawSuggestion {
 /// to be called immediately after the turn's terminal `chat_done` has been
 /// published — see module docs for why this never delays that event.
 pub(crate) fn spawn_follow_up_suggestions(
+    ctx: crate::core::runtime::DispatchCtx,
     client_id: String,
     thread_id: String,
     request_id: String,
@@ -87,6 +87,7 @@ pub(crate) fn spawn_follow_up_suggestions(
     tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
         async move {
             generate_and_emit(
+                &ctx,
                 &client_id,
                 &thread_id,
                 &request_id,
@@ -99,6 +100,7 @@ pub(crate) fn spawn_follow_up_suggestions(
 }
 
 async fn generate_and_emit(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: &str,
@@ -115,7 +117,7 @@ async fn generate_and_emit(
         return;
     }
 
-    let config = match config_rpc::load_config_with_timeout().await {
+    let config = match ctx.load_config().await {
         Ok(c) => c,
         Err(err) => {
             log::debug!(
@@ -135,7 +137,7 @@ async fn generate_and_emit(
     }
 
     let (chat_model, resolved_model) =
-        match provider::create_chat_model_with_model_id("summarization", &config, 0.2) {
+        match provider::create_chat_model_with_model_id_in(ctx, "summarization", &config, 0.2) {
             Ok(resolved) => resolved,
             Err(error) => {
                 log::debug!(
@@ -187,14 +189,17 @@ async fn generate_and_emit(
          request_id={request_id} count={}",
         suggestions.len()
     );
-    publish_web_channel_event(WebChannelEvent {
-        event: "chat_suggestions".to_string(),
-        client_id: client_id.to_string(),
-        thread_id: thread_id.to_string(),
-        turn_request_id: Some(request_id.to_string()),
-        suggestions: Some(suggestions),
-        ..Default::default()
-    });
+    publish_web_channel_event_in(
+        ctx,
+        WebChannelEvent {
+            event: "chat_suggestions".to_string(),
+            client_id: client_id.to_string(),
+            thread_id: thread_id.to_string(),
+            turn_request_id: Some(request_id.to_string()),
+            suggestions: Some(suggestions),
+            ..Default::default()
+        },
+    );
 }
 
 fn build_suggestions_request(user_message: &str, assistant_message: &str) -> ModelRequest {

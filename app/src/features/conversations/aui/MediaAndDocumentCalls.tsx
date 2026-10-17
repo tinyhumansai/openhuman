@@ -15,8 +15,8 @@ import { useAppSelector } from '../../../store/hooks';
  * (`crates/openhuman-core/src/media/generation/tools.rs`) per the
  * fe-brief's wire contract: an array of produced artifacts. `path` is a
  * local, core-served file (opened through the existing artifact
- * download/serve path — see `services/artifactDownloadService.ts` and
- * `ChatFilesPanel`); `source_url` is used directly when the artifact is
+ * download/serve path — see `services/artifactDownloadService.ts`);
+ * `source_url` is used directly when the artifact is
  * already externally hosted.
  */
 interface MediaArtifact {

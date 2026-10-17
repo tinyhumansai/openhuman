@@ -3,7 +3,7 @@
 //! Adapts two OpenHuman domains onto
 //! [`tinyagents_harness::host::DefinitionRegistry`]:
 //!
-//! * [`crate::agent::harness::definition::AgentDefinitionRegistry`] —
+//! * [`crate::agent::harness::host_definition::AgentDefinitionRegistry`] —
 //!   the harness registry of built-in ([`load_builtins`](crate::agent::registry::agents::load_builtins)-parsed
 //!   `agent.toml`)
 //!   and workspace-override agent definitions, plus the config-backed
@@ -31,7 +31,7 @@
 //! `AgentDefinition::subagents` is only what an agent *declares*;
 //! `delegates_for` must return the **authorized** set. OpenHuman's authority is
 //! the tier hierarchy, so `delegates_for` applies
-//! [`validate_tier_transition`](crate::agent::harness::definition::validate_tier_transition)
+//! [`validate_tier_transition`](tinyagents_definition::validate_tier_transition)
 //! — the same single source of truth
 //! [`validate_tier_hierarchy`](crate::agent::registry::agents::validate_tier_hierarchy) walks at boot — per declared pair. A `Worker`
 //! parent yields an empty list; a tier-illegal child is dropped. Unknown child
@@ -58,13 +58,13 @@ use async_trait::async_trait;
 use tinyagents_definition::Result;
 use tinyagents_definition::{AgentDefinition, DefinitionRegistry};
 
-use crate::agent::harness::definition::NO_TOOLS_SENTINEL;
-use crate::agent::harness::definition::{
-    AgentDefinition as HostAgentDefinition, AgentDefinitionRegistry, AgentTier, ModelSpec,
-    SubagentEntry, ToolScope,
+use crate::agent::harness::host_definition::NO_TOOLS_SENTINEL;
+use crate::agent::harness::host_definition::{
+    AgentDefinition as HostAgentDefinition, AgentDefinitionRegistry,
 };
 use crate::agent::registry::{definition_from_registry_entry, find_custom_in_config};
 use crate::config::Config;
+use tinyagents_definition::{AgentTier, ToolScope};
 
 // ── Registry handle ───────────────────────────────────────────────────────────
 
@@ -286,13 +286,10 @@ impl OpenHumanDefinitionRegistry {
             // The definition's validated tier is the host assertion the model
             // resolver consumes for workload routing.
             role: Some(def.agent_tier.to_string()),
-            agent_tier: match def.agent_tier {
-                AgentTier::Chat => tinyagents_definition::AgentTier::Chat,
-                AgentTier::Reasoning => tinyagents_definition::AgentTier::Reasoning,
-                AgentTier::Worker => tinyagents_definition::AgentTier::Worker,
-            },
-            model: model_for(&def.model),
-            subagents: declared_subagent_ids(def)
+            agent_tier: def.agent_tier,
+            model: def.model.clone(),
+            subagents: def
+                .allowed_subagent_ids()
                 .into_iter()
                 .map(tinyagents_definition::SubagentEntry::AgentId)
                 .collect(),
@@ -316,10 +313,7 @@ impl OpenHumanDefinitionRegistry {
         match &def.tools {
             ToolScope::Named(named) => {
                 let mut names = named.clone();
-                if named
-                    .iter()
-                    .any(|name| name == crate::tools::implementations::meta::TOOL_SEARCH_NAME)
-                {
+                if named.iter().any(|name| name == tinytools::TOOL_SEARCH_NAME) {
                     if let Some(deferred) = self.deferred_tools.as_deref() {
                         names.extend(deferred.iter().cloned());
                     }
@@ -407,7 +401,7 @@ impl OpenHumanDefinitionRegistry {
 
     /// Tier-checked delegate ids for `def`.
     ///
-    /// Reuses [`crate::agent::harness::definition::validate_tier_transition`]
+    /// Reuses [`tinyagents_definition::validate_tier_transition`]
     /// — the single source of truth [`validate_tier_hierarchy`](crate::agent::registry::agents::validate_tier_hierarchy) walks at boot —
     /// so this seam can never disagree with the host's boot-time validation.
     fn authorized_delegates(&self, def: &HostAgentDefinition) -> Vec<String> {
@@ -418,7 +412,7 @@ impl OpenHumanDefinitionRegistry {
         }
 
         let mut out = Vec::new();
-        for id in declared_subagent_ids(def) {
+        for id in def.allowed_subagent_ids() {
             let Some(child) = self.host_definition(&id) else {
                 // Unknown child: `validate_tier_hierarchy` `continue`s past it
                 // rather than failing, and the trait explicitly allows an
@@ -426,10 +420,8 @@ impl OpenHumanDefinitionRegistry {
                 out.push(id);
                 continue;
             };
-            match crate::agent::harness::definition::validate_tier_transition(
-                def.agent_tier,
-                child.agent_tier,
-            ) {
+            match tinyagents_definition::validate_tier_transition(def.agent_tier, child.agent_tier)
+            {
                 Ok(()) => out.push(id),
                 Err(reason) => {
                     tracing::warn!(
@@ -450,31 +442,6 @@ impl OpenHumanDefinitionRegistry {
 }
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
-
-/// Declared subagent **agent ids** only.
-///
-/// [`SubagentEntry::Skills`] entries are skipped: they are a wildcard that
-/// expands to searchable integration actions, not an agent the parent may
-/// address by id.
-fn declared_subagent_ids(def: &HostAgentDefinition) -> Vec<String> {
-    def.subagents
-        .iter()
-        .filter_map(|entry| match entry {
-            SubagentEntry::AgentId(id) => Some(id.clone()),
-            SubagentEntry::Skills(_) => None,
-        })
-        .collect()
-}
-
-/// Preserves inherited routing, concrete model pins and routing hints in the
-/// provider-neutral definition vocabulary.
-fn model_for(spec: &ModelSpec) -> tinyagents_definition::ModelSpec {
-    match spec {
-        ModelSpec::Inherit => tinyagents_definition::ModelSpec::Inherit,
-        ModelSpec::Exact(name) => tinyagents_definition::ModelSpec::Exact(name.clone()),
-        ModelSpec::Hint(hint) => tinyagents_definition::ModelSpec::Hint(hint.clone()),
-    }
-}
 
 /// Drops repeated names while keeping first-occurrence order.
 ///

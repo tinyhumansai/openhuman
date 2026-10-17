@@ -205,14 +205,18 @@ fn host_engine() -> Option<BoundEngine> {
 /// Resolves the configured engine.
 #[must_use]
 pub fn resolve(config: &Config) -> Binding {
-    if let Some(capabilities) = crate::profiles::capabilities::ProfileCapabilities::current() {
+    if !config.components.memory {
+        tracing::debug!("[memory:engine] components.memory is off; engine not bound");
+        return off(None, None, COMPONENT_OFF_REASON);
+    }
+    // The hosted profile's engine is bound for the calling task's own tenant.
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    if let Some(capabilities) = crate::profiles::capabilities::ProfileCapabilities::in_ctx(&ctx) {
         if let Some(engine) = &capabilities.memory_engine {
-            if let Err(reason) = crate::profiles::host::ensure_hosted() {
+            if let Err(reason) = crate::profiles::host::ensure_hosted(&ctx) {
                 return off(None, None, &reason);
             }
-            let profile = crate::core::runtime::current_tenant()
-                .ok()
-                .and_then(|tenant| tenant.profile);
+            let profile = ctx.tenant().ok().and_then(|tenant| tenant.profile);
             let valid = profile.as_ref().is_some_and(|id| {
                 config.memory.agent_id.as_ref() == Some(id)
                     && config.memory.root.as_deref() == Some(format!("user:{id}").as_str())
@@ -277,6 +281,9 @@ pub fn resolve(config: &Config) -> Binding {
 /// installed engine is bound, which has one layout of its own and cannot be
 /// bound below a scope root.
 pub fn bind_with_root(config: &Config, root: Option<&str>) -> MemoryResult<BoundEngine> {
+    if !config.components.memory {
+        return Err(MemoryError::Off(COMPONENT_OFF_REASON.to_string()));
+    }
     #[cfg(test)]
     {
         let installed = TEST_ROOT_ENGINES
@@ -366,6 +373,16 @@ fn resolve_configured(config: &Config, root: Option<&str>) -> Binding {
             )
         }
     }
+}
+
+/// Why memory answers off while `[components] memory = false`.
+const COMPONENT_OFF_REASON: &str = "memory component is disabled ([components] memory = false)";
+
+/// Whether memory is switched off by config: `[components] memory = false` or
+/// `[memory] engine = "none"`. No engine is bound in either case.
+#[must_use]
+pub fn switched_off(config: &Config) -> bool {
+    !config.components.memory || config.memory.engine == DISABLED_ENGINE
 }
 
 /// Whether memory is on for `config`.

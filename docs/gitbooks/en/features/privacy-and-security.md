@@ -25,8 +25,8 @@ Your workspace files, settings and audio buffers stay on your machine. Your memo
 
 | Item | Where it lives |
 | --- | --- |
-| Memory items | Not local with hosted memory. They are stored in CortexDB by your selected engine (see below). A CortexDB you host on your own machine keeps them there. |
-| Memory bookkeeping | Local: the job queue and sync, backfill and import progress under `<workspace>/memory/`, the sources list in `config.toml`, and a CortexDB key in the OS keychain. No memory content. |
+| Committed memory items | Stored in CortexDB by your selected engine (see below). A CortexDB you host on your own machine keeps them there. Pending agent writes are held locally until delivery. |
+| Memory bookkeeping and pending writes | Local: scrubbed agent `learn`/`forget` requests await delivery in a private outbox under `<workspace>/memory/`, alongside job queues and sync, backfill and import progress. Sources are listed in `config.toml`; the CortexDB key is kept in the OS keychain. Automatic context packs stay in process memory briefly. |
 | Audio capture buffers | Local. Discarded after speech-to-text. |
 | Local model state | Local. |
 

@@ -53,6 +53,14 @@ A spec that asserts only the happy path is incomplete.
 
 ---
 
+## Property-test regressions
+
+Core proptests set `failure_persistence: None` in their `ProptestConfig`; they do not write seed files. When a property fails, preserve the minimized input shown in the failure report to reproduce it, then promote that input to a named unit test beside the property test. Confirm that the explicit case fails against the faulty implementation and passes with the fix before shipping it.
+
+For example, the lease model retains the expired-holder reacquisition case as `reacquiring_at_expiry_advances_epoch_and_marks_previous_holder_unclean`, with two nodes and the steps `Acquire(0), Advance(1000), Acquire(0)`.
+
+---
+
 ## Mock policy
 
 - Use no real network in unit, integration or E2E tests. Use the shared mock backend (`scripts/mock-api-core.mjs`, `scripts/mock-api-server.mjs`, `app/test/e2e/mock-server.ts`).
@@ -75,7 +83,7 @@ A spec that asserts only the happy path is incomplete.
 ## What the existing harness gives you
 
 - Mock backend: `startMockServer` and `stopMockServer` in `app/test/e2e/mock-server.ts`.
-- Auth shortcut: `triggerAuthDeepLink` and `triggerAuthDeepLinkBypass` in `helpers/deep-link-helpers.ts` skip real OAuth.
+- Auth shortcut: use `triggerAuthLoopbackBypass` in `helpers/loopback-auth-helpers.ts`. It uses a test JWT but exercises the loopback listener and state-nonce validation without a real OAuth provider.
 - Element helpers: `clickNativeButton`, `waitForWebView` and `clickToggle` in `helpers/element-helpers.ts`. Use these instead of raw `XCUIElementType*` selectors.
 - Shared flows: `completeOnboardingIfVisible`, `navigateViaHash`, `navigateToSkills` and `walkOnboarding` in `helpers/shared-flows.ts`.
 - Core RPC from a spec: `callOpenhumanRpc` in `helpers/core-rpc.ts` drives the embedded core directly when a UI step would be brittle.
@@ -196,7 +204,7 @@ ls vendor/<module> | wc -l         # 0 = empty, whatever status says
 
 `cargo test -p openhuman --lib` on default features builds a smaller product than CI does, and the difference changes test outcomes, not just which tests exist. A feature flag can gate a tool's registration. A test can compare a static allowlist with what it finds by inspecting the built binary. The flag then moves the result silently, and the failure names a product concept, such as "agents that carry tools but whose prompt names none of them", with no mention of a feature.
 
-In one comparison, `openhuman --lib` failed 5 tests on default features and 3 under CI's set. The two that differed were profile artifacts: `every_prompt_names_at_least_one_tool_it_can_call` needs `runtime-node`, and `the_withheld_block_renders_for_a_renamed_session_with_a_filter` needs `documents`. Reproduce CI exactly before you assert anything:
+In one comparison, `openhuman --lib` failed 5 tests on default features and 3 under CI's set. The two that differed were profile artifacts: `every_prompt_names_at_least_one_tool_it_can_call` depends on its default registry, and `the_withheld_block_renders_for_a_renamed_session_with_a_filter` needs `documents`. Reproduce CI exactly before you assert anything:
 
 ```bash
 RUST_MIN_STACK=67108864 cargo test -p openhuman --lib \

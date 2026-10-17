@@ -1,7 +1,7 @@
 //! Platform-specific descriptor/handle-bound attachment opens.
 
 #[cfg(unix)]
-pub(super) fn secure_open(
+pub(crate) fn secure_open(
     path: &std::path::Path,
     root: &std::path::Path,
 ) -> std::io::Result<std::fs::File> {
@@ -94,7 +94,7 @@ pub(super) fn secure_open(
 }
 
 #[cfg(windows)]
-pub(super) fn secure_open(
+pub(crate) fn secure_open(
     path: &std::path::Path,
     _root: &std::path::Path,
 ) -> std::io::Result<std::fs::File> {
@@ -142,7 +142,7 @@ pub(super) fn normalize_windows_path_for_comparison(value: &str) -> String {
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(super) fn secure_open(
+pub(crate) fn secure_open(
     _path: &std::path::Path,
     _root: &std::path::Path,
 ) -> std::io::Result<std::fs::File> {

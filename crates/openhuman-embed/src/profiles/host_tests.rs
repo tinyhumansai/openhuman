@@ -2,6 +2,10 @@
 
 use super::*;
 
+fn unbound_ctx() -> openhuman_core::core::runtime::DispatchCtx {
+    openhuman_core::core::runtime::DispatchCtx::unbound()
+}
+
 #[test]
 fn wildcard_profile_scope_is_refused_before_boot() {
     let config = SaasConfig::new("/srv/openhuman");
@@ -40,15 +44,16 @@ fn named_selection_never_overrides_hard_denies_or_default_readonly() {
         ..Default::default()
     };
     let capabilities = options.finish(&config).unwrap();
-    assert!(capabilities.admits("memory"));
+    let unbound = unbound_ctx();
+    assert!(capabilities.admits(&unbound, "memory"));
     for name in ["shell", "delegate", "curl", "run_workflow", "hidden"] {
-        assert!(!capabilities.admits(name), "{name}");
+        assert!(!capabilities.admits(&unbound, name), "{name}");
     }
     assert_eq!(
         capabilities.channel_permission("telegram"),
         PermissionLevel::ReadOnly
     );
-    assert!(!capabilities.authorizes_approval("memory"));
+    assert!(!capabilities.authorizes_approval(&unbound, "memory"));
 }
 
 #[test]
@@ -80,8 +85,9 @@ fn host_only_admission_does_not_authorize_supervised_mutation_or_unknown_channel
         ..Default::default()
     };
     let capabilities = options.finish(&config).unwrap();
-    assert!(capabilities.admits("custom_host_mutation"));
-    assert!(!capabilities.authorizes_approval("custom_host_mutation"));
+    let unbound = unbound_ctx();
+    assert!(capabilities.admits(&unbound, "custom_host_mutation"));
+    assert!(!capabilities.authorizes_approval(&unbound, "custom_host_mutation"));
     assert_eq!(
         capabilities.channel_permission("telegram"),
         PermissionLevel::Execute

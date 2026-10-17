@@ -21,29 +21,9 @@
  * insert-text handling runs through the same composer text that the slash
  * interception reads.
  *
- * # What this file actually found
- *
- * The commands do not work. `/new` and `/clear` + Enter are complete no-ops:
- * no new thread, no completion, no assistant message, and the command text is
- * left sitting in the composer.
- *
- * `handleSlashCommand` (`Conversations.tsx:946-952`) does
- * `setInputValue(''); void handleCreateNewThread();` — but `setInputValue`
- * writes host React state the visible composer does not render from. The main
- * composer is Lexical (`thread.tsx:429`), and replacing the host `onChange`
- * with a complete no-op changes nothing at all, proven in
- * `chat-composer-caret.spec.ts`. So the clear cannot reach the input, and the
- * same host/Lexical split is the likeliest reason the thread never changes.
- *
- * # A vacuity trap I fell into, recorded so the next reader does not
- *
- * My first draft asserted "no completion is requested for /new" and called it
- * proof of interception. It is not. Disabling `handleComposerSlashCommand`
- * entirely — making it always return `not_handled` — left **all five tests
- * passing**, because `/new` never reaches the model for reasons unrelated to
- * the interception. Those three tests were deleted rather than reworded.
- * What remains asserts the three observable facts together, so a fix to any
- * part of the path turns this red.
+ * The browser assertions cover the user-visible result, not only the pure
+ * send-decision helper: `/new` creates a different thread without submitting
+ * its text, `/clear` consumes its command, and an ordinary message still sends.
  */
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
@@ -78,6 +58,32 @@ async function completionCount(): Promise<number> {
   const res = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
   const payload = (await res.json()) as { data?: Array<{ url?: string }> };
   return (payload.data ?? []).filter(e => (e.url ?? '').includes('/chat/completions')).length;
+}
+
+async function completionCountContainingUserText(text: string): Promise<number> {
+  const res = await fetch(`${MOCK_ADMIN_BASE}/__admin/requests`);
+  const payload = (await res.json()) as { data?: Array<{ url?: string; body?: string }> };
+  return (payload.data ?? []).filter(request => {
+    if (!(request.url ?? '').includes('/chat/completions')) return false;
+    try {
+      const body = JSON.parse(request.body ?? '{}') as {
+        messages?: Array<{ role?: string; content?: unknown }>;
+      };
+      return body.messages?.some(message => {
+        if (message.role !== 'user') return false;
+        const content = Array.isArray(message.content)
+          ? message.content
+              .map(part =>
+                typeof part === 'object' && part !== null && 'text' in part ? String(part.text) : ''
+              )
+              .join('\n')
+          : String(message.content ?? '');
+        return content.includes(text);
+      });
+    } catch {
+      return false;
+    }
+  }).length;
 }
 
 async function openChat(page: Page): Promise<Locator> {
@@ -139,55 +145,63 @@ async function clearAndType(page: Page, input: Locator, text: string): Promise<v
 test.describe('Composer slash commands', () => {
   test.beforeEach(async () => {
     await resetMock();
-    await setMockBehavior('llmForcedResponses', JSON.stringify([{ content: REPLY }]));
+    await setMockBehavior(
+      'llmForcedResponses',
+      JSON.stringify(Array.from({ length: 6 }, () => ({ content: REPLY })))
+    );
   });
 
   /**
-   * `/new` is consumed locally without creating a thread from the
-   * assistant-ui composer. The draft is cleared after the command is handled.
-   *
-   * Measured after Enter on `/new`: the selected thread is unchanged, no chat
-   * completion is requested and no assistant message appears.
-   *
-   * All three observations are asserted together on purpose. Any one of them
-   * alone is satisfiable by an unrelated failure — "no completion" is also true
-   * of a composer that sends nothing ever, which is exactly the trap that made
-   * my first draft of this file vacuous. Together they describe one specific
-   * broken state, and any real fix breaks at least one of them.
+   * `/new` creates and selects a fresh thread without sending the command text.
    */
-  test('/new + Enter is consumed locally without sending', async ({ page }) => {
+  test('/new + Enter starts a blank conversation without sending the command', async ({ page }) => {
     const input = await openChat(page);
     await waitForSocketConnected(page);
 
+    await clearAndType(page, input, 'existing conversation before a new thread');
+    await page.keyboard.press('Enter');
+    await expect(page.getByText(REPLY).last()).toBeVisible({ timeout: 45_000 });
+    await expect.poll(() => composerText(input), { timeout: 10_000 }).toBe('');
+
     const threadBefore = await selectedThreadId(page);
-    const completionsBefore = await completionCount();
+    const slashCommandCompletionsBefore = await completionCountContainingUserText('/new');
+    expect(threadBefore).not.toBeNull();
 
     await clearAndType(page, input, '/new');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(3000);
 
-    expect(await selectedThreadId(page), 'a new thread was selected — /new now works').toBe(
-      threadBefore
+    await expect.poll(() => selectedThreadId(page), { timeout: 15_000 }).not.toBe(threadBefore);
+    expect(await completionCountContainingUserText('/new'), '"/new" reached the model').toBe(
+      slashCommandCompletionsBefore
     );
-    expect(await completionCount(), '"/new" reached the model').toBe(completionsBefore);
     expect(await composerText(input)).toBe('');
     await expect(page.getByTestId('agent-message')).toHaveCount(0);
   });
 
-  test('/clear + Enter is consumed locally without sending', async ({ page }) => {
+  test('/clear + Enter opens a blank conversation without sending the command', async ({
+    page,
+  }) => {
     const input = await openChat(page);
     await waitForSocketConnected(page);
 
+    await clearAndType(page, input, 'existing conversation before clearing');
+    await page.keyboard.press('Enter');
+    await expect(page.getByText(REPLY).last()).toBeVisible({ timeout: 45_000 });
+    await expect.poll(() => composerText(input), { timeout: 10_000 }).toBe('');
+
     const threadBefore = await selectedThreadId(page);
-    const completionsBefore = await completionCount();
+    const clearCommandCompletionsBefore = await completionCountContainingUserText('/clear');
+    expect(threadBefore).not.toBeNull();
 
     await clearAndType(page, input, '/clear');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(3000);
 
-    expect(await selectedThreadId(page)).toBe(threadBefore);
-    expect(await completionCount()).toBe(completionsBefore);
+    await expect.poll(() => selectedThreadId(page), { timeout: 15_000 }).not.toBe(threadBefore);
+    expect(await completionCountContainingUserText('/clear')).toBe(clearCommandCompletionsBefore);
     expect(await composerText(input)).toBe('');
+    await expect(page.getByTestId('agent-message')).toHaveCount(0);
   });
 
   /**

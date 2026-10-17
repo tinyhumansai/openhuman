@@ -6,6 +6,7 @@
 //! and the config is found through `OPENHUMAN_WORKSPACE`, so the phases below
 //! must share one process and run in order.
 
+use openhuman_core::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use chrono::{Datelike, Duration, Utc};
@@ -82,6 +83,7 @@ async fn cost_reports_group_the_ledger_and_a_refuse_budget_stops_the_call() {
 
     // cost_report grouped by model.
     let report = invoke_method(
+        DispatchCtx::process_default(),
         default_state(),
         "openhuman.cost_report",
         json!({ "days": 1, "groupBy": ["model"] }),
@@ -107,6 +109,7 @@ async fn cost_reports_group_the_ledger_and_a_refuse_budget_stops_the_call() {
 
     // A filter narrows the report; a misspelt one is refused.
     let filtered = invoke_method(
+        DispatchCtx::process_default(),
         default_state(),
         "openhuman.cost_report",
         json!({ "days": 1, "filter": { "model": "m-b" } }),
@@ -115,6 +118,7 @@ async fn cost_reports_group_the_ledger_and_a_refuse_budget_stops_the_call() {
     .expect("filtered cost_report");
     assert_eq!(peel(&filtered)["totals"]["calls"], 1);
     invoke_method(
+        DispatchCtx::process_default(),
         default_state(),
         "openhuman.cost_report",
         json!({ "days": 1, "filter": { "modle": "m-b" } }),
@@ -124,6 +128,7 @@ async fn cost_reports_group_the_ledger_and_a_refuse_budget_stops_the_call() {
 
     // cost_cache_report: overall hit ratio and the cold call.
     let cache = invoke_method(
+        DispatchCtx::process_default(),
         default_state(),
         "openhuman.cost_cache_report",
         json!({ "days": 1 }),

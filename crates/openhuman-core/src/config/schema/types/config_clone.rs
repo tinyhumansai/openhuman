@@ -90,6 +90,8 @@ impl Clone for Config {
             embeddings_provider: self.embeddings_provider.clone(),
             custom_embeddings: self.custom_embeddings.clone(),
             tokenjuice: self.tokenjuice.clone(),
+            memes: self.memes.clone(),
+            components: self.components.clone(),
             hosting: self.hosting.clone(),
             storage: self.storage.clone(),
             voice_server: self.voice_server.clone(),

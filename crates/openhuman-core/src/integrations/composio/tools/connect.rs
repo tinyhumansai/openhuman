@@ -226,13 +226,28 @@ impl Tool for ComposioConnectTool {
     // the toolkit slug into the card for the inline Connect button. The
     // engine's auto-gate is unconditional and would double-prompt.
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        let outcome = Box::pin(self.execute_unredacted(args, &approval)).await;
         redact_composio_outcome(&self.config, outcome)
     }
 }
 
 impl ComposioConnectTool {
-    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
+    pub(crate) async fn execute_unredacted(
+        &self,
+        args: Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let raw_toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -250,14 +265,11 @@ impl ComposioConnectTool {
         let started = std::time::Instant::now();
 
         // The inline connect card only has a surface on an interactive chat
-        // turn (the web-chat path installs `APPROVAL_CHAT_CONTEXT`). On
+        // turn (the web-chat path sets a chat approval context). On
         // background / cron turns there is no UI to click Connect, so fail
         // closed with a clear message rather than parking forever — mirrors
         // the `install_tool` guard (#3993).
-        if crate::security::approval::APPROVAL_CHAT_CONTEXT
-            .try_with(|_| ())
-            .is_err()
-        {
+        if !approval.is_interactive() {
             return Ok(ToolResult::error(format!(
                 "[policy-denied] composio_connect needs an interactive chat turn. \
                  Ask the user to connect '{toolkit}' in Connections."
@@ -369,6 +381,7 @@ impl ComposioConnectTool {
         );
         let (outcome, _request_id) = match gate
             .intercept_audited_bounded(
+                approval,
                 "composio_connect",
                 &summary,
                 json!({ "toolkit": toolkit }),

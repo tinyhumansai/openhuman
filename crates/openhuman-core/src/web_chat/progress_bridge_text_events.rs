@@ -6,6 +6,7 @@
 use crate::web_chat::WebChannelEvent;
 
 pub(super) fn publish_text_delta(
+    dispatch: &crate::core::runtime::DispatchCtx,
     emit_seq: &mut u64,
     client_id: &str,
     thread_id: &str,
@@ -14,6 +15,7 @@ pub(super) fn publish_text_delta(
     delta: String,
 ) {
     super::publish_seq_stamped(
+        dispatch,
         emit_seq,
         WebChannelEvent {
             event: "text_delta".to_string(),

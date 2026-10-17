@@ -10,37 +10,19 @@
 //! The `tinyagents` adapter installs a `StopHookMiddleware`
 //! ([`crate::agent::tinyagents::stop_hooks`]) that fires each hook after
 //! every model call; a hook returning [`StopDecision::Stop`] pauses the run
-//! gracefully (via the steering handle) before the next provider call. The
+//! gracefully (via the steering handle) before the next provider call. Hooks
+//! arrive on the turn's explicit run context
+//! (`OpenHumanRunContext::stop_hooks`). The
 //! goal-budget hook ([`crate::agent::goals::runtime::GoalBudgetStopHook`]) is
 //! the live implementation.
 //!
-//! The per-turn tool budget ([`with_tool_call_limit`]) also lives here, on a
-//! task-local.
+//! The per-turn tool budget ([`tool_call_limit`]) also lives here; a host
+//! narrows it through `HostTurnEnv::tool_call_limit`.
 
-pub use crate::agent::cost::TurnCost;
 use async_trait::async_trait;
-use std::sync::Arc;
+use tinyagents_harness::cost::TurnCost;
 
 use tinyagents_harness::middleware::{StopDecision, StopHook, TurnState};
-
-tokio::task_local! {
-    static CURRENT_STOP_HOOKS: Vec<Arc<dyn StopHook<TurnCost>>>;
-}
-
-/// Clone the stop hooks active in the current task, if any.
-pub fn current_stop_hooks() -> Vec<Arc<dyn StopHook<TurnCost>>> {
-    CURRENT_STOP_HOOKS
-        .try_with(Clone::clone)
-        .unwrap_or_default()
-}
-
-/// Scope a future with per-turn stop hooks.
-pub async fn with_stop_hooks<F: std::future::Future>(
-    hooks: Vec<Arc<dyn StopHook<TurnCost>>>,
-    future: F,
-) -> F::Output {
-    CURRENT_STOP_HOOKS.scope(hooks, future).await
-}
 
 /// Stop a turn when its cumulative cost reaches the configured USD cap.
 #[derive(Debug, Clone, Copy)]
@@ -81,34 +63,12 @@ impl StopHook<TurnCost> for BudgetStopHook {
     }
 }
 
-tokio::task_local! {
-    static CURRENT_TOOL_CALL_LIMIT: usize;
-}
-
-/// Narrow the real tool invocation budget for one turn, including parallel calls.
-/// Nested scopes cannot widen their parent's budget. The scope resets on exit.
-pub async fn with_tool_call_limit<F: std::future::Future>(
-    limit: Option<usize>,
-    future: F,
-) -> F::Output {
-    let inherited = CURRENT_TOOL_CALL_LIMIT.try_with(|n| *n).ok();
-    tracing::debug!(
-        limit,
-        inherited,
-        "[tinyagents] installing per-turn tool budget"
-    );
-    match (limit, inherited) {
-        (Some(a), Some(b)) => CURRENT_TOOL_CALL_LIMIT.scope(a.min(b), future).await,
-        (Some(n), None) | (None, Some(n)) => CURRENT_TOOL_CALL_LIMIT.scope(n, future).await,
-        (None, None) => future.await,
-    }
-}
-
-pub(crate) fn tool_call_limit(max_iterations: usize) -> usize {
+/// The real tool invocation budget for one turn: the default derived from the
+/// iteration cap, narrowed by the host's explicit `cap`
+/// (`HostTurnEnv::tool_call_limit`) when it set one. A host can only narrow it.
+pub(crate) fn tool_call_limit(max_iterations: usize, cap: Option<usize>) -> usize {
     let default = max_iterations.saturating_mul(8).max(8);
-    CURRENT_TOOL_CALL_LIMIT
-        .try_with(|n| default.min(*n))
-        .unwrap_or(default)
+    cap.map_or(default, |cap| default.min(cap))
 }
 
 #[cfg(test)]

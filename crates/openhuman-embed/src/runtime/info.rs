@@ -97,7 +97,7 @@ impl StorageInfo {
                 configured: true,
             },
             Some(super::StorageSource::Url(url)) => Self::url("explicit", url),
-            None => match openhuman_core::storage::configured_url(config) {
+            None => match openhuman_core::storage::explicit_url(config) {
                 Some(url) => Self::url("configuration", &url),
                 None => Self {
                     source: "workspace".into(),
@@ -187,6 +187,15 @@ impl RuntimeBuilder {
         );
         info.configuration_resolved = self.config_source == super::ConfigSource::Resolved;
         info.storage = StorageInfo::describe(self.seams.storage.as_ref(), &config);
+        // `build` gives a stateless workspace with no storage source an
+        // in-memory backend; report what it will install.
+        if !info.storage.configured && matches!(self.workspace, crate::Workspace::Stateless) {
+            info.storage = StorageInfo {
+                source: "backend".into(),
+                driver: Some("memory".into()),
+                configured: true,
+            };
+        }
         info
     }
 }

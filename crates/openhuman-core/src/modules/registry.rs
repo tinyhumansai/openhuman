@@ -34,40 +34,110 @@
 #[path = "registry_tests.rs"]
 mod tests;
 
+#[cfg(all(test, feature = "modules"))]
+#[path = "registry_contract_tests.rs"]
+mod contract_tests;
+
 mod records_computer;
 mod records_docs_wallet;
 mod records_extra;
+mod records_flows;
 mod records_mcp_connectors;
+#[cfg(feature = "tinymemes")]
+mod records_memes;
 mod records_memory_juice;
 mod records_search;
 mod records_voice;
 
 use crate::modules::types::ModuleRecord;
 use records_computer::TINYCOMPUTER;
-use records_docs_wallet::{TINYDOCS, TINYWALLET};
-use records_extra::{TINYBOX, TINYCHANNELS, TINYHOSTS};
+#[cfg(feature = "documents")]
+use records_docs_wallet::TINYDOCS;
+#[cfg(feature = "web3")]
+use records_docs_wallet::TINYWALLET;
+#[cfg(feature = "modules")]
+use records_extra::TINYBOX;
+use records_extra::TINYCHANNELS;
+#[cfg(feature = "hosting")]
+use records_extra::TINYHOSTS;
+use records_flows::TINYFLOWS;
 use records_mcp_connectors::{TINYCONNECTORS, TINYMCP};
+#[cfg(feature = "tinymemes")]
+use records_memes::TINYMEMES;
 use records_memory_juice::TINYJUICE;
 use records_search::TINYSEARCH;
+#[cfg(feature = "voice")]
 use records_voice::TINYVOICE;
 
-/// Every module this build can load.
+/// Every module this build can load. The records whose contract crate is an
+/// optional dependency (`documents`, `web3`, `voice`, `hosting`, `tinymemes`) exist only when
+/// that gate is on; a product-feature build carries all thirteen.
 pub const ALL: &[ModuleRecord] = &[
     TINYCOMPUTER,
     TINYSEARCH,
+    #[cfg(feature = "documents")]
     TINYDOCS,
+    #[cfg(feature = "web3")]
     TINYWALLET,
     TINYJUICE,
+    #[cfg(feature = "voice")]
     TINYVOICE,
     TINYMCP,
     TINYCONNECTORS,
+    #[cfg(feature = "modules")]
     TINYBOX,
     TINYCHANNELS,
+    TINYFLOWS,
+    #[cfg(feature = "hosting")]
     TINYHOSTS,
+    #[cfg(feature = "tinymemes")]
+    TINYMEMES,
 ];
 
 /// The record for `id`, if this build knows it.
 #[must_use]
 pub fn find(id: &str) -> Option<&'static ModuleRecord> {
     ALL.iter().find(|record| record.id == id)
+}
+
+/// The resolver's view of [`ALL`], built once. The tinybus resolver takes
+/// `&'static` records, and the records are compiled constants, so this is a
+/// fixed-size table for the life of the process.
+#[must_use]
+pub fn release_records() -> Vec<&'static tinybus::module::ReleaseRecord> {
+    static TABLE: std::sync::OnceLock<Vec<tinybus::module::ReleaseRecord>> =
+        std::sync::OnceLock::new();
+    TABLE
+        .get_or_init(|| ALL.iter().map(ModuleRecord::release).collect())
+        .iter()
+        .collect()
+}
+
+/// Which `[components]` switch owns each module id.
+///
+/// Every record in [`ALL`] has an entry (`registry_tests` enforces it), so a
+/// module is never exempt from a disabled component by omission.
+pub const COMPONENT_OF: &[(&str, &str)] = &[
+    ("tinycomputer", "computer"),
+    ("tinysearch", "search"),
+    ("tinydocs", "documents"),
+    ("tinywallet", "wallet"),
+    ("tinyjuice", "juice"),
+    ("tinyvoice", "voice"),
+    ("tinymcp", "mcp"),
+    ("tinyconnectors", "connectors"),
+    ("tinybox", "sandbox"),
+    ("tinychannels", "channels"),
+    ("tinyflows", "tinyflows"),
+    ("tinyhosts", "hosting"),
+    ("tinymemes", "memes"),
+];
+
+/// The `[components]` name that owns module `id`, if the table knows it.
+#[must_use]
+pub fn component_for(id: &str) -> Option<&'static str> {
+    COMPONENT_OF
+        .iter()
+        .find(|(module, _)| *module == id)
+        .map(|(_, component)| *component)
 }

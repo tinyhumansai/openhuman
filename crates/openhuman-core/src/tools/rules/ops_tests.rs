@@ -2,7 +2,7 @@ use super::*;
 
 use std::sync::Arc;
 
-use crate::agent::harness::definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::config::Config;
 use tinytools::ToolRuleSet;
 

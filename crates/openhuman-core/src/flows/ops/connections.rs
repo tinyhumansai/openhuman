@@ -12,6 +12,7 @@ use super::*;
 /// the HTTP credential half, and vice-versa. A failure in one source never
 /// fails the whole picker.
 pub async fn flows_list_connections(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
 ) -> Result<Outcome<Vec<FlowConnection>>, String> {
     tracing::debug!(
@@ -24,7 +25,7 @@ pub async fn flows_list_connections(
     //    error); a backend outage returns Err — tolerate it so the picker still
     //    surfaces HTTP credentials.
     let composio_conns =
-        match crate::integrations::composio::ops::composio_list_connections(config).await {
+        match crate::integrations::composio::ops::composio_list_connections(ctx, config).await {
             Ok(outcome) => {
                 tracing::debug!(
                     count = outcome.value.connections.len(),
@@ -75,7 +76,7 @@ pub async fn flows_list_connections(
     // connection sync. Loaded once here so `build_flow_connections` can stay
     // a pure, unit-testable matcher.
     let identities =
-        crate::integrations::composio::identity_store::load_connected_identities(config)
+        crate::integrations::composio::identity_store::load_connected_identities(ctx, config)
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(
@@ -88,7 +89,8 @@ pub async fn flows_list_connections(
         count = identities.len(),
         "[flows] flows_list_connections: identity-cache load"
     );
-    let connections = build_flow_connections(composio_conns, http_creds, &identities);
+    let keys = normalize_keys(config, &composio_conns, &identities).await;
+    let connections = build_flow_connections(composio_conns, http_creds, &identities, &keys);
     tracing::debug!(
         total = connections.len(),
         "[flows] flows_list_connections: aggregated picker sources"
@@ -98,6 +100,43 @@ pub async fn flows_list_connections(
         connections.len()
     ));
     Ok(Outcome::new(connections, logs))
+}
+
+/// Normalise every connection key `build_flow_connections` matches on, in one
+/// connector-module call. Returns an empty map when the module is unavailable;
+/// the picker then lists connections without a `platform_user_id`.
+async fn normalize_keys(
+    config: &Config,
+    composio: &[crate::integrations::composio::ComposioConnection],
+    identities: &[crate::integrations::composio::contract::ConnectedIdentity],
+) -> std::collections::HashMap<String, String> {
+    let mut raw: Vec<String> = identities
+        .iter()
+        .flat_map(|id| [id.source.clone(), id.identifier.clone()])
+        .collect();
+    for conn in composio {
+        raw.push(conn.normalized_toolkit());
+        raw.push(conn.id.clone());
+    }
+    raw.sort();
+    raw.dedup();
+    if identities.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    match crate::integrations::composio::contract::normalize_connection_identifiers(config, &raw)
+        .await
+    {
+        Ok(normalized) if normalized.len() == raw.len() => {
+            raw.into_iter().zip(normalized).collect()
+        }
+        other => {
+            tracing::debug!(
+                error = ?other.err(),
+                "[flows] flows_list_connections: key normalisation unavailable"
+            );
+            std::collections::HashMap::new()
+        }
+    }
 }
 
 /// Fold Composio connected accounts + named HTTP credentials into the flat,
@@ -118,8 +157,12 @@ pub(super) fn build_flow_connections(
     composio: Vec<crate::integrations::composio::ComposioConnection>,
     http: Vec<crate::security::credentials::HttpCredentialSummary>,
     identities: &[crate::integrations::composio::contract::ConnectedIdentity],
+    keys: &std::collections::HashMap<String, String>,
 ) -> Vec<FlowConnection> {
-    use crate::integrations::composio::contract::normalize_connection_identifier;
+    // Normalised form of a raw key, from the module-computed `keys`. A key the
+    // module did not return is left as it came.
+    let normalize_connection_identifier =
+        |raw: &str| keys.get(raw).cloned().unwrap_or_else(|| raw.to_string());
 
     let identity_lookup: std::collections::HashMap<(String, String), &_> = identities
         .iter()
@@ -239,8 +282,11 @@ pub(super) fn title_case_toolkit(toolkit: &str) -> String {
 
 /// The set of Composio toolkits currently connected (lowercased), derived from
 /// the same picker source the node-config credential dropdown uses.
-pub(crate) async fn connected_toolkits(config: &Config) -> std::collections::HashSet<String> {
-    match flows_list_connections(config).await {
+pub(crate) async fn connected_toolkits(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) -> std::collections::HashSet<String> {
+    match flows_list_connections(ctx, config).await {
         Ok(outcome) => outcome
             .value
             .iter()
@@ -259,7 +305,11 @@ pub(crate) async fn connected_toolkits(config: &Config) -> std::collections::Has
 /// canvas/proposal "Connect <toolkit>" CTAs (audit Phase 5, item 18). Native
 /// `oh:` tools and `http_request` nodes need no Composio connection and are
 /// skipped.
-pub async fn compute_required_connections(config: &Config, graph: &WorkflowGraph) -> Vec<Value> {
+pub async fn compute_required_connections(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    graph: &WorkflowGraph,
+) -> Vec<Value> {
     use crate::integrations::composio::contract::toolkit_from_slug;
 
     // Collect required toolkits (deduped, order-preserving).
@@ -296,7 +346,7 @@ pub async fn compute_required_connections(config: &Config, graph: &WorkflowGraph
         return Vec::new();
     }
 
-    let connected = connected_toolkits(config).await;
+    let connected = connected_toolkits(ctx, config).await;
     required
         .into_iter()
         .map(|toolkit| {
@@ -313,11 +363,12 @@ pub async fn compute_required_connections(config: &Config, graph: &WorkflowGraph
 /// RPC: compute the toolkits a candidate graph needs and their connected
 /// status, so the canvas/proposal can render "Connect <toolkit>" CTAs.
 pub async fn flows_required_connections(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     graph_json: Value,
 ) -> Result<Outcome<Value>, String> {
-    let graph = migrate_and_deserialize_graph(graph_json)?;
-    let required = compute_required_connections(config, &graph).await;
+    let graph = tinyflows::migrate::deserialize_graph(graph_json)?;
+    let required = compute_required_connections(ctx, config, &graph).await;
     Ok(Outcome::single_log(
         json!({ "required_connections": required }),
         "required connections computed",

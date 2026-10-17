@@ -16,6 +16,12 @@
 
 use std::fmt::Display;
 
+#[cfg(feature = "crash-reporting")]
+#[path = "observability_release_tag.rs"]
+mod release_tag;
+#[cfg(feature = "crash-reporting")]
+use release_tag::{parse_release_tag, parse_version};
+
 #[path = "observability_availability.rs"]
 mod availability;
 use availability::log_module_unavailable;
@@ -28,21 +34,6 @@ pub use availability::{
 /// and filterable in the Sentry UI — prefer them over free-form fields for
 /// anything you'd want to facet on (`error_kind`, `tool_name`, `method`).
 pub type Tag<'a> = (&'a str, &'a str);
-
-/// HTTP status codes that the reliable-provider layer already handles via
-/// retry + fallback, so per-attempt Sentry reports add noise without signal:
-///
-/// - **408** Request Timeout
-/// - **429** Too Many Requests
-/// - **502** Bad Gateway
-/// - **503** Service Unavailable
-/// - **504** Gateway Timeout
-///
-/// Single source of truth for both the call-site classifier
-/// (`crate::inference::provider::ops::should_report_provider_http_failure`) and the
-/// `before_send` filter (`is_transient_provider_http_failure`). Update here
-/// and both sites pick it up — keeps the two layers from drifting.
-pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504, 520];
 
 /// HTTP status codes that represent transient backend / integration transport
 /// failures rather than application bugs. Keep this as strings because Sentry
@@ -326,9 +317,8 @@ pub enum ExpectedErrorKind {
     /// lost-registration defect still reaches Sentry.
     ApprovalNoPendingRace,
     /// A remote MCP server answered the connect handshake with HTTP 401 — it
-    /// needs OAuth sign-in, not a code fix. `McpHttpClient::read_response`
-    /// (`crates/openhuman-core/src/mcp/http_client/client.rs`) raises the typed
-    /// `tinymcp::Error::Unauthorized`, and
+    /// needs OAuth sign-in, not a code fix. TinyMCP returns the typed
+    /// unauthorized outcome over `tinymcp-bus`, and
     /// `mcp::registry::connections::connect` already classifies it and stores a
     /// `needs_auth` flag so the UI prompts the user to authenticate (the
     /// `needs_auth` UX shipped in #3733 / #3719). But `mcp_clients_connect`
@@ -542,7 +532,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // reliable-provider layer retries + falls back over, with no client lever.
     // Delegates to the single-source provider matcher so the phrasing can't
     // drift. Distinct anchor from the matchers above, so it shadows nothing.
-    if crate::inference::provider::is_ollama_cloud_internal_500_message(message) {
+    if tinyinference_llm::failure::is_ollama_cloud_internal_500_message(message) {
         return Some(ExpectedErrorKind::TransientUpstreamHttp);
     }
     if is_backend_user_error_message(&lower) {
@@ -945,7 +935,7 @@ fn is_embedding_model_rejected(lower: &str) -> bool {
 ///   streaming 401s still escalate — guarded by
 ///   `does_not_classify_streaming_byo_key_401_as_session_expired`.
 /// - `"SESSION_EXPIRED: backend session not active — sign in to resume LLM work"`
-///   — the `scheduler_gate::is_signed_out` sentinel from
+///   — the `llm_gate::is_signed_out` sentinel from
 ///   `providers::openhuman_backend::resolve_bearer`.
 /// - `"no backend session token; run auth_store_session first"` and
 ///   `"session JWT required"` — local pre-flight guards that fire when the
@@ -1014,15 +1004,15 @@ pub fn is_session_expired_message(msg: &str) -> bool {
 
 /// Detect a remote MCP server's connect-time 401 — the user must sign in to
 /// that server (OAuth), not a code defect. Anchored on the canonical
-/// `tinymcp::Error::Unauthorized` `Display`
-/// body, which renders as `"MCP unauthorized for \`<endpoint>\` (HTTP 401…)"`.
+/// TinyMCP unauthorized error text, which renders as
+/// `"mcp unauthorized for \`<endpoint>\` (HTTP 401…)"`.
 ///
 /// Conjunctive match — both anchors must hit (input already lower-cased):
 ///
-/// 1. `"mcp unauthorized for "` — the typed-error prefix. Scopes the match to
+/// 1. `"mcp unauthorized for "` — the stable module error prefix. Scopes the match to
 ///    the MCP transport's own 401 so an unrelated "unauthorized" / "401" from
 ///    another domain cannot borrow this demotion.
-/// 2. `"(http 401"` — the parenthesised status the `Display` impl always emits
+/// 2. `"(http 401"` — the parenthesised status the module message always emits
 ///    (with or without the trailing `resource metadata:` discovery hint).
 ///
 /// `connections::connect` already classifies this and stores a `needs_auth`
@@ -1417,13 +1407,15 @@ fn is_channel_supervisor_restart_message(lower: &str) -> bool {
 /// status integer alone could collide with unrelated log lines containing
 /// `"HTTP error: 5023"` (port number, runbook ID).
 fn is_transient_upstream_http_message(lower: &str) -> bool {
-    TRANSIENT_PROVIDER_HTTP_STATUSES.iter().any(|code| {
-        lower.contains(&format!("api error ({code}"))
-            || lower.contains(&format!("api error {code} "))
-            || lower.contains(&format!("http error: {code} "))
-            || lower.contains(&format!("http error: {code}\n"))
-            || lower.contains(&format!("http error: {code}:"))
-    })
+    tinyinference_llm::failure::TRANSIENT_PROVIDER_HTTP_STATUSES
+        .iter()
+        .any(|code| {
+            lower.contains(&format!("api error ({code}"))
+                || lower.contains(&format!("api error {code} "))
+                || lower.contains(&format!("http error: {code} "))
+                || lower.contains(&format!("http error: {code}\n"))
+                || lower.contains(&format!("http error: {code}:"))
+        })
 }
 
 /// Detect a non-2xx **HTML 403/Forbidden gateway page** returned to a provider
@@ -2572,7 +2564,7 @@ pub fn is_transient_provider_http_failure(event: &sentry::protocol::Event<'_>) -
     let Some(status_u16) = tags.get("status").and_then(|s| s.parse::<u16>().ok()) else {
         return false;
     };
-    TRANSIENT_PROVIDER_HTTP_STATUSES.contains(&status_u16)
+    tinyinference_llm::failure::TRANSIENT_PROVIDER_HTTP_STATUSES.contains(&status_u16)
 }
 
 /// Defense-in-depth `before_send` filter for managed-backend `errorCode`
@@ -2678,7 +2670,7 @@ fn all_provider_attempts_are_transient(message: &str) -> bool {
 
 /// Returns true when a Sentry event's message/exception text contains the
 /// canonical max-tool-iterations cap phrase (see
-/// `crate::agent::error::MAX_ITERATIONS_ERROR_PREFIX`).
+/// `tinyagents_harness::agent_error::MAX_ITERATIONS_ERROR_PREFIX`).
 ///
 /// Defense-in-depth filter for the Sentry `before_send` hook: the primary
 /// suppression lives at the call sites in `agent::session_host::
@@ -2702,7 +2694,7 @@ pub fn is_max_iterations_event(event: &sentry::protocol::Event<'_>) -> bool {
     [direct, from_exception]
         .into_iter()
         .flatten()
-        .any(crate::agent::error::is_max_iterations_error)
+        .any(tinyagents_harness::agent_error::is_max_iterations_error)
 }
 
 /// Tag + body classifier for the `before_send` chain — drops Sentry events
@@ -3104,11 +3096,12 @@ pub fn is_insufficient_credits_event(event: &sentry::protocol::Event<'_>) -> boo
 /// [`is_insufficient_credits_message`] it does NOT anchor on a 402 status,
 /// because the Kiro IDE proxy wraps its 402 inside a 500 envelope
 /// (TAURI-RUST-C9A). Delegates to the single-source quota-phrase set in
-/// [`crate::inference::provider::body_indicates_quota_exhausted`], so
+/// [`tinyinference_llm::failure::body_indicates_quota_exhausted`], so
 /// the emit-site guard and this `before_send` net can't drift. Shared with the
 /// event-level filter [`is_quota_exhausted_event`].
-pub fn is_quota_exhausted_message(text: &str) -> bool {
-    tinyinference_llm::failure::body_indicates_quota_exhausted(text)
+#[cfg(any(feature = "crash-reporting", test))]
+fn is_quota_exhausted_message(body: &str) -> bool {
+    tinyinference_llm::failure::body_indicates_quota_exhausted(body)
 }
 
 /// Defense-in-depth `before_send` filter for provider **monthly-quota
@@ -3149,7 +3142,7 @@ pub fn is_quota_exhausted_event(event: &sentry::protocol::Event<'_>) -> bool {
 /// generic 500 from another provider, or a local Ollama daemon crash (which
 /// carries no `ref:` UUID), still reaches Sentry.
 pub fn is_ollama_cloud_internal_500_message_any(text: &str) -> bool {
-    if crate::inference::provider::is_ollama_cloud_internal_500_message(text) {
+    if tinyinference_llm::failure::is_ollama_cloud_internal_500_message(text) {
         return true;
     }
     let lower = text.to_ascii_lowercase();
@@ -3466,26 +3459,6 @@ pub fn is_stale_release_event(event: &sentry::protocol::Event<'_>) -> bool {
             current_minor.saturating_sub(event_minor) > MAX_AGE_MINOR_VERSIONS
         })
     })
-}
-
-/// Parse a Sentry release tag like `"openhuman@0.58.0"` or
-/// `"openhuman@0.58.0+abc123def456"` into `(major, minor)`.
-#[cfg(feature = "crash-reporting")]
-fn parse_release_tag(tag: &str) -> Option<(u32, u32)> {
-    // Strip the `openhuman@` prefix
-    let after_at = tag.split('@').nth(1)?;
-    // Get the version part before any `+` suffix
-    let version = after_at.split('+').next()?;
-    parse_version(version)
-}
-
-/// Parse a `"MAJOR.MINOR.PATCH"` version string into `(major, minor)`.
-#[cfg(feature = "crash-reporting")]
-fn parse_version(version: &str) -> Option<(u32, u32)> {
-    let mut parts = version.splitn(3, '.');
-    let major = parts.next()?.parse::<u32>().ok()?;
-    let minor = parts.next()?.parse::<u32>().ok()?;
-    Some((major, minor))
 }
 
 #[cfg(test)]

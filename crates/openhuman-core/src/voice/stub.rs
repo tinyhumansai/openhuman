@@ -120,7 +120,7 @@ pub mod server {
     }
 
     /// No-op: there is no voice server to start.
-    pub async fn start_if_enabled(_config: &Config) {}
+    pub async fn start_if_enabled(_ctx: &crate::core::runtime::DispatchCtx, _config: &Config) {}
 
     /// Always `None`: no global voice server exists.
     pub fn try_global_server() -> Option<Arc<VoiceServer>> {
@@ -168,7 +168,7 @@ pub mod dictation_listener {
     }
 
     /// No-op: no hotkey listener is started.
-    pub async fn start_if_enabled(_config: &Config) {}
+    pub async fn start_if_enabled(_ctx: &crate::core::runtime::DispatchCtx, _config: &Config) {}
 
     /// No-op: nothing to stop.
     pub async fn stop() {}
@@ -182,7 +182,7 @@ pub mod always_on {
     use crate::config::Config;
 
     /// No-op: always-on listening does not exist when voice is disabled.
-    pub async fn start_if_enabled(_config: &Config) {}
+    pub async fn start_if_enabled(_ctx: &crate::core::runtime::DispatchCtx, _config: &Config) {}
 
     /// No-op: nothing to stop.
     pub fn stop() {}
@@ -223,7 +223,12 @@ pub mod live {
         use crate::config::Config;
 
         /// Drop the upgraded socket immediately — live voice is compiled out.
-        pub async fn handle_live_voice_ws(_socket: WebSocket, _config: Arc<Config>) {}
+        pub async fn handle_live_voice_ws(
+            _socket: WebSocket,
+            _ctx: crate::core::runtime::DispatchCtx,
+            _config: Arc<Config>,
+        ) {
+        }
     }
 }
 

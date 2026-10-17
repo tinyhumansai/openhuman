@@ -82,6 +82,6 @@ None. No `store.rs`: staged binaries are written to the filesystem (current-exe 
 ## Further reading
 
 - [Parent module (`platform`)](../README.md)
-- [Auto-update](../../../../../gitbooks/overview/auto-update.md)
-- [Release policy](../../../../../gitbooks/developing/release-policy.md)
-- [Platform and availability](../../../../../gitbooks/features/platform.md)
+- [Auto-update](../../../../../docs/gitbooks/en/overview/auto-update.md)
+- [Release policy](../../../../../docs/gitbooks/en/developing/release-policy.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)

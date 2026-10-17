@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::turn_origin::{with_origin, TrustedAutomationSource};
 use serde_json::json;
-use tinyflows_schedule::types::Schedule;
+use tinyflows_bus::schedule::types::Schedule;
 
 fn channel_turn(history_key: Option<&str>) -> AgentTurnOrigin {
     AgentTurnOrigin::ExternalChannel {
@@ -71,25 +71,33 @@ fn other_origins_have_no_job_origin() {
 
 #[tokio::test]
 async fn current_job_origin_reads_the_scoped_turn() {
-    assert_eq!(current_job_origin(), None);
-    let got = with_origin(web_turn("t-9"), async { current_job_origin() }).await;
+    assert_eq!(
+        current_job_origin(crate::agent::turn_origin::current().as_ref()),
+        None
+    );
+    let got = with_origin(web_turn("t-9"), async {
+        current_job_origin(crate::agent::turn_origin::current().as_ref())
+    })
+    .await;
     assert!(matches!(got, Some(JobOrigin::Web { thread_id, .. }) if thread_id == "t-9"));
 }
 
 fn job_with_origin(origin: Option<JobOrigin>) -> CronJob {
     CronJob {
+        claim_generation: 0,
+        policy: Default::default(),
         id: "job-1".into(),
         expression: "* * * * *".into(),
         schedule: Schedule::Every { every_ms: 300_000 },
         command: String::new(),
         prompt: Some("p".into()),
         name: None,
-        job_type: tinyflows_schedule::types::JobType::Agent,
-        session_target: tinyflows_schedule::types::SessionTarget::Current,
+        job_type: tinyflows_bus::schedule::types::JobType::Agent,
+        session_target: tinyflows_bus::schedule::types::SessionTarget::Current,
         model: None,
         agent_id: None,
         enabled: true,
-        delivery: tinyflows_schedule::types::DeliveryConfig::default(),
+        delivery: tinyflows_bus::schedule::types::DeliveryConfig::default(),
         delete_after_run: false,
         created_at: chrono::Utc::now(),
         next_run: chrono::Utc::now(),

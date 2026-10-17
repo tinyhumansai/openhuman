@@ -91,5 +91,5 @@ Does not own a `store.rs`. Its effects are written through other layers:
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Settings](../../../../../gitbooks/features/settings.md)
-- [Deep architecture reference](../../../../../gitbooks/developing/architecture.md)
+- [Settings](../../../../../docs/gitbooks/en/features/settings.md)
+- [Deep architecture reference](../../../../../docs/gitbooks/en/developing/architecture.md)

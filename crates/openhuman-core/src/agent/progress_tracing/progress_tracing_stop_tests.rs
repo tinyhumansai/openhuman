@@ -5,9 +5,9 @@
 
 use super::*;
 
-use crate::agent::turn_stop::TurnStop;
 use tinyagents_harness::observability::trace_export::otlp::otlp_requests;
 use tinyagents_harness::observability::trace_export::SpanStatus;
+use tinyagents_harness::turn_stop::TurnStop;
 
 const BREAKER_NOTE: &str = "Stopping after 2 attempt(s): failure class \
     `uncertain_side_effect` still blocks operation `web_answer_tool` on \
@@ -57,7 +57,7 @@ fn a_breaker_stopped_turn_closes_at_warning_with_stop_attributes() {
         (
             AgentProgress::TurnCompleted {
                 iterations: 4,
-                stop: Some(TurnStop::breaker(BREAKER_NOTE)),
+                stop: Some(crate::agent::turn_projection::breaker_stop(BREAKER_NOTE)),
             },
             50,
         ),
@@ -167,7 +167,10 @@ fn a_stopped_subagent_span_closes_at_warning_with_stop_attributes() {
         (AgentProgress::TurnStarted, 0),
         (spawn("t-stop", "Research"), 5),
         (
-            subagent_completed("t-stop", Some(TurnStop::breaker(BREAKER_NOTE))),
+            subagent_completed(
+                "t-stop",
+                Some(crate::agent::turn_projection::breaker_stop(BREAKER_NOTE)),
+            ),
             40,
         ),
     ]);

@@ -6,15 +6,17 @@ use tinyagents_runtime::{
     SessionTerminal, SessionTurnRequest, ToolSnapshot, TranscriptCodec, TranscriptTurnOptions,
     TurnOptions,
 };
-use tinyagents_session::transcript::{FileTranscriptLocator, TranscriptMeta};
+use tinyagents_session::port::{InMemorySessionStores, SessionStoreProvider};
+use tinyagents_session::transcript::TranscriptMeta;
 use tinyinference_llm::message::Message;
 
 use super::announcement_notes::{
     integration_announcement_note, mcp_announcement_note, skill_announcement_note,
 };
+use super::runtime_session::tool_surface::reconcile_synthesized_visibility;
 use super::runtime_session::{
     account_committed_turn_against_goal, begin_turn_resume, holistic_last_turn_usage,
-    reconcile_synthesized_visibility, OpenHumanSessionState,
+    OpenHumanSessionState,
 };
 use super::{OpenHumanSessionFactory, OpenHumanSessionHooks, OpenHumanTranscriptCodec};
 use crate::agent::tinyagents::host::OpenHumanRunContext;
@@ -65,7 +67,7 @@ impl SessionDriver<OpenHumanRunContext> for RecordingDriver {
 fn codec_marks_failed_tool_rows_from_the_explicit_turn_sidecar() {
     let context = OpenHumanRunContext::new();
     context.session_sidecar.lock().unwrap().tool_outcomes.push(
-        crate::agent::tinyagents::ToolCallOutcome {
+        tinyagents_harness::turn_outcome::ToolCallOutcome {
             call_id: "call-1".into(),
             name: "dangerous_tool".into(),
             arguments: serde_json::json!({"path": "secret"}),
@@ -112,16 +114,16 @@ fn codec_attaches_only_this_agents_own_sidecar_usage_to_atomic_append() {
         sidecar.input_tokens = 13;
         sidecar.output_tokens = 8;
         sidecar.cached_input_tokens = 3;
-        sidecar.cost = crate::agent::cost::CostTally {
+        sidecar.cost = tinyagents_harness::cost::CostTally {
             known_usd: 0.004,
-            source: crate::agent::cost::CostSource::Charged,
+            source: tinyagents_harness::cost::CostSource::Charged,
         };
         sidecar.context_window = 128_000;
         sidecar.last_call_input_tokens = 9;
         sidecar.last_call_output_tokens = 2;
         sidecar
             .tool_outcomes
-            .push(crate::agent::tinyagents::ToolCallOutcome {
+            .push(tinyagents_harness::turn_outcome::ToolCallOutcome {
                 call_id: "call-usage".into(),
                 name: "read_file".into(),
                 arguments: serde_json::json!({"path": "Cargo.toml"}),
@@ -138,7 +140,7 @@ fn codec_attaches_only_this_agents_own_sidecar_usage_to_atomic_append() {
             output_tokens: 2,
             cached_input_tokens: 1,
             charged_amount_usd: 0.001,
-            cost_source: crate::agent::cost::CostSource::Charged,
+            cost_source: tinyagents_harness::cost::CostSource::Charged,
         },
     });
     // `OpenHumanRunContext` is `Clone` and its child ledger is an `Arc`, so this
@@ -203,9 +205,9 @@ fn last_turn_usage_reports_the_same_holistic_totals_as_transcript_billing() {
         input_tokens: 13,
         output_tokens: 8,
         cached_input_tokens: 3,
-        cost: crate::agent::cost::CostTally {
+        cost: tinyagents_harness::cost::CostTally {
             known_usd: 0.004,
-            source: crate::agent::cost::CostSource::Charged,
+            source: tinyagents_harness::cost::CostSource::Charged,
         },
         context_window: 128_000,
         last_call_input_tokens: 9,
@@ -222,7 +224,7 @@ fn last_turn_usage_reports_the_same_holistic_totals_as_transcript_billing() {
                 output_tokens: 2,
                 cached_input_tokens: 1,
                 charged_amount_usd: 0.001,
-                cost_source: crate::agent::cost::CostSource::Charged,
+                cost_source: tinyagents_harness::cost::CostSource::Charged,
             },
         });
 
@@ -393,10 +395,9 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
             }
         },
     ));
-    let root = std::env::temp_dir().join(format!(
-        "openhuman-session-adapter-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let locator = InMemorySessionStores::new()
+        .for_agent("adapter-test")
+        .transcripts;
     let context = OpenHumanRunContext::new();
     let cancellation = context.cancellation.clone();
     let mut session = OpenHumanSessionFactory::build(
@@ -404,7 +405,7 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
         hooks,
         PrefixSnapshot::default(),
         ToolSnapshot::default(),
-        Arc::new(FileTranscriptLocator::new(&root)),
+        Arc::clone(&locator),
         "adapter-test",
         meta(),
     )
@@ -422,6 +423,7 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
                 cancellation: cancellation.clone(),
                 run_context: context
                     .into_tinyagents(tinyagents_harness::context::RunConfig::new("adapter-turn")),
+                controls: Default::default(),
             },
         )
         .await
@@ -434,10 +436,10 @@ async fn runtime_adapter_passes_host_context_commits_before_finalize_and_emits_o
         [SessionTerminal::Completed(_)]
     ));
     assert!(
-        root.join("session_raw").exists(),
+        locator.latest_for_agent("adapter-test").is_some()
+            || locator.root_for_thread("thread-1").is_some(),
         "commit precedes finalization"
     );
-    let _ = std::fs::remove_dir_all(root);
 }
 
 /// Mid-conversation availability notes are prepended to the user's next
@@ -488,8 +490,9 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
     };
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
 
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
     let mut root =
-        super::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator").unwrap();
     root.set_thread_id(Some("thread-1"));
     // The exact stem encoding (sanitisation, per-component digest, generation
     // suffix) belongs to tinyagents and is pinned by its own tests. What
@@ -504,7 +507,7 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
     );
 
     let mut child =
-        super::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator").unwrap();
     child.session_parent_prefix = Some("1713000000_orchestrator".into());
     child.set_thread_id(Some("thread-1"));
     assert_eq!(child.session_id(), None);
@@ -613,14 +616,13 @@ async fn production_turn_path_wires_an_artifact_store_outside_the_project() {
         "the production turn path must wire an artifact store, or oversized \
          tool results are truncated with their tail discarded (#6408)",
     );
-    assert!(store.is_detached(), "the pointer must be absolute");
     assert_eq!(
-        store.root(),
+        store.materialize_root(),
         crate::security::policy::tool_result_artifacts_dir(workspace.path()),
         "the store must live under the workspace, not in the project the agent edits"
     );
-    assert!(!store.root().starts_with(action_dir.path()));
-    assert!(!store.root().starts_with(turn_root.path()));
+    assert!(!store.materialize_root().starts_with(action_dir.path()));
+    assert!(!store.materialize_root().starts_with(turn_root.path()));
 }
 
 /// Without a descriptor the answer is the same: the workspace, not
@@ -656,7 +658,7 @@ async fn artifact_store_stays_in_the_workspace_without_a_descriptor() {
         .as_ref()
         .expect("artifact store");
     assert_eq!(
-        store.root(),
+        store.materialize_root(),
         crate::security::policy::tool_result_artifacts_dir(workspace.path())
     );
 }

@@ -46,7 +46,8 @@ fn heartbeat_names_the_elapsed_time_and_job_state() {
 #[tokio::test(start_paused = true)]
 async fn a_long_call_reports_progress_with_the_polled_job_state() {
     let recorder = Recorder::default();
-    let observer = video_status_observer();
+    let slot = JobStateSlot::default();
+    let observer = video_status_observer(slot.clone());
     let work = async {
         observer(&status(JobState::Pending));
         tokio::time::sleep(Duration::from_secs(20)).await;
@@ -58,6 +59,7 @@ async fn a_long_call_reports_progress_with_the_polled_job_state() {
         Some(&recorder),
         "Generating video",
         HEARTBEAT_INTERVAL,
+        slot,
         work,
     )
     .await;
@@ -79,6 +81,7 @@ async fn a_quick_call_reports_nothing() {
         Some(&recorder),
         "Generating image",
         HEARTBEAT_INTERVAL,
+        JobStateSlot::default(),
         async {
             tokio::time::sleep(Duration::from_secs(3)).await;
             1
@@ -90,7 +93,10 @@ async fn a_quick_call_reports_nothing() {
 }
 
 #[test]
-fn a_poll_outside_a_call_is_dropped() {
-    // No heartbeat scope: the observer must not panic.
-    video_status_observer()(&status(JobState::InProgress));
+fn concurrent_calls_record_into_their_own_slots() {
+    let (a, b) = (JobStateSlot::default(), JobStateSlot::default());
+    video_status_observer(a.clone())(&status(JobState::Pending));
+    video_status_observer(b.clone())(&status(JobState::InProgress));
+    assert_eq!(a.lock().unwrap().as_deref(), Some("pending"));
+    assert_eq!(b.lock().unwrap().as_deref(), Some("in_progress"));
 }

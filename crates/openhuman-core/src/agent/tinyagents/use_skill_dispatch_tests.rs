@@ -14,10 +14,9 @@
 //! that failure and is the fastest way to see these tests fail red.
 
 use super::*;
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::harness::ParentExecutionContext;
-use crate::agent::prompts::ToolCallFormat;
-use crate::agent::tinyagents::tools::CanonicalSharedToolAdapter;
+use crate::agent::tinyagents::tool_registration::shared_tool_adapter;
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
@@ -28,6 +27,7 @@ use tinyagents_harness::CallId;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinytools::{Tool, ToolCallOptions, ToolResult};
+use tinytools_agent::dialect::ToolCallFormat;
 
 /// A stub archetype-delegate tool: only its name has to match `image_agent`'s
 /// `delegate_name` ("create_image", set in
@@ -116,11 +116,12 @@ fn parent_execution_context(workspace_dir: &Path) -> ParentExecutionContext {
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 
 /// Builds the `use_skill` registration exactly as
-/// `register_turn_tools_and_agents` does: a durable registry containing the
+/// `host_tool_set_builder` does: a durable registry containing the
 /// real `UseSkillTool` plus one packed archetype-delegate stub, a
 /// `PackRegistryHandle` bound to it, and the `CanonicalSharedToolAdapter`
 /// wrapping `use_skill` that the harness would have registered.
@@ -134,11 +135,8 @@ fn build_use_skill_dispatch_with_handle() -> (UseSkillDispatch, PackRegistryHand
     let durable: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![use_skill_tool, create_image_tool]);
     handle.bind(Arc::downgrade(&durable));
 
-    let adapter = CanonicalSharedToolAdapter::for_name(
-        vec![durable],
-        tinyagents_harness::tool::packs::USE_SKILL,
-    )
-    .expect("use_skill resolves in the durable registry it was just placed in");
+    let adapter = shared_tool_adapter(vec![durable], tinyagents_harness::tool::packs::USE_SKILL)
+        .expect("use_skill resolves in the durable registry it was just placed in");
     (
         UseSkillDispatch::new(Arc::new(adapter), handle.clone()),
         handle,

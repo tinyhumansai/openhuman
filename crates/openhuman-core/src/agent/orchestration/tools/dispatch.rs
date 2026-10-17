@@ -1,6 +1,6 @@
 //! Subagent dispatch logic shared by all agent delegation tools.
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
     run_subagent_with_parent, SubagentRunOptions, SubagentRunStatus,
@@ -13,7 +13,6 @@ use tinytools::ToolRunContext;
 use tinytools::{ToolCallOptions, ToolResult};
 
 mod dispatch_outcomes;
-mod tool_call_text;
 pub(crate) use dispatch_outcomes::*;
 
 /// Typed dispatch for the delegation tools synthesised from the active agent.
@@ -252,6 +251,7 @@ pub(crate) async fn dispatch_subagent_with_live_parent(
 
     if agent_id == "vision_agent" {
         match crate::agent::attachments::has_resolvable_image(
+            &run_context.dispatch_ctx(),
             prompt,
             parent_workspace_descriptor.as_ref(),
             run_context.origin.as_ref(),

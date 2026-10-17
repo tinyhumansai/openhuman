@@ -21,6 +21,8 @@ use super::background_completions::{record_awaiting_input, record_completion, re
 /// parent key). Built once at spawn so every terminal path records the same way.
 #[derive(Clone, Debug)]
 pub(crate) struct CompletionTarget {
+    /// The dispatch context the child's completions are recorded under.
+    ctx: crate::core::runtime::DispatchCtx,
     workspace_dir: PathBuf,
     parent_session: String,
     parent_thread_id: Option<String>,
@@ -28,11 +30,13 @@ pub(crate) struct CompletionTarget {
 
 impl CompletionTarget {
     pub(crate) fn new(
+        ctx: crate::core::runtime::DispatchCtx,
         workspace_dir: PathBuf,
         parent_session: String,
         parent_thread_id: Option<String>,
     ) -> Self {
         Self {
+            ctx,
             workspace_dir,
             parent_session,
             parent_thread_id,
@@ -42,6 +46,7 @@ impl CompletionTarget {
     /// Queue a finished result. See [`record_completion`].
     pub(crate) async fn completed(&self, task_id: &str, agent_id: &str, summary: String) {
         record_completion(
+            &self.ctx,
             &self.workspace_dir,
             &self.parent_session,
             task_id,
@@ -55,6 +60,7 @@ impl CompletionTarget {
     /// Queue a failure. See [`record_failure`].
     pub(crate) async fn failed(&self, task_id: &str, agent_id: &str, error: &str) {
         record_failure(
+            &self.ctx,
             &self.workspace_dir,
             &self.parent_session,
             task_id,
@@ -74,6 +80,7 @@ impl CompletionTarget {
         checkpointed: bool,
     ) {
         record_awaiting_input(
+            &self.ctx,
             &self.workspace_dir,
             &self.parent_session,
             task_id,

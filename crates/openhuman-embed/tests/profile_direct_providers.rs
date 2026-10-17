@@ -1,7 +1,7 @@
 //! A profile answers from the operator's direct chat provider and searches
 //! through direct Exa and Gemini endpoints, with no managed-backend traffic.
 //! One runtime and one test: SaaS operating mode is process-wide. The search
-//! half needs the real module (`TINYSEARCH_TEST_MODULE`), as in
+//! half needs the real module (`node scripts/modules/build.mjs tinysearch`), as in
 //! `tests/search_pinned_keys_e2e.rs`; without it only chat is asserted.
 
 mod common;
@@ -10,7 +10,7 @@ use common::{
     chat_completion, chat_requests, runtime_without_master_key, tool_names, PointedTransport,
 };
 use openhuman_embed::config::{
-    SearchConfig, SearchEngineCredentials, SearchPresentation, SearchProviderSettings, SearchRole,
+    PresentationMode, SearchConfig, SearchEngineCredentials, SearchProviderSettings, SearchRole,
 };
 use openhuman_embed::seams::ToolHookDecision;
 use openhuman_embed::{
@@ -87,7 +87,7 @@ fn profile_uses_operator_direct_chat_and_search_with_no_managed_traffic() {
 }
 
 async fn scenario() {
-    let module = std::env::var_os("TINYSEARCH_TEST_MODULE").is_some();
+    let module = openhuman_core::modules::local_artifact("tinysearch").is_some();
     let (managed, chat, exa, gemini) = (
         MockServer::start().await,
         MockServer::start().await,
@@ -122,7 +122,7 @@ async fn scenario() {
     PointedTransport::install(&managed.uri());
 
     let search = SearchConfig {
-        presentation: SearchPresentation::Roles,
+        presentation: PresentationMode::Roles,
         providers: BTreeMap::from([
             ("exa".into(), SearchProviderSettings::direct()),
             ("gemini".into(), SearchProviderSettings::direct()),

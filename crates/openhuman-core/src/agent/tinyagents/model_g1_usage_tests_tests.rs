@@ -3,6 +3,7 @@
 //! home (charged USD + context window) ride `ModelResponse.raw` and
 //! reconstruct exactly via [`usage_info_from_response`].
 use super::*;
+use tinyinference_llm::usage::Usage;
 
 fn empty_registry() -> tinytools_agent::PFormatRegistry {
     tinytools_agent::PFormatRegistry::default()

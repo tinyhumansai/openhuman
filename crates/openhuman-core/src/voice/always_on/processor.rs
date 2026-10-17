@@ -71,7 +71,12 @@ const MAX_UTTERANCE_SAMPLES: usize = TARGET_SAMPLE_RATE as usize * 60;
 /// Opens a continuous mic stream, segments it through the `tinyvoice` module, and
 /// routes each finished utterance through STT and the dictation delivery bus (so
 /// it reaches the agent exactly like a hotkey dictation, and lights up the notch).
-pub async fn start_if_enabled(app_config: &Config) {
+pub async fn start_if_enabled(ctx: &crate::core::runtime::DispatchCtx, app_config: &Config) {
+    if !app_config.components.voice {
+        log::info!("{LOG_PREFIX} [components].voice is off — always-on stays down");
+        shutdown().await;
+        return;
+    }
     if !app_config.voice_server.always_on_enabled {
         shutdown().await;
         return;
@@ -108,7 +113,7 @@ pub async fn start_if_enabled(app_config: &Config) {
     );
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<RawChunk>(CAPTURE_QUEUE_CHUNKS);
-    let (format, pump) = match spawn_capture_thread(app_config, tx).await {
+    let (format, pump) = match spawn_capture_thread(ctx, app_config, tx).await {
         Ok(stream) => stream,
         Err(error) => {
             log::warn!("{LOG_PREFIX} could not start microphone capture: {error}");
@@ -121,7 +126,7 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     let onset_threshold = vad.onset_threshold;
     let mut stopped = super::capture::stop_subscription();
-    let processor = crate::core::runtime::spawn_scoped(async move {
+    let processor = ctx.spawn(async move {
         let _running = running;
         let _pump = pump;
         // The segmenter lives in the module now, so opening it can fail for

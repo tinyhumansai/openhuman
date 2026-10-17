@@ -1,8 +1,13 @@
-use super::shell_platform::{
-    command_param_description, python_utf8_env, shell_child_env, shell_description,
-};
+use super::shell_description::{command_param_description, shell_description};
+#[cfg(feature = "modules")]
+use super::shell_support::container_environment;
+use super::shell_support::{command_failure, exec_result, python_utf8_env, tool_timeout_message};
 use crate::agent::host_runtime::RuntimeAdapter;
+use crate::agent::tinyagents::host::run_context::{
+    command_environment_for_tool, dispatch_ctx_for_tool,
+};
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::security::{AuditLogger, CommandExecutionLog, SecurityPolicy};
 use async_trait::async_trait;
 use serde_json::json;
@@ -14,29 +19,6 @@ use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout}
 
 /// Maximum output size in bytes (1MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
-/// Exit status coreutils `timeout` returns when its own limit expires.
-const COMMAND_TIMEOUT_EXIT_CODE: i32 = 124;
-/// Appended to an exit-124 failure: the command's own `timeout` fired, not the
-/// tool's (#6953). Without it, `exit code 124 [stdout] ok` reads like a bug.
-const COMMAND_TIMEOUT_NOTE: &str = "[exit 124: the command's own `timeout` limit expired; the shell tool's timeout_secs did not fire]";
-
-/// The result when the tool's own `timeout_secs` deadline killed the command.
-fn tool_timeout_message(secs: u64) -> String {
-    format!("Command timed out after {secs}s and was killed: the shell tool's timeout_secs limit fired.")
-}
-
-/// [`tinytools::command_failure`], plus [`COMMAND_TIMEOUT_NOTE`] on exit 124.
-fn command_failure(code: Option<i32>, stdout: &str, stderr: &str) -> ToolResult {
-    let mut failure = tinytools::command_failure(code, stdout, stderr);
-    if code == Some(COMMAND_TIMEOUT_EXIT_CODE) {
-        tracing::debug!("[shell] exit 124: attributing it to the command's own timeout");
-        failure.content.push(tinytools::ToolContent::Text {
-            text: COMMAND_TIMEOUT_NOTE.to_string(),
-        });
-    }
-    failure
-}
-
 #[cfg(feature = "modules")]
 fn docker_module_result(
     output: crate::modules::tinybox::contract::DockerRunOutput,
@@ -175,11 +157,11 @@ impl ShellTool {
     /// deadline applies only when the caller passes `timeout_secs` (issue
     /// #4023). A `0` explicitly disables it. Any positive value is clamped to
     /// `1..=3600`. See
-    /// [`crate::tools::timeout::explicit_call_timeout_duration`].
+    /// [`tinytools_std::timeout::explicit_call_timeout_duration`].
     fn explicit_timeout(&self, requested: Option<u64>) -> Option<Duration> {
-        crate::tools::timeout::explicit_call_timeout_duration(
+        tinytools_std::timeout::explicit_call_timeout_duration(
             requested,
-            crate::tools::timeout::MAX_TIMEOUT_SECS,
+            tinytools_std::timeout::MAX_TIMEOUT_SECS,
         )
     }
 }
@@ -209,9 +191,9 @@ impl Tool for ShellTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "minimum": 1,
+                    "minimum": 0,
                     "maximum": 3600,
-                    "description": "Optional wall-clock timeout (seconds, 1..=3600) for this command before it is killed. Use a larger value for long-running work (builds, test suites, solvers). Omitted or out-of-range falls back to the configured tool timeout."
+                    "description": "Optional wall-clock timeout (seconds, up to 3600) for this command before it is killed. Use a larger value for long-running work (builds, test suites, solvers). Omitted or 0 runs without a deadline."
                 }
             },
             "required": ["command"]
@@ -285,7 +267,8 @@ impl Tool for ShellTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        self.execute_in_context(args, None).await
+        self.execute_in_context(&dispatch_ctx_for_tool(None), args, None)
+            .await
     }
 
     async fn execute_with_context(
@@ -294,13 +277,15 @@ impl Tool for ShellTool {
         _options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        self.execute_in_context(args, context).await
+        self.execute_in_context(&dispatch_ctx_for_tool(context), args, context)
+            .await
     }
 }
 
 impl ShellTool {
     async fn execute_in_context(
         &self,
+        ctx: &DispatchCtx,
         args: serde_json::Value,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
@@ -314,11 +299,15 @@ impl ShellTool {
         // `tool_timeout::explicit_call_timeout_*`. Shell has no default deadline
         // (issue #4023) — long scripts must run to completion.
         let requested_timeout = args.get("timeout_secs").and_then(|v| v.as_u64());
-
         let start = Instant::now();
-        let (allowed, result) = self
-            .run_with_security_in_context(command, requested_timeout, context)
-            .await;
+        let (allowed, result) = crate::sandbox::shell_progress::with_shell_progress(
+            context,
+            crate::sandbox::shell_progress::HEARTBEAT_INTERVAL,
+            |meter| {
+                self.run_with_security_in_context(ctx, command, requested_timeout, context, meter)
+            },
+        )
+        .await;
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         // `allowed` = passed the in-tool security checks. `approved` = the command
         // is Prompt-class (required human approval) and thus went through the
@@ -345,19 +334,23 @@ impl ShellTool {
     /// identically to workflow-triggered commands.
     pub(crate) async fn run_with_security(
         &self,
+        ctx: &DispatchCtx,
         command: &str,
         requested_timeout: Option<u64>,
     ) -> (bool, ToolResult) {
-        self.run_with_security_in_context(command, requested_timeout, None)
+        self.run_with_security_in_context(ctx, command, requested_timeout, None, None)
             .await
     }
 
     async fn run_with_security_in_context(
         &self,
+        ctx: &DispatchCtx,
         command: &str,
         requested_timeout: Option<u64>,
         context: Option<&dyn ToolRunContext>,
+        meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
     ) -> (bool, ToolResult) {
+        let command_environment = command_environment_for_tool(context);
         // Revalidate facts immediately before execution. The authorization
         // hook supplies the same module-owned parser to the harness gate; this
         // second call keeps direct/workflow execution on the same contract and
@@ -427,8 +420,16 @@ impl ShellTool {
             let action_dir = saas_action_dir;
             return match resolved {
                 Ok(policy) => {
-                    self.run_in_policy(policy, command, requested_timeout, &action_dir)
-                        .await
+                    self.run_in_policy(
+                        ctx,
+                        policy,
+                        command,
+                        requested_timeout,
+                        &action_dir,
+                        context,
+                        meter,
+                    )
+                    .await
                 }
                 Err(why) => {
                     tracing::warn!(reason = %why, "[shell] SaaS sandbox refused the command");
@@ -441,6 +442,7 @@ impl ShellTool {
         // A sandboxed agent or an explicit operator backend uses the sandbox
         // execution path. Security checks above still apply.
         let sandbox_required = match crate::sandbox::command_requires_sandbox(
+            ctx,
             crate::agent::tinyagents::host::run_context::sandbox_mode_for_tool(context),
         )
         .await
@@ -456,7 +458,7 @@ impl ShellTool {
         if sandbox_required {
             let action_dir = self.effective_action_dir_for_context(context);
             return self
-                .run_sandboxed(command, requested_timeout, &action_dir)
+                .run_sandboxed(ctx, command, requested_timeout, &action_dir, context, meter)
                 .await;
         }
 
@@ -497,17 +499,12 @@ impl ShellTool {
                 request.timeout_ms = timeout_ms;
             }
 
-            let mut env = std::collections::BTreeMap::new();
-            for (name, value) in shell_child_env(crate::tools::timeout::CommandEnvironment::var_os)
-            {
-                let Ok(value) = value.into_string() else {
-                    return (
-                        false,
-                        ToolResult::error("Docker environment contains a non-UTF-8 value."),
-                    );
-                };
-                env.insert(name.to_owned(), value);
-            }
+            let Some(mut env) = container_environment(command_environment.as_deref()) else {
+                return (
+                    false,
+                    ToolResult::error("Docker environment contains a non-UTF-8 value."),
+                );
+            };
             for (name, value) in tinytools_std::filesystem::shell_git_env() {
                 let (Ok(name), Ok(value)) = (name.into_string(), value.into_string()) else {
                     return (
@@ -544,25 +541,52 @@ impl ShellTool {
             return (true, result);
         }
 
-        let mut cmd = match self.runtime.build_shell_command(command, &action_dir) {
-            Ok(cmd) => cmd,
-            Err(e) => {
-                return (
-                    true,
-                    ToolResult::error(format!("Failed to build shell command: {e}")),
-                );
-            }
-        };
-        cmd.env_clear();
+        // The module spawns the shell: it selects cmd or bash, starts from its
+        // own safe environment (no API keys or other secrets, CWE-200) and owns
+        // the per-call scratch directory. The host adds only what it approves.
+        if let Err(e) = crate::config::ensure_usable_cwd(&action_dir) {
+            return (
+                true,
+                ToolResult::error(format!("Failed to build shell command: {e}")),
+            );
+        }
+        let mut env = std::collections::BTreeMap::new();
 
-        for (var, val) in shell_child_env(crate::tools::timeout::CommandEnvironment::var_os) {
-            cmd.env(var, val);
+        if let Some(overrides) = command_environment.as_deref() {
+            env.extend(
+                overrides
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
+        }
+
+        // A turn that owns its child environment (library agents) keeps it: the
+        // module starts from the process snapshot, so the turn's own values for
+        // the functional variables are passed as approved overrides.
+        if tinytools_std::timeout::CommandEnvironment::is_active() {
+            for name in crate::sandbox::ops::SANDBOX_ENV_PASSTHROUGH {
+                if let Some(value) = tinytools_std::timeout::CommandEnvironment::var_os(name) {
+                    let Ok(value) = value.into_string() else {
+                        return (
+                            false,
+                            ToolResult::error("Shell environment contains a non-UTF-8 value."),
+                        );
+                    };
+                    env.insert((*name).to_owned(), value);
+                }
+            }
         }
 
         // Keep command-valued repository Git settings from executing host
         // programs when a shell command happens to invoke git.
         for (key, value) in tinytools_std::filesystem::shell_git_env() {
-            cmd.env(key, value);
+            let (Ok(key), Ok(value)) = (key.into_string(), value.into_string()) else {
+                return (
+                    false,
+                    ToolResult::error("Shell environment contains a non-UTF-8 value."),
+                );
+            };
+            env.insert(key, value);
         }
 
         // Point the child's temp dir at the agent's granted scratch dir
@@ -570,101 +594,102 @@ impl ShellTool {
         // `from_config`) so `python3 tempfile` / `mktemp` / `$TMPDIR` writes land
         // in a sandboxed, readable location instead of the world-shared /tmp.
         let scratch_dir = crate::security::openhuman_scratch_dir();
-        if scratch_dir.is_dir() {
+        if let (true, Some(scratch)) = (scratch_dir.is_dir(), scratch_dir.to_str()) {
             tracing::debug!(
                 scratch_dir = %scratch_dir.display(),
                 "[shell] overriding TMPDIR/TMP/TEMP to the openhuman scratch dir"
             );
-            cmd.env("TMPDIR", scratch_dir.as_os_str());
-            cmd.env("TMP", scratch_dir.as_os_str());
-            cmd.env("TEMP", scratch_dir.as_os_str());
+            for name in ["TMPDIR", "TMP", "TEMP"] {
+                env.insert(name.to_owned(), scratch.to_owned());
+            }
         } else {
             tracing::debug!(
                 scratch_dir = %scratch_dir.display(),
-                "[shell] scratch dir missing — leaving TMPDIR/TMP/TEMP as inherited"
+                "[shell] scratch dir missing — leaving TMPDIR/TMP/TEMP to the module"
             );
         }
 
         // No default deadline — only a caller-supplied `timeout_secs` bounds the
-        // run. `None` ⇒ run to completion (issue #4023).
+        // run (issue #4023). TinyBox needs a finite budget, so an unbounded call
+        // gets the module's ceiling.
         let explicit_timeout = self.explicit_timeout(requested_timeout);
+        let effective = explicit_timeout.unwrap_or_else(|| {
+            Duration::from_secs(tinytools_std::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+        });
         tracing::debug!(
-            timeout_secs = ?explicit_timeout.map(|d| d.as_secs()),
+            timeout_secs = effective.as_secs(),
             requested_timeout_secs = ?requested_timeout,
-            "[shell] starting command ({} timeout)",
-            if explicit_timeout.is_some() { "explicit" } else { "no" }
+            unbounded = explicit_timeout.is_none(),
+            "[shell] starting command through TinyBox"
         );
-        let result = match explicit_timeout {
-            Some(timeout) => crate::tools::timeout::output_or_kill(&mut cmd, timeout).await,
-            None => Ok(crate::tools::timeout::output_unbounded(&mut cmd).await),
+        let config = match self.analysis_config.as_deref() {
+            Some(config) => config.clone(),
+            None => match ctx.load_config().await {
+                Ok(config) => config,
+                Err(e) => {
+                    return (
+                        true,
+                        ToolResult::error(format!("Cannot read module configuration: {e}")),
+                    )
+                }
+            },
         };
-
-        let tool_result = match result {
-            Ok(Ok(output)) => {
-                let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-                // Truncate output to prevent OOM
-                if stdout.len() > MAX_OUTPUT_BYTES {
-                    stdout.truncate(crate::util::floor_char_boundary(&stdout, MAX_OUTPUT_BYTES));
-                    stdout.push_str("\n... [output truncated at 1MB]");
-                }
-                if stderr.len() > MAX_OUTPUT_BYTES {
-                    stderr.truncate(crate::util::floor_char_boundary(&stderr, MAX_OUTPUT_BYTES));
-                    stderr.push_str("\n... [stderr truncated at 1MB]");
-                }
-
-                if output.status.success() {
-                    if stderr.is_empty() {
-                        ToolResult::success(stdout)
-                    } else {
-                        // Successful exit but stderr present — attach stderr as output suffix
-                        ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}"))
-                    }
-                } else {
-                    // Surface the exit code AND both streams so the agent can
-                    // diagnose the failure (e.g. 127 missing dependency, 126
-                    // sandbox/permission wall) instead of looping on it (#4095).
-                    command_failure(output.status.code(), &stdout, &stderr)
-                }
-            }
-            Ok(Err(e)) => ToolResult::error(format!("Failed to execute command: {e}")),
-            Err(_) => {
-                let secs = explicit_timeout.map(|d| d.as_secs()).unwrap_or(0);
-                tracing::debug!(timeout_secs = secs, "[shell] tool timeout_secs fired");
-                ToolResult::error(tool_timeout_message(secs))
-            }
-        };
-        (true, tool_result)
+        let mut run = crate::sandbox::shell_exec::NativeShellRun::new(
+            command,
+            &action_dir,
+            &self.security.workspace_dir,
+            effective,
+        );
+        run.env = env;
+        run.python_utf8 = true;
+        run.hide_window = self.runtime.hide_window();
+        run.meter = meter;
+        let result = crate::sandbox::shell_exec::run(ctx, &config, run).await;
+        (true, exec_result(result, effective))
     }
 
     /// Execute a command through the sandbox backend. Called when the
     /// agent's `SandboxMode` is `Sandboxed`.
     async fn run_sandboxed(
         &self,
+        ctx: &DispatchCtx,
         command: &str,
         requested_timeout: Option<u64>,
         action_dir: &Path,
+        context: Option<&dyn ToolRunContext>,
+        meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
     ) -> (bool, ToolResult) {
         let config = crate::config::RuntimeConfig::default();
         let policy = crate::sandbox::resolve_sandbox_policy(
-            crate::agent::harness::definition::SandboxMode::Sandboxed,
+            ctx,
+            tinyagents_definition::SandboxMode::Sandboxed,
             action_dir,
             &self.security.workspace_dir,
             &config,
             false,
         );
-        self.run_in_policy(policy, command, requested_timeout, action_dir)
-            .await
+        self.run_in_policy(
+            ctx,
+            policy,
+            command,
+            requested_timeout,
+            action_dir,
+            context,
+            meter,
+        )
+        .await
     }
 
     /// Execute a command under a resolved sandbox `policy`.
     async fn run_in_policy(
         &self,
+        ctx: &DispatchCtx,
         policy: crate::sandbox::SandboxPolicy,
         command: &str,
         requested_timeout: Option<u64>,
         action_dir: &Path,
+        context: Option<&dyn ToolRunContext>,
+        meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
     ) -> (bool, ToolResult) {
         use crate::sandbox;
 
@@ -674,11 +699,27 @@ impl ShellTool {
             "[shell] routing to sandbox backend"
         );
 
-        let mut extra_env = std::collections::HashMap::new();
+        let mut extra_env =
+            std::collections::HashMap::<std::ffi::OsString, std::ffi::OsString>::new();
+        let command_environment = command_environment_for_tool(context);
+        super::shell_support::extend_explicit_environment(
+            &mut extra_env,
+            command_environment.as_deref(),
+        );
         // Apply the same Git config hardening to local and sandboxed shells.
         extra_env.extend(tinytools_std::filesystem::shell_git_env());
         // And the same Python UTF-8 defaults the native path sets.
-        for (var, val) in python_utf8_env(|name| std::env::var_os(name)) {
+        for (var, val) in python_utf8_env(|name| {
+            command_environment
+                .as_ref()
+                .and_then(|overrides| overrides.get(name).map(std::ffi::OsString::from))
+                .or_else(|| {
+                    command_environment
+                        .is_none()
+                        .then(|| std::env::var_os(name))
+                        .flatten()
+                })
+        }) {
             extra_env.insert(var.into(), val);
         }
 
@@ -687,7 +728,7 @@ impl ShellTool {
         // long command isn't killed while still bounding a wedged sandbox.
         let explicit_timeout = self.explicit_timeout(requested_timeout);
         let effective = explicit_timeout.unwrap_or_else(|| {
-            Duration::from_secs(crate::tools::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+            Duration::from_secs(tinytools_std::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
         });
         tracing::debug!(
             timeout_secs = effective.as_secs(),
@@ -696,36 +737,11 @@ impl ShellTool {
             "[shell] starting sandboxed command"
         );
 
-        match sandbox::execute_in_sandbox(&policy, command, action_dir, extra_env, effective).await
-        {
-            Ok(result) => {
-                let tool_result = if result.timed_out {
-                    ToolResult::error(tool_timeout_message(effective.as_secs()))
-                } else if result.success() {
-                    if result.stderr.is_empty() {
-                        ToolResult::success(result.stdout)
-                    } else {
-                        ToolResult::success(format!(
-                            "{}\n[stderr]\n{}",
-                            result.stdout, result.stderr
-                        ))
-                    }
-                } else {
-                    // Same exit-code + both-streams surfacing as the native path
-                    // (#4095); the sandbox `-1` sentinel renders as a signal.
-                    command_failure(
-                        tinytools::sandbox_exit_code(result.exit_code),
-                        &result.stdout,
-                        &result.stderr,
-                    )
-                };
-                (true, tool_result)
-            }
-            Err(e) => (
-                true,
-                ToolResult::error(format!("Sandbox execution failed: {e}")),
-            ),
-        }
+        let result = sandbox::ops::execute_in_sandbox_metered(
+            ctx, &policy, command, action_dir, extra_env, effective, meter,
+        )
+        .await;
+        (true, exec_result(result, effective))
     }
 }
 

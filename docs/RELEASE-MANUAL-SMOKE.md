@@ -1,6 +1,6 @@
 # Release Manual Smoke Checklist
 
-Run this checklist on every release-cut. Sign-off lives as a GitHub commit comment on the `v<version>-staging` tagged commit that QA validated (paste the checklist with checked items + the sign-off block at the bottom). Before approving the production run, the `Release-Approval` reviewer checks the sign-off exists **and** that the run targets that validated commit (staging SHA passed as `commit_sha`, or separated from the target only by `[skip ci]` version-bump commits). Owns OS-level surfaces that drivers cannot assert — everything else is automated under WDIO, Vitest, or Rust integration tests (see [Testing Strategy](../gitbooks/developing/testing-strategy.md)).
+Run this checklist on every release-cut. Sign-off lives as a GitHub commit comment on the `v<version>-staging` tagged commit that QA validated (paste the checklist with checked items + the sign-off block at the bottom). Before approving the production run, the `Release-Approval` reviewer checks the sign-off exists **and** that the run targets that validated commit (staging SHA passed as `commit_sha`, or separated from the target only by `[skip ci]` version-bump commits). Owns OS-level surfaces that drivers cannot assert — everything else is automated under WDIO, Vitest, or Rust integration tests (see [Testing Strategy](../docs/gitbooks/en/developing/testing-strategy.md)).
 
 This is the **only** acceptable substitute for a `🚫` row in [`TEST-COVERAGE-MATRIX.md`](./TEST-COVERAGE-MATRIX.md). If a feature has neither automated coverage nor an entry on this checklist, treat it as untested and open a coverage gap.
 
@@ -31,6 +31,10 @@ Applies to every release, all platforms.
 - [ ] **An existing chat accepts another turn after restart** — Send a message and wait for its reply, fully quit OpenHuman, then reopen that conversation and send a second message. Expected: the second reply streams normally, retains the earlier context, and does not show a generic error. Repeat after the conversation has compacted if a long-running test profile is available (#6608).
 - [ ] **A failed chat turn does not offer an invalid regenerate action** — Trigger a provider failure in a test profile and inspect its error card. Expected: the diagnostic text remains visible, with no Retry or Refresh button on that failed message. A completed assistant reply still offers Refresh (#6613).
 - [ ] **A failed turn leaves its thread usable** — In a test profile, get one successful reply, trigger a streamed provider failure on the next turn, then send another message in the same thread. Expected: the error card appears, the composer re-enables, the next reply streams normally, and the agent still has the first turn's context. If a queued follow-up starts as the failed turn ends, its stream and composer state stay active.
+
+### Tool UI widgets in chat
+
+- [ ] **An MCP tool widget renders and works inline** — Connect an MCP server that declares a `ui://` widget (for example a food-ordering server) in a staging test profile and ask for something that returns one. Expected: the widget appears after the activity group and above the answer, its buttons work, a non-read-only action asks for confirmation, and with no widget a link result shows an Open in browser action and a phone QR.
 
 ### Memory latency and queued writes (coverage 8.1 / 8.2)
 
@@ -140,7 +144,7 @@ Use a disposable staging account/workspace and synthetic facts. Keep inference r
 
 ### Current stable line
 
-- [ ] **OAuth gate respects `VITE_MINIMUM_SUPPORTED_APP_VERSION`** (per [Release Policy](../gitbooks/developing/release-policy.md)) — Set the variable to a value above this build's version, build, attempt OAuth from the older binary. Expected: gate blocks the deep link; opens `VITE_LATEST_APP_DOWNLOAD_URL`.
+- [ ] **OAuth gate respects `VITE_MINIMUM_SUPPORTED_APP_VERSION`** (per [Release Policy](../docs/gitbooks/en/developing/release-policy.md)) — Set the variable to a value above this build's version, build, attempt OAuth from the older binary. Expected: gate blocks the deep link; opens `VITE_LATEST_APP_DOWNLOAD_URL`.
 - [ ] **Gmail connect succeeds on a fresh install from `releases/latest`** — Per release-policy step 4. Expected: token exchange completes, inbox lists in-app.
 
 ---

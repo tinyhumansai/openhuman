@@ -1,218 +1,63 @@
-//! The supply-chain scan gate shared by catalog and URL installs.
+//! Host adapter over `tinyskills::scan_gate`.
 //!
-//! A fetched `SKILL.md` whose scan blocks, or a fetch that fails, is fetched
-//! and scanned once more. A document that still blocks is not installed
-//! unless the user acknowledged that exact document (by its digest) in the
-//! Skills UI; the caller gets a [`SkillInstallOutcome::ScanBlocked`] instead.
+//! The acknowledgement, blocked-document summary, retry policy and install gate
+//! live in the module. This file keeps the host's grep-friendly log lines
+//! around those calls and names the install result with the host's
+//! [`InstallWorkflowFromUrlOutcome`].
 
 use std::future::Future;
 
-use serde::Serialize;
-use tinyskills::{RegistryDocument, RegistryError, RegistryErrorKind, ScanCheck, Verdict};
+use tinyskills::{RegistryDocument, RegistryError};
+
+pub use tinyskills::{ScanAcknowledgement, ScanBlocked as ScanBlockedOutcome, ScanFindingSummary};
 
 use super::fetch::InstallWorkflowFromUrlOutcome;
 
-/// Whether the user has reviewed a blocking scan and chosen to install anyway.
-///
-/// The acknowledgement names the digest of the document the user was shown;
-/// it covers that document only. Only the Skills UI sets
-/// [`ScanAcknowledgement::ByUser`], through the `acknowledged_digest` JSON-RPC
-/// param. Agent tools always pass [`ScanAcknowledgement::Absent`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScanAcknowledgement {
-    /// Nobody acknowledged the findings: a blocking scan refuses the install.
-    Absent,
-    /// The user acknowledged the findings of the document with this digest.
-    ByUser { digest: String },
-}
-
-impl ScanAcknowledgement {
-    /// The acknowledgement a caller-supplied digest stands for; a missing or
-    /// blank digest acknowledges nothing.
-    pub fn from_user_digest(digest: Option<String>) -> Self {
-        match digest.map(|digest| digest.trim().to_owned()) {
-            Some(digest) if !digest.is_empty() => Self::ByUser { digest },
-            _ => Self::Absent,
-        }
-    }
-
-    pub fn is_given(&self) -> bool {
-        matches!(self, Self::ByUser { .. })
-    }
-
-    /// Whether this acknowledgement lets `document` install despite its scan.
-    pub fn covers(&self, document: &RegistryDocument) -> bool {
-        match self {
-            Self::Absent => false,
-            Self::ByUser { digest } => *digest == document.digest,
-        }
-    }
-}
-
-/// One scan finding, in operator-facing language.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ScanFindingSummary {
-    pub check: ScanCheck,
-    pub verdict: Verdict,
-    /// Where in the skill it fired, e.g. `the document body`.
-    pub field: String,
-    /// The finding as one readable line, without the offending value.
-    pub message: String,
-}
-
-/// A document the scan blocked, returned instead of installing it.
-#[derive(Debug, Clone, Serialize)]
-pub struct ScanBlockedOutcome {
-    /// The catalog entry id or URL the caller asked to install.
-    pub target: String,
-    /// The URL the document was fetched from, redacted.
-    pub fetched_from: String,
-    /// The install slug the document would have used.
-    pub slug: String,
-    /// The digest of the blocked document; sending it back as
-    /// `acknowledged_digest` installs this document and no other.
-    pub digest: String,
-    pub findings: Vec<ScanFindingSummary>,
-    pub message: String,
-}
-
-impl ScanBlockedOutcome {
-    pub(crate) fn of(target: &str, document: &RegistryDocument) -> Self {
-        let findings: Vec<ScanFindingSummary> = document
-            .scan
-            .findings
-            .iter()
-            .map(|finding| ScanFindingSummary {
-                check: finding.check,
-                verdict: finding.verdict,
-                field: finding.field.label(),
-                message: finding.message(),
-            })
-            .collect();
-        let blocking: Vec<&str> = findings
-            .iter()
-            .filter(|finding| finding.verdict == Verdict::Block)
-            .map(|finding| finding.message.as_str())
-            .collect();
-        Self {
-            target: target.to_owned(),
-            fetched_from: document.fetched_from.clone(),
-            slug: document.document.slug.clone(),
-            digest: document.digest.clone(),
-            message: format!(
-                "The security scan blocked this skill and it was not installed: {}.",
-                blocking.join("; ")
-            ),
-            findings,
-        }
-    }
-}
-
 /// What an install did: installed the skill, or refused it on its scan.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum SkillInstallOutcome {
-    Installed(InstallWorkflowFromUrlOutcome),
-    ScanBlocked(ScanBlockedOutcome),
-}
+pub type SkillInstallOutcome = tinyskills::Gated<InstallWorkflowFromUrlOutcome>;
 
-impl SkillInstallOutcome {
-    pub fn status(&self) -> &'static str {
-        match self {
-            Self::Installed(_) => "installed",
-            Self::ScanBlocked(_) => "scan_blocked",
-        }
-    }
-
-    /// The install, or `None` when the scan refused it.
-    pub fn installed(self) -> Option<InstallWorkflowFromUrlOutcome> {
-        match self {
-            Self::Installed(installed) => Some(installed),
-            Self::ScanBlocked(_) => None,
-        }
-    }
-}
-
-/// Whether a failed fetch is worth one more attempt. Refusals that depend
-/// only on the request (an unknown id, an unsafe URL, a portal entry), an
-/// oversized body and an upstream asking us to back off are not.
-pub(crate) fn fetch_error_is_retryable(error: &RegistryError) -> bool {
-    !matches!(
-        error.kind(),
-        RegistryErrorKind::NotFound
-            | RegistryErrorKind::Ambiguous
-            | RegistryErrorKind::UpstreamAmbiguous
-            | RegistryErrorKind::NoDirectDownload
-            | RegistryErrorKind::UnsafeUrl
-            | RegistryErrorKind::UnknownRegistry
-            | RegistryErrorKind::TooLarge
-            | RegistryErrorKind::RateLimited
-    )
-}
-
-/// Fetch and scan a document, retrying once when the scan blocks or the
-/// fetch fails with a retryable error. A blocked document the user
-/// acknowledged by its digest is taken as is; one whose digest differs from
-/// the acknowledged one is treated as unacknowledged.
+/// Fetch and scan a document through the module's retry policy, logging each
+/// outcome for `target`.
 pub(crate) async fn fetch_scanned<F, Fut>(
     target: &str,
     acknowledgement: &ScanAcknowledgement,
-    mut fetch: F,
+    fetch: F,
 ) -> Result<RegistryDocument, RegistryError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<RegistryDocument, RegistryError>>,
 {
-    match fetch().await {
-        Ok(document) if !document.is_blocked() => return Ok(document),
-        Ok(document) if acknowledgement.covers(&document) => {
-            tracing::warn!(
-                install_target = %target,
-                fetched_from = %document.fetched_from,
-                digest = %document.digest,
-                findings = document.scan.findings.len(),
-                "[skills] scan gate: blocked document installed on user acknowledgement"
-            );
-            return Ok(document);
-        }
-        Ok(document) => {
-            if acknowledgement.is_given() {
-                tracing::warn!(
-                    install_target = %target,
-                    digest = %document.digest,
-                    "[skills] scan gate: acknowledged digest does not match the fetched document"
-                );
-            }
-            tracing::info!(
-                install_target = %target,
-                fetched_from = %document.fetched_from,
-                findings = document.scan.findings.len(),
-                "[skills] scan gate: scan blocked the document; fetching it once more"
-            );
-        }
-        Err(error) if fetch_error_is_retryable(&error) => tracing::info!(
+    let mut fetch = fetch;
+    let mut attempts = 0usize;
+    let result = tinyskills::fetch_scanned(acknowledgement, || {
+        attempts += 1;
+        fetch()
+    })
+    .await;
+    match &result {
+        Ok(document) if attempts > 1 => tracing::info!(
             install_target = %target,
-            kind = error.kind().as_str(),
-            error = %error,
-            "[skills] scan gate: fetch failed; fetching it once more"
-        ),
-        Err(error) => return Err(error),
-    }
-    let retried = fetch().await;
-    match &retried {
-        Ok(document) => tracing::info!(
-            install_target = %target,
+            attempts,
             blocked = document.is_blocked(),
             digest = %document.digest,
             "[skills] scan gate: retry fetched the document"
         ),
+        Ok(document) if document.is_blocked() => tracing::warn!(
+            install_target = %target,
+            fetched_from = %document.fetched_from,
+            digest = %document.digest,
+            findings = document.scan.findings.len(),
+            "[skills] scan gate: blocked document installed on user acknowledgement"
+        ),
+        Ok(_) => {}
         Err(error) => tracing::info!(
             install_target = %target,
+            attempts,
             kind = error.kind().as_str(),
-            "[skills] scan gate: retry failed"
+            "[skills] scan gate: fetch failed"
         ),
     }
-    retried
+    result
 }
 
 /// Turn a scanned document into an install, or into a refusal when its scan
@@ -223,8 +68,8 @@ pub(crate) fn gate_install(
     document: RegistryDocument,
     install: impl FnOnce(RegistryDocument) -> Result<InstallWorkflowFromUrlOutcome, String>,
 ) -> Result<SkillInstallOutcome, String> {
-    if document.is_blocked() && !acknowledgement.covers(&document) {
-        let blocked = ScanBlockedOutcome::of(target, &document);
+    let outcome = tinyskills::gate_install(target, acknowledgement, document, install)?;
+    if let SkillInstallOutcome::ScanBlocked(blocked) = &outcome {
         tracing::warn!(
             install_target = %target,
             fetched_from = %blocked.fetched_from,
@@ -234,9 +79,8 @@ pub(crate) fn gate_install(
             findings = blocked.findings.len(),
             "[skills] scan gate: refused install; scan still blocks and the document is not acknowledged"
         );
-        return Ok(SkillInstallOutcome::ScanBlocked(blocked));
     }
-    install(document).map(SkillInstallOutcome::Installed)
+    Ok(outcome)
 }
 
 #[cfg(test)]

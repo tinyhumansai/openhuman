@@ -14,9 +14,5 @@
 
 pub mod prompt;
 
-#[cfg(test)]
-#[path = "tool_wording_tests.rs"]
-mod tool_wording_tests;
-
 /// The harness-independent turn brief, from `tinyflows-copilot`.
 pub use tinyflows_copilot::builder as builder_prompt;

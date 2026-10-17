@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use openhuman_core::tools::timeout::ProcessCleanup;
+use tinytools_std::timeout::ProcessCleanup;
 use tokio::sync::watch;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

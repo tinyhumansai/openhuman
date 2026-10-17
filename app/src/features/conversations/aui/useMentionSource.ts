@@ -9,8 +9,8 @@
  *   filter, which would drop semantic hits whose label does not literally
  *   contain the query, so `search` is extended to always include them.
  * - **Files** — the thread's ready artifacts, read from
- *   `chatRuntime.artifactsByThread` (the list the header `ChatFilesChip`
- *   hydrates). No new RPC.
+ *   `chatRuntime.artifactsByThread` (the list
+ *   `useThreadArtifactsHydration` loads). No new RPC.
  *
  * Choosing an item inserts `:type[label]{name=id}` through the default
  * directive formatter — the syntax `DirectiveText` renders as a chip in the

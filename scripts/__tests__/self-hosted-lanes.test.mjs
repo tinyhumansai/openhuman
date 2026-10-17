@@ -45,6 +45,57 @@ const ALL = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, true]));
 const NONE = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, false]));
 const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
 
+test("EX63 installs script dependencies only after changed areas are detected", () => {
+  const detect = ciLanes.indexOf("- name: Detect changed areas");
+  const install = ciLanes.indexOf(
+    "- name: Install jq for release-script tests",
+  );
+  const python = ciLanes.indexOf("- name: Setup Python for lanes");
+  const start = ciLanes.indexOf("- name: Start lanes");
+  assert.ok(
+    detect >= 0 && install > detect && python > detect && start > python,
+    "area detection and Python setup must precede lane startup",
+  );
+  const nextStep = ciLanes.indexOf("\n      - name:", install + 1);
+  const installBlock = ciLanes.slice(
+    install,
+    nextStep < 0 ? undefined : nextStep,
+  );
+  assert.doesNotMatch(
+    installBlock,
+    /\bsudo\b|apt-get/,
+    "the pinned jq download does not require package installation",
+  );
+  assert.match(installBlock, /JQ_SHA256/);
+  assert.match(installBlock, /sha256sum -c/);
+
+  const pythonBlock = ciLanes.slice(
+    python,
+    ciLanes.indexOf("\n      - name:", python + 1),
+  );
+  assert.match(pythonBlock, /python-version: "3\.12"/);
+  assert.match(pythonBlock, /update-environment: false/);
+  const startBlock = ciLanes.slice(
+    start,
+    ciLanes.indexOf("\n      - name:", start + 1),
+  );
+  assert.match(
+    startBlock,
+    /OPENHUMAN_CI_PYTHON: \$\{\{ steps\.python\.outputs\.python-path \}\}/,
+    "the pinned Python interpreter is passed to the lanes without exporting its PATH",
+  );
+});
+
+test("EX63 provides jq without root and before the lanes start", () => {
+  const install = ciLanes.indexOf("- name: Install jq for release-script tests");
+  const end = ciLanes.indexOf("\n      - name:", install + 1);
+  const step = ciLanes.slice(install, end);
+  assert.doesNotMatch(step, /\bsudo\b|apt-get/);
+  assert.match(step, /sha256sum -c/);
+  assert.match(step, /GITHUB_PATH/);
+  assert.ok(install < ciLanes.indexOf("- name: Start lanes"), "jq must be on PATH before the lanes spawn");
+});
+
 const plans = () => [
   buildPlan({ profile: "ex63", areas: ALL, env: EX63_ENV }),
   buildPlan({ profile: "hosted", areas: ALL }),
@@ -164,9 +215,14 @@ test("core doctests remain outside PR coverage; embed doctests and tui tests run
     assert.equal(cov.env.OH_COV_TUI, "1");
     const runs = allRuns(plan).join("\n");
     assert.doesNotMatch(runs, /cargo test -p openhuman --doc/);
-    assert.doesNotMatch(runs, /cargo test -p openhuman-(embed|tinyhumans)\b(?! --doc)/);
+    assert.doesNotMatch(
+      runs,
+      /cargo test -p openhuman-(embed|tinyhumans)\b(?! --doc)/,
+    );
     assert.match(runs, /cargo test -p openhuman-embed --doc/);
-    const doc = plan.lanes.find(l => l.name === "rust-lint").checks.find(c => c.name === "embed-rustdoc");
+    const doc = plan.lanes
+      .find((l) => l.name === "rust-lint")
+      .checks.find((c) => c.name === "embed-rustdoc");
     assert.equal(doc.env.RUSTDOCFLAGS, "-D warnings");
     assert.match(doc.run, /cargo doc -p openhuman-embed --no-deps/);
     assert.match(runs, /node scripts\/run-embed-examples.mjs/);
@@ -188,8 +244,9 @@ test("the complete suites run, not subsets", () => {
 
 test("the lane plan retains the shared CI checks", () => {
   const shared = [
-    "cargo fmt --all -- --check",
+    "cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check",
     "node scripts/ci/check-openhuman-rust-layout.mjs",
+    "node scripts/ci/check-storage-owner.mjs",
     "pnpm agent:runtime-boundary",
     "pnpm rust:ignored-tests",
     "bash scripts/check-linux-tls-dependencies.sh",
@@ -231,6 +288,8 @@ test("untouched areas leave only the always-on gates", () => {
     "static:orch-ip-gate",
     "static:feature-forwarding",
     "static:crate-chain",
+    "static:process-statics",
+    "static:module-source",
     "static:module-pins",
     "static:submodule-monotonic",
   ]);
@@ -257,6 +316,7 @@ test("the storage area arms only the storage-drivers lane, with the sqlite and f
       [
         "storage-drivers:storage-e2e",
         "storage-drivers:storage-lib-tests",
+        "storage-drivers:cron-module-tests",
         "storage-drivers:storage-session-store-tests",
       ],
       profile,
@@ -267,6 +327,8 @@ test("the storage area arms only the storage-drivers lane, with the sqlite and f
         "static:orch-ip-gate",
         "static:feature-forwarding",
         "static:crate-chain",
+        "static:process-statics",
+        "static:module-source",
         "static:module-pins",
         "static:submodule-monotonic",
       ],
@@ -660,18 +722,66 @@ test("module boundaries run for Rust and scripts changes in both profiles", () =
         areas: { ...NONE, [area]: true },
         env: profile === "ex63" ? EX63_ENV : {},
       });
-      const check = plan.lanes.flatMap(lane => lane.checks).find(check => check.name === "module-boundaries");
+      const check = plan.lanes
+        .flatMap((lane) => lane.checks)
+        .find((check) => check.name === "module-boundaries");
       assert.equal(check.when, true, `${profile}:${area}`);
-      assert.equal(check.run, "bash scripts/ci-cancel-aware.sh node scripts/ci/check-module-boundaries.mjs");
+      assert.equal(
+        check.run,
+        "bash scripts/ci-cancel-aware.sh node scripts/ci/check-module-boundaries.mjs",
+      );
     }
   }
 });
 
-
 test("module boundary policy and checker changes arm their own scripts lane", () => {
-  const filters = fs.readFileSync(path.join(repoRoot, ".github/ci-paths-filter.yml"), "utf8");
+  const filters = fs.readFileSync(
+    path.join(repoRoot, ".github/ci-paths-filter.yml"),
+    "utf8",
+  );
   const scripts = filters.split(/^scripts:\s*$/m)[1].split(/^\S[^\n]*:/m)[0];
-  for (const file of ["scripts/ci/check-module-boundaries.mjs", "scripts/ci/module-boundaries.json"]) {
-    assert.ok(scripts.includes(`'${file}'`), `${file} must arm the scripts area`);
+  for (const file of [
+    "scripts/ci/check-module-boundaries.mjs",
+    "scripts/ci/module-boundaries.json",
+  ]) {
+    assert.ok(
+      scripts.includes(`'${file}'`),
+      `${file} must arm the scripts area`,
+    );
+  }
+});
+
+test("process-static policy and checker changes arm their own scripts lane", () => {
+  const filters = fs.readFileSync(
+    path.join(repoRoot, ".github/ci-paths-filter.yml"),
+    "utf8",
+  );
+  const scripts = filters.split(/^scripts:\s*$/m)[1].split(/^\S[^\n]*:/m)[0];
+  for (const file of [
+    "scripts/ci/check-process-statics.mjs",
+    "scripts/ci/check-crate-chain.mjs",
+    "scripts/ci/process-statics.json",
+  ]) {
+    assert.ok(
+      scripts.includes(`'${file}'`),
+      `${file} must arm the scripts area`,
+    );
+  }
+});
+
+test("process-static scan uses cancellation supervision in both profiles", () => {
+  for (const profile of ["hosted", "ex63"]) {
+    const plan = buildPlan({
+      profile,
+      areas: NONE,
+      env: profile === "ex63" ? EX63_ENV : {},
+    });
+    const check = plan.lanes
+      .flatMap((lane) => lane.checks)
+      .find((check) => check.name === "process-statics");
+    assert.equal(
+      check.run,
+      "bash scripts/ci-cancel-aware.sh node scripts/ci/check-process-statics.mjs",
+    );
   }
 });

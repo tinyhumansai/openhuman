@@ -16,9 +16,9 @@ impl openhuman_embed::observe::TurnObserver for Outcomes {
 }
 
 use common::{offline_config, provider, route, runtime, stub_backend};
-use openhuman_embed::{
-    Access, AgentDefinitionSpec, AgentSpec, CoreError, Runtime, ToolScopeSpec, Workspace,
-};
+#[cfg(target_os = "linux")]
+use openhuman_embed::{Access, AgentDefinitionSpec, ToolScopeSpec};
+use openhuman_embed::{AgentSpec, CoreError, Runtime, Workspace};
 
 #[test]
 fn cancellation_is_awaited_and_scoped_to_one_turn() {

@@ -1,6 +1,6 @@
 use super::*;
-use crate::channels::traits;
 use async_trait::async_trait;
+use tinychannels_bus as traits;
 use tinytools::{Tool, ToolResult};
 
 struct DummyTool;
@@ -30,6 +30,7 @@ fn runtime_context() -> ChannelRuntimeContext {
             "ok",
         ]));
     ChannelRuntimeContext {
+        relay_thread: None,
         channels_by_name: Arc::new(HashMap::new()),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("default".into()),
@@ -50,6 +51,7 @@ fn runtime_context() -> ChannelRuntimeContext {
         multimodal: crate::config::MultimodalConfig::default(),
         multimodal_files: crate::config::MultimodalFileConfig::default(),
         config: None,
+        core: None,
     }
 }
 
@@ -88,18 +90,16 @@ fn clear_and_compact_sender_history_update_cached_messages() {
     let ctx = runtime_context();
     let sender = "discord_alice_reply_thread:thread-1";
     let mut history = Vec::new();
-    history.push(tinyagents_session::transcript::TranscriptMessage::user(
-        "short",
-    ));
-    history.extend((0..20).map(|idx| {
-        tinyagents_session::transcript::TranscriptMessage::assistant("x".repeat(700 + idx))
-    }));
+    history.push(tinychannels_bus::context::ChatMessage::user("short"));
+    history.extend(
+        (0..20).map(|idx| tinychannels_bus::context::ChatMessage::assistant("x".repeat(700 + idx))),
+    );
     ctx.conversation_histories
         .lock()
         .unwrap()
         .insert(sender.into(), history);
 
-    assert!(compact_sender_history(&ctx, sender));
+    assert!(compact_sender_history(&ctx.conversation_histories, sender));
     {
         let compacted = ctx.conversation_histories.lock().unwrap();
         let compacted = compacted.get(sender).unwrap();
@@ -109,7 +109,7 @@ fn clear_and_compact_sender_history_update_cached_messages() {
         }));
     }
 
-    clear_sender_history(&ctx, sender);
+    clear_sender_history(&ctx.conversation_histories, sender);
     assert!(!ctx
         .conversation_histories
         .lock()
@@ -117,12 +117,18 @@ fn clear_and_compact_sender_history_update_cached_messages() {
         .contains_key(sender));
 }
 
-#[test]
-fn overflow_detection_covers_edge_cases() {
-    assert!(is_context_window_overflow_error(&anyhow::anyhow!(
-        "Maximum context length exceeded"
-    )));
-    assert!(!is_context_window_overflow_error(&anyhow::anyhow!(
-        "network timeout"
-    )));
+#[tokio::test]
+async fn overflow_detection_covers_edge_cases() {
+    let ctx = runtime_context();
+    assert!(is_context_window_overflow_error(
+        &ctx,
+        &anyhow::anyhow!("Maximum context length exceeded")
+    )
+    .await
+    .unwrap());
+    assert!(
+        !is_context_window_overflow_error(&ctx, &anyhow::anyhow!("network timeout"))
+            .await
+            .unwrap()
+    );
 }

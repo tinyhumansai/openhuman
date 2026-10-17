@@ -12,6 +12,7 @@ async fn flows_resume_succeeds_when_the_graph_is_unchanged() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -30,9 +31,16 @@ async fn flows_resume_succeeds_when_the_graph_is_unchanged() {
         "a freshly parked run must pin the graph it parked against"
     );
 
-    let resumed = flows_resume(&config, &created.value.id, &thread_id, pending, vec![])
-        .await
-        .expect("resume must succeed when the pinned graph still matches the current one");
+    let resumed = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        pending,
+        vec![],
+    )
+    .await
+    .expect("resume must succeed when the pinned graph still matches the current one");
     assert_eq!(resumed.value["pending_approvals"], json!([]));
     assert!(
         !resumed.value["output"]["nodes"]["downstream"]["items"].is_null(),
@@ -62,6 +70,7 @@ async fn flows_resume_allows_a_legacy_row_with_null_graph_hash() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -112,9 +121,16 @@ async fn flows_resume_allows_a_legacy_row_with_null_graph_hash() {
     )
     .unwrap();
 
-    let resumed = flows_resume(&config, &created.value.id, &thread_id, pending, vec![])
-        .await
-        .expect("a legacy row with no graph_hash must still resume (unknown treated as allow)");
+    let resumed = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        pending,
+        vec![],
+    )
+    .await
+    .expect("a legacy row with no graph_hash must still resume (unknown treated as allow)");
     assert_eq!(resumed.value["pending_approvals"], json!([]));
 }
 
@@ -156,6 +172,7 @@ async fn flows_resume_marks_an_incompatible_legacy_checkpoint_failed() {
         .await
         .unwrap();
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -206,9 +223,16 @@ async fn flows_resume_marks_an_incompatible_legacy_checkpoint_failed() {
     )
     .unwrap();
 
-    let error = flows_resume(&config, &created.value.id, &thread_id, pending, vec![])
-        .await
-        .expect_err("an incompatible checkpoint cannot be resumed safely");
+    let error = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        pending,
+        vec![],
+    )
+    .await
+    .expect_err("an incompatible checkpoint cannot be resumed safely");
     assert!(
         error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
         "{error}"
@@ -236,6 +260,7 @@ async fn flows_resume_marks_a_checkpoint_with_an_incompatible_saved_child_failed
         .await
         .unwrap();
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -285,9 +310,16 @@ async fn flows_resume_marks_a_checkpoint_with_an_incompatible_saved_child_failed
     )
     .unwrap();
 
-    let error = flows_resume(&config, &created.value.id, &thread_id, pending, vec![])
-        .await
-        .expect_err("an incompatible saved child cannot be resumed safely");
+    let error = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        pending,
+        vec![],
+    )
+    .await
+    .expect_err("an incompatible saved child cannot be resumed safely");
     assert!(
         error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
         "{error}"
@@ -309,9 +341,16 @@ async fn flows_resume_marks_a_checkpoint_with_an_incompatible_saved_child_failed
 async fn flows_resume_missing_flow_errors() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = flows_resume(&config, "missing", "thread-1", vec![], vec![])
-        .await
-        .expect_err("must error");
+    let err = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "missing",
+        "thread-1",
+        vec![],
+        vec![],
+    )
+    .await
+    .expect_err("must error");
     assert!(err.contains("not found"));
 }
 
@@ -335,6 +374,7 @@ async fn flows_resume_with_empty_approvals_is_rejected_and_does_not_complete_the
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -345,9 +385,16 @@ async fn flows_resume_with_empty_approvals_is_rejected_and_does_not_complete_the
     .unwrap();
     let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
 
-    let err = flows_resume(&config, &created.value.id, &thread_id, vec![], vec![])
-        .await
-        .expect_err("an empty approvals list must not silently approve the pending gate");
+    let err = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        vec![],
+        vec![],
+    )
+    .await
+    .expect_err("an empty approvals list must not silently approve the pending gate");
     assert!(
         err.contains("no pending approval matches"),
         "expected a clear approval-mismatch error, got: {err}"
@@ -375,6 +422,7 @@ async fn flows_resume_with_mismatched_approvals_is_rejected() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -387,6 +435,7 @@ async fn flows_resume_with_mismatched_approvals_is_rejected() {
 
     // Names a node id that is not actually pending for this run.
     let err = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         &thread_id,
@@ -407,6 +456,7 @@ async fn flows_resume_with_the_correct_gate_completes_and_runs_downstream() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -418,6 +468,7 @@ async fn flows_resume_with_the_correct_gate_completes_and_runs_downstream() {
     let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
 
     let resumed = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         &thread_id,
@@ -450,6 +501,7 @@ async fn flows_resume_denying_a_gate_routes_to_its_error_port() {
     .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -462,6 +514,7 @@ async fn flows_resume_denying_a_gate_routes_to_its_error_port() {
 
     // Deny the gate: no approvals, `gate` in rejections.
     let resumed = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         &thread_id,
@@ -501,6 +554,7 @@ async fn flows_resume_denying_a_gate_with_no_error_port_fails_the_run() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({ "x": 1 }),
@@ -512,6 +566,7 @@ async fn flows_resume_denying_a_gate_with_no_error_port_fails_the_run() {
     let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
 
     let err = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         &thread_id,
@@ -540,6 +595,7 @@ async fn flows_resume_rejects_a_gate_named_in_both_approvals_and_rejections() {
         .unwrap();
 
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({}),
@@ -551,6 +607,7 @@ async fn flows_resume_rejects_a_gate_named_in_both_approvals_and_rejections() {
     let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
 
     let err = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         &thread_id,
@@ -577,6 +634,7 @@ async fn flows_resume_of_a_non_paused_run_errors_clearly() {
     // This run completes outright (no approval gate) — its recorded status
     // is "completed", not "pending_approval".
     let run = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({}),
@@ -587,9 +645,16 @@ async fn flows_resume_of_a_non_paused_run_errors_clearly() {
     .unwrap();
     let thread_id = run.value["thread_id"].as_str().unwrap().to_string();
 
-    let err = flows_resume(&config, &created.value.id, &thread_id, vec![], vec![])
-        .await
-        .expect_err("resuming an already-completed run must be a clear error, not a silent no-op");
+    let err = flows_resume(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &created.value.id,
+        &thread_id,
+        vec![],
+        vec![],
+    )
+    .await
+    .expect_err("resuming an already-completed run must be a clear error, not a silent no-op");
     assert!(
         err.contains("not pending approval") || err.contains("no paused run"),
         "expected a clear non-paused-run error, got: {err}"

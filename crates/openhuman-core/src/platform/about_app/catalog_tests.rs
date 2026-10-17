@@ -551,3 +551,25 @@ fn v1_memory_capabilities_are_not_advertised() {
         }
     }
 }
+
+#[test]
+fn computer_capabilities_disclose_the_components_ceiling() {
+    for id in [
+        "settings.desktop_control",
+        "workflows.computer_browser_automation",
+    ] {
+        let capability = lookup(id).unwrap_or_else(|| panic!("{id} is in the catalog"));
+        assert!(
+            capability
+                .description
+                .contains("[components] computer = false"),
+            "{id} must name the ceiling that switches it off"
+        );
+        assert!(
+            capability
+                .description
+                .contains("COMPONENT_DISABLED:computer"),
+            "{id} must name the typed error a switched-off computer answers"
+        );
+    }
+}

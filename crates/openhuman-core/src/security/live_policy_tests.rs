@@ -232,3 +232,32 @@ async fn effective_falls_back_to_the_process_policy_for_an_agent_without_one() {
         crate::core::runtime::CoreContext::scope(agent_context(None), async { effective() }).await;
     assert!(Arc::ptr_eq(&seen.expect("process policy"), &process));
 }
+
+/// The policy in effect for the calling task's ambient context.
+fn effective() -> Option<Arc<SecurityPolicy>> {
+    effective_in(&crate::core::runtime::DispatchCtx::ambient())
+}
+
+#[tokio::test]
+async fn an_explicit_context_policy_wins_over_the_ambient_one() {
+    let workspace = std::env::temp_dir().join("openhuman_effective_policy_test");
+    let process = Arc::new(SecurityPolicy::default());
+    let _guard = install_scoped(Arc::clone(&process), workspace.clone(), workspace);
+    let explicit = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        ..SecurityPolicy::default()
+    });
+    let ambient = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::Full,
+        ..SecurityPolicy::default()
+    });
+    let explicit_ctx =
+        crate::core::runtime::DispatchCtx::new(agent_context(Some(Arc::clone(&explicit))));
+
+    let seen = crate::core::runtime::CoreContext::scope(agent_context(Some(ambient)), async {
+        effective_in(&explicit_ctx)
+    })
+    .await;
+
+    assert!(Arc::ptr_eq(&seen.expect("explicit policy"), &explicit));
+}

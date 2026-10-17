@@ -123,13 +123,14 @@ run() {
 # capture (and Appium/chromedriver logs alongside).
 # ---------------------------------------------------------------------------
 _copy_failure_logs() {
-  local logs
+  local logs driver_logs
   logs=$(ls /tmp/openhuman-e2e-app-*.log 2>/dev/null || true)
-  if [[ -z "$logs" ]]; then
+  driver_logs=$(ls "${RUNNER_TEMP:-${TMPDIR:-/tmp}}"/tauri-driver-*.log 2>/dev/null || true)
+  if [[ -z "$logs" && -z "$driver_logs" ]]; then
     return
   fi
   mkdir -p "$E2E_ARTIFACTS_DIR"
-  for f in $logs; do
+  for f in $logs $driver_logs; do
     local dest="$E2E_ARTIFACTS_DIR/$(basename "$f" .log)-session.log"
     cp "$f" "$dest" 2>/dev/null || true
   done

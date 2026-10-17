@@ -14,10 +14,11 @@
 //   json-write   fs::write / File::create / OpenOptions::new() / NamedTempFile - a raw file
 //                store; use the document, stream or secret port
 //
-// A file may keep a rule when it is the legacy fallback of a store that already
-// runs on the port (it serves the host that configured no backend), or when its
-// state is per-machine and must not be shared. Both are listed in ALLOW with the
-// reason; the reason is the review.
+// A file may keep a rule when it is a read-only legacy importer, or when its
+// state is per-machine, bootstrap or non-record bytes. Each is listed in ALLOW
+// with the reason; the reason is the review. A store's own file fallback is
+// never allowed: with no installed backend it uses the workspace default
+// (`storage::local`).
 //
 //   node scripts/ci/check-storage-bypass.mjs
 //   node scripts/ci/check-storage-bypass.mjs --write-baseline
@@ -54,8 +55,8 @@ export const RULES = [
 ];
 
 const SRC = "crates/openhuman-core/src/";
-const FALLBACK =
-  "legacy fallback of a store that already runs on the storage port";
+const LEGACY_READER =
+  "the storage importer's read-only reader of a legacy database, opened on a scratch copy of it (never the real file) to bring older installs' rows into the backend";
 
 /**
  * path -> { rule, site, reason }: the one site (its trimmed source line) a rule
@@ -66,58 +67,46 @@ const FALLBACK =
 export const ALLOW = new Map(
   [
     [
-      "security/approval/store.rs",
-      "sqlite-open",
-      "let conn = Connection::open(&db_path).with_context(|| {",
-      FALLBACK,
+      "util/classic_transcript_fixture.rs",
+      "json-write",
+      'std::fs::write(path, classic_jsonl(messages, meta)).expect("write the classic transcript");',
+      "test-only fixture (compiled under cfg(test)) that writes a retired-layout `session_raw/*.jsonl` file for the importer and rewrite tests; no store reads it back",
     ],
     [
-      "security/devices/store.rs",
+      "security/approval/store_import.rs",
+      "sqlite-open",
+      "let conn = Connection::open(&db_path).with_context(|| {",
+      LEGACY_READER,
+    ],
+    [
+      "security/devices/store_import.rs",
       "sqlite-open",
       "let conn = Connection::open(&db_path)",
-      FALLBACK,
+      LEGACY_READER,
     ],
     [
-      "desktop/notifications/store.rs",
+      "desktop/notifications/store_import.rs",
       "sqlite-open",
       "let conn = Connection::open(&db_path).with_context(|| {",
-      FALLBACK,
+      LEGACY_READER,
     ],
     [
-      "integrations/task_sources/store.rs",
+      "integrations/task_sources/store_import.rs",
       "sqlite-open",
       "let mut conn = Connection::open(&db_path)",
-      FALLBACK,
+      LEGACY_READER,
     ],
     [
-      "cron/policy.rs",
+      "modules/storage_import_tinymcp.rs",
       "sqlite-open",
-      "let conn = Connection::open(&path)",
-      FALLBACK,
+      "Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_WRITE)",
+      LEGACY_READER,
     ],
     [
       "config/workspace/state.rs",
       "sqlite-open",
       "let conn = Connection::open(db_path)?;",
       "vault watcher state is absolute local paths and their mtimes: per-machine filesystem state that is meaningless on, and must not be shared through, another host's database",
-    ],
-    [
-      "platform/cost/tracker.rs",
-      "json-write",
-      "let mut file = OpenOptions::new()",
-      FALLBACK,
-    ],
-    [
-      "agent/orchestration/subagent_sessions/store.rs",
-      "json-write",
-      "fs::write(&tmp_path, raw)",
-      FALLBACK,
-    ],
-    [
-      "integrations/composio/file_store.rs",
-      "json-write",
-      "tokio::fs::write(&tmp, &bytes)",
-      FALLBACK,
     ],
     [
       "desktop/control/ops.rs",
@@ -138,28 +127,40 @@ export const ALLOW = new Map(
       "paired with the OS keychain mnemonic (and holds it when there is no keychain): moves with the secrets work, not as a plain document",
     ],
     [
+      "agent/harness/artifact_offload/mod.rs",
+      "json-write",
+      "tokio::fs::write(&target, body)",
+      "a derived view of a blob-stored artifact, placed in the action dir so file_read can open the path a pointer hands back; the tenant's blob store stays the source of truth",
+    ],
+    [
+      "agent/harness/tool_result_artifacts/mod.rs",
+      "json-write",
+      "tokio::fs::write(&target, body).await?;",
+      "a derived view of a blob-stored tool-result artifact, written under the workspace's read-only artifacts root so file_read can open the key a pointer hands back; re-derived from the tenant's blob store on every read, which stays the source of truth",
+    ],
+    [
       "inference/tokenjuice/savings.rs",
       "json-write",
       "if let Err(e) = std::fs::write(path, json) {",
       "one process-global savings counter snapshot, cheap to lose; not per-user data a scope would mean anything for",
     ],
     [
-      "agent/artifacts/store.rs",
-      "json-write",
-      "tokio::fs::write(&tmp_path, json).await.map_err(|e| {",
-      FALLBACK,
-    ],
-    [
-      "agent/artifacts/store.rs",
-      "json-write",
-      "tokio::fs::write(&args_path, json)",
-      FALLBACK,
-    ],
-    [
       "agent/artifacts/files.rs",
       "json-write",
       "match tokio::fs::OpenOptions::new()",
       "reserves the artifact's content file in the user-visible files folder; the bytes stay a file on every backend (the port has no blob store), only the records moved",
+    ],
+    [
+      "agent/artifacts/tiny_store.rs",
+      "json-write",
+      "tokio::fs::write(&dest, latest.body.as_bytes()).await?;",
+      "writes a text artifact's newest version into its file in the user-visible files folder; the deliverable is a user file on every backend, the versioned record itself goes through the artifact store",
+    ],
+    [
+      "media/generation/artifact_tool.rs",
+      "json-write",
+      "let mut file = tokio::fs::OpenOptions::new()",
+      "copies a generated media blob into the artifact's reserved user-visible file; the finalized file remains the artifact bytes on every backend because the storage port has no blob store",
     ],
   ].reduce((map, [path, rule, site, reason]) => {
     const key = `${SRC}${path}`;

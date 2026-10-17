@@ -24,52 +24,16 @@
 //! [`super::model_context::context_window_for_model`] (usage meters, the
 //! context breakdown) reports the same window the turn used.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
+use tinyinference_llm::model::context_window::{ContextWindowInput, ContextWindowResolver};
+use tinyinference_llm::model::context_window::{ResolvedWindow, WindowSource};
 use tinyinference_llm::model::discover::{
-    discover_model_limits_with, model_limits_cache, DiscoveryRequest, ModelLimitsCache,
-    ModelListingFetcher,
+    model_limits_cache, DiscoveryRequest, ModelLimitsCache, ModelListingFetcher,
 };
 
 use crate::config::Config;
-
-/// Where a resolved window came from (stable labels for logs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WindowSource {
-    /// `config.model_registry[].context_window`.
-    ConfigOverride,
-    /// The provider's listing (model-level or a pinned endpoint).
-    ProviderReported,
-    /// The window the provider stated in an overflow error.
-    LearnedFromOverflow,
-    /// The local runtime's profile default.
-    LocalProfile,
-    /// A static table: tier alias, cost catalog, or id pattern.
-    StaticGuess,
-    /// Nothing known.
-    Unknown,
-}
-
-impl WindowSource {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::ConfigOverride => "config_override",
-            Self::ProviderReported => "provider_reported",
-            Self::LearnedFromOverflow => "learned_from_overflow",
-            Self::LocalProfile => "local_profile",
-            Self::StaticGuess => "static_guess",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-/// A resolved window and its source.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ResolvedWindow {
-    pub(crate) window: Option<u64>,
-    pub(crate) source: WindowSource,
-}
 
 /// The user's explicit window for `model`, from `config.model_registry`.
 pub(crate) fn config_override(model: &str, config: &Config) -> Option<u64> {
@@ -81,35 +45,16 @@ pub(crate) fn config_override(model: &str, config: &Config) -> Option<u64> {
         .map(|entry| u64::from(entry.context_window))
 }
 
-fn remembered() -> &'static Mutex<HashMap<(String, String), u64>> {
-    static MAP: OnceLock<Mutex<HashMap<(String, String), u64>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+/// The process-wide resolver: precedence and the per-route/endpoint memory of
+/// provider-sourced windows live in `tinyinference-llm`.
+fn resolver() -> &'static ContextWindowResolver {
+    static RESOLVER: OnceLock<ContextWindowResolver> = OnceLock::new();
+    RESOLVER.get_or_init(ContextWindowResolver::new)
 }
 
-/// The last provider-sourced (or overridden) window resolved for `model` in
-/// this process.
+/// The last provider-sourced window resolved for `model` in this process.
 pub(crate) fn remembered_window(provider: &str, model: &str) -> Option<u64> {
-    remembered()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&(
-            provider.trim().to_ascii_lowercase(),
-            model.trim().to_ascii_lowercase(),
-        ))
-        .copied()
-}
-
-fn remember_window(provider: &str, model: &str, window: u64) {
-    remembered()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            (
-                provider.trim().to_ascii_lowercase(),
-                model.trim().to_ascii_lowercase(),
-            ),
-            window,
-        );
+    resolver().remembered_window(provider, model)
 }
 
 /// Logs a static guess at `warn` the first time per model, `debug` after.
@@ -233,40 +178,6 @@ pub(crate) async fn resolve_context_window_with(
     model: &str,
     config: &Config,
 ) -> ResolvedWindow {
-    let resolved = resolve_inner(fetcher, cache, role, provider, model, config).await;
-    if let Some(window) = resolved.window {
-        if matches!(
-            resolved.source,
-            WindowSource::ProviderReported | WindowSource::LearnedFromOverflow
-        ) {
-            remember_window(provider, model, window);
-        }
-    }
-    tracing::debug!(
-        role,
-        model,
-        context_window = ?resolved.window,
-        source = resolved.source.label(),
-        "[model_context] resolved context window"
-    );
-    resolved
-}
-
-async fn resolve_inner(
-    fetcher: &dyn ModelListingFetcher,
-    cache: &ModelLimitsCache,
-    role: &str,
-    provider: &str,
-    model: &str,
-    config: &Config,
-) -> ResolvedWindow {
-    if let Some(window) = config_override(model, config) {
-        return ResolvedWindow {
-            window: Some(window),
-            source: WindowSource::ConfigOverride,
-        };
-    }
-
     let local_kind = tinyinference_local::profile::kind_from_provider_string(provider);
     let request = match local_kind {
         None => {
@@ -277,61 +188,61 @@ async fn resolve_inner(
         }
         Some(_) => None,
     };
-    {
-        if let Some(request) = request {
-            let limits = discover_model_limits_with(fetcher, cache, &request).await;
-            if let Some((window, limits)) = limits
-                .as_ref()
-                .and_then(|limits| limits.context_window.map(|window| (window, limits)))
-            {
-                let source = match limits.source {
-                    tinyinference_llm::model::discover::LimitSource::LearnedFromOverflow => {
-                        WindowSource::LearnedFromOverflow
-                    }
-                    _ => WindowSource::ProviderReported,
-                };
-                tracing::info!(
-                    role,
-                    model = %request.model,
-                    endpoint = %request.endpoint,
-                    context_window = window,
-                    max_output_tokens = ?limits.max_output_tokens,
-                    source = source.label(),
-                    "[model_context] context window from provider"
-                );
-                return ResolvedWindow {
-                    window: Some(window),
-                    source,
-                };
-            }
-        }
-    }
-
     let static_window = super::model_context::static_context_window_for_model(model);
-    if local_kind.is_some() {
-        let window = tinyinference_local::profile::context_window_with_local_fallback(
+    let local_window = local_kind.and_then(|kind| {
+        tinyinference_local::profile::context_window_with_local_fallback(
             model,
             static_window,
-            local_kind,
-        );
-        return ResolvedWindow {
-            window,
-            source: if static_window.is_some() {
-                WindowSource::StaticGuess
-            } else {
-                WindowSource::LocalProfile
+            Some(kind),
+        )
+    });
+    let resolved = resolver()
+        .resolve(
+            provider,
+            model,
+            ContextWindowInput {
+                config_override: config_override(model, config),
+                discovery: request.as_ref(),
+                static_window,
+                has_local_profile: local_kind.is_some(),
+                local_window,
             },
-        };
+            fetcher,
+            cache,
+        )
+        .await;
+    if local_kind.is_none()
+        && matches!(
+            resolved.source,
+            WindowSource::StaticGuess | WindowSource::Unknown
+        )
+    {
+        warn_static_guess(model, resolved.window, provider);
     }
-    warn_static_guess(model, static_window, provider);
-    ResolvedWindow {
-        window: static_window,
-        source: if static_window.is_some() {
-            WindowSource::StaticGuess
-        } else {
-            WindowSource::Unknown
-        },
+    if let (Some(window), Some(request)) = (resolved.window, request.as_ref()) {
+        if matches!(
+            resolved.source,
+            WindowSource::ProviderReported | WindowSource::LearnedFromOverflow
+        ) {
+            tracing::info!(
+                role,
+                model = %request.model,
+                endpoint = %request.endpoint,
+                context_window = window,
+                max_output_tokens = ?resolved.max_output_tokens,
+                source = resolved.source.label(),
+                "[model_context] context window from provider"
+            );
+        }
     }
+    tracing::debug!(
+        role,
+        model,
+        context_window = ?resolved.window,
+        source = resolved.source.label(),
+        "[model_context] resolved context window"
+    );
+    resolved
 }
 
 #[cfg(test)]

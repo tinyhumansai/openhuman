@@ -90,13 +90,17 @@ pub fn discovery_home_dir() -> Option<PathBuf> {
 // keep until v0.66 (review after 2027-01-11): this is the cached, ambient-user
 // discovery entry point; discover_workflows alone omits those host semantics.
 pub fn load_workflow_metadata(workspace_dir: &Path) -> Vec<Workflow> {
+    if !crate::skills::skills_component_enabled() {
+        log::debug!("[skills][discover] load_workflow_metadata -> [] ([components] skills off)");
+        return Vec::new();
+    }
     let trusted = is_workspace_trusted(workspace_dir);
     let home = discovery_home_dir();
     let key = (
         workspace_dir.to_path_buf(),
         home.clone(),
         trusted,
-        crate::core::runtime::current_tenant().ok(),
+        crate::core::runtime::DispatchCtx::ambient().tenant().ok(),
     );
     if let Ok(cache) = METADATA_CACHE.read() {
         if let Some(workflows) = cache.get(&key) {

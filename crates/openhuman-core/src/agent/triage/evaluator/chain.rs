@@ -1,5 +1,6 @@
 //! The tiered cloud → retry → local fallback orchestration.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Mutex, OnceLock};
@@ -7,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 
-use crate::cron::scheduler_gate::LlmPermit;
+use crate::platform::llm_gate::LlmPermit;
 
 use super::super::envelope::TriggerEnvelope;
 use super::super::events;
@@ -75,17 +76,20 @@ fn retry_state() -> &'static RetryState {
 ///    caller does not create another fixed-interval cloud invocation.
 /// 5. On local failure, return `TriageOutcome::Deferred` so the
 ///    caller can retry when a local arm is available.
-pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageOutcome> {
-    let config = crate::config::ops::load_current_or_init()
+pub async fn run_triage(
+    ctx: &DispatchCtx,
+    envelope: &TriggerEnvelope,
+) -> anyhow::Result<TriageOutcome> {
+    let config = crate::config::ops::load_current_or_init(ctx)
         .await
         .context("loading config for triage turn")?;
-    let cloud = resolve_provider_with_config(&config)
+    let cloud = resolve_provider_with_config(ctx, &config)
         .await
         .context("resolving provider for triage turn")?;
-    let local = build_local_provider_with_config(&config);
+    let local = build_local_provider_with_config(ctx, &config);
 
     let outcome = run_triage_with_arms_inner(cloud, local, envelope, Some(retry_state()), || {
-        crate::cron::scheduler_gate::wait_for_capacity()
+        crate::platform::llm_gate::wait_for_capacity()
     })
     .await;
     if let Err(err) = &outcome {
@@ -95,7 +99,7 @@ pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageOutc
 }
 
 /// Test-only entry point: skip the global LLM permit acquisition so the
-/// triage tests don't contend with `scheduler_gate`'s process-wide
+/// triage tests don't contend with `llm_gate`'s process-wide
 /// 1-slot semaphore or get trapped by a stale `Paused` policy left in
 /// `STATE` by another test's `init_global` call.
 #[cfg(test)]
@@ -121,7 +125,7 @@ pub(crate) async fn run_triage_with_arms_for_test_with_state(
 ///
 /// `acquire_permit` is called exactly once, on the local-fallback arm,
 /// to obtain the global LLM permit. Production callers pass
-/// `scheduler_gate::wait_for_capacity`; tests pass `|| async { None }`
+/// `llm_gate::wait_for_capacity`; tests pass `|| async { None }`
 /// to skip the shared semaphore.
 async fn run_triage_with_arms_inner<F, Fut>(
     cloud: ResolvedProvider,

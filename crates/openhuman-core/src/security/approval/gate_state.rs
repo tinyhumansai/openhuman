@@ -1,3 +1,5 @@
+use crate::core::runtime::DispatchCtx;
+
 impl ApprovalGate {
     /// Write the *terminal* status of a tool call onto its approval
     /// audit row — see [`store::record_execution`] for semantics.
@@ -68,7 +70,7 @@ impl ApprovalGate {
         {
             anyhow::bail!("this action requires a one-time approval or denial");
         }
-        let decided = store::decide(&self.config, request_id, decision)?;
+        let decided = self.decide_in_parked_scope(request_id, decision)?;
         if let Some(row) = &decided {
             // `ApproveAlwaysForTool` persistence (append to `autonomy.auto_approve`
             // + reload the live policy) is handled by the `approval_decide` RPC
@@ -95,6 +97,26 @@ impl ApprovalGate {
             });
         }
         Ok(decided)
+    }
+
+    /// Commits `decision` in the store the request was parked in when this
+    /// process parked it (the parking task's storage scope, remembered on its
+    /// route), else in the caller's scope — an orphan from an earlier launch has
+    /// no route, so the caller's scope is where it can be looked for.
+    pub(super) fn decide_in_parked_scope(
+        &self,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> anyhow::Result<Option<PendingApproval>> {
+        let parked_in = self
+            .request_routes
+            .lock()
+            .get(request_id)
+            .and_then(|route| route.docs.clone());
+        match parked_in {
+            Some(docs) => store::decide_in(&docs, request_id, decision),
+            None => store::decide(&self.config, request_id, decision),
+        }
     }
 
     /// [`Self::decide`] on behalf of `agent`: refuses with
@@ -135,15 +157,20 @@ impl ApprovalGate {
 
     /// Deny every undecided request `agent` parked, resolving its waiters.
     /// Returns how many rows were denied.
-    pub fn deny_all_for_agent(&self, agent: &str, resolution: &str) -> anyhow::Result<usize> {
+    pub fn deny_all_for_agent(
+        &self,
+        ctx: &DispatchCtx,
+        agent: &str,
+        resolution: &str,
+    ) -> anyhow::Result<usize> {
         if !store::exists(&self.config) {
             return Ok(0);
         }
-        let rows = store::list_pending_for_agent(&self.config, Some(agent))?;
+        let rows = store::list_pending_for_agent(ctx, &self.config, Some(agent))?;
         let mut denied = 0;
         for row in rows {
             let Some(decided) =
-                store::decide(&self.config, &row.request_id, ApprovalDecision::Deny)?
+                self.decide_in_parked_scope(&row.request_id, ApprovalDecision::Deny)?
             else {
                 continue;
             };
@@ -228,9 +255,10 @@ impl ApprovalGate {
     /// process's own rows.
     pub fn list_pending_for_agent(
         &self,
+        ctx: &DispatchCtx,
         agent: Option<&str>,
     ) -> anyhow::Result<Vec<PendingApproval>> {
-        store::list_pending_for_agent(&self.config, agent)
+        store::list_pending_for_agent(ctx, &self.config, agent)
     }
 
     /// List recently decided rows for durable audit views.

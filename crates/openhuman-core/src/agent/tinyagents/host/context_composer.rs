@@ -62,6 +62,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use tinytools_agent::dialect::ToolCallFormat;
 
 use async_trait::async_trait;
 use tinyagents_harness::error::{Result as TinyAgentsResult, TinyAgentsError};
@@ -70,9 +71,10 @@ use tinyinference_llm::message::Message;
 
 use crate::agent::prompts::{
     load_agents_md_layers, render_connected_identities, AgentsMdContent, ConnectedIntegration,
-    PromptContext, PromptTool, SystemPromptBuilder, ToolCallFormat,
+    PromptContext, PromptTool, SystemPromptBuilder,
 };
 use crate::config::{Config, DEFAULT_MODEL};
+use crate::core::runtime::DispatchCtx;
 use tinyskills::Skill as Workflow;
 
 /// Composes OpenHuman's system prompt for a TinyAgents turn.
@@ -96,7 +98,7 @@ pub struct OpenHumanContextComposer {
     /// it.
     model_name: String,
     /// How the tool catalogue renders. Left at the OpenHuman default
-    /// ([`ToolCallFormat::PFormat`]) unless the caller pins it, since the
+    /// ([`ToolCallFormat::Json`]) unless the caller pins it, since the
     /// authoritative value lives on the agent's tool dispatcher, which is not
     /// reachable from a `TurnContextRequest`.
     tool_call_format: ToolCallFormat,
@@ -104,6 +106,9 @@ pub struct OpenHumanContextComposer {
     /// (nothing connected, or the caller has not fetched yet) and renders as
     /// an absent section rather than an error.
     connected_integrations: Vec<ConnectedIntegration>,
+    /// The turn's dispatch context for config reads; `None` falls back to the
+    /// calling task's.
+    dispatch: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
     /// The section chain. Built once so per-turn composition is just a render.
     builder: SystemPromptBuilder,
 }
@@ -121,10 +126,17 @@ impl OpenHumanContextComposer {
         Self {
             config,
             model_name,
-            tool_call_format: ToolCallFormat::default(),
+            tool_call_format: ToolCallFormat::Json,
             connected_integrations: Vec::new(),
+            dispatch: None,
             builder: SystemPromptBuilder::with_defaults(),
         }
+    }
+
+    /// Binds the turn's dispatch context, which the composer reads config under.
+    pub fn with_dispatch(mut self, dispatch: DispatchCtx) -> Self {
+        self.dispatch = dispatch.downgrade();
+        self
     }
 
     /// Pins the model name rendered into the runtime section.
@@ -203,7 +215,9 @@ impl ContextComposer for OpenHumanContextComposer {
             visible_tool_names: &visible_tool_names,
             tool_call_format: self.tool_call_format,
             connected_integrations: &self.connected_integrations,
-            connected_identities_md: render_connected_identities(),
+            connected_identities_md: render_connected_identities(&DispatchCtx::from_weak(
+                self.dispatch.as_ref(),
+            )),
             user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
             // TODO(phase4): the master agent's personality roster is built
             // from the profiles domain (`crate::profiles`); the

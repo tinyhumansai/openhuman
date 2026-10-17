@@ -150,6 +150,11 @@ run_integration_target() {
       suite "${target}::${module}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
         --test "${target}" -- "${module}::"
     done < <(in_process_modules)
+  elif [ "${target}" = "mcp_registry_multi_server" ]; then
+    # Its cases share TinyMCP's process-wide module client; keep them serial,
+    # as scripts/test-rust-with-mock.sh does.
+    suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
+      --test "${target}" -- --test-threads=1
   elif [ "${target}" = "json_rpc_e2e" ]; then
     # JSON-RPC tests share runtime/config globals and must remain serial.
     suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \

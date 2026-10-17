@@ -87,7 +87,7 @@ fn record_provider_usage_persists_through_the_global_tracker() {
     const MODEL: &str = "test-model/record-provider-usage-persists";
     let tracker = global_tracker();
 
-    record_provider_usage(MODEL, &make_usage(10, 5, 0.5));
+    record_provider_usage(&DispatchCtx::ambient(), MODEL, &make_usage(10, 5, 0.5));
 
     let records = records_for_model(&tracker, MODEL);
     assert_eq!(
@@ -116,7 +116,7 @@ fn record_provider_usage_skips_all_zero_payload() {
     // `..._without_global_is_noop` test. That test asserted nothing at all, and
     // its premise ("no GLOBAL_TRACKER initialised in this test process") is not
     // something a shared-process test binary can guarantee.
-    record_provider_usage(MODEL, &make_usage(0, 0, 0.0));
+    record_provider_usage(&DispatchCtx::ambient(), MODEL, &make_usage(0, 0, 0.0));
 
     assert!(
         records_for_model(&tracker, MODEL).is_empty(),
@@ -187,20 +187,17 @@ fn rebind_global_moves_recording_to_the_new_workspace() {
     cfg.enabled = true;
 
     rebind_global(cfg.clone(), before_login.path());
-    record_provider_usage(MODEL_A, &make_usage(10, 5, 0.1));
+    let first = try_global().expect("rebind installs a tracker");
+    record_provider_usage(&DispatchCtx::ambient(), MODEL_A, &make_usage(10, 5, 0.1));
 
     rebind_global(cfg.clone(), after_login.path());
     let bound = try_global().expect("rebind leaves a tracker installed");
     assert_eq!(bound.workspace_dir(), after_login.path());
-    record_provider_usage(MODEL_B, &make_usage(20, 10, 0.2));
+    record_provider_usage(&DispatchCtx::ambient(), MODEL_B, &make_usage(20, 10, 0.2));
 
-    let ledger = |dir: &TempDir| {
-        std::fs::read_to_string(dir.path().join("state").join("costs.jsonl")).unwrap_or_default()
-    };
-    assert!(ledger(&before_login).contains(MODEL_A));
-    assert!(!ledger(&before_login).contains(MODEL_B));
-    assert!(ledger(&after_login).contains(MODEL_B));
-    assert!(!ledger(&after_login).contains(MODEL_A));
+    // Each workspace keeps its own ledger.
+    assert_eq!(records_for_model(&first, MODEL_A).len(), 1);
+    assert!(records_for_model(&first, MODEL_B).is_empty());
     assert_eq!(records_for_model(&bound, MODEL_B).len(), 1);
     assert!(records_for_model(&bound, MODEL_A).is_empty());
 

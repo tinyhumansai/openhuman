@@ -22,7 +22,7 @@ pub mod wire;
 pub use dump_writer::{write_prompt_dumps, DumpWriteSummary};
 pub use wire::render as render_wire_dump;
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::session_host::OpenHumanSessionHost;
 use crate::config::Config;
 use tinytools::ToolCategory;
@@ -175,8 +175,12 @@ async fn load_dump_config(
 /// Build a real [`Agent`] via `from_config_for_agent`, populate live
 /// connected integrations, and render the turn-1 system prompt.
 async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPrompt> {
-    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, agent_id)
-        .with_context(|| format!("building session agent for `{agent_id}`"))?;
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        config,
+        agent_id,
+    )
+    .with_context(|| format!("building session agent for `{agent_id}`"))?;
 
     // Match turn-1 behaviour: fetch the user's active Composio
     // connections so the rendered prompt mirrors what the LLM actually

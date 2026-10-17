@@ -1,11 +1,5 @@
 use super::*;
 
-#[test]
-fn step_status_maps_to_stable_strings() {
-    assert_eq!(step_status_str(&StepStatus::Success), "success");
-    assert_eq!(step_status_str(&StepStatus::Error), "error");
-}
-
 /// The canvas's `.flow-node-running` pulse is bound to a `running` status
 /// that only `on_step_start` can produce. Before it was implemented the
 /// socket carried nothing but `success`/`failed`, so the pulse was

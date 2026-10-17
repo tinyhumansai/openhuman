@@ -333,7 +333,7 @@ jobs:
               '## Acceptance criteria',
               '',
               '- [ ] Each official channel has a CI smoke test (install + `openhuman --version`)',
-              '- [ ] Install commands appear in `gitbooks/overview/install.md`',
+              '- [ ] Install commands appear in `docs/gitbooks/en/overview/install.md`',
               '- [ ] Checksums shipped for all artifacts',
               '',
             ].join('\n');

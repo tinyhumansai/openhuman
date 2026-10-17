@@ -4,7 +4,7 @@ use crate::core::events::DomainEvent;
 use tinybus::EventHandler;
 
 use crate::channels::bus::delivery::map_backend_error;
-use tinychannels::delivery::progressive::ProgressiveSendError;
+use tinychannels_bus::module_progressive::ProgressiveTransportResult;
 #[test]
 fn subscriber_metadata_is_stable() {
     let subscriber = ChannelInboundSubscriber::new();
@@ -35,7 +35,7 @@ fn backend_errors_map_to_distinct_progressive_recoveries() {
     });
     assert!(matches!(
         map_backend_error(route_absent),
-        ProgressiveSendError::EditUnsupported
+        ProgressiveTransportResult::EditUnsupported
     ));
 
     let message_absent = anyhow::Error::new(BackendApiError::MessageNotFound {
@@ -44,13 +44,13 @@ fn backend_errors_map_to_distinct_progressive_recoveries() {
     });
     assert!(matches!(
         map_backend_error(message_absent),
-        ProgressiveSendError::MessageGone
+        ProgressiveTransportResult::MessageGone
     ));
 
     // Anything untyped (5xx, transport, rate limit) keeps the retry budget.
     assert!(matches!(
         map_backend_error(anyhow::anyhow!("502 Bad Gateway")),
-        ProgressiveSendError::Other(_)
+        ProgressiveTransportResult::Failed
     ));
 
     // A different typed variant must not be mistaken for either edit case.
@@ -60,6 +60,6 @@ fn backend_errors_map_to_distinct_progressive_recoveries() {
     });
     assert!(matches!(
         map_backend_error(unauthorized),
-        ProgressiveSendError::Other(_)
+        ProgressiveTransportResult::Failed
     ));
 }

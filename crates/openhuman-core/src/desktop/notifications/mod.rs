@@ -18,7 +18,7 @@
 //!
 //! - [`bus`]     — `NotificationBridgeSubscriber`, publish/subscribe helpers
 //! - [`types`]   — `CoreNotificationEvent`, `IntegrationNotification`, request/response types
-//! - [`store`]   — SQLite persistence (one DB per workspace)
+//! - [`store`]   — persistence on the storage backend
 //! - [`rpc`]     — Async RPC handler functions: ingest, list, mark_read
 //! - [`schemas`] — Controller schema definitions and registered handler wrappers
 
@@ -27,6 +27,8 @@ pub mod rpc;
 pub mod schemas;
 pub mod store;
 mod store_documents;
+mod store_import;
+pub(crate) use store_documents::import_source;
 pub mod types;
 
 pub use bus::{

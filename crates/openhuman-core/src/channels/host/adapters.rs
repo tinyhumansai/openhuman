@@ -1,15 +1,19 @@
-//! OpenHuman-side implementations of the portable `tinychannels::host`
-//! capability traits.
+//! OpenHuman callback implementations used by the TinyChannels module.
 //!
-//! Each adapter wraps existing OpenHuman internals (voice factory, inference
-//! ops, approval gate, conversation store, shutdown registry, web event bus)
-//! and exposes them through the portable, `Config`-free trait surface a ported
-//! channel provider consumes. See [`super::build_channel_host`].
+//! Production callbacks translate typed module requests into OpenHuman-owned
+//! voice, persistence, allowlist, and event operations. The legacy portable
+//! provider-trait adapters below exist only for unit-test compatibility.
 
 use std::sync::Arc;
 
+#[cfg(test)]
+use crate::core::runtime::DispatchCtx;
+
+#[cfg(test)]
 use async_trait::async_trait;
+#[cfg(test)]
 use parking_lot::Mutex;
+#[cfg(test)]
 use tinychannels::host::{
     AllowlistStore, ApprovalDecision, ApprovalGate, ConversationMessage, ConversationStore,
     EventSink, LifecycleRegistry, ShutdownHook, SpeechRequest, SpeechResult, SpeechSynthesizer,
@@ -26,8 +30,10 @@ const LOG_PREFIX: &str = "[channels_host]";
 
 /// Bridges [`LifecycleRegistry`] onto the process-global async shutdown hook
 /// registry. Providers register teardown that runs once on shutdown.
+#[cfg(test)]
 pub struct CoreShutdownRegistry;
 
+#[cfg(test)]
 impl LifecycleRegistry for CoreShutdownRegistry {
     fn register_shutdown(&self, name: &str, hook: ShutdownHook) {
         let name = name.to_string();
@@ -58,23 +64,16 @@ pub struct VoiceTranscriber {
     pub config: Arc<Config>,
 }
 
-#[async_trait]
-impl Transcriber for VoiceTranscriber {
-    fn name(&self) -> &str {
-        "openhuman-voice"
-    }
-
-    async fn transcribe(
+impl VoiceTranscriber {
+    pub(crate) async fn transcribe_host(
         &self,
-        request: TranscriptionRequest,
-    ) -> anyhow::Result<TranscriptionResult> {
+        request: tinychannels_bus::HostTranscriptionRequest,
+    ) -> anyhow::Result<tinychannels_bus::HostTranscriptionResult> {
         let provider = crate::voice::effective_stt_provider(&self.config);
         tracing::debug!(
             "{LOG_PREFIX} transcribe provider={provider} bytes_b64={}",
             request.audio_base64.len()
         );
-        // Empty model lets a configured external provider use its registry
-        // default; the cloud provider resolves its own backend default.
         let stt = crate::voice::create_stt_provider(&provider, "", &self.config)?;
         let outcome = stt
             .transcribe(
@@ -86,10 +85,36 @@ impl Transcriber for VoiceTranscriber {
             )
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(TranscriptionResult {
+        Ok(tinychannels_bus::HostTranscriptionResult {
             text: outcome.value.text,
             language: request.language,
             duration_secs: None,
+        })
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl Transcriber for VoiceTranscriber {
+    fn name(&self) -> &str {
+        "openhuman-voice"
+    }
+
+    async fn transcribe(
+        &self,
+        request: TranscriptionRequest,
+    ) -> anyhow::Result<TranscriptionResult> {
+        self.transcribe_host(tinychannels_bus::HostTranscriptionRequest {
+            audio_base64: request.audio_base64,
+            mime_type: request.mime_type,
+            file_name: request.file_name,
+            language: request.language,
+        })
+        .await
+        .map(|result| TranscriptionResult {
+            text: result.text,
+            language: result.language,
+            duration_secs: result.duration_secs,
         })
     }
 }
@@ -99,10 +124,12 @@ impl Transcriber for VoiceTranscriber {
 // ---------------------------------------------------------------------------
 
 /// Text-to-speech backed by the hosted reply-speech synthesizer.
+#[cfg(test)]
 pub struct VoiceSynthesizer {
     pub config: Arc<Config>,
 }
 
+#[cfg(test)]
 #[async_trait]
 impl SpeechSynthesizer for VoiceSynthesizer {
     async fn synthesize(&self, request: SpeechRequest) -> anyhow::Result<SpeechResult> {
@@ -138,8 +165,10 @@ impl SpeechSynthesizer for VoiceSynthesizer {
 /// Parses inbound approval replies via the OpenHuman approval gate. Raising
 /// interactive approvals stays host-internal (the tool gate), so only
 /// [`ApprovalGate::parse_reply`] is implemented.
+#[cfg(test)]
 pub struct CoreApprovalGate;
 
+#[cfg(test)]
 impl ApprovalGate for CoreApprovalGate {
     fn parse_reply(&self, message: &str) -> Option<ApprovalDecision> {
         crate::security::approval::parse_approval_reply(message).map(|decision| {
@@ -169,10 +198,12 @@ impl ApprovalGate for CoreApprovalGate {
 // ---------------------------------------------------------------------------
 
 /// Durable conversation history backed by the OpenHuman conversation store.
+#[cfg(test)]
 pub struct ConversationHistoryStore {
     pub workspace_dir: std::path::PathBuf,
 }
 
+#[cfg(test)]
 #[async_trait]
 impl ConversationStore for ConversationHistoryStore {
     async fn history(
@@ -180,8 +211,10 @@ impl ConversationStore for ConversationHistoryStore {
         session_key: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<ConversationMessage>> {
-        let messages = crate::threads::store::get_messages(self.workspace_dir.clone(), session_key)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let ctx = DispatchCtx::host_default();
+        let messages =
+            crate::threads::store::get_messages(&ctx, self.workspace_dir.clone(), session_key)
+                .map_err(|e| anyhow::anyhow!(e))?;
         let start = messages.len().saturating_sub(limit);
         Ok(messages[start..]
             .iter()
@@ -194,9 +227,11 @@ impl ConversationStore for ConversationHistoryStore {
     }
 
     async fn append(&self, session_key: &str, message: ConversationMessage) -> anyhow::Result<()> {
+        let ctx = DispatchCtx::host_default();
         let now = chrono::Utc::now().to_rfc3339();
         // `append_message` requires the thread to exist; create-or-noop first.
         crate::threads::store::ensure_thread(
+            &ctx,
             self.workspace_dir.clone(),
             crate::threads::store::CreateConversationThread {
                 id: session_key.to_string(),
@@ -217,8 +252,13 @@ impl ConversationStore for ConversationHistoryStore {
             sender: message.role,
             created_at: now,
         };
-        crate::threads::store::append_message(self.workspace_dir.clone(), session_key, stored)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        crate::threads::store::append_message(
+            &ctx,
+            self.workspace_dir.clone(),
+            session_key,
+            stored,
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 }
@@ -232,9 +272,12 @@ impl ConversationStore for ConversationHistoryStore {
 /// `~/.openhuman/config.toml`, append to the channel's `allowed_users`, save).
 pub struct ConfigAllowlistStore;
 
-#[async_trait]
-impl AllowlistStore for ConfigAllowlistStore {
-    async fn persist_allowed_identity(&self, channel: &str, identity: &str) -> anyhow::Result<()> {
+impl ConfigAllowlistStore {
+    pub(crate) async fn persist_allowed_identity(
+        &self,
+        channel: &str,
+        identity: &str,
+    ) -> anyhow::Result<()> {
         use anyhow::Context;
         let normalized = identity.trim().trim_start_matches('@').to_string();
         if normalized.is_empty() {
@@ -274,6 +317,14 @@ impl AllowlistStore for ConfigAllowlistStore {
     }
 }
 
+#[cfg(test)]
+#[async_trait]
+impl AllowlistStore for ConfigAllowlistStore {
+    async fn persist_allowed_identity(&self, channel: &str, identity: &str) -> anyhow::Result<()> {
+        ConfigAllowlistStore::persist_allowed_identity(self, channel, identity).await
+    }
+}
+
 // ---------------------------------------------------------------------------
 // EventSink → routes provider events to the right OpenHuman bus
 // ---------------------------------------------------------------------------
@@ -286,6 +337,17 @@ impl AllowlistStore for ConfigAllowlistStore {
 /// One capability, two backends — providers don't know which bus they hit.
 pub struct OpenHumanEventSink;
 
+impl OpenHumanEventSink {
+    pub(crate) async fn publish_host(
+        &self,
+        domain: &str,
+        kind: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        publish_event(domain, kind, payload).await
+    }
+}
+
 fn json_str(payload: &serde_json::Value, key: &str) -> String {
     payload
         .get(key)
@@ -294,6 +356,49 @@ fn json_str(payload: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
+async fn publish_event(domain: &str, kind: &str, payload: serde_json::Value) -> anyhow::Result<()> {
+    match domain {
+        "web" => {
+            let event: crate::web_chat::WebChannelEvent =
+                serde_json::from_value(payload).map_err(|e| {
+                    anyhow::anyhow!(
+                        "{LOG_PREFIX} web event payload not a WebChannelEvent ({kind}): {e}"
+                    )
+                })?;
+            crate::web_chat::publish_web_channel_event(event);
+        }
+        "channel" => {
+            use crate::core::bus::BUS;
+            use crate::core::events::DomainEvent;
+            let event = match kind {
+                "reaction_received" => DomainEvent::ChannelReactionReceived {
+                    channel: json_str(&payload, "channel"),
+                    sender: json_str(&payload, "sender"),
+                    target_message_id: json_str(&payload, "target_message_id"),
+                    emoji: json_str(&payload, "emoji"),
+                },
+                "reaction_sent" => DomainEvent::ChannelReactionSent {
+                    channel: json_str(&payload, "channel"),
+                    target_message_id: json_str(&payload, "target_message_id"),
+                    emoji: json_str(&payload, "emoji"),
+                    success: payload
+                        .get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                },
+                other => {
+                    tracing::warn!("{LOG_PREFIX} unmapped channel event kind: {other}");
+                    return Ok(());
+                }
+            };
+            BUS.publish(event);
+        }
+        other => tracing::warn!("{LOG_PREFIX} unmapped event domain: {other}"),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 #[async_trait]
 impl EventSink for OpenHumanEventSink {
     async fn publish(
@@ -302,44 +407,6 @@ impl EventSink for OpenHumanEventSink {
         kind: &str,
         payload: serde_json::Value,
     ) -> anyhow::Result<()> {
-        match domain {
-            "web" => {
-                let event: crate::web_chat::WebChannelEvent = serde_json::from_value(payload)
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "{LOG_PREFIX} web event payload not a WebChannelEvent ({kind}): {e}"
-                        )
-                    })?;
-                crate::web_chat::publish_web_channel_event(event);
-            }
-            "channel" => {
-                use crate::core::bus::BUS;
-                use crate::core::events::DomainEvent;
-                let event = match kind {
-                    "reaction_received" => DomainEvent::ChannelReactionReceived {
-                        channel: json_str(&payload, "channel"),
-                        sender: json_str(&payload, "sender"),
-                        target_message_id: json_str(&payload, "target_message_id"),
-                        emoji: json_str(&payload, "emoji"),
-                    },
-                    "reaction_sent" => DomainEvent::ChannelReactionSent {
-                        channel: json_str(&payload, "channel"),
-                        target_message_id: json_str(&payload, "target_message_id"),
-                        emoji: json_str(&payload, "emoji"),
-                        success: payload
-                            .get("success")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                    },
-                    other => {
-                        tracing::warn!("{LOG_PREFIX} unmapped channel event kind: {other}");
-                        return Ok(());
-                    }
-                };
-                BUS.publish(event);
-            }
-            other => tracing::warn!("{LOG_PREFIX} unmapped event domain: {other}"),
-        }
-        Ok(())
+        self.publish_host(domain, kind, payload).await
     }
 }

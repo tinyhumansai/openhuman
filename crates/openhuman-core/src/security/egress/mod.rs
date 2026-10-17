@@ -11,6 +11,6 @@ pub mod emit;
 pub mod enforce;
 pub mod types;
 
-pub use emit::{dedup_turn_scope, emit_external_transfer};
+pub use emit::{emit_external_transfer, emit_external_transfer_in, EgressLedger};
 pub use enforce::{enforce_egress, local_only_blocks, local_only_tool_block};
 pub use types::{DataKind, EgressDescriptor, EgressReason, IdentificationRisk};

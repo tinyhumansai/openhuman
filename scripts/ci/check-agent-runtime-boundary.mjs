@@ -50,6 +50,10 @@ const embedContractExports = new Map(
         // Existing embed tool injection API now names its contract directly.
         "pub use tinytools::{PermissionLevel, Tool, ToolExposure, ToolResult};",
         "pub use tinyagents_harness::middleware::{StopDecision, StopHook};",
+        // The harness cost tally is the stop-hook metrics type (#7600).
+        "pub use tinyagents_harness::cost::TurnCost;",
+        // The tool-call policy seam `HostTools::with_policy` takes (#7600).
+        "pub use tinyagents_harness::middleware::{PolicyDecision, ToolCallPolicy};",
         "pub use tinyagents_session::port::{AppendStore, InMemorySessionStores, InMemoryTranscriptLocator, InMemoryTurnStates, Store, TurnStates};",
         "pub use tinyagents_session::testkit::conformance::{session_store_conformance, session_store_isolation_conformance};",
         "pub use tinyagents_session::transcript::{SessionRef, SessionTranscript, TranscriptHistory, TranscriptLocator, TranscriptMessage, TranscriptMeta, TranscriptPartial, TranscriptRead, TranscriptTurn};",
@@ -140,9 +144,9 @@ const bridgeSymbols = [
   "execute_openhuman_tool",
   "assemble_turn_harness",
   "run_turn_via_tinyagents_shared",
+  "run_root_turn_via_hosted_agent",
 ];
 const deletedTaskLocalModules = [
-  "fork_context",
   "sandbox_context",
   "spawn_depth_context",
   "task_recency_context",
@@ -152,6 +156,13 @@ const deletedTaskLocalModules = [
   "resolved_route",
   "run_cancellation_context",
   "thread_context",
+  "turn_workspace",
+];
+// The only non-test files still allowed to declare a `task_local!` (#7801): the
+// dispatch-level ambient state that needs an explicit dispatch context before
+// it can go. Any other declaration is a new violation.
+const taskLocalDeclarationAllowlist = [
+  "crates/openhuman-core/src/core/runtime/context.rs",
 ];
 const taskLocalAccessors = [
   "current_parent",
@@ -182,6 +193,18 @@ const taskLocalAccessors = [
   "with_origin",
   "with_inherited_origin",
   "current_request_id",
+  "with_turn_deadline",
+  "with_stop_hooks",
+  "current_stop_hooks",
+  "with_tool_call_limit",
+  "with_fresh_snapshot",
+  "with_untrusted_input_turn",
+  "dedup_turn_scope",
+  "current_meter",
+  "with_turn_activity",
+  // `memory::scope` (the acting memory identity) is explicit now: a run's
+  // `OpenHumanRunContext::memory_identity`, or a `&MemoryIdentity` argument.
+  "resolve_current",
 ];
 const taskLocalStatics = [
   "PARENT_CONTEXT",
@@ -194,6 +217,23 @@ const taskLocalStatics = [
   "THREAD_ID",
   "AGENT_TURN_ORIGIN",
   "AGENT_TURN_WORKSPACE",
+  "CURRENT_TURN_DEADLINE",
+  "TURN_CANCELLATION",
+  "MODEL_BUDGET",
+  "SPAWN_DEPTH_LIMIT",
+  "CURRENT_STOP_HOOKS",
+  "CURRENT_TOOL_CALL_LIMIT",
+  "UNTRUSTED_INPUT_TURN",
+  "REGENERATE_TARGET_ID",
+  "EGRESS_TURN_DEDUP",
+  "JOB_STATE",
+  "CURRENT_TURN_ACTIVITY",
+  "CURRENT_METER",
+  "APPROVAL_CHAT_CONTEXT",
+  "APPROVAL_COPILOT_STREAM_CONTEXT",
+  "APPROVAL_FLOW_RUN_CONTEXT",
+  // `memory/scope.rs`: the ambient memory identity.
+  "CURRENT",
 ];
 
 async function filesUnder(root, predicate) {
@@ -633,8 +673,12 @@ for (const path of await filesUnder(
         /\b(?:turn_origin|turn_workspace|turn_dispatch_guard)::(?:current|capture|propagate|spawn|spawn_unlabelled|check|record_subagent_elapsed|with_workspace)\b/.test(
           compact,
         ) ||
+        /\bmemory::scope::(?:current|within|within_agent)\b/.test(compact) ||
         (/\/turn_workspace\.rs$/.test(path) &&
           /\bwith_workspace\s*\(/.test(text));
+      const declaresUnlistedTaskLocal =
+        /\btask_local!/.test(text) &&
+        !taskLocalDeclarationAllowlist.includes(rel);
       const declaresDeletedModule = deletedTaskLocalModules.some((name) =>
         new RegExp(`\\bmod\\s+${escapeRegex(name)}\\s*;`).test(text),
       );
@@ -643,6 +687,7 @@ for (const path of await filesUnder(
         namesTaskLocalAccessor ||
         namesTaskLocalStatic ||
         usesGenericAccessor ||
+        declaresUnlistedTaskLocal ||
         declaresDeletedModule
       )
         add("openhuman-task-local", path, line, raw);

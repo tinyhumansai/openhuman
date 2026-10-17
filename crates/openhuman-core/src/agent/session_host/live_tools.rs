@@ -24,16 +24,17 @@ impl OpenHumanSessionHost {
             .cloned()
             .collect();
         LiveToolSurface {
+            tool_hooks: self.host_env.hooks.tool_hooks().to_vec(),
             tool_sets: vec![Arc::clone(&self.tools)],
             allowed,
             tool_policy: Some(ToolPolicyEnforcement {
                 policy: self.tool_policy.clone(),
                 session: self.tool_policy_session.clone(),
-                session_id: self.event_session_id.clone(),
-                channel: self.event_channel.clone(),
                 agent_definition_id: self.agent_definition_id.clone(),
+                channel: self.event_channel.clone(),
             }),
             has_thread: self.thread_id.is_some(),
+            dispatch: crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref()),
         }
     }
 

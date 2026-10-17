@@ -18,6 +18,7 @@ use super::*;
 /// unknown) is rejected outright — resuming an already-settled thread_id is
 /// no longer treated as a harmless no-op, it's a clear error.
 pub async fn flows_resume(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     flow_id: &str,
     thread_id: &str,
@@ -208,8 +209,19 @@ pub async fn flows_resume(
     }
     let compiled = tinyflows::compiler::compile(&flow.graph).map_err(|e| e.to_string())?;
     let config_arc = Arc::new(config.clone());
-    let caps =
-        crate::flows::tinyflows::build_capabilities(config_arc.clone(), format!("flow:{flow_id}"));
+    // The run acts under its own trusted `Workflow` origin: its capabilities
+    // read the origin from this context, not from the calling task's scope.
+    let origin = workflow_origin(flow_id, flow.require_approval);
+    let run_ctx = ctx.with_turn_origin(origin.clone());
+    let caps = crate::flows::tinyflows::build_capabilities(
+        &run_ctx,
+        config_arc.clone(),
+        format!("flow:{flow_id}"),
+        Some(FlowRunContext {
+            flow_id: flow_id.to_string(),
+            run_id: thread_id.to_string(),
+        }),
+    );
     let checkpointer =
         crate::flows::tinyflows::open_flow_checkpointer(config).map_err(|e| e.to_string())?;
 
@@ -273,7 +285,6 @@ pub async fn flows_resume(
         "[flows] flows_resume: resuming checkpointed run"
     );
 
-    let origin = workflow_origin(flow_id, flow.require_approval);
     // Same per-run journal as `flows_run`: the resumed execution mints a new
     // tinyagents run id, so its observation slice is read under that id.
     let journal = Arc::new(tinyflows::engine::InMemoryGraphEventJournal::new());
@@ -291,26 +302,20 @@ pub async fn flows_resume(
     // `error` port (recovery branch) or, if it has none, fails the run. The
     // empty-rejections case is byte-for-byte the prior approve-only resume.
     //
-    // Same flow/run correlation scope as `flows_run` (see its comment) — a
-    // resumed run can dispatch further tool calls that park, and those parks
-    // need `source_context` too.
-    let run = APPROVAL_FLOW_RUN_CONTEXT.scope(
-        FlowRunContext {
-            flow_id: flow_id.to_string(),
-            run_id: thread_id.to_string(),
-        },
-        with_origin(
-            origin,
-            tinyflows::engine::resume_with_checkpointer_journaled_observed(
-                &compiled,
-                &caps,
-                checkpointer,
-                thread_id,
-                approvals,
-                rejections,
-                journal.clone(),
-                &observer,
-            ),
+    // Same flow/run correlation as `flows_run` (see its comment), carried by the
+    // capabilities above -- a resumed run can dispatch further tool calls that
+    // park, and those parks need `source_context` too.
+    let run = with_origin(
+        origin,
+        tinyflows::engine::resume_with_checkpointer_journaled_observed(
+            &compiled,
+            &caps,
+            checkpointer,
+            thread_id,
+            approvals,
+            rejections,
+            journal.clone(),
+            &observer,
         ),
     );
 

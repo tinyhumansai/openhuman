@@ -115,13 +115,24 @@ unless you override that, because it forwards the bearer token verbatim.
 Everything above is about local artifacts. For a real agent run, the
 core can export trace spans to Langfuse instead: when
 `observability.share_usage_data` is on (the default), a completed run's spans
-go to the OpenHuman backend's Langfuse ingestion proxy over the same session
-bearer every other backend call uses, and the backend forwards them to
-Langfuse with the project keys injected server-side. Clients never hold
-Langfuse credentials directly. Prompt and reply text ride along only while
+go as OTLP/HTTP JSON to the OpenHuman backend's Langfuse proxy,
+`/telemetry/langfuse/otel/v1/traces`, over the same session bearer every other
+backend call uses. The backend stamps the signed-in user on every span, injects
+the project keys server-side and forwards to Langfuse v4's
+`/api/public/otel/v1/traces` with `x-langfuse-ingestion-version: 4`. Clients
+never hold Langfuse credentials directly. Flow runs export the same way
+(`crates/openhuman-core/src/flows/tinyflows/langfuse_export.rs`).
+
+Langfuse v4 has no trace record of its own and filters observations directly,
+so the exporters copy the trace name, session, tags, release, environment and
+trace metadata onto every span, and put the run's overall input and output on
+the root observation. Each finished span is exported once; v4 duplicates a
+span id it receives twice. Langfuse Cloud removes the legacy
+`/api/public/ingestion` trace path on 2026-11-16, and nothing in the core sends
+traces there. Prompt and reply text ride along only while
 `observability.agent_tracing.capture_content` is also on; turning it off keeps
 metadata (names, timings, token and cost figures) but drops content. See
-`crates/openhuman-core/src/agent/progress_tracing/langfuse.rs` and
+`crates/openhuman-core/src/agent/progress_tracing/otlp.rs` and
 `crates/openhuman-core/src/config/schema/observability.rs`.
 
 ## Out of scope for the E2E layer

@@ -168,67 +168,6 @@ pub fn node_kind_contract(kind: &str) -> Option<NodeKindContract> {
     tinyflows::catalog::contract_for(kind).map(apply_host_overlay)
 }
 
-/// Renders the compact, one-line-per-kind node-kind enumeration used to keep
-/// `propose_workflow`'s description honest against the typed contracts (drift
-/// test). Format: `kind [required config.a/config.b; optional config.c] —
-/// summary`, joined by ` | `.
-pub fn render_node_kinds_line() -> String {
-    all_node_kind_contracts()
-        .iter()
-        .map(|c| {
-            let required: Vec<&str> = c
-                .config_fields
-                .iter()
-                .filter(|f| f.required)
-                .map(|f| f.name.as_str())
-                .collect();
-            let optional: Vec<&str> = c
-                .config_fields
-                .iter()
-                .filter(|f| !f.required)
-                .map(|f| f.name.as_str())
-                .collect();
-            let mut cfg = String::new();
-            if !required.is_empty() {
-                cfg.push_str(&format!("required config.{}", required.join("/config.")));
-            }
-            if !optional.is_empty() {
-                if !cfg.is_empty() {
-                    cfg.push_str("; ");
-                }
-                cfg.push_str(&format!("optional config.{}", optional.join("/config.")));
-            }
-            if cfg.is_empty() {
-                format!("{} ({})", c.kind, c.summary)
-            } else {
-                format!("{} [{}] — {}", c.kind, cfg, c.summary)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" | ")
-}
-
-/// Renders the node kinds and only their required configuration fields.
-pub fn render_node_kinds_required() -> String {
-    all_node_kind_contracts()
-        .iter()
-        .map(|c| {
-            let required: Vec<&str> = c
-                .config_fields
-                .iter()
-                .filter(|f| f.required)
-                .map(|f| f.name.as_str())
-                .collect();
-            if required.is_empty() {
-                c.kind.clone()
-            } else {
-                format!("{}(config.{})", c.kind, required.join(", config."))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 #[cfg(test)]
 #[path = "node_contracts_tests.rs"]
 mod tests;

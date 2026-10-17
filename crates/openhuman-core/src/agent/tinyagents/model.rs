@@ -1,14 +1,11 @@
 //! OpenHuman helpers and wrappers for native TinyAgents [`ChatModel`] values.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use async_trait::async_trait;
 use tinyinference_llm::message::{AssistantMessage, ContentBlock};
-use tinyinference_llm::model::{
-    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
-};
+use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall as TaToolCall;
-use tinyinference_llm::usage::Usage;
+use tinyinference_llm::usage::{recover_usage, ProviderUsageReport};
 
 use crate::inference::provider::{BilledUsage, ChatResponse};
 
@@ -112,25 +109,8 @@ fn response_to_model_response(
     ) {
         content.push(block);
     }
-    let usage = response.usage.as_ref().map(|u| {
-        // Carry every token breakdown the crate `Usage` can express so a
-        // standalone `invoke` is usage-faithful (gap G1): cache reads/writes and
-        // reasoning tokens all have crate homes as of tinyagents 1.7. `Usage::new`
-        // seeds input/output/total; set the detail fields on top.
-        let mut usage = Usage::new(u.input_tokens, u.output_tokens);
-        usage.cache_read_tokens = u.cached_input_tokens();
-        usage.cache_creation_tokens = u.cache_creation_tokens;
-        usage.reasoning_tokens = u.reasoning_tokens;
-        if u.charged_amount_usd.is_finite() && u.charged_amount_usd > 0.0 {
-            usage.charged_amount = Some(tinyinference_llm::usage::ChargedAmount::usd_micros(
-                (u.charged_amount_usd * 1_000_000.0).round() as i64,
-            ));
-        }
-        if u.context_window() > 0 {
-            usage.context_window_tokens = Some(u.context_window());
-        }
-        usage
-    });
+    let report = response.usage.as_ref().map(billed_usage_report);
+    let usage = report.as_ref().map(ProviderUsageReport::to_usage);
     let finish_reason = if tool_calls.is_empty() {
         "stop"
     } else {
@@ -153,7 +133,7 @@ fn response_to_model_response(
         // managed backend's charged amount + window via
         // [`usage_info_from_response`], no crate change required. Omitted when the
         // provider reported neither (keeps non-managed responses byte-clean).
-        raw: openhuman_usage_meta_raw(response.usage.as_ref()),
+        raw: report.as_ref().and_then(ProviderUsageReport::raw_meta),
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
@@ -177,388 +157,39 @@ pub(crate) fn native_model_response_for_request(
     )
 }
 
-/// JSON key under which the model adapter stashes the provider-reported
-/// billing/context metadata that the crate [`Usage`] has no field for
-/// (gap G1). Consumed by [`usage_info_from_response`].
-const OPENHUMAN_USAGE_META_KEY: &str = "openhuman_usage_meta";
-
-/// The two host [`BilledUsage`] fields with no crate [`Usage`] home, ferried
-/// through [`ModelResponse::raw`] so a standalone `invoke` stays usage-faithful.
-#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
-struct OpenhumanUsageMeta {
-    /// Provider-charged amount in USD (`BilledUsage::charged_amount_usd`).
-    /// `None` when no charge was reported; `Some(0.0)` is a free call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    charged_amount_usd: Option<f64>,
-    /// Model context window in tokens (`BilledUsage::context_window`).
-    #[serde(default)]
-    context_window: u64,
-}
-
 /// Build the `ModelResponse.raw` value carrying charged-USD + context-window
-/// metadata, or `None` when the provider reported neither (so responses from
-/// providers that don't surface billing stay `raw: None`).
-fn openhuman_usage_meta_raw(usage: Option<&BilledUsage>) -> Option<serde_json::Value> {
-    let u = usage?;
-    let charged = (u.charge_reported && !u.cost_is_estimate).then_some(u.charged_amount_usd);
-    if charged.is_none() && u.context_window() == 0 {
-        return None;
-    }
-    let meta = OpenhumanUsageMeta {
-        charged_amount_usd: charged,
+/// metadata, or `None` when the provider reported neither.
+fn billed_usage_report(u: &BilledUsage) -> ProviderUsageReport {
+    ProviderUsageReport {
+        input_tokens: u.input_tokens,
+        output_tokens: u.output_tokens,
+        cached_input_tokens: u.cached_input_tokens(),
+        cache_creation_tokens: u.cache_creation_tokens,
+        reasoning_tokens: u.reasoning_tokens,
+        charged_amount_usd: u.charged_amount_usd,
+        charge_reported: u.charge_reported,
+        cost_is_estimate: u.cost_is_estimate,
         context_window: u.context_window(),
-    };
-    Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta }))
-}
-
-/// Merge the host billing/context metadata the crate [`Usage`] cannot carry into
-/// a crate [`ModelResponse::raw`] under [`OPENHUMAN_USAGE_META_KEY`], so
-/// [`usage_info_from_response`] recovers the charged-USD + context window from a
-/// crate-native model (e.g. [`OpenHumanBackendModel`](crate::inference::provider::OpenHumanBackendModel))
-/// exactly as it does from a [`native model adapter`].
-///
-/// The crate `OpenAiModel` leaves the managed backend's `openhuman.{billing,usage}`
-/// envelope only on the raw wire JSON — it has no field for charged USD — so the
-/// crate-native managed path would otherwise report `$0` charged and fall back to
-/// the catalog estimate (issue #4249, Phase 3 usage-parity). This is the symmetric
-/// writer for [`usage_info_from_response`]'s reader.
-///
-/// No-op when both values are zero (keeps billing-free responses `raw`-clean);
-/// otherwise inserts the meta key into the existing raw object (preserving the
-/// wire JSON) or creates a fresh object.
-pub(crate) fn merge_openhuman_usage_meta(
-    raw: Option<serde_json::Value>,
-    charged_amount_usd: Option<f64>,
-    context_window: u64,
-) -> Option<serde_json::Value> {
-    if charged_amount_usd.is_none() && context_window == 0 {
-        return raw;
-    }
-    let meta = match serde_json::to_value(OpenhumanUsageMeta {
-        charged_amount_usd,
-        context_window,
-    }) {
-        Ok(v) => v,
-        Err(_) => return raw,
-    };
-    match raw {
-        Some(serde_json::Value::Object(mut obj)) => {
-            obj.insert(OPENHUMAN_USAGE_META_KEY.to_string(), meta);
-            Some(serde_json::Value::Object(obj))
-        }
-        // A non-object (or absent) raw can't hold the key alongside wire fields —
-        // stash the meta on its own so the reader still recovers it.
-        _ => Some(serde_json::json!({ OPENHUMAN_USAGE_META_KEY: meta })),
     }
 }
 
 /// Reconstruct a host [`BilledUsage`] from a crate [`ModelResponse`], recovering
-/// the provider-charged USD + context window the adapter stashed in
-/// [`ModelResponse::raw`] (gap G1). Returns `None` when the response carried no
-/// usage at all.
-///
-/// This is the seam one-shot inference callers use once they move off
-/// the legacy chat response onto `Arc<dyn ChatModel>`
-/// (`invoke` → `ModelResponse`): the full host usage record — real token
-/// counts *and* backend-charged USD — survives the crossing.
+/// the provider-charged USD + context window stashed in [`ModelResponse::raw`]
+/// by `tinyinference_llm::usage::recover_usage`. `None` when the response
+/// carried no usage at all.
 pub(crate) fn usage_info_from_response(response: &ModelResponse) -> Option<BilledUsage> {
-    let usage = response.usage.as_ref()?;
-    let mut meta = response
-        .raw
-        .as_ref()
-        .and_then(|v| v.get(OPENHUMAN_USAGE_META_KEY))
-        .and_then(|v| serde_json::from_value::<OpenhumanUsageMeta>(v.clone()).ok())
-        .unwrap_or_default();
-    if meta.charged_amount_usd.is_none() {
-        meta.charged_amount_usd = response
-            .raw
-            .as_ref()
-            .and_then(|value| value.get("total_cost_usd"))
-            .and_then(serde_json::Value::as_f64)
-            .or_else(|| response.raw.as_ref()?.get("usage")?.get("cost")?.as_f64())
-            .or_else(|| {
-                usage
-                    .charged_amount
-                    .map(|charge| charge.micros as f64 / 1_000_000.0)
-            });
-    }
+    let recovered = recover_usage(response)?;
+    let usage = recovered.usage;
     Some(
         BilledUsage::from_counts(usage.input_tokens, usage.output_tokens)
-            .with_context_window(meta.context_window)
+            .with_context_window(recovered.context_window)
             .with_cached_input_tokens(usage.cache_read_tokens)
             .with_cache_creation_tokens(usage.cache_creation_tokens)
             .with_reasoning_tokens(usage.reasoning_tokens)
-            .with_reported_charge(meta.charged_amount_usd),
+            .with_reported_charge(recovered.charged_amount_usd),
     )
-}
-
-/// Shared slot that preserves the most recent original provider error.
-///
-/// tinyagents carries errors as `TinyAgentsError::Model(String)`, which would
-/// stringify openhuman's typed `anyhow::Error` (e.g. `AgentError::PermissionDenied`
-/// / `MaxIterationsExceeded`) and break the downcast the caller relies on for
-/// Sentry suppression and `AgentError`-tagged events. The adapter stashes the
-/// original error here before returning the stringified one to the harness, so
-/// the runner can re-surface the downcastable error after the run fails.
-pub(super) type ModelErrorSlot = Arc<Mutex<Option<anyhow::Error>>>;
-
-/// Fills the turn's [`ModelErrorSlot`] with the provider failure that ended a
-/// model call, so the runner re-surfaces the real failure instead of the
-/// harness's sanitized "hosted agent invocation failed" (#6724).
-///
-/// The slot is emptied when each attempt *starts*, not only when one succeeds:
-/// an attempt that is dropped (call timeout), cancelled, or ends without a
-/// terminal item must not leave the previous attempt's error behind.
-///
-/// Covers both an `Err` from `invoke`/`stream` and a failure reported *inside*
-/// a stream (`ProviderFailed`, e.g. an HTTP 200 SSE `{"error":…}` payload).
-/// The recorded error only feeds `web_errors` classification, which picks the
-/// user-facing copy; it is never rendered verbatim.
-pub(super) struct ErrorSlotModel {
-    inner: Arc<dyn ChatModel<()>>,
-    slot: ModelErrorSlot,
-}
-
-impl ErrorSlotModel {
-    pub(super) fn new(inner: Arc<dyn ChatModel<()>>, slot: ModelErrorSlot) -> Self {
-        Self { inner, slot }
-    }
-}
-
-fn store_model_error(slot: &ModelErrorSlot, error: Option<anyhow::Error>) {
-    *slot
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = error;
-}
-
-/// The slot's error flows into logs, Sentry and classification, and a provider
-/// message can echo request content, so it is secret-scrubbed and truncated
-/// here, once, before any of them sees it.
-fn slot_provider_error(error: &tinyinference_llm::model::ProviderError) -> anyhow::Error {
-    let mut error = error.clone();
-    error.message = tinyinference_core::sanitize::sanitize_api_error(&error.message);
-    error.raw = None;
-    anyhow::Error::new(tinyinference_llm::Error::Provider(Box::new(error)))
-}
-
-fn slot_error(error: &tinyinference_llm::Error) -> anyhow::Error {
-    match error {
-        tinyinference_llm::Error::Provider(provider_error) => slot_provider_error(provider_error),
-        other => anyhow::anyhow!(
-            "{}",
-            tinyinference_core::sanitize::sanitize_api_error(&other.to_string())
-        ),
-    }
-}
-
-#[async_trait]
-impl ChatModel<()> for ErrorSlotModel {
-    fn profile(&self) -> Option<&ModelProfile> {
-        self.inner.profile()
-    }
-
-    fn supports_input(
-        &self,
-        modality: tinyinference_llm::model::InputModality,
-        mime: &str,
-        source: tinyinference_llm::model::InputSource,
-    ) -> bool {
-        self.inner.supports_input(modality, mime, source)
-    }
-
-    fn cache_identity(&self) -> Option<String> {
-        self.inner.cache_identity()
-    }
-
-    async fn invoke(
-        &self,
-        state: &(),
-        request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelResponse> {
-        store_model_error(&self.slot, None);
-        let result = self.inner.invoke(state, request).await;
-        store_model_error(&self.slot, result.as_ref().err().map(slot_error));
-        result
-    }
-
-    async fn stream(
-        &self,
-        state: &(),
-        request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelStream> {
-        store_model_error(&self.slot, None);
-        match self.inner.stream(state, request).await {
-            Ok(stream) => {
-                let slot = self.slot.clone();
-                Ok(stream.map_items(move |item| {
-                    match &item {
-                        ModelStreamItem::ProviderFailed(error) => {
-                            store_model_error(&slot, Some(slot_provider_error(error)))
-                        }
-                        ModelStreamItem::Completed(_) => store_model_error(&slot, None),
-                        _ => {}
-                    }
-                    item
-                }))
-            }
-            Err(error) => {
-                store_model_error(&self.slot, Some(slot_error(&error)));
-                Err(error)
-            }
-        }
-    }
-}
-
-pub(super) struct MaxTokensModel {
-    inner: Arc<dyn ChatModel<()>>,
-    max_tokens: u32,
-}
-
-/// A model wrapper that overrides capability metadata without changing wire
-/// behavior. Directly injected crate models use this when a turn supplies a
-/// more precise context window or explicitly selects prompt-guided tool mode.
-pub(super) struct ProfileOverrideModel {
-    inner: Arc<dyn ChatModel<()>>,
-    profile: ModelProfile,
-    request_model: Option<String>,
-    request_temperature: Option<f64>,
-}
-
-impl ProfileOverrideModel {
-    pub(super) fn new(inner: Arc<dyn ChatModel<()>>, profile: ModelProfile) -> Self {
-        Self {
-            inner,
-            profile,
-            request_model: None,
-            request_temperature: None,
-        }
-    }
-
-    pub(super) fn with_request_model(mut self, model: impl Into<String>) -> Self {
-        self.request_model = Some(model.into());
-        self
-    }
-
-    pub(super) fn with_request_temperature(mut self, temperature: f64) -> Self {
-        self.request_temperature = Some(temperature);
-        self
-    }
-
-    fn pin_request_options(&self, mut request: ModelRequest) -> ModelRequest {
-        if request.model.is_none() {
-            request.model.clone_from(&self.request_model);
-        }
-        if request.temperature.is_none() {
-            request.temperature = self.request_temperature;
-        }
-        request
-    }
-}
-
-#[async_trait]
-impl ChatModel<()> for ProfileOverrideModel {
-    fn profile(&self) -> Option<&ModelProfile> {
-        Some(&self.profile)
-    }
-
-    fn supports_input(
-        &self,
-        modality: tinyinference_llm::model::InputModality,
-        mime: &str,
-        source: tinyinference_llm::model::InputSource,
-    ) -> bool {
-        self.inner.supports_input(modality, mime, source)
-    }
-
-    fn cache_identity(&self) -> Option<String> {
-        self.inner
-            .cache_identity()
-            .map(|identity| match &self.request_model {
-                Some(model) => format!("{identity}:request-model={model}"),
-                None => identity,
-            })
-    }
-
-    async fn invoke(
-        &self,
-        state: &(),
-        request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelResponse> {
-        self.inner
-            .invoke(state, self.pin_request_options(request))
-            .await
-    }
-
-    async fn stream(
-        &self,
-        state: &(),
-        request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelStream> {
-        self.inner
-            .stream(state, self.pin_request_options(request))
-            .await
-    }
-}
-
-impl MaxTokensModel {
-    pub(super) fn new(inner: Arc<dyn ChatModel<()>>, max_tokens: u32) -> Self {
-        Self { inner, max_tokens }
-    }
-
-    fn cap(&self, mut request: ModelRequest) -> ModelRequest {
-        request.max_tokens = Some(
-            request
-                .max_tokens
-                .map_or(self.max_tokens, |current| current.min(self.max_tokens)),
-        );
-        request
-    }
-}
-
-#[async_trait]
-impl ChatModel<()> for MaxTokensModel {
-    fn profile(&self) -> Option<&ModelProfile> {
-        self.inner.profile()
-    }
-
-    // Every host wrapper forwards `cache_identity`: the trait default declines
-    // identity, and the harness response cache then keys every wrapped model
-    // under one "anonymous-model" marker, so a shared cache could serve a
-    // local model's answer to a hosted one.
-    fn supports_input(
-        &self,
-        modality: tinyinference_llm::model::InputModality,
-        mime: &str,
-        source: tinyinference_llm::model::InputSource,
-    ) -> bool {
-        self.inner.supports_input(modality, mime, source)
-    }
-
-    fn cache_identity(&self) -> Option<String> {
-        self.inner.cache_identity()
-    }
-
-    async fn invoke(
-        &self,
-        state: &(),
-        request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelResponse> {
-        self.inner.invoke(state, self.cap(request)).await
-    }
-
-    async fn stream(
-        &self,
-        state: &(),
-        request: ModelRequest,
-    ) -> tinyinference_llm::Result<ModelStream> {
-        self.inner.stream(state, self.cap(request)).await
-    }
 }
 
 #[cfg(test)]
 #[path = "model_g1_usage_tests_tests.rs"]
 mod g1_usage_tests;
-
-#[cfg(test)]
-#[path = "error_slot_model_tests.rs"]
-mod error_slot_model_tests;

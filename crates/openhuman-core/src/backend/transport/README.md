@@ -76,6 +76,6 @@ for the real transport and how it maps SDK errors onto
 ## Further reading
 
 - [Parent module README](../README.md)
-- [One TinyHumans API key](../../../../../gitbooks/developing/tinyhumans-api-key.md)
+- [One TinyHumans API key](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md)
 - [openhuman-tinyhumans crate](../../../../openhuman-tinyhumans/README.md)
 - [tinyhumans-sdk](../../../../../vendor/tinyhumans-sdk/README.md)

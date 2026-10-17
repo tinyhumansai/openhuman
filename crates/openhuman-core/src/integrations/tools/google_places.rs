@@ -129,6 +129,27 @@ impl Tool for GooglePlacesSearchTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl GooglePlacesSearchTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
@@ -153,7 +174,7 @@ impl Tool for GooglePlacesSearchTool {
 
         match self
             .client
-            .post::<SearchResponse>("/agent-integrations/google-places/search", &body)
+            .post::<SearchResponse>(approval, "/agent-integrations/google-places/search", &body)
             .await
         {
             Ok(resp) => {
@@ -232,6 +253,27 @@ impl Tool for GooglePlacesDetailsTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.run(args, &Default::default()).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(args, &approval).await
+    }
+}
+
+impl GooglePlacesDetailsTool {
+    /// Runs the tool for a turn whose approval context is `approval`.
+    pub(crate) async fn run(
+        &self,
+        args: serde_json::Value,
+        approval: &crate::security::approval::ApprovalTurnContext,
+    ) -> anyhow::Result<ToolResult> {
         let place_id = args
             .get("place_id")
             .and_then(|v| v.as_str())
@@ -247,13 +289,13 @@ impl Tool for GooglePlacesDetailsTool {
 
         match self
             .client
-            .post::<DetailsResponse>("/agent-integrations/google-places/details", &body)
+            .post::<DetailsResponse>(approval, "/agent-integrations/google-places/details", &body)
             .await
         {
             Ok(resp) => {
                 let p = &resp.place;
                 let mut lines = vec![
-                    format!("{}", p.name),
+                    p.name.to_string(),
                     format!("Address: {}", p.formatted_address),
                 ];
 

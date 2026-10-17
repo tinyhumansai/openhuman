@@ -6,8 +6,8 @@ use super::dirs::{
 };
 use super::env::{EnvLookup, ProcessEnv, ProcessEnvWithoutWorkspace};
 use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_legacy_inference_url, migrate_legacy_memory_backend,
-    migrate_search_settings,
+    migrate_cloud_provider_slugs, migrate_components, migrate_legacy_inference_url,
+    migrate_legacy_memory_backend, migrate_search_settings,
 };
 use super::secrets::{
     decrypt_config_secrets, decrypt_config_secrets_strict, encrypt_config_secrets,
@@ -437,6 +437,7 @@ impl Config {
         config.action_dir = resolve_action_dir(&config.action_dir_override);
         let migration_raw = migration_source(&config_path, &raw).await;
         migrate_legacy_memory_backend(&mut config, &migration_raw);
+        migrate_components(&mut config, &migration_raw);
         config.apply_env_overrides();
         // Debug-dump path is read-only; ignore the migration signal (the
         // authoritative `load_or_init` path persists upgraded secrets).
@@ -499,6 +500,7 @@ impl Config {
         migrate_legacy_inference_url(&mut config);
         let migration_raw = migration_source(&config_path, &raw).await;
         migrate_legacy_memory_backend(&mut config, &migration_raw);
+        migrate_components(&mut config, &migration_raw);
         migrate_cloud_provider_slugs(&mut config);
         migrate_search_settings(&mut config);
         config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);

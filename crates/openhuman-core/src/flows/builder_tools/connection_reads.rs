@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::flows::ops;
-use tinytools::{PermissionLevel, Tool, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext};
 
 /// `list_connectable_toolkits`: read-only list of the Composio toolkits the
 /// builder can wire, each tagged connected/unconnected — so the agent can steer
@@ -47,18 +47,23 @@ impl Tool for ListConnectableToolkitsTool {
         false
     }
 
-    async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
-        // The contract crate, not `memory::sync::composio::providers` (#5560).
-        // That host shim is `pub use tinymemory_core::sync::composio::providers::*`
-        // and the engine's `providers` module in turn re-exports this function
-        // verbatim from `crate::integrations::composio::contract::scopes` — so the two paths
-        // name the SAME item and this is a path change with no behaviour delta.
-        // Naming the contract directly is what lets the shim's caller list
-        // shrink to the sites that genuinely need the engine's registry and
-        // curated catalogs.
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        _args: Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context);
+        // The agent-ready list is the connector module's (`GetVocabulary`),
+        // read through the host's curated snapshot.
         use crate::integrations::composio::contract::agent_ready_toolkits;
         tracing::debug!(target: "flows", "[flows] list_connectable_toolkits: listing toolkits + connected state (read-only) via the memory contract");
-        let connected = ops::connected_toolkits(&self.config).await;
+        let connected = ops::connected_toolkits(&ctx, &self.config).await;
         let toolkits: Vec<Value> = agent_ready_toolkits()
             .into_iter()
             .map(|tk| {
@@ -121,9 +126,20 @@ impl Tool for ListFlowConnectionsTool {
         false
     }
 
-    async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        _args: Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context);
         tracing::debug!(target: "flows", "[flows] list_flow_connections: enumerating connection refs (read-only)");
-        match ops::flows_list_connections(&self.config).await {
+        match ops::flows_list_connections(&ctx, &self.config).await {
             Ok(outcome) => {
                 let conns: Vec<Value> = outcome.value.iter().map(flow_connection_to_json).collect();
                 Ok(ToolResult::success(serde_json::to_string_pretty(

@@ -5,7 +5,7 @@
 //! events and, when possible, persisted in the child worker thread.
 
 use super::subagent_abort_report::AbortReport;
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::orchestration::fleet_tools::FleetToolSet;
 use crate::agent::orchestration::running_subagents;
 use crate::agent::orchestration::subagent_sessions::{
@@ -17,6 +17,7 @@ use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
     run_subagent_with_parent, SubagentRunOptions, SubagentRunStatus,
 };
+use crate::core::runtime::DispatchCtx;
 use crate::threads::store::{self as conversations, ConversationMessage};
 use async_trait::async_trait;
 use serde_json::json;
@@ -239,30 +240,14 @@ impl Tool for SpawnAsyncSubagentTool {
         options: ToolCallOptions,
         tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        if let Some(live_parent) = super::ambient_parent_run_context("direct-async-subagent") {
-            let detached_data = live_parent.data.detached_child();
-            let detached_cancellation = detached_data.cancellation.clone();
-            let detached_parent = live_parent
-                .child(
-                    RunConfig::new(format!("async-subagent-{}", uuid::Uuid::new_v4())),
-                    detached_data,
-                )
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?
-                .with_cancellation(detached_cancellation);
-            return self
-                .execute_with_live_parent_context(
-                    args,
-                    tool_context,
-                    live_parent.data.child(),
-                    detached_parent,
-                )
-                .await;
-        }
         self.execute_with_context_inner(
             args,
             options,
             tool_context,
-            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            crate::agent::tinyagents::host::OpenHumanRunContext::new().with_core(
+                crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                    .into_core(),
+            ),
             None,
         )
         .await
@@ -270,6 +255,37 @@ impl Tool for SpawnAsyncSubagentTool {
 }
 
 impl SpawnAsyncSubagentTool {
+    /// Drive the tool the way a live parent turn does, over an explicit
+    /// `parent` execution context. Tests only: production turns reach the tool
+    /// through [`SpawnAsyncSubagentDispatch`] with their own carrier.
+    #[cfg(test)]
+    pub(crate) async fn execute_under_parent(
+        &self,
+        args: serde_json::Value,
+        options: ToolCallOptions,
+        tool_context: Option<&dyn ToolRunContext>,
+        parent: crate::agent::harness::ParentExecutionContext,
+    ) -> anyhow::Result<ToolResult> {
+        let live_parent = super::live_parent_run_context("direct-async-subagent", parent);
+        let detached_data = live_parent.data.detached_child();
+        let detached_cancellation = detached_data.cancellation.clone();
+        let detached_parent = live_parent
+            .child(
+                RunConfig::new(format!("async-subagent-{}", uuid::Uuid::new_v4())),
+                detached_data,
+            )
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .with_cancellation(detached_cancellation);
+        self.execute_with_context_inner(
+            args,
+            options,
+            tool_context,
+            live_parent.data.child(),
+            Some(detached_parent),
+        )
+        .await
+    }
+
     pub(crate) async fn execute_with_live_parent_context(
         &self,
         args: serde_json::Value,
@@ -290,6 +306,24 @@ impl SpawnAsyncSubagentTool {
 
 include!("spawn_async_subagent_execute.rs");
 include!("spawn_async_subagent_args.rs");
+include!("spawn_async_subagent_results.rs");
+
+/// Settle a late registration refusal before an accepted response is built.
+fn finish_spawn_registration(
+    registration: Result<(), running_subagents::RegistrationError>,
+    store: &SubagentSessionStore,
+    session_id: &str,
+    task_id: &str,
+) -> Result<(), String> {
+    if let Err(error) = registration {
+        let refusal = format!("spawn_async_subagent: registration refused: {error}");
+        subagent_sessions::mark_failed(store, session_id, task_id, refusal.clone()).map_err(
+            |failure| format!("{refusal}; failed to settle persisted session: {failure}"),
+        )?;
+        return Err(refusal);
+    }
+    Ok(())
+}
 
 /// Format the user-facing acceptance text around a structured async sub-agent reference.
 ///
@@ -518,6 +552,7 @@ pub(crate) fn extract_workflow_proposal_from_history(
 /// summary; on any persistence error the summary still carries the envelope —
 /// losing durability must not lose delivery.
 fn attach_workflow_proposal(
+    ctx: &DispatchCtx,
     workspace_dir: &std::path::Path,
     parent_thread_id: Option<&str>,
     task_id: &str,
@@ -549,6 +584,7 @@ fn attach_workflow_proposal(
     );
     if let Some(thread_id) = parent_thread_id {
         let persisted = conversations::append_message(
+            ctx,
             workspace_dir.to_path_buf(),
             thread_id,
             ConversationMessage {

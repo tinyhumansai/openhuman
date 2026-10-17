@@ -137,7 +137,8 @@ async fn a_claimed_removal_refuses_turns_before_approvals_are_settled() {
 fn a_claimed_removal_refuses_approval_decisions_before_denial_finishes() {
     let lifecycle = Arc::new(Lifecycle::new());
     let shared_scope = lifecycle.approval_scope();
-    let approvals = crate::Approvals::new("a", lifecycle.removed(), lifecycle.approval_state());
+    let approvals =
+        crate::Approvals::new("a", lifecycle.removed(), lifecycle.approval_state(), None);
     let removing = lifecycle.clone();
     let (entered, callback_entered) = std::sync::mpsc::channel();
     let (release, callback_release) = std::sync::mpsc::channel();

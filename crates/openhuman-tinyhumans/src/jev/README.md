@@ -7,7 +7,7 @@ This module provides `TinyHumansJevRanker`: an embedding retriever cuts the
 catalogue to a shortlist, and one Jev `Choice` evaluation picks from it. The
 module compiles only with the crate's `jev` feature (on by default).
 
-See [`gitbooks/developing/jev.md`](../../../../gitbooks/developing/jev.md) for
+See [`docs/gitbooks/en/developing/jev.md`](../../../../docs/gitbooks/en/developing/jev.md) for
 what Jev is, the benchmark numbers, and how it compares to plain BM25.
 
 ## How it works
@@ -136,6 +136,6 @@ cargo test -p openhuman-tinyhumans jev::
 
 ## Further reading
 
-- [`gitbooks/developing/jev.md`](../../../../gitbooks/developing/jev.md): Jev.
-- [`gitbooks/developing/performance.md`](../../../../gitbooks/developing/performance.md): performance.
+- [`docs/gitbooks/en/developing/jev.md`](../../../../docs/gitbooks/en/developing/jev.md): Jev.
+- [`docs/gitbooks/en/developing/performance.md`](../../../../docs/gitbooks/en/developing/performance.md): performance.
 - [`crates/openhuman-tinyhumans/README.md`](../../README.md): the openhuman-tinyhumans crate README.

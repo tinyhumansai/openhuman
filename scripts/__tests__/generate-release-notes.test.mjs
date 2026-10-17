@@ -53,12 +53,18 @@ test('release notes collect only first-parent pull request merges', async (t) =>
   const git = (...args) => execFileSync('git', args, {
     cwd: repo,
     encoding: 'utf8',
-    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_SYSTEM: '/dev/null',
+      GIT_MERGE_AUTOEDIT: 'no',
+    },
   });
   git('init', '--quiet', '--initial-branch', 'main');
   git('config', 'user.name', 'Range Fixture');
   git('config', 'user.email', 'range@example.test');
   git('config', 'commit.gpgsign', 'false');
+  git('config', 'tag.gpgSign', 'false');
   git('commit', '--allow-empty', '--quiet', '-m', 'base');
   git('tag', 'start');
   git('switch', '--quiet', '-c', 'feature');

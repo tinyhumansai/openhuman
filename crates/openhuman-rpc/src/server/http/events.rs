@@ -1,11 +1,12 @@
 //! Server-Sent Event streams: `/events`, `/events/webhooks`, `/events/domain`.
 
 use crate::core_host::core::events::DomainEvent;
+use crate::core_host::core::runtime::DispatchCtx;
 use axum::extract::Query;
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::{Extension, Json};
 use serde_json::json;
 use tokio_stream::StreamExt;
 
@@ -39,8 +40,12 @@ pub(super) struct EventsQuery {
 /// `client_id`.
 pub(super) async fn events_handler(
     headers: axum::http::HeaderMap,
+    ctx: Option<Extension<DispatchCtx>>,
     Query(query): Query<EventsQuery>,
 ) -> Response {
+    // The context the serving middleware attached; a request that carries none
+    // has no tenant, which fails closed in SaaS.
+    let ctx = ctx.map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx);
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -54,11 +59,9 @@ pub(super) async fn events_handler(
     // SaaS: the stream belongs to the user the gateway scoped this request to,
     // and carries only that user's events. No user scope, or a browser bind
     // token instead of the gateway's bearer, is refused outright.
-    // The stream keys on the tenant (profile), read from the task's own scope.
+    // The stream keys on the tenant (profile) of the request's own context.
     let saas_profile = if crate::core_host::core::runtime::is_saas() {
-        let profile = crate::core_host::core::runtime::current_tenant()
-            .ok()
-            .and_then(|tenant| tenant.profile);
+        let profile = ctx.tenant().ok().and_then(|tenant| tenant.profile);
         match profile {
             Some(profile) if bearer_ok => Some(profile),
             _ => {
@@ -150,7 +153,11 @@ pub(super) async fn webhook_events_handler() -> Response {
 ///
 /// Requires bearer auth. Streams all domain events as JSON with event type
 /// set to the domain name (agent, tool, memory, etc.).
-pub(super) async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
+pub(super) async fn domain_events_handler(
+    headers: axum::http::HeaderMap,
+    ctx: Option<Extension<DispatchCtx>>,
+) -> Response {
+    let ctx = ctx.map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx);
     let bearer = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -175,7 +182,8 @@ pub(super) async fn domain_events_handler(headers: axum::http::HeaderMap) -> Res
     }
 
     // Read dashboard config for event stream settings.
-    let es_cfg = crate::core_host::config::rpc::load_config_with_timeout()
+    let es_cfg = ctx
+        .load_config()
         .await
         .map(|c| c.dashboard.event_stream)
         .unwrap_or_default();

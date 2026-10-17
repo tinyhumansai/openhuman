@@ -36,6 +36,6 @@ The AUR repository should contain `PKGBUILD`, `.SRCINFO`, `openhuman`,
 
 ## Further reading
 
-- [Getting set up](../../../gitbooks/developing/getting-set-up.md) for the other install paths.
-- [Release policy](../../../gitbooks/developing/release-policy.md) for how versions are cut.
+- [Getting set up](../../../docs/gitbooks/en/developing/getting-set-up.md) for the other install paths.
+- [Release policy](../../../docs/gitbooks/en/developing/release-policy.md) for how versions are cut.
 - [`scripts/release/`](../../../scripts/release) for the release tooling that produces the AppImage this package repackages.

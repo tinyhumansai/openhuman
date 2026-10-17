@@ -8,8 +8,11 @@
 //! download into the agent's action dir and expose list / link / visibility /
 //! delete operations.
 
+pub mod artifact_publisher;
 pub mod tools;
 pub mod types;
+
+pub use artifact_publisher::{artifact_publisher, StorageArtifactPublisher};
 
 pub use tools::{
     build_file_storage_tools, StorageDeleteFileTool, StorageDownloadFileTool, StorageGetLinkTool,

@@ -1,7 +1,7 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -69,16 +69,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_report(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_report(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::platform::doctor::rpc::doctor_report(&config).await?)
     })
 }
 
-fn handle_models(params: Map<String, Value>) -> ControllerFuture {
+fn handle_models(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let use_cache = read_optional::<bool>(&params, "use_cache")?.unwrap_or(true);
         to_json(crate::platform::doctor::rpc::doctor_models(&config, use_cache).await?)
     })

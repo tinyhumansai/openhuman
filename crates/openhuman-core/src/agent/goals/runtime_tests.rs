@@ -1,10 +1,13 @@
 use super::*;
-use crate::agent::cost::TurnCost;
 use crate::inference::provider::BilledUsage;
+use tinyagents_harness::cost::TurnCost;
 
 fn cost_with_tokens(input: u64, output: u64) -> TurnCost {
-    let mut tc = TurnCost::new();
-    tc.add_call("agentic-v1", &BilledUsage::from_counts(input, output));
+    let mut tc = crate::agent::cost::turn_cost();
+    tc.add_priced_call(
+        "agentic-v1",
+        &crate::agent::cost::call_usage(&BilledUsage::from_counts(input, output)),
+    );
     tc
 }
 

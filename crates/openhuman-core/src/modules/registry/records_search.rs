@@ -1,6 +1,6 @@
 //! TinySearch web-search module. Published digests are added only from its
 //! release manifest.
-use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset};
+use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset, SourceSpec};
 
 pub(crate) const TINYSEARCH: ModuleRecord = ModuleRecord {
     id: "tinysearch",
@@ -8,66 +8,73 @@ pub(crate) const TINYSEARCH: ModuleRecord = ModuleRecord {
         "Web search, grounded answers and page contents across providers through TinySearch",
     bus_name: tinysearch_bus::names::INTERFACE,
     object_path: tinysearch_bus::names::OBJECT_PATH,
-    version: "0.4.2",
-    release_url: "https://github.com/tinyhumansai/tinysearch/releases/tag/v0.4.2",
-    // Verbatim from the published v0.4.2 checksum.toml; the same host set as
+    version: "0.5.1",
+    release_url: "https://github.com/tinyhumansai/tinysearch/releases/tag/v0.5.1",
+    // Verbatim from the published v0.5.0 checksum.toml; the same host set as
     // the other native modules (macOS, Ubuntu, Windows).
     assets: &[
         PlatformAsset {
             host_key: "macos-26-arm64",
-            archive: "tinysearch-0.4.2-macos-26-arm64.tar.gz",
-            sha256: "c89f54a958a95d802c9b608a5d2b9469dd63819f03274bd0ea484212f88cca2a",
+            archive: "tinysearch-0.5.1-macos-26-arm64.tar.gz",
+            sha256: "dc2464f8f6995425a757a0b6c8afdb58a49ef402dcf1b9c4448652ffb1fcd414",
         },
         PlatformAsset {
             host_key: "macos-26-x86_64",
-            archive: "tinysearch-0.4.2-macos-26-x86_64.tar.gz",
-            sha256: "6af3f7adc28a4ec99344c57019b6243f7c597a130862956e98170eeac18304e1",
+            archive: "tinysearch-0.5.1-macos-26-x86_64.tar.gz",
+            sha256: "811cf06a8ad560231fbdb5981e357d003a35e6fbc757bf38fc2c73c6b7f11925",
         },
         PlatformAsset {
             host_key: "macos-15-arm64",
-            archive: "tinysearch-0.4.2-macos-15-arm64.tar.gz",
-            sha256: "5f0f56e3d1a202ee4e81ae8d6a83479fb0635d2ed231f91dab005d00cd05c6bc",
+            archive: "tinysearch-0.5.1-macos-15-arm64.tar.gz",
+            sha256: "09b542f2ced3cb4dff7ee9e59ec8eda53a669136269f8c43fe8ca3e6a4120997",
         },
         PlatformAsset {
             host_key: "macos-15-x86_64",
-            archive: "tinysearch-0.4.2-macos-15-x86_64.tar.gz",
-            sha256: "c303bd5832945ff456412eb66bd4159da312de982c0c4a5b2fb77b796fcc99c0",
+            archive: "tinysearch-0.5.1-macos-15-x86_64.tar.gz",
+            sha256: "e67875550b5390b10f4834bf2ed061904961221d18a803d362624fa9fa4eae7d",
         },
         PlatformAsset {
             host_key: "ubuntu-24.04-x86_64",
-            archive: "tinysearch-0.4.2-ubuntu-24.04-x86_64.tar.gz",
-            sha256: "a799fe7f9dabddfcf7421f462b8517588242f69f6531938cd94a7ff75076d711",
+            archive: "tinysearch-0.5.1-ubuntu-24.04-x86_64.tar.gz",
+            sha256: "f078d63ada0c5051a830d803079051d9dee4c7c08c9b6e61100692ed2c63c887",
         },
         PlatformAsset {
             host_key: "ubuntu-24.04-arm64",
-            archive: "tinysearch-0.4.2-ubuntu-24.04-arm64.tar.gz",
-            sha256: "1f75b38b0d7811e6d3610a0ff430b55614d3d43dbdfd44127086953593e7f01d",
+            archive: "tinysearch-0.5.1-ubuntu-24.04-arm64.tar.gz",
+            sha256: "47cb89a8d704e6c097300c97da544d28757bdf3ff3022c995e9f8f47979140a0",
         },
         PlatformAsset {
             host_key: "ubuntu-22.04-x86_64",
-            archive: "tinysearch-0.4.2-ubuntu-22.04-x86_64.tar.gz",
-            sha256: "a07d6bdace72fdb57879b7383b9d1a56ba397ddfce45d0ea4152a90ed9f79c0b",
+            archive: "tinysearch-0.5.1-ubuntu-22.04-x86_64.tar.gz",
+            sha256: "494bfdf799abe9200e6f6da1bbd6b26496f727e0d4fa5e5b135396681540de35",
         },
         PlatformAsset {
             host_key: "ubuntu-22.04-arm64",
-            archive: "tinysearch-0.4.2-ubuntu-22.04-arm64.tar.gz",
-            sha256: "a5675addd35aaab67316bbd01ee056476dcb5de281ac99428eb4d500362c664a",
+            archive: "tinysearch-0.5.1-ubuntu-22.04-arm64.tar.gz",
+            sha256: "e7ea0d94bdb41952ff31d29fb8353930c79183c3ecd746f15e516c0902f89f49",
         },
         PlatformAsset {
             host_key: "windows-2025-x86_64",
-            archive: "tinysearch-0.4.2-windows-2025-x86_64.zip",
-            sha256: "5f10f8dd32b3bf420ab7aa627d9a4400503a3168cf84b52556e08c0a4e90b368",
+            archive: "tinysearch-0.5.1-windows-2025-x86_64.zip",
+            sha256: "59cda410efa9ea0c38eb7fa273485c0d66e4e59fef56f954819c913913d114b3",
         },
         PlatformAsset {
             host_key: "windows-2022-x86_64",
-            archive: "tinysearch-0.4.2-windows-2022-x86_64.zip",
-            sha256: "e997d23c1bc9152a179ba51630a04053597c4db9e0fad4f24658dde6cffab128",
+            archive: "tinysearch-0.5.1-windows-2022-x86_64.zip",
+            sha256: "ddca87348d4cc3d0aa26c90c9270d45a32dc0e92b0499dac9cdf8bcc213888be",
         },
         PlatformAsset {
             host_key: "windows-11-arm64",
-            archive: "tinysearch-0.4.2-windows-11-arm64.zip",
-            sha256: "61a15ad5a952b2acb80e95fe6e0775308ecaa28148c432ed48b989212339740f",
+            archive: "tinysearch-0.5.1-windows-11-arm64.zip",
+            sha256: "408b6ad81212e2bbe3873543002d6dbadf4647cc14a29f1300078fc3e6170b51",
         },
     ],
     load: LoadPolicy::Lazy,
+    source: SourceSpec {
+        submodule: "tinysearch",
+        manifest: "crates/tinysearch/Cargo.toml",
+        package: "tinysearch",
+        lib_name: "tinysearch",
+        features: &[],
+    },
 };

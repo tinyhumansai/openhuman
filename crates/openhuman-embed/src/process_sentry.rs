@@ -5,8 +5,9 @@
 //! union of both, in the CLI's order with the shell's dev-server filter in
 //! front, followed by hostname stripping, the user-id fallback and secret
 //! scrubbing. What differs per host — DSN, release, environment and where a
-//! fallback user id comes from — is a [`SentryConfig`] field; the panic hook
-//! and scope tags stay with the host.
+//! fallback user id comes from — is a
+//! [`SentryConfig`](crate::process::sentry::SentryConfig) field; the panic
+//! hook and scope tags stay with the host.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -312,7 +313,7 @@ fn is_localhost_dev_fetch_noise(event: &Event<'static>) -> bool {
         .any(message_is_localhost_dev_fetch_noise)
 }
 
-/// The prefix rule behind [`is_localhost_dev_fetch_noise`].
+/// The prefix rule used by the internal localhost-dev-fetch-noise filter.
 pub fn message_is_localhost_dev_fetch_noise(message: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "Failed to request http://localhost:",

@@ -120,10 +120,10 @@ README for the explicit `[[test]]` entries they need.
 - [`crates/openhuman-rpc/README.md`](openhuman-rpc/README.md): the openhuman-rpc crate README.
 - [`crates/openhuman-tinyhumans/README.md`](openhuman-tinyhumans/README.md): the openhuman-tinyhumans crate README.
 - [`crates/openhuman-tui/README.md`](openhuman-tui/README.md): the openhuman-tui crate README.
-- [`gitbooks/developing/architecture.md`](../gitbooks/developing/architecture.md): architecture overview.
-- [`gitbooks/developing/building-rust-core.md`](../gitbooks/developing/building-rust-core.md): building the Rust core.
-- [`gitbooks/developing/embedding.md`](../gitbooks/developing/embedding.md): embedding the core in another product.
-- [`gitbooks/developing/loadable-modules.md`](../gitbooks/developing/loadable-modules.md): loadable modules.
-- [`gitbooks/developing/architecture/tauri-shell.md`](../gitbooks/developing/architecture/tauri-shell.md): the Tauri shell.
+- [`docs/gitbooks/en/developing/architecture.md`](../docs/gitbooks/en/developing/architecture.md): architecture overview.
+- [`docs/gitbooks/en/developing/building-rust-core.md`](../docs/gitbooks/en/developing/building-rust-core.md): building the Rust core.
+- [`docs/gitbooks/en/developing/embedding.md`](../docs/gitbooks/en/developing/embedding.md): embedding the core in another product.
+- [`docs/gitbooks/en/developing/loadable-modules.md`](../docs/gitbooks/en/developing/loadable-modules.md): loadable modules.
+- [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../docs/gitbooks/en/developing/architecture/tauri-shell.md): the Tauri shell.
 - [`AGENTS.md`](../AGENTS.md): project conventions.
 - [`scripts/README.md`](../scripts/README.md): scripts.

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tinyagents_harness::error::Result;
-use tinyagents_harness::summarization::{Summarizer, SummaryRecord, SummaryRequest};
+use tinyagents_harness::summarization::{is_checkpoint, Summarizer, SummaryRecord, SummaryRequest};
 use tinyinference_llm::message::{ContentBlock, Message};
 use tinymemory_api::{Role, Turn};
 
@@ -33,14 +33,16 @@ pub(crate) struct MemoryRecallSummarizer {
 
 impl MemoryRecallSummarizer {
     /// Wraps `inner` for `turn`; without a turn binding the summarizer is
-    /// returned as is.
+    /// returned as is. With recall off the wrapper adds no recall, but still
+    /// moves the turn's memory window past what the fold took: the agent's
+    /// `memory` tool reads by it either way.
     pub(crate) fn wrap(
         inner: Box<dyn Summarizer>,
         turn: Option<Arc<MemoryTurn>>,
     ) -> Box<dyn Summarizer> {
         match turn {
-            Some(turn) if turn.identity.recall => Box::new(Self { inner, turn }),
-            _ => inner,
+            Some(turn) => Box::new(Self { inner, turn }),
+            None => inner,
         }
     }
 
@@ -49,13 +51,29 @@ impl MemoryRecallSummarizer {
         messages: &[Message],
         summary: impl std::future::Future<Output = Result<SummaryRecord>>,
     ) -> Result<SummaryRecord> {
-        let pack = crate::memory::lifecycle::prefetch::compaction(
-            self.turn.config.clone(),
-            self.turn.identity.clone(),
-            self.turn.thread_id.clone(),
-            dropped_turns(messages),
-        );
+        let pack = if self.turn.identity.recall {
+            crate::memory::lifecycle::prefetch::compaction(
+                &self.turn.dispatch_ctx(),
+                self.turn.config.clone(),
+                self.turn.identity.clone(),
+                self.turn.thread_id.clone(),
+                dropped_turns(messages),
+            )
+        } else {
+            None
+        };
         let mut record = summary.await?;
+        // The folded user turns are out of the prompt now, so the turn's next
+        // memory read may return them.
+        self.turn.in_prompt_from.advance_past(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::User(_)) && !is_checkpoint(message))
+                .map(Message::text),
+        );
+        if !self.turn.identity.recall {
+            return Ok(record);
+        }
         // A later compaction folds the previous checkpoint, recall included;
         // keep one recall section, the current one.
         strip_recalled(&mut record.summary);

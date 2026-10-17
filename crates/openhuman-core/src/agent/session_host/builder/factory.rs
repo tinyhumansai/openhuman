@@ -1,22 +1,22 @@
 //! `OpenHumanSessionHost::from_config` factory methods and internal `build_session_agent_inner` constructor.
 
-use super::dispatcher::{resolve_dispatcher_kind, DispatcherKind};
-use super::host_tools::derive_turn_workspace_descriptor;
 use super::should_synthesize_delegation_tools;
-use crate::agent::harness::definition::{
-    AgentDefinitionRegistry, PromptSource, ToolScope, NO_TOOLS_SENTINEL,
+use crate::agent::harness::host_definition::{
+    AgentDefinitionExt, AgentDefinitionRegistry, NO_TOOLS_SENTINEL,
 };
 use crate::agent::host_runtime;
 use crate::agent::prompts::SystemPromptBuilder;
 use crate::agent::session_host::types::OpenHumanSessionHost;
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::security::SecurityPolicy;
 use crate::tools;
 use anyhow::Result;
 use std::sync::Arc;
+use tinyagents_definition::{PromptSource, ToolScope};
 use tinytools::Tool;
 use tinytools_agent::dialect::{
-    CodeDialect, NativeDialect, PFormatDialect, ToolDialect, XmlDialect,
+    CodeDialect, CodeStyle, NativeDialect, PFormatDialect, ToolCallFormat, ToolDialect, XmlDialect,
 };
 
 #[path = "factory_workflows.rs"]
@@ -41,8 +41,8 @@ impl OpenHumanSessionHost {
     /// time (for example the Tauri web chat path, which routes to the
     /// welcome agent pre-onboarding) should call
     /// [`OpenHumanSessionHost::from_config_for_agent`] directly.
-    pub fn from_config(config: &Config) -> Result<Self> {
-        Self::from_config_for_agent(config, "orchestrator")
+    pub fn from_config(ctx: &DispatchCtx, config: &Config) -> Result<Self> {
+        Self::from_config_for_agent(ctx, config, "orchestrator")
     }
 
     /// Constructs an `OpenHumanSessionHost` instance scoped to a specific agent
@@ -77,12 +77,14 @@ impl OpenHumanSessionHost {
     ///
     /// The welcome agent uses this entry point when routed from the
     /// Tauri web channel (see `channels::provider::web::build_session_agent`).
-    pub fn from_config_for_agent(config: &Config, agent_id: &str) -> Result<Self> {
+    pub fn from_config_for_agent(
+        ctx: &DispatchCtx,
+        config: &Config,
+        agent_id: &str,
+    ) -> Result<Self> {
         // A hosted profile never receives the ordinary config-derived belt.
-        // Its operator-selected factory carries registration and permission
-        // boundaries into the same session builder, under this profile scope.
-        if crate::profiles::capabilities::ProfileCapabilities::current().is_some() {
-            return Self::from_config_for_agent_session(config, agent_id, None);
+        if crate::profiles::capabilities::ProfileCapabilities::in_ctx(ctx).is_some() {
+            return Self::from_config_for_agent_session(ctx, config, agent_id, None);
         }
         let target_def = resolve_target_definition(config, agent_id)?;
 
@@ -99,41 +101,25 @@ impl OpenHumanSessionHost {
                 .unwrap_or_else(|| "legacy".to_string()),
             target_def
                 .as_ref()
-                .map(|d| d.omit_identity)
-                .unwrap_or(false),
+                .is_some_and(|d| d.extensions.omit_identity),
             target_def
                 .as_ref()
-                .map(|d| d.omit_memory_context)
-                .unwrap_or(false),
+                .is_some_and(|d| d.extensions.omit_memory_context),
             target_def
                 .as_ref()
                 .map(|d| d.temperature)
                 .unwrap_or(config.default_temperature)
         );
 
-        Self::build_session_agent_inner(config, agent_id, target_def.as_ref(), false, None, None)
-    }
-
-    /// Build a session agent from a definition the caller already holds,
-    /// rather than an id resolved through `AgentDefinitionRegistry::current()`
-    /// or `config.agent_registry`.
-    ///
-    /// The definition is authoritative for this agent's prompt, tool scope,
-    /// sandbox mode and delegation allowlist; it is stamped on the session so
-    /// in-turn readers ([`OpenHumanSessionHost::resolved_definition`]) never fall back to a
-    /// registry entry that happens to share its id. This is the constructor a
-    /// library host uses to run many independently specified agents on one
-    /// booted core.
-    pub fn from_config_with_definition(
-        config: &Config,
-        definition: &crate::agent::harness::definition::AgentDefinition,
-    ) -> Result<Self> {
-        log::debug!(
-            "[agent] from_config_with_definition id={} sandbox={:?}",
-            definition.id,
-            definition.sandbox_mode,
-        );
-        Self::build_session_agent_inner(config, &definition.id, Some(definition), false, None, None)
+        Self::build_session_agent_inner(
+            ctx,
+            config,
+            agent_id,
+            target_def.as_ref(),
+            false,
+            None,
+            None,
+        )
     }
 
     /// Internal constructor that consumes the optionally-resolved agent
@@ -147,14 +133,15 @@ impl OpenHumanSessionHost {
     // of the crate's public API.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn build_session_agent_inner(
+        ctx: &DispatchCtx,
         config: &Config,
         agent_id: &str,
-        target_def: Option<&crate::agent::harness::definition::AgentDefinition>,
+        target_def: Option<&crate::agent::harness::host_definition::AgentDefinition>,
         host_only: bool,
         host: Option<&super::HostTools>,
         session_id: Option<&str>,
     ) -> Result<Self> {
-        let workspace_descriptor = derive_turn_workspace_descriptor();
+        let workspace_descriptor: Option<tinytools::WorkspaceDescriptor> = None;
 
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
             host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
@@ -266,7 +253,8 @@ impl OpenHumanSessionHost {
         // the crate registry `FallbackPolicy`, so `config.reliability.*` no longer
         // layers on the turn path (it still governs the non-seam provider paths).
         let (resolved_chat_model, mut model_name) =
-            crate::inference::provider::create_chat_model_with_model_id(
+            crate::inference::provider::create_chat_model_with_model_id_in(
+                ctx,
                 provider_role,
                 config,
                 config.default_temperature,
@@ -338,19 +326,18 @@ impl OpenHumanSessionHost {
         // `with_defaults()` branch only fires when the registry is
         // unavailable (pre-startup, tests). `PromptSource::Dynamic`
         // agents install a [`DynamicPromptSection`] that re-runs the
-        // builder against the live [`PromptContext`] at
-        // `build_system_prompt` time, so `connected_integrations`
-        // fetched asynchronously on session start land in the prompt.
+        // builder against the live [`PromptContext`] at `build_system_prompt`
+        // time, so late `connected_integrations` land in the prompt.
         // `Inline`/`File` sources still resolve to just the archetype
         // body and get wrapped by [`SystemPromptBuilder::for_subagent`].
         let prompt_builder = match target_def {
             Some(def) => match &def.system_prompt {
-                PromptSource::Dynamic(build) => SystemPromptBuilder::from_dynamic(*build),
+                PromptSource::Dynamic(()) => SystemPromptBuilder::from_dynamic(def.prompt_fn()?),
                 PromptSource::Verbatim(text) => SystemPromptBuilder::verbatim(text.clone()),
                 PromptSource::Inline(text) => SystemPromptBuilder::for_subagent(
                     text.clone(),
-                    def.omit_identity,
-                    def.omit_safety_preamble,
+                    def.extensions.omit_identity,
+                    def.extensions.omit_safety_preamble,
                 ),
                 PromptSource::File { path } => {
                     let prompt_root = config.workspace_dir.join("agent").join("prompts");
@@ -385,15 +372,15 @@ impl OpenHumanSessionHost {
                     };
                     SystemPromptBuilder::for_subagent(
                         body_text,
-                        def.omit_identity,
-                        def.omit_safety_preamble,
+                        def.extensions.omit_identity,
+                        def.extensions.omit_safety_preamble,
                     )
                 }
             },
             None => SystemPromptBuilder::with_defaults(),
         };
         let post_turn_hooks: Vec<Arc<dyn crate::agent::hooks::PostTurnHook>> =
-            crate::agent::hooks::turn_post_turn_hooks();
+            crate::agent::hooks::embedder_post_turn_hooks_in(ctx);
 
         // Best-effort prewarm from the shared Composio cache. This avoids
         // building the session with a knowingly stale `&[]` integration view
@@ -431,7 +418,7 @@ impl OpenHumanSessionHost {
             Option<std::collections::HashSet<String>>,
         ) = match (
             target_def,
-            crate::agent::harness::definition::AgentDefinitionRegistry::current(),
+            crate::agent::harness::host_definition::AgentDefinitionRegistry::current(),
         ) {
             // Host-only: no delegation; the host's names join an empty belt.
             _ if host_only => (Vec::new(), Some(super::host_only::empty_belt())),
@@ -640,14 +627,19 @@ impl OpenHumanSessionHost {
                 .chain(delegation_tools.iter())
                 .map(|tool| (tool.name(), tool.parameters_schema())),
         );
-        let dispatcher_kind = resolve_dispatcher_kind(&dispatcher_choice, supports_native);
+        let dispatcher_kind = ToolCallFormat::resolve(&dispatcher_choice, supports_native);
         let tool_dispatcher: Box<dyn ToolDialect> = match dispatcher_kind {
-            DispatcherKind::Native => Box::new(NativeDialect),
-            DispatcherKind::Xml => Box::new(XmlDialect),
-            DispatcherKind::PFormat => Box::new(PFormatDialect::new(pformat_registry.clone())),
-            DispatcherKind::Code(style) => {
-                Box::new(CodeDialect::new(style, pformat_registry.clone()))
-            }
+            ToolCallFormat::Native => Box::new(NativeDialect),
+            ToolCallFormat::Json => Box::new(XmlDialect),
+            ToolCallFormat::PFormat => Box::new(PFormatDialect::new(pformat_registry.clone())),
+            ToolCallFormat::Python => Box::new(CodeDialect::new(
+                CodeStyle::Python,
+                pformat_registry.clone(),
+            )),
+            ToolCallFormat::TypeScript => Box::new(CodeDialect::new(
+                CodeStyle::TypeScript,
+                pformat_registry.clone(),
+            )),
         };
 
         log::debug!(
@@ -666,10 +658,10 @@ impl OpenHumanSessionHost {
         // Whether a new session gets `context.md` prepended to its first user
         // message; agents without a definition get it.
         let effective_omit_memory_context = target_def
-            .map(|def| def.omit_memory_context)
+            .map(|def| def.extensions.omit_memory_context)
             .unwrap_or(false);
         let effective_tokenjuice_compression = target_def
-            .map(|def| def.effective_tokenjuice_compression())
+            .map(|def| def.extensions.tokenjuice_for(&def.model))
             .unwrap_or(tinyjuice_bus::types::AgentTokenjuiceCompression::Full);
 
         // Stamp the resolved agent definition id onto the OpenHumanSessionHost via the
@@ -711,9 +703,9 @@ impl OpenHumanSessionHost {
         // `None` and their tool results stay untouched (the summarizer
         // itself MUST be `None` to avoid recursive self-summarization).
         let payload_summarizer: Option<
-            std::sync::Arc<dyn crate::agent::tinyagents::payload_summarizer::PayloadSummarizer>,
+            std::sync::Arc<crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer>,
         > = if !host_only && super::summarizes_tool_output(agent_id, config) {
-            match crate::agent::harness::definition::AgentDefinitionRegistry::current() {
+            match crate::agent::harness::host_definition::AgentDefinitionRegistry::current() {
                 Some(reg) => match reg.get("summarizer") {
                     Some(summarizer_def) => {
                         log::info!(
@@ -750,9 +742,8 @@ impl OpenHumanSessionHost {
 
         // Crate-native turn models (Phase 3 P3-B): the production main-turn agent
         // builds crate `ChatModel`s from `(provider_role, config)` without retaining
-        // a host provider. The
-        // `agent_harness_e2e` mock now serves SSE for streaming, so the crate-native
-        // streaming path is exercised end-to-end.
+        // a host provider. The `agent_harness_e2e` mock now serves SSE for streaming,
+        // so the crate-native streaming path is exercised end-to-end.
         //
         // Resolve the per-turn iteration cap in one place so an explicit
         // operator override takes precedence over the selected definition,
@@ -775,6 +766,7 @@ impl OpenHumanSessionHost {
         }
         effective_agent_config.max_tool_iterations = effective_cap;
         let merged_host_tools = super::host_tools::merge_for_turn(
+            ctx,
             host,
             agent_id,
             session_id,
@@ -786,7 +778,7 @@ impl OpenHumanSessionHost {
             super::host_only::session_policy(host_only, &tools, merged_host_tools.policy);
         let withheld_tool_names = merged_host_tools.withheld;
         let mut builder = OpenHumanSessionHost::builder()
-            .crate_native_provider(provider_role, Arc::clone(&base_config))
+            .crate_native_provider(ctx, provider_role, Arc::clone(&base_config))
             .tools(tools)
             .synthesized_tools(delegation_tools)
             .visible_tool_names(visible)
@@ -879,7 +871,7 @@ impl OpenHumanSessionHost {
 pub(super) fn resolve_target_definition(
     config: &Config,
     agent_id: &str,
-) -> Result<Option<crate::agent::harness::definition::AgentDefinition>> {
+) -> Result<Option<crate::agent::harness::host_definition::AgentDefinition>> {
     let registry = AgentDefinitionRegistry::current();
 
     if let Some(reg) = registry.as_deref() {
@@ -950,7 +942,7 @@ mod provider_role_tests;
 /// Flow readiness shares this path so it checks the provider used at runtime.
 pub(crate) fn provider_role_for_definition(
     default_model: Option<&str>,
-    target_def: Option<&crate::agent::harness::definition::AgentDefinition>,
+    target_def: Option<&crate::agent::harness::host_definition::AgentDefinition>,
 ) -> &'static str {
     let master_hint = default_model
         .is_none()
@@ -958,7 +950,7 @@ pub(crate) fn provider_role_for_definition(
             target_def.and_then(|def| {
                 if def.id == "orchestrator" {
                     match &def.model {
-                        crate::agent::harness::definition::ModelSpec::Hint(hint) => {
+                        tinyagents_definition::ModelSpec::Hint(hint) => {
                             Some(format!("hint:{hint}"))
                         }
                         _ => None,

@@ -1,0 +1,872 @@
+[
+  {
+    "description": "Propose a candidate automation workflow for the user to review and save. This tool ONLY VALIDATES the graph and returns a summary — it NEVER creates or enables the flow; the user must click \"Save & enable\" in the UI before anything is persisted or can run. If validation fails, fix the graph and call this tool again.\n\nBuild a tinyflows WorkflowGraph: nodes[] ({id, kind, name, config}) + edges[] ({from_node, to_node, from_port?, to_port?}; ports default \"main\"). Exactly ONE trigger node is required.\n\nBranching (condition/switch): the branch label goes on from_port, NEVER on to_port (which stays \"main\"). Routing is keyed exclusively on from_port, so a label on to_port silently turns the branch into an unconditional fan-out and is a hard reject.\n\nA memory node may only target config.scope \"flow\" for remember/forget; \"user\" is READ-ONLY and a write to it is a hard reject.\n\nNode kinds and their required config: trigger(config.trigger_kind), agent(config.prompt), tool_call(config.slug), http_request(config.method, config.url), code(config.language, config.source), shell, condition(config.field), switch, merge, split_out(config.path), transform(config.set), output_parser, sub_workflow, memory(config.operation), dedup(config.key), loop, spawn(config.target), gate, scatter, gather(config.from), approval, void.\nCall `get_node_kind_contract { kind }` for a kind's optional fields, ports, a worked example, and its gotchas — it is generated from the catalog the validator enforces, so it is always current.",
+    "external_effect": false,
+    "name": "propose_workflow",
+    "parameters": {
+      "properties": {
+        "graph": {
+          "description": "A tinyflows WorkflowGraph: { name?, nodes: [...], edges: [...] }. See the tool description for node kinds and their config shapes.",
+          "properties": {
+            "edges": {
+              "items": {
+                "properties": {
+                  "from_node": {
+                    "type": "string"
+                  },
+                  "from_port": {
+                    "description": "Defaults to \"main\". For a condition/switch branch, this is where the branch label (e.g. \"true\"/\"false\") goes.",
+                    "type": "string"
+                  },
+                  "to_node": {
+                    "type": "string"
+                  },
+                  "to_port": {
+                    "description": "Defaults to \"main\". Almost always stays \"main\" — branch labels go on from_port, not here.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from_node",
+                  "to_node"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "nodes": {
+              "items": {
+                "properties": {
+                  "config": {
+                    "description": "Kind-specific configuration; see tool description."
+                  },
+                  "id": {
+                    "description": "Unique id within the graph.",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "trigger",
+                      "agent",
+                      "tool_call",
+                      "http_request",
+                      "code",
+                      "shell",
+                      "condition",
+                      "switch",
+                      "merge",
+                      "split_out",
+                      "transform",
+                      "output_parser",
+                      "sub_workflow",
+                      "memory",
+                      "dedup",
+                      "loop",
+                      "spawn",
+                      "gate",
+                      "scatter",
+                      "gather",
+                      "approval",
+                      "void"
+                    ],
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Human-readable node name.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "name"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "nodes",
+            "edges"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Human-readable name for the proposed flow.",
+          "type": "string"
+        },
+        "require_approval": {
+          "description": "Force a human-approval gate on every outbound tool/HTTP action this flow takes once saved. Defaults to true for agent-proposed flows.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "graph"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Refine an EXISTING workflow draft: supply the full updated tinyflows WorkflowGraph (your revision applied to the prior draft — NOT a regeneration from scratch) plus the `instruction` that motivated the change. Like propose_workflow, this ONLY VALIDATES the revised graph and returns a proposal summary for the user to review — it NEVER creates, updates, or enables the flow. Same graph shape and node kinds as propose_workflow. If validation fails, fix the graph and call again.",
+    "external_effect": false,
+    "name": "revise_workflow",
+    "parameters": {
+      "properties": {
+        "graph": {
+          "description": "The full REVISED tinyflows WorkflowGraph: { name?, nodes: [...], edges: [...] }. Apply your changes to the prior draft and pass the whole graph — see propose_workflow for node kinds and config shapes.",
+          "properties": {
+            "edges": {
+              "type": "array"
+            },
+            "nodes": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "nodes",
+            "edges"
+          ],
+          "type": "object"
+        },
+        "instruction": {
+          "description": "The revision instruction that motivated this change (e.g. 'add a Slack step after the summary'). Echoed back for the review card; does not affect validation.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable name for the (revised) proposed flow.",
+          "type": "string"
+        },
+        "require_approval": {
+          "description": "Force a human-approval gate on every outbound action once saved. Defaults to true for agent-proposed flows.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "graph"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Iterate on a workflow with STRUCTURED EDITS instead of re-emitting the whole graph — the cheap, low-regression path for changing a draft, saved, or inline flow. Provide the base (draft_id for a working draft — the applied edit is written back to it; flow_id for a saved flow; or an inline graph) plus ops[]: a list of edits applied in order. Op shapes (each is { \"op\": <type>, ... }): add_node {node}, update_node_config {id, config} (JSON merge-patch — a null value deletes that config key), set_node_name {id, name}, rename_node {id, new_id} (rewires EDGES onto the new id, but does NOT rewrite `=nodes.<old_id>...` binding expressions inside OTHER nodes' config — re-point those yourself, or validate_workflow will catch the dangling reference), remove_node {id} (drops its edges), add_edge {edge}, remove_edge {from_node, to_node, from_port?, to_port?}, set_node_position {id, position}. PERSISTENCE: the applied edit is written to a DRAFT, never onto the saved flow — this tool NEVER saves. Editing a flow_id SEEDS A NEW DRAFT from that flow's graph and returns its `draft_id`; editing a draft_id writes back to that same draft. The result carries `draft_id`, `flow_id` (if any), `persisted: false`, and a `next` hint. To keep iterating pass that `draft_id` (to edit_workflow / dry_run_workflow); to persist, call save_workflow { flow_id, draft_id } when the user asks. If an op fails or the resulting graph is invalid, the error names the failing op / node; fix it and call edit_workflow again.",
+    "external_effect": false,
+    "name": "edit_workflow",
+    "parameters": {
+      "properties": {
+        "draft_id": {
+          "description": "A working draft to edit as the base; the applied edit is written back to it. Provide one of draft_id / flow_id / graph.",
+          "type": "string"
+        },
+        "flow_id": {
+          "description": "The saved flow to edit as the base graph. Provide one of draft_id / flow_id / graph.",
+          "type": "string"
+        },
+        "graph": {
+          "description": "An inline base tinyflows WorkflowGraph to edit. Provide one of draft_id / flow_id / graph.",
+          "properties": {
+            "edges": {
+              "type": "array"
+            },
+            "nodes": {
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "instruction": {
+          "description": "The change that motivated these ops (echoed back on the review card).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name for the resulting proposed flow. Defaults to the base flow's name.",
+          "type": "string"
+        },
+        "ops": {
+          "description": "The structured edits, applied in order. Each item is { op, ... } — see the tool description for op shapes.",
+          "items": {
+            "properties": {
+              "op": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "require_approval": {
+          "description": "Force a human-approval gate on every outbound action once saved. Defaults to true.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ops"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Check a workflow graph WITHOUT proposing or saving it — the same validation the propose/revise/edit/save tools run, surfaced on its own so you can verify a draft mid-build. Provide the graph to check as exactly one of `draft_id` (a working draft), `flow_id` (a saved flow), or inline `graph` (if several are given, draft_id wins, then flow_id). Returns { ok, structurally_valid, errors, error_details:[{code, message, node_id}], gate_errors, warnings }: `errors` lists EVERY structural problem at once; `gate_errors` lists the hard author-gate failures (unresolvable bindings, unreal tool slugs, unwired required args) checked only once the graph is structurally valid; `warnings` are non-fatal. `ok` is true only when there are no errors and no gate_errors. Read-only.",
+    "external_effect": false,
+    "name": "validate_workflow",
+    "parameters": {
+      "properties": {
+        "draft_id": {
+          "description": "A working draft to validate. Provide one of draft_id / flow_id / graph (draft_id wins).",
+          "type": "string"
+        },
+        "flow_id": {
+          "description": "A saved flow to validate. Provide one of draft_id / flow_id / graph.",
+          "type": "string"
+        },
+        "graph": {
+          "description": "An inline tinyflows WorkflowGraph to validate. Provide one of draft_id / flow_id / graph.",
+          "properties": {
+            "edges": {
+              "type": "array"
+            },
+            "nodes": {
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "List a saved flow's revision history — the prior graph snapshots captured automatically on each update (newest first, capped). Read-only. Returns a JSON array of { id, flow_id, graph, name, require_approval, created_at }. Use it to see what a flow looked like before a change, or to find the revision id the user can roll back to.",
+    "external_effect": false,
+    "name": "get_flow_history",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "flow_id": {
+          "description": "The saved flow whose history to list.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max revisions to return (default 20).",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "flow_id"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "List a saved flow's recent runs (newest first) so you can find one to diagnose with get_flow_run. Read-only. Returns a JSON array of runs { id, flow_id, thread_id, status, started_at, finished_at?, error? }. `id`/`thread_id` is the run id you pass to get_flow_run / resume_flow_run / cancel_flow_run.",
+    "external_effect": false,
+    "name": "list_flow_runs",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "flow_id": {
+          "description": "The saved flow whose runs to list.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max runs to return (default 20).",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "flow_id"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Resume a flow run that is paused on a human approval, approving and/or rejecting its pending node(s). This ADVANCES A REAL RUN — approved outbound nodes will fire — so it is approval-gated. Params: { flow_id, run_id, approve?: [node_id...], reject?: [node_id...] }. Use list_flow_runs / get_flow_run to find a run with status pending_approval and its pending node ids first.",
+    "external_effect": true,
+    "name": "resume_flow_run",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "approve": {
+          "description": "Node ids to approve.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "flow_id": {
+          "description": "The run's flow id.",
+          "type": "string"
+        },
+        "reject": {
+          "description": "Node ids to reject.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "description": "The run (thread) id to resume (from list_flow_runs).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow_id",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "permission": "Execute"
+  },
+  {
+    "description": "Cancel an in-flight or approval-parked flow run by its run_id (from list_flow_runs). Stops a runaway or stuck run; fires no new outbound effect. The run_id must belong to the given flow_id — cancelling a run that belongs to a different flow is refused. Approval-gated. Params: { flow_id, run_id }.",
+    "external_effect": true,
+    "name": "cancel_flow_run",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "flow_id": {
+          "description": "The flow that owns the run being cancelled (from list_flow_runs).",
+          "type": "string"
+        },
+        "run_id": {
+          "description": "The run (thread) id to cancel.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow_id",
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "permission": "Write"
+  },
+  {
+    "description": "Create a NEW saved flow from a graph. Approval-gated. The flow is ALWAYS created DISABLED (only the user can enable it via the UI) and inherits the forced approval gate for any outbound action — so a created flow can never fire on its own without an explicit human enable. Runs the same author hard-gates as save. Params: { name, graph, require_approval? }. Prefer propose_workflow when the user just wants to review a design; use this when they've explicitly asked you to create the flow.",
+    "external_effect": true,
+    "name": "create_workflow",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "graph": {
+          "description": "The tinyflows WorkflowGraph: { nodes: [...], edges: [...] }.",
+          "properties": {
+            "edges": {
+              "type": "array"
+            },
+            "nodes": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "nodes",
+            "edges"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Human-readable flow name.",
+          "type": "string"
+        },
+        "require_approval": {
+          "description": "Force the approval gate (defaults true).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "graph"
+      ],
+      "type": "object"
+    },
+    "permission": "Write"
+  },
+  {
+    "description": "Duplicate a saved flow: create an independent, DISABLED copy of its graph under a new id (name suffixed \" (copy)\"). The copy never fires until the user enables it. Use this for the clone-then-edit pattern (edit_workflow the copy). Params: { flow_id }.",
+    "external_effect": true,
+    "name": "duplicate_flow",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "flow_id": {
+          "description": "The saved flow to duplicate.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow_id"
+      ],
+      "type": "object"
+    },
+    "permission": "Write"
+  },
+  {
+    "description": "List the user's saved automation flows (tinyflows workflows). Read-only. Returns a JSON array of { id, name, enabled, last_status, last_run_at } so you can reference an existing flow, clone its structure (fetch the full graph with get_flow), or avoid proposing a duplicate.",
+    "external_effect": false,
+    "name": "list_flows",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Fetch a saved flow's full tinyflows WorkflowGraph (nodes + edges) plus its metadata by id. Read-only. Use it to clone or extend an existing automation — pass the returned graph (possibly modified) to revise_workflow or dry_run_workflow.",
+    "external_effect": false,
+    "name": "get_flow",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The saved flow's id (from list_flows).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Fetch a single flow run's record by run id: status, per-node step results, any pending approvals, and the error (if it failed). Read-only. Use it to debug a failing flow from an error report and propose a repair.",
+    "external_effect": false,
+    "name": "get_flow_run",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "description": "The run id (also the run's thread_id).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "List the connection sources a flow node's `connection_ref` can attach to: Composio connected accounts and named HTTP credentials. Read-only; returns only non-secret metadata — ids, display labels, kind, and `toolkit`/`scheme` (never any secret). Each Composio entry also carries `platform_user_id` — the connected account's own member id (e.g. Slack `U123ABC`) — use it to wire a self-targeted action like 'DM me' to that account instead of a public channel. Use the `connection_ref` values verbatim on tool_call / http_request nodes so the generated flow carries valid connections.",
+    "external_effect": false,
+    "name": "list_flow_connections",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Search the FULL LIVE Composio catalog for REAL action slugs to use on `tool_call` nodes — every action for a named app, whether or not the user has connected it yet and whether or not it's one of OpenHuman's hand-curated actions. Read-only. Query by keyword (e.g. 'send email', 'slack message'); optionally scope to one `toolkit` (e.g. 'gmail', or any Composio app name) to search that app specifically. Returns matching { slug, toolkit, description, required_args, output_fields, primary_array_path, featured } entries, curated (`featured: true`) matches ranked first. ALWAYS ground a tool_call node's `slug` in a real result here — never invent one. Before wiring a match's args or a downstream binding, call get_tool_contract { slug } for the FULL contract (exact required_args, full input/output JSON Schema) — this search result is enough to FIND the right slug, get_tool_contract is what grounds the WIRING. If the app isn't connected yet, you can still build the node and use composio_connect (or tell the user) — the flow will prompt for the connection at run time.",
+    "external_effect": false,
+    "name": "search_tool_catalog",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "description": "Keywords to match against tool slugs/descriptions (case-insensitive). All terms must match for an exact hit; a multi-word query with no exact match falls back to the nearest per-keyword matches. For the widest listing, prefer ONE keyword (e.g. 'gmail' or 'tweets').",
+          "type": "string"
+        },
+        "toolkit": {
+          "description": "Optional toolkit/app slug to scope the search (e.g. 'gmail', 'slack', or any named Composio app — connected or not).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Fetch the FULL live contract for one Composio action slug (found via search_tool_catalog) before wiring it into a tool_call node. Read-only. Returns { slug, toolkit, description, required_args, input_schema, output_fields, output_schema, primary_array_path, is_curated }. Use `required_args` for EVERY arg you must wire in config.args; use `output_fields` for a downstream `=nodes.<id>.item.json.data.<field>` binding — note the `data.` segment: a Composio tool_call's real runtime output wraps its payload in `data` (`ComposioExecuteResponse`), so `output_fields` names fields INSIDE that wrapper, not top-level envelope keys — never guess a field name, and never drop the `data.` segment (`.item.json.<field>` with no `data.` resolves null even when `<field>` is a real output field). Use `primary_array_path` (prefixed with `json.`, e.g. \"json.data.messages\" — the `data.` segment is already baked into the value) verbatim as a downstream split_out.path when you need to fan out over this action's result list. Call this for every real slug right before you wire its args — search_tool_catalog's summary is enough to find the slug, this is what grounds the wiring.",
+    "external_effect": false,
+    "name": "get_tool_contract",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "slug": {
+          "description": "The exact Composio action slug, e.g. 'GMAIL_SEND_EMAIL' (from search_tool_catalog).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Make ONE bounded, READ-ONLY, REAL call to a Composio action and derive its real `primary_array_path`/`output_fields` from the ACTUAL response — use this when get_tool_contract returns `output_schema: null` / `primary_array_path: null` for a source tool you plan to `split_out` (e.g. every GitHub action, verified live), so a downstream split_out.path never fans out over the whole-payload container by mistake. Only ever performs a Read action (refuses Write/Admin actions unconditionally, regardless of the user's scope preference) against an ALREADY-CONNECTED toolkit — never sends, creates, updates, or deletes anything. Pass the SAME args you intend to wire into the real tool_call node — this samples THAT exact call. Call get_tool_contract again afterward (or trust this tool's own `primary_array_path`/`output_fields`) to see the override applied. Real actions only, not `oh:` or `=`-derived slugs.",
+    "external_effect": false,
+    "name": "get_tool_output_sample",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "description": "Arguments for the real call — the SAME ones you intend to wire into the tool_call node (e.g. {\"owner\": \"acme\", \"repo\": \"widgets\"}). Omit for a zero-required-arg action.",
+          "type": "object"
+        },
+        "slug": {
+          "description": "The exact Composio action slug, e.g. 'GITHUB_LIST_REPOSITORY_ISSUES'.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "type": "object"
+    },
+    "permission": "ReadOnly"
+  },
+  {
+    "description": "List the agent KINDS an `agent` node can run via its `agent_ref` config field (e.g. agent_memory, vision_agent, presentation_agent). Read-only. Returns a JSON array of { id, name, description, model, tools, tags }. Use this to pick a real agent_ref — a memory-lookup step should reference agent_memory, an image-reading step vision_agent — instead of guessing an id. Note: setting agent_ref runs the step as a REAL agent turn (its own `run_single`), with the selected specialist's full persona, model, tool loop, and iteration cap — not just a persona-flavored completion. A plain `agent` node with no agent_ref only gets the default LLM plus its own inline `tools` list; it cannot run code, search the web, or use any specialist's tools.",
+    "external_effect": false,
+    "name": "list_agent_definitions",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "List the Composio toolkits available to wire into a tool_call/app_event, each flagged `connected: true/false`. Read-only. Use it to prefer an ALREADY-connected toolkit when several would work, and to tell the user which toolkits a proposed flow still needs connecting. Returns a JSON array of { toolkit, connected }.",
+    "external_effect": false,
+    "name": "list_connectable_toolkits",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "List the 14 tinyflows node kinds you can put in a WorkflowGraph, each with a one-line summary and its config field names. Read-only, no args. Returns a JSON array of { kind, summary, required_config, optional_config }. Call get_node_kind_contract { kind } for the full config-field shapes, ports, an example node, and authoring gotchas of any one kind — this is the machine-readable DSL schema, so you don't have to rely on prose or memory.",
+    "external_effect": false,
+    "name": "list_node_kinds",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Fetch the FULL contract for ONE tinyflows node kind before you author a node of that kind. Read-only. Returns { kind, summary, description, config_fields:[{name, required, value_type, description, enum_values?}], ports:{inputs, outputs}, example, notes }. Use config_fields for exactly what to put in config, ports for how to wire branch edges (the branch label goes on the edge's from_port), and notes for the envelope/gotcha rules that otherwise silently resolve to null. Find the kind names via list_node_kinds.",
+    "external_effect": false,
+    "name": "get_node_kind_contract",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "One of the 22 node kinds, e.g. 'tool_call' (from list_node_kinds).",
+          "enum": [
+            "trigger",
+            "agent",
+            "tool_call",
+            "http_request",
+            "code",
+            "shell",
+            "condition",
+            "switch",
+            "merge",
+            "split_out",
+            "transform",
+            "output_parser",
+            "sub_workflow",
+            "memory",
+            "dedup",
+            "loop",
+            "spawn",
+            "gate",
+            "scatter",
+            "gather",
+            "approval",
+            "void"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Dry-run a workflow graph in a SANDBOX to self-verify it before proposing. Compiles the graph and executes it against MOCK capabilities — every LLM / tool_call / http_request / code node returns a deterministic echo, so NOTHING real happens (no messages sent, no code run). Returns the simulated per-node output labeled as sandbox output. Use it to catch wiring/routing mistakes; it does NOT prove real integrations work. Provide the graph as exactly one of `draft_id` (a working draft), `flow_id` (a saved flow), or inline `graph` (draft_id wins, then flow_id), plus an optional `input`.",
+    "external_effect": false,
+    "name": "dry_run_workflow",
+    "parameters": {
+      "properties": {
+        "draft_id": {
+          "description": "A working draft to simulate. Provide one of draft_id / flow_id / graph (draft_id wins).",
+          "type": "string"
+        },
+        "flow_id": {
+          "description": "A saved flow to simulate. Provide one of draft_id / flow_id / graph.",
+          "type": "string"
+        },
+        "graph": {
+          "description": "An inline tinyflows WorkflowGraph to simulate: { nodes: [...], edges: [...] }. Provide one of draft_id / flow_id / graph.",
+          "properties": {
+            "edges": {
+              "type": "array"
+            },
+            "nodes": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "nodes",
+            "edges"
+          ],
+          "type": "object"
+        },
+        "input": {
+          "description": "Optional trigger input passed to the run (defaults to {})."
+        }
+      },
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Run a SAVED workflow by id to TEST it end-to-end. This is a REAL run, not a simulation — real effects can fire (use dry_run_workflow for a safe MOCK run instead). It only works on a flow the user has already saved; pass its `flow_id`. You MUST ask the user to confirm and wait for an explicit 'yes' before calling this — never run a workflow unprompted. The flow's own approval gate still pauses outbound-action nodes. If the flow declares workflow inputs (read `graph.inputs` via get_flow), pass their values in `inputs` — ask the user for any required one rather than inventing it; a missing or wrongly-typed value is rejected and nothing runs. Params: { flow_id (required), input?, inputs? }. Returns the run's status + any nodes paused for approval.",
+    "external_effect": true,
+    "name": "run_flow",
+    "parameters": {
+      "properties": {
+        "flow_id": {
+          "description": "Id of the SAVED flow to run (the user must have saved it first).",
+          "type": "string"
+        },
+        "input": {
+          "description": "Optional trigger input passed to the run (defaults to {})."
+        },
+        "inputs": {
+          "description": "Values for the flow's DECLARED workflow inputs, keyed by name. Read the declarations from the flow's graph.inputs first; ask the user for any required value instead of guessing. Distinct from 'input', the free-form trigger payload.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "flow_id"
+      ],
+      "type": "object"
+    },
+    "permission": "Write"
+  },
+  {
+    "description": "Save a workflow graph onto an EXISTING saved flow (by `flow_id`), persisting it. This is the ONLY builder tool that writes onto a saved flow — edit/validate/dry_run never do. Use it after the user asked you to build/update a workflow and you have dry-run-verified the graph. The graph source is either `draft_id` (a working draft — the usual case after editing with edit_workflow; draft_id wins if both are given) or an inline `graph`; `flow_id` is always required as the persistence TARGET. It validates and writes the graph (and optional new `name`) to that flow. It can NOT create a new flow, and it never touches the approval gate — but it CAN auto-disable the flow when the trigger transitions from manual to automatic (schedule/webhook/app_event), so a save never silently arms a trigger that wasn't already live; the returned `warnings` will explain it when that happens. NOTE: if the flow was ALREADY enabled with an automatic trigger and stays automatic, saving re-arms it live — it will start firing on its own. Always tell the user what you saved (including any auto-disable). Params: { flow_id, draft_id? | graph?, name? }.",
+    "external_effect": false,
+    "name": "save_workflow",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "draft_id": {
+          "description": "A working draft whose graph to persist onto the flow. Provide this OR inline `graph`; if both are given, draft_id wins.",
+          "type": "string"
+        },
+        "flow_id": {
+          "description": "Id of the EXISTING saved flow to write the graph to (the persistence target — always required).",
+          "type": "string"
+        },
+        "graph": {
+          "description": "The full tinyflows WorkflowGraph to persist: { name?, nodes: [...], edges: [...] }. Provide this OR `draft_id`. Same shape as propose_workflow.",
+          "properties": {
+            "edges": {
+              "type": "array"
+            },
+            "nodes": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "nodes",
+            "edges"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "Optional new human-readable name for the flow.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow_id"
+      ],
+      "type": "object"
+    },
+    "permission": "Write"
+  },
+  {
+    "description": "Emit your discovered workflow suggestions for the user. Call this ONCE at the end of your run with the few highest-value automations you found. Each suggestion is a PITCH (not a graph): give a short `title`, a one-sentence `one_liner` of what it does, a `rationale` grounded in what you actually observed about THIS user (a recurring thread, a stated goal in memory, a connected app — never generic advice), and a self-contained `build_prompt` that the workflow-builder agent can turn into a real graph. Ground `suggested_connections` in real connection_ref values you saw via list_flow_connections and `suggested_slugs` in real slugs from search_tool_catalog — NEVER invent either. This tool only records the suggestions for the user to review on the Flows page; it does NOT create, enable, or run any flow. Return 1-8 suggestions, best first.",
+    "external_effect": false,
+    "name": "suggest_workflows",
+    "parameters": {
+      "properties": {
+        "run_id": {
+          "description": "Optional correlation id for the discovery run that produced these.",
+          "type": "string"
+        },
+        "suggestions": {
+          "description": "1-8 workflow suggestions, highest-value first.",
+          "items": {
+            "properties": {
+              "build_prompt": {
+                "description": "Self-contained natural-language brief handed to the workflow-builder on \"Build this\".",
+                "type": "string"
+              },
+              "confidence": {
+                "description": "Your confidence in [0,1] that this is a genuinely useful, buildable automation.",
+                "type": "number"
+              },
+              "one_liner": {
+                "description": "One sentence describing what the workflow does.",
+                "type": "string"
+              },
+              "rationale": {
+                "description": "Why this is suggested to THIS user, grounded in what you observed.",
+                "type": "string"
+              },
+              "steps_outline": {
+                "description": "Plain-language step outline, one per element.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "suggested_connections": {
+                "description": "Real connection_ref values from list_flow_connections. Never invented.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "suggested_slugs": {
+                "description": "Real Composio action slugs from search_tool_catalog. Never hallucinated.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "description": "Short, human-friendly title, e.g. \"Auto-file email receipts\".",
+                "type": "string"
+              },
+              "trigger_hint": {
+                "description": "Likely trigger: \"schedule\" | \"app_event\" | \"manual\" (only these self-fire).",
+                "enum": [
+                  "schedule",
+                  "app_event",
+                  "manual"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "one_liner",
+              "rationale",
+              "build_prompt"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "suggestions"
+      ],
+      "type": "object"
+    },
+    "permission": "None"
+  },
+  {
+    "description": "Search a flow's own private memory for relevant facts — e.g. so a scheduled digest flow can check what it already sent before, to avoid duplicates. `scope: \"flow\"` (the default) searches only the calling flow's own memory. `scope: \"flows\"` searches read-only across every flow's memory (useful when related flows should dedupe against each other). This tool never reads the user's personal memory — only memory flows have written about their own runs.",
+    "external_effect": false,
+    "name": "flow_memory_recall",
+    "parameters": {
+      "properties": {
+        "flow_id": {
+          "description": "The calling flow's id. Inside a running flow this is informational only: the active flow's own id (from the run's trusted origin) is authoritative and any value supplied here is ignored. Required only when this tool is invoked outside a flow run (e.g. from a chat agent).",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max results to return (default: 5)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Keywords or phrase to search for",
+          "type": "string"
+        },
+        "scope": {
+          "description": "\"flow\" (default) searches only this flow's own memory; \"flows\" searches read-only across every flow's memory.",
+          "enum": [
+            "flow",
+            "flows"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "flow_id"
+      ],
+      "type": "object"
+    },
+    "permission": "ReadOnly"
+  },
+  {
+    "description": "Store a fact in THIS flow's own private memory — e.g. so a scheduled digest flow can remember which items it already sent, to avoid re-sending them on the next run. Writing the same `key` again replaces the earlier value. The flow is taken from the run itself; there is no way to target the user's personal memory or another flow's memory from this tool.",
+    "external_effect": false,
+    "name": "flow_memory_remember",
+    "parameters": {
+      "properties": {
+        "category": {
+          "description": "What kind of statement this is: 'fact' (default), 'preference', 'procedure', 'correction', or anything else (stored as 'other').",
+          "type": "string"
+        },
+        "content": {
+          "description": "The information to remember",
+          "type": "string"
+        },
+        "flow_id": {
+          "description": "Informational only: inside a running flow the active flow's own id (from the run's trusted origin) is authoritative and this value is ignored. This tool ONLY works inside a workflow run — calling it from chat or any other context without a trusted run origin is refused, regardless of what is passed here.",
+          "type": "string"
+        },
+        "key": {
+          "description": "Unique key for this memory within the flow's own memory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow_id",
+        "key",
+        "content"
+      ],
+      "type": "object"
+    },
+    "permission": "Write"
+  }
+]

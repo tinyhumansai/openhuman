@@ -5,6 +5,59 @@ use crate::agent::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
 use std::sync::Mutex;
 
+#[tokio::test]
+async fn relayed_thread_and_external_authority_survive_scoped_spawn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let context = CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(config(&tmp), DomainSet::full(), Default::default())
+            .session_agent("relay-agent"),
+    );
+    let origin = AgentTurnOrigin::ExternalChannel {
+        channel: "telegram".into(),
+        sender: Some("42".into()),
+        sender_name: None,
+        reply_target: "-100".into(),
+        message_id: "spawned-turn".into(),
+        history_key: None,
+    };
+    let thread = params("spawned-turn", "hello").thread_id();
+    CoreContext::scope(context, async {
+        CoreContext::scope(
+            CoreContext::scoped()
+                .unwrap()
+                .derive_channel_turn(Some(thread.clone()), None),
+            async {
+                crate::agent::turn_origin::with_origin(origin, async {
+                    let (child_thread, child_agent, child_origin) =
+                        crate::core::runtime::DispatchCtx::ambient()
+                            .spawn(async {
+                                (
+                                    CoreContext::current_channel_thread(),
+                                    CoreContext::scoped()
+                                        .and_then(|ctx| ctx.session_agent().map(str::to_owned)),
+                                    crate::agent::turn_origin::current(),
+                                )
+                            })
+                            .await
+                            .unwrap();
+                    assert_eq!(child_thread.as_deref(), Some(thread.as_str()));
+                    assert_eq!(child_agent.as_deref(), Some("relay-agent"));
+                    assert!(matches!(
+                        child_origin,
+                        Some(AgentTurnOrigin::ExternalChannel { channel, sender, .. })
+                            if channel == "telegram" && sender.as_deref() == Some("42")
+                    ));
+                })
+                .await;
+            },
+        )
+        .await;
+        assert!(CoreContext::current_channel_thread().is_none());
+        assert!(CoreContext::current_turn_origin().is_none());
+    })
+    .await;
+}
+
 fn config(tmp: &tempfile::TempDir) -> Config {
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -53,6 +106,7 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
         let mut seen = stub_seen.lock().unwrap();
         seen.busy
             .push(crate::agent::orchestration::busy_guard::is_busy(
+                &crate::core::runtime::DispatchCtx::ambient(),
                 &relayed_thread,
             ));
         seen.histories.push(
@@ -75,10 +129,23 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
         let p = params(id, text);
         let thread = p.thread_id();
         assert_eq!(
-            store::record_inbound(&workspace, &p, &thread).await,
+            store::record_inbound(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                &workspace,
+                &p,
+                &thread
+            )
+            .await,
             Ok(Recorded::New)
         );
-        let replies = run_relay_turn(config.clone(), p, thread, format!("req-{id}")).await;
+        let replies = run_relay_turn(
+            crate::core::runtime::DispatchCtx::ambient(),
+            config.clone(),
+            p,
+            thread,
+            format!("req-{id}"),
+        )
+        .await;
         assert_eq!(replies.len(), 1, "{replies:?}");
     }
 
@@ -90,7 +157,10 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
         "a relayed turn marks its thread busy, so a background result waits"
     );
     assert!(
-        !crate::agent::orchestration::busy_guard::is_busy(&params("m1", "x").thread_id()),
+        !crate::agent::orchestration::busy_guard::is_busy(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &params("m1", "x").thread_id()
+        ),
         "the thread is idle once the turn ends"
     );
     for origin in &seen.origins {
@@ -121,7 +191,12 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
     );
 
     let thread = params("m1", "x").thread_id();
-    let messages = crate::threads::store::get_messages(workspace.clone(), &thread).unwrap();
+    let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        workspace.clone(),
+        &thread,
+    )
+    .unwrap();
     let ids: Vec<&str> = messages.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -152,24 +227,27 @@ async fn invalid_or_repeated_messages_start_no_turn() {
         ContextOverlay::new(config, DomainSet::full(), Default::default()),
     );
 
-    CoreContext::scope(ctx, async {
+    {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(ctx);
+
         let mut bad = params("m1", "hello");
         bad.chat_id = "a/b".into();
-        let err = channel_relay_inbound(bad).await.expect_err("invalid");
+        let err = channel_relay_inbound(&scope_ctx, bad)
+            .await
+            .expect_err("invalid");
         assert!(err.contains("chat_id"), "{err}");
 
         let p = params("m1", "hello");
         let thread = p.thread_id();
-        store::record_inbound(&workspace, &p, &thread)
+        store::record_inbound(&scope_ctx, &workspace, &p, &thread)
             .await
             .unwrap();
-        let outcome = channel_relay_inbound(p)
+        let outcome = channel_relay_inbound(&scope_ctx, p)
             .await
             .expect("duplicate is not an error");
         let value = outcome.into_cli_compatible_json().unwrap();
         let text = value.to_string();
         assert!(text.contains("\"duplicate\":true"), "{text}");
         assert!(text.contains(&thread), "{text}");
-    })
-    .await;
+    };
 }

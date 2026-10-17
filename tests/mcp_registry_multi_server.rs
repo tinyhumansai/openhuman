@@ -1,461 +1,305 @@
-//! Regression tests for multi-MCP-server support (#3196).
+//! Multi-server MCP integration tests through OpenHuman's current RPC adapters.
 //!
-//! These verify the three risks the issue calls out:
-//! 1. Two servers exposing identically-named tools both reach the agent
-//!    surface without collision (namespaced tool_id keys via server_id).
-//! 2. One server failing to connect does not block another from running.
-//! 3. Tool listing aggregates across all connected servers and tolerates
-//!    a missing one.
-//!
-//! All tests are hermetic — they use the `test-mcp-stub` binary built
-//! by Cargo (exposed via `CARGO_BIN_EXE_test-mcp-stub`) and a fresh
-//! temp-dir workspace so they do not share SQLite state with each other
-//! or with `mcp_registry_e2e.rs`.
+//! TinyMCP owns the install store and connections. These tests use its
+//! checksum-pinned module artifact through the host's public config and
+//! registry operations, with the Cargo-built MCP stub as the local server.
 
-// Exercises the gated `mcp_registry` surface, so the whole suite is compiled
-// only when the `mcp` feature is on — otherwise the slim build's
-// `cargo test --no-default-features --tests`
-// fails to compile against the removed APIs (#4799).
 #![cfg(feature = "mcp")]
 
-use openhuman_core::config::Config;
-use openhuman_core::mcp::registry::ops;
-use tinymcp_bus::{CommandKind, InstalledServer, Transport};
+use openhuman_core::config::{
+    schema::{ModuleOverride, ModulesConfig},
+    Config,
+};
+use serde_json::{json, Map, Value};
 
-/// The service over `config`'s workspace.
-///
-/// Resolved the same way the RPC handlers resolve it, so a connection this test
-/// opens directly is the same one a handler sees. Each case uses its own
-/// workspace, so each gets its own store.
-fn host(config: &Config) -> std::sync::Arc<openhuman_core::mcp::host::McpHost> {
-    openhuman_core::mcp::host::for_config(config).expect("the mcp host opens")
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
+const MODULE_ARTIFACT_ENV: &str = "OPENHUMAN_TINYMCP_TEST_MODULE";
 
 fn fresh_workspace_config() -> (tempfile::TempDir, Config) {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let cfg = Config {
-        workspace_dir: tmp.path().to_path_buf(),
+    let workspace = tempfile::tempdir().expect("temporary MCP workspace");
+    let artifact = std::env::var_os(MODULE_ARTIFACT_ENV)
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            openhuman_core::modules::local_artifact("tinymcp").map(std::path::PathBuf::from)
+        })
+        .expect("the MCP test runner supplies the verified TinyMCP artifact")
+        .canonicalize()
+        .expect("TinyMCP artifact exists");
+    let config = Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        modules: ModulesConfig {
+            enabled: true,
+            allow_download: false,
+            overrides: vec![ModuleOverride::with_path(
+                "tinymcp",
+                artifact.to_string_lossy().into_owned(),
+            )],
+            ..ModulesConfig::default()
+        },
         ..Config::default()
     };
-    (tmp, cfg)
+    (workspace, config)
 }
 
-fn make_stub_server(qualified: &str) -> InstalledServer {
-    let stub = env!("CARGO_BIN_EXE_test-mcp-stub");
-    InstalledServer {
-        server_id: format!("multi-{}", uuid::Uuid::new_v4()),
-        qualified_name: qualified.to_string(),
-        display_name: qualified.to_string(),
-        description: None,
-        icon_url: None,
-        command_kind: CommandKind::Binary,
-        command: stub.to_string(),
-        args: Vec::new(),
-        env_keys: Vec::new(),
-        config: None,
-        installed_at: 0,
-        last_connected_at: None,
-        transport: Transport::Stdio,
-        enabled: true,
-    }
+fn stdio_server(command: impl Into<String>, enabled: bool) -> Value {
+    json!({
+        "command": command.into(),
+        "args": [],
+        "enabled": enabled,
+    })
 }
 
-// ── extract response text (mirrors mcp_registry_e2e.rs convention) ───────────
+fn stub_server(enabled: bool) -> Value {
+    stdio_server(env!("CARGO_BIN_EXE_test-mcp-stub"), enabled)
+}
 
-fn extract_echo_text(result: &serde_json::Value) -> &str {
+async fn install_servers(
+    config: &Config,
+    servers: Map<String, Value>,
+) -> std::collections::HashMap<String, String> {
+    openhuman_core::mcp::registry::config_ops::mcp_clients_config_set(
+        config,
+        json!({ "mcpServers": servers }),
+    )
+    .await
+    .expect("apply the server document through TinyMCP");
+
+    let status = openhuman_core::mcp::registry::ops::mcp_clients_status(config)
+        .await
+        .expect("read installed servers from TinyMCP");
+    status.value["servers"]
+        .as_array()
+        .expect("status contains a server array")
+        .iter()
+        .map(|server| {
+            let name = server["qualified_name"]
+                .as_str()
+                .expect("status contains the qualified server name")
+                .to_owned();
+            let id = server["server_id"]
+                .as_str()
+                .expect("status contains the module-owned server id")
+                .to_owned();
+            (name, id)
+        })
+        .collect()
+}
+
+async fn connect(config: &Config, server_id: &str) -> Result<Value, String> {
+    openhuman_core::mcp::registry::ops::mcp_clients_set_enabled(config, server_id.to_owned(), true)
+        .await?;
+    openhuman_core::mcp::registry::ops::mcp_clients_connect(config, server_id.to_owned())
+        .await
+        .map(|outcome| outcome.value)
+}
+
+async fn call_echo(config: &Config, server_id: &str, message: &str) -> String {
+    let outcome = openhuman_core::mcp::registry::ops::mcp_clients_tool_call(
+        config,
+        server_id.to_owned(),
+        "echo".to_owned(),
+        json!({ "message": message }),
+    )
+    .await
+    .expect("call the stub tool through TinyMCP");
+    assert_eq!(outcome.value["is_error"], false, "{outcome:?}");
+    extract_echo_text(&outcome.value["result"]).to_owned()
+}
+
+fn extract_echo_text(result: &Value) -> &str {
     result
         .get("content")
-        .and_then(|c| c.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|first| first.get("text"))
-        .and_then(|t| t.as_str())
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("text"))
+        .and_then(Value::as_str)
         .unwrap_or("")
 }
 
-// ── Test 1: name collision ────────────────────────────────────────────────────
+async fn disconnect(config: &Config, server_id: &str) {
+    openhuman_core::mcp::registry::ops::mcp_clients_disconnect(config, server_id.to_owned())
+        .await
+        .expect("disconnect the module-owned MCP session");
+}
 
-/// Two stub servers both expose the same tool name (`echo`). After connecting
-/// both, `all_connected_tools` returns two entries — one per server — and both
-/// respond correctly when called by `server_id`, proving the `server_id` is
-/// the disambiguator for identically-named tools.
 #[tokio::test]
 async fn two_servers_same_tool_name_no_collision() {
-    let (_tmp, cfg) = fresh_workspace_config();
-    let h = host(&cfg);
+    let (_workspace, config) = fresh_workspace_config();
+    let servers = Map::from_iter([
+        ("@multi-test/echo-a".to_owned(), stub_server(false)),
+        ("@multi-test/echo-b".to_owned(), stub_server(false)),
+    ]);
+    let installed = install_servers(&config, servers).await;
+    let server_a = &installed["@multi-test/echo-a"];
+    let server_b = &installed["@multi-test/echo-b"];
+    assert_ne!(server_a, server_b, "each install has its own server id");
 
-    let server_a = make_stub_server("@multi-test/echo-a");
-    let server_b = make_stub_server("@multi-test/echo-b");
+    for server_id in [server_a, server_b] {
+        let connected = connect(&config, server_id)
+            .await
+            .expect("connect stub server");
+        assert_eq!(connected["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(connected["tools"][0]["name"], "echo");
+    }
 
-    // Both server_ids must be distinct (sanity guard for the disambiguation
-    // assertions below).
-    assert_ne!(
-        server_a.server_id, server_b.server_id,
-        "two stub servers must have distinct server_ids"
-    );
-
-    h.dynamic()
-        .store()
-        .insert_server(&server_a)
-        .expect("insert server_a");
-    h.dynamic()
-        .store()
-        .insert_server(&server_b)
-        .expect("insert server_b");
-
-    // Connect both — each spawns its own subprocess.
-    let tools_a = h
-        .dynamic()
-        .connect(&server_a.server_id)
-        .await
-        .expect("connect server_a")
-        .tools;
-    let tools_b = h
-        .dynamic()
-        .connect(&server_b.server_id)
-        .await
-        .expect("connect server_b")
-        .tools;
-
-    assert_eq!(tools_a.len(), 1, "server_a: stub advertises one tool");
-    assert_eq!(tools_b.len(), 1, "server_b: stub advertises one tool");
-    assert_eq!(tools_a[0].name, "echo", "server_a tool name is `echo`");
-    assert_eq!(tools_b[0].name, "echo", "server_b tool name is `echo`");
-
-    // Both servers are in the connected aggregate.
-    let all_tools = h.dynamic().connections().all_connected_tools().await;
-    let a_tools: Vec<_> = all_tools
+    let all_tools =
+        openhuman_core::mcp::registry::connections::all_connected_tools_for_config(&config).await;
+    let tools_a: Vec<_> = all_tools
         .iter()
-        .filter(|(sid, _, _)| sid == &server_a.server_id)
+        .filter(|(id, _, _)| id == server_a)
         .collect();
-    let b_tools: Vec<_> = all_tools
+    let tools_b: Vec<_> = all_tools
         .iter()
-        .filter(|(sid, _, _)| sid == &server_b.server_id)
+        .filter(|(id, _, _)| id == server_b)
         .collect();
+    assert_eq!(tools_a.len(), 1, "server A contributes one tool");
+    assert_eq!(tools_b.len(), 1, "server B contributes one tool");
+    assert_eq!(tools_a[0].2.name, "echo");
+    assert_eq!(tools_b[0].2.name, "echo");
 
-    assert_eq!(
-        a_tools.len(),
-        1,
-        "server_a contributes exactly one tool to the aggregate"
-    );
-    assert_eq!(
-        b_tools.len(),
-        1,
-        "server_b contributes exactly one tool to the aggregate"
-    );
-    assert_eq!(
-        a_tools[0].2.name, "echo",
-        "server_a's aggregated tool is `echo`"
-    );
-    assert_eq!(
-        b_tools[0].2.name, "echo",
-        "server_b's aggregated tool is `echo`"
-    );
-
-    // Both are `connected` in all_status.
-    let statuses = h.dynamic().status().await.expect("status");
-    let find = |id: &str| {
-        statuses
+    let statuses = openhuman_core::mcp::registry::ops::mcp_clients_status(&config)
+        .await
+        .expect("read server status");
+    for server_id in [server_a, server_b] {
+        let status = statuses.value["servers"]
+            .as_array()
+            .unwrap()
             .iter()
-            .find(|s| s.server_id == id)
-            .cloned()
-            .unwrap_or_else(|| panic!("status entry missing for {id}"))
-    };
-    assert_eq!(find(&server_a.server_id).status.as_str(), "connected");
-    assert_eq!(find(&server_a.server_id).tool_count, 1);
-    assert_eq!(find(&server_b.server_id).status.as_str(), "connected");
-    assert_eq!(find(&server_b.server_id).tool_count, 1);
+            .find(|status| status["server_id"] == *server_id)
+            .expect("connected server remains in status");
+        assert_eq!(status["status"], "connected");
+        assert_eq!(status["tool_count"], 1);
+    }
 
-    let _ = h
-        .dynamic()
-        .connections()
-        .disconnect(&server_a.server_id)
-        .await;
-    let _ = h
-        .dynamic()
-        .connections()
-        .disconnect(&server_b.server_id)
-        .await;
+    assert_eq!(
+        call_echo(&config, server_a, "payload-for-a").await,
+        "payload-for-a"
+    );
+    assert_eq!(
+        call_echo(&config, server_b, "payload-for-b").await,
+        "payload-for-b"
+    );
+    disconnect(&config, server_a).await;
+    disconnect(&config, server_b).await;
 }
 
-// ── Test 2: routing ───────────────────────────────────────────────────────────
-
-/// `call_tool` routes by `server_id` even with a shared name — each server
-/// subprocess receives and echoes back the exact payload sent to that server_id.
-/// Demonstrates the agent → core call path works across multiple servers without
-/// cross-wiring.
 #[tokio::test]
 async fn tool_calls_route_to_the_correct_server() {
-    let (_tmp, cfg) = fresh_workspace_config();
-    let h = host(&cfg);
+    let (_workspace, config) = fresh_workspace_config();
+    let servers = Map::from_iter([
+        ("@route-test/echo-a".to_owned(), stub_server(false)),
+        ("@route-test/echo-b".to_owned(), stub_server(false)),
+    ]);
+    let installed = install_servers(&config, servers).await;
+    let server_a = &installed["@route-test/echo-a"];
+    let server_b = &installed["@route-test/echo-b"];
+    connect(&config, server_a).await.expect("connect server A");
+    connect(&config, server_b).await.expect("connect server B");
 
-    let server_a = make_stub_server("@route-test/echo-a");
-    let server_b = make_stub_server("@route-test/echo-b");
+    let text_a = call_echo(&config, server_a, "payload-for-a").await;
+    let text_b = call_echo(&config, server_b, "payload-for-b").await;
+    assert_eq!(text_a, "payload-for-a");
+    assert_eq!(text_b, "payload-for-b");
+    assert_ne!(text_a, text_b, "the server id determines the destination");
 
-    h.dynamic()
-        .store()
-        .insert_server(&server_a)
-        .expect("insert server_a");
-    h.dynamic()
-        .store()
-        .insert_server(&server_b)
-        .expect("insert server_b");
-
-    h.dynamic()
-        .connect(&server_a.server_id)
-        .await
-        .expect("connect server_a");
-    h.dynamic()
-        .connect(&server_b.server_id)
-        .await
-        .expect("connect server_b");
-
-    // Send distinct payloads to each server; verify each echoes its own input.
-    let result_a = h
-        .dynamic()
-        .tool_call(
-            &server_a.server_id,
-            "echo",
-            serde_json::json!({ "message": "payload-for-a" }),
-        )
-        .await
-        .expect("call_tool on server_a should succeed");
-
-    let result_b = h
-        .dynamic()
-        .tool_call(
-            &server_b.server_id,
-            "echo",
-            serde_json::json!({ "message": "payload-for-b" }),
-        )
-        .await
-        .expect("call_tool on server_b should succeed");
-
-    let text_a = extract_echo_text(&result_a.result);
-    let text_b = extract_echo_text(&result_b.result);
-
-    assert_eq!(
-        text_a, "payload-for-a",
-        "server_a must echo back exactly what was sent to it"
-    );
-    assert_eq!(
-        text_b, "payload-for-b",
-        "server_b must echo back exactly what was sent to it"
-    );
-
-    // Cross-verify: calling server_b's id echoes server_b's payload — not server_a's.
-    assert_ne!(
-        text_a, text_b,
-        "two servers must not produce identical outputs for different inputs"
-    );
-
-    let _ = h
-        .dynamic()
-        .connections()
-        .disconnect(&server_a.server_id)
-        .await;
-    let _ = h
-        .dynamic()
-        .connections()
-        .disconnect(&server_b.server_id)
-        .await;
+    disconnect(&config, server_a).await;
+    disconnect(&config, server_b).await;
 }
 
-// ── Test 3: failure isolation ─────────────────────────────────────────────────
-
-/// One server failing to connect must not prevent another from connecting or
-/// being usable in the same session. The bad server records an `error` status
-/// with a `last_error` message; the good server is `connected` and responds.
 #[tokio::test]
 async fn failed_connect_does_not_block_healthy_peer() {
-    let (_tmp, cfg) = fresh_workspace_config();
-    let h = host(&cfg);
+    let (_workspace, config) = fresh_workspace_config();
+    let servers = Map::from_iter([
+        (
+            "@isolation-test/bad".to_owned(),
+            stdio_server("/this/path/does/not/exist/bad-mcp", false),
+        ),
+        ("@isolation-test/good".to_owned(), stub_server(false)),
+    ]);
+    let installed = install_servers(&config, servers).await;
+    let bad = &installed["@isolation-test/bad"];
+    let good = &installed["@isolation-test/good"];
 
-    // "bad" server: non-existent binary.
-    let mut bad = make_stub_server("@isolation-test/bad");
-    bad.command = "/this/path/does/not/exist/bad-mcp".to_string();
-
-    // "good" server: real stub.
-    let good = make_stub_server("@isolation-test/good");
-
-    h.dynamic()
-        .store()
-        .insert_server(&bad)
-        .expect("insert bad server");
-    h.dynamic()
-        .store()
-        .insert_server(&good)
-        .expect("insert good server");
-
-    // Connecting the bad server must fail.
-    let connect_err = h
-        .dynamic()
-        .connect(&bad.server_id)
-        .await
-        .expect_err("connect bad server should fail");
     assert!(
-        !connect_err.to_string().is_empty(),
-        "bad connect error must not be empty"
+        connect(&config, bad).await.is_err(),
+        "bad server refuses to connect"
     );
-
-    // Connecting the good server must succeed independently.
-    let good_tools = h
-        .dynamic()
-        .connect(&good.server_id)
+    let connected = connect(&config, good)
         .await
-        .expect("connect good server must succeed regardless of the bad peer")
-        .tools;
-    assert_eq!(good_tools.len(), 1, "good server exposes one tool");
+        .expect("good server connects independently");
+    assert_eq!(connected["tools"].as_array().unwrap().len(), 1);
 
-    // all_status: bad → error with last_error, good → connected.
-    let statuses = h.dynamic().status().await.expect("status");
-    let find = |id: &str| {
-        statuses
+    let statuses = openhuman_core::mcp::registry::ops::mcp_clients_status(&config)
+        .await
+        .expect("read status after isolated failure");
+    let status_for = |id: &str| {
+        statuses.value["servers"]
+            .as_array()
+            .unwrap()
             .iter()
-            .find(|s| s.server_id == id)
-            .cloned()
-            .unwrap_or_else(|| panic!("status entry missing for {id}"))
+            .find(|status| status["server_id"] == id)
+            .expect("server remains visible after connect attempt")
     };
+    assert_eq!(status_for(bad)["status"], "error");
+    assert!(status_for(bad)["last_error"]
+        .as_str()
+        .is_some_and(|error| !error.is_empty()));
+    assert_eq!(status_for(good)["status"], "connected");
+    assert!(status_for(good)["last_error"].is_null());
 
-    let bad_status = find(&bad.server_id);
+    let all_tools =
+        openhuman_core::mcp::registry::connections::all_connected_tools_for_config(&config).await;
+    assert!(all_tools.iter().all(|(id, _, _)| id != bad));
+    assert!(all_tools
+        .iter()
+        .any(|(id, _, tool)| id == good && tool.name == "echo"));
     assert_eq!(
-        bad_status.status.as_str(),
-        "error",
-        "bad server must report `error`"
+        call_echo(&config, good, "isolation-check").await,
+        "isolation-check"
     );
-    assert!(
-        bad_status
-            .last_error
-            .as_deref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false),
-        "bad server must have a non-empty last_error"
-    );
-
-    let good_status = find(&good.server_id);
-    assert_eq!(
-        good_status.status.as_str(),
-        "connected",
-        "good server must be `connected`"
-    );
-    assert!(
-        good_status.last_error.is_none(),
-        "good server must have no last_error"
-    );
-
-    // The good server is still callable after the peer's failure.
-    let result = h
-        .dynamic()
-        .tool_call(
-            &good.server_id,
-            "echo",
-            serde_json::json!({ "message": "isolation-check" }),
-        )
-        .await
-        .expect("call_tool on good server must succeed after peer failure");
-
-    assert_eq!(
-        extract_echo_text(&result.result),
-        "isolation-check",
-        "good server must echo input correctly after peer failure"
-    );
-
-    let _ = h.dynamic().connections().disconnect(&good.server_id).await;
+    disconnect(&config, good).await;
 }
 
-// ── Test 4: disabled enforcement ──────────────────────────────────────────────
-
-/// A disabled server must not contribute tools to the agent surface and must
-/// refuse explicit connect, even when a sibling is connected and active.
 #[tokio::test]
 async fn disabled_server_contributes_no_tools_to_agent_surface() {
-    let (_tmp, cfg) = fresh_workspace_config();
-    let h = host(&cfg);
+    let (_workspace, config) = fresh_workspace_config();
+    let servers = Map::from_iter([
+        ("@disabled-test/live".to_owned(), stub_server(false)),
+        ("@disabled-test/quiet".to_owned(), stub_server(false)),
+    ]);
+    let installed = install_servers(&config, servers).await;
+    let live = &installed["@disabled-test/live"];
+    let quiet = &installed["@disabled-test/quiet"];
+    connect(&config, live).await.expect("live server connects");
 
-    // "live" server: enabled, real stub.
-    let live = make_stub_server("@disabled-test/live");
-
-    // "quiet" server: disabled, also uses the real stub binary (so the
-    // bogus-command failure path cannot mask the disabled enforcement check).
-    let mut quiet = make_stub_server("@disabled-test/quiet");
-    quiet.enabled = false;
-
-    h.dynamic()
-        .store()
-        .insert_server(&live)
-        .expect("insert live server");
-    h.dynamic()
-        .store()
-        .insert_server(&quiet)
-        .expect("insert quiet server");
-
-    // Connect the live server.
-    h.dynamic()
-        .connect(&live.server_id)
-        .await
-        .expect("connect live server");
-
-    // Attempting to connect the disabled server via ops must fail with
-    // a clear "disabled" message (matches mcp_registry_e2e::connect_refuses_disabled_server).
-    let disabled_err = ops::mcp_clients_connect(&cfg, quiet.server_id.clone())
-        .await
-        .expect_err("connect must reject a disabled server");
     assert!(
-        disabled_err.to_lowercase().contains("disabled"),
-        "error must mention 'disabled', got: {disabled_err}"
+        openhuman_core::mcp::registry::ops::mcp_clients_connect(&config, quiet.to_owned())
+            .await
+            .is_err(),
+        "an explicitly disabled server must refuse connection"
     );
-
-    // all_status: live → connected, quiet → disabled.
-    let statuses = h.dynamic().status().await.expect("status");
-    let find = |id: &str| {
-        statuses
+    let statuses = openhuman_core::mcp::registry::ops::mcp_clients_status(&config)
+        .await
+        .expect("read server status");
+    let status_for = |id: &str| {
+        statuses.value["servers"]
+            .as_array()
+            .unwrap()
             .iter()
-            .find(|s| s.server_id == id)
-            .cloned()
-            .unwrap_or_else(|| panic!("status entry missing for {id}"))
+            .find(|status| status["server_id"] == id)
+            .expect("server remains visible in status")
     };
+    assert_eq!(status_for(live)["status"], "connected");
+    assert_eq!(status_for(quiet)["status"], "disabled");
 
-    assert_eq!(find(&live.server_id).status.as_str(), "connected");
-    assert_eq!(find(&quiet.server_id).status.as_str(), "disabled");
-
-    // The disabled server must not appear in all_connected_tools.
-    let all_tools = h.dynamic().connections().all_connected_tools().await;
-    let quiet_tools: Vec<_> = all_tools
+    let all_tools =
+        openhuman_core::mcp::registry::connections::all_connected_tools_for_config(&config).await;
+    assert!(all_tools
         .iter()
-        .filter(|(sid, _, _)| sid == &quiet.server_id)
-        .collect();
-    assert!(
-        quiet_tools.is_empty(),
-        "disabled server must contribute zero tools to the agent surface; found: {quiet_tools:?}"
-    );
-
-    // The live server IS present and callable.
-    let live_tools: Vec<_> = all_tools
-        .iter()
-        .filter(|(sid, _, _)| sid == &live.server_id)
-        .collect();
+        .any(|(id, _, tool)| id == live && tool.name == "echo"));
+    assert!(all_tools.iter().all(|(id, _, _)| id != quiet));
     assert_eq!(
-        live_tools.len(),
-        1,
-        "live server must contribute its tool even while disabled peer is present"
+        call_echo(&config, live, "live-while-quiet").await,
+        "live-while-quiet"
     );
-
-    let result = h
-        .dynamic()
-        .tool_call(
-            &live.server_id,
-            "echo",
-            serde_json::json!({ "message": "live-while-quiet" }),
-        )
-        .await
-        .expect("call_tool on live server must succeed");
-
-    assert_eq!(
-        extract_echo_text(&result.result),
-        "live-while-quiet",
-        "live server echoes correctly while disabled peer exists"
-    );
-
-    let _ = h.dynamic().connections().disconnect(&live.server_id).await;
+    disconnect(&config, live).await;
 }

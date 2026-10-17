@@ -47,5 +47,5 @@ this function.
 
 ## Further reading
 
-- [Third-party integrations](../../../../../gitbooks/features/integrations/README.md)
-- [Connections](../../../../../gitbooks/features/connections.md)
+- [Third-party integrations](../../../../../docs/gitbooks/en/features/integrations/README.md)
+- [Connections](../../../../../docs/gitbooks/en/features/connections.md)

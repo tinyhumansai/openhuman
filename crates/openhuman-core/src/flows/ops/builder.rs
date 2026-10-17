@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 /// Runs the `workflow_builder` agent for one authoring turn and returns its
 /// proposal, invoking it as a first-class backend agent (exactly like the Flow
@@ -16,11 +17,12 @@ use super::*;
 /// `save_workflow` (only reachable in `build` mode with a real `flow_id`)
 /// writes onto an existing flow. This op never enables or runs a flow.
 pub async fn flows_build(
+    ctx: &DispatchCtx,
     config: &Config,
     req: crate::flows::agents::workflow_builder::builder_prompt::BuilderRequest,
     stream: Option<FlowStreamTarget>,
 ) -> Result<Outcome<Value>, String> {
-    flows_build_with_extra_hidden_tools(config, req, stream, &[]).await
+    flows_build_with_extra_hidden_tools(ctx, config, req, stream, &[]).await
 }
 
 /// [`flows_build`] with caller-specific tools removed in addition to the
@@ -30,6 +32,7 @@ pub async fn flows_build(
 /// normal builder belt. Host integrations that add their own persistence
 /// boundary can hide tools that would bypass that boundary.
 pub(crate) async fn flows_build_with_extra_hidden_tools(
+    ctx: &DispatchCtx,
     config: &Config,
     req: crate::flows::agents::workflow_builder::builder_prompt::BuilderRequest,
     stream: Option<FlowStreamTarget>,
@@ -49,7 +52,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     ) {
         if let Some(assistant_text) = req.error.as_deref().and_then(backend_repair_message) {
             if let Some(target) = &stream {
-                finalize_flow_stream(target, &Ok(assistant_text.clone()), &prompt).await;
+                finalize_flow_stream(ctx, target, &Ok(assistant_text.clone()), &prompt).await;
             }
             return Ok(Outcome::single_log(
                 json!({
@@ -74,14 +77,16 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
 
     // The registry must be initialised before building a named builtin agent
     // (idempotent — mirrors `flows_discover`).
-    crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
-        .map_err(|e| format!("failed to initialise agent registry: {e}"))?;
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global(
+        &config.workspace_dir,
+    )
+    .map_err(|e| format!("failed to initialise agent registry: {e}"))?;
 
     // Issue #4868 — the session builder (`build_session_agent_inner`) now
     // resolves the per-agent iteration cap from the `workflow_builder`
     // `AgentDefinition` itself (`iteration_policy = "extended"` ->
     // `effective_max_iterations()` = 50), so no override is needed here.
-    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, "workflow_builder")
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, "workflow_builder")
         .map_err(|e| format!("failed to build workflow_builder agent: {e:#}"))?;
     agent.set_agent_definition_name("workflow_builder".to_string());
     start_builder_turn_clean(&mut agent);
@@ -129,7 +134,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     // `propose_workflow` tool result the frontend renders as a proposal card.
     // Best-effort — with no target the run stays headless (CLI / tests).
     if let Some(target) = &stream {
-        attach_flow_progress_bridge(&mut agent, target, "flows_build", config);
+        attach_flow_progress_bridge(ctx, &mut agent, target, "flows_build", config);
     }
 
     // Run to completion, bounded by a wall-clock timeout. PR3
@@ -137,7 +142,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     // chat thread is attached.
     //
     // - Streaming (copilot pane): run under `AgentTurnOrigin::WebChat` with
-    //   `APPROVAL_CHAT_CONTEXT` scoped alongside it — the identical
+    //   the chat approval context handed to the same turn — the identical
     //   double-scope pattern `web_chat::ops::run_turn_under_cancel_and_deadline`
     //   uses for a real interactive chat turn. The approval gate then PARKS
     //   (rather than auto-allows) any `external_effect` tool call instead of
@@ -183,24 +188,22 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
                 thread_id = %target.thread_id,
                 request_id = %target.request_id,
                 "[flows] flows_build: streaming copilot turn — WebChat origin + \
-                 APPROVAL_CHAT_CONTEXT scoped, live-run tools park for approval instead \
+                 chat approval context set, live-run tools park for approval instead \
                  of auto-allowing (shortened to COPILOT_APPROVAL_TTL via \
-                 APPROVAL_COPILOT_STREAM_CONTEXT)"
+                 the copilot_stream flag)"
             );
-            // `APPROVAL_COPILOT_STREAM_CONTEXT` scopes alongside the existing
-            // chat context so any `run_flow`/`resume_flow_run` park raised by
+            // The copilot flag rides the turn's approval context alongside the
+            // chat context, so any `run_flow`/`resume_flow_run` park raised by
             // this turn is clamped to the shorter `COPILOT_APPROVAL_TTL`
             // instead of the gate's full ten-minute default — a stale park on
             // a copilot pane the user may have already navigated away from
-            // shouldn't idle that long. Main-chat turns never scope this, so
+            // shouldn't idle that long. Main-chat turns never set it, so
             // they are unaffected.
             agent.set_thread_id(Some(target.thread_id.as_str()));
+            let approval = ApprovalTurnContext::chat(chat_ctx).with_copilot_stream();
             let run = with_origin(
-                origin,
-                APPROVAL_CHAT_CONTEXT.scope(
-                    chat_ctx,
-                    APPROVAL_COPILOT_STREAM_CONTEXT.scope((), agent.run_single(&prompt)),
-                ),
+                origin.clone(),
+                agent.run_single_with_approval(&prompt, Some(origin), approval),
             );
             let run =
                 tokio::time::timeout(std::time::Duration::from_secs(FLOW_BUILD_TIMEOUT_SECS), run);
@@ -209,9 +212,9 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
             // so a `flows_build_cancel` call landing the instant this turn
             // starts can never miss the registration window. The run stays
             // awaited INLINE (never spawned) — spawning it would drop the
-            // task-local `with_origin` / `APPROVAL_CHAT_CONTEXT.scope` /
-            // `APPROVAL_COPILOT_STREAM_CONTEXT.scope` / thread-id scope
-            // context above, which the approval gate + tracing depend on.
+            // task-local `with_origin` / thread-id scope context above, which
+            // the approval gate + tracing depend on (the approval context
+            // itself is an explicit value on the turn).
             // `tokio::select!` races the two futures on THIS task instead, so
             // every one of those scopes stays attached to the winning arm.
             let token = CancellationToken::new();
@@ -312,7 +315,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     if cancelled {
         if let Some(target) = &stream {
             let terminal: Result<String, String> = Ok(assistant_text.clone());
-            finalize_flow_stream(target, &terminal, &prompt).await;
+            finalize_flow_stream(ctx, target, &terminal, &prompt).await;
         }
         tracing::info!(
             target: "flows",
@@ -338,7 +341,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
         if let Some(err) = &run_error {
             if let Some(target) = &stream {
                 let terminal: Result<String, String> = Err(err.clone());
-                finalize_flow_stream(target, &terminal, &prompt).await;
+                finalize_flow_stream(ctx, target, &terminal, &prompt).await;
             }
             return Err(format!("workflow_builder produced no proposal: {err}"));
         }
@@ -395,7 +398,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
             None => Ok(assistant_text.clone()),
             Some(err) => Err(err.clone()),
         };
-        finalize_flow_stream(target, &terminal, &prompt).await;
+        finalize_flow_stream(ctx, target, &terminal, &prompt).await;
     }
 
     tracing::info!(

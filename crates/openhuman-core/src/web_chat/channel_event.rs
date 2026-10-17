@@ -351,7 +351,7 @@ pub struct TurnUsagePayload {
     /// `charged` (every call billed by the provider), `estimated` (some call
     /// priced from list rates) or `unknown`.
     #[serde(default)]
-    pub cost_source: crate::agent::cost::CostSource,
+    pub cost_source: tinyagents_harness::cost::CostSource,
     pub context_window: u64,
     /// Tokens the parent's context held after the turn's final model call: the
     /// context gauge's numerator. Unlike the totals above it is one request,

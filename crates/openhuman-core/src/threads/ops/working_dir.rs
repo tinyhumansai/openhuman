@@ -8,6 +8,7 @@
 //! in another.
 
 use super::support::{counts, envelope, thread_to_summary, workspace_dir};
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::security::SecurityPolicy;
 use crate::threads::store as conversations;
@@ -51,10 +52,11 @@ pub(crate) fn validate_working_dir(raw: Option<&str>) -> Result<Option<String>, 
 /// An unusable bound folder is an error, rather than a reason to run in the
 /// global folder. This preserves the conversation's filesystem boundary.
 pub(crate) async fn thread_working_dir(
+    ctx: &DispatchCtx,
     workspace_dir: PathBuf,
     thread_id: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let threads = conversations::blocking::list_threads(workspace_dir)
+    let threads = conversations::blocking::list_threads(ctx.clone(), workspace_dir)
         .await
         .map_err(|err| format!("failed to load thread working folder: {err}"))?;
     let bound = threads
@@ -73,11 +75,12 @@ pub(crate) async fn thread_working_dir(
 
 /// Binds or clears the working folder of a thread that has no messages yet.
 pub async fn thread_update_working_dir(
+    ctx: &DispatchCtx,
     request: UpdateConversationThreadWorkingDirRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, ThreadsError> {
     let dir = workspace_dir().await?;
     let working_dir = validate_working_dir(Some(&request.action_dir))?;
-    let Some(thread) = conversations::blocking::list_threads(dir.clone())
+    let Some(thread) = conversations::blocking::list_threads(ctx.clone(), dir.clone())
         .await?
         .into_iter()
         .find(|thread| thread.id == request.thread_id)
@@ -92,6 +95,7 @@ pub async fn thread_update_working_dir(
         );
     }
     let updated = conversations::blocking::update_thread_working_dir(
+        ctx.clone(),
         dir,
         request.thread_id.clone(),
         working_dir,

@@ -12,7 +12,7 @@ sandbox_mode = "sandboxed"
 # Spawn hierarchy: this is the user-facing tier. It can complete ordinary work
 # itself and delegates only when that is the better execution shape.
 # Loader enforces: a `chat` agent must NOT list any other `chat` agent
-# in `subagents` below — handoff goes directly to `worker` specialists. See `AgentTier` in `crates/openhuman-core/src/agent/harness/definition.rs`.
+# in `subagents` below — handoff goes directly to `worker` specialists. See `AgentTier` in `vendor/tinyagents/crates/tinyagents-definition/src/tier.rs`.
 agent_tier = "chat"
 # Connected MCP servers' tools join this agent's deferred catalogue.
 searches_connected_mcp = true
@@ -210,6 +210,15 @@ named = [
     "file_write",
     "shell",
     "git_operations",
+    # Versioned artifact surface (vendor/tiny-artifacts): every document the
+    # agent creates must land in the artifact pipeline — versioned JSON record
+    # + legacy mirror + UI card — so it is editable/viewable in the preview
+    # panel, instead of a bare file written via `shell` that never files an
+    # artifact (regression: MD outputs were not registered as artifacts).
+    "create_artifact",
+    "update_artifact",
+    "read_artifact",
+    "list_artifacts",
     # Web research, done directly. There is no research sub-agent any more:
     # the routed web tools do the depth themselves. A single fact is one
     # `web_answer_tool` / `web_search_tool` / `web_fetch` / `http_request`

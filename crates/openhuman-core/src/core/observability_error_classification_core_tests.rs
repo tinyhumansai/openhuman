@@ -140,32 +140,20 @@ fn report_error_or_expected_demotes_codex_auth_unavailable() {
 /// preventable user-state (the server needs OAuth sign-in), already handled
 /// by the `needs_auth` UX (#3733 / #3719), so it must classify as
 /// `McpServerNeedsAuth` and stay out of Sentry. The canonical body comes
-/// straight from `tinymcp::Error::Unauthorized`'s `Display` impl (both the
-/// bare and `resource metadata:` variants), plus the
-/// `mcp_clients_connect`-prefixed RPC re-report shape that actually reaches
-/// the dispatcher.
+/// using the public TinyMCP unauthorized message shape, plus the
+/// `mcp_clients_connect`-prefixed RPC re-report shape that reaches the
+/// dispatcher. The metadata URL is intentionally absent from the message.
 
 #[test]
 fn classifies_mcp_connect_401_as_needs_auth() {
-    // The 401 is a variant of `tinymcp`'s error now rather than a
-    // standalone type. What this test pins is unchanged: the *wording* the
-    // classifier keys on, which is what reaches the dispatcher.
-    let bare = tinymcp::Error::Unauthorized {
-        endpoint: "https://youtube.run.tools".to_string(),
-        resource_metadata: None,
-    };
-    let with_meta = tinymcp::Error::Unauthorized {
-        endpoint: "https://youtube.run.tools".to_string(),
-        resource_metadata: Some(
-            "https://youtube.run.tools/.well-known/oauth-protected-resource".to_string(),
-        ),
-    };
+    // Pin the wording that reaches the classifier without linking the
+    // implementation crate into host tests.
+    let bare = "mcp unauthorized for `https://youtube.run.tools` (HTTP 401)";
     for msg in [
         bare.to_string(),
-        with_meta.to_string(),
         // The stringified RPC re-report shape that propagates from
         // `mcp_clients_connect` to `report_error_or_expected`.
-        format!("openhuman.mcp_clients_connect failed: {with_meta}"),
+        format!("openhuman.mcp_clients_connect failed: {bare}"),
     ] {
         assert_eq!(
             expected_error_kind(&msg),

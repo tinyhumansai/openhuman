@@ -33,33 +33,6 @@ pub(super) fn resolve_local_runtime_key(
     looked_up
 }
 
-/// Whether a provider entry can be probed at `{endpoint}/models`.
-///
-/// Claude Code is a local CLI provider, and a `cli://…` endpoint is a
-/// placeholder rather than an API base. Any other scheme (`ftp://…`) is a
-/// misconfiguration and is left to the request path to surface as an error.
-/// An endpoint that does not parse as `scheme://host` at all is left to the
-/// request path so a genuine misconfiguration still surfaces as an error.
-fn endpoint_hosts_models_listing(slug: &str, endpoint: &str) -> bool {
-    if slug == "claude-code" {
-        return false;
-    }
-    match reqwest::Url::parse(endpoint.trim()) {
-        Ok(url) if url.has_host() => url.scheme() != "cli",
-        _ => true,
-    }
-}
-
-pub fn append_query_param(url: &str, key: &str, value: &str) -> String {
-    if let Ok(mut parsed) = reqwest::Url::parse(url) {
-        parsed.query_pairs_mut().append_pair(key, value);
-        return parsed.to_string();
-    }
-
-    let separator = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{separator}{key}={value}")
-}
-
 pub async fn list_configured_models(
     provider_id: &str,
 ) -> Result<crate::core::Outcome<serde_json::Value>, String> {
@@ -245,7 +218,7 @@ pub async fn list_configured_models_from_config(
         );
     }
 
-    if is_openrouter_provider(&entry) {
+    if is_openrouter_provider(&entry.slug, &entry.endpoint) {
         validate_openrouter_api_key(&client, &routing.endpoint, &api_key).await?;
     }
 

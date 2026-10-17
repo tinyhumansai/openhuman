@@ -1,25 +1,78 @@
 use super::*;
 use crate::desktop::notifications::store as live;
 use crate::desktop::notifications::types::{
-    CoreNotificationCategory, CoreNotificationEvent, IntegrationNotification, NotificationSettings,
-    NotificationStatus,
+    CoreNotificationCategory, CoreNotificationEvent, IntegrationNotification, NotificationStatus,
 };
-use crate::storage::local::{forget, table_names};
+use crate::storage::import::{run_with, Outcome};
 use chrono::{Duration, Utc};
 use tempfile::TempDir;
 
-fn workspace() -> (TempDir, Config, Config) {
+fn workspace() -> (TempDir, Config) {
     let dir = TempDir::new().unwrap();
-    let mut classic = Config {
+    let config = Config {
         workspace_dir: dir.path().to_path_buf(),
         ..Config::default()
     };
-    classic.storage.url = Some("classic".into());
-    let default = Config {
-        workspace_dir: dir.path().to_path_buf(),
-        ..Config::default()
-    };
-    (dir, classic, default)
+    (dir, config)
+}
+
+fn import(config: &Config) -> Outcome {
+    let backend = crate::storage::local::backend_for(&config.workspace_dir).unwrap();
+    run_with(&backend, config, &[super::super::import_source()])
+        .remove(0)
+        .outcome
+        .unwrap()
+}
+
+/// Writes a notification row the way the retired store did.
+fn seed_note(
+    config: &Config,
+    n: &IntegrationNotification,
+    score: Option<(f64, &str)>,
+    status: &str,
+) {
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO integration_notifications
+                (id, provider, account_id, title, body, raw_payload, importance_score,
+                 triage_action, triage_reason, status, received_at, scored_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                n.id,
+                n.provider,
+                n.account_id,
+                n.title,
+                n.body,
+                n.raw_payload.to_string(),
+                score.map(|(s, _)| s),
+                score.map(|(_, a)| a),
+                score.map(|_| "important"),
+                status,
+                n.received_at.to_rfc3339(),
+                score.map(|_| Utc::now().to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+fn seed_core(config: &Config, e: &CoreNotificationEvent, read: bool) {
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT INTO core_notifications (id, payload, timestamp_ms, read, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                e.id,
+                serde_json::to_string(e).unwrap(),
+                e.timestamp_ms as i64,
+                i64::from(read),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
 }
 
 fn note(id: &str, provider: &str, secs_ago: i64) -> IntegrationNotification {
@@ -54,29 +107,40 @@ fn event(id: &str, ts: u64) -> CoreNotificationEvent {
 }
 
 #[test]
-fn legacy_notifications_are_imported_once_through_the_public_api() {
-    let (_dir, classic, default) = workspace();
-    live::insert(&classic, &note("n-old", "slack", 60)).unwrap();
-    live::insert(&classic, &note("n-new", "gmail", 0)).unwrap();
-    live::insert(&classic, &note("n-read", "gmail", 30)).unwrap();
-    live::update_triage(&classic, "n-new", 0.8, "react", "important").unwrap();
-    live::mark_read(&classic, "n-read").unwrap();
-    live::upsert_settings(
-        &classic,
-        &NotificationSettings {
-            provider: "slack".into(),
-            enabled: false,
-            importance_threshold: 0.5,
-            route_to_orchestrator: false,
-        },
-    )
+fn legacy_notifications_are_imported_once_and_the_file_is_left_alone() {
+    let (_dir, config) = workspace();
+    seed_note(&config, &note("n-old", "slack", 60), None, "unread");
+    seed_note(
+        &config,
+        &note("n-new", "gmail", 0),
+        Some((0.8, "react")),
+        "unread",
+    );
+    seed_note(&config, &note("n-read", "gmail", 30), None, "read");
+    with_connection(&config, |conn| {
+        conn.execute(
+            "INSERT INTO notification_settings
+                (provider, enabled, importance_threshold, route_to_orchestrator)
+             VALUES ('slack', 0, 0.5, 0)",
+            [],
+        )?;
+        Ok(())
+    })
     .unwrap();
-    live::insert_core_notification(&classic, &event("e1", 1_000)).unwrap();
-    live::insert_core_notification(&classic, &event("e2", 2_000)).unwrap();
-    live::mark_core_notification_read(&classic, "e1").unwrap();
-    let db = live::db_path(&classic);
+    seed_core(&config, &event("e1", 1_000), true);
+    seed_core(&config, &event("e2", 2_000), false);
+    let db = db_path(&config);
+    let before = std::fs::read(&db).unwrap();
 
-    let listed = live::list(&default, 10, 0, None, None).unwrap();
+    assert!(matches!(
+        import(&config),
+        Outcome::Imported {
+            found: 6,
+            written: 6
+        }
+    ));
+
+    let listed = live::list(&config, 10, 0, None, None).unwrap();
     let ids: Vec<_> = listed.iter().map(|n| n.id.as_str()).collect();
     assert_eq!(ids, ["n-new", "n-read", "n-old"]);
     let scored = &listed[0];
@@ -85,30 +149,25 @@ fn legacy_notifications_are_imported_once_through_the_public_api() {
     assert_eq!(scored.raw_payload["k"], "n-new");
     assert_eq!(scored.account_id.as_deref(), Some("acct"));
     assert_eq!(listed[1].status, NotificationStatus::Read);
-    assert_eq!(live::unread_count(&default).unwrap(), 2);
-    let settings = live::get_settings(&default, "slack").unwrap();
+    assert_eq!(live::unread_count(&config).unwrap(), 2);
+    let settings = live::get_settings(&config, "slack").unwrap();
     assert!(!settings.enabled);
     assert!(!settings.route_to_orchestrator);
     assert!((settings.importance_threshold - 0.5).abs() < f32::EPSILON);
-    let core = live::list_core_notifications(&default, false, 10).unwrap();
+    let core = live::list_core_notifications(&config, false, 10).unwrap();
     let core_ids: Vec<_> = core.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(core_ids, ["e2", "e1"]);
-    assert_eq!(live::unread_core_notification_count(&default).unwrap(), 1);
+    assert_eq!(live::unread_core_notification_count(&config).unwrap(), 1);
+    assert_eq!(
+        std::fs::read(&db).unwrap(),
+        before,
+        "notifications.db untouched"
+    );
 
-    let tables = table_names(&db);
-    for name in [
-        "integration_notifications",
-        "notification_settings",
-        "core_notifications",
-    ] {
-        assert!(tables.contains(&format!("_legacy_{name}")), "{name}");
-        assert!(!tables.contains(&name.to_string()), "{name} was renamed");
-    }
-
-    // A restart does not import again.
-    live::mark_dismissed(&default, "n-old").unwrap();
-    forget(&db);
-    let after = live::list(&default, 10, 0, None, None).unwrap();
+    // A second run does not import again.
+    live::mark_dismissed(&config, "n-old").unwrap();
+    assert!(matches!(import(&config), Outcome::AlreadyDone));
+    let after = live::list(&config, 10, 0, None, None).unwrap();
     let old = after.iter().find(|n| n.id == "n-old").unwrap();
     assert_eq!(old.status, NotificationStatus::Dismissed);
     assert_eq!(after.len(), 3);
@@ -116,15 +175,13 @@ fn legacy_notifications_are_imported_once_through_the_public_api() {
 
 #[test]
 fn core_notifications_survive_a_moved_workspace() {
-    let (dir, classic, default) = workspace();
-    live::insert_core_notification(&classic, &event("e1", 1_000)).unwrap();
-    // Imported, then one more written through the default store.
-    assert_eq!(live::unread_core_notification_count(&default).unwrap(), 1);
-    live::insert_core_notification(&default, &event("e2", 2_000)).unwrap();
-    let db = live::db_path(&default);
-    forget(&db);
+    let (dir, config) = workspace();
+    seed_core(&config, &event("e1", 1_000), false);
+    import(&config);
+    live::insert_core_notification(&config, &event("e2", 2_000)).unwrap();
+    crate::storage::local::forget(&config.workspace_dir);
 
-    // The workspace is moved; its database comes along.
+    // The workspace is moved; its storage directory comes along.
     let moved_root = TempDir::new().unwrap();
     let moved_dir = moved_root.path().join("moved");
     std::fs::rename(dir.path(), &moved_dir).unwrap();
@@ -137,7 +194,7 @@ fn core_notifications_survive_a_moved_workspace() {
     assert_eq!(ids, ["e2", "e1"]);
     assert!(live::mark_core_notification_read(&moved, "e1").unwrap());
     assert_eq!(live::unread_core_notification_count(&moved).unwrap(), 1);
-    forget(&live::db_path(&moved));
+    crate::storage::local::forget(&moved_dir);
     // Put it back so the TempDir cleans up.
     std::fs::rename(&moved_dir, dir.path()).unwrap();
 }

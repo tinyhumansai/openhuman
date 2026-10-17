@@ -180,11 +180,12 @@ async fn media_tools_deliver_images_and_videos_through_the_backend_proxy() {
     tinyhumans_boot::boot();
     let tmp = tempfile::tempdir().unwrap();
     let (api_url, backend) = start_backend().await;
-    let config = config(tmp.path(), &api_url);
+    let mut config = config(tmp.path(), &api_url);
     let action_dir = tmp.path().join("projects");
-    // Deliverables land in the visible Files folder (#5505); only each
-    // artifact's `meta.json` stays in the hidden workspace store.
+    // Deliverables land in the visible Files folder (#5505); metadata is read
+    // through the artifact store because it may use the configured backend.
     let files_dir = tmp.path().join("Files");
+    config.files_dir_override = Some(files_dir.clone());
 
     let generators = managed_generators(&config).expect("backend transport is installed");
     let tools = media_tools_from(
@@ -216,7 +217,12 @@ async fn media_tools_deliver_images_and_videos_through_the_backend_proxy() {
     assert_eq!(image_artifacts.len(), 1, "one filed image: {result:?}");
     let image_id = image_artifacts[0]["artifact_id"]
         .as_str()
-        .expect("image filed as artifact")
+        .unwrap_or_else(|| {
+            panic!(
+                "image was not filed as an artifact: {:?}",
+                image_artifacts[0]
+            )
+        })
         .to_owned();
 
     // ── video: must poll through `completed` with no outputs ─────────────
@@ -241,32 +247,37 @@ async fn media_tools_deliver_images_and_videos_through_the_backend_proxy() {
     assert_eq!(video_artifacts.len(), 1, "one filed video: {result:?}");
     let video_id = video_artifacts[0]["artifact_id"]
         .as_str()
-        .expect("video filed as artifact")
+        .unwrap_or_else(|| {
+            panic!(
+                "video was not filed as an artifact: {:?}",
+                video_artifacts[0]
+            )
+        })
         .to_owned();
     assert!(
         backend.polls.load(Ordering::SeqCst) >= 4,
         "the job must be polled through the empty `completed` states"
     );
 
-    // ── artifacts on disk ────────────────────────────────────────────────
-    assert_eq!(
-        std::fs::read_dir(action_dir.join("generated-media"))
-            .expect("generated-media staging directory")
-            .count(),
-        0,
-        "filed media must leave the staging directory"
+    // ── artifacts are persisted and their visible files resolve ──────────
+    assert!(
+        !action_dir.join("generated-media").exists(),
+        "blob-backed generation must not leave a filesystem staging directory"
     );
-    for id in [&image_id, &video_id] {
-        let entries: Vec<String> =
-            std::fs::read_dir(config.workspace_dir.join("artifacts").join(id))
-                .expect("filed artifact record")
-                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-                .collect();
-        assert_eq!(
-            entries,
-            vec!["meta.json".to_string()],
-            "only the record stays hidden"
+    for (id, kind) in [(&image_id, "image"), (&video_id, "video")] {
+        let record = openhuman_core::agent::artifacts::ops::ai_get_artifact(&config, id)
+            .await
+            .expect("filed artifact record")
+            .value;
+        assert_eq!(record["kind"], kind);
+        assert_eq!(record["status"], "ready");
+        let path = std::path::Path::new(
+            record["absolute_path"]
+                .as_str()
+                .expect("resolved artifact path"),
         );
+        assert!(path.starts_with(&files_dir), "{path:?}");
+        assert!(path.is_file(), "{path:?}");
     }
     let mut saved: Vec<(String, Vec<u8>)> = std::fs::read_dir(&files_dir)
         .expect("visible files folder")

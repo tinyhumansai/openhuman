@@ -1,8 +1,21 @@
 //! Native and Docker shell runtime adapters (`RuntimeAdapter` implementations).
 
-use crate::agent::platform_shell;
 use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
+pub use tinybox_bus::ShellFlavor;
+
+/// The shell family the TinyBox module selects on this machine.
+///
+/// TinyBox is loaded in-process, so its machine is this host. This is only the
+/// answer to "what do we tell the model about the shell?"; which shell actually
+/// runs, and how, is the module's `SelectShell` / `StartNativeShellExec`.
+pub const fn host_shell_flavor() -> ShellFlavor {
+    if cfg!(windows) {
+        ShellFlavor::Cmd
+    } else {
+        ShellFlavor::Posix
+    }
+}
 
 /// Runtime adapter — abstracts platform differences for tools that need
 /// to spawn shell commands. The agent holds a boxed `dyn RuntimeAdapter`
@@ -17,17 +30,17 @@ pub trait RuntimeAdapter: Send + Sync {
     fn memory_budget(&self) -> u64 {
         0
     }
-    /// The shell family [`Self::build_shell_command`] runs commands under, so
-    /// what the `shell` tool tells the model matches what actually executes.
-    /// Defaults to the host's own shell.
-    fn shell_flavor(&self) -> platform_shell::ShellFlavor {
-        platform_shell::ShellFlavor::current()
+    /// The shell family commands run under, so what the `shell` tool tells the
+    /// model matches what actually executes. Defaults to the host's own shell.
+    fn shell_flavor(&self) -> ShellFlavor {
+        host_shell_flavor()
     }
-    fn build_shell_command(
-        &self,
-        command: &str,
-        workspace_dir: &Path,
-    ) -> anyhow::Result<tokio::process::Command>;
+
+    /// Windows: start shell children without a console window
+    /// (`[shell] hide_window`). Passed to TinyBox on the native shell request.
+    fn hide_window(&self) -> bool {
+        false
+    }
 
     /// Build a module-owned Docker request when this runtime does not execute
     /// through a host child process. The shell tool supplies its filtered
@@ -91,50 +104,9 @@ impl RuntimeAdapter for NativeRuntime {
         0
     }
 
-    fn build_shell_command(
-        &self,
-        command: &str,
-        workspace_dir: &Path,
-    ) -> anyhow::Result<tokio::process::Command> {
-        // Shell selection is shared with the sandboxed execution paths in
-        // `sandbox::ops` so all three sites (native, unsandboxed, jailed)
-        // pick the same platform-appropriate shell (#4705).
-        let mut cmd = platform_shell::build_tokio_command(command);
-        // Validate the CWD up front so a missing/bad action_dir produces an
-        // actionable message naming the path, instead of an opaque OS error 267
-        // (ERROR_DIRECTORY) from CreateProcessW on Windows / a raw ENOENT on
-        // Unix when the process is spawned. Covers all three shell-family tools
-        // (shell) since it routes through here.
-        // (#3353, Fix 2)
-        crate::config::ensure_usable_cwd(workspace_dir)?;
-        cmd.current_dir(workspace_dir);
-        // Optionally suppress the Windows console window for this child process
-        // (`[shell] hide_window`). No-op when disabled and on non-Windows hosts.
-        maybe_hide_window(&mut cmd, self.hide_window);
-        Ok(cmd)
+    fn hide_window(&self) -> bool {
+        self.hide_window
     }
-}
-
-/// Suppress the Windows console window for a shell child process when `hide` is
-/// set, by applying the `CREATE_NO_WINDOW` creation flag (`0x08000000`). No-op
-/// when `hide` is false, and on non-Windows hosts the flag does not exist so this
-/// does nothing regardless. Delegates to the shared [`apply_no_window`] helper so
-/// there is a single source of truth for the flag (#3727/#3728).
-fn maybe_hide_window(cmd: &mut tokio::process::Command, hide: bool) {
-    tracing::trace!(
-        hide_window = hide,
-        windows = cfg!(windows),
-        "[agent][runtime] hide_window evaluated for shell child process"
-    );
-    if !hide {
-        return;
-    }
-    tinyinference_local::process::apply_no_window(cmd);
-    #[cfg(windows)]
-    tracing::debug!(
-        creation_flags = "0x08000000",
-        "[agent][runtime] applied CREATE_NO_WINDOW to shell child process"
-    );
 }
 
 pub struct DockerRuntime {
@@ -178,16 +150,8 @@ impl RuntimeAdapter for DockerRuntime {
 
     /// Commands run under `sh -lc` inside the container on every host,
     /// including Windows, so the model must be told POSIX, not cmd.exe.
-    fn shell_flavor(&self) -> platform_shell::ShellFlavor {
-        platform_shell::ShellFlavor::Posix
-    }
-
-    fn build_shell_command(
-        &self,
-        _command: &str,
-        _workspace_dir: &Path,
-    ) -> anyhow::Result<tokio::process::Command> {
-        anyhow::bail!("Docker commands are executed through the TinyBox module")
+    fn shell_flavor(&self) -> ShellFlavor {
+        ShellFlavor::Posix
     }
 
     #[cfg(feature = "modules")]

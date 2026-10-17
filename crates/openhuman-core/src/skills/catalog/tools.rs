@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::skills::ops_install::{ScanAcknowledgement, ScanBlockedOutcome, SkillInstallOutcome};
-use crate::tools::status::{NOT_FOUND_MARKER, UNSUPPORTED_MARKER};
+use tinytools::status::{NOT_FOUND_MARKER, UNSUPPORTED_MARKER};
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use super::ops;

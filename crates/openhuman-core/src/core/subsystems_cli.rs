@@ -66,7 +66,8 @@ pub fn run_subsystems_command(args: &[String]) -> Result<()> {
 /// The slot table for a standalone CLI invocation: the same rows the
 /// `subsystems status` RPC returns, resolved from the on-disk config.
 async fn cli_subsystems_status() -> Vec<SubsystemStatus> {
-    subsystems_status().await
+    // A standalone CLI call is the host's one context.
+    subsystems_status(&crate::core::runtime::DispatchCtx::host_default()).await
 }
 
 fn print_help() {

@@ -2,11 +2,10 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 use super::types::CommandRiskLevel;
-use super::types::{
-    AutonomyLevel, CommandClass, GateDecision, SecurityPolicy, POLICY_BLOCKED_MARKER,
-};
+use super::types::{AutonomyLevel, GateDecision, SecurityPolicy};
 #[cfg(test)]
 use crate::util::floor_char_boundary;
+use tinybox_bus::CommandClass;
 #[cfg(test)]
 use tinybox_core::shell::classify::{classify_segment, has_hidden_execution};
 #[cfg(test)]
@@ -19,6 +18,7 @@ use tinybox_core::shell::scan::{
     has_leading_env_assignment, normalized_command_name, skip_env_assignments,
     split_unquoted_segments, strip_quoted_heredoc_bodies,
 };
+use tinytools::status::POLICY_BLOCKED_MARKER;
 
 impl SecurityPolicy {
     /// Apply the supervised allowlist to parser facts returned by TinyBox.
@@ -80,15 +80,7 @@ impl SecurityPolicy {
         let mut class = analysis
             .segments
             .iter()
-            .map(|segment| match segment.class {
-                crate::modules::tinybox::contract::CommandClass::Read => CommandClass::Read,
-                crate::modules::tinybox::contract::CommandClass::Write => CommandClass::Write,
-                crate::modules::tinybox::contract::CommandClass::Network => CommandClass::Network,
-                crate::modules::tinybox::contract::CommandClass::Install => CommandClass::Install,
-                crate::modules::tinybox::contract::CommandClass::Destructive => {
-                    CommandClass::Destructive
-                }
-            })
+            .map(|segment| segment.class)
             .max()
             .unwrap_or(CommandClass::Read);
         if analysis.redirection || analysis.tee {
@@ -240,15 +232,7 @@ impl SecurityPolicy {
             let base = normalized_command_name(base_raw);
             let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
             let joined = cmd_part.to_ascii_lowercase();
-            let segment_class = match classify_segment(&base, &args, &joined) {
-                tinybox_core::shell::classify::CommandClass::Read => CommandClass::Read,
-                tinybox_core::shell::classify::CommandClass::Write => CommandClass::Write,
-                tinybox_core::shell::classify::CommandClass::Network => CommandClass::Network,
-                tinybox_core::shell::classify::CommandClass::Install => CommandClass::Install,
-                tinybox_core::shell::classify::CommandClass::Destructive => {
-                    CommandClass::Destructive
-                }
-            };
+            let segment_class = classify_segment(&base, &args, &joined);
             class = class.max(segment_class);
         }
         // A redirect or `tee` writes a file regardless of the base command.

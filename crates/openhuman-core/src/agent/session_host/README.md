@@ -66,5 +66,5 @@ long conversation's generations without reading the whole chain.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Memory architecture](../../../../../gitbooks/developing/architecture/memory.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Memory architecture](../../../../../docs/gitbooks/en/developing/architecture/memory.md)

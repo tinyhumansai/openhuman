@@ -6,11 +6,11 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { type ChatSendError, chatSendError } from '../../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../../chat/promptInjectionGuard';
 import { trackAnalyticsEvent } from '../../components/analytics';
-import ChatFilesChip from '../../components/chat/ChatFilesChip';
 import WorkflowProposalCard from '../../components/chat/WorkflowProposalCard';
 import { ConfirmationModal } from '../../components/intelligence/ConfirmationModal';
 import { SidebarContent } from '../../components/layout/shell/SidebarSlot';
 import { ArtifactCardAdapter } from '../../features/conversations/aui/ArtifactCardAdapter';
+import { ArtifactPreviewPanel } from '../../features/conversations/aui/ArtifactPreviewPanel';
 import { ContextUsage } from '../../features/conversations/aui/ContextUsage';
 import { PlanReviewCardCore } from '../../features/conversations/aui/PlanReviewPart';
 import { useRunMode } from '../../features/conversations/aui/useRunMode';
@@ -68,6 +68,7 @@ import {
   fetchAndHydrateTurnState,
   hydrateThreadUsage,
   markThreadSendPending,
+  openArtifact,
   type ProcessingTranscriptItem,
   setToolTimelineForThread,
   type ToolTimelineEntry,
@@ -108,6 +109,7 @@ import {
 import { StallWarning } from './aui/StallWarning';
 import { ThreadWorkspaceChip } from './aui/ThreadWorkspaceChip';
 import { useChatSurfaceRegistration } from './hooks/useChatSurfaceRegistration';
+import { useThreadArtifactsHydration } from './hooks/useThreadArtifactsHydration';
 import { useThreadDraft } from './hooks/useThreadDraft';
 import { ThreadList } from './threadList/ThreadList';
 import { useThreadPins } from './threadList/useThreadPins';
@@ -259,6 +261,7 @@ const Conversations = ({
   projectThreadList = false,
 }: ConversationsProps = {}) => {
   const [composerOverride, setComposerOverride] = useState<'mic-cloud' | 'text' | null>(null);
+  const activeArtifactId = useAppSelector(s => s.chatRuntime.activeArtifactId);
   const composer = composerOverride ?? composerProp;
   const { t } = useT();
   const dispatch = useAppDispatch();
@@ -2011,11 +2014,27 @@ const Conversations = ({
       inferenceTurnLifecycleByThread[selectedThreadId] === 'streaming')
       ? (inferenceStatusByThread[selectedThreadId]?.phase ?? 'thinking')
       : null;
+  // The most recently issued tool still running, so a long healthy step (a
+  // build, a CI watch) is named instead of reading as a stuck turn. Run-ledger
+  // rows and detached sub-agents can outlive the turn that started them, so
+  // they say nothing about whether THIS turn is still working.
+  const selectedRunningTool =
+    selectedStalledPhase && selectedThreadId
+      ? (toolTimelineByThread[selectedThreadId] ?? [])
+          .filter(
+            entry =>
+              entry.status === 'running' &&
+              entry.sourceToolName !== 'run_ledger' &&
+              entry.subagent?.mode !== 'async'
+          )
+          .sort((a, b) => b.seq - a.seq)[0]
+      : undefined;
   const stallWarningBanner =
     selectedStalledPhase && selectedThreadId ? (
       <StallWarning
         phase={selectedStalledPhase}
         quietSince={stalledThreadIds.get(selectedThreadId)}
+        runningTool={selectedRunningTool}
         onStop={handleStopGeneration}
       />
     ) : null;
@@ -2141,9 +2160,7 @@ const Conversations = ({
 
   // Surface in-flight + failed artifact cards above the composer (#2779).
   // Mirrors the approval-card placement so the user sees the spinner / error
-  // without scrolling. `ready` cards are delegated to the header ChatFilesChip
-  // panel (#3024) so the chat scroll area isn't permanently occupied —
-  // restored decks are listable from the chip on demand.
+  // without scrolling.
   //
   // The failed-card Retry button re-dispatches the producing tool via
   // `ai_regenerate` (#3162): the core reloads the persisted creation args and
@@ -2155,12 +2172,19 @@ const Conversations = ({
   // (`MediaAndDocumentCalls.tsx`) instead, per the `ArtifactCardAdapter` doc.
   const liveArtifacts = artifactDeckThreadId
     ? (artifactsByThread[artifactDeckThreadId] ?? []).filter(
-        a => a.status !== 'ready' && !a.toolCallId
+        a =>
+          // Ready artifacts render inside their turn's reply, placed by the
+          // core's artifact rows (`MessageArtifactCards`); so does an
+          // in-progress one whose event names its turn. Here wait an
+          // in-progress artifact with no turn (an older core) and every failed
+          // one, which needs its Retry button.
+          !a.toolCallId &&
+          (a.status === 'failed' || (!a.ownerRequestId && a.status === 'in_progress'))
       )
     : [];
   const liveArtifactDeck =
     liveArtifacts.length > 0 && artifactDeckThreadId ? (
-      <div className="mb-2 flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         {liveArtifacts.map(artifact => (
           <ArtifactCardAdapter
             key={artifact.artifactId}
@@ -2170,15 +2194,13 @@ const Conversations = ({
                 console.warn('[artifact] regenerate failed:', err);
               });
             }}
+            onOpenPreview={id => dispatch(openArtifact(id))}
           />
         ))}
       </div>
     ) : null;
 
-  const chatFilesChip =
-    (selectedThreadId ?? firstActiveThreadId) ? (
-      <ChatFilesChip threadId={(selectedThreadId ?? firstActiveThreadId) as string} />
-    ) : null;
+  useThreadArtifactsHydration(selectedThreadId ?? firstActiveThreadId);
 
   const assistantComposerHeader = (
     <div
@@ -2211,7 +2233,6 @@ const Conversations = ({
       {sendErrorBanner}
       {stallWarningBanner}
       {sendAdvisoryBanner}
-      {liveArtifactDeck}
       {/* The core's run queue for this thread; renders nothing while empty. */}
       <ComposerMessageQueue />
       {/* Where this conversation works. Last, so it sits directly on the
@@ -2229,7 +2250,6 @@ const Conversations = ({
         onChange={applyComposerReasoningEffort}
         modelLabel={reasoningModel}
       />
-      {chatFilesChip}
     </>
   );
 
@@ -2333,6 +2353,7 @@ const Conversations = ({
         onOpenHumanMode={() => openTinyVoice(chatMascot, navigate)}
         onSwitchToMicCloud={() => setComposerOverride('mic-cloud')}
         onModelChange={applyComposerModel}
+        afterMessages={liveArtifactDeck}
       />
       {/* The transcript-local overlays: background processes and the Agent
           Process Source panel. Mounted beside the Thread (not inside it)
@@ -2389,7 +2410,10 @@ const Conversations = ({
               {threadSidebar}
             </div>
           </SidebarContent>
-          <div className="flex h-full w-full">{mainPanel}</div>
+          <div className="flex h-full w-full min-w-0">
+            {mainPanel}
+            {activeArtifactId && <ArtifactPreviewPanel />}
+          </div>
         </>
       )}
       <ConfirmationModal

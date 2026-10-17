@@ -6,19 +6,17 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use tinycomputer_bus::agent::{TaskStatus, TaskView};
-use tinycomputer_bus::browser::{Action, LocateBy, Locator, ScrollDirection, Target, WaitState};
+use tinycomputer_bus::browser::tool::ToolArgs;
+use tinycomputer_bus::browser::Action;
 
 /// What the host adds to a task report the agent cannot act on alone: a
-/// task that failed because Chrome was not found says where the user sets
-/// its path, rather than leaving the agent to install a browser.
+/// task that failed because Chrome was not found, or would not start from
+/// the path the user set, says where the user sets that path, rather than
+/// leaving the agent to install a browser.
 pub(super) fn host_hint(view: &TaskView) -> Option<&'static str> {
     match &view.status {
-        TaskStatus::Failed { reason, hint, .. }
-            if crate::modules::browser::chrome_not_found(reason)
-                || crate::modules::browser::chrome_not_found(hint) =>
-        {
-            Some(crate::modules::browser::CHROME_NOT_FOUND_HINT)
-        }
+        TaskStatus::Failed { reason, hint, .. } => crate::modules::browser::chrome_hint(reason)
+            .or_else(|| crate::modules::browser::chrome_hint(hint)),
         _ => None,
     }
 }
@@ -29,7 +27,7 @@ pub(super) fn host_hint(view: &TaskView) -> Option<&'static str> {
 /// not finish. Every other state (running, paused for a person, input or
 /// approval, a checkpoint, done) is a success the model acts on.
 pub(super) fn task_outcome(view: &TaskView, output: Value) -> anyhow::Result<Value> {
-    let marker = crate::tools::status::TASK_FAILED_MARKER;
+    let marker = tinytools::status::TASK_FAILED_MARKER;
     let headline = match &view.status {
         TaskStatus::Failed {
             step, reason, hint, ..
@@ -131,70 +129,11 @@ pub(super) fn required<'a>(args: &'a Value, key: &str) -> anyhow::Result<&'a str
         .ok_or_else(|| anyhow::anyhow!("Missing '{key}' parameter"))
 }
 
-pub(super) fn parse_action(args: &Value) -> anyhow::Result<Action> {
-    let target = || required(args, "selector").map(Target::parse);
-    Ok(match required(args, "action")? {
-        "click" => Action::Click {
-            target: target()?,
-            new_tab: false,
-        },
-        "fill" => Action::Fill {
-            target: target()?,
-            value: required(args, "value")?.into(),
-        },
-        "type" => Action::Type {
-            target: args["selector"].as_str().map(Target::parse),
-            text: required(args, "text")?.into(),
-            delay_ms: None,
-        },
-        "get_text" => Action::GetText { target: target()? },
-        "is_visible" => Action::IsVisible { target: target()? },
-        "hover" => Action::Hover { target: target()? },
-        "press" => Action::Press {
-            key: required(args, "key")?.into(),
-        },
-        "scroll" => Action::Scroll {
-            direction: match required(args, "direction")? {
-                "up" => ScrollDirection::Up,
-                "down" => ScrollDirection::Down,
-                "left" => ScrollDirection::Left,
-                "right" => ScrollDirection::Right,
-                x => anyhow::bail!("Invalid direction: {x}"),
-            },
-            pixels: args["pixels"].as_u64().and_then(|v| u32::try_from(v).ok()),
-            target: None,
-        },
-        "wait" => Action::WaitFor {
-            target: args["selector"].as_str().map(Target::parse),
-            text: args["text"].as_str().map(str::to_owned),
-            state: WaitState::Visible,
-            ms: args["ms"].as_u64(),
-            timeout_ms: args["timeout_ms"].as_u64(),
-        },
-        "find" => {
-            let by = match required(args, "by")? {
-                "role" => LocateBy::Role,
-                "text" => LocateBy::Text,
-                "label" => LocateBy::Label,
-                "placeholder" => LocateBy::Placeholder,
-                "testid" => LocateBy::TestId,
-                x => anyhow::bail!("Invalid locator: {x}"),
-            };
-            let target = Target::locator(Locator::new(by, required(args, "value")?));
-            match required(args, "find_action")? {
-                "click" => Action::Click {
-                    target,
-                    new_tab: false,
-                },
-                "fill" => Action::Fill {
-                    target,
-                    value: required(args, "fill_value")?.into(),
-                },
-                "text" => Action::GetText { target },
-                "hover" => Action::Hover { target },
-                x => anyhow::bail!("Invalid find action: {x}"),
-            }
-        }
-        x => anyhow::bail!("Unsupported browser action: {x}"),
-    })
+/// Decodes the model's arguments into the contract's [`ToolArgs`] and maps
+/// them to the module's page [`Action`]; the schema and mapping live in
+/// `tinycomputer_bus::browser::tool`.
+pub(super) fn direct_action(args: &Value) -> anyhow::Result<Action> {
+    let parsed: ToolArgs = serde_json::from_value(args.clone())
+        .map_err(|e| anyhow::anyhow!("Invalid browser arguments: {e}"))?;
+    Ok(parsed.to_action()?)
 }

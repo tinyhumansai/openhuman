@@ -83,6 +83,97 @@ fn ingestion_url_targets_backend_proxy_route() {
 }
 
 #[test]
+fn flow_export_targets_the_v4_otlp_proxy_route() {
+    let mut config = Config::default();
+    config.api_url = Some("https://staging-api.tinyhumans.ai/api/v1".to_string());
+    let client = LangfuseClient::new(
+        ingestion_url(&config),
+        LangfuseAuth::Bearer {
+            token: "tok".to_string(),
+        },
+    )
+    .expect("client");
+    assert_eq!(
+        build_flow_exporter(client, "flow-1")
+            .client()
+            .otlp_endpoint(),
+        "https://staging-api.tinyhumans.ai/telemetry/langfuse/otel/v1/traces"
+    );
+}
+
+/// The string value of OTLP span attribute `key`, if present.
+fn otlp_attr<'a>(span: &'a Value, key: &str) -> Option<&'a str> {
+    span["attributes"]
+        .as_array()?
+        .iter()
+        .find(|item| item["key"] == key)?["value"]["stringValue"]
+        .as_str()
+}
+
+#[test]
+fn otlp_flow_trace_puts_flow_attributes_on_every_span() {
+    let thread_id = "flow:flow-1:uuid-1";
+    let client = LangfuseClient::new(
+        "https://backend.test/telemetry/langfuse/ingestion",
+        LangfuseAuth::Bearer {
+            token: "tok".to_string(),
+        },
+    )
+    .expect("client");
+    let trace = build_flow_trace_config(
+        "Daily digest",
+        "flow-1",
+        thread_id,
+        "completed",
+        FlowRunTrigger::Rpc,
+    );
+    let requests = flow_otlp_requests(
+        &build_flow_exporter(client, "flow-1"),
+        trace,
+        &to_exporter_observations(&sample_observations(thread_id)),
+    )
+    .expect("otlp requests");
+    let resource = &requests[0]["resourceSpans"][0];
+    assert_eq!(
+        resource["resource"]["attributes"][0]["value"]["stringValue"],
+        "openhuman"
+    );
+    let spans = resource["scopeSpans"][0]["spans"]
+        .as_array()
+        .expect("spans");
+    assert!(spans.len() >= 3, "run, step and node spans");
+    for span in spans {
+        assert_eq!(
+            otlp_attr(span, "langfuse.trace.name"),
+            Some("flow.run:Daily digest")
+        );
+        assert_eq!(otlp_attr(span, "langfuse.session.id"), Some("flow:flow-1"));
+        assert_eq!(otlp_attr(span, "langfuse.release"), Some(APP_VERSION));
+        assert_eq!(
+            otlp_attr(span, "langfuse.trace.metadata.flow_id"),
+            Some("flow-1")
+        );
+        assert_eq!(
+            otlp_attr(span, "langfuse.trace.metadata.trigger"),
+            Some("rpc")
+        );
+        assert!(otlp_attr(span, "langfuse.trace.input").is_none());
+    }
+    let node = spans
+        .iter()
+        .find(|span| span["name"] == "fetch")
+        .expect("node span");
+    assert_eq!(
+        otlp_attr(node, "langfuse.observation.metadata.langgraph_node"),
+        Some("fetch")
+    );
+    assert_eq!(
+        otlp_attr(node, "langfuse.observation.metadata.flow_id"),
+        Some("flow-1")
+    );
+}
+
+#[test]
 fn flow_trace_config_uses_thread_id_and_flow_coordinates() {
     let trace = build_flow_trace_config(
         "Daily digest",
@@ -230,7 +321,9 @@ async fn export_skips_api_key_credentials() {
     );
 }
 
-/// The re-typing hop is a serde round-trip between two independently
+/// The re-typing mapper itself lives (and is tested) in
+/// `tinyflows::observe`; this pins it against `tinyagents`' exporter type,
+/// which only the host sees. The hop is a serde round-trip between two independently
 /// declared types, so nothing but a test notices when one of them grows,
 /// renames, or re-tags a field: `to_exporter_observations` would start
 /// silently dropping observations and the trace would quietly lose spans.
@@ -240,7 +333,7 @@ async fn export_skips_api_key_credentials() {
 fn re_typing_preserves_every_field() {
     let thread_id = "flow:flow-1:uuid-1";
     let engine = sample_observations(thread_id);
-    let converted = to_exporter_observations(&engine);
+    let converted: Vec<GraphObservation> = to_exporter_observations(&engine);
 
     assert_eq!(
         converted.len(),

@@ -5,7 +5,7 @@
 //! `publish_global`-ed inline across every turn/orchestration path
 //! (`tools/dispatch.rs`, `tools/spawn_subagent.rs`,
 //! `tools/spawn_async_subagent.rs`, `tools/continue_subagent.rs`,
-//! `spawn_parallel_graph.rs`). That scattered
+//! `spawn_parallel.rs`). That scattered
 //! the ordering/rate-limiting decision across many call sites.
 //!
 //! This module centralizes construction + publish so there is exactly one place

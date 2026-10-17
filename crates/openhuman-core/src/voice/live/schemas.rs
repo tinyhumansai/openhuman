@@ -3,12 +3,12 @@
 //! The session itself is not an RPC — it runs over the `/ws/live-voice`
 //! WebSocket (`ws.rs`).
 
+use crate::core::runtime::DispatchCtx;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use super::ops;
 use super::types::LiveSettingsPatch;
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
@@ -117,34 +117,34 @@ struct TestParams {
     provider: String,
 }
 
-fn handle_live_providers(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_live_providers(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_value(ops::live_providers(&config).value)
     })
 }
 
-fn handle_live_settings_get(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_live_settings_get(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_value(ops::live_settings_get(&config).value)
     })
 }
 
-fn handle_live_settings_set(params: Map<String, Value>) -> ControllerFuture {
+fn handle_live_settings_set(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let patch: LiveSettingsPatch = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        let mut config = config_rpc::load_config_with_timeout().await?;
+        let mut config = ctx.load_config().await?;
         to_value(ops::live_settings_set(&mut config, patch).await?.value)
     })
 }
 
-fn handle_live_test_provider(params: Map<String, Value>) -> ControllerFuture {
+fn handle_live_test_provider(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params: TestParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_value(
             ops::live_test_provider(&config, &params.provider)
                 .await

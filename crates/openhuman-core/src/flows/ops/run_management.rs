@@ -1,5 +1,7 @@
 use super::*;
 
+use tinyflows_catalog::run_management as rm;
+
 /// Cancels a flow run (issue G4), settling it to a terminal `"cancelled"`
 /// status and dropping its durable checkpoint so the aborted thread can never
 /// be resumed.
@@ -24,14 +26,8 @@ pub async fn flows_cancel_run(config: &Config, run_id: &str) -> Result<Outcome<V
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("flow run '{run_id}' not found"))?;
 
-    if matches!(
-        run.status.as_str(),
-        "completed" | "completed_with_warnings" | "failed" | "cancelled" | "interrupted"
-    ) {
-        return Err(format!(
-            "flow run '{run_id}' is already terminal (status: {}) — nothing to cancel",
-            run.status
-        ));
+    if rm::is_terminal_run_status(&run.status) {
+        return Err(rm::already_terminal_error(run_id, &run.status));
     }
 
     let signalled = run_registry::cancel(run_id);
@@ -85,10 +81,7 @@ pub async fn flows_cancel_run(config: &Config, run_id: &str) -> Result<Outcome<V
             prior_status = %run.status,
             "[flows] flows_cancel_run: run settled concurrently — leaving its terminal status intact"
         );
-        return Err(format!(
-            "flow run '{run_id}' settled before it could be cancelled — its recorded outcome was \
-             left untouched"
-        ));
+        return Err(rm::settled_concurrently_error(run_id));
     }
     if let Err(e) = store::record_run(config, &run.flow_id, "cancelled") {
         tracing::warn!(target: "flows", run_id, flow_id = %run.flow_id, error = %e, "[flows] flows_cancel_run: failed to record cancelled status on flow summary");
@@ -157,14 +150,14 @@ pub async fn flows_list_all_runs(
 }
 
 /// Manually prunes a flow's run history down to the retention cap
-/// ([`tinyflows_sqlite::flows::MAX_FLOW_RUNS_PER_FLOW`]), deleting only terminal runs outside the
+/// ([`tinyflows_drivers::catalog::MAX_FLOW_RUNS_PER_FLOW`]), deleting only terminal runs outside the
 /// newest-N window. Never removes a `running` or `pending_approval` run — a
 /// parked run must survive for a later `flows_resume`. Pruning also happens
 /// automatically on every new-run insert; this RPC exposes it for an explicit
 /// on-demand sweep (e.g. a maintenance action). Returns the number of runs
 /// pruned.
 pub async fn flows_prune_runs(config: &Config, flow_id: &str) -> Result<Outcome<Value>, String> {
-    let keep = tinyflows_sqlite::flows::MAX_FLOW_RUNS_PER_FLOW;
+    let keep = tinyflows_drivers::catalog::MAX_FLOW_RUNS_PER_FLOW;
     let pruned = store::prune_flow_runs(config, flow_id, keep).map_err(|e| e.to_string())?;
     tracing::info!(target: "flows", flow_id, pruned, keep, "[flows] flows_prune_runs: manual retention sweep");
     Ok(Outcome::single_log(
@@ -202,7 +195,7 @@ pub async fn sweep_expired_parked_runs(config: &Config) -> usize {
     let now = Utc::now();
     let cutoff = (now - chrono::Duration::seconds(FLOW_PARKED_TTL_SECS)).to_rfc3339();
     let now_str = now.to_rfc3339();
-    let error_msg = format!("parked run expired after {FLOW_PARKED_TTL_SECS}s awaiting approval");
+    let error_msg = rm::parked_expiry_message(FLOW_PARKED_TTL_SECS);
 
     let swept = match store::expire_parked_runs(config, &cutoff, &now_str, &error_msg) {
         Ok(swept) => swept,
@@ -270,49 +263,27 @@ pub async fn sweep_expired_parked_runs(config: &Config) -> usize {
 /// resumable — only `pending_approval` is). Best-effort by construction: a store
 /// error is logged and the sweep returns what it managed.
 pub async fn sweep_orphaned_running_runs_on_boot(config: &Config) -> usize {
-    match boot_sweep_plan(crate::storage::installed_is_shared()) {
-        BootSweepPlan::Nothing => {
+    match rm::boot_sweep_plan(crate::storage::installed_is_shared()) {
+        rm::BootSweepPlan::Nothing => {
             tracing::info!(target: "flows", "[flows] boot sweep: skipped, the storage backend is shared");
             0
         }
-        BootSweepPlan::EveryScope => {
-            crate::storage::agents::for_each_scope("flows boot sweep", || {
-                sweep_orphaned_running_runs_in_scope(config)
-            })
-            .await
-            .into_iter()
-            .map(|(_, swept)| swept)
-            .sum()
-        }
-    }
-}
-
-/// Which scopes the boot sweep reconciles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BootSweepPlan {
-    /// `local`, then every agent scope (`crate::storage::agents`).
-    EveryScope,
-    /// No scope.
-    Nothing,
-}
-
-/// The boot sweep's scopes. On a backend other processes share (MongoDB) a
-/// `running` row below the boot floor — `local` or an agent's — can belong to
-/// a run another replica is still driving, and sweeping it would drop that
-/// run's checkpoint, so nothing is swept there, as the agent run reaper does.
-pub(crate) fn boot_sweep_plan(shared: bool) -> BootSweepPlan {
-    if shared {
-        BootSweepPlan::Nothing
-    } else {
-        BootSweepPlan::EveryScope
+        rm::BootSweepPlan::EveryScope => crate::storage::agents::for_each_scope(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            "flows boot sweep",
+            |_| sweep_orphaned_running_runs_in_scope(config),
+        )
+        .await
+        .into_iter()
+        .map(|(_, swept)| swept)
+        .sum(),
     }
 }
 
 /// [`sweep_orphaned_running_runs_on_boot`] for the current storage scope.
 async fn sweep_orphaned_running_runs_in_scope(config: &Config) -> usize {
     let now_str = Utc::now().to_rfc3339();
-    const REASON: &str =
-        "Run interrupted by an app restart — no live run was executing this row after boot.";
+    const REASON: &str = rm::ORPHANED_RUN_REASON;
 
     let floor: &str = PROCESS_RUN_FLOOR.as_str();
     tracing::debug!(target: "flows", floor, "[flows] boot sweep: reconciling only runs started before this process");

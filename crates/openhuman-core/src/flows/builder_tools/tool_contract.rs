@@ -126,8 +126,7 @@ impl Tool for GetToolContractTool {
                 // every GitHub action verified live as of this fix), where
                 // `contract.primary_array_path` would otherwise be
                 // permanently `None`.
-                let contract =
-                    crate::flows::tinyflows::caps::apply_probe_override(contract.clone());
+                let contract = contract.clone();
 
                 // WS3 — EARLY runtime-gate warning (transcript failure #2): a
                 // real-but-uncurated action of a toolkit that ships a curated
@@ -179,7 +178,7 @@ impl Tool for GetToolContractTool {
 /// for `slug` and derive its `primary_array_path`/`output_fields` from the
 /// ACTUAL response, overriding `get_tool_contract`'s schema-derived hint for
 /// this slug from then on (see
-/// [`crate::flows::tinyflows::caps::apply_probe_override`]).
+/// the module's probe overlay).
 ///
 /// **Exists because a schema-derived hint sometimes doesn't exist at all**:
 /// Composio's live listing genuinely omits `output_parameters` for some

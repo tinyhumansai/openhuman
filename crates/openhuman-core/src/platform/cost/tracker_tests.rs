@@ -1,5 +1,7 @@
 use super::*;
 use chrono::{Datelike, Duration};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use tempfile::TempDir;
 
 fn enabled_config() -> CostConfig {
@@ -355,13 +357,16 @@ fn get_dashboard_budget_status_warning_and_exceeded() {
         monthly_limit_usd: 100.0,
         ..Default::default()
     };
-    let tracker = CostTracker::new(config.clone(), tmp.path()).unwrap();
+    let tracker = CostTracker::new(config, tmp.path()).unwrap();
     let warn_dash = tracker.get_dashboard("USD", 0.8, 0.95).unwrap();
     assert_eq!(warn_dash.budget_status, BudgetStatus::Warning);
 
-    write_raw_record(tmp.path(), &dated_record("s1", MANAGED_MODEL, 15.0, today));
-    let tracker2 = CostTracker::new(config, tmp.path()).unwrap();
-    let alert_dash = tracker2.get_dashboard("USD", 0.8, 0.95).unwrap();
+    // The legacy ledger is imported once, so the next spend goes through the
+    // tracker like any other.
+    tracker
+        .record_usage_unconditional(dated_record("s1", MANAGED_MODEL, 15.0, today).usage)
+        .unwrap();
+    let alert_dash = tracker.get_dashboard("USD", 0.8, 0.95).unwrap();
     assert_eq!(alert_dash.budget_status, BudgetStatus::Exceeded);
     assert!((alert_dash.budget_utilization - 1.0).abs() < f64::EPSILON);
 }

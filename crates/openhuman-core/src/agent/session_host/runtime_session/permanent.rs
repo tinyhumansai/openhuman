@@ -15,7 +15,7 @@ pub(super) fn refresh_visibility(
     // a `Deferred` synthesised tool leaves the wire and joins the
     // searchable set, on a belt that opted into discovery.
     if surface.discovery_enabled {
-        let deferred = crate::tools::implementations::meta::deferred_set(
+        let deferred = tinytools::deferred_set(
             surface.tools.as_slice(),
             synthesized,
             &surface.requested_deferred_tools,
@@ -46,11 +46,17 @@ impl OpenHumanTurnPrelude {
             .tool_surface
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        preparation.prefix = super::super::managed_tools::refresh_prefix(
+        preparation.prefix = tinyagents_runtime::refresh_prefix(
             preparation.prefix.as_ref().unwrap_or(current),
             &surface.visible_tool_specs,
             &surface.permanent_tool_names,
+            "<openhuman-permanent-tools>\n",
+            "</openhuman-permanent-tools>",
         )
         .or(preparation.prefix.take());
     }
 }
+
+#[cfg(test)]
+#[path = "permanent_tests.rs"]
+mod tests;

@@ -1,5 +1,6 @@
 //! Controller schemas + handlers for `http_host`.
 
+use crate::core_host::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -159,16 +160,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_start(params: Map<String, Value>) -> ControllerFuture {
+fn handle_start(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params: StartHostedDirParams = parse(params)?;
-        crate::http_host::rpc::start(params)
+        crate::http_host::rpc::start(&ctx, params)
             .await?
             .into_cli_compatible_json()
     })
 }
 
-fn handle_stop(params: Map<String, Value>) -> ControllerFuture {
+fn handle_stop(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params: HostedDirLookupParams = parse(params)?;
         crate::http_host::rpc::stop(params)
@@ -177,7 +178,7 @@ fn handle_stop(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_get(params: Map<String, Value>) -> ControllerFuture {
+fn handle_get(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let params: HostedDirLookupParams = parse(params)?;
         crate::http_host::rpc::get(params)
@@ -186,7 +187,7 @@ fn handle_get(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_list(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         crate::http_host::rpc::list()
             .await?

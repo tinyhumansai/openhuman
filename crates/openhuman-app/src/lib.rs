@@ -22,7 +22,7 @@
 //! This crate is excluded from the root Cargo workspace — build it with
 //! `cargo check --manifest-path crates/openhuman-app/Cargo.toml`. See
 //! `README.md` in this crate and
-//! [`gitbooks/developing/architecture/tauri-shell.md`](../../../gitbooks/developing/architecture/tauri-shell.md)
+//! [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
 //! for the full IPC surface and lifecycle model.
 
 // Desktop targets: Windows, macOS, Linux. iOS + Android live in
@@ -66,8 +66,8 @@ const _: () = assert!(
 const _: &str = openhuman_rpc::embed::modules::browser::MODULE_ID;
 
 mod app_update;
-// Artifact export command (#2779) — cross-platform Downloads copy. The `rfd`
-// Save-As dialog that used to sit in front of it was removed with the crate.
+// Artifact export commands (#2779): the OS save dialog (`save_artifact_as`)
+// and the cross-platform Downloads copy.
 mod artifact_commands;
 mod claude_code;
 mod core_process;
@@ -109,6 +109,7 @@ mod ptt_overlay;
 mod reset_reboot_schedule;
 mod session;
 mod stderr_panic_hook;
+mod widget_scheme;
 mod window_state;
 mod workspace_paths;
 
@@ -2879,13 +2880,14 @@ pub fn run() {
         // Native backstop: the main webview never loads a remote page; any
         // http(s) navigation away from the app is handed to the OS browser.
         .plugin(external_navigation::init())
+        .register_asynchronous_uri_scheme_protocol(widget_scheme::SCHEME, widget_scheme::handle)
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // Auto-updater for the Tauri shell. Endpoint and minisign pubkey live
         // in `tauri.conf.json` under `plugins.updater`. Releases are signed at
         // build time with `TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`); see
-        // gitbooks/overview/auto-update.md for the full pipeline.
+        // docs/gitbooks/en/overview/auto-update.md for the full pipeline.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(dictation_hotkeys::DictationHotkeyState(
             std::sync::Mutex::new(Vec::new()),
@@ -2938,7 +2940,7 @@ pub fn run() {
                         "[deep-link] openhuman:// scheme registration unhealthy — \
                          OAuth callbacks may never reach the app. \
                          register_all_error={register_err:?}, hkcu_status={status_log}. \
-                         See gitbooks/overview/troubleshooting-sign-in.md \
+                         See docs/gitbooks/en/overview/troubleshooting-sign-in.md \
                          (\"Windows: openhuman:// handler not registered\") for the manual repair."
                     );
                 }
@@ -3300,9 +3302,10 @@ pub fn run() {
             process_diagnostics_list_owned,
             // Artifact export — cross-platform. Previously macOS/Linux-gated,
             // but the `directories` + `tokio::fs::copy` flow compiles on Windows
-            // too (CodeRabbit on #4127). The Save-As dialog that used to sit in
-            // front of this went with the shell's `rfd` dependency.
+            // too (CodeRabbit on #4127). `save_artifact_as` puts the OS save
+            // dialog in front of the copy.
             artifact_commands::download_artifact_to_downloads,
+            artifact_commands::save_artifact_as,
             // Native directory chooser for the folder memory-source (#5831).
             // Unlike the Save-As dialog above it, this one has no renderer-side
             // substitute: a `webkitdirectory` input cannot report where the

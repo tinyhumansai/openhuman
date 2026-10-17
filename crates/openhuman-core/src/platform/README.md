@@ -144,6 +144,6 @@ pnpm debug rust platform::
 
 ## Further reading
 
-- [Platform and availability](../../../../gitbooks/features/platform.md)
-- [Tauri shell architecture](../../../../gitbooks/developing/architecture/tauri-shell.md)
-- [Architecture overview](../../../../gitbooks/developing/architecture.md)
+- [Platform and availability](../../../../docs/gitbooks/en/features/platform.md)
+- [Tauri shell architecture](../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Architecture overview](../../../../docs/gitbooks/en/developing/architecture.md)

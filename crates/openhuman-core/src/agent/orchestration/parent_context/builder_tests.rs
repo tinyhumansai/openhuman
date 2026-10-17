@@ -1,5 +1,4 @@
 use super::*;
-use crate::agent::harness::fork_context::current_parent;
 
 fn test_config() -> (tempfile::TempDir, Config) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -10,58 +9,95 @@ fn test_config() -> (tempfile::TempDir, Config) {
     (dir, config)
 }
 
-/// Baseline for the bug: with no enclosing agent turn there is no ambient
-/// parent — exactly the state a background surface spawned `context_scout`
-/// in (TAURI-RUST-HMW / #4337), which made `run_subagent` return
-/// `NoParentContext`.
+/// Regression (TAURI-RUST-HMW / #4337): `with_root_parent` must hand a real
+/// parent to the wrapped closure so a background orchestration surface (cron
+/// job, workflow engine, team runtime) can spawn sub-agents without hitting
+/// `NoParentContext`. Proven by observing the parent the closure receives.
 #[tokio::test]
-async fn no_ambient_parent_outside_with_root_parent() {
-    assert!(
-        current_parent().is_none(),
-        "no parent context should be installed by default"
-    );
-}
-
-/// Regression (TAURI-RUST-HMW / #4337): `with_root_parent` must install a
-/// real parent for the wrapped future so a background orchestration surface
-/// (cron job, workflow engine, team runtime) can spawn sub-agents
-/// without hitting `NoParentContext`. Proven by observing the installed
-/// parent from inside the future.
-#[tokio::test]
-async fn with_root_parent_installs_parent_for_inner_future() {
+async fn with_root_parent_hands_a_root_parent_to_the_closure() {
     let (_dir, config) = test_config();
-    let observed = with_root_parent(&config, "cron", "cron", "cron", async {
-        current_parent().map(|p| p.agent_definition_id)
-    })
+    let observed = with_root_parent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        None,
+        &config,
+        "cron",
+        "cron",
+        "cron",
+        |parent| async move { parent.agent_definition_id },
+    )
     .await
     .expect("root parent builds from config");
     assert_eq!(
-        observed.as_deref(),
-        Some("cron"),
-        "inner future must observe the installed root parent"
+        observed, "cron",
+        "the closure must receive the root parent built from config"
     );
 }
 
-/// When a parent is already installed, `with_root_parent` reuses it instead
-/// of building a second root — so a surface nested in a turn (or a test
-/// driving it under a mock parent) runs under the ambient context.
+/// When a parent is passed explicitly, `with_root_parent` uses it instead of
+/// building a second root, so a test can drive a surface under a mock parent
+/// (and thus a mock provider) hermetically.
 #[tokio::test]
-async fn with_root_parent_reuses_ambient_parent() {
+async fn with_root_parent_uses_an_explicit_parent_override() {
     let (_dir, config) = test_config();
-    let outer = build_root_parent(&config, "outer", "outer", "outer")
-        .await
-        .expect("build ambient parent");
-    let observed = with_parent_context(outer, async {
-        with_root_parent(&config, "inner", "inner", "inner", async {
-            current_parent().map(|p| p.agent_definition_id)
-        })
-        .await
-        .expect("reuses ambient, no build error")
-    })
-    .await;
+    let outer = build_root_parent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "outer",
+        "outer",
+        "outer",
+    )
+    .await
+    .expect("build explicit parent");
+    let observed = with_root_parent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        Some(outer),
+        &config,
+        "inner",
+        "inner",
+        "inner",
+        |parent| async move { parent.agent_definition_id },
+    )
+    .await
+    .expect("uses the override, no build error");
     assert_eq!(
-        observed.as_deref(),
-        Some("outer"),
-        "with_root_parent must reuse the ambient parent, not build a new 'inner' root"
+        observed, "outer",
+        "with_root_parent must use the explicit parent, not build a new 'inner' root"
     );
+}
+
+/// The parent a surface spawns under is the value the closure received, not
+/// something read from the executing task: two concurrent surfaces on one
+/// runtime each see their own root.
+#[tokio::test]
+async fn concurrent_root_parents_do_not_cross() {
+    let (_dir, config) = test_config();
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let (a, b) = tokio::join!(
+        with_root_parent(
+            &ctx,
+            None,
+            &config,
+            "surface_a",
+            "a",
+            "a",
+            |parent| async move {
+                tokio::task::yield_now().await;
+                parent.agent_definition_id
+            }
+        ),
+        with_root_parent(
+            &ctx,
+            None,
+            &config,
+            "surface_b",
+            "b",
+            "b",
+            |parent| async move {
+                tokio::task::yield_now().await;
+                parent.agent_definition_id
+            }
+        ),
+    );
+    assert_eq!(a.expect("a"), "surface_a");
+    assert_eq!(b.expect("b"), "surface_b");
 }

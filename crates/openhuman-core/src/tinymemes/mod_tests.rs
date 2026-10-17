@@ -1,137 +1,63 @@
 use super::*;
 
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use tinymemes::decisions::{
-    Answer, ChoiceAnswer, EvaluationRequest, EvaluationResponse, NoulAnswer, ScoreAnswer, Usage,
-};
-use tinymemes::{BoxError, ChatModel, Evaluator, MemeEngine, Region};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::threads::store::ConversationMessage;
 
-/// Answers every reading question the same way, whatever the chat.
-struct ScriptedJev {
-    frankness: f64,
-    playful: f64,
-    serious: f64,
-    slang_enough: f64,
-    meme: Option<&'static str>,
-}
-
-#[async_trait]
-impl Evaluator for ScriptedJev {
-    async fn evaluate(&self, request: &EvaluationRequest) -> Result<EvaluationResponse, BoxError> {
-        let choice = |c: &str| {
-            Answer::Choice(ChoiceAnswer {
-                choice: c.to_owned(),
-                probabilities: BTreeMap::new(),
-                confidence: 0.9,
-            })
-        };
-        let noul = |p: f64| Answer::Noul(NoulAnswer { noul: p });
-        let mut answers = BTreeMap::from([
-            ("chat_intent".to_owned(), choice("celebration")),
-            ("reply_intent".to_owned(), choice("celebration")),
-            (
-                "frankness".to_owned(),
-                Answer::Score(ScoreAnswer {
-                    score: self.frankness * 4.0,
-                    legend: BTreeMap::new(),
-                    probabilities: BTreeMap::new(),
-                    confidence: 0.8,
-                }),
-            ),
-            ("playful".to_owned(), noul(self.playful)),
-            ("serious".to_owned(), noul(self.serious)),
-        ]);
-        if request.questions.contains_key("slang_enough") {
-            answers.insert("slang_enough".to_owned(), noul(self.slang_enough));
-            answers.insert("slang_best".to_owned(), choice("yaar"));
-        }
-        if let (Some(meme), true) = (self.meme, request.questions.contains_key("meme_best")) {
-            answers.insert("meme_best".to_owned(), choice(meme));
-        }
-        Ok(EvaluationResponse {
-            model: "jev-latest".into(),
-            answers,
-            usage: Usage::default(),
-        })
-    }
-}
-
-struct FailingJev;
-
-#[async_trait]
-impl Evaluator for FailingJev {
-    async fn evaluate(&self, _: &EvaluationRequest) -> Result<EvaluationResponse, BoxError> {
-        Err("jev down".into())
-    }
-}
-
-/// Returns a fixed rewrite, after an optional delay.
-struct ScriptedModel {
-    rewrite: &'static str,
+/// Answers every remix with a fixed response, after an optional delay.
+struct ScriptedRemixer {
+    response: Result<RemixResponse, String>,
     delay: Duration,
+    calls: AtomicUsize,
+    last: std::sync::Mutex<Option<RemixRequest>>,
+}
+
+impl ScriptedRemixer {
+    fn new(response: Result<RemixResponse, String>) -> Self {
+        Self {
+            response,
+            delay: Duration::ZERO,
+            calls: AtomicUsize::new(0),
+            last: std::sync::Mutex::new(None),
+        }
+    }
 }
 
 #[async_trait]
-impl ChatModel for ScriptedModel {
-    async fn complete(&self, _system: &str, _user: &str) -> Result<String, BoxError> {
+impl Remixer for ScriptedRemixer {
+    async fn remix(&self, request: RemixRequest) -> Result<RemixResponse, String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        *self.last.lock().unwrap() = Some(request);
         tokio::time::sleep(self.delay).await;
-        Ok(self.rewrite.to_owned())
+        self.response.clone()
     }
 }
 
-fn frank(slang_enough: f64) -> Arc<ScriptedJev> {
-    Arc::new(ScriptedJev {
-        frankness: 0.95,
-        playful: 0.95,
-        serious: 0.0,
-        slang_enough,
-        meme: None,
-    })
-}
-
-fn model(rewrite: &'static str) -> Arc<ScriptedModel> {
-    Arc::new(ScriptedModel {
-        rewrite,
-        delay: Duration::ZERO,
-    })
-}
-
-fn host(
-    dir: &tempfile::TempDir,
-    jev: Arc<dyn Evaluator>,
-    chat: Arc<dyn ChatModel>,
-    region: Option<Region>,
-) -> Arc<host::Host> {
-    let mut builder = MemeEngine::builder(jev, chat).learn_inline(None);
-    if let Some(region) = region {
-        builder = builder.region(region);
+fn remixed_response(reply: &str) -> RemixResponse {
+    RemixResponse {
+        reply: reply.to_owned(),
+        remixed: true,
+        skipped: None,
+        score: Some(7),
+        wants_more_memes: false,
     }
-    Arc::new(host::Host::new(
-        builder.build(),
-        dir.path().to_path_buf(),
-        VecDeque::new(),
-        0,
-    ))
 }
 
-fn config_in(dir: &std::path::Path) -> Config {
-    let mut config = Config::default();
-    config.config_path = dir.join("config.toml");
-    config.workspace_dir = dir.join("workspace");
-    config.secrets.encrypt = false;
-    config
+fn skipped_response(reply: &str, reason: SkipReason) -> RemixResponse {
+    RemixResponse {
+        reply: reply.to_owned(),
+        remixed: false,
+        skipped: Some(reason),
+        score: None,
+        wants_more_memes: false,
+    }
 }
 
 fn turn(request_id: &str) -> TurnInfo<'_> {
     TurnInfo {
         request_id,
         bucket: 7,
-        turn_ms: 1200,
+        turn_ms: 1234,
     }
 }
 
@@ -148,267 +74,248 @@ fn msg(id: &str, sender: &str, content: &str) -> ConversationMessage {
 
 fn thread() -> Vec<ConversationMessage> {
     vec![
-        msg("u1", "user", "yo the deploy finally went green lmaooo"),
-        msg("r1", "agent", "Nice. Want me to tag the release?"),
+        msg("u1", "user", "bhai build fail ho gaya"),
+        msg("r1", "agent", "Arre yaar, moye moye"),
     ]
 }
 
-const REPLY: &str = "Done. Tagged the release.";
-const REWRITE: &str = "Done bhai, release tagged, full send 🎉";
-
-/// Let spawned research tasks run to completion.
-async fn settle() {
-    for _ in 0..20 {
-        tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+async fn run(remixer: &ScriptedRemixer, request_id: &str, budget: Duration) -> Option<String> {
+    remix_with(
+        remixer,
+        options_with(None, 3, true),
+        &thread(),
+        &turn(request_id),
+        Instant::now(),
+        "phir se fail",
+        "Build failed again.",
+        budget,
+    )
+    .await
 }
 
 #[test]
-fn only_real_answers_are_remixed() {
-    let placeholder = "You've hit your inference budget.";
-    assert!(should_remix("Here's the fix.", placeholder));
-    assert!(!should_remix("", placeholder));
-    assert!(!should_remix("   \n", placeholder));
-    assert!(!should_remix(placeholder, placeholder));
+fn the_budget_defaults_to_the_configured_twenty_seconds() {
+    let config = Config::default();
+    assert_eq!(
+        budget_with(None, config.memes.timeout_ms),
+        Duration::from_secs(20)
+    );
+}
+
+#[test]
+fn the_budget_env_override_beats_config_and_bad_values_fall_back() {
+    assert_eq!(
+        budget_with(Some("1500"), 20_000),
+        Duration::from_millis(1500)
+    );
+    assert_eq!(
+        budget_with(Some("soon"), 7_000),
+        Duration::from_millis(7_000)
+    );
+}
+
+#[test]
+fn component_off_disables_every_arm() {
+    let mut config = Config::default();
+    config.components.memes = false;
+    for mode in [arm::Mode::On, arm::Mode::Ab { percent: 100 }] {
+        assert_eq!(arm::arm_for(&config, mode, "t1"), Arm::Disabled);
+    }
+    assert!(!holds_text_stream(&config, "t1"));
+}
+
+#[test]
+fn arm_is_honoured_only_when_the_component_is_on() {
+    let config = Config::default();
+    assert!(config.components.memes);
+    assert_eq!(arm::arm_for(&config, arm::Mode::Off, "t1"), Arm::Disabled);
+    assert_eq!(arm::arm_for(&config, arm::Mode::On, "t1"), Arm::Treatment);
+    assert_eq!(
+        arm::arm_for(&config, arm::Mode::Ab { percent: 0 }, "t1"),
+        Arm::Control
+    );
+}
+
+#[test]
+fn precedence_matrix_env_beats_build_default_and_component_gates_both() {
+    // env set wins over the build default; unset falls to it; neither is off.
+    assert_eq!(arm::resolve_mode(Some("off"), Some("on")), arm::Mode::Off);
+    assert_eq!(arm::resolve_mode(Some("on"), None), arm::Mode::On);
+    assert_eq!(arm::resolve_mode(None, Some("on")), arm::Mode::On);
+    assert_eq!(arm::resolve_mode(None, None), arm::Mode::Off);
+    let mut config = Config::default();
+    config.components.memes = false;
+    assert_eq!(
+        arm::arm_for(&config, arm::resolve_mode(Some("on"), Some("on")), "t"),
+        Arm::Disabled
+    );
 }
 
 #[test]
 fn only_the_treatment_arm_passes_the_gate() {
-    let t = turn("req-gate");
+    let t = turn("req");
     assert!(!gate(Arm::Disabled, &t));
     assert!(!gate(Arm::Control, &t));
     assert!(gate(Arm::Treatment, &t));
 }
 
-#[test]
-fn the_budget_defaults_to_twenty_seconds() {
-    if std::env::var(TIMEOUT_ENV).is_err() {
-        assert_eq!(budget(), DEFAULT_TIMEOUT);
+#[tokio::test]
+async fn a_remixed_reply_is_delivered_and_named_for_the_module_to_remember() {
+    let remixer = ScriptedRemixer::new(Ok(remixed_response("Arre yaar, build phir fail!")));
+    let out = run(&remixer, "req-ok", Duration::from_secs(5)).await;
+    assert_eq!(out.as_deref(), Some("Arre yaar, build phir fail!"));
+
+    // The module remembers remixed ids itself: it is told which id this reply
+    // will have, and the thread's turns carry theirs.
+    let request = remixer.last.lock().unwrap().clone().unwrap();
+    assert!(request.enabled && !request.deliver);
+    assert_eq!(request.reply, "Build failed again.");
+    assert_eq!(request.timeout_ms, 5000);
+    assert_eq!(request.conversation.last().unwrap().text, "phir se fail");
+    assert_eq!(
+        request.reply_id,
+        Some(crate::threads::store::run_reply_message_id("req-ok"))
+    );
+    assert_eq!(request.conversation[1].id.as_deref(), Some("r1"));
+    assert_eq!(request.options.meme_cooldown_turns, Some(3));
+    assert!(request.options.research);
+}
+
+#[tokio::test]
+async fn an_unchanged_reply_sends_the_original() {
+    for reason in [
+        SkipReason::BelowThreshold,
+        SkipReason::Failed,
+        SkipReason::Timeout,
+    ] {
+        let remixer = ScriptedRemixer::new(Ok(skipped_response("Build failed again.", reason)));
+        assert_eq!(
+            run(&remixer, "req-skip", Duration::from_secs(5)).await,
+            None
+        );
     }
 }
 
 #[tokio::test]
-async fn a_disabled_flag_leaves_the_task_reply_alone() {
-    // The flag is unset in tests, so every thread is in the disabled arm.
-    if std::env::var(arm::FLAG_ENV).is_ok() {
-        return;
-    }
-    assert!(!holds_text_stream("thread-1"));
-    let dir = tempfile::TempDir::new().unwrap();
-    let config = config_in(dir.path());
-    let mut reply = REPLY.to_owned();
-    remix_task_reply(
-        &config,
-        "thread-1",
-        "req-1",
-        "tag it",
-        &mut reply,
-        "placeholder",
-        Duration::from_millis(5),
-    )
-    .await;
-    assert_eq!(reply, REPLY);
-
-    let mut empty = String::new();
-    remix_task_reply(
-        &config,
-        "thread-1",
-        "req-1",
-        "tag it",
-        &mut empty,
-        "placeholder",
-        Duration::ZERO,
-    )
-    .await;
-    assert!(empty.is_empty());
+async fn a_remix_that_returns_the_same_text_is_not_a_change() {
+    let remixer = ScriptedRemixer::new(Ok(remixed_response("Build failed again. ")));
+    assert_eq!(
+        run(&remixer, "req-same", Duration::from_secs(5)).await,
+        None
+    );
 }
 
 #[tokio::test]
-async fn load_builds_the_engine_once_per_workspace() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let config = config_in(dir.path());
-    let (first, _messages) = load(&config, "thread-missing").await.expect("engine");
-    let (second, _) = load(&config, "thread-missing").await.expect("engine");
-    assert!(Arc::ptr_eq(&first, &second), "the engine was rebuilt");
-    assert!(dir.path().join("workspace").join("tinymemes").is_dir());
-}
-
-#[tokio::test]
-async fn a_frank_chat_is_remixed_and_remembered() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let host = host(&dir, frank(0.9), model(REWRITE), Some(Region::global()));
-    let out = remix_with(
-        &host,
-        &thread(),
-        &turn("req-remix"),
-        Instant::now(),
-        "ya send it",
-        REPLY,
-        Duration::from_secs(5),
-    )
-    .await
-    .expect("remixed");
-    assert_ne!(out.trim(), REPLY);
-    // The delivered message is remembered as remixed, and state is saved.
-    let id = crate::threads::store::run_reply_message_id("req-remix");
-    assert!(host.is_remixed(&id));
-    let remixed: Vec<String> =
-        serde_json::from_str(&std::fs::read_to_string(dir.path().join("remixed.json")).unwrap())
-            .unwrap();
-    assert_eq!(remixed, [id]);
-    assert!(dir.path().join("slang-index.json").exists());
-    assert!(dir.path().join("meme-index.json").exists());
-}
-
-#[tokio::test]
-async fn a_short_slang_index_researches_after_delivery() {
-    let dir = tempfile::TempDir::new().unwrap();
-    // Jev judges the index short of slang; with no researcher configured the
-    // background task finds nothing to do and the reply still goes out.
-    let host = host(&dir, frank(0.05), model(REWRITE), Some(Region::global()));
-    let out = remix_with(
-        &host,
-        &thread(),
-        &turn("req-slang"),
-        Instant::now(),
-        "ya send it",
-        REPLY,
-        Duration::from_secs(5),
-    )
-    .await;
-    assert!(out.is_some());
-    settle().await;
-    assert!(dir.path().join("slang-index.json").exists());
-}
-
-#[tokio::test]
-async fn no_fitting_meme_starts_meme_research() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let jev = Arc::new(ScriptedJev {
-        meme: Some(tinymemes::reading::NONE_FIT),
-        ..*frank(0.9)
-    });
-    // The default (India) region offers catalog memes, so Jev is asked to
-    // pick one and answers that none fit.
-    let host = host(&dir, jev, model(REWRITE), None);
-    let _ = remix_with(
-        &host,
-        &thread(),
-        &turn("req-meme"),
-        Instant::now(),
-        "ya send it",
-        REPLY,
-        Duration::from_secs(5),
-    )
-    .await;
-    settle().await;
-    assert!(dir.path().join("meme-index.json").exists());
-}
-
-#[tokio::test]
-async fn an_off_rated_chat_is_left_unchanged() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let jev = Arc::new(ScriptedJev {
-        frankness: 0.0,
-        playful: 0.0,
-        serious: 0.9,
-        slang_enough: 0.9,
-        meme: None,
-    });
-    let host = host(&dir, jev, model(REWRITE), Some(Region::global()));
-    let out = remix_with(
-        &host,
-        &thread(),
-        &turn("req-off"),
-        Instant::now(),
-        "ya send it",
-        REPLY,
-        Duration::from_secs(5),
-    )
-    .await;
-    assert_eq!(out, None);
-    assert!(!dir.path().join("remixed.json").exists());
-}
-
-#[tokio::test]
-async fn a_jev_failure_sends_the_original() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let host = host(&dir, Arc::new(FailingJev), model(REWRITE), None);
-    let out = remix_with(
-        &host,
-        &thread(),
-        &turn("req-error"),
-        Instant::now(),
-        "ya send it",
-        REPLY,
-        Duration::from_secs(5),
-    )
-    .await;
-    assert_eq!(out, None);
+async fn a_module_error_sends_the_original() {
+    let remixer = ScriptedRemixer::new(Err("module unavailable".into()));
+    assert_eq!(run(&remixer, "req-err", Duration::from_secs(5)).await, None);
 }
 
 #[tokio::test]
 async fn a_slow_remix_times_out_to_the_original() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let slow = Arc::new(ScriptedModel {
-        rewrite: REWRITE,
-        delay: Duration::from_secs(5),
-    });
-    let host = host(&dir, frank(0.9), slow, Some(Region::global()));
-    let out = remix_with(
-        &host,
-        &thread(),
-        &turn("req-timeout"),
-        Instant::now(),
-        "ya send it",
-        REPLY,
-        Duration::from_millis(50),
-    )
-    .await;
+    let mut remixer = ScriptedRemixer::new(Ok(remixed_response("too late")));
+    remixer.delay = Duration::from_secs(30);
+    let out = run(&remixer, "req-slow", Duration::from_millis(50)).await;
     assert_eq!(out, None);
 }
 
+#[tokio::test]
+async fn a_disabled_flag_leaves_the_task_reply_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.config_path = dir.path().join("config.toml");
+    config.workspace_dir = dir.path().join("workspace");
+    let mut reply = String::from("Build failed again.");
+    // Disabled arm: no module is touched and nothing changes.
+    let out = remix_final_reply(
+        Arm::Disabled,
+        &DispatchCtx::ambient(),
+        &config,
+        "thread",
+        "req",
+        "msg",
+        &reply,
+        Duration::from_millis(5),
+    )
+    .await;
+    assert_eq!(out, None);
+    remix_task_reply(
+        &DispatchCtx::ambient(),
+        &config,
+        "thread",
+        "req",
+        "msg",
+        &mut reply,
+        "placeholder",
+        Duration::ZERO,
+    )
+    .await;
+    assert_eq!(reply, "Build failed again.");
+}
+
 #[test]
-fn the_log_line_handles_a_missing_outcome() {
-    // Exercised for its formatting paths; it must not panic without a reading.
-    log_outcome(&turn("req-log"), Instant::now(), "engine_unavailable", None);
+fn the_turn_line_reports_the_outcome_without_user_content() {
+    let t = turn("req-1");
+    let none = turn_line(&t, 5, "error", None);
+    assert!(none.contains("outcome=error") && none.contains("score=-1"));
+    let some = turn_line(&t, 9, "remixed", Some(&remixed_response("secret text")));
+    assert!(some.contains("score=7") && some.contains("request_id=req-1"));
+    assert!(!some.contains("secret text"));
+    let skipped = turn_line(
+        &t,
+        9,
+        "unchanged",
+        Some(&skipped_response("x", SkipReason::BelowThreshold)),
+    );
+    assert!(skipped.contains("skipped=below_threshold"));
+}
+
+#[test]
+fn flag_values_enable_remixing() {
+    assert!(flag_enabled("on"));
+    assert!(flag_enabled("ab:30"));
+    assert!(!flag_enabled("off"));
 }
 
 #[tokio::test]
-async fn the_turn_line_reports_the_outcome_without_user_content() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let host = host(&dir, frank(0.9), model(REWRITE), Some(Region::global()));
-    let turns = host::history_turns(&thread(), "ya send it", |_| false);
-    let outcome = host.engine.process(&turns, REPLY).await;
-    let line = turn_line(&turn("req-line"), 42, "remixed", Some(&outcome));
-    assert!(line.starts_with("[tinymemes] turn arm=treatment bucket=7 request_id=req-line"));
-    assert!(line.contains("turn_ms=1200 remix_ms=42 outcome=remixed"));
-    assert!(line.contains("tier=unhinged"), "{line}");
-    assert!(!line.contains("send it") && !line.contains("Tagged"));
-
-    let bare = turn_line(&turn("req-none"), 0, "timeout", None);
-    assert!(bare.contains("score=-1 tier=none mode=none memes=0 rewrite_kept=true dupes=0"));
-    assert!(bare.contains("meme_pick=none meme_p=none matches=none"));
+async fn component_off_refuses_the_remix_before_any_module_load() {
+    let mut config = Config::default();
+    config.components.memes = false;
+    let request = RemixRequest {
+        conversation: Vec::new(),
+        reply: "hi".to_owned(),
+        region: None,
+        enabled: true,
+        timeout_ms: 100,
+        deliver: false,
+        correlation: String::new(),
+        reply_id: None,
+        options: RemixOptions::default(),
+    };
+    let err = service::remix(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        request,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("component is off"), "{err}");
 }
 
-#[tokio::test]
-async fn every_arm_fails_open_without_working_providers() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let config = config_in(dir.path());
-    for arm in [Arm::Disabled, Arm::Control, Arm::Treatment] {
-        // Treatment builds the real engine; with no provider configured every
-        // model call fails, so the original reply is delivered.
-        let out = remix_final_reply(
-            arm,
-            &config,
-            "thread-real",
-            "req-real",
-            "ya send it",
-            REPLY,
-            Duration::from_millis(5),
-        )
-        .await;
-        assert_eq!(out, None, "{arm:?}");
-    }
+#[test]
+fn the_cooldown_env_beats_config_and_bad_values_fall_back() {
+    assert_eq!(
+        options_with(Some("5"), 3, true).meme_cooldown_turns,
+        Some(5)
+    );
+    assert_eq!(
+        options_with(Some("0"), 3, true).meme_cooldown_turns,
+        Some(0)
+    );
+    assert_eq!(
+        options_with(Some("often"), 3, true).meme_cooldown_turns,
+        Some(3)
+    );
+    assert_eq!(options_with(None, 4, false).meme_cooldown_turns, Some(4));
+    assert!(!options_with(None, 4, false).research);
 }

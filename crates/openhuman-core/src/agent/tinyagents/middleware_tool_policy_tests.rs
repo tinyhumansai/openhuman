@@ -1,4 +1,6 @@
 use super::*;
+use crate::agent::tinyagents::middleware::tool_policy::AllowAllToolPolicy;
+use crate::agent::tinyagents::middleware::tool_policy::ToolPolicyMiddleware;
 
 // ── the listing must agree with the gate (#workflow-routing) ────────────────
 //
@@ -9,13 +11,13 @@ use super::*;
 // the route out of the session's own delegation tools.
 
 use crate::agent::orchestration::tools::{ArchetypeDelegationTool, DelegationTarget};
-use crate::tools::agent_policy::{
-    TaskProfile, TaskRiskLevel, ToolCapability, ToolPolicyAction, ToolPolicyDecision,
-    ToolPolicySession,
-};
 use crate::tools::toolpacks::{append_pack_tools, bind_pack_registry};
 use tinyagents_harness::tool::packs::USE_SKILL;
 use tinytools::{PermissionLevel, ToolResult};
+use tinytools::{
+    TaskProfile, TaskRiskLevel, ToolCapability, ToolPolicyAction, ToolPolicyDecision,
+    ToolPolicySession,
+};
 
 struct RoutingFakeTool(&'static str);
 
@@ -102,12 +104,10 @@ fn non_owner_middleware_at(allowed: PermissionLevel) -> ToolPolicyMiddleware {
     };
 
     ToolPolicyMiddleware::new(
-        Arc::new(crate::agent::tool_policy::AllowAllToolPolicy),
+        Arc::new(AllowAllToolPolicy),
         session,
         vec![tools],
-        "sess".to_string(),
         "web_chat".to_string(),
-        "orchestrator".to_string(),
     )
 }
 
@@ -140,12 +140,10 @@ fn desktop_approval_bypass_skips_only_require_approval_channel_verdict() {
             .collect(),
         };
         ToolPolicyMiddleware::new(
-            Arc::new(crate::agent::tool_policy::AllowAllToolPolicy),
+            Arc::new(AllowAllToolPolicy),
             session,
             vec![Arc::new(vec![Box::new(RoutingFakeTool(name))])],
-            "sess".to_owned(),
             "web_chat".to_owned(),
-            "orchestrator".to_owned(),
         )
     }
     let approval_middleware = middleware(ToolPolicyAction::RequireApproval);
@@ -288,12 +286,10 @@ async fn a_session_without_the_delegate_is_not_told_to_call_it() {
         decisions: [allow(USE_SKILL)].into_iter().collect(),
     };
     let mw = ToolPolicyMiddleware::new(
-        Arc::new(crate::agent::tool_policy::AllowAllToolPolicy),
+        Arc::new(AllowAllToolPolicy),
         session,
         vec![tools],
-        "sess".to_string(),
         "web_chat".to_string(),
-        "orchestrator".to_string(),
     );
 
     let message = mw
@@ -326,8 +322,8 @@ async fn a_session_without_the_delegate_is_not_told_to_call_it() {
 /// "Registered and callable: yes".
 #[tokio::test]
 async fn use_skill_reaches_a_withheld_packed_tool() {
-    use crate::tools::agent_policy::ToolPolicyEngine;
     use crate::tools::toolpacks::strip_packed_from_visible;
+    use tinytools::ToolPolicyEngine;
 
     let mut tools: Vec<Box<dyn tinytools::Tool>> = vec![Box::new(RoutingFakeTool("goal_set"))];
     append_pack_tools(&mut tools);
@@ -349,12 +345,10 @@ async fn use_skill_reaches_a_withheld_packed_tool() {
     );
 
     let mw = ToolPolicyMiddleware::new(
-        Arc::new(crate::agent::tool_policy::AllowAllToolPolicy),
+        Arc::new(AllowAllToolPolicy),
         session,
         vec![tools],
-        "sess".to_string(),
         "web_chat".to_string(),
-        "orchestrator".to_string(),
     );
 
     assert!(
@@ -376,8 +370,8 @@ async fn use_skill_reaches_a_withheld_packed_tool() {
 /// remove, one hop later. The hint must fall back to the owning agent instead.
 #[tokio::test]
 async fn a_prompt_hidden_delegate_is_not_offered_as_a_direct_route() {
-    use crate::tools::agent_policy::ToolPolicyEngine;
     use crate::tools::toolpacks::strip_packed_from_visible;
+    use tinytools::ToolPolicyEngine;
 
     let mut tools: Vec<Box<dyn tinytools::Tool>> = vec![
         Box::new(RoutingFakeTool("propose_workflow")),
@@ -411,12 +405,10 @@ async fn a_prompt_hidden_delegate_is_not_offered_as_a_direct_route() {
         &visible,
     );
     let mw = ToolPolicyMiddleware::new(
-        Arc::new(crate::agent::tool_policy::AllowAllToolPolicy),
+        Arc::new(AllowAllToolPolicy),
         session,
         vec![tools],
-        "sess".to_string(),
         "web_chat".to_string(),
-        "orchestrator".to_string(),
     );
 
     let pack = crate::tools::toolpacks::pack("workflows").expect("workflows pack");
@@ -484,7 +476,7 @@ fn an_invented_tool_name_is_not_found_even_under_the_packs_permission_ceiling() 
         .expect("an invented tool must be answered, not dispatched");
 
     assert!(
-        message.starts_with(crate::tools::status::NOT_FOUND_MARKER),
+        message.starts_with(tinytools::status::NOT_FOUND_MARKER),
         "a restricted channel must still answer an invented name as not-found: {message}"
     );
     assert!(

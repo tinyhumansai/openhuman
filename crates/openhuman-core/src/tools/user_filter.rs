@@ -165,7 +165,7 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
     // Task & workflow productivity — overextending tools (agent-tool
     // expansion). Only the destructive/persistent-config mutators are listed
     // here so the onboarding toggle surface can default them OFF and let users
-    // opt in; the read-only + bounded-write siblings (e.g. `artifact_list`,
+    // opt in; the read-only + bounded-write siblings (e.g. `list_artifacts`,
     // `task_source_fetch`) are intentionally NOT listed, so they
     // are always-retained infrastructure. Grouped one toggle per risk family.
     ToolFamily {
@@ -173,9 +173,11 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
         rust_names: &["agent_workflow_uninstall"],
         default_enabled: false,
     },
+    // The toggle id predates the tool's rename to `delete_artifact`; it stays
+    // so a user's saved choice keeps applying.
     ToolFamily {
         id: "artifact_delete",
-        rust_names: &["artifact_delete"],
+        rust_names: &["delete_artifact"],
         default_enabled: false,
     },
     ToolFamily {

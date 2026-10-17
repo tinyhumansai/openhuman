@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::core::events::DomainEvent;
 use serde_json::json;
 use tokio::time::{sleep, timeout, Duration};
@@ -16,9 +16,13 @@ async fn build_triage_parent_scopes_allowed_subagents_to_target() {
     };
 
     let _ = AgentDefinitionRegistry::init_global_builtins();
-    let ctx = build_triage_parent(&config, "researcher")
-        .await
-        .expect("build triage parent");
+    let ctx = build_triage_parent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "researcher",
+    )
+    .await
+    .expect("build triage parent");
 
     assert_eq!(ctx.agent_definition_id, "triage");
     assert_eq!(ctx.channel, "triage");
@@ -124,9 +128,13 @@ async fn apply_decision_drop_only_publishes_evaluated() {
         })
     }));
 
-    apply_decision(run(TriageAction::Drop), &envelope)
-        .await
-        .expect("drop should not fail");
+    apply_decision(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        run(TriageAction::Drop),
+        &envelope,
+    )
+    .await
+    .expect("drop should not fail");
 
     let captured = collect.await.expect("event collector should not panic");
     assert!(captured.iter().any(|event| matches!(
@@ -163,9 +171,13 @@ async fn apply_decision_acknowledge_only_publishes_evaluated() {
         })
     }));
 
-    apply_decision(run(TriageAction::Acknowledge), &envelope)
-        .await
-        .expect("acknowledge should not fail");
+    apply_decision(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        run(TriageAction::Acknowledge),
+        &envelope,
+    )
+    .await
+    .expect("acknowledge should not fail");
 
     let captured = collect.await.expect("event collector should not panic");
     assert!(captured.iter().any(|event| matches!(
@@ -211,6 +223,7 @@ async fn apply_decision_react_failure_publishes_failed_event() {
     }));
 
     let result = apply_decision(
+        &crate::core::runtime::DispatchCtx::ambient(),
         run_with_target(TriageAction::React, &missing_target, "handle this"),
         &envelope,
     )
@@ -265,6 +278,7 @@ async fn apply_decision_escalate_failure_publishes_failed_event() {
     ));
 
     let result = apply_decision(
+        &crate::core::runtime::DispatchCtx::ambient(),
         run_with_target(TriageAction::Escalate, &missing_target, "escalate this"),
         &envelope,
     )

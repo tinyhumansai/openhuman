@@ -36,7 +36,7 @@ fn test_config(tmp: &tempfile::TempDir) -> crate::config::Config {
 /// bundled TOML files, entirely independent of the global registry
 /// singleton (so tests can't be poisoned by another test's
 /// `AgentDefinitionRegistry::init_global*` call, and can't poison later ones).
-fn builtin_def(id: &str) -> crate::agent::harness::definition::AgentDefinition {
+fn builtin_def(id: &str) -> crate::agent::harness::host_definition::AgentDefinition {
     crate::agent::registry::agents::load_builtins()
         .unwrap()
         .into_iter()
@@ -48,11 +48,11 @@ fn builtin_def(id: &str) -> crate::agent::harness::definition::AgentDefinition {
 /// wire. No built-in keeps a wildcard belt any more (the generalist
 /// `tools_agent` was removed), so the shape is synthesised from a real
 /// built-in: same parsing and defaults, only the id and the belt differ.
-fn wildcard_probe_def() -> crate::agent::harness::definition::AgentDefinition {
+fn wildcard_probe_def() -> crate::agent::harness::host_definition::AgentDefinition {
     let mut def = builtin_def("summarizer");
     def.id = "wildcard_probe".to_string();
     def.delegate_name = None;
-    def.tools = crate::agent::harness::definition::ToolScope::Wildcard;
+    def.tools = tinyagents_definition::ToolScope::Wildcard;
     def.subagents = Vec::new();
     def
 }
@@ -72,10 +72,10 @@ mod tool_spec_views_tests;
 
 // ── use_skill's advertised spec is scoped to the session ────────────────────
 
-use crate::tools::agent_policy::{
+use tinytools::PermissionLevel;
+use tinytools::{
     TaskProfile, TaskRiskLevel, ToolPolicyAction, ToolPolicyDecision, ToolPolicySession,
 };
-use tinytools::PermissionLevel;
 
 fn session_allowing(names: &[&str]) -> ToolPolicySession {
     ToolPolicySession {
@@ -190,8 +190,8 @@ fn visible_specs_drop_the_pack_tool_when_no_pack_is_reachable() {
 /// the only route to every withheld tool.
 #[test]
 fn a_realistic_withheld_session_keeps_its_packs_advertised() {
-    use crate::tools::agent_policy::ToolPolicyEngine;
     use crate::tools::toolpacks::{append_pack_tools, strip_packed_from_visible};
+    use tinytools::ToolPolicyEngine;
 
     struct Fake(&'static str);
     #[async_trait::async_trait]
@@ -331,17 +331,21 @@ async fn an_empty_named_scope_advertises_no_tools_at_all() {
     // Tolerant of an already-initialised singleton: this binary shares one
     // `OnceLock` across every test, so whether we are first is a property of
     // test ordering, not of this test.
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let agent = OpenHumanSessionHost::from_config_for_agent(&config, "summarizer")
-        .expect("summarizer is a shipped agent definition");
+    let agent = OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "summarizer",
+    )
+    .expect("summarizer is a shipped agent definition");
 
     let visible = agent.visible_tool_names_for_test();
     let real: Vec<&String> = visible
         .iter()
-        .filter(|n| n.as_str() != crate::agent::harness::definition::NO_TOOLS_SENTINEL)
+        .filter(|n| n.as_str() != crate::agent::harness::host_definition::NO_TOOLS_SENTINEL)
         .collect();
     assert!(
         real.is_empty(),
@@ -357,22 +361,25 @@ async fn a_zero_tool_agent_does_not_gain_the_compaction_recovery_tool() {
     // quietly become "one tool" — and there is nothing for it to recover,
     // because an agent with no tools produces no tool output to truncate.
     use crate::agent::session_host::types::OpenHumanSessionHost;
-    use crate::inference::tokenjuice::RETRIEVE_TOOL_NAME;
 
     // Tolerant of an already-initialised singleton: this binary shares one
     // `OnceLock` across every test, so whether we are first is a property of
     // test ordering, not of this test.
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let agent = OpenHumanSessionHost::from_config_for_agent(&config, "trigger_triage")
-        .expect("trigger_triage is a shipped agent definition");
+    let agent = OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "trigger_triage",
+    )
+    .expect("trigger_triage is a shipped agent definition");
 
     assert!(
         !agent
             .visible_tool_names_for_test()
-            .contains(RETRIEVE_TOOL_NAME),
+            .contains(tinyjuice_bus::tools::RETRIEVE),
         "a deliberately tool-less agent must not be handed the recovery tool"
     );
 }
@@ -382,14 +389,14 @@ fn the_no_tools_sentinel_can_never_name_a_real_tool() {
     // The value is load-bearing: it works only because no registry can contain
     // it. Leading underscores are not a legal tool name for any provider's
     // function-calling schema, which is why this shape was chosen.
-    use crate::agent::harness::definition::NO_TOOLS_SENTINEL;
+    use crate::agent::harness::host_definition::NO_TOOLS_SENTINEL;
     assert!(NO_TOOLS_SENTINEL.starts_with("__"));
     assert!(!NO_TOOLS_SENTINEL.chars().next().unwrap().is_alphanumeric());
 }
 
 #[test]
 fn is_empty_tool_scope_distinguishes_the_three_states() {
-    use crate::agent::harness::definition::{is_empty_tool_scope, NO_TOOLS_SENTINEL};
+    use crate::agent::harness::host_definition::{is_empty_tool_scope, NO_TOOLS_SENTINEL};
     use std::collections::HashSet;
 
     // Unset — the historical "everything" sentinel.
@@ -415,35 +422,37 @@ async fn a_summarized_agent_sees_the_recovery_tool_with_compaction_off() {
     // the compaction router off (the default). The orchestrator is the agent
     // that gets them, so it must see the tool whatever the router says.
     use crate::agent::session_host::types::OpenHumanSessionHost;
-    use crate::inference::tokenjuice::RETRIEVE_TOOL_NAME;
 
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.context.compaction_enabled = false;
     assert!(super::summarizes_tool_output("orchestrator", &config));
-    let agent = OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
-        .expect("orchestrator is a shipped agent definition");
+    let agent = OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("orchestrator is a shipped agent definition");
     let visible = agent.visible_tool_names_for_test();
     assert!(
-        visible.is_empty() || visible.contains(RETRIEVE_TOOL_NAME),
+        visible.is_empty() || visible.contains(tinyjuice_bus::tools::RETRIEVE),
         "the orchestrator's summaries point at a tool it must be able to call"
     );
 }
 
 #[test]
 fn the_recovery_tool_joins_a_belt_only_when_something_can_point_at_it() {
-    use crate::inference::tokenjuice::RETRIEVE_TOOL_NAME;
     let belt = || std::collections::HashSet::from(["web_fetch".to_string()]);
 
     let mut unused = belt();
     super::ensure_recovery_tool_visible(&mut unused, false);
-    assert!(!unused.contains(RETRIEVE_TOOL_NAME));
+    assert!(!unused.contains(tinyjuice_bus::tools::RETRIEVE));
 
     let mut needed = belt();
     super::ensure_recovery_tool_visible(&mut needed, true);
-    assert!(needed.contains(RETRIEVE_TOOL_NAME));
+    assert!(needed.contains(tinyjuice_bus::tools::RETRIEVE));
 
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = test_config(&tmp);
@@ -454,17 +463,20 @@ fn the_recovery_tool_joins_a_belt_only_when_something_can_point_at_it() {
 
 #[test]
 fn the_repl_tools_join_a_belt_only_while_handle_mode_is_active() {
-    use crate::agent::harness::definition::NO_TOOLS_SENTINEL;
-    use crate::inference::tokenjuice::REPL_TOOL_NAMES;
+    use crate::agent::harness::host_definition::NO_TOOLS_SENTINEL;
     let belt = || std::collections::HashSet::from(["web_fetch".to_string()]);
 
     let mut inactive = belt();
     super::ensure_repl_tools_visible(&mut inactive, false);
-    assert!(REPL_TOOL_NAMES.iter().all(|n| !inactive.contains(*n)));
+    assert!(tinyjuice_bus::tools::REPL_TOOLS
+        .iter()
+        .all(|n| !inactive.contains(*n)));
 
     let mut active = belt();
     super::ensure_repl_tools_visible(&mut active, true);
-    assert!(REPL_TOOL_NAMES.iter().all(|n| active.contains(*n)));
+    assert!(tinyjuice_bus::tools::REPL_TOOLS
+        .iter()
+        .all(|n| active.contains(*n)));
 
     // "No filter" and "deliberately no tools" both stay as they were.
     let mut unfiltered = std::collections::HashSet::new();
@@ -483,9 +495,8 @@ async fn a_curated_orchestrator_sees_and_holds_every_juice_tool_in_handle_mode()
     // (`ToolScope::Named`) belt that lacked them was told to call tools it
     // could not dispatch.
     use crate::agent::session_host::types::OpenHumanSessionHost;
-    use crate::inference::tokenjuice::{REPL_TOOL_NAMES, RETRIEVE_TOOL_NAME};
 
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = test_config(&tmp);
@@ -495,8 +506,12 @@ async fn a_curated_orchestrator_sees_and_holds_every_juice_tool_in_handle_mode()
     config.tokenjuice.repl_handle_enabled = true;
     assert!(crate::inference::tokenjuice::repl_handle_active(&config));
 
-    let agent = OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
-        .expect("orchestrator is a shipped agent definition");
+    let agent = OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("orchestrator is a shipped agent definition");
     let visible = agent.visible_tool_names_for_test();
     assert!(
         !visible.is_empty(),
@@ -504,7 +519,11 @@ async fn a_curated_orchestrator_sees_and_holds_every_juice_tool_in_handle_mode()
     );
     let registered: std::collections::HashSet<&str> =
         agent.tools().iter().map(|t| t.name()).collect();
-    for name in REPL_TOOL_NAMES.iter().copied().chain([RETRIEVE_TOOL_NAME]) {
+    for name in tinyjuice_bus::tools::REPL_TOOLS
+        .iter()
+        .copied()
+        .chain([tinyjuice_bus::tools::RETRIEVE])
+    {
         assert!(
             visible.contains(name),
             "{name} must be visible to the orchestrator"

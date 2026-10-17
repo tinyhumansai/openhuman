@@ -119,5 +119,5 @@ Tests sit beside each module ([`ops_tests.rs`](./ops_tests.rs), [`schemas_tests.
 ## Further reading
 
 - [Parent module README](../../README.md)
-- [Deep architecture reference](../../../../gitbooks/developing/architecture.md)
-- [Chat](../../../../gitbooks/features/chat.md)
+- [Deep architecture reference](../../../../docs/gitbooks/en/developing/architecture.md)
+- [Chat](../../../../docs/gitbooks/en/features/chat.md)

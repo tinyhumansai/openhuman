@@ -238,7 +238,10 @@ impl Tool for CollapsedDelegationTool {
         _options: ToolCallOptions,
         tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+        let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new().with_core(
+            crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                .into_core(),
+        );
         run_context.thread_id = tool_context
             .and_then(ToolRunContext::thread_id)
             .map(ToOwned::to_owned);
@@ -364,6 +367,7 @@ pub(crate) async fn execute_collapsed_delegation_with_live_parent(
     }
     let prompt = render_structured_handoff(&raw_prompt, &args);
     let prompt = match crate::agent::attachments::delegation_prompt(
+        &run_context.dispatch_ctx(),
         &prompt,
         &args,
         tool_context

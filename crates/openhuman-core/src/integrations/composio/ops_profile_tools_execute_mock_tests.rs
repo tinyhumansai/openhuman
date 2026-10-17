@@ -64,7 +64,10 @@ async fn composio_get_user_profile_via_mock_returns_provider_profile() {
     let _workspace_env_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     config.save().await.unwrap();
 
-    let outcome = composio_get_user_profile(&config, "c1").await.unwrap();
+    let outcome =
+        composio_get_user_profile(&crate::core::runtime::DispatchCtx::ambient(), &config, "c1")
+            .await
+            .unwrap();
 
     assert_eq!(outcome.value.toolkit, "gmail");
     assert_eq!(outcome.value.connection_id.as_deref(), Some("c1"));
@@ -83,7 +86,7 @@ async fn composio_list_tools_via_mock_with_filter() {
                 "success": true,
                 "data": {"tools": [
                     {"type":"function","function":{"name":"GMAIL_SEND_EMAIL"}},
-                    {"type":"function","function":{"name":"GMAIL_SEARCH"}}
+                    {"type":"function","function":{"name":"GMAIL_FETCH_EMAILS"}}
                 ]}
             }))
         }),
@@ -91,10 +94,54 @@ async fn composio_list_tools_via_mock_with_filter() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]), None)
-        .await
-        .unwrap();
+    let outcome = composio_list_tools(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Some(vec!["gmail".into()]),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.value.tools.len(), 2);
+}
+
+#[tokio::test]
+async fn composio_list_tools_lets_the_module_apply_the_scope_preference_and_catalog() {
+    // The host no longer opts out of the module's scope filter
+    // (`apply_user_scopes` defaults on): an admin-scoped action, and one the
+    // gmail catalog does not name, never reach the caller.
+    let _serialised = module_guard().await;
+    let app = Router::new().route(
+        "/agent-integrations/composio/tools",
+        get(|| async {
+            Json(json!({
+                "success": true,
+                "data": {"tools": [
+                    {"type":"function","function":{"name":"GMAIL_FETCH_EMAILS"}},
+                    {"type":"function","function":{"name":"GMAIL_DELETE_MESSAGE"}},
+                    {"type":"function","function":{"name":"GMAIL_NOT_IN_THE_CATALOG"}}
+                ]}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let outcome = composio_list_tools(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Some(vec!["gmail".into()]),
+        None,
+    )
+    .await
+    .unwrap();
+    let names: Vec<&str> = outcome
+        .value
+        .tools
+        .iter()
+        .map(|tool| tool.function.name.as_str())
+        .collect();
+    assert_eq!(names, ["GMAIL_FETCH_EMAILS"]);
 }
 
 #[tokio::test]
@@ -147,4 +194,63 @@ async fn composio_execute_via_mock_propagates_backend_error() {
     // signal we get is the backend error text, so assert on its contents.
     assert!(err.starts_with("[composio:error:"), "got: {err}");
     assert!(err.contains("rate limited"), "got: {err}");
+}
+
+#[tokio::test]
+async fn composio_list_tools_honours_a_preference_still_in_the_legacy_file() {
+    // A workspace upgraded from before the preference moved into the module
+    // still has `composio_user_scopes.json`. The module filters the listing by
+    // the preference it holds, so that file must be migrated before the call;
+    // otherwise its default (`write` on) outranks the user's stored `write=false`.
+    let _serialised = module_guard().await;
+    let app = Router::new().route(
+        "/agent-integrations/composio/tools",
+        get(|| async {
+            Json(json!({
+                "success": true,
+                "data": {"tools": [
+                    {"type":"function","function":{"name":"GMAIL_FETCH_EMAILS"}},
+                    {"type":"function","function":{"name":"GMAIL_SEND_EMAIL"}}
+                ]}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    crate::integrations::composio::file_store::save(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        crate::integrations::composio::file_store::USER_SCOPES_FILE,
+        &json!({"gmail": {"read": true, "write": false, "admin": false}}),
+    )
+    .await
+    .unwrap();
+
+    let outcome = composio_list_tools(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Some(vec!["gmail".into()]),
+        None,
+    )
+    .await;
+    // The module's preference store is process-wide: put the default back
+    // before asserting so a failure cannot leak `write=false` into other tests.
+    let restored = save_user_scope_pref(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "gmail",
+        Default::default(),
+    )
+    .await;
+    let outcome = outcome.unwrap();
+    restored.unwrap();
+
+    let names: Vec<&str> = outcome
+        .value
+        .tools
+        .iter()
+        .map(|tool| tool.function.name.as_str())
+        .collect();
+    assert_eq!(names, ["GMAIL_FETCH_EMAILS"]);
 }

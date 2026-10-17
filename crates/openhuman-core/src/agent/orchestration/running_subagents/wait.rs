@@ -9,25 +9,34 @@ use tinyagents_orchestration::subagent::{
     record_to_wait_outcome, task_status_label, wait_detached, WaitError, WaitOutcome,
 };
 
-use super::registry::registry;
+use super::registry::{admit_workspace, owner_key, registry};
 use super::task_ledger::task_record_for_task_in_workspace;
 
 /// Block until `task_id` reaches a terminal status or `timeout` elapses.
 pub(crate) async fn wait(
+    ctx: &crate::core::runtime::DispatchCtx,
     task_id: &str,
     parent_session: &str,
     timeout: Duration,
 ) -> Result<WaitOutcome, WaitError> {
-    wait_detached(registry(), task_id, parent_session, timeout).await
+    wait_detached(
+        registry(),
+        task_id,
+        &owner_key(ctx, parent_session)?,
+        timeout,
+    )
+    .await
 }
 
 pub(crate) async fn wait_in_workspace(
+    ctx: &crate::core::runtime::DispatchCtx,
     task_id: &str,
     parent_session: &str,
     workspace_dir: &Path,
     timeout: Duration,
 ) -> Result<WaitOutcome, WaitError> {
-    match wait(task_id, parent_session, timeout).await {
+    admit_workspace(ctx, workspace_dir)?;
+    match wait(ctx, task_id, parent_session, timeout).await {
         Ok(outcome) => return Ok(outcome),
         Err(WaitError::NotOwned) => return Err(WaitError::NotOwned),
         Err(WaitError::RegistryPoisoned) => return Err(WaitError::RegistryPoisoned),

@@ -1,5 +1,8 @@
 use super::*;
-use crate::integrations::task_sources::types::{FilterSpec, ProviderSlug, SourceTarget};
+use crate::core::runtime::DispatchCtx;
+use crate::integrations::task_sources::types::{
+    provider_can_fetch, FilterSpec, ProviderSlug, SourceTarget,
+};
 use chrono::Utc;
 use serde_json::json;
 
@@ -83,7 +86,7 @@ fn no_provider_can_fetch_today() {
         ProviderSlug::Clickup,
     ] {
         assert!(
-            !provider.can_fetch(),
+            !provider_can_fetch(provider),
             "{} has no fetch path until the pipeline's fetch step is restored",
             provider.as_str()
         );
@@ -99,7 +102,7 @@ fn no_provider_can_fetch_today() {
 /// proof the source was skipped before `run_source_once` ran.
 ///
 /// This asserts through the scheduler rather than on the predicate, on
-/// purpose: a test that only checked `can_fetch()` would still pass if the
+/// purpose: a test that only checked `provider_can_fetch` would still pass if the
 /// guard were deleted from `run_one_tick`, which is the exact regression this
 /// PR exists to prevent.
 ///
@@ -151,13 +154,13 @@ async fn a_tick_over_an_unfetchable_source_records_nothing() {
     assert!(stored.enabled, "precondition: the source is enabled");
     assert!(is_due(&stored), "precondition: the source is due");
     assert!(
-        !stored.provider.can_fetch(),
+        !provider_can_fetch(stored.provider),
         "precondition: its provider has no fetch path, so the gate must skip it"
     );
 
     CoreContext::scope(
         CoreContext::for_test_with_config(DomainSet::full(), config.clone()),
-        run_one_tick(),
+        run_one_tick(&DispatchCtx::process_default()),
     )
     .await
     .expect("a tick must not fail");
@@ -193,7 +196,13 @@ async fn manual_fetch_still_returns_the_explanatory_error() {
     std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
 
     let s = source("ts-manual-path-xyz", 1800);
-    let outcome = pipeline::run_source_once(&config, &s, FetchReason::Manual).await;
+    let outcome = pipeline::run_source_once(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &s,
+        FetchReason::Manual,
+    )
+    .await;
 
     let error = outcome
         .error

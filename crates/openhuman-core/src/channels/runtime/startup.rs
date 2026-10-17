@@ -1,11 +1,54 @@
 //! Channel startup wiring.
 
+mod callback;
 mod chat_workload;
 mod credentials;
+mod delivery_import;
+mod module_providers;
 mod prompt;
+#[cfg(test)]
 mod relay;
 mod start_channels;
 mod turn_parts;
+
+use anyhow::Result;
+use tinybus::module::{ModuleCallError, ModuleClient};
+
+/// Ask the owning module to prepare effective execution limits for this host
+/// runtime. A malformed response fails closed and reports only the module ID.
+pub(crate) async fn prepare_runtime_limits(
+    client: &ModuleClient,
+    timeout_secs: u64,
+    listener_count: usize,
+) -> Result<(u64, usize)> {
+    use tinychannels_bus::module_control::{ChannelControlRequest, ChannelControlResult};
+
+    let result: ChannelControlResult = client
+        .call_confidential(
+            "tinychannels",
+            tinychannels_bus::methods::PREPARE_CHANNEL_CONTROL,
+            (ChannelControlRequest::RuntimeLimits {
+                timeout_secs,
+                listener_count,
+            },),
+        )
+        .await?;
+    match result {
+        ChannelControlResult::RuntimeLimits {
+            timeout_secs,
+            max_in_flight,
+        } if timeout_secs >= tinychannels_bus::context::MIN_CHANNEL_MESSAGE_TIMEOUT_SECS
+            && max_in_flight > 0 =>
+        {
+            Ok((timeout_secs, max_in_flight))
+        }
+        _ => {
+            crate::modules::report::malformed_reply("tinychannels");
+            Err(anyhow::Error::new(ModuleCallError::ModuleFault)
+                .context("channel runtime returned invalid runtime limits"))
+        }
+    }
+}
 
 pub(crate) use credentials::hydrate_channel_credentials;
 pub use start_channels::start_channels;
@@ -40,3 +83,7 @@ mod yuanbao_secret_tests;
 #[cfg(test)]
 #[path = "startup_email_secret_tests_tests.rs"]
 mod email_secret_tests;
+
+#[cfg(all(test, feature = "modules"))]
+#[path = "startup/runtime_limits_tests.rs"]
+mod runtime_limits_tests;

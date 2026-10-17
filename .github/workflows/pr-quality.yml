@@ -59,8 +59,11 @@ jobs:
         with:
           fetch-depth: 1
       - name: Lychee link check
+        id: link-check
+        continue-on-error: true
         uses: lycheeverse/lychee-action@v2
         with:
+          output: target/link-check/report.md
           # Product Hunt denies GitHub-hosted runners (403) for the translated
           # README badge destination, so it cannot be a stable external-link
           # check.
@@ -70,8 +73,11 @@ jobs:
           # The managed Discord vanity endpoint currently returns 404 before
           # forwarding anonymous requests; keep checking all other links until
           # its provider-side redirect is restored.
+          # GitHub intermittently returns 503 when the docs check fans out.
+          # Limit the request burst; unsuccessful responses still fail the check.
           args: >-
             --no-progress
+            --max-concurrency 4
             --include-fragments
             --exclude '^http://localhost'
             --exclude '^https?://127\.0\.0\.1'
@@ -86,12 +92,20 @@ jobs:
             --exclude '^https://www\.producthunt\.com/'
             --exclude '^https://discord\.tinyhumans\.ai/?$'
             'docs/**/*.md'
-            'gitbooks/**/*.md'
+            'docs/gitbooks/en/**/*.md'
             'README.md'
             'INSTALL.md'
             'CONTRIBUTING.md'
             '.github/PULL_REQUEST_TEMPLATE.md'
           fail: true
+      - name: Recheck transient service failures
+        if: steps.link-check.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          bash scripts/ci-cancel-aware.sh node scripts/ci/retry-markdown-links.mjs
+          target/link-check/report.md
+          "$RUNNER_TEMP/lychee/bin/lychee"
   appimage-rpath-guard:
     name: AppImage RPATH + libxdo guard
     runs-on: ubuntu-latest

@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 use crate::core::TypeSchema;
 use serde_json::json;
 
@@ -80,7 +81,7 @@ fn deserialize_params_and_helpers_cover_success_and_failure_paths() {
 
 #[tokio::test]
 async fn graph_topologies_handler_exports_structural_reports() {
-    let result = handle_graph_topologies(Map::new())
+    let result = handle_graph_topologies(DispatchCtx::process_default(), Map::new())
         .await
         .expect("topology export is infallible");
     let graphs = result
@@ -126,7 +127,7 @@ async fn graph_topologies_handler_exports_structural_reports() {
 
 #[tokio::test]
 async fn reload_and_definition_handlers_cover_missing_registry_paths() {
-    let reload = handle_reload_definitions(Map::new())
+    let reload = handle_reload_definitions(DispatchCtx::process_default(), Map::new())
         .await
         .expect("reload handler should always succeed");
     assert_eq!(reload.get("status").and_then(Value::as_str), Some("noop"));
@@ -136,16 +137,19 @@ async fn reload_and_definition_handlers_cover_missing_registry_paths() {
         .unwrap()
         .contains("Restart"));
 
-    let list_result = handle_list_definitions(Map::new()).await;
+    let list_result = handle_list_definitions(DispatchCtx::process_default(), Map::new()).await;
     match list_result {
         Ok(value) => assert!(value.get("definitions").and_then(Value::as_array).is_some()),
         Err(err) => assert!(err.contains("AgentDefinitionRegistry not initialised")),
     }
 
-    let get_err = handle_get_definition(Map::from_iter([(
-        "id".into(),
-        Value::String("__definitely_missing_definition__".into()),
-    )]))
+    let get_err = handle_get_definition(
+        DispatchCtx::process_default(),
+        Map::from_iter([(
+            "id".into(),
+            Value::String("__definitely_missing_definition__".into()),
+        )]),
+    )
     .await
     .expect_err("missing or unknown definition should error");
     assert!(
@@ -156,11 +160,14 @@ async fn reload_and_definition_handlers_cover_missing_registry_paths() {
 
 #[tokio::test]
 async fn triage_handler_rejects_unknown_source_and_to_json_maps_outcome() {
-    let err = handle_triage_evaluate(Map::from_iter([
-        ("source".into(), Value::String("__unknown_source__".into())),
-        ("display_label".into(), Value::String("lbl".into())),
-        ("payload".into(), json!({})),
-    ]))
+    let err = handle_triage_evaluate(
+        DispatchCtx::process_default(),
+        Map::from_iter([
+            ("source".into(), Value::String("__unknown_source__".into())),
+            ("display_label".into(), Value::String("lbl".into())),
+            ("payload".into(), json!({})),
+        ]),
+    )
     .await
     .expect_err("unsupported source should fail before runtime dispatch");
     assert!(err.contains("unsupported trigger source"));

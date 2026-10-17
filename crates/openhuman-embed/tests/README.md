@@ -48,6 +48,7 @@ record types preserve populated persisted JSON, including metadata and lineage.
 | [`turn_observers.rs`](turn_observers.rs) | Terminal error privacy, explicit input capture, and exactly one terminal callback on dispatch failure. |
 | [`observed_turns.rs`](observed_turns.rs) | Actual model and host-tool observations survive the core runtime task hop; payloads require consent; actual model, finish reason and reasoning usage. |
 | [`public_api.rs`](public_api.rs) | Compile-time check that the host-facing types and signatures stay exported. |
+| [`turn_steering.rs`](turn_steering.rs) | A steer sent during a plain chat turn's only model call is applied after the draft answer and earns one more call in the same turn; a steer queued before send reaches the first call; a steer after the turn ended is refused with its text; a cancelled turn hands an undelivered steer back. |
 | [`turn_cancellation.rs`](turn_cancellation.rs) | Cancellation before send, during inference and during a builtin shell command; repeated requests and agent reuse. |
 | [`process_cancellation.rs`](process_cancellation.rs) | On Linux, dropping a command future kills its shell descendants. |
 | `inline_permissions.rs` | An inline UI decision precedes execution; concurrent agents and one-turn denials stay isolated. |
@@ -74,6 +75,6 @@ existing one, and reuse [`common/`](common/) for mocks.
 
 ## Further reading
 
-- [`gitbooks/developing/embedding.md`](../../../gitbooks/developing/embedding.md): embedding the core in another product.
-- [`gitbooks/developing/testing-strategy.md`](../../../gitbooks/developing/testing-strategy.md): testing strategy.
+- [`docs/gitbooks/en/developing/embedding.md`](../../../docs/gitbooks/en/developing/embedding.md): embedding the core in another product.
+- [`docs/gitbooks/en/developing/testing-strategy.md`](../../../docs/gitbooks/en/developing/testing-strategy.md): testing strategy.
 - [`crates/openhuman-embed/README.md`](../README.md): the openhuman-embed crate README.

@@ -3,19 +3,20 @@ use super::*;
 #[test]
 fn single_bubble_delivery_emits_one_unsegmented_chat_done() {
     let mut rx = crate::web_chat::subscribe_web_channel_events();
-    // Prose `deliver_response` WOULD split into several `chat_segment` bubbles
-    // (long, multi-paragraph, no fences) — the shape a background delivery turn
-    // produces. A core-persisted single row must be announced as one bubble.
+    // Multi-paragraph prose remains one byte-for-byte terminal reply.
     let text = "Same three meetings as before, and nothing on the calendar moved since the last check.\n\n\
         The product standup is still at noon and the design review still follows it at two.\n\n\
         Nothing needs input from you right now, so I have not rescheduled anything on your behalf.";
-    assert!(
-        segment_for_delivery(text).len() > 1,
-        "fixture must be one the conversational path would segment"
-    );
     let request_id = format!("single-bubble-{}", uuid::Uuid::new_v4());
 
-    deliver_response_single_bubble("system", "thread-1", &request_id, text, None);
+    deliver_response_single_bubble(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "system",
+        "thread-1",
+        &request_id,
+        text,
+        None,
+    );
 
     // Other tests publish on the same process-global bus; keep only ours.
     let mut mine = Vec::new();
@@ -53,7 +54,7 @@ async fn chat_done_carries_timing_when_a_snapshot_is_supplied() {
         output_tokens: 40,
         cached_input_tokens: 0,
         cost_usd: Some(0.01),
-        cost_source: crate::agent::cost::CostSource::Charged,
+        cost_source: tinyagents_harness::cost::CostSource::Charged,
         context_window: 8000,
         context_tokens: 60,
         subagents: Vec::new(),
@@ -140,6 +141,7 @@ async fn delivery_stores_the_reply_before_announcing_it() {
     let ws = std::env::temp_dir().join(format!("deliver-persist-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&ws).unwrap();
     conversations::ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         ws.clone(),
         CreateConversationThread {
             id: "t-deliver".to_string(),
@@ -176,7 +178,12 @@ async fn delivery_stores_the_reply_before_announcing_it() {
     // a row present here proves the write happened no later than the announce.
     // A client that never receives that event, or fails to append it, no longer
     // decides whether the reply exists.
-    let messages = conversations::get_messages(ws.clone(), "t-deliver").expect("messages");
+    let messages = conversations::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        ws.clone(),
+        "t-deliver",
+    )
+    .expect("messages");
     assert_eq!(messages.len(), 1, "delivery must leave exactly one row");
     assert_eq!(messages[0].id, "agent:req-deliver");
     assert_eq!(messages[0].content, "Here is the summary you asked for.");
@@ -212,8 +219,12 @@ async fn delivery_still_announces_when_the_reply_cannot_be_stored() {
     // `get_messages` answers `Ok(vec![])` for a thread it has never seen — only
     // `append_message` refuses one — so absence is what proves the write was
     // rejected and swallowed rather than silently creating a thread.
-    let messages = crate::threads::store::get_messages(ws.clone(), "absent-thread")
-        .expect("reading an unknown thread is not an error");
+    let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        ws.clone(),
+        "absent-thread",
+    )
+    .expect("reading an unknown thread is not an error");
     assert!(
         messages.is_empty(),
         "the thread was never created, so nothing should have been written"

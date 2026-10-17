@@ -1,0 +1,142 @@
+[
+  {
+    "file": "crates/openhuman-core/src/mcp/ui/cache.rs",
+    "scope": "",
+    "name": "STORE",
+    "type": "LazyLock<Mutex<Store>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Every entry key is prefixed with the calling tenant's profile and agent scope through tenant_key, and a SaaS call with no tenant scope gets an isolated key that never matches.",
+    "verification": "mcp/ui/cache_tests.rs: entries_are_not_shared_across_tenants"
+  },
+  {
+    "file": "crates/openhuman-core/src/mcp/module_client.rs",
+    "scope": "",
+    "name": "LIFECYCLE_GATE",
+    "type": "tokio::sync::Mutex<()>",
+    "count": 1,
+    "category": "A",
+    "reason": "Serializes TinyMCP open/close transitions, which the module admits one at a time process-wide; it guards no data and carries no tenant state.",
+    "verification": "mcp/module_client_tests.rs: concurrent_workspaces_open_one_at_a_time_through_the_module_lifecycle_gate"
+  },
+  {
+    "file": "crates/openhuman-core/src/tinymemes/callbacks.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "LazyLock<Mutex<HashMap<String,Entry>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Keyed by a random per-remix correlation id; each entry holds the registering caller's config and CoreContext, which every callback re-enters. Callbacks are accepted only from the module peer (bus name owner) for a live id, and the entry is retired by End, a failed call, or an age sweep.",
+    "verification": "tinymemes/service_tests.rs: only_the_module_may_call_back_and_only_for_a_live_remix"
+  },
+  {
+    "file": "crates/openhuman-core/src/tinymemes/service.rs",
+    "scope": "",
+    "name": "FOREGROUND",
+    "type": "std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String,std::sync::Arc<tokio::sync::Mutex<()>>>>, >",
+    "count": 1,
+    "category": "B",
+    "reason": "Holds only unit mutexes. The key is the workspace directory, so different workspaces never share or wait on a lock and no tenant data is stored.",
+    "verification": "tinymemes/service_tests.rs: foreground_remixes_share_a_lock_per_workspace_and_never_across_workspaces"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/runtime.rs",
+    "scope": "",
+    "name": "RUNTIME",
+    "type": "OnceLock<Result<ModuleRuntime,String>>",
+    "count": 1,
+    "category": "A",
+    "reason": "The single tinybus module bus (broker, loader, connection) for the process; tinybus never unloads a module, so there is exactly one. Carries no tenant data: tenant scope is resolved per call by the host callbacks it serves.",
+    "verification": "modules/runtime_tests.rs: the_module_bus_is_a_singleton_and_serves_proxies"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/runtime.rs",
+    "scope": "",
+    "name": "CALLBACKS",
+    "type": "tokio::sync::OnceCell<Result<(),String>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Records that the host callback objects were served on the module bus once, before any module loads; infrastructure only.",
+    "verification": "modules/runtime_tests.rs: wallet_host_callback_is_served_before_the_module_is_loaded"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/report.rs",
+    "scope": "",
+    "name": "REPORTER",
+    "type": "OnceLock<Arc<FailureReporter>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Deduplicates terminal module outcomes per (module id, reason) so a broken install is one Sentry event per process; keys are registry ids only and no tenant data is held.",
+    "verification": "modules/report_tests.rs: terminal_reports_are_sanitized_and_deduplicated"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/registry.rs",
+    "scope": "",
+    "name": "TABLE",
+    "type": "std::sync::OnceLock<Vec<tinybus::module::ReleaseRecord>>",
+    "count": 1,
+    "category": "A",
+    "reason": "The compiled module registry in the shape the tinybus resolver consumes; constants only.",
+    "verification": "modules/ops_tests.rs: list_reports_every_registry_entry"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/ops.rs",
+    "scope": "",
+    "name": "LOGGED",
+    "type": "OnceLock<Mutex<std::collections::HashSet<&'static str>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Registry ids whose serving source was already logged, so each is logged once; holds static ids only.",
+    "verification": "modules/ops_tests.rs: status_reports_the_source_that_serves_a_module"
+  },
+  {
+    "file": "crates/openhuman-core/src/web_chat/ops/test_hooks.rs",
+    "scope": "",
+    "name": "TEST_PARK_AFTER_RUN",
+    "type": "std::sync::atomic::AtomicBool",
+    "count": 1,
+    "category": "A",
+    "reason": "A debug/test-only hook flag (`cfg(any(test, debug_assertions))`) that parks `run_chat_task` after its run so the idle guard can be exercised end to end; it holds no tenant data and is off unless a test sets it.",
+    "verification": "tests/agent_harness_e2e.rs: idle_guard_local::stalled_turn_is_stopped_by_the_idle_guard_and_closed_with_a_summary"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/connectors.rs",
+    "scope": "",
+    "name": "ROUTE_TURN",
+    "type": "tokio::sync::Mutex<()>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (cfg(test)): serializes each TinyConnectors call with the route it sets, because libtest runs a crate's tests in one process and the module's route is process-global; it guards no data and carries no tenant state.",
+    "verification": "flows/tinyflows/caps/tools/composio_tests.rs: backend_dispatch_forwards_the_workflow_connection_id"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_store/mod.rs",
+    "scope": "",
+    "name": "OPEN_WORKSPACE_STORES",
+    "type": "LazyLock<Mutex<HashMap<(std::path::PathBuf,String),tinyagents_session::port::WorkspaceStores>>, >",
+    "count": 1,
+    "category": "D",
+    "reason": "Holds open the workspace transcript stores used when no host session store is installed. Each entry is a handle to the SQLite store under one workspace, keyed by that workspace and the session store key (agent_key_for: <profile>~<agent> for a SaaS profile), so two profiles or agents never share an entry; the store under the workspace is the authoritative data. release_workspace_defaults drops them all for a data reset, release_workspace those of one workspace.",
+    "verification": "threads/ops/edit_tests.rs: a_profile_prefixed_key_round_trips_through_edit_and_regenerate; agent/session_store/mod_tests.rs: without_a_store_transcripts_come_from_the_workspace_store_not_files"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_store/rebound.rs",
+    "scope": "",
+    "name": "PROCESS",
+    "type": "LazyLock<StoreRegistry>",
+    "count": 1,
+    "category": "A",
+    "reason": "The process's registry of weak handles to the rebindable session-store providers a host installed, so a workspace switch (storage::rebind) can point each at the new backend. It holds no records and no tenant state, only Weak references; the stores' data lives in the storage backend. A test builds its own StoreRegistry, so rebinding one never moves another's stores.",
+    "verification": "agent/session_store/rebound_tests.rs: a_registry_rebind_leaves_other_registries_alone"
+  },
+  {
+    "file": "crates/openhuman-core/src/threads/artifact_rows.rs",
+    "scope": "",
+    "name": "ARTIFACT_ROW_HANDLE",
+    "type": "OnceLock<SubscriptionHandle>",
+    "count": 1,
+    "category": "A",
+    "reason": "Keeps the one process-wide event-bus subscription that writes artifact rows alive and makes registration idempotent; it holds no data, and each event names the workspace and thread its row is written to.",
+    "verification": "threads/artifact_rows_tests.rs: recording_an_artifact_twice_writes_one_row"
+  }
+]

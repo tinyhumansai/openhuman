@@ -11,8 +11,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::agent::turn_origin::{self, AgentTurnOrigin};
-use crate::security::approval::APPROVAL_CHAT_CONTEXT;
+use crate::agent::turn_origin::AgentTurnOrigin;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext, ToolTimeout};
 
 use super::gate;
@@ -120,7 +119,8 @@ impl RequestPlanReviewTool {
 
         // Only interactive (WebChat) turns have a human to review the plan.
         // Anything else auto-approves so background automation isn't wedged.
-        let origin = turn_origin::current().unwrap_or(AgentTurnOrigin::Unknown);
+        let origin = crate::agent::tinyagents::host::run_context::turn_origin_for_tool(context)
+            .unwrap_or(AgentTurnOrigin::Unknown);
         if !matches!(origin, AgentTurnOrigin::WebChat { .. }) {
             tracing::debug!(
                 origin = ?origin,
@@ -133,8 +133,8 @@ impl RequestPlanReviewTool {
         }
 
         // Route the surface back to the originating chat thread/client (set by
-        // the web channel around the turn, same task-local the ApprovalGate uses).
-        let chat_ctx = APPROVAL_CHAT_CONTEXT.try_with(|c| c.clone()).ok();
+        // the web channel for the turn, the same context the ApprovalGate uses).
+        let chat_ctx = crate::agent::tinyagents::host::run_context::approval_for_tool(context).chat;
         let thread_id = chat_ctx.as_ref().map(|c| c.thread_id.clone());
         let client_id = chat_ctx.as_ref().map(|c| c.client_id.clone());
 
@@ -149,7 +149,12 @@ impl RequestPlanReviewTool {
         // instead of freezing the turn on an approval nobody asked for.
         let mode = thread_id
             .as_deref()
-            .map(crate::agent::tinyagents::run_mode::get_mode)
+            .map(|thread_id| {
+                crate::agent::tinyagents::run_mode::get_mode(
+                    &crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context),
+                    thread_id,
+                )
+            })
             .unwrap_or_default();
         if mode != tinyagents_harness::middleware::RunMode::Plan {
             tracing::debug!(

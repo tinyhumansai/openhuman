@@ -6,11 +6,12 @@
 //! progress projection over it.
 
 use crate::agent::progress::AgentProgress;
+use crate::threads::turn_state::rpc_types::persisted_tool_failure;
 
 use tinyagents_session::turn_state::mirror::caps::{cap_persisted_args, cap_persisted_output};
 use tinyagents_session::turn_state::types::{
-    PersistedToolFailure, SubagentActivity, SubagentToolCall, SubagentTranscriptItem,
-    ToolTimelineEntry, ToolTimelineStatus, TurnLifecycle, TurnPhase,
+    SubagentActivity, SubagentToolCall, SubagentTranscriptItem, ToolTimelineEntry,
+    ToolTimelineStatus, TurnLifecycle, TurnPhase,
 };
 use tinyagents_session::turn_state::TurnStateMirror;
 
@@ -123,7 +124,7 @@ impl ObserveProgress for TurnStateMirror {
                     // Persist the plain-language failure so the explanation
                     // survives a thread switch / cold boot (#4459). Clear it on
                     // a (re-)success so a retried row doesn't keep stale copy.
-                    entry.failure = failure.as_ref().map(PersistedToolFailure::from);
+                    entry.failure = failure.as_ref().map(persisted_tool_failure);
                     // Persist the (capped) result text so the rehydrated
                     // timeline can show what the tool returned, matching the
                     // live `tool_result` socket payload.
@@ -321,7 +322,7 @@ impl ObserveProgress for TurnStateMirror {
                         } else {
                             ToolTimelineStatus::Error
                         };
-                        let persisted_failure = failure.as_ref().map(PersistedToolFailure::from);
+                        let persisted_failure = failure.as_ref().map(persisted_tool_failure);
                         if let Some(call) = activity
                             .tool_calls
                             .iter_mut()
@@ -461,6 +462,12 @@ impl ObserveProgress for TurnStateMirror {
             AgentProgress::TurnContent { .. } => {
                 // Prompt/reply content is consumed by the tracing exporter, not
                 // the turn-state snapshot; nothing to mirror, no flush.
+                false
+            }
+            AgentProgress::ToolCallProgress { .. } => {
+                // A running tool's status line is live-only (`tool_progress`
+                // on the socket); the snapshot already shows the call as
+                // running, so a flush per beat would buy nothing.
                 false
             }
         }

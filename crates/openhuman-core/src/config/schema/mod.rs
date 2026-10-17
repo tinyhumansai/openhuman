@@ -24,6 +24,8 @@ mod defaults;
 mod dictation;
 mod hooks;
 pub use hooks::HooksConfig;
+pub mod components;
+pub use components::ComponentsConfig;
 pub mod hosting;
 pub use hosting::HostingConfig;
 pub mod storage;
@@ -56,6 +58,7 @@ pub(crate) use load::CONFIG_OWNER_MISMATCH_MARKER;
 pub mod claude_agent_sdk;
 pub use claude_agent_sdk::ClaudeAgentSdkConfig;
 mod local_ai;
+mod memes;
 mod memory;
 mod modules;
 mod observability;
@@ -92,12 +95,15 @@ pub use identity_cost::{
     BudgetAction, BudgetPeriod, BudgetPolicy, BudgetScope, CostConfig, ModelPricing,
 };
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
+pub use memes::MemesConfig;
 pub use memory::{
     migrate_legacy_source, MemoryAgentConfig, MemoryConfig, MemoryConversationsConfig,
     MemoryEngineSettings, MemoryLayoutMode, MemoryRecallConfig, MemorySourceConfig,
     MemorySourceKind, MEMORY_CORTEXDB_KEY_NAME,
 };
-pub use modules::{ModuleOverride, ModulesConfig};
+pub use modules::{
+    module_source_env_for, ModuleOverride, ModuleSourceMode, ModulesConfig, MODULE_SOURCE_ENV,
+};
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
 pub use privacy::{PrivacyConfig, PrivacyMode};
 pub use proxy::{
@@ -118,13 +124,13 @@ pub use tools::{
     ComposioHostCredential, CurlConfig, GitbooksConfig, HttpHeader, HttpRequestConfig,
     IntegrationToggle, IntegrationsConfig, LegacySearchInputs, McpAuthConfig, McpClientConfig,
     McpClientIdentityConfig, McpServerConfig, McpToolExposure, MultimodalConfig,
-    MultimodalFileConfig, SearchConfig, SearchEngineCredentials, SearchHostCredential,
-    SearchPresentation, SearchProviderSettings, SearchRoute, SearxngConfig, SecretsConfig,
-    SeltzConfig, UnknownKeyedSearchProvider, WebSearchConfig, COMPOSIO_MODE_BACKEND,
-    COMPOSIO_MODE_DIRECT, COMPOSIO_MODE_DISABLED, MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE,
-    SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
-    SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER,
-    SEARCH_ROLE_CONTENTS, SEARCH_ROLE_SEARCH,
+    MultimodalFileConfig, PresentationMode, ProviderRoute, SearchConfig, SearchEngineCredentials,
+    SearchHostCredential, SearchProviderSettings, SearxngConfig, SecretsConfig, SeltzConfig,
+    UnknownKeyedSearchProvider, WebSearchConfig, COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT,
+    COMPOSIO_MODE_DISABLED, MANAGED_SEARCH_PROVIDERS, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,
+    SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
+    SEARCH_ENGINE_TAVILY, SEARCH_PROVIDERS, SEARCH_ROLES, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS,
+    SEARCH_ROLE_SEARCH,
 };
 pub use update::{UpdateConfig, UpdateRestartStrategy};
 pub use web_chat_config::WebChatConfig;

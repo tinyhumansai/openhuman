@@ -1,3 +1,4 @@
+use super::pending;
 use super::store::persist_openai_oauth_token;
 use super::{
     complete_openai_oauth, disconnect_openai_oauth, openai_oauth_status, start_openai_oauth,
@@ -58,7 +59,7 @@ fn test_oauth_config(token_url: &str) -> OAuthConfig {
         scopes: vec!["scope-a".to_string(), "scope-b".to_string()],
         extra_authorize_params: vec![("prompt".to_string(), "consent".to_string())],
         state_equals_verifier: false,
-        pending_filename: "openai-oauth-pending.json".to_string(),
+        pending_secret: "openai-oauth-pending".to_string(),
     }
 }
 

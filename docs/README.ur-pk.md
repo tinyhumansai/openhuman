@@ -139,7 +139,7 @@ macOS اور Linux کی اسکرپٹ کیا کرے گی، یہ پہلے دیکھ
 
 <h3>ڈیولپرز کے لیے بنایا گیا</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> · <a href="../gitbooks/developing/embed/README.md">ایمبیڈنگ گائیڈ</a> · <a href="../crates/openhuman-embed/examples">مثالیں</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">ایمبیڈنگ گائیڈ</a> · <a href="../crates/openhuman-embed/examples">مثالیں</a></p>
 
 <p>اسے Rust لائبریری کے طور پر استعمال کریں: ایجنٹ کو کسی بھی عام فنکشن کی طرح کال کریں، یا ایک چھوٹے سرور سے پورا بیڑا چلائیں۔</p>
 
@@ -257,9 +257,9 @@ OpenHuman ان حصوں کو نئے سرے سے سوچتا ہے جن پر سب �
 
 <p align="center">
  <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
-  <source media="(prefers-color-scheme: light)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
-  <img alt="SWE-bench Verified رن swe-x86-1: OpenHuman بمقابلہ چھ دوسرے ہارنیس، دس پینلز میں" src="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified رن swe-x86-1: OpenHuman بمقابلہ چھ دوسرے ہارنیس، دس پینلز میں" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
  </picture>
 </p>
 
@@ -333,7 +333,7 @@ println!("{}", reply.reply);
 
 <div dir="rtl" lang="ur">
 
-اگلا قدم: [Rust کوئیک اسٹارٹ](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، [ایمبیڈنگ گائیڈ](../gitbooks/developing/embed/README.md) اور [ڈیولپر دستاویزات](https://tinyhumans.gitbook.io/openhuman/developing)۔
+اگلا قدم: [Rust کوئیک اسٹارٹ](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، [ایمبیڈنگ گائیڈ](../docs/gitbooks/en/developing/embed/README.md) اور [ڈیولپر دستاویزات](https://tinyhumans.gitbook.io/openhuman/developing)۔
 
 ---
 

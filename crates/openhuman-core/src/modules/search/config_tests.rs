@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::SearchProviderSettings;
+use tinysearch_bus::PresentationMode;
 
 fn config_in(dir: &std::path::Path) -> Config {
     let mut config = Config::default();
@@ -126,7 +127,7 @@ fn roles_are_passed_in_configured_order() {
 fn all_tools_presentation_maps_through() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = config_in(dir.path());
-    config.search.presentation = SearchPresentation::OneProvider;
+    config.search.presentation = PresentationMode::OneProvider;
     config.search.presentation_provider = Some("exa".into());
     let payload = module_config(&config);
     assert_eq!(payload.presentation.mode, PresentationMode::OneProvider);

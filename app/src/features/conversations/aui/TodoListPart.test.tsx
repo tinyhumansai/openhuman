@@ -13,6 +13,9 @@ describe('mapCoreTodoStatus', () => {
   it('maps pending to pending', () => {
     expect(mapCoreTodoStatus('pending')).toBe('pending');
   });
+  it('maps cancelled to skipped, never pending', () => {
+    expect(mapCoreTodoStatus('cancelled')).toBe('skipped');
+  });
   it('maps an unknown status to pending', () => {
     expect(mapCoreTodoStatus('bogus')).toBe('pending');
     expect(mapCoreTodoStatus(undefined)).toBe('pending');
@@ -29,6 +32,12 @@ describe('toAuiTodoItems', () => {
       { id: '0-Write tests', text: 'Write tests', status: 'pending' },
       { id: '1-Ship it', text: 'Ship it', status: 'done' },
     ]);
+  });
+
+  it('carries a cancelled step as skipped with its reason', () => {
+    expect(
+      toAuiTodoItems([{ content: 'Deploy', status: 'cancelled', reason: 'not asked for' }])
+    ).toEqual([{ id: '0-Deploy', text: 'Deploy', status: 'skipped', reason: 'not asked for' }]);
   });
 
   it('drops items with no non-empty content', () => {

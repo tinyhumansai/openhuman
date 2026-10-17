@@ -44,6 +44,36 @@ pub static SHARED_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 /// which is `cfg(test)`-only; this is the integration-binary equivalent.
 pub static CONNECTOR_MODULE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// A host storage backend, installed for one test and removed on drop (also
+/// when the test panics).
+///
+/// Modules reach host storage only through the installed backend
+/// (`modules::storage_host`), as they do under a real host's boot; these
+/// suites boot none. The slot is process-wide and libtest runs this binary's
+/// tests in one process, so taking the [`SHARED_ENV_LOCK`] guard serializes
+/// every install. A test that holds no lock can still observe the backend
+/// while one is installed.
+pub struct HostStorage<'lock>(std::marker::PhantomData<&'lock ()>);
+
+impl<'lock> HostStorage<'lock> {
+    pub fn install(_env: &'lock tokio::sync::MutexGuard<'_, ()>) -> Self {
+        let previous = openhuman_core::storage::install(std::sync::Arc::new(
+            openhuman_core::storage::MemoryStorage::new(),
+        ));
+        assert!(
+            previous.is_none(),
+            "a host storage backend was left installed"
+        );
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl Drop for HostStorage<'_> {
+    fn drop(&mut self) {
+        openhuman_core::storage::clear();
+    }
+}
+
 /// The TinyHumans backend transport for every aggregated suite that boots the
 /// core in-process and reaches the mock backend: call
 /// `crate::tinyhumans_boot::boot()` from the suite's fixture (or each test).

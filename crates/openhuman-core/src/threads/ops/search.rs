@@ -7,6 +7,7 @@
 
 use super::crud::transcript_search;
 use super::support::envelope;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::threads::ApiEnvelope;
 
@@ -45,6 +46,7 @@ pub struct ThreadSearchResponse {
 
 /// See the module docs. A blank query answers no hits without reading.
 pub async fn thread_search(
+    ctx: &DispatchCtx,
     request: ThreadSearchRequest,
 ) -> Result<Outcome<ApiEnvelope<ThreadSearchResponse>>, String> {
     let query = request.query.trim();
@@ -56,7 +58,7 @@ pub async fn thread_search(
         ));
     }
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let hits = transcript_search(query, limit, None)
+    let hits = transcript_search(ctx, query, limit, None)
         .await?
         .into_iter()
         .map(|hit| ThreadSearchHit {

@@ -1,25 +1,16 @@
 //! The channel runtime's entry point: wiring subscribers, providers, the
 //! system prompt, and the message dispatch loop.
 
-use super::super::dispatch::{run_message_dispatch_loop, RuntimeChannelMessage};
-use super::super::supervision::spawn_supervised_listener;
-use super::credentials::{hydrate_channel_credentials, RuntimeProxyClients};
-use super::relay::start_relay_runtime;
+use super::super::dispatch::run_message_dispatch_loop;
+use super::module_providers::ModuleChannelRuntime;
 use super::turn_parts::{build_channel_turn_parts, runtime_context, PromptToolDescs};
-use crate::channels::context::{
-    DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS, DEFAULT_CHANNEL_MAX_BACKOFF_SECS,
-};
-use crate::channels::traits;
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::security::SecurityPolicy;
 use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tinychannels::runtime::compute_max_in_flight_messages;
-use tinychannels_runtime::config::RelayRuntimeConfigExt as _;
-use tokio_util::task::AbortOnDropHandle;
+use std::sync::{Arc, OnceLock, Weak};
+use tokio_util::sync::CancellationToken;
 
 pub async fn start_channels(config: Config) -> Result<()> {
     start_channels_with_session(config, super::super::session::channel_session()).await
@@ -29,10 +20,16 @@ pub(crate) async fn start_channels_with_session(
     config: Config,
     session: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    super::super::session::run_in_session(session, start_channels_inner(config)).await
+    start_channels_inner(config, session).await
 }
 
-async fn start_channels_inner(mut config: Config) -> Result<()> {
+async fn start_channels_inner(mut config: Config, session: CancellationToken) -> Result<()> {
+    if session.is_cancelled() {
+        return Ok(());
+    }
+    // The listener runs for the host's own tenant (none in SaaS, where hosted
+    // channels go through the relay under their profile's context).
+    let dispatch = crate::core::runtime::DispatchCtx::host_default();
     // Initialize the global event bus singleton and register the tracing
     // subscriber for debug logging of all domain events.
     crate::core::bus::init().await.expect("bus init");
@@ -50,6 +47,7 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     // ArtifactFailed) as `artifact_ready` / `artifact_failed` web-channel
     // events so the frontend ArtifactCard can render in chat (#2779).
     crate::web_chat::register_artifact_surface_subscriber();
+    crate::threads::artifact_rows::register_artifact_row_subscriber();
     // Surface external-egress disclosure events (ExternalTransferPending) as
     // `external_transfer_pending` web-channel events so the frontend can show a
     // per-action "what leaves, to where, why" card (privacy epic S2, #4436).
@@ -86,9 +84,9 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
 
     // Initialise the sub-agent definition registry from this workspace.
     // Idempotent — `bootstrap_core_runtime` may also call it.
-    if let Err(err) =
-        crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
-    {
+    if let Err(err) = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global(
+        &config.workspace_dir,
+    ) {
         tracing::warn!(
             "AgentDefinitionRegistry::init_global failed: {err} — \
              spawn_subagent will be unavailable until restart"
@@ -126,7 +124,7 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     // user-configured `[agent].agent_timeout_secs` (#5027).
     // Model, tools and the identity-refreshing system prompt (`turn_parts`),
     // shared with the hosted-channel relay.
-    let parts = build_channel_turn_parts(&config, &security, PromptToolDescs::Fixed)?;
+    let parts = build_channel_turn_parts(&dispatch, &config, &security, PromptToolDescs::Fixed)?;
     let model = parts.model.clone();
     let workspace = config.workspace_dir.clone();
     let skills = parts.skills.clone();
@@ -149,37 +147,49 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
         );
     }
 
-    // Assemble the ChannelHost capability surface (shutdown, STT/TTS, reaction
-    // gate, approvals, conversation store, event sink). Ported rich providers
-    // reach host capabilities through this instead of calling core internals.
-    let channel_host = crate::channels::host::build_channel_host(Arc::new(config.clone()));
-
-    // Provider construction lives in `tinychannels::factory` so that this host
-    // and the `tinychannels-module` cdylib build the same providers from the
-    // same config. It used to be ~200 lines inline here; a second copy is how
-    // the two drift, and only one of them would have been the one under test.
-    //
-    // Three things stay on this side because they are host policy, and the
-    // factory's docs say so explicitly:
-    //   - credential hydration (below) reads OpenHuman's keyring,
-    //   - `RuntimeProxyClients` applies the configured HTTP proxy,
-    //   - `channel_host` is the capability surface assembled just above.
-    let channels = tinychannels::build_channels(
-        &hydrate_channel_credentials(&config),
-        &channel_host,
-        &RuntimeProxyClients,
-    );
-
-    let relay_config = config
+    let configured = crate::channels::configured_providers(&config);
+    let relay_configured = config
         .channels_config
         .relay
-        .clone()
-        .filter(tinychannels::config::RelayRuntimeConfig::is_listener_configured);
-
-    if channels.is_empty() && relay_config.is_none() {
+        .as_ref()
+        .is_some_and(|relay| !relay.url.is_empty() && !relay.identities.is_empty());
+    if configured.is_empty() && !relay_configured {
         println!("No channels configured. Set up channels in the web UI.");
         return Ok(());
     }
+
+    // The module runtime captures one config identity and host callback object.
+    // A weak context cell is filled once the turn context is ready, avoiding a
+    // callback -> context -> channel -> lease -> callback reference cycle.
+    let (dispatch_tx, rx) = tokio::sync::mpsc::channel(100);
+    let context_slot: Arc<OnceLock<Weak<crate::channels::context::ChannelRuntimeContext>>> =
+        Arc::new(OnceLock::new());
+    let preparing = ModuleChannelRuntime::prepare(
+        &dispatch,
+        Arc::new(config.clone()),
+        Arc::clone(&context_slot),
+        dispatch_tx.clone(),
+    );
+    tokio::pin!(preparing);
+    let mut module_runtime = tokio::select! {
+        biased;
+        _ = session.cancelled() => {
+            // Do not drop preparation after it may have acquired a module
+            // lease. Finish it and await the runtime's acknowledged close
+            // before the service supervisor can admit another identity.
+            let mut runtime = preparing.await?;
+            runtime.close().await?;
+            return Ok(());
+        },
+        prepared = &mut preparing => {
+            Some(prepared?)
+        }
+    };
+    let channels_by_name = module_runtime
+        .as_ref()
+        .expect("runtime prepared when providers are configured")
+        .channels();
+    let channels = channels_by_name.values().cloned().collect::<Vec<_>>();
 
     println!("🦀 OpenHuman Channel Server");
     println!("  🤖 Model:    {model}");
@@ -196,7 +206,7 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
         channels
             .iter()
             .map(|c| c.name())
-            .chain(relay_config.as_ref().map(|_| "relay"))
+            .chain(relay_configured.then_some("relay"))
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -208,62 +218,6 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
         component: "channels".into(),
     });
 
-    let initial_backoff_secs = config
-        .reliability
-        .channel_initial_backoff_secs
-        .max(DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS);
-    let max_backoff_secs = config
-        .reliability
-        .channel_max_backoff_secs
-        .max(DEFAULT_CHANNEL_MAX_BACKOFF_SECS);
-
-    // Providers still publish legacy `ChannelMessage`s through the public
-    // channel trait. The runtime dispatch queue wraps those messages so relay
-    // inbound can carry its original TinyChannels envelope through processing.
-    let (provider_tx, mut provider_rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(100);
-    let (dispatch_tx, rx) = tokio::sync::mpsc::channel::<RuntimeChannelMessage>(100);
-    let provider_dispatch_tx = dispatch_tx.clone();
-    let provider_bridge = AbortOnDropHandle::new(tokio::spawn(async move {
-        while let Some(msg) = provider_rx.recv().await {
-            if provider_dispatch_tx
-                .send(RuntimeChannelMessage::from(msg))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    }));
-
-    let mut relay_handles = Vec::new();
-    if let Some(ref relay) = relay_config {
-        match start_relay_runtime(relay, dispatch_tx.clone()).await {
-            Ok(handle) => relay_handles.push(handle),
-            Err(error) => {
-                tracing::warn!("[channels][relay] failed to start relay runtime: {error}")
-            }
-        }
-    }
-
-    // Spawn a listener for each channel
-    let mut handles = Vec::new();
-    for ch in &channels {
-        handles.push(AbortOnDropHandle::new(spawn_supervised_listener(
-            ch.clone(),
-            provider_tx.clone(),
-            initial_backoff_secs,
-            max_backoff_secs,
-        )));
-    }
-    drop(provider_tx); // Drop our copy so provider_rx closes when all channels stop.
-    drop(dispatch_tx); // Drop startup's copy; relay/bridge clones keep dispatch alive.
-
-    let channels_by_name = Arc::new(
-        channels
-            .iter()
-            .map(|ch| (ch.name().to_string(), Arc::clone(ch)))
-            .collect::<HashMap<_, _>>(),
-    );
     // Register the cron delivery subscriber so cron jobs can deliver output
     // to channels via events instead of directly constructing channel instances.
     let _cron_delivery_handle = bus.subscribe(Arc::new(
@@ -290,7 +244,7 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     // Remote-control turn state (`/status` shows "in progress") for every
     // channel with the `remote_control` capability.
     let _turn_state_handle = bus.subscribe(Arc::new(
-        crate::channels::host::ChannelTurnStateSubscriber::new(config.workspace_dir.clone()),
+        crate::channels::host::ChannelTurnStateSubscriber::with_config(Arc::new(config.clone())),
     ));
     // In-chat approvals (sub-issue 2 of #3098) for every channel with the
     // `chat_approvals` capability: `Prompt`-class tool calls are gated for the
@@ -298,16 +252,32 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     // each such turn in an `ApprovalChatContext` and intercepting `yes`/`no`
     // replies for parked approvals.
     let _approval_surface_handle = bus.subscribe(Arc::new(
-        crate::channels::host::ChannelApprovalSurfaceSubscriber::new(Arc::clone(&channels_by_name)),
+        crate::channels::host::ChannelApprovalSurfaceSubscriber::with_config(
+            Arc::clone(&channels_by_name),
+            Arc::new(config.clone()),
+        ),
     ));
     tracing::debug!("[channels] registered turn-state and approval-surface subscribers");
 
-    let listener_count = channels.len() + relay_config.as_ref().map(|_| 1).unwrap_or_default();
-    let max_in_flight_messages = compute_max_in_flight_messages(listener_count);
+    let listener_count = channels.len() + usize::from(relay_configured);
+    let (message_timeout_secs, max_in_flight_messages) = module_runtime
+        .as_ref()
+        .expect("runtime prepared when providers are configured")
+        .runtime_limits(config.channels_config.message_timeout_secs, listener_count)
+        .await?;
 
     println!("  🚦 In-flight message limit: {max_in_flight_messages}");
 
-    let runtime_ctx = Arc::new(runtime_context(&config, parts, channels_by_name));
+    let runtime_ctx = Arc::new(runtime_context(
+        &dispatch,
+        &config,
+        parts,
+        Arc::clone(&channels_by_name),
+        message_timeout_secs,
+    ));
+    context_slot
+        .set(Arc::downgrade(&runtime_ctx))
+        .map_err(|_| anyhow::anyhow!("channel callback context was already initialized"))?;
     // Let cron jobs created from a channel chat read that chat's history, send
     // into it and append their replies to it.
     crate::cron::channel_bridge::register_channel_bridge(
@@ -316,13 +286,24 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
         crate::channels::context::MAX_CHANNEL_HISTORY,
     );
 
-    run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
-
-    // Wait for all channel tasks
-    for h in handles {
-        let _ = h.await;
+    let startup = module_runtime
+        .as_mut()
+        .expect("runtime prepared when providers are configured")
+        .start(&config);
+    tokio::select! {
+        biased;
+        _ = session.cancelled() => {},
+        result = startup => result?,
     }
-    let _ = provider_bridge.await;
+
+    tokio::select! {
+        biased;
+        _ = session.cancelled() => {},
+        _ = run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages) => {},
+    }
+    if let Some(runtime) = module_runtime.as_mut() {
+        runtime.close().await?;
+    }
 
     Ok(())
 }

@@ -42,7 +42,11 @@ fn bare_prompt_is_verbatim_with_nothing_composed_around_it() {
         .into_core("alpha")
         .expect("definition");
     assert!(matches!(def.system_prompt, PromptSource::Verbatim(ref p) if p == "Analyze."));
-    assert!(def.omit_identity && def.omit_safety_preamble && def.omit_memory_context);
+    assert!(
+        def.extensions.omit_identity
+            && def.extensions.omit_safety_preamble
+            && def.extensions.omit_memory_context
+    );
 }
 
 #[test]

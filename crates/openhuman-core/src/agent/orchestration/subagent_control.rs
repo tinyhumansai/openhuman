@@ -14,6 +14,7 @@
 //! the thread stays alive and the user expects to see that their sub-agent was
 //! cancelled.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{json, Map, Value};
 
 use crate::agent::orchestration::running_subagents::{CancelledSubagent, SteerError};
@@ -100,7 +101,7 @@ fn schema_for(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_subagent_cancel(params: Map<String, Value>) -> ControllerFuture {
+fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         let task_id = require_str(&params, "taskId")?;
@@ -113,7 +114,7 @@ fn handle_subagent_cancel(params: Map<String, Value>) -> ControllerFuture {
         // `outcome` is set only when nothing was cancelled: how the run ended
         // if the registry still knew it, else "unknown" (never registered, or
         // already swept). The card settles on it instead of assuming success.
-        let (cancelled, outcome) = match running_subagents::cancel_by_task(&task_id) {
+        let (cancelled, outcome) = match running_subagents::cancel_by_task(&ctx, &task_id) {
             // Finished before the click landed (it stays registered until the
             // terminal sweep). Its outcome is already recorded and delivered;
             // announcing a cancellation would overwrite a completed session
@@ -143,6 +144,7 @@ fn handle_subagent_cancel(params: Map<String, Value>) -> ControllerFuture {
                 // record a completion that flows through the same idle-gated
                 // delivery and surfaces the cancellation in chat.
                 background_completions::record_completion(
+                    &ctx,
                     &meta.workspace_dir,
                     &meta.parent_session,
                     &task_id,
@@ -182,7 +184,7 @@ fn handle_subagent_cancel(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
+fn handle_subagent_steer(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         let task_id = require_str(&params, "taskId")?;
@@ -197,7 +199,7 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
             message.chars().count()
         );
 
-        match running_subagents::steer_control(&task_id, message, lane).await {
+        match running_subagents::steer_control(&ctx, &task_id, message, lane).await {
             Ok(()) => {
                 log::debug!(
                     target: "subagent_control_rpc",
@@ -209,12 +211,8 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
                 let reason = match err {
                     SteerError::Unknown => "unknown",
                     SteerError::AlreadyDone => "already_done",
-                    // `steer_control` is trusted UI/RPC control and currently
-                    // does not perform parent ownership checks, so this arm is
-                    // unreachable on THIS path. The variant is not dead overall:
-                    // the agent-tool `running_subagents::steer` path enforces
-                    // ownership and returns `NotOwned`. Kept here for the Phase 4
-                    // SteeringRegistry ownership consolidation.
+                    // SaaS user controls check the captured worker profile,
+                    // independently of the caller-supplied task ID.
                     SteerError::NotOwned => "not_owned",
                     SteerError::UnsupportedLane => "unsupported_lane",
                 };

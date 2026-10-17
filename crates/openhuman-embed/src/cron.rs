@@ -59,14 +59,19 @@ use std::future::Future;
 use std::time::SystemTime;
 
 use openhuman_core::config::Config;
-use openhuman_core::cron::policy::{self, JobPolicy};
 use openhuman_core::cron::system_jobs::SYSTEM_COMMAND_PREFIX;
+use openhuman_core::cron::JobPolicy;
 use {
     openhuman_core::cron::CronJob, openhuman_core::cron::CronJobPatch,
     openhuman_core::cron::JobType, openhuman_core::cron::Schedule,
 };
 
+pub use openhuman_core::cron::handlers::{JobKindHandler, JobOutcome, JobRunContext};
 pub use openhuman_core::cron::system_job_handlers::SystemJobContext;
+/// The kind of a scheduled job (`shell`, `agent`, `flow`), which decides the
+/// handler that runs it: see
+/// [`RuntimeBuilder::cron_job_handler`](crate::RuntimeBuilder::cron_job_handler).
+pub use openhuman_core::cron::JobType as JobKind;
 
 /// When a job fires.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,11 +353,16 @@ pub enum CronError {
 /// [`Runtime::cron`](crate::Runtime::cron).
 pub struct Cron<'a> {
     config: &'a Config,
+    /// The runtime's own context: what a Run Now executes and delivers under.
+    dispatch: openhuman_core::core::runtime::DispatchCtx,
 }
 
 impl<'a> Cron<'a> {
-    pub(crate) fn new(config: &'a Config) -> Self {
-        Self { config }
+    pub(crate) fn new(
+        config: &'a Config,
+        dispatch: openhuman_core::core::runtime::DispatchCtx,
+    ) -> Self {
+        Self { config, dispatch }
     }
 
     fn enabled(&self) -> Result<(), CronError> {
@@ -411,7 +421,14 @@ impl<'a> Cron<'a> {
                 create(config, &spec.name, target, schedule, spec.enabled)?
             }
         };
-        policy::set_policy(config, &job.id, spec.policy())?;
+        let job = openhuman_core::cron::update_job(
+            config,
+            &job.id,
+            CronJobPatch {
+                policy: Some(spec.policy()),
+                ..CronJobPatch::default()
+            },
+        )?;
         self.describe(job)?.ok_or_else(|| {
             CronError::Invalid(format!("job {:?} is not an agent or system job", spec.name))
         })
@@ -451,9 +468,10 @@ impl<'a> Cron<'a> {
             .find(name)?
             .ok_or_else(|| CronError::NotFound(name.to_string()))?;
         log::debug!("[embed][cron] run_now name={name} id={}", job.id);
-        let (success, output) = openhuman_core::cron::ops::run_job_now(self.config, &job.id)
-            .await
-            .map_err(CronError::Run)?;
+        let (success, output) =
+            openhuman_core::cron::ops::run_job_now(&self.dispatch, self.config, &job.id)
+                .await
+                .map_err(CronError::Run)?;
         Ok(JobRun { success, output })
     }
 
@@ -486,7 +504,7 @@ impl<'a> Cron<'a> {
         let Some(target) = JobTarget::from_job(&job) else {
             return Ok(None);
         };
-        let policy = policy::get_policy(self.config, &job.id)?;
+        let policy = job.policy;
         Ok(Some(ScheduledJob {
             name: job.name.clone().unwrap_or_default(),
             schedule: JobSchedule::from_core(&job.schedule),

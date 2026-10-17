@@ -5,7 +5,7 @@ use tinychannels_bus::{methods, ChannelControllerRequest, ChannelControllerResul
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::modules::client::{ModuleCallError, ModuleClient};
+use tinybus::module::ModuleCallError;
 
 use tinychannels_bus::controllers::ChannelAuthMode;
 use tinychannels_bus::controllers::ChannelTestResult;
@@ -18,7 +18,7 @@ pub async fn test_channel(
     auth_mode: ChannelAuthMode,
     credentials_value: Value,
 ) -> Result<Outcome<ChannelTestResult>, String> {
-    let response = ModuleClient::new(config.clone())
+    let response = crate::modules::client(config.clone())
         .call_confidential(
             "tinychannels",
             methods::CHANNEL_CONTROLLER,
@@ -34,7 +34,7 @@ pub async fn test_channel(
     match response {
         ChannelControllerResult::TestChannel(result) => Ok(Outcome::new(result, vec![])),
         _ => {
-            ModuleClient::report_malformed_reply("tinychannels");
+            crate::modules::report::malformed_reply("tinychannels");
             Err(ModuleCallError::ModuleFault.to_string())
         }
     }

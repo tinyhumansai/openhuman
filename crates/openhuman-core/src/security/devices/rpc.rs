@@ -65,6 +65,7 @@ pub(crate) static ACTIVE_CIPHERS: once_cell::sync::Lazy<
 /// 4. Detects the local LAN IP for the optional direct fast-path `rpc_url`.
 /// 5. Returns QR-bound fields to the caller.
 pub async fn devices_create_pairing(
+    ctx: &crate::core::runtime::DispatchCtx,
     _config: &Config,
     label: Option<String>,
 ) -> Result<Outcome<CreatePairingResponse>, String> {
@@ -137,9 +138,7 @@ pub async fn devices_create_pairing(
             core_pubkey: core_pubkey.clone(),
             rpc_url: rpc_url.clone(),
             expires_at: expires_at.clone(),
-            agent: crate::core::runtime::current_tenant()
-                .ok()
-                .and_then(|tenant| tenant.agent),
+            agent: ctx.tenant().ok().and_then(|tenant| tenant.agent),
         },
     );
 

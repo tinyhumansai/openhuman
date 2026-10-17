@@ -36,7 +36,7 @@ pub(super) fn approval_target(action: &Action) -> (Option<&str>, String) {
         | Action::Fill { target, .. }
         | Action::Select { target, .. }
         | Action::Check { target, .. } => Some(target),
-        Action::Type { target, .. } => target.as_ref(),
+        Action::Type { target, .. } | Action::Press { target, .. } => target.as_ref(),
         _ => None,
     };
     let preview = |raw: &str| {

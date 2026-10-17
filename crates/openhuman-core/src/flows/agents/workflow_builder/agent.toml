@@ -21,7 +21,7 @@ omit_memory_context = true
 # saved flow), is gated by the `ApprovalGate` itself, not this preamble: on the
 # streaming copilot path (flows-copilot-live-run-approval, PR3) it parks behind
 # a real human approval card (`AgentTurnOrigin::WebChat` +
-# `APPROVAL_CHAT_CONTEXT`, same as main chat); on the headless `flows_build`
+# chat approval context, same as main chat); on the headless `flows_build`
 # path it stays hidden entirely (`restrict_builder_toolset`, #4593/#4881) since
 # there is no approval surface to park against there.
 omit_safety_preamble = true

@@ -49,6 +49,10 @@ pub fn install(workspace_dir: &Path) -> InstallReport {
 
 /// Boot entry point used by runtime composition.
 pub fn install_bundled_skills(workspace_dir: &Path) {
+    if !crate::skills::skills_component_enabled() {
+        tracing::debug!("[skills][bundled] install skipped ([components] skills off)");
+        return;
+    }
     let _ = install(workspace_dir);
 }
 

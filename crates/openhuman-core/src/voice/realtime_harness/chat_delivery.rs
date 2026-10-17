@@ -9,12 +9,12 @@ use crate::platform::socket::manager::global_socket_manager;
 
 /// Chat thread + client id the voice turn scopes as its approval / routing
 /// surface, mirroring `deliver_voice_result_to_chat`. Setting these around the
-/// turn (via `APPROVAL_CHAT_CONTEXT` plus the explicit agent thread) is what makes the voice
+/// turn (via the chat approval context plus the explicit agent thread) is what makes the voice
 /// orchestrator behave like the chat path for tools that need a *routable*
 /// approval surface:
 ///
 /// - `composio_connect` fails closed with a `[policy-denied] … needs an
-///   interactive chat turn` message whenever `APPROVAL_CHAT_CONTEXT` is absent
+///   interactive chat turn` message whenever the turn has no chat approval context
 ///   (see `integrations/composio/tools.rs`). On voice that message got
 ///   paraphrased back to the user as "your Gmail connection is throwing an auth
 ///   error, reconnect it" — the exact voice-only Gmail-summary failure — even

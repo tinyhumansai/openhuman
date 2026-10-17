@@ -130,7 +130,9 @@ pub(super) fn grant_turn_cwd(config: &mut Config, root: &std::path::Path) {
 /// [`is_user_authored`](crate::agent::turn_origin::AgentTurnOrigin::is_user_authored)
 /// reads `false` for it and the conversation autosave would silently drop a
 /// real user message.
-pub(super) fn effective_agent_chat_origin() -> crate::agent::turn_origin::AgentTurnOrigin {
-    crate::agent::turn_origin::current()
+pub(super) fn effective_agent_chat_origin(
+    ctx: &crate::core::runtime::DispatchCtx,
+) -> crate::agent::turn_origin::AgentTurnOrigin {
+    ctx.turn_origin_or_scoped()
         .unwrap_or(crate::agent::turn_origin::AgentTurnOrigin::DirectChat)
 }

@@ -28,6 +28,7 @@
 //! tool migration in
 //! [`super::tools::ComposioExecuteTool`].
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -35,10 +36,9 @@ use serde_json::Value;
 
 use super::contract::ToolScope;
 use super::tools::resolve_action_scope;
-use crate::agent::harness::definition::SandboxMode;
-use crate::agent::tinyagents::host::run_context::sandbox_mode_for_tool;
-use crate::config::rpc as config_rpc;
+use crate::agent::tinyagents::host::run_context::{dispatch_ctx_for_tool, sandbox_mode_for_tool};
 use crate::config::Config;
+use tinyagents_definition::SandboxMode;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolRunContext};
 
 /// A single Composio action exposed as a first-class tool.
@@ -60,7 +60,7 @@ pub struct ComposioActionTool {
     ///
     /// `None` for a deferred instance synthesised for a parent session,
     /// which has no spawn-time config: it resolves the live config through
-    /// [`config_rpc::load_config_with_timeout`] on every call — the
+    /// [`DispatchCtx::load_config`] on every call — the
     /// embedder's config when one is bound, else the process-global one.
     config: Option<Arc<Config>>,
     /// Action slug as-shipped to Composio, e.g. `"GMAIL_SEND_EMAIL"`.
@@ -162,10 +162,10 @@ impl ComposioActionTool {
 
     /// The live config for one call: a reload anchored to the spawn-time
     /// snapshot when there is one, else the core's read path.
-    async fn live_config(&self) -> Result<Config, String> {
+    async fn live_config(&self, ctx: &DispatchCtx) -> Result<Config, String> {
         match self.config.as_deref() {
             Some(snapshot) => super::tools::live_composio_config(snapshot).await,
-            None => config_rpc::load_config_with_timeout().await,
+            None => ctx.load_config().await,
         }
     }
 }
@@ -239,7 +239,8 @@ impl Tool for ComposioActionTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let (config, outcome) = Box::pin(self.execute_unredacted(args, None)).await;
+        let (config, outcome) =
+            Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None)).await;
         super::tools::redact_composio_outcome(&config, outcome)
     }
     async fn execute_with_context(
@@ -248,8 +249,12 @@ impl Tool for ComposioActionTool {
         _options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        let (config, outcome) =
-            Box::pin(self.execute_unredacted(args, sandbox_mode_for_tool(context))).await;
+        let (config, outcome) = Box::pin(self.execute_unredacted(
+            &dispatch_ctx_for_tool(context),
+            args,
+            sandbox_mode_for_tool(context),
+        ))
+        .await;
         super::tools::redact_composio_outcome(&config, outcome)
     }
 }
@@ -261,6 +266,7 @@ impl ComposioActionTool {
     /// deferred instance with none.
     async fn execute_unredacted(
         &self,
+        ctx: &DispatchCtx,
         args: Value,
         sandbox_mode: Option<SandboxMode>,
     ) -> (Box<Config>, anyhow::Result<ToolResult>) {
@@ -308,7 +314,7 @@ impl ComposioActionTool {
         // fresh routing. Anchored to this tool's original config path rather than
         // re-resolving process-global `OPENHUMAN_WORKSPACE` (the tool is scoped to
         // the user/workspace it was created for).
-        let live_config = match self.live_config().await {
+        let live_config = match self.live_config(ctx).await {
             Ok(c) => Box::new(c),
             Err(e) => {
                 tracing::warn!(

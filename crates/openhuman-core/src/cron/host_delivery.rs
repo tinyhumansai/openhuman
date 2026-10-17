@@ -1,12 +1,15 @@
-//! Host-routed delivery of a hosted profile's scheduled output.
+//! Host-routed delivery of scheduled output.
 //!
-//! A host that embeds profiles (`profiles::ProfileHost`) owns the conversations
-//! its users talk in, so it can route a scheduled reply better than the core
-//! can. With a [`CronDelivery`] installed, an `origin`-mode run of a profile's
-//! job hands its output to the host instead of writing into a local thread or
-//! channel: the host is told which profile, which conversation the job was
-//! created in, and the job's recorded origin. A run with nothing to say (blank
-//! or `NO_REPLY`) never reaches it.
+//! A host that embeds profiles (`profiles::ProfileHost`) or library agents
+//! (`openhuman_embed::Runtime`) owns the conversations its users talk in, so it
+//! can route a scheduled reply better than the core can. With a
+//! [`CronDelivery`] installed, an `origin`-mode run of a profile's or an
+//! embedded agent's job hands its output to the host instead of writing into a
+//! local thread or channel: the host is told whose job it was (the profile, the
+//! agent, or both), which conversation the job was created in, and the job's
+//! recorded origin. A run with nothing to say (blank or `NO_REPLY`) never
+//! reaches it. A run with neither a profile nor an agent (the desktop's own
+//! orchestrator) keeps the core's delivery.
 
 use std::sync::{Arc, RwLock};
 
@@ -17,8 +20,12 @@ use crate::cron::JobOrigin;
 /// One scheduled reply for the host to route.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CronReply {
-    /// The profile whose job produced the reply.
-    pub profile_id: String,
+    /// The profile whose job produced the reply; `None` for an embedded
+    /// agent outside any profile.
+    pub profile_id: Option<String>,
+    /// The agent whose job produced the reply; `None` for a profile's
+    /// default agent.
+    pub agent_id: Option<String>,
     /// The job that ran.
     pub job_id: String,
     /// This run; stable across redelivery of the same reply.

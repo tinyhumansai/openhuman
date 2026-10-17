@@ -19,6 +19,24 @@ async fn channel_test_handler_requires_module_before_provider_field_validation()
     assert!(error.contains("module unavailable"), "{error}");
 }
 
+#[tokio::test]
+async fn rich_channel_send_requires_module_before_normalization_or_backend_delivery() {
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    let error = send_with_config(
+        &config,
+        SendMessageParams {
+            channel: " telegram ".into(),
+            message: json!({"text":"fixture-content", "thread_ts":"fixture-thread"}),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("module unavailable"), "{error}");
+    assert!(!error.contains("fixture-content"));
+    assert!(!error.contains("fixture-thread"));
+}
+
 #[test]
 fn schema_handler_parity() {
     let schemas = all_controller_schemas();

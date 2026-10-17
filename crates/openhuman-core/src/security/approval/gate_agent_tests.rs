@@ -30,14 +30,12 @@ async fn gated_call(
         ctx,
         turn_origin::with_origin(
             origin,
-            APPROVAL_CHAT_CONTEXT.scope(
-                chat_ctx(),
-                gate.intercept_audited_bounded(
-                    tool,
-                    "run it",
-                    serde_json::json!({}),
-                    Some(Duration::from_millis(100)),
-                ),
+            gate.intercept_audited_bounded(
+                &ApprovalTurnContext::chat(chat_ctx()),
+                tool,
+                "run it",
+                serde_json::json!({}),
+                Some(Duration::from_millis(100)),
             ),
         ),
     )
@@ -168,13 +166,11 @@ fn park(
     let ctx = agent_ctx(agent, None, false);
     tokio::spawn(CoreContext::scope(
         ctx,
-        turn_origin::with_origin(
-            web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(chat_ctx(), async move {
-                gate.intercept_audited("shell", "run it", serde_json::json!({}))
-                    .await
-            }),
-        ),
+        turn_origin::with_origin(web_origin(), async move {
+            let turn = ApprovalTurnContext::chat(chat_ctx());
+            gate.intercept_audited(&turn, "shell", "run it", serde_json::json!({}))
+                .await
+        }),
     ))
 }
 
@@ -237,11 +233,19 @@ async fn agents_parked_on_one_thread_id_are_routed_and_decided_apart() {
     .expect("ApprovalRequested for alpha");
     assert_eq!(seen.as_deref(), Some("route-alpha"));
 
-    let alpha_rows = gate.list_pending_for_agent(Some("route-alpha")).unwrap();
+    let alpha_rows = gate
+        .list_pending_for_agent(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            Some("route-alpha"),
+        )
+        .unwrap();
     assert_eq!(alpha_rows.len(), 1);
     assert_eq!(alpha_rows[0].request_id, alpha_request);
     assert_eq!(alpha_rows[0].agent_id.as_deref(), Some("route-alpha"));
-    assert!(gate.list_pending_for_agent(None).unwrap().is_empty());
+    assert!(gate
+        .list_pending_for_agent(&crate::core::runtime::DispatchCtx::ambient(), None)
+        .unwrap()
+        .is_empty());
 
     let refused = gate
         .decide_for_agent("route-alpha", &beta_request, ApprovalDecision::ApproveOnce)
@@ -271,7 +275,11 @@ async fn agents_parked_on_one_thread_id_are_routed_and_decided_apart() {
     );
 
     let denied = gate
-        .deny_all_for_agent("route-beta", "agent_removed")
+        .deny_all_for_agent(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "route-beta",
+            "agent_removed",
+        )
         .unwrap();
     assert_eq!(denied, 1);
     let (outcome, _) = beta.await.unwrap();
@@ -299,7 +307,10 @@ async fn agents_parked_on_one_thread_id_are_routed_and_decided_apart() {
         other => panic!("unexpected event {other:?}"),
     }
     assert!(gate
-        .list_pending_for_agent(Some("route-beta"))
+        .list_pending_for_agent(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            Some("route-beta")
+        )
         .unwrap()
         .is_empty());
 }
@@ -309,13 +320,11 @@ async fn an_agent_cannot_decide_a_request_the_process_parked() {
     let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
     let g = Arc::clone(&gate);
-    let process = tokio::spawn(turn_origin::with_origin(
-        web_origin(),
-        APPROVAL_CHAT_CONTEXT.scope(chat_ctx(), async move {
-            g.intercept_audited("shell", "run it", serde_json::json!({}))
-                .await
-        }),
-    ));
+    let process = tokio::spawn(turn_origin::with_origin(web_origin(), async move {
+        let turn = ApprovalTurnContext::chat(chat_ctx());
+        g.intercept_audited(&turn, "shell", "run it", serde_json::json!({}))
+            .await
+    }));
     let request_id = loop {
         if let Some(request_id) = gate.pending_for_agent_thread(None, "t-test") {
             break request_id;

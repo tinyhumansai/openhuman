@@ -170,3 +170,7 @@ pub(crate) fn user_actionable_escalation(tool: &str, error: &str) -> Option<Stri
         crate::util::truncate_with_ellipsis(error, 400),
     ))
 }
+
+#[cfg(test)]
+#[path = "halt_tests.rs"]
+mod tests;

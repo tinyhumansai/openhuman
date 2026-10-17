@@ -75,12 +75,16 @@ async function handleRequest(req, res) {
   const parsedBody = tryParseJson(body);
   const origin = requestOrigin(req);
 
-  appendRequest({
+  const requestLogEntry = {
     method,
     url,
     body,
     headers: normalizeHeaders(req.headers),
     timestamp: Date.now(),
+  };
+  appendRequest(requestLogEntry);
+  res.once("finish", () => {
+    requestLogEntry.status = res.statusCode;
   });
 
   if (method === "OPTIONS") {

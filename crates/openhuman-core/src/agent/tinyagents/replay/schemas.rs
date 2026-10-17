@@ -29,6 +29,7 @@
 //! call counters, usage/cost totals, and timestamps — never prompt text, tool
 //! arguments, or provider payloads.
 
+use crate::core::runtime::DispatchCtx;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -220,14 +221,14 @@ fn replay_schema(function: &str) -> ControllerSchema {
 
 /// Resolve the configured internal workspace whose `tinyagents_store/` holds the
 /// journal + status stores.
-async fn configured_workspace() -> Result<std::path::PathBuf, String> {
-    let config = crate::config::ops::load_current_or_init()
+async fn configured_workspace(ctx: &DispatchCtx) -> Result<std::path::PathBuf, String> {
+    let config = crate::config::ops::load_current_or_init(ctx)
         .await
         .map_err(|e| format!("failed to load config: {e}"))?;
     Ok(config.workspace_dir)
 }
 
-fn handle_run_events(params: Map<String, Value>) -> ControllerFuture {
+fn handle_run_events(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: RunEventsParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
@@ -242,7 +243,7 @@ fn handle_run_events(params: Map<String, Value>) -> ControllerFuture {
             limit
         );
 
-        let workspace = configured_workspace().await?;
+        let workspace = configured_workspace(&ctx).await?;
         let page = read_run_events_page(&workspace, &payload.run_id, payload.offset, limit)
             .await
             .map_err(|e| format!("read run events failed: {e:#}"))?;
@@ -261,13 +262,13 @@ fn handle_run_events(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_run_status(params: Map<String, Value>) -> ControllerFuture {
+fn handle_run_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: RunStatusParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
         log::debug!("[rpc] openhuman.agent_run_status run_id={}", payload.run_id);
 
-        let workspace = configured_workspace().await?;
+        let workspace = configured_workspace(&ctx).await?;
         let status = read_run_status(&workspace, &payload.run_id)
             .await
             .map_err(|e| format!("read run status failed: {e:#}"))?;
@@ -282,7 +283,7 @@ fn handle_run_status(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_runs_active(params: Map<String, Value>) -> ControllerFuture {
+fn handle_runs_active(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload: RunsActiveParams = serde_json::from_value(Value::Object(params))
             .map_err(|e| format!("invalid params: {e}"))?;
@@ -292,7 +293,7 @@ fn handle_runs_active(params: Map<String, Value>) -> ControllerFuture {
             payload.root_run_id
         );
 
-        let workspace = configured_workspace().await?;
+        let workspace = configured_workspace(&ctx).await?;
         let runs = list_active_runs(
             &workspace,
             payload.thread_id.as_deref(),

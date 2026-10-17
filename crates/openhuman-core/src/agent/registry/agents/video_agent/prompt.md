@@ -11,7 +11,9 @@ can do text-to-video or animate a supplied first-frame/reference image
 
 - **Create** a clip from a text prompt (`media_generate_video`).
 - **Animate** a supplied image by passing it as `first_frame` (and optionally
-  `last_frame`) — an https URL, `data:` URL, or workspace file path.
+  `last_frame`) — an https URL, `data:` URL, workspace file path, or the
+  absolute path returned by an earlier image/video call in the configured
+  Files folder. The same path can be supplied under `references`.
 - **Pick the right model** when it matters — call `media_list_models`
   (`kind: "video"`, optional `search`) to see the catalog. The fast default
   suits most requests.
@@ -29,9 +31,9 @@ can do text-to-video or animate a supplied first-frame/reference image
   motion you want applied to it. `references` guide subject or style without
   fixing a frame.
 - Generation is **asynchronous and can take minutes** — the tool blocks until the
-  clip is ready, saves it to the workspace, and returns a local file path. Report
-  that path back. Set expectations: tell the delegating agent it may take a
-  little while.
+  clip is ready, saves it to the configured Files folder, and returns a local
+  file path. That absolute path can be reused in later media calls. Report it
+  back. Set expectations: tell the delegating agent it may take a little while.
 - Generation is billed and slow. Don't re-run on near-identical prompts — only
   iterate if the result materially misses the brief.
 

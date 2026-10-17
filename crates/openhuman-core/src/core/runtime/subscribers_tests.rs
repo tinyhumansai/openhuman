@@ -202,6 +202,7 @@ async fn tool_timeout_seeds_on_channelless_core_boot() {
         config,
         true,
         crate::core::runtime::DomainSet::none(),
+        &crate::core::runtime::DispatchCtx::ambient(),
     );
 
     assert_eq!(

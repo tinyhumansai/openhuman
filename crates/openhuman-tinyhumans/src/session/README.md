@@ -151,7 +151,7 @@ attribution headers from `ClientHeaders` (`x-sdk-name`, plus
   [`crates/openhuman-core/src/security/credentials/`](../../../openhuman-core/src/security/credentials/).
 - Library and headless hosts that authenticate with an API key do not need
   this module; see
-  [`gitbooks/developing/tinyhumans-api-key.md`](../../../../gitbooks/developing/tinyhumans-api-key.md).
+  [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md).
   Embedders use `openhuman_embed::Auth`.
 
 ## Gotchas
@@ -174,6 +174,6 @@ cargo test -p openhuman-tinyhumans session::
 
 ## Further reading
 
-- [`gitbooks/developing/tinyhumans-api-key.md`](../../../../gitbooks/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
-- [`gitbooks/developing/architecture/security.md`](../../../../gitbooks/developing/architecture/security.md): security.
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`docs/gitbooks/en/developing/architecture/security.md`](../../../../docs/gitbooks/en/developing/architecture/security.md): security.
 - [`crates/openhuman-tinyhumans/README.md`](../../README.md): the openhuman-tinyhumans crate README.

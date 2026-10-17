@@ -14,9 +14,11 @@ async fn flows_discover_applies_the_flow_discovery_definitions_effective_iterati
 
     // Building an agent constructs a memory client, which needs the host seams
     // wired. `Once`-guarded, so this is free when another test got there first.
-    crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
-        .expect("agent registry init");
-    let def = crate::agent::harness::AgentDefinitionRegistry::global()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global(
+        &config.workspace_dir,
+    )
+    .expect("agent registry init");
+    let def = crate::agent::harness::host_definition::AgentDefinitionRegistry::global()
         .expect("registry initialised")
         .get("flow_discovery")
         .expect("flow_discovery definition registered")
@@ -24,9 +26,12 @@ async fn flows_discover_applies_the_flow_discovery_definitions_effective_iterati
     let expected = def.effective_max_iterations();
     assert_eq!(expected, 50);
 
-    let agent =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "flow_discovery")
-            .expect("build flow_discovery agent");
+    let agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "flow_discovery",
+    )
+    .expect("build flow_discovery agent");
     assert_eq!(agent.agent_config().max_tool_iterations, expected);
 }
 
@@ -329,21 +334,33 @@ async fn flows_update_does_not_force_require_approval_on_readonly_graph() {
 async fn strict_gate_passes_a_valid_graph_and_rejects_a_structurally_invalid_one() {
     let config = Config::default();
     // A trigger-only graph is structurally valid and has no outbound gates.
-    assert!(strict_gate(&config, &trigger_only_graph()).await.is_ok());
+    assert!(strict_gate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &trigger_only_graph()
+    )
+    .await
+    .is_ok());
 
     // No trigger → structural failure surfaced by strict mode.
     let bad = json!({
         "nodes": [ { "id": "a", "kind": "output_parser", "name": "A" } ],
         "edges": []
     });
-    let err = strict_gate(&config, &bad).await.unwrap_err();
+    let err = strict_gate(&crate::core::runtime::DispatchCtx::ambient(), &config, &bad)
+        .await
+        .unwrap_err();
     assert!(err.contains("structurally invalid"), "{err}");
     assert!(err.contains("trigger"), "{err}");
 
     // A structurally valid graph must still pass the shared engine gate.
-    let err = strict_gate(&config, &nested_conditional_fan_in_graph())
-        .await
-        .unwrap_err();
+    let err = strict_gate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &nested_conditional_fan_in_graph(),
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN), "{err}");
 }
 
@@ -360,9 +377,13 @@ async fn strict_gate_rejects_an_incompatible_saved_child_reference() {
     )
     .unwrap();
 
-    let error = strict_gate(&config, &referenced_child_graph(&child.id))
-        .await
-        .expect_err("strict authoring must reject an incompatible saved child");
+    let error = strict_gate(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &referenced_child_graph(&child.id),
+    )
+    .await
+    .expect_err("strict authoring must reject an incompatible saved child");
     assert!(
         error.contains(UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN),
         "{error}"
@@ -386,6 +407,7 @@ async fn builder_proposal_rejects_an_incompatible_saved_child_reference() {
     let parent = structurally_valid_graph(referenced_child_graph(&child.id));
 
     let error = build_builder_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "propose_workflow",
         "parent",

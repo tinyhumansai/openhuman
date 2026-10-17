@@ -7,6 +7,7 @@
 //! external-transfer disclosure, applied once before the call.
 
 use crate::config::Config;
+use crate::security::approval::ApprovalChatContext;
 use crate::security::egress::{emit_external_transfer, enforce_egress, EgressDescriptor};
 
 use super::module_client::{self};
@@ -22,6 +23,7 @@ use tinyconnectors_bus::names::methods;
 /// refusal is `Ok` with `successful: false`.
 pub async fn execute_composio_action(
     config: &Config,
+    chat: Option<&ApprovalChatContext>,
     tool: &str,
     arguments: Option<serde_json::Value>,
     connection_id: Option<&str>,
@@ -37,7 +39,7 @@ pub async fn execute_composio_action(
         tracing::debug!(tool = %tool, "[composio][dispatch] local-only egress block");
         return Err(e.to_string());
     }
-    emit_external_transfer(egress);
+    emit_external_transfer(chat, egress);
 
     // Resolve the mode-aware route on the host first: a module configured
     // without a route answers with an opaque "no connector route" error, so a

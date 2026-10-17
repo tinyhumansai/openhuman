@@ -1,85 +1,49 @@
 use super::*;
+use std::sync::Arc;
 
-#[tokio::test]
-async fn scoped_tool_limits_narrow_restore_and_keep_zero() {
-    assert_eq!(tool_call_limit(10), 80);
-    with_tool_call_limit(Some(4), async {
-        assert_eq!(tool_call_limit(10), 4);
-        with_tool_call_limit(Some(12), async {
-            assert_eq!(tool_call_limit(10), 4);
-        })
-        .await;
-        with_tool_call_limit(Some(0), async {
-            assert_eq!(tool_call_limit(10), 0);
-        })
-        .await;
-        assert_eq!(tool_call_limit(10), 4);
-        with_tool_call_limit(None, async {
-            assert_eq!(tool_call_limit(10), 4);
-        })
-        .await;
-    })
-    .await;
-    assert_eq!(tool_call_limit(10), 80);
-    with_tool_call_limit(Some(100), async {
-        assert_eq!(tool_call_limit(1), 8);
-    })
-    .await;
+#[test]
+fn host_tool_cap_only_narrows_the_default_and_keeps_zero() {
+    assert_eq!(tool_call_limit(10, None), 80);
+    assert_eq!(tool_call_limit(10, Some(4)), 4);
+    // A cap wider than the product default never widens it.
+    assert_eq!(tool_call_limit(10, Some(1_000)), 80);
+    assert_eq!(tool_call_limit(1, Some(100)), 8);
+    // Zero is a real cap: no tool may run.
+    assert_eq!(tool_call_limit(10, Some(0)), 0);
 }
 
-#[tokio::test]
-async fn concurrent_turns_do_not_share_tool_limits() {
-    let (a, b) = tokio::join!(
-        with_tool_call_limit(Some(2), async {
-            tokio::task::yield_now().await;
-            tool_call_limit(10)
-        }),
-        with_tool_call_limit(Some(7), async {
-            tokio::task::yield_now().await;
-            tool_call_limit(10)
-        })
-    );
-    assert_eq!((a, b), (2, 7));
-    assert_eq!(tool_call_limit(10), 80);
-}
-
-#[tokio::test]
-async fn cancelled_scope_restores_the_callers_tool_limit() {
-    let mut scoped = Box::pin(with_tool_call_limit(Some(0), async {
-        assert_eq!(tool_call_limit(10), 0);
-        std::future::pending::<()>().await;
-    }));
-    assert!(futures::poll!(&mut scoped).is_pending());
-    drop(scoped);
-    assert_eq!(tool_call_limit(10), 80);
-}
-
-#[tokio::test]
-async fn scoped_stop_hooks_are_visible_to_run_contexts() {
-    let hook: Arc<dyn StopHook<crate::agent::cost::TurnCost>> = Arc::new(BudgetStopHook::new(1.0));
-    assert!(current_stop_hooks().is_empty());
-    with_stop_hooks(vec![Arc::clone(&hook)], async {
-        let active = current_stop_hooks();
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].name(), "budget");
-        assert_eq!(
-            crate::agent::tinyagents::host::OpenHumanRunContext::new()
-                .stop_hooks
-                .len(),
-            1
-        );
-    })
-    .await;
-    assert!(current_stop_hooks().is_empty());
+#[test]
+fn host_tool_cap_and_stop_hooks_flow_into_the_run_context_and_its_children() {
+    let hook: Arc<dyn StopHook<tinyagents_harness::cost::TurnCost>> =
+        Arc::new(BudgetStopHook::new(1.0));
+    let mut hooks = crate::agent::hooks::HookScope::default();
+    hooks.push_stop(Arc::clone(&hook));
+    let env = crate::agent::turn_env::HostTurnEnv {
+        tool_call_limit: Some(3),
+        hooks,
+        ..Default::default()
+    };
+    let context = crate::agent::tinyagents::host::OpenHumanRunContext::new().with_host_env(&env);
+    assert_eq!(context.tool_call_limit, Some(3));
+    assert_eq!(context.stop_hooks.len(), 1);
+    assert_eq!(context.stop_hooks[0].name(), "budget");
+    // Sub-agents inherit both through the explicit child carrier.
+    let child = context.child();
+    assert_eq!(child.tool_call_limit, Some(3));
+    assert_eq!(child.stop_hooks.len(), 1);
+    // A context built without an env carries nothing ambient.
+    let bare = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    assert_eq!(bare.tool_call_limit, None);
+    assert!(bare.stop_hooks.is_empty());
 }
 
 #[tokio::test]
 async fn budget_stop_hook_fails_closed_and_stops_at_cap() {
     let hook = BudgetStopHook::new(1.0);
     let cost = TurnCost {
-        cost: crate::agent::cost::CostTally {
+        cost: tinyagents_harness::cost::CostTally {
             known_usd: 1.0,
-            source: crate::agent::cost::CostSource::Charged,
+            source: tinyagents_harness::cost::CostSource::Charged,
         },
         ..TurnCost::default()
     };

@@ -45,14 +45,17 @@ pub fn all_mcp_audit_internal_controllers() -> Vec<crate::core::all::RegisteredC
 /// `Err` because the real callers treat a failure here as a logged anomaly —
 /// an "audit write failed" warning would be actively misleading when the
 /// audited subsystem does not exist.
-pub fn record_write(_config: &Config, _record: NewMcpWriteRecord) -> Result<i64> {
+pub async fn record_write(_config: &Config, _record: NewMcpWriteRecord) -> Result<i64> {
     log::debug!("[mcp_audit] {DISABLED_MSG} — record_write is a no-op (no MCP writer exists)");
     Ok(0)
 }
 
 /// Empty history: no MCP writes can have occurred in this build. `Ok(vec![])`
 /// (not `Err`) keeps the shape honest — the query succeeded, the log is empty.
-pub fn list_writes(_config: &Config, _query: &McpWriteListQuery) -> Result<Vec<McpWriteRecord>> {
+pub async fn list_writes(
+    _config: &Config,
+    _query: &McpWriteListQuery,
+) -> Result<Vec<McpWriteRecord>> {
     log::debug!("[mcp_audit] {DISABLED_MSG} — list_writes returning empty history");
     Ok(Vec::new())
 }

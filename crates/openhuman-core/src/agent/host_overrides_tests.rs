@@ -22,14 +22,3 @@ fn local_hooks_do_not_escape_their_agent_and_can_be_removed() {
     a.post_turn_hook("local", None);
     assert!(a.post_turn_hooks().is_empty());
 }
-
-#[tokio::test]
-async fn caller_cancellation_is_shared_and_does_not_escape_its_scope() {
-    let token = CancellationToken::new();
-    with_cancellation(token.clone(), async {
-        token.cancel();
-        assert!(current_cancellation().is_cancelled());
-    })
-    .await;
-    assert!(!current_cancellation().is_cancelled());
-}

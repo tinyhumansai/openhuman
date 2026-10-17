@@ -332,3 +332,26 @@ fn approval_bypass_requires_a_registered_desktop_tool_and_disabled_setting() {
     config.desktop.approvals_enabled = true;
     assert!(!approval_bypass_decision(&config, &goal));
 }
+
+#[test]
+fn component_off_overrides_local_consent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = dir.path().to_path_buf();
+    save(&config, true).unwrap();
+    assert!(enabled(&config));
+    config.components.computer = false;
+    assert!(
+        !enabled(&config),
+        "component off must disable despite consent"
+    );
+}
+
+#[test]
+fn component_on_without_local_consent_stays_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = dir.path().to_path_buf();
+    assert!(config.components.computer);
+    assert!(!enabled(&config));
+}

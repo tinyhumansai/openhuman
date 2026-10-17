@@ -17,8 +17,8 @@ use std::sync::Arc;
 use super::*;
 use crate::security::{AutonomyLevel, SecurityPolicy, TrustedAccess, TrustedRoot};
 use tinyagents_harness::artifacts::{
-    extract_artifact_paths, ArtifactKind, ArtifactPathPolicy, OffloadError,
-    ARTIFACT_POINTER_PREFIX, DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+    extract_artifact_paths, ArtifactKind, ArtifactPathPolicy, ARTIFACT_POINTER_PREFIX,
+    DEFAULT_OFFLOAD_THRESHOLD_BYTES,
 };
 
 /// Policy with disjoint action/workspace roots, the shipped default layout
@@ -104,39 +104,44 @@ fn workspace_guard_defers_to_the_security_policy_for_internal_state() {
     }
 }
 
+fn memory_blobs() -> Arc<dyn tinystoragedrivers::BlobStore> {
+    use tinystoragedrivers::StorageBackend as _;
+    let scoped = tinystoragedrivers::MemoryStorage::new()
+        .for_scope(&tinystoragedrivers::Scope::local())
+        .expect("the memory backend binds the local scope");
+    Arc::clone(scoped.blobs())
+}
+
 // ── Wiring (the point of `new_artifact_offload`) ──────────────────────────────
 
 #[tokio::test]
-async fn a_wired_writer_refuses_a_target_inside_workspace_dir() {
-    // The fail-closed invariant, end to end: offload targets resolve under
-    // `action_dir`, never `workspace_dir`. Here `action_dir` is configured
-    // INSIDE the workspace root, so containment alone would pass and only the
-    // injected guard stands between an agent and core state.
+async fn an_action_dir_inside_workspace_dir_is_never_materialized() {
+    // The fail-closed invariant, end to end: the reader's copy lands under
+    // `action_dir`, never in `workspace_dir`. Here `action_dir` is configured
+    // INSIDE the workspace root, so only the host's check stands between an
+    // agent and core state. The result stays inline and nothing is written.
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace_dir = dir.path().to_path_buf();
     let action_dir = workspace_dir.join("action");
     std::fs::create_dir_all(&action_dir).expect("action dir");
+    let policy = policy_with(action_dir.clone(), workspace_dir);
 
-    let offload = new_artifact_offload(
-        action_dir,
-        Some(policy_with(
-            dir.path().join("action"),
-            workspace_dir.clone(),
-        )),
-        "agent",
-        "task",
-    );
+    let offload = new_artifact_offload(memory_blobs(), Some(policy.clone()), "agent", "task");
+    let big = "x".repeat(10_000);
+    let (text, artifact) = offload_oversized_result(
+        big.clone(),
+        &offload,
+        DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+        &action_dir,
+        Some(&policy),
+    )
+    .await;
 
-    let err = offload
-        .write(ArtifactKind::Output, "leak.md", "x")
-        .await
-        .expect_err("a target inside workspace_dir must be refused");
+    assert_eq!(text, big, "the inline payload must survive the refusal");
+    assert!(artifact.is_none());
     assert!(
-        matches!(
-            err,
-            OffloadError::InternalRoot { .. } | OffloadError::InternalState { .. }
-        ),
-        "expected a workspace refusal, got {err:?}"
+        !action_dir.join("outputs").exists(),
+        "nothing may be materialized under workspace_dir"
     );
 }
 
@@ -151,7 +156,7 @@ async fn a_wired_writer_redacts_before_the_bytes_reach_disk() {
     std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
 
     let offload = new_artifact_offload(
-        action_dir,
+        memory_blobs(),
         Some(policy_with(dir.path().join("action"), workspace_dir)),
         "agent",
         "task",
@@ -163,16 +168,18 @@ async fn a_wired_writer_redacts_before_the_bytes_reach_disk() {
         .await
         .expect("write");
 
-    let on_disk = tokio::fs::read_to_string(&artifact.absolute_path)
+    let on_disk = offload
+        .read(&artifact.relative_path)
         .await
-        .expect("read back");
+        .expect("read back")
+        .expect("stored");
     // Whether this particular shape trips `sanitize_text` is that function's
     // business; what this pins is that the two agree. A redactor reported as
     // having fired must have actually rewritten the stored bytes.
     assert_eq!(
         artifact.redacted,
         on_disk != secret,
-        "the redacted flag must match what actually reached disk"
+        "the redacted flag must match what actually reached the blob store"
     );
 }
 
@@ -185,15 +192,21 @@ async fn oversized_result_is_offloaded_and_the_parent_gets_a_readable_pointer() 
     std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
 
     let offload = new_artifact_offload(
-        action_dir,
+        memory_blobs(),
         Some(policy_with(dir.path().join("action"), workspace_dir)),
         "worker",
         "task-1",
     );
     let big = "x".repeat(10_000);
 
-    let (text, artifact) =
-        offload_oversized_result(big.clone(), &offload, DEFAULT_OFFLOAD_THRESHOLD_BYTES).await;
+    let (text, artifact) = offload_oversized_result(
+        big.clone(),
+        &offload,
+        DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+        &action_dir,
+        None,
+    )
+    .await;
     let artifact = artifact.expect("an artifact was written");
 
     assert!(text.starts_with(ARTIFACT_POINTER_PREFIX));
@@ -204,9 +217,13 @@ async fn oversized_result_is_offloaded_and_the_parent_gets_a_readable_pointer() 
         "pointer must name the host read tool: {text}"
     );
     // And the path it quotes must be the one a parent can actually extract.
-    assert_eq!(extract_artifact_paths(&text), vec![artifact.relative_path]);
+    assert_eq!(
+        extract_artifact_paths(&text),
+        vec![artifact.relative_path.clone()]
+    );
 
-    let on_disk = tokio::fs::read_to_string(&artifact.absolute_path)
+    // The pointer's path is openable by `file_read` against the action root.
+    let on_disk = tokio::fs::read_to_string(action_dir.join(&artifact.relative_path))
         .await
         .expect("read back");
     assert_eq!(on_disk, big, "full fidelity is preserved on disk");
@@ -216,16 +233,19 @@ async fn oversized_result_is_offloaded_and_the_parent_gets_a_readable_pointer() 
 async fn offload_failure_keeps_the_inline_payload_for_the_summarizer_fallback() {
     // The soft-failure contract the summarizer detour depends on: a refused
     // offload must never cost the caller its content.
-    let offload = new_artifact_offload(
-        PathBuf::from("/proc/nonexistent-action-root"),
-        None,
-        "worker",
-        "task-1",
-    );
+    // The blob write succeeds but the file cannot be materialised for the
+    // reader: no pointer to an unopenable path may reach the parent.
+    let offload = new_artifact_offload(memory_blobs(), None, "worker", "task-1");
     let big = "x".repeat(10_000);
 
-    let (text, artifact) =
-        offload_oversized_result(big.clone(), &offload, DEFAULT_OFFLOAD_THRESHOLD_BYTES).await;
+    let (text, artifact) = offload_oversized_result(
+        big.clone(),
+        &offload,
+        DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+        &PathBuf::from("/proc/nonexistent-action-root"),
+        None,
+    )
+    .await;
 
     assert_eq!(
         text, big,

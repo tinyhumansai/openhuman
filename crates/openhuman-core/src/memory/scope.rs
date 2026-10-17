@@ -10,10 +10,13 @@
 //! ```
 //!
 //! A [`MemoryIdentity`] is who is acting: an agent definition and, for a team
-//! member, its team. The host scopes one around every agent turn
-//! ([`within_agent`], [`within`]); memory resolves it against the config of
-//! whoever reads or writes ([`MemoryIdentity::resolve`]) into a
-//! [`ResolvedIdentity`]: the layout root and the memory agent id.
+//! member, its team. It is always explicit: a turn's run context carries its
+//! own (`OpenHumanRunContext::memory_identity`, a sub-agent's derived with
+//! [`MemoryIdentity::child`]), work the host does on its own behalf passes
+//! [`MemoryIdentity::root`], and nothing reads it from the running task.
+//! Memory resolves it against the config of whoever reads or writes
+//! ([`MemoryIdentity::resolve`]) into a [`ResolvedIdentity`]: the layout root
+//! and the memory agent id.
 //!
 //! Resolution, first match wins:
 //!
@@ -37,8 +40,6 @@
 //! chats share one node ([`chat_node`], `ws:main`), each turn carrying its
 //! agent id. [`switch_to_v3`] turns it on once the person's memory moved.
 
-use std::future::Future;
-
 use tinymemory_api::{Namespace, Segment, SegmentKind};
 use tinymemory_tools::MemoryLayout;
 
@@ -47,10 +48,6 @@ use crate::memory::error::{MemoryError, MemoryResult};
 
 /// The memory agent id of work no agent is running (RPC, sync jobs, the UI).
 pub const DEFAULT_AGENT_ID: &str = "assistant";
-
-tokio::task_local! {
-    static CURRENT: MemoryIdentity;
-}
 
 /// Who is acting on memory: the agent definition and its team. Scoping one
 /// needs no config; what it maps to is resolved against the config of
@@ -319,40 +316,6 @@ fn non_blank_opt(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-/// The identity in scope, or the root identity outside any agent, resolved
-/// against `config`.
-#[must_use]
-pub fn resolve_current(config: &Config) -> ResolvedIdentity {
-    current().unwrap_or_default().resolve(config)
-}
-
-/// Runs `fut` as `identity`.
-pub async fn within<F: Future>(identity: MemoryIdentity, fut: F) -> F::Output {
-    tracing::debug!(
-        agent_id = identity.agent_id.as_deref().unwrap_or("-"),
-        team = identity.team.as_deref().unwrap_or("-"),
-        "[memory:scope] acting as"
-    );
-    CURRENT.scope(identity, fut).await
-}
-
-/// The identity scoped around the running task, if any.
-#[must_use]
-pub fn current() -> Option<MemoryIdentity> {
-    CURRENT.try_with(Clone::clone).ok()
-}
-
-/// Runs a turn of `agent_id`: a turn of the agent already in scope keeps its
-/// identity; another agent runs as a child of it (same team).
-pub async fn within_agent<F: Future>(agent_id: &str, fut: F) -> F::Output {
-    let identity = match current() {
-        Some(outer) if outer.agent_id.as_deref() == Some(agent_id) => outer,
-        Some(outer) => outer.child(agent_id),
-        None => MemoryIdentity::agent(agent_id),
-    };
-    within(identity, fut).await
 }
 
 #[cfg(test)]

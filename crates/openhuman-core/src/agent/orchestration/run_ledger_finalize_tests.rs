@@ -5,9 +5,8 @@ use super::*;
 use serde_json::json;
 use tempfile::TempDir;
 
-use tinyagents_session::run_ledger::{
-    get_agent_run, upsert_agent_run, AgentRunKind, AgentRunStatus, AgentRunUpsert,
-};
+use crate::agent::session_store::ledger_sync::{get_agent_run, upsert_agent_run};
+use tinyagents_session::run_ledger::{AgentRunKind, AgentRunStatus, AgentRunUpsert};
 use tinybus::EventHandler;
 
 fn test_config(dir: &TempDir) -> Config {

@@ -190,8 +190,8 @@ Per-section `*_tests.rs` files, plus [`load_tests.rs`](./load_tests.rs) (split i
   schema-version upgrades run during load.
 - [../../security/README.md](../../security/README.md): enforces the
   `action_dir` / `workspace_dir` boundary this module only describes.
-- [Settings](../../../../../gitbooks/features/settings.md)
-- [Deep architecture reference](../../../../../gitbooks/developing/architecture.md)
+- [Settings](../../../../../docs/gitbooks/en/features/settings.md)
+- [Deep architecture reference](../../../../../docs/gitbooks/en/developing/architecture.md)
 
 ## Config sources
 

@@ -30,6 +30,16 @@ fn transcript_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         .unwrap_or_default()
 }
 
+/// Whether `agent` has a root transcript for the test thread in its own store
+/// under the workspace.
+fn has_transcript(agent: &Agent) -> bool {
+    tinyagents_session::port::WorkspaceStores::open(agent.workspace_dir(), agent.id())
+        .expect("the agent's workspace store")
+        .transcripts()
+        .root_for_thread(SESSION)
+        .is_some()
+}
+
 fn skill_tools() -> AgentDefinitionSpec {
     AgentDefinitionSpec::new().tools(ToolScopeSpec::Named(vec!["create_skill".to_string()]))
 }
@@ -109,12 +119,12 @@ fn agents_on_one_workspace_keep_their_own_state() {
                 );
             }
 
-            // ── transcripts land under each agent's own directory ──
+            // ── transcripts land in each agent's own store ──
             assert_ne!(a.transcripts_dir(), b.transcripts_dir());
             assert!(a.transcripts_dir().starts_with(a.home_dir()));
             assert!(b.transcripts_dir().starts_with(b.home_dir()));
-            assert!(!transcript_files(a.transcripts_dir()).is_empty());
-            assert!(!transcript_files(b.transcripts_dir()).is_empty());
+            assert!(has_transcript(&a), "a's turns are stored under a");
+            assert!(has_transcript(&b), "b's turns are stored under b");
             assert!(
                 transcript_files(&a.workspace_dir().join("session_raw")).is_empty(),
                 "nothing is written to the shared transcript directory"

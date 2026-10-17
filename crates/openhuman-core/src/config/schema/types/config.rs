@@ -211,7 +211,7 @@ pub struct Config {
     /// Background-AI scheduler gate — throttles embeddings and other
     /// LLM-bound background work based on power
     /// state, CPU pressure, and deployment mode. See
-    /// [`crate::cron::scheduler_gate`].
+    /// [`crate::platform::llm_gate`].
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
 
@@ -421,12 +421,21 @@ pub struct Config {
     #[serde(default)]
     pub tokenjuice: TokenjuiceConfig,
 
+    /// TinyMemes remix tuning (`[memes]`); the switch is `[components] memes`.
+    #[serde(default)]
+    pub memes: MemesConfig,
+
+    /// Per-dependency switches (`[components]`). Narrow-only; applied at the
+    /// next core start.
+    #[serde(default)]
+    pub components: ComponentsConfig,
+
     /// Hosting provider credentials and switch (`hosting` feature).
     #[serde(default)]
     pub hosting: HostingConfig,
 
     /// Storage backend for state on the `tinystoragedrivers` ports
-    /// (`[storage]`). Empty keeps the classic on-disk layout.
+    /// (`[storage]`). Empty uses the default, `sqlite:<workspace>/storage`.
     #[serde(default)]
     pub storage: StorageConfig,
 

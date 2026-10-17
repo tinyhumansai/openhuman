@@ -33,7 +33,8 @@ mod list_tools;
 mod live_config;
 mod redact;
 mod registry;
-mod visibility;
+mod render;
+mod scope_gate;
 
 // ── Tests ───────────────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ pub use registry::all_composio_agent_tools;
 // submodule.
 #[cfg(test)]
 pub(crate) use connect::canonicalize_toolkit_slug;
-pub(crate) use visibility::{action_mutates_external_state, resolve_action_scope};
+pub(crate) use scope_gate::{action_mutates_external_state, resolve_action_scope};
 
 pub use authorize::ComposioAuthorizeTool;
 #[cfg(test)]
@@ -65,11 +66,11 @@ pub use list_connections::ComposioListConnectionsTool;
 pub use list_toolkits::ComposioListToolkitsTool;
 pub use list_tools::ComposioListToolsTool;
 #[cfg(test)]
-use tinytools::Tool;
-#[cfg(test)]
-use tinytools::{PermissionLevel, ToolCategory};
-#[cfg(test)]
-use visibility::{
+use render::{
     empty_uncurated_toolkits_message, normalized_scope_toolkits, render_tools_markdown,
     retain_connected_tools,
 };
+#[cfg(test)]
+use tinytools::Tool;
+#[cfg(test)]
+use tinytools::{PermissionLevel, ToolCategory};

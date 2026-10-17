@@ -1,8 +1,9 @@
 use super::*;
+use crate::util::classic_transcript_fixture::{read_classic_rows, write_classic};
 use std::fs;
 use tempfile::TempDir;
 use tinyagents_session::transcript::TranscriptMessage;
-use tinyagents_session::transcript::{read_transcript, write_transcript, TranscriptMeta};
+use tinyagents_session::transcript::TranscriptMeta;
 
 fn durable_messages(
     messages: impl IntoIterator<Item = TranscriptMessage>,
@@ -42,7 +43,7 @@ fn write_tainted_transcript(workspace_dir: &Path, stem: &str, system_body: &str)
         TranscriptMessage::user("hello"),
         TranscriptMessage::assistant("hi"),
     ];
-    write_transcript(&path, &durable_messages(messages), &meta(), None).unwrap();
+    write_classic(&path, &durable_messages(messages), &meta());
     path
 }
 
@@ -158,21 +159,30 @@ fn sanitize_only_touches_first_system_message() {
     );
     // Add a later user message that also mentions PROFILE.md — it must
     // survive the migration unchanged.
-    let mut session = read_transcript(&path).unwrap();
-    session.messages.push(TranscriptMessage::user(
-        "Could you show me what was in ### PROFILE.md earlier?",
-    ));
-    write_transcript(&path, &session.messages, &session.meta, None).unwrap();
+    let mut text = fs::read_to_string(&path).unwrap();
+    text.push_str(
+        &serde_json::to_string(&TranscriptMessage::user(
+            "Could you show me what was in ### PROFILE.md earlier?",
+        ))
+        .unwrap(),
+    );
+    text.push('\n');
+    fs::write(&path, text).unwrap();
 
-    let mutated = process_transcript(&path).unwrap();
-    assert!(mutated, "first system message had a block, must mutate");
+    let stats = run(dir.path()).unwrap();
+    assert_eq!(
+        stats.cleaned, 1,
+        "first system message had a block, must mutate"
+    );
 
-    let session = read_transcript(&path).unwrap();
-    assert!(!session.messages[0].content.contains("### PROFILE.md"));
-    assert!(session
-        .messages
-        .iter()
-        .any(|m| { m.role == "user" && m.content.contains("### PROFILE.md") }));
+    let rows = read_classic_rows(&path);
+    assert!(!rows[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("### PROFILE.md"));
+    assert!(rows.iter().any(|m| {
+        m["role"] == "user" && m["content"].as_str().unwrap().contains("### PROFILE.md")
+    }));
 }
 
 #[test]
@@ -194,7 +204,7 @@ fn run_cleans_flat_and_legacy_dirs_in_one_pass() {
         TranscriptMessage::system(prompt_with_profile_block("style/legacy")),
         TranscriptMessage::user("legacy"),
     ];
-    write_transcript(&legacy_path, &durable_messages(messages), &meta(), None).unwrap();
+    write_classic(&legacy_path, &durable_messages(messages), &meta());
 
     let stats = run(dir.path()).unwrap();
     assert_eq!(stats.scanned, 2);
@@ -374,7 +384,7 @@ fn run_leaves_clean_transcripts_byte_identical() {
         TranscriptMessage::system("## Identity\n\nNo profile here.\n\n### Tools\n\n- shell\n"),
         TranscriptMessage::user("hi"),
     ];
-    write_transcript(&path, &durable_messages(messages), &meta(), None).unwrap();
+    write_classic(&path, &durable_messages(messages), &meta());
     let before = fs::read(&path).unwrap();
 
     let stats = run(dir.path()).unwrap();

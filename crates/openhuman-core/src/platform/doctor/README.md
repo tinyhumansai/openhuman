@@ -91,5 +91,5 @@ None of its own (no `store.rs`). It only **reads** existing state owned by other
 ## Further reading
 
 - [Parent module (`platform`)](../README.md)
-- [Platform and availability](../../../../../gitbooks/features/platform.md)
-- [Recover a failed installation](../../../../../gitbooks/guides/recover-failed-installation.md)
+- [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)
+- [Recover a failed installation](../../../../../docs/gitbooks/en/guides/recover-failed-installation.md)

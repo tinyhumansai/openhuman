@@ -16,10 +16,11 @@
 //! carried explicitly into [`run_subagent`] so it can inherit the provider
 //! and tools.
 
+use crate::core::runtime::DispatchCtx;
 use anyhow::{anyhow, Context};
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::orchestration::parent_context::build_root_parent;
 use crate::agent::subagent_host::{self, SubagentRunOptions};
 use crate::config::Config;
@@ -37,7 +38,11 @@ use super::events;
 /// 3. If the action is `React` or `Escalate`, dispatching the appropriate
 ///    sub-agent (`trigger_reactor` or `orchestrator`).
 /// 4. Publishing `TriggerEscalated` or `TriggerEscalationFailed` events.
-pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyhow::Result<()> {
+pub async fn apply_decision(
+    ctx: &DispatchCtx,
+    run: TriageRun,
+    envelope: &TriggerEnvelope,
+) -> anyhow::Result<()> {
     // Always publish `TriggerEvaluated` — it's the single source of
     // truth for dashboards, counts every trigger regardless of action.
     events::publish_evaluated(
@@ -131,8 +136,11 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                     "prompt_chars": prompt.chars().count(),
                 });
                 let tool_key = format!("triage.{}", run.decision.action.as_str());
-                let (outcome, request_id) =
-                    gate.intercept_audited(&tool_key, &summary, redacted).await;
+                // A triage escalation is not a chat turn: nothing to route an
+                // approval reply to.
+                let (outcome, request_id) = gate
+                    .intercept_audited(&Default::default(), &tool_key, &summary, redacted)
+                    .await;
                 match outcome {
                     crate::security::approval::GateOutcome::Allow => {
                         approval_request_id = request_id;
@@ -157,7 +165,7 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 }
             }
 
-            let dispatch_result = dispatch_target_agent(target, prompt).await;
+            let dispatch_result = dispatch_target_agent(ctx, target, prompt).await;
             // Record terminal status on the approval audit row
             // (#2135). Best-effort: write errors are logged inside
             // record_execution and never propagate to the caller.
@@ -222,17 +230,22 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
 /// `allowed_subagent_ids`: the escalated agent may itself nested-spawn only the
 /// dispatched target (the builder defaults this to empty for background roots).
 async fn build_triage_parent(
+    ctx: &DispatchCtx,
     config: &Config,
     agent_id: &str,
 ) -> anyhow::Result<ParentExecutionContext> {
-    let mut parent_ctx = build_root_parent(config, "triage", "triage", "triage")
+    let mut parent_ctx = build_root_parent(ctx, config, "triage", "triage", "triage")
         .await
         .context("building root parent for sub-agent dispatch")?;
     parent_ctx.allowed_subagent_ids = [agent_id.to_string()].into_iter().collect();
     Ok(parent_ctx)
 }
 
-async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<String> {
+async fn dispatch_target_agent(
+    ctx: &DispatchCtx,
+    agent_id: &str,
+    prompt: &str,
+) -> anyhow::Result<String> {
     #[cfg(test)]
     if agent_id.starts_with("missing-agent-") {
         return Err(anyhow!(
@@ -240,11 +253,11 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         ));
     }
 
-    let config = crate::config::ops::load_current_or_init()
+    let config = crate::config::ops::load_current_or_init(ctx)
         .await
         .context("loading config for sub-agent dispatch")?;
 
-    let parent_ctx = build_triage_parent(&config, agent_id).await?;
+    let parent_ctx = build_triage_parent(ctx, &config, agent_id).await?;
 
     // `build_root_parent` (inside `build_triage_parent`) guarantees the registry
     // is initialised, so this lookup for the target definition is safe here.
@@ -266,6 +279,8 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         prompt,
         SubagentRunOptions {
             run_context: crate::agent::tinyagents::host::OpenHumanRunContext::new()
+                .with_core(ctx.core().cloned())
+                .with_host_env(&parent_ctx.host_env)
                 .with_parent(parent_ctx),
             ..Default::default()
         },

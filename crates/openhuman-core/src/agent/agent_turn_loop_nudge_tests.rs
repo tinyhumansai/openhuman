@@ -225,14 +225,16 @@ fn committed_rows_mentioning_nudge(history: &[TranscriptEntry]) -> Vec<String> {
         .collect()
 }
 
-/// Every persisted file under the workspace, as text.
+/// Every persisted file under the workspace, as (lossy) text: the session
+/// store's database files included, so a row written there is searched too.
 fn persisted_text(root: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
     walkdir::WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
         .filter_map(|entry| {
-            let text = std::fs::read_to_string(entry.path()).ok()?;
+            let bytes = std::fs::read(entry.path()).ok()?;
+            let text = String::from_utf8_lossy(&bytes).into_owned();
             Some((entry.into_path(), text))
         })
         .collect()

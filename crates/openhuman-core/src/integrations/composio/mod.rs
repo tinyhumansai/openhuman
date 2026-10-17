@@ -87,6 +87,3 @@ pub use types::{
     ComposioToolsResponse, ComposioTriggerEvent, ComposioTriggerHistoryEntry,
     ComposioTriggerHistoryResult, ComposioTriggerMetadata,
 };
-
-/// Product-specific task recency scoping used by the briefing runner.
-pub(crate) mod task_recency_context;

@@ -108,12 +108,15 @@ fn desktop_connected_builder_binds_the_transport_and_hosted_controllers() {
 
 #[cfg(feature = "session-store")]
 #[test]
-fn tui_builder_runs_every_domain_without_services_on_the_disk_store() {
+fn tui_builder_runs_every_domain_without_services_and_leaves_the_session_store_to_tui() {
     let summary = tui_builder().into_embed().summary();
     assert_eq!(summary.host_kind, HostKind::detect_standalone());
     assert_eq!(summary.domains, Some(DomainSet::full()));
     assert_eq!(summary.services, Some(ServiceSet::none()));
-    assert!(summary.has_session_store);
+    assert!(
+        !summary.has_session_store,
+        "tui() adds the storage-backed session store once the URL is resolved"
+    );
     assert!(!summary.has_server_launcher, "the TUI binds no server");
 }
 

@@ -111,7 +111,7 @@ fn failed_tool_outcome_does_not_mark_an_earlier_turns_result_with_the_same_call_
 
     let context = OpenHumanRunContext::new();
     context.session_sidecar.lock().unwrap().tool_outcomes.push(
-        crate::agent::tinyagents::ToolCallOutcome {
+        tinyagents_harness::turn_outcome::ToolCallOutcome {
             call_id: "call_1".into(),
             name: "cron".into(),
             arguments: serde_json::json!({}),

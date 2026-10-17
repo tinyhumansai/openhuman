@@ -14,7 +14,10 @@ impl IntegrationClient {
         self.pricing
             .get_or_init(|| async {
                 match self
-                    .get::<IntegrationPricing>("/agent-integrations/pricing")
+                    .get::<IntegrationPricing>(
+                        &crate::security::approval::ApprovalTurnContext::default(),
+                        "/agent-integrations/pricing",
+                    )
                     .await
                 {
                     Ok(p) => {

@@ -46,7 +46,7 @@ pub async fn channel_status(
         for spec in &def.auth_modes {
             let provider_key = credential_provider(def.id, spec.mode);
             let has_creds = stored_providers.iter().any(|p| p == &provider_key);
-            let has_config = channel_config_connected(&config.channels_config, def.id, spec.mode);
+            let has_config = channel_config_connected(config, def.id, spec.mode).await?;
             let presence_connected = has_creds || has_config;
             let (connected, error) = merge_listener_health(
                 presence_connected,

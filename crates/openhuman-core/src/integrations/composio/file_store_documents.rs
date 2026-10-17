@@ -1,9 +1,8 @@
 //! The Composio host state files on the `tinystoragedrivers` document port.
 //!
-//! Used instead of `<workspace>/integrations/<file>.json` when the host
-//! configured a storage backend ([`crate::storage`]); `file_store.rs` picks it
-//! per call, so the state lives under the acting agent's storage scope
-//! (`local` on a single-user host). These are the connected-account identities
+//! `file_store.rs` opens it per call, so the state lives under the acting
+//! agent's storage scope (`local` on a single-user host) in the installed
+//! backend, or the workspace default when none is installed. These are the connected-account identities
 //! and the per-toolkit agent scope preferences: user data, so unlike a cache
 //! they must follow the user to a shared backend.
 //!
@@ -11,11 +10,12 @@
 //!
 //! | Collection | Document id | Holds |
 //! | --- | --- | --- |
-//! | `composio_state` | the file name (`composio_identities.json`, ...) | `value`: the serde value the file held |
+//! | `composio_state` | the value name (`composio_identities.json`, ...) | `value`: the serde value |
+//! | `composio_state_import` | the value name | marker: the legacy `integrations/<name>` file was imported (the file is left byte-identical) |
 
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
@@ -24,30 +24,28 @@ use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition, StorageError};
 use crate::storage::documents::Repo;
 
 const STATE: &str = "composio_state";
+/// One marker document per legacy file whose one-time import finished, so the
+/// file itself is never touched.
+const IMPORTED: &str = "composio_state_import";
 const DOMAIN: &str = "composio::file_store";
 
 fn collections() -> Vec<CollectionSpec> {
-    vec![CollectionSpec::new(STATE)]
+    vec![CollectionSpec::new(STATE), CollectionSpec::new(IMPORTED)]
 }
 
-/// The document store for this call, when the host configured one.
-pub(super) fn current() -> Result<Option<Docs>> {
+/// The document store for this call: the installed backend, else the
+/// workspace default, in the acting scope.
+pub(super) fn current(workspace_dir: &Path) -> Result<Docs> {
     #[cfg(test)]
     if let Some(docs) = TEST_OVERRIDE.with(|slot| slot.borrow().clone()) {
-        return Ok(Some(docs));
+        return Ok(docs);
     }
-    Ok(Repo::current(DOMAIN, collections)?.map(Docs))
+    Ok(Docs(Repo::current_for(workspace_dir, DOMAIN, collections)?))
 }
 
 #[cfg(test)]
 thread_local! {
     static TEST_OVERRIDE: std::cell::RefCell<Option<Docs>> = const { std::cell::RefCell::new(None) };
-}
-
-fn id_of(path: &Path) -> Result<String> {
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| anyhow!("composio state path {} has no file name", path.display()))
 }
 
 /// The composio state over one scoped document handle.
@@ -60,9 +58,9 @@ impl Docs {
         Self(Repo::over(scoped, DOMAIN, collections))
     }
 
-    /// The value stored for the file `path` names, or `T::default()`.
-    pub(super) fn load<T: DeserializeOwned + Default>(&self, path: &Path) -> Result<T> {
-        let id = id_of(path)?;
+    /// The value stored stored under `name`, or `T::default()`.
+    pub(super) fn load<T: DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
+        let id = name.to_string();
         let stored = self
             .0
             .run(|docs| async move { docs.get(STATE, &id).await })?;
@@ -72,21 +70,21 @@ impl Docs {
         }
     }
 
-    /// Read-modify-write of the value for the file `path` names, under
+    /// Read-modify-write of the value stored under `name`, under
     /// compare-and-swap so two cores sharing the scope never lose each other's
     /// change. `change` returns its result and whether it changed the value
     /// (an unchanged value is not written); it is retried on a conflict, so it
     /// must be repeatable.
     pub(super) fn update<T, R>(
         &self,
-        path: &Path,
+        name: &str,
         change: impl Fn(&mut T) -> (R, bool) + Send + 'static,
     ) -> Result<R>
     where
         T: DeserializeOwned + Serialize + Default + Send + 'static,
         R: Send + 'static,
     {
-        let id = id_of(path)?;
+        let id = name.to_string();
         self.0.run(|docs| async move {
             for _ in 0..crate::storage::documents::CAS_ATTEMPTS {
                 let stored = docs.get(STATE, &id).await?;
@@ -125,8 +123,56 @@ impl Docs {
         })
     }
 
-    pub(super) fn save<T: Serialize>(&self, path: &Path, value: &T) -> Result<()> {
-        let id = id_of(path)?;
+    /// Whether the one-time import of the legacy `integrations/<name>` file
+    /// finished in this scope.
+    pub(super) fn legacy_imported(&self, name: &str) -> Result<bool> {
+        let id = name.to_string();
+        let found = self
+            .0
+            .run(|docs| async move { docs.get(IMPORTED, &id).await })?;
+        Ok(found.is_some())
+    }
+
+    /// Stores `value` under `name` only when no value is stored there yet
+    /// (the one-time import of a pre-documents state file), then records the
+    /// import in a marker document so it never runs again. The legacy file is
+    /// not modified. Returns whether the value was written.
+    pub(super) fn import_if_absent(&self, name: &str, value: serde_json::Value) -> Result<bool> {
+        let id = name.to_string();
+        let doc = json!({ "value": value });
+        log::debug!("[composio:store] document import id={id}");
+        let claimed =
+            crate::storage::import_claim::with_claim(&self.0, IMPORTED, &id.clone(), || {
+                let (id, doc) = (id.clone(), doc.clone());
+                self.0.run(|docs| async move {
+                    let wrote = match docs.put(STATE, &id, doc, Precondition::Absent).await {
+                        Ok(_) => true,
+                        Err(error) if error.kind() == ErrorKind::Conflict => false,
+                        Err(error) => return Err(error),
+                    };
+                    match docs
+                        .put(
+                            IMPORTED,
+                            &id,
+                            json!({ "imported": true }),
+                            Precondition::Absent,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        // Another core finished first.
+                        Err(error) if error.kind() == ErrorKind::Conflict => {}
+                        Err(error) => return Err(error),
+                    }
+                    Ok(wrote)
+                })
+            })?;
+        Ok(claimed.unwrap_or(false))
+    }
+
+    #[cfg(test)]
+    pub(super) fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
+        let id = name.to_string();
         let doc = json!({ "value": serde_json::to_value(value)? });
         log::debug!("[composio:store] document save id={id}");
         self.0.run(|docs| async move {

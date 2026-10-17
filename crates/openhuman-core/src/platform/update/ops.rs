@@ -1,23 +1,27 @@
 //! JSON-RPC / CLI controller surface for the update domain.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::config::{self, UpdateConfig, UpdateRestartStrategy};
+use crate::config::{UpdateConfig, UpdateRestartStrategy};
 use crate::core::Outcome;
 use crate::platform::update;
 use crate::platform::update::types::{UpdateApplyResult, UpdateInfo, UpdateRunResult, VersionInfo};
 
-async fn load_update_policy() -> Result<UpdateConfig, String> {
-    config::rpc::load_config_with_timeout()
+async fn load_update_policy(ctx: &DispatchCtx) -> Result<UpdateConfig, String> {
+    ctx.load_config()
         .await
         .map(|cfg| cfg.update)
         .map_err(|err| format!("failed to load config for update policy: {err}"))
 }
 
-async fn enforce_update_mutation_policy(method: &str) -> Result<UpdateConfig, String> {
-    let policy = load_update_policy().await.map_err(|err| {
+async fn enforce_update_mutation_policy(
+    ctx: &DispatchCtx,
+    method: &str,
+) -> Result<UpdateConfig, String> {
+    let policy = load_update_policy(ctx).await.map_err(|err| {
         let message = format!(
             "{method} blocked: {err}; failing closed because update policy could not be loaded"
         );
@@ -177,9 +181,9 @@ pub async fn update_version() -> Outcome<Value> {
 /// update was applied the function publishes a restart request before
 /// returning, so the caller will see `restart_requested: true` and the
 /// core process will exit shortly afterwards.
-pub async fn update_run() -> Outcome<Value> {
+pub async fn update_run(ctx: &DispatchCtx) -> Outcome<Value> {
     log::info!("[update:rpc] update_run invoked");
-    let policy = match enforce_update_mutation_policy("openhuman.update_run").await {
+    let policy = match enforce_update_mutation_policy(ctx, "openhuman.update_run").await {
         Ok(policy) => policy,
         Err(error) => {
             return Outcome::single_log(
@@ -342,6 +346,7 @@ fn validate_asset_name(name: &str) -> Result<(), String> {
 ///   - `staging_dir` (string, optional): ignored — always uses the default staging directory
 ///     for security (next to the running executable or Resources/).
 pub async fn update_apply(
+    ctx: &DispatchCtx,
     download_url: String,
     asset_name: String,
     _staging_dir: Option<String>,
@@ -351,7 +356,7 @@ pub async fn update_apply(
         download_url,
         asset_name,
     );
-    let policy = match enforce_update_mutation_policy("openhuman.update_apply").await {
+    let policy = match enforce_update_mutation_policy(ctx, "openhuman.update_apply").await {
         Ok(policy) => policy,
         Err(error) => {
             return Outcome::single_log(

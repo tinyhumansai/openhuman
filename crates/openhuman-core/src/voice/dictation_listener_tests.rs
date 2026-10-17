@@ -74,7 +74,7 @@ async fn start_if_enabled_returns_early_when_config_disabled() {
     // Fast path — `enabled=false` → the fn returns without spawning.
     let mut config = Config::default();
     config.dictation.enabled = false;
-    start_if_enabled(&config).await;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
     // No panic = pass. The absence of a spawned hotkey task is what
     // we're verifying; hard to assert directly without internals.
 }
@@ -84,7 +84,7 @@ async fn start_if_enabled_returns_early_when_hotkey_empty() {
     let mut config = Config::default();
     config.dictation.enabled = true;
     config.dictation.hotkey = String::new();
-    start_if_enabled(&config).await;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
 }
 
 #[tokio::test]
@@ -92,7 +92,7 @@ async fn start_if_enabled_returns_early_when_hotkey_unparseable() {
     let mut config = Config::default();
     config.dictation.enabled = true;
     config.dictation.hotkey = "not a real hotkey".into();
-    start_if_enabled(&config).await;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
 }
 
 // On macOS the rdev listener must never start — TSMGetInputSourceProperty
@@ -105,7 +105,7 @@ async fn start_if_enabled_is_noop_on_macos_with_valid_hotkey() {
     config.dictation.enabled = true;
     config.dictation.hotkey = "ctrl+space".into();
     // Must return without panicking or spawning the rdev listener.
-    start_if_enabled(&config).await;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
     // No rdev thread was started: the global handle remains None.
     let guard = LISTENER_HANDLE.lock().expect("lock");
     assert!(
@@ -120,7 +120,7 @@ async fn start_if_enabled_is_noop_on_macos_with_fn_hotkey() {
     let mut config = Config::default();
     config.dictation.enabled = true;
     config.dictation.hotkey = "fn".into();
-    start_if_enabled(&config).await;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
     let guard = LISTENER_HANDLE.lock().expect("lock");
     assert!(
         guard.is_none(),
@@ -148,4 +148,17 @@ fn normalize_preserves_function_keys() {
 fn normalize_trims_whitespace_between_segments() {
     let result = normalize_hotkey("  cmd  + shift  +  d  ");
     assert_eq!(result, "cmd+shift+d");
+}
+
+#[tokio::test]
+async fn voice_component_off_overrides_dictation_enabled() {
+    let mut config = Config::default();
+    config.dictation.enabled = true;
+    config.dictation.hotkey = "ctrl+space".into();
+    config.components.voice = false;
+    start_if_enabled(&crate::core::runtime::DispatchCtx::default(), &config).await;
+    assert!(
+        LISTENER_HANDLE.lock().expect("lock").is_none(),
+        "no hotkey listener while [components].voice is off"
+    );
 }

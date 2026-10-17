@@ -1,10 +1,11 @@
 //! The voice server runtime: owns the hotkey event loop that turns
 //! press/release events into recordings, and hands each finished recording
-//! off to the background pipeline.
+//! off to the background pipeline. The state machine deciding what each event
+//! means lives in the `tinyvoice` module; this loop reports facts to it
+//! (`SessionAdvance`) and performs the action it answers with.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 use log::{debug, info, warn};
 use tokio::sync::Mutex;
@@ -12,23 +13,30 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::modules::voice::{RecorderSession, SessionAction, SessionInput};
 use crate::voice::audio_capture::{self, RecordingHandle};
 use tinyvoice_bus::hotkey::{ActivationMode, HotkeyEvent};
 
 use super::hotkey_listener::start_hotkey_listener;
 use super::pipeline::{capture_expected_app_name, process_recording_bg};
+use super::recorder::Recorder;
 use super::types::{ServerState, VoiceServerConfig, VoiceServerStatus};
 use super::LOG_PREFIX;
 
+type RecordingSetupReceiver =
+    tokio::sync::oneshot::Receiver<Result<(RecordingHandle, Option<String>), String>>;
+
 /// The voice server runtime.
 pub struct VoiceServer {
+    /// Mirror of the module-owned session phase; see [`Recorder`].
     state: Arc<Mutex<ServerState>>,
+    /// The live session, present only while `run()` is active.
+    recorder: Mutex<Option<Recorder>>,
     /// Wrapped in a Mutex so `run()` can replace it with a fresh token after
     /// `stop()` — a `CancellationToken` cannot be un-cancelled.
     cancel: Mutex<CancellationToken>,
     config: VoiceServerConfig,
     transcription_count: Arc<std::sync::atomic::AtomicU64>,
-    session_generation: Arc<std::sync::atomic::AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     /// Rolling buffer of recent transcriptions used as STT context for
     /// better continuity across consecutive recordings.
@@ -39,10 +47,10 @@ impl VoiceServer {
     pub fn new(config: VoiceServerConfig) -> Self {
         Self {
             state: Arc::new(Mutex::new(ServerState::Stopped)),
+            recorder: Mutex::new(None),
             cancel: Mutex::new(CancellationToken::new()),
             config,
             transcription_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            session_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
             recent_transcripts: Arc::new(Mutex::new(Vec::new())),
         }
@@ -62,14 +70,18 @@ impl VoiceServer {
     /// Run the voice server. Blocks until stopped.
     ///
     /// This is the main entry point for both embedded and standalone modes.
-    pub async fn run(&self, app_config: &Config) -> Result<(), String> {
+    pub async fn run(
+        &self,
+        ctx: &crate::core::runtime::DispatchCtx,
+        app_config: &Config,
+    ) -> Result<(), String> {
         // Atomically transition Stopped → Idle to prevent concurrent run() calls.
         // The globe listener compilation can take several seconds; without this
         // guard the RPC handler sees "Stopped" and spawns a duplicate run().
         //
         // Also replace the cancellation token with a fresh one — a cancelled
         // token cannot be reused (stop() cancels it permanently).
-        let cancel = {
+        let (cancel, recorder) = {
             // Lock cancel FIRST, then state — same order as stop() — to
             // prevent a race where stop() cancels the old token between
             // setting Idle and swapping the token.
@@ -79,10 +91,22 @@ impl VoiceServer {
                 return Err(format!("voice server already running (state={:?})", *state));
             }
 
+            let session = RecorderSession::open(app_config)
+                .await
+                .map_err(|e| format!("could not open the recording session: {e}"))?;
+            match session.advance(app_config, SessionInput::Run).await {
+                Ok(reply) if reply.accepted => *state = reply.phase.into(),
+                other => {
+                    let _ = session.close(app_config).await;
+                    return Err(format!("recording session refused to start: {other:?}"));
+                }
+            }
+
             let fresh = CancellationToken::new();
             *cancel_guard = fresh.clone();
-            *state = ServerState::Idle;
-            fresh
+            let recorder = Recorder::new(session, self.state.clone());
+            *self.recorder.lock().await = Some(recorder.clone());
+            (fresh, recorder)
         };
 
         info!(
@@ -94,6 +118,7 @@ impl VoiceServer {
         // rdev's CGEventTap can see it. Use the Swift-based globe listener
         // instead, which monitors NSEvent.flagsChanged for the .function flag.
         let (listener_handle, mut hotkey_rx) = match start_hotkey_listener(
+            ctx,
             app_config,
             &self.config.hotkey,
             self.config.activation_mode,
@@ -103,7 +128,7 @@ impl VoiceServer {
         {
             Ok(pair) => pair,
             Err(e) => {
-                *self.state.lock().await = ServerState::Stopped;
+                self.shut_session(app_config, &recorder).await;
                 return Err(e);
             }
         };
@@ -116,22 +141,11 @@ impl VoiceServer {
         // Pending recording setup: `start_recording()` runs on a blocking
         // thread so the event loop stays responsive to Release events that
         // macOS fires almost immediately for the Fn key.
-        let mut recording_pending_rx: Option<
-            tokio::sync::oneshot::Receiver<Result<(RecordingHandle, Option<String>), String>>,
-        > = None;
-        let mut pending_generation: Option<u64> = None;
-        let mut recording_generation: Option<u64> = None;
-        // Set when a stop-intent event (Release/Pressed toggle) arrives before
-        // recording has started.
-        let mut pending_stop = false;
-        // Deferred stop deadline used when stop intent arrives during setup.
-        // Keeping this in a select! branch avoids blocking the hotkey loop.
+        let mut recording_pending_rx: Option<RecordingSetupReceiver> = None;
+        // Deferred stop deadline, set when the module answers `DeferStop`
+        // because a stop intent arrived during setup. Keeping this in a
+        // select! branch avoids blocking the hotkey loop.
         let mut deferred_stop_deadline: Option<tokio::time::Instant> = None;
-
-        /// Minimum recording duration after setup completes. If the user
-        /// released the hotkey while cpal was still initialising, we keep
-        /// recording for at least this long to capture actual speech.
-        const MIN_RECORDING_AFTER_SETUP: Duration = Duration::from_millis(1500);
 
         loop {
             // Build a future that resolves when the pending recording setup
@@ -180,80 +194,52 @@ impl VoiceServer {
                         );
                     }
 
-                    match event {
-                        HotkeyEvent::Pressed => {
-                            let current_state = *self.state.lock().await;
-                            info!(
-                                "{LOG_PREFIX} received hotkey event=Pressed state_before={current_state:?} recording={} pending={}",
-                                recording.is_some(),
-                                recording_pending_rx.is_some()
-                            );
-                            if recording.is_some() {
-                                // Recording in progress → stop it (tap toggle or
-                                // unreliable-release keys like Fn that always send Pressed).
-                                debug!("{LOG_PREFIX} hotkey pressed while recording → stopping");
-                                deferred_stop_deadline = None;
-                                if let Some(handle) = recording.take() {
-                                    self.spawn_process_recording(
-                                        handle,
-                                        app_config,
-                                        recording_generation.take().unwrap_or_default(),
-                                        recording_expected_app.take(),
-                                    );
-                                }
-                            } else if recording_pending_rx.is_some() {
-                                info!("{LOG_PREFIX} hotkey pressed while recording setup pending — buffering stop intent");
-                                pending_stop = true;
-                            } else {
-                                let generation =
-                                    self.session_generation.fetch_add(1, Ordering::Relaxed) + 1;
-                                debug!("{LOG_PREFIX} hotkey pressed → starting recording (non-blocking)");
-                                debug!(
-                                    "{LOG_PREFIX} assigned recording generation={} for new session",
-                                    generation
-                                );
+                    let input = match event {
+                        HotkeyEvent::Pressed => SessionInput::Pressed,
+                        HotkeyEvent::Released => SessionInput::Released,
+                    };
+                    info!(
+                        "{LOG_PREFIX} received hotkey event={event:?} recording={} pending={}",
+                        recording.is_some(),
+                        recording_pending_rx.is_some()
+                    );
+                    let Some(reply) = recorder.advance(app_config, input).await else {
+                        continue;
+                    };
+                    match reply.action {
+                        SessionAction::StartRecording { generation } => {
+                            debug!("{LOG_PREFIX} hotkey pressed → starting recording generation={generation} (non-blocking)");
+                            deferred_stop_deadline = None;
 
-                                // Start recording on a blocking thread so the
-                                // event loop remains responsive to Release.
-                                let (tx, rx) = tokio::sync::oneshot::channel();
-                                let capture_config = app_config.clone();
-                                crate::core::runtime::spawn_scoped(async move {
-                                    let expected_app = capture_expected_app_name(&capture_config).await;
-                                    let result = audio_capture::start_recording(&capture_config).await
-                                        .map(|handle| (handle, expected_app));
-                                    let _ = tx.send(result);
-                                });
-                                recording_pending_rx = Some(rx);
-                                pending_generation = Some(generation);
-                                pending_stop = false;
-                                deferred_stop_deadline = None;
-                                *self.state.lock().await = ServerState::Recording;
-                            }
+                            // Start recording on a blocking thread so the
+                            // event loop remains responsive to Release.
+                            let (tx, rx) = tokio::sync::oneshot::channel();
+                            let capture_config = app_config.clone();
+                            ctx.spawn(async move {
+                                let expected_app = capture_expected_app_name(&capture_config).await;
+                                let result = audio_capture::start_recording(&capture_config).await
+                                    .map(|handle| (handle, expected_app));
+                                let _ = tx.send(result);
+                            });
+                            recording_pending_rx = Some(rx);
                         }
-                        HotkeyEvent::Released => {
-                            info!(
-                                "{LOG_PREFIX} received hotkey event=Released recording={} pending={}",
-                                recording.is_some(),
-                                recording_pending_rx.is_some()
-                            );
+                        SessionAction::StopRecording { generation } => {
+                            deferred_stop_deadline = None;
                             if let Some(handle) = recording.take() {
-                                debug!("{LOG_PREFIX} hotkey released → stopping recording");
-                                deferred_stop_deadline = None;
+                                debug!("{LOG_PREFIX} hotkey stop → stopping recording generation={generation}");
                                 self.spawn_process_recording(
+                                    ctx,
                                     handle,
                                     app_config,
-                                    recording_generation.take().unwrap_or_default(),
+                                    &recorder,
+                                    generation,
                                     recording_expected_app.take(),
                                 );
-                            } else if recording_pending_rx.is_some() {
-                                // Release arrived before recording setup finished.
-                                // Buffer stop intent — we'll handle it once the handle arrives.
-                                info!("{LOG_PREFIX} release buffered — recording setup still pending");
-                                pending_stop = true;
-                            } else {
-                                debug!("{LOG_PREFIX} release received with no active recording (normal for unreliable-release keys)");
                             }
                         }
+                        SessionAction::None
+                        | SessionAction::RecordingLive { .. }
+                        | SessionAction::DeferStop { .. } => {}
                     }
                 }
 
@@ -262,95 +248,76 @@ impl VoiceServer {
                     recording_pending_rx = None;
                     match result {
                         Ok(Ok((handle, expected_app))) => {
-                            // Check for a buffered stop event that lost the
-                            // select! race against pending_ready. On warm CPAL
-                            // init both branches may be ready simultaneously;
-                            // select! picks one pseudo-randomly, so a Released
-                            // event can sit unprocessed in hotkey_rx.
-                            let had_pending_stop = pending_stop;
-                            if !pending_stop {
-                                if let Ok(buffered) = hotkey_rx.try_recv() {
-                                    match buffered {
-                                        HotkeyEvent::Released => {
-                                            info!(
-                                                "{LOG_PREFIX} recording handle ready — found buffered Released in hotkey_rx (select! race recovered)"
+                            // A hotkey event queued behind the setup result lost
+                            // the select! race against `pending_ready` (on warm
+                            // CPAL init both are ready at once). Either kind is
+                            // a stop intent; the module decides what it means.
+                            let stop_buffered = hotkey_rx.try_recv().is_ok();
+                            if stop_buffered {
+                                info!("{LOG_PREFIX} recording handle ready — found a buffered hotkey event (select! race recovered)");
+                            }
+                            match recorder
+                                .advance(app_config, SessionInput::SetupReady { stop_buffered })
+                                .await
+                            {
+                                Some(reply) if reply.accepted => {
+                                    recording = Some(handle);
+                                    recording_expected_app = expected_app;
+                                    match reply.action {
+                                        SessionAction::DeferStop { after_ms, .. } => {
+                                            info!("{LOG_PREFIX} deferred stop: recording for at least {after_ms}ms");
+                                            deferred_stop_deadline = Some(
+                                                tokio::time::Instant::now()
+                                                    + std::time::Duration::from_millis(after_ms),
                                             );
-                                            pending_stop = true;
                                         }
-                                        HotkeyEvent::Pressed => {
-                                            // A second Pressed while pending means
-                                            // user wants to stop (tap-style). Treat
-                                            // the same as a stop intent.
-                                            info!(
-                                                "{LOG_PREFIX} recording handle ready — found buffered Pressed in hotkey_rx (treating as stop intent)"
-                                            );
-                                            pending_stop = true;
+                                        _ => {
+                                            deferred_stop_deadline = None;
+                                            info!("{LOG_PREFIX} recording started (live)");
                                         }
                                     }
                                 }
-                            }
-
-                            info!(
-                                "{LOG_PREFIX} recording handle ready (pending_stop={pending_stop}, was_buffered={})",
-                                !had_pending_stop && pending_stop
-                            );
-
-                            if pending_stop {
-                                // A stop intent arrived while cpal was initialising.
-                                // Keep recording for a minimum duration, then stop
-                                // via non-blocking deferred deadline branch.
-                                pending_stop = false;
-                                recording = Some(handle);
-                                recording_generation = pending_generation.take();
-                                recording_expected_app = expected_app;
-
-                                info!(
-                                    "{LOG_PREFIX} deferred stop: recording for at least {}ms",
-                                    MIN_RECORDING_AFTER_SETUP.as_millis()
-                                );
-                                deferred_stop_deadline = Some(
-                                    tokio::time::Instant::now() + MIN_RECORDING_AFTER_SETUP,
-                                );
-                            } else {
-                                recording = Some(handle);
-                                recording_generation = pending_generation.take();
-                                recording_expected_app = expected_app;
-                                deferred_stop_deadline = None;
-
-                                info!("{LOG_PREFIX} recording started (live)");
+                                _ => {
+                                    // The session moved on (stopped, or the module
+                                    // is unreachable): this recording has no owner.
+                                    warn!("{LOG_PREFIX} recording setup result not accepted; dropping the recording");
+                                    drop(handle);
+                                }
                             }
                         }
                         Ok(Err(e)) => {
-                            pending_stop = false;
                             deferred_stop_deadline = None;
-                            pending_generation = None;
                             warn!("{LOG_PREFIX} failed to start recording: {e}");
-                            *self.state.lock().await = ServerState::Idle;
+                            recorder.advance(app_config, SessionInput::SetupFailed).await;
                             *self.last_error.lock().await = Some(e);
                         }
                         Err(_) => {
-                            pending_stop = false;
                             deferred_stop_deadline = None;
-                            pending_generation = None;
                             warn!("{LOG_PREFIX} recording setup task dropped");
-                            *self.state.lock().await = ServerState::Idle;
+                            recorder.advance(app_config, SessionInput::SetupFailed).await;
                         }
                     }
                 }
 
                 _ = deferred_stop_ready => {
                     deferred_stop_deadline = None;
-                    if let Some(handle) = recording.take() {
-                        info!(
-                            "{LOG_PREFIX} deferred stop deadline reached after {}ms, stopping recording",
-                            MIN_RECORDING_AFTER_SETUP.as_millis()
-                        );
-                        self.spawn_process_recording(
-                            handle,
-                            app_config,
-                            recording_generation.take().unwrap_or_default(),
-                            recording_expected_app.take(),
-                        );
+                    if let Some(reply) = recorder
+                        .advance(app_config, SessionInput::DeferredStopElapsed)
+                        .await
+                    {
+                        if let SessionAction::StopRecording { generation } = reply.action {
+                            if let Some(handle) = recording.take() {
+                                info!("{LOG_PREFIX} deferred stop deadline reached, stopping recording");
+                                self.spawn_process_recording(
+                                    ctx,
+                                    handle,
+                                    app_config,
+                                    &recorder,
+                                    generation,
+                                    recording_expected_app.take(),
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -362,10 +329,20 @@ impl VoiceServer {
         }
 
         listener_handle.stop().await;
-        *self.state.lock().await = ServerState::Stopped;
+        self.shut_session(app_config, &recorder).await;
         info!("{LOG_PREFIX} voice server stopped");
 
         Ok(())
+    }
+
+    /// Stop the module-side session (invalidating in-flight pipelines), close
+    /// it, and leave the mirrored state `Stopped`.
+    async fn shut_session(&self, config: &Config, recorder: &Recorder) {
+        recorder.advance(config, SessionInput::Stop).await;
+        recorder.close(config).await;
+        *self.recorder.lock().await = None;
+        // The module may have been unreachable; the server is stopped either way.
+        *self.state.lock().await = ServerState::Stopped;
     }
 
     /// Stop the voice server and wait for it to reach `Stopped` state.
@@ -398,16 +375,17 @@ impl VoiceServer {
     /// consecutive Fn presses are never missed.
     fn spawn_process_recording(
         &self,
+        ctx: &crate::core::runtime::DispatchCtx,
         handle: RecordingHandle,
         config: &Config,
+        recorder: &Recorder,
         generation: u64,
         expected_app: Option<String>,
     ) {
         let pipeline_id = Uuid::new_v4().to_string()[..8].to_string();
-        let state = self.state.clone();
         let server_config = self.config.clone();
         let transcription_count = self.transcription_count.clone();
-        let session_generation = self.session_generation.clone();
+        let recorder = recorder.clone();
         let last_error = self.last_error.clone();
         let recent_transcripts = self.recent_transcripts.clone();
         let app_config = config.clone();
@@ -416,15 +394,14 @@ impl VoiceServer {
             "{LOG_PREFIX} [pipeline={pipeline_id}] spawning process_recording (generation={generation})"
         );
 
-        crate::core::runtime::spawn_scoped(async move {
+        ctx.spawn(async move {
             process_recording_bg(
                 &pipeline_id,
                 handle,
                 &app_config,
                 &server_config,
-                state,
+                recorder,
                 transcription_count,
-                session_generation,
                 generation,
                 last_error,
                 recent_transcripts,

@@ -143,5 +143,5 @@ cargo test -p openhuman-rpc http_host
 
 ## Further reading
 
-- [`gitbooks/developing/architecture.md`](../../../../gitbooks/developing/architecture.md): architecture overview.
+- [`docs/gitbooks/en/developing/architecture.md`](../../../../docs/gitbooks/en/developing/architecture.md): architecture overview.
 - [`crates/openhuman-rpc/README.md`](../../README.md): the openhuman-rpc crate README.

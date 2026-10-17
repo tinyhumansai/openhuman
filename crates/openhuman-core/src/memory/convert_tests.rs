@@ -300,6 +300,7 @@ async fn brain_ingest_files_a_pdf_by_path() {
 
     let view = ingest(
         &config,
+        &crate::memory::scope::MemoryIdentity::root(),
         BrainIngestParams {
             path: Some(path.display().to_string()),
             text: None,
@@ -341,6 +342,21 @@ async fn a_pdf_does_not_fall_back_to_a_local_parser_when_modules_are_disabled() 
     assert!(
         matches!(error, Error::Converter { ref converter, .. } if converter == "tinydocs"),
         "expected a TinyDocs-unavailable converter error, got {error}"
+    );
+}
+
+#[cfg(feature = "documents")]
+#[tokio::test]
+async fn a_disabled_documents_component_answers_a_typed_disabled_error() {
+    let raw = RawDocument::new(pdf_saying("hello")).with_filename("brief.pdf");
+    let mut config = Config::default();
+    config.components.documents = false;
+
+    let error = converter(&config).convert(&raw).await.unwrap_err();
+    assert!(
+        matches!(error, Error::Converter { ref converter, ref message }
+            if converter == "tinydocs" && message == "COMPONENT_DISABLED:documents"),
+        "expected COMPONENT_DISABLED:documents, got {error}"
     );
 }
 

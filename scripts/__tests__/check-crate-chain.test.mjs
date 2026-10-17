@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   CHAIN,
+  checkLinkedBridgeGate,
   checkManifestEdges,
   checkRepository,
   findForbiddenPaths,
@@ -93,7 +94,7 @@ openhuman-rpc = { path = "crates/openhuman-rpc", default-features = false }
 
 test('each layer may name only the layer directly below it', () => {
   assert.deepEqual(CHAIN['openhuman-embed'], ['openhuman']);
-  assert.deepEqual(CHAIN['openhuman-cli'], ['openhuman-rpc']);
+  assert.deepEqual(CHAIN['openhuman-cli'], ['openhuman-rpc', 'openhuman-modules-linked']);
   assert.deepEqual(
     checkManifestEdges({
       crate: 'openhuman-tui',
@@ -312,4 +313,85 @@ test('the real repository passes through the CLI', () => {
   const result = spawnSync('node', [CHECKER], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /OK: every crate depends only on the layer below it/);
+});
+
+// ── the linked-modules bridge (E0.2) ───────────────────────────────────────
+
+const BRIDGE_CLI = `
+[package]
+name = "openhuman-cli"
+[dependencies]
+openhuman-rpc = { workspace = true }
+openhuman-modules-linked = { path = "../openhuman-modules-linked", features = ["all"], optional = true }
+[features]
+default = ["modules"]
+modules = ["openhuman-rpc/modules"]
+linked-modules = ["modules", "dep:openhuman-modules-linked"]
+`;
+
+test('only the CLI may name the linked-modules bridge; every other crate breaks the chain', () => {
+  const bridge = [{ key: 'openhuman-modules-linked', package: 'openhuman-modules-linked', workspace: false }];
+  assert.deepEqual(checkManifestEdges({ crate: 'openhuman-cli', deps: bridge }), []);
+  for (const crate of ['openhuman-app', 'openhuman-tui', 'openhuman', 'openhuman-embed', 'openhuman-rpc']) {
+    const violations = checkManifestEdges({ crate, deps: bridge });
+    assert.equal(violations.length, 1, crate);
+    assert.equal(violations[0].dependency, 'openhuman-modules-linked');
+  }
+});
+
+test('the bridge depends on rpc alone', () => {
+  const deps = [{ key: 'openhuman-embed', package: 'openhuman-embed', workspace: false }];
+  assert.equal(checkManifestEdges({ crate: 'openhuman-modules-linked', deps }).length, 1);
+});
+
+test('an optional bridge behind linked-modules passes the CLI gate', () => {
+  assert.deepEqual(checkLinkedBridgeGate(BRIDGE_CLI), []);
+  assert.deepEqual(checkLinkedBridgeGate('[package]\nname = "openhuman-cli"\n'), []);
+});
+
+test('a non-optional bridge dependency in the CLI fails the gate', () => {
+  const toml = BRIDGE_CLI.replace(', optional = true', '');
+  const violations = checkLinkedBridgeGate(toml);
+  assert.ok(violations.some(v => /optional = true/.test(v.reason)), JSON.stringify(violations));
+});
+
+test('enabling the bridge from default or another feature fails the gate', () => {
+  const viaDefault = BRIDGE_CLI.replace('default = ["modules"]', 'default = ["modules", "linked-modules"]');
+  assert.ok(checkLinkedBridgeGate(viaDefault).some(v => /feature `default`/.test(v.reason)));
+  const viaOther = BRIDGE_CLI.replace('modules = ["openhuman-rpc/modules"]', 'modules = ["openhuman-rpc/modules", "dep:openhuman-modules-linked"]');
+  assert.ok(checkLinkedBridgeGate(viaOther).some(v => /feature `modules`/.test(v.reason)));
+});
+
+test('a bridge with no linked-modules feature fails the gate', () => {
+  const toml = BRIDGE_CLI.replace(/linked-modules = .*\n/, '');
+  assert.ok(checkLinkedBridgeGate(toml).some(v => /must enable it/.test(v.reason)));
+});
+
+test('the CLI exits 1 when the TUI depends on the linked-modules bridge', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'crate-chain-bridge-'));
+  try {
+    writeFileSync(
+      join(dir, 'Cargo.toml'),
+      '[workspace]\nmembers = ["crates/openhuman-tui", "crates/openhuman-cli"]\n'
+    );
+    const crate = (name, toml) => {
+      mkdirSync(join(dir, 'crates', name, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'crates', name, 'Cargo.toml'), toml);
+    };
+    crate(
+      'openhuman-tui',
+      '[package]\nname = "openhuman-tui"\n[dependencies]\nopenhuman-modules-linked = { path = "../openhuman-modules-linked" }\n'
+    );
+    crate('openhuman-cli', BRIDGE_CLI);
+    crate('openhuman-app', '[package]\nname = "openhuman-app"\n');
+    for (const layer of ['openhuman-embed', 'openhuman-tinyhumans', 'openhuman-rpc']) {
+      mkdirSync(join(dir, 'crates', layer, 'src'), { recursive: true });
+    }
+    const result = spawnSync('node', [CHECKER, dir], { encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /openhuman-tui -> openhuman-modules-linked/);
+    assert.doesNotMatch(result.stderr, /openhuman-cli -> openhuman-modules-linked/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

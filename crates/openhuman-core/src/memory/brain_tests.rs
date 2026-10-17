@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::memory::scope::MemoryIdentity;
+use tinymemory_tools::layout::placement::file_into;
+
 use tinymemory_api::{ItemKind, MemoryMeta, MetaFilter};
 
 use crate::memory::test_fixtures::{bind_reference, config_in, stored};
@@ -31,43 +34,6 @@ fn synced_items_are_filed_by_their_connector() {
     assert_eq!(files_source().to_string(), "files");
 }
 
-#[test]
-fn a_github_document_names_its_repository() {
-    let with = |repo: Option<&str>, url: Option<&str>| {
-        let mut item = document(None, None);
-        item.meta_mut().repo = repo.map(str::to_string);
-        item.meta_mut().url = url.map(str::to_string);
-        github_collection(&item)
-    };
-    assert_eq!(with(Some("Acme/API"), None).as_deref(), Some("acme--api"));
-    assert_eq!(
-        with(Some("https://github.com/acme/api.git"), None).as_deref(),
-        Some("acme--api")
-    );
-    // A Composio issue carries only its URL.
-    assert_eq!(
-        with(
-            None,
-            Some("https://github.com/tinyhumansai/openhuman/issues/12")
-        )
-        .as_deref(),
-        Some("tinyhumansai--openhuman")
-    );
-    assert_eq!(with(None, Some("https://example.com/a/b")), None);
-    assert_eq!(with(Some("acme"), None), None);
-    assert_eq!(with(None, None), None);
-    // A query or fragment is not part of the repository.
-    assert_eq!(
-        with(None, Some("https://github.com/acme/api?tab=readme#top")).as_deref(),
-        Some("acme--api")
-    );
-    // Hyphens on either side never make two repositories one collection.
-    assert_ne!(
-        with(Some("foo-bar/repo"), None),
-        with(Some("foo/bar-repo"), None)
-    );
-}
-
 #[tokio::test]
 async fn a_sources_collections_count_and_forget_with_it() {
     use tinymemory_api::MemoryEngine as _;
@@ -91,7 +57,7 @@ async fn a_sources_collections_count_and_forget_with_it() {
         };
         engine.store(StoreItem::document(text, meta)).await.unwrap();
     }
-    let view = sources(&config).await.unwrap();
+    let view = sources(&config, &MemoryIdentity::root()).await.unwrap();
     let counts: Vec<(&str, u64)> = view
         .sources
         .iter()
@@ -102,6 +68,7 @@ async fn a_sources_collections_count_and_forget_with_it() {
 
     let gone = forget(
         &config,
+        &MemoryIdentity::root(),
         BrainForgetParams {
             source: "github".into(),
         },
@@ -127,6 +94,7 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
 
     let ingested = ingest(
         &config,
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: None,
             text: Some("Refunds are issued within 14 days.".into()),
@@ -139,6 +107,7 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
     assert_eq!(ingested.source, "notion");
     ingest(
         &config,
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: None,
             text: Some("Onboarding takes a week.".into()),
@@ -157,13 +126,14 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
         "one belief build per source"
     );
 
-    let counts = sources(&config).await.unwrap();
+    let counts = sources(&config, &MemoryIdentity::root()).await.unwrap();
     assert_eq!(counts.root, "root");
     assert_eq!(counts.sources.len(), 2);
     assert_eq!(counts.unfiled, 0);
 
     let found = search(
         &config,
+        &MemoryIdentity::root(),
         BrainSearchParams {
             query: "refunds".into(),
             source: Some("notion".into()),
@@ -176,6 +146,7 @@ async fn text_is_ingested_searched_counted_and_forgotten_per_source() {
 
     let gone = forget(
         &config,
+        &MemoryIdentity::root(),
         BrainForgetParams {
             source: "notion".into(),
         },
@@ -217,12 +188,13 @@ async fn ingest_refuses_bad_input() {
         },
     ] {
         assert!(matches!(
-            ingest(&config, params).await,
+            ingest(&config, &MemoryIdentity::root(), params).await,
             Err(MemoryError::InvalidRequest(_))
         ));
     }
     assert!(search(
         &config,
+        &MemoryIdentity::root(),
         BrainSearchParams {
             query: " ".into(),
             source: None,
@@ -242,6 +214,7 @@ async fn a_file_is_converted_and_filed_under_files() {
     std::fs::write(&path, "# Guide\n\nAlways tag releases.").unwrap();
     let ingested = ingest(
         &config,
+        &MemoryIdentity::root(),
         BrainIngestParams {
             path: Some(path.display().to_string()),
             text: None,
@@ -271,6 +244,7 @@ async fn an_ingest_queues_a_belief_build_only_for_an_engine_that_waits_for_one()
         );
         ingest(
             &config,
+            &MemoryIdentity::root(),
             BrainIngestParams {
                 path: None,
                 text: Some("Refunds are issued within 14 days.".into()),
@@ -286,52 +260,6 @@ async fn an_ingest_queues_a_belief_build_only_for_an_engine_that_waits_for_one()
             .len();
         assert_eq!(pending, queued, "{consolidation:?}");
     }
-}
-
-#[test]
-fn legacy_nodes_map_to_their_connector() {
-    use tinymemory_api::{SourceKind, SourceRef};
-    let item = |kind: SourceKind, path: Option<&str>| {
-        let mut item = document(None, path);
-        item.meta_mut().source = SourceRef { kind, id: None };
-        item
-    };
-    let link = item(SourceKind::Link, None);
-    for old in [
-        "pdf", "markdown", "md", "docx", "xlsx", "pptx", "code", "other", "files",
-    ] {
-        assert_eq!(legacy_brain_node(old, &link), files_source(), "{old}");
-    }
-    // `web` held links and feeds, and HTML files that were filed beside them.
-    assert_eq!(legacy_brain_node("web", &link), BrainSource::Web);
-    assert_eq!(
-        legacy_brain_node("web", &item(SourceKind::Rss, None)),
-        BrainSource::Web
-    );
-    assert_eq!(
-        legacy_brain_node("web", &item(SourceKind::Folder, None)),
-        files_source()
-    );
-    assert_eq!(
-        legacy_brain_node("web", &item(SourceKind::File, None)),
-        files_source()
-    );
-    // An upload carried the `Link` kind `web` implies, but kept its path.
-    assert_eq!(
-        legacy_brain_node("web", &item(SourceKind::Link, Some("/u/pricing.html"))),
-        files_source()
-    );
-    // Connectors keep their node, under the slug Composio uses.
-    assert_eq!(legacy_brain_node("notion", &link), BrainSource::Notion);
-    assert_eq!(legacy_brain_node("github", &link), BrainSource::Github);
-    assert_eq!(
-        legacy_brain_node("gmail", &link),
-        BrainSource::Other("gmail".into())
-    );
-    assert_eq!(
-        legacy_brain_node("google_drive", &link),
-        BrainSource::Other("googledrive".into())
-    );
 }
 
 fn path_params(path: String) -> BrainIngestParams {
@@ -361,7 +289,7 @@ async fn ingest_refuses_a_credential_store_a_system_root_traversal_and_null_byte
         format!("{}/../guide.md", notes.display()),
         format!("{}\0.md", tmp.path().join("guide").display()),
     ] {
-        let result = ingest(&config, path_params(path.clone())).await;
+        let result = ingest(&config, &MemoryIdentity::root(), path_params(path.clone())).await;
         assert!(
             matches!(result, Err(MemoryError::InvalidRequest(_))),
             "{path:?}: {result:?}"
@@ -382,7 +310,12 @@ async fn ingest_refuses_a_symlink_into_a_credential_store() {
     let link = tmp.path().join("innocent.md");
     std::os::unix::fs::symlink(aws.join("credentials"), &link).unwrap();
 
-    let result = ingest(&config, path_params(link.display().to_string())).await;
+    let result = ingest(
+        &config,
+        &MemoryIdentity::root(),
+        path_params(link.display().to_string()),
+    )
+    .await;
     assert!(
         matches!(result, Err(MemoryError::InvalidRequest(_))),
         "{result:?}"

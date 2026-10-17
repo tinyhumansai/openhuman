@@ -118,8 +118,9 @@ The bearer is the per-launch RPC token the core owns
 `run_server_saas` (`--mode saas --saas-config <file>`) boots the operator's
 config instead of a builder. Before boot it installs the session store for
 the operator's storage URL (`OPENHUMAN_STORAGE_URL`, else `storage_url`)
-through `session_store::install_for_saas`: the on-disk store with no URL,
-else `DriverSessionStores` over that backend with `recover_on_open(false)`,
+through `session_store::install_for_saas`: one default database per profile
+workspace with no URL, else `DriverSessionStores` over that backend with
+`recover_on_open(false)`,
 because a profile's turns are recovered when its lease is taken over, not
 when its stores open. On shutdown it releases the leases of idle profiles.
 
@@ -271,6 +272,6 @@ cargo test -p openhuman-rpc --features crash-reporting server::
 
 ## Further reading
 
-- [`gitbooks/developing/architecture.md`](../../../../gitbooks/developing/architecture.md): architecture overview.
-- [`gitbooks/developing/architecture/security.md`](../../../../gitbooks/developing/architecture/security.md): security.
+- [`docs/gitbooks/en/developing/architecture.md`](../../../../docs/gitbooks/en/developing/architecture.md): architecture overview.
+- [`docs/gitbooks/en/developing/architecture/security.md`](../../../../docs/gitbooks/en/developing/architecture/security.md): security.
 - [`crates/openhuman-rpc/README.md`](../../README.md): the openhuman-rpc crate README.

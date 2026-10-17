@@ -2,7 +2,7 @@
 //! bus subscriber that delivers it.
 //!
 //! The background-completion tables are keyed per profile
-//! (`tenant::profile_key`), but the delivery subscriber
+//! (`tenant::profile_key_in`), but the delivery subscriber
 //! ([`super::background_delivery`]) runs off-task with no `CoreContext` scope,
 //! so in SaaS it cannot read them. [`record_outcome`] runs inside the user's
 //! scope: it notes the profile here under the sub-agent's task id (core-minted,
@@ -43,8 +43,8 @@ fn owners() -> MutexGuard<'static, Owners> {
 
 /// Note the calling task's profile as an owner of each id. A no-op outside a
 /// profile (the desktop, embedded agents).
-pub(crate) fn note(ids: &[&str]) {
-    let Ok(Some(profile)) = crate::core::runtime::current_tenant().map(|t| t.profile) else {
+pub(crate) fn note(ctx: &crate::core::runtime::DispatchCtx, ids: &[&str]) {
+    let Ok(Some(profile)) = ctx.tenant().map(|t| t.profile) else {
         return;
     };
     note_profile(ids, &profile);

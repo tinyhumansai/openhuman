@@ -1,12 +1,12 @@
 use super::*;
 use crate::agent::harness::fork_context::ParentExecutionContext;
-use crate::agent::prompts::ToolCallFormat;
 use crate::config::AgentConfig;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tinyagents_harness::context::RunConfig;
 use tinyagents_harness::tool::ToolDispatch;
+use tinytools_agent::dialect::ToolCallFormat;
 
 #[tokio::test]
 async fn missing_session_id_is_rejected() {
@@ -127,5 +127,6 @@ fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }

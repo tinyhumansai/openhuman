@@ -32,7 +32,7 @@ use async_trait::async_trait;
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use tinyagents_session::run_ledger::{transition_agent_run_status, AgentRunStatus};
+use tinyagents_session::run_ledger::AgentRunStatus;
 use tinybus::EventHandler;
 
 const LOG_PREFIX: &str = "[run_ledger][finalize]";
@@ -71,38 +71,31 @@ impl EventHandler<DomainEvent> for RunLedgerFinalizeSubscriber {
             _ => return,
         };
 
-        // Single fast UPDATE, but keep it off the async runtime to honour the
-        // EventHandler "must not block" contract.
-        let config = self.config.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            transition_agent_run_status(
-                &config.workspace_dir,
-                &task_id,
-                status,
-                error.as_deref(),
-                completed_at,
-            )
-            .map(|run| (task_id, run))
-        })
+        let result = crate::agent::session_store::with_ledger_async(
+            &self.config.workspace_dir,
+            |ledger| async move {
+                ledger
+                    .transition_agent_run_status(&task_id, status, error.as_deref(), completed_at)
+                    .await
+                    .map(|run| (task_id, run))
+            },
+        )
         .await;
 
         match result {
-            Ok(Ok((task_id, Some(_)))) => {
+            Ok((task_id, Some(_))) => {
                 log::debug!(
                     "{LOG_PREFIX} settled run id={task_id} status={}",
                     status.as_str()
                 );
             }
-            Ok(Ok((task_id, None))) => {
+            Ok((task_id, None)) => {
                 // No row matched — the spawn upsert never reached the ledger, or
                 // the run was deleted. Nothing to settle.
                 log::debug!("{LOG_PREFIX} no run row to settle id={task_id}");
             }
-            Ok(Err(err)) => {
+            Err(err) => {
                 log::warn!("{LOG_PREFIX} failed to settle run: {err}");
-            }
-            Err(join_err) => {
-                log::warn!("{LOG_PREFIX} settle task panicked: {join_err}");
             }
         }
     }

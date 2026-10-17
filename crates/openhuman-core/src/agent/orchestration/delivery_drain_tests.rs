@@ -3,6 +3,7 @@ use crate::agent::orchestration::background_completions::{
     pending_for, record_completion, router_for_workspace, TestWorkspace,
 };
 use crate::agent::orchestration::busy_guard::TurnBusy;
+use crate::core::runtime::DispatchCtx;
 use crate::storage::fence::{system_now_ms, ScopeMatch};
 use crate::storage::lease::{DocumentLeases, LeaseStore};
 use crate::storage::MemoryStorage;
@@ -38,9 +39,17 @@ async fn drain(
 ) -> (DrainOutcome, bool) {
     let ran = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&ran);
-    let outcome = run_drain(thread, delay, wait_idle, fence, SHORT, || async move {
-        flag.store(true, Ordering::SeqCst);
-    })
+    let outcome = run_drain(
+        &DispatchCtx::ambient(),
+        thread,
+        delay,
+        wait_idle,
+        fence,
+        SHORT,
+        || async move {
+            flag.store(true, Ordering::SeqCst);
+        },
+    )
     .await;
     (outcome, ran.load(Ordering::SeqCst))
 }
@@ -113,7 +122,7 @@ async fn an_expired_grant_fences_the_drain_without_a_latch() {
 async fn losing_the_lease_while_waiting_for_an_idle_thread_drops_the_drain() {
     let _g = crate::config::TEST_ENV_LOCK.lock().await;
     let (_leases, fence) = live_fence();
-    let turn = TurnBusy::start_on_thread("dd-busy-fenced");
+    let turn = TurnBusy::start_on_thread(&DispatchCtx::ambient(), "dd-busy-fenced");
     let latch = Arc::clone(&fence);
     tokio::spawn(async move {
         tokio::time::sleep(SHORT * 3).await;
@@ -129,8 +138,11 @@ async fn losing_the_lease_while_waiting_for_an_idle_thread_drops_the_drain() {
 async fn a_recovered_drain_waits_for_a_relayed_turn_on_its_thread() {
     let _g = crate::config::TEST_ENV_LOCK.lock().await;
     let thread = "dd-relayed-thread";
-    let turn = TurnBusy::start_on_thread(thread);
-    assert!(is_busy(thread), "a relayed turn marks its thread busy");
+    let turn = TurnBusy::start_on_thread(&DispatchCtx::ambient(), thread);
+    assert!(
+        is_busy(&DispatchCtx::ambient(), thread),
+        "a relayed turn marks its thread busy"
+    );
     let release = tokio::spawn(async move {
         tokio::time::sleep(SHORT * 3).await;
         drop(turn);
@@ -139,7 +151,7 @@ async fn a_recovered_drain_waits_for_a_relayed_turn_on_its_thread() {
     release.await.unwrap();
     assert_eq!(outcome, DrainOutcome::Ran);
     assert!(ran);
-    assert!(!is_busy(thread));
+    assert!(!is_busy(&DispatchCtx::ambient(), thread));
 }
 
 #[tokio::test]
@@ -149,6 +161,7 @@ async fn a_delivery_waits_while_a_relayed_turn_runs_on_its_thread() {
     let w = ws.path();
     let thread = "dd-relay-deliver";
     record_completion(
+        &DispatchCtx::ambient(),
         w,
         "dd-relay-session",
         "sub-relay",
@@ -161,13 +174,14 @@ async fn a_delivery_waits_while_a_relayed_turn_runs_on_its_thread() {
     let turns = Arc::new(AtomicU32::new(0));
     let attempt = |turns: Arc<AtomicU32>| {
         super::super::background_delivery::try_deliver_for_test(
+            DispatchCtx::ambient(),
             thread.to_string(),
             Arc::clone(&router),
             turns,
         )
     };
 
-    let relayed = TurnBusy::start_on_thread(thread);
+    let relayed = TurnBusy::start_on_thread(&DispatchCtx::ambient(), thread);
     attempt(Arc::clone(&turns)).await;
     assert_eq!(
         turns.load(Ordering::SeqCst),

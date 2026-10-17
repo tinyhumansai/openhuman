@@ -13,17 +13,17 @@
 //!   round keeps its bytes, gains typed rows, and a fresh process resumes the
 //!   mixed file to exactly what the continuing process held.
 //!
-//! Regenerate the `.typed` files only when deliberately re-deriving them:
-//! `OH_REGEN_SESSION_COMPAT=1 cargo test -p openhuman --lib regenerate_typed_session_compat -- --ignored`.
+//! The `.typed` files were derived once with the retired file writer; they are
+//! committed corpus now.
 
+use crate::agent::session_store::splice_fixture::head_of;
 use serde_json::{json, Value};
-use tinyagents_session::transcript::{append_tools_record, read_transcript, write_transcript};
 use tinyinference_llm::message::ContentBlock;
 use tinyinference_llm::model::ModelResponse;
 
 use super::transcript_compat_tests::{
-    build_host, call, fixture, golden, model, response, run_async, snapshot_with, stem_path,
-    thread_id, Scenario, SCENARIOS,
+    build_host, call, classic_path, fixture, golden, import_placed, model, response, run_async,
+    snapshot_with, store_locator, thread_id, Scenario, SCENARIOS,
 };
 
 /// Head fixtures that have a typed re-write (the chain and legacy layouts are
@@ -84,6 +84,7 @@ fn build_live_image_host(
     config.config_path = root.join("config.toml");
     config.modules.enabled = false;
     let mut host = crate::agent::SessionHostBuilder::new()
+        .with_session_history_locator(super::transcript_compat_tests::store_locator(root))
         .chat_model_with_config(model, std::sync::Arc::new(config))
         .tools(Vec::new())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::NativeDialect))
@@ -173,9 +174,12 @@ fn an_old_session_continued_by_this_binary_reloads_identically() {
             &thread,
         );
         let stem = first.session_id().expect("session id");
-        let path = stem_path(root.path(), &stem);
+        let path = classic_path(root.path(), &stem);
+        std::fs::create_dir_all(path.parent().unwrap()).expect("session_raw");
         std::fs::copy(fixture("native_tools.jsonl"), &path).expect("place legacy file");
-        let legacy_bytes = std::fs::read(&path).expect("legacy bytes");
+        import_placed(root.path());
+        let locator = store_locator(root.path());
+        let legacy_rows = head_of(&locator, &thread).messages;
 
         assert!(first.resume_bound_session().await.expect("resume"));
         first.turn("keep going").await.expect("continued turn");
@@ -189,20 +193,18 @@ fn an_old_session_continued_by_this_binary_reloads_identically() {
         .expect("history");
         drop(first);
 
-        // The old rows are byte-for-byte what was captured; new rows follow.
-        let after = std::fs::read(&path).expect("file after");
-        assert!(
-            after.starts_with(&legacy_bytes),
-            "existing bytes were rewritten"
+        // The old rows are what was captured; new rows follow.
+        let after = head_of(&locator, &thread).messages;
+        assert_eq!(
+            after[..legacy_rows.len()],
+            legacy_rows[..],
+            "existing rows were rewritten"
         );
-        let appended = String::from_utf8(after[legacy_bytes.len()..].to_vec()).unwrap();
-        let new_rows = message_lines(&appended);
-        let shape = |index: usize| new_rows[index].get("shape").and_then(Value::as_str);
+        let new_rows = &after[legacy_rows.len()..];
         assert!(
-            new_rows.iter().any(|row| row["shape"] == "assistant_calls")
-                && new_rows.iter().any(|row| row["shape"] == "tool_result"),
-            "continued tool round must be typed: {shape:?}",
-            shape = (0..new_rows.len()).map(shape).collect::<Vec<_>>()
+            new_rows.iter().any(|row| !row.tool_calls.is_empty())
+                && new_rows.iter().any(|row| row.tool_call_id.is_some()),
+            "continued tool round must be typed: {new_rows:?}"
         );
 
         // A fresh process resumes the mixed file to what the first one held.
@@ -221,7 +223,7 @@ fn an_old_session_continued_by_this_binary_reloads_identically() {
             serde_json::to_value(runtime.history()).expect("history"),
             continued_history
         );
-        let transcript = read_transcript(&path).expect("read mixed");
+        let transcript = head_of(&locator, &thread);
         assert!(transcript
             .messages
             .iter()
@@ -254,19 +256,24 @@ fn a_live_image_turn_persists_typed_image_parts_and_resumes_identically() {
         .expect("history");
         drop(host);
 
-        let path = stem_path(root.path(), &stem);
-        let raw = std::fs::read_to_string(&path).expect("transcript");
-        let user_line = message_lines(&raw)
-            .into_iter()
-            .find(|line| line["shape"] == "user_parts")
+        let _ = stem;
+        let stored = head_of(&store_locator(root.path()), &thread);
+        let raw = serde_json::to_string(&stored.messages).expect("rows");
+        let user_row = stored
+            .messages
+            .iter()
+            .find(|row| row.parts.is_some())
             .expect("the image turn is a typed user_parts row");
-        assert!(!user_line["content"].as_str().unwrap().contains("[IMAGE:"));
-        let image_path = user_line["parts"]
-            .as_array()
+        assert!(!user_row.content.contains("[IMAGE:"));
+        let image_path = user_row
+            .parts
+            .as_ref()
             .unwrap()
             .iter()
-            .find(|part| part["type"] == "image")
-            .and_then(|part| part["url"].as_str())
+            .find_map(|part| match part {
+                tinyagents_session::transcript::TranscriptPart::Image { url } => Some(url.as_str()),
+                _ => None,
+            })
             .expect("durable image path");
         assert!(image_path.starts_with("uploads/"), "{image_path}");
         assert_eq!(
@@ -394,44 +401,18 @@ fn typed_and_legacy_rows_bridge_to_identical_model_messages() {
         .iter()
         .filter_map(message_to_native_chat_message)
         .collect();
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("typed.jsonl");
-    let transcript = read_transcript(&fixture("plain.jsonl")).expect("meta source");
-    write_transcript(&path, &rows, &transcript.meta, None).expect("write");
-    let raw = std::fs::read_to_string(&path).expect("raw");
-    let shapes: Vec<_> = message_lines(&raw)
-        .iter()
-        .map(|line| line["shape"].as_str().unwrap_or("").to_string())
-        .collect();
-    assert_eq!(shapes, ["user_parts", "assistant_calls", "tool_result"]);
-    let read = read_transcript(&path).expect("read").messages;
+    let locator = crate::agent::session_store::splice_fixture::memory_locator();
+    let mut meta = crate::agent::session_store::splice_fixture::blank_meta();
+    meta.thread_id = Some("typed-bridge".into());
+    let history = locator.open_stem("typed-bridge", meta).expect("bind");
+    history.replace(&rows).expect("write");
+    let read = history.messages().expect("read");
+    assert!(read[0].parts.is_some(), "an image row is stored as parts");
+    assert!(!read[1].tool_calls.is_empty(), "calls are stored typed");
+    assert!(read[2].tool_call_id.is_some(), "a result names its call");
     assert_eq!(read.len(), rows.len());
     for (read, written) in read.iter().zip(&rows) {
         assert_eq!(read.content, written.content);
     }
     assert_eq!(history_to_messages(&read), history_to_messages(&rows));
-}
-
-#[test]
-#[ignore = "re-derives the committed .typed fixtures; run deliberately (OH_REGEN_SESSION_COMPAT=1)"]
-fn regenerate_typed_session_compat() {
-    if std::env::var("OH_REGEN_SESSION_COMPAT").as_deref() != Ok("1") {
-        return;
-    }
-    for name in TYPED_SCENARIOS {
-        let transcript = read_transcript(&fixture(&format!("{name}.jsonl"))).expect("read legacy");
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("typed.jsonl");
-        write_transcript(&path, &transcript.messages, &transcript.meta, None).expect("write typed");
-        // The rows' sibling record: the tool list the session was sent with.
-        let legacy = std::fs::read_to_string(fixture(&format!("{name}.jsonl"))).expect("raw");
-        let tools = legacy
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .rfind(|value| value.get("kind").and_then(Value::as_str) == Some("tools"))
-            .map(|value| value["tools"].clone())
-            .expect("legacy fixture records its tools");
-        append_tools_record(&path, &tools).expect("tools record");
-        std::fs::copy(&path, fixture(&format!("{name}.typed.jsonl"))).expect("store typed");
-    }
 }

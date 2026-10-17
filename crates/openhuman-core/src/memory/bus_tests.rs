@@ -28,13 +28,28 @@ async fn the_background_job_runs_the_due_queue() {
     )
     .await;
 
-    run_system_job(&config, BACKGROUND_JOB).await;
+    run_system_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        BACKGROUND_JOB,
+    )
+    .await;
     let queue = jobs::snapshot(&config).await;
     assert!(queue.pending.is_empty());
     assert_eq!(queue.history.len(), 1);
 
-    run_system_job(&config, "someone_elses_job").await;
-    run_system_job(&config, SOURCES_SYNC_JOB).await;
+    run_system_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "someone_elses_job",
+    )
+    .await;
+    run_system_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        SOURCES_SYNC_JOB,
+    )
+    .await;
 }
 
 #[test]
@@ -57,7 +72,15 @@ async fn a_sign_in_drains_the_deletions_queued_while_signed_out() {
         },
     );
     bind_reference(&config);
-    assert_eq!(drain_pending_deletions(&config, "session").await, 1);
+    assert_eq!(
+        drain_pending_deletions(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            "session"
+        )
+        .await,
+        1
+    );
     assert!(pending(&config.workspace_dir).is_empty());
 }
 
@@ -74,6 +97,11 @@ async fn the_background_job_retries_pending_deletions() {
         },
     );
     bind_reference(&config);
-    run_system_job(&config, BACKGROUND_JOB).await;
+    run_system_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        BACKGROUND_JOB,
+    )
+    .await;
     assert!(pending(&config.workspace_dir).is_empty());
 }

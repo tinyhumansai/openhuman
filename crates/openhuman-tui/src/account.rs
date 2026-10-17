@@ -16,6 +16,7 @@ pub enum Operation {
 }
 
 /// Messages carry display state only; credentials stay in SessionManager.
+#[allow(clippy::large_enum_variant)] // Keep the infrequent login result inline.
 pub enum Message {
     BrowserReady {
         generation: u64,

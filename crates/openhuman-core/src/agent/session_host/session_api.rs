@@ -43,6 +43,7 @@ impl OpenHumanSessionHost {
             resume: ResumeMode::Session,
             cancellation,
             run_context: context.into_tinyagents(root_config),
+            controls: Default::default(),
         };
         let resumed = self
             .runtime_session

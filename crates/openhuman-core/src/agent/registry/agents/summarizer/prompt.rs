@@ -13,7 +13,7 @@ use anyhow::Result;
 /// TinyJuice owns the tool-output summary — it writes this prompt into every
 /// `MlHost.Generate` request it sends — so this is a re-export rather than a
 /// second copy that could drift. It stays `pub` (issue #6014) so an embedder
-/// supplying its own [`PayloadSummarizer`](crate::agent::tinyagents::payload_summarizer::PayloadSummarizer)
+/// supplying its own [`PayloadSummarizer`](crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer)
 /// can read the contract its model is asked to follow.
 pub const ARCHETYPE: &str = tinyjuice_bus::summary::SYSTEM_PROMPT;
 

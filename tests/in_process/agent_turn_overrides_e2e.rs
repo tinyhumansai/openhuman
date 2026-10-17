@@ -34,12 +34,11 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 use openhuman_core::agent::goals::{runtime as goal_runtime, store as goal_store};
-use openhuman_core::agent::harness::definition::{
-    AgentDefinition, AgentDefinitionRegistry, ToolScope,
-};
+use openhuman_core::agent::harness::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use openhuman_core::agent::session_host::TurnOverrides;
 use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::config::{AgentConfig, ContextConfig};
+use tinyagents_definition::ToolScope;
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,

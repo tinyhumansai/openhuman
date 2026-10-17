@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::fmt::Write as _;
 use std::sync::Arc;
-use tinyflows_schedule::types::CronJob;
+use tinyflows_bus::schedule::types::CronJob;
 use tinytools::{Tool, ToolCallOptions, ToolExposure, ToolResult};
 
 fn render_jobs_markdown(jobs: &[CronJob]) -> String {

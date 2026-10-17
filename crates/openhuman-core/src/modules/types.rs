@@ -26,6 +26,8 @@ pub struct ModuleRecord {
     pub assets: &'static [PlatformAsset],
     /// When the module is loaded.
     pub load: LoadPolicy,
+    /// How to build the module from its vendored gitlink, for local use.
+    pub source: SourceSpec,
 }
 
 impl ModuleRecord {
@@ -34,18 +36,62 @@ impl ModuleRecord {
     pub fn asset_for(&self, host_key: &str) -> Option<&'static PlatformAsset> {
         self.assets.iter().find(|asset| asset.host_key == host_key)
     }
+
+    /// The part of this record the tinybus resolver consumes: identity, bus
+    /// address and the pinned release. The rest (`description`, `load`,
+    /// `source`) is host policy.
+    #[must_use]
+    pub fn release(&self) -> tinybus::module::ReleaseRecord {
+        tinybus::module::ReleaseRecord {
+            id: self.id,
+            bus_name: self.bus_name,
+            object_path: self.object_path,
+            version: self.version,
+            release_url: self.release_url,
+            assets: self.assets,
+        }
+    }
 }
 
-/// One published artifact and the digest that makes it legitimate.
+/// How to build a module's native library from its gitlink under `vendor/`.
+///
+/// Used only by `scripts/modules/build.mjs` and the `source` mode, both for
+/// local development and local tests. It says nothing about legitimacy: the
+/// registry digests in [`PlatformAsset`] are the only pins, and a local build
+/// is trusted by the operator through a `modules.toml` the build step writes
+/// beside the artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlatformAsset {
-    /// Host identifier this artifact targets, e.g. `ubuntu-24.04-x86_64`.
-    pub host_key: &'static str,
-    /// Exact release asset name to download.
-    pub archive: &'static str,
-    /// Lowercase hex SHA-256 of the archive, taken from the release manifest.
-    pub sha256: &'static str,
+pub struct SourceSpec {
+    /// Directory name under `vendor/` holding the module's repository.
+    pub submodule: &'static str,
+    /// Path of the module crate's `Cargo.toml`, relative to the submodule.
+    pub manifest: &'static str,
+    /// Cargo package that produces the `cdylib`.
+    pub package: &'static str,
+    /// Library file stem Cargo emits, without the platform prefix or suffix.
+    pub lib_name: &'static str,
+    /// Cargo features to enable on top of the package defaults.
+    pub features: &'static [&'static str],
 }
+
+impl SourceSpec {
+    /// The file name Cargo gives the built library on this platform.
+    #[must_use]
+    pub fn artifact_filename(&self) -> String {
+        if cfg!(target_os = "windows") {
+            format!("{}.dll", self.lib_name)
+        } else if cfg!(target_os = "macos") {
+            format!("lib{}.dylib", self.lib_name)
+        } else {
+            format!("lib{}.so", self.lib_name)
+        }
+    }
+}
+
+/// One published artifact and the digest that makes it legitimate: the digest
+/// is copied verbatim from the release's `checksum.toml`. This is tinybus'
+/// own type, so the registry records feed the resolver without a conversion.
+pub type PlatformAsset = tinybus::module::ReleaseAsset<'static>;
 
 /// When a module is loaded into the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,17 +110,22 @@ pub enum LoadPolicy {
     Eager,
 }
 
-/// Where a module's artifact should come from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+/// Which source actually serves (or would serve) a module.
+///
+/// Reported in `modules.list`. It can differ from the mode requested: a
+/// `linked` request in a binary with no linked factory is served by `release`.
+/// Never carries a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModuleSource {
-    /// The registry-pinned GitHub release for this build.
-    Pinned,
-    /// A local artifact, for developing a module against a live core.
-    LocalFile {
-        /// Absolute path to the platform library.
-        path: String,
-    },
+    /// The registry-pinned, digest-checked GitHub release.
+    Release,
+    /// The in-process factory from `openhuman-modules-linked`.
+    Linked,
+    /// A locally built artifact selected through the `source` mode.
+    Source,
+    /// A local artifact named by a `[[modules.overrides]]` `path`.
+    LocalFile,
 }
 
 /// Lifecycle of a module as this host sees it.
@@ -98,6 +149,8 @@ pub enum ModuleState {
     Failed,
     /// No artifact is published for this host.
     Unsupported,
+    /// Switched off by `[components]`: never downloaded, loaded or registered.
+    Disabled,
 }
 
 /// A module's status as reported over RPC.
@@ -113,6 +166,9 @@ pub struct ModuleStatus {
     pub bus_name: String,
     /// Current lifecycle state.
     pub state: ModuleState,
+    /// Source that serves this module under the current configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ModuleSource>,
     /// Why the module is in [`ModuleState::Failed`] or
     /// [`ModuleState::Unsupported`], if it is.
     ///

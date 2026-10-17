@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[tokio::test]
 async fn get_config_snapshot_wraps_snapshot_in_rpc_outcome() {
@@ -29,7 +30,9 @@ async fn load_and_apply_dictation_settings_rejects_invalid_activation_mode() {
         streaming: None,
         streaming_interval_ms: None,
     };
-    let err = load_and_apply_dictation_settings(patch).await.unwrap_err();
+    let err = load_and_apply_dictation_settings(&DispatchCtx::process_default(), patch)
+        .await
+        .unwrap_err();
     assert!(err.contains("invalid activation_mode"));
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -55,7 +58,7 @@ async fn load_and_apply_voice_server_settings_rejects_invalid_activation_mode() 
         wake_word: None,
         stt_engine: None,
     };
-    let err = load_and_apply_voice_server_settings(patch)
+    let err = load_and_apply_voice_server_settings(&DispatchCtx::process_default(), patch)
         .await
         .unwrap_err();
     assert!(err.contains("invalid activation_mode"));
@@ -81,7 +84,9 @@ async fn load_and_apply_dictation_settings_accepts_valid_modes() {
             streaming_interval_ms: Some(500),
         };
         assert!(
-            load_and_apply_dictation_settings(patch).await.is_ok(),
+            load_and_apply_dictation_settings(&DispatchCtx::process_default(), patch)
+                .await
+                .is_ok(),
             "mode `{mode}` should be accepted"
         );
     }
@@ -110,7 +115,7 @@ async fn load_and_apply_voice_server_settings_accepts_valid_modes_and_clamps() {
         wake_word: Some("Hey Tiny".to_string()),
         stt_engine: Some("elevenlabs".into()),
     };
-    let outcome = load_and_apply_voice_server_settings(patch)
+    let outcome = load_and_apply_voice_server_settings(&DispatchCtx::process_default(), patch)
         .await
         .expect("ok");
     assert!(
@@ -155,7 +160,7 @@ async fn load_and_apply_voice_server_settings_rejects_unknown_stt_engine() {
         // could still send it.
         stt_engine: Some("whisper".into()),
     };
-    let err = load_and_apply_voice_server_settings(patch)
+    let err = load_and_apply_voice_server_settings(&DispatchCtx::process_default(), patch)
         .await
         .unwrap_err();
     assert!(err.contains("invalid stt_engine"), "got: {err}");
@@ -173,7 +178,9 @@ async fn get_dictation_settings_reads_from_loaded_config() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let outcome = get_dictation_settings().await.expect("ok");
+    let outcome = get_dictation_settings(&DispatchCtx::process_default())
+        .await
+        .expect("ok");
     assert!(outcome.value.get("enabled").is_some());
     assert!(outcome.value.get("hotkey").is_some());
     assert!(outcome.value.get("streaming_interval_ms").is_some());
@@ -189,7 +196,9 @@ async fn get_voice_server_settings_reads_from_loaded_config() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let outcome = get_voice_server_settings().await.expect("ok");
+    let outcome = get_voice_server_settings(&DispatchCtx::process_default())
+        .await
+        .expect("ok");
     assert!(outcome.value.get("auto_start").is_some());
     assert!(outcome.value.get("custom_dictionary").is_some());
     unsafe {
@@ -204,7 +213,9 @@ async fn get_onboarding_completed_reads_from_loaded_config() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let outcome = get_onboarding_completed().await.expect("ok");
+    let outcome = get_onboarding_completed(&DispatchCtx::process_default())
+        .await
+        .expect("ok");
     // Default value — either true or false is fine; we just verify the call path.
     let _ = outcome.value;
     unsafe {
@@ -219,7 +230,9 @@ async fn load_and_resolve_api_url_returns_api_url_in_response() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let outcome = load_and_resolve_api_url().await.expect("ok");
+    let outcome = load_and_resolve_api_url(&DispatchCtx::process_default())
+        .await
+        .expect("ok");
     assert!(outcome.value.get("api_url").is_some());
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -245,15 +258,20 @@ async fn workspace_onboarding_flag_resolve_rejects_invalid_and_defaults() {
     unsafe {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
-    let err = workspace_onboarding_flag_resolve(Some("a/b".into()), "done")
-        .await
-        .unwrap_err();
+    let err = workspace_onboarding_flag_resolve(
+        &DispatchCtx::process_default(),
+        Some("a/b".into()),
+        "done",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("Invalid onboarding flag"));
 
     // Happy path: default name on a fresh workspace → file doesn't exist.
-    let outcome = workspace_onboarding_flag_resolve(None, "onboarding.done")
-        .await
-        .expect("ok");
+    let outcome =
+        workspace_onboarding_flag_resolve(&DispatchCtx::process_default(), None, "onboarding.done")
+            .await
+            .expect("ok");
     let _ = outcome.value;
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -268,9 +286,14 @@ async fn workspace_onboarding_flag_set_rejects_invalid_names() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
     for bad in ["", "   ", "a/b", "a\\b", ".."] {
-        let err = workspace_onboarding_flag_set(Some(bad.into()), "default", true)
-            .await
-            .unwrap_err();
+        let err = workspace_onboarding_flag_set(
+            &DispatchCtx::process_default(),
+            Some(bad.into()),
+            "default",
+            true,
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("Invalid onboarding flag"), "name {bad}: {err}");
     }
     unsafe {
@@ -286,14 +309,24 @@ async fn workspace_onboarding_flag_set_round_trip() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
     // Create flag
-    let created = workspace_onboarding_flag_set(Some("onboarding.done".into()), "default", true)
-        .await
-        .expect("create");
+    let created = workspace_onboarding_flag_set(
+        &DispatchCtx::process_default(),
+        Some("onboarding.done".into()),
+        "default",
+        true,
+    )
+    .await
+    .expect("create");
     assert!(created.value);
     // Remove flag
-    let removed = workspace_onboarding_flag_set(Some("onboarding.done".into()), "default", false)
-        .await
-        .expect("remove");
+    let removed = workspace_onboarding_flag_set(
+        &DispatchCtx::process_default(),
+        Some("onboarding.done".into()),
+        "default",
+        false,
+    )
+    .await
+    .expect("remove");
     assert!(!removed.value);
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -452,7 +485,7 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
         max_actions_per_hour: Some(500),
         ..Default::default()
     };
-    let outcome = load_and_apply_autonomy_settings(patch)
+    let outcome = load_and_apply_autonomy_settings(&DispatchCtx::process_default(), patch)
         .await
         .expect("apply");
     assert!(outcome.value.get("config").is_some());
@@ -559,11 +592,11 @@ async fn add_auto_approve_tool_appends_then_dedupes() {
         std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
     }
 
-    add_auto_approve_tool("git_operations")
+    add_auto_approve_tool(&DispatchCtx::process_default(), "git_operations")
         .await
         .expect("first add");
     // Idempotent: a second add of the same tool must not create a duplicate.
-    add_auto_approve_tool("git_operations")
+    add_auto_approve_tool(&DispatchCtx::process_default(), "git_operations")
         .await
         .expect("second add (idempotent)");
 

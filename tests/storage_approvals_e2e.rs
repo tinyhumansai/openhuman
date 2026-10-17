@@ -53,17 +53,14 @@ fn a_configured_backend_holds_the_approvals_instead_of_approval_db(case: Case) {
             .join("approval")
             .join("approval.db")
             .exists(),
-        "nothing was written to the classic database"
+        "nothing was written to the legacy database"
     );
 
-    // Without a backend the classic database is back in use.
+    // Without a backend the workspace's own default database is used, and the
+    // configured backend's requests are not in it.
     assert!(openhuman_core::storage::clear());
     assert!(store::list_pending(&config).unwrap().is_empty());
-    assert!(workspace
-        .path()
-        .join("approval")
-        .join("approval.db")
-        .exists());
+    assert!(workspace.path().join("storage").join("storage.db").exists());
 }
 
 driver_cases!(sync a_configured_backend_holds_the_approvals_instead_of_approval_db);

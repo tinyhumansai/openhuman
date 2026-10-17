@@ -41,7 +41,7 @@ impl in [`types.rs`](./types.rs).
 
 | File | Purpose |
 | --- | --- |
-| [`types.rs`](./types.rs) | `SecurityPolicy` fields, `AutonomyLevel`, `CommandRiskLevel`, `CommandClass`, `GateDecision`, `ToolOperation`, `ActionTracker`, `TrustedRoot`/`TrustedAccess`, `WORKSPACE_INTERNAL_DIRS`/`WORKSPACE_INTERNAL_FILES`, the two policy markers |
+| [`types.rs`](./types.rs) | `SecurityPolicy` fields, `AutonomyLevel`, `CommandRiskLevel`, `GateDecision`, `ToolOperation`, `ActionTracker`, `TrustedRoot`/`TrustedAccess`, `WORKSPACE_INTERNAL_DIRS`/`WORKSPACE_INTERNAL_FILES`, the two policy markers |
 | [`path_checks.rs`](./path_checks.rs) | `is_workspace_internal_path`, `is_always_forbidden`, `check_cross_profile`, `is_within_trusted_root`, `is_resolved_path_allowed[_for]`, `check_resolved_against_forbidden` |
 | [`command_checks.rs`](./command_checks.rs) | `classify_command`, `gate_decision`, `check_gated_command`, `is_command_allowed`, `command_risk_level`, `parse_declared_class`, `is_command_executor`, `split_unquoted_segments` |
 | [`enforcement.rs`](./enforcement.rs) | `can_act`, `enforce_write_tier`, `enforce_tool_operation`, `record_action`/`is_rate_limited`, `from_config`, `with_privacy_mode`, `openhuman_scratch_dir`/`ensure_openhuman_scratch_dir`, `validate_path_within_root` |
@@ -134,7 +134,7 @@ Each of these must not be weakened to make a feature work:
 ## Further reading
 
 - [Parent module (`security`)](../README.md)
-- [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
-- [Privacy and security](../../../../../gitbooks/features/privacy-and-security.md)
-- [Approval gate](../../../../../gitbooks/features/approval-gate.md)
-- [OS keyring and secret storage](../../../../../gitbooks/features/os-keyring-and-secret-storage.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
+- [Privacy and security](../../../../../docs/gitbooks/en/features/privacy-and-security.md)
+- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
+- [OS keyring and secret storage](../../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)

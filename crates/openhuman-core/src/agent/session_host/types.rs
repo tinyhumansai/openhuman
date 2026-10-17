@@ -11,9 +11,8 @@ use crate::agent::hooks::PostTurnHook;
 use crate::agent::progress::AgentProgress;
 use crate::agent::prompts::SystemPromptBuilder;
 use crate::agent::tinyagents::TurnModelSource;
-use crate::agent::tool_policy::ToolPolicy;
-use crate::tools::agent_policy::ToolPolicySession;
 use std::sync::Arc;
+use tinytools::ToolPolicySession;
 use tinytools::{Tool, ToolSpec};
 use tinytools_agent::dialect::ToolDialect;
 
@@ -55,12 +54,17 @@ pub struct TurnOverrides {
     pub suppress_transcript_autoload: bool,
 }
 
+/// The next turn's response shape, consumed at its start.
+pub(crate) type PendingResponseShape =
+    Option<Arc<tinyagents_harness::middleware::ResponseShapeScope>>;
+
 /// What the runtime hook hands one user turn's request enrichment: this
 /// turn's [`TurnOverrides`] (consumed) and the reply-language instruction the
 /// host armed with `set_reply_language_directive` (kept for later turns).
 #[derive(Debug, Default)]
 pub(crate) struct TurnInputs {
     pub(crate) overrides: TurnOverrides,
+    pub(crate) response_shape: PendingResponseShape,
     pub(crate) reply_language_directive: Option<String>,
     pub(crate) time_zone: Option<String>,
 }
@@ -82,6 +86,7 @@ impl super::runtime_session::OpenHumanSessionState {
     pub(super) fn take_turn_inputs(&mut self) -> TurnInputs {
         TurnInputs {
             overrides: std::mem::take(&mut self.active_turn_overrides),
+            response_shape: self.pending_response_shape.take(),
             reply_language_directive: self.reply_language_directive.clone(),
             time_zone: self.time_zone.clone(),
         }
@@ -279,6 +284,16 @@ pub struct OpenHumanSessionHost {
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     pub(super) event_session_id: String,
     pub(super) event_channel: String,
+    /// Recency window handed to every turn's run context so integration
+    /// task-fetch tools only see recently touched tasks (cron morning
+    /// briefing). `None` leaves them unbounded.
+    pub(super) task_recency_window: Option<std::time::Duration>,
+    /// Autonomous skill-run iteration cap handed to every turn's run context
+    /// (lifts sub-agent iteration caps); `None` for ordinary agents.
+    pub(super) autonomous_iter_cap: Option<usize>,
+    /// Per-turn host environment (budget, cancellation, deadline, hooks, ...)
+    /// handed in by the entry point; copied onto every turn's run context.
+    pub(super) host_env: crate::agent::turn_env::HostTurnEnv,
     /// Backend/session thread explicitly owned by this agent run. It is kept
     /// separate from event identity: CLI and worker event sessions are not
     /// necessarily user conversation threads.
@@ -303,24 +318,24 @@ pub struct OpenHumanSessionHost {
     /// `subagents` list post-fetch) stay correct even after the web
     /// channel's per-thread rename.
     ///
-    /// [`AgentDefinitionRegistry`]: crate::agent::harness::definition::AgentDefinitionRegistry
+    /// [`AgentDefinitionRegistry`]: crate::agent::harness::host_definition::AgentDefinitionRegistry
     pub(super) agent_definition_id: String,
-    /// Injected transcript locator, or `None` to use real files.
+    /// Injected transcript locator, or `None` to resolve the session store for
+    /// this agent key.
     ///
     /// The single injection point for the whole transcript seam: it resolves
     /// both resume reads (`latest_for_agent`, `root_for_thread`) and binds this
     /// session's write handle (`open_stem`). `None` is the production default
     /// and is resolved *lazily* by
-    /// [`OpenHumanSessionHost::session_locator`][Self::session_locator] into a
-    /// [`FileTranscriptLocator`][tinyagents_session::transcript::FileTranscriptLocator]
-    /// over the **current** `workspace_dir` — never
+    /// [`OpenHumanSessionHost::session_locator`][Self::session_locator] into the
+    /// session store's transcripts for the **current** `workspace_dir` — never
     /// captured at build time, because callers (tests especially) reassign
     /// `workspace_dir` after `build()` and a frozen locator would silently keep
     /// reading the old directory.
     pub(super) session_history_locator:
         Option<std::sync::Arc<dyn tinyagents_session::transcript::TranscriptLocator>>,
     /// First-call memo for [`OpenHumanSessionHost::session_locator`][Self::session_locator]'s
-    /// lazily-constructed `FileTranscriptLocator` (the `session_history_locator` `None` branch).
+    /// lazily-resolved store locator (the `session_history_locator` `None` branch).
     ///
     /// tinyagents' `SessionBuilder` only accepts a later transcript-target
     /// change when it is the *same* locator object (`Arc::ptr_eq`), not merely
@@ -408,7 +423,7 @@ pub struct OpenHumanSessionHost {
     /// built from an explicit definition (a library host's per-agent spec)
     /// keeps those settings instead of having them silently replaced by
     /// whatever the process-global registry holds under the same id.
-    pub(super) definition: Option<Arc<crate::agent::harness::definition::AgentDefinition>>,
+    pub(super) definition: Option<Arc<crate::agent::harness::host_definition::AgentDefinition>>,
     /// Built by `from_config_host_only`: the belt is the host's tools alone.
     pub(super) host_only: bool,
     /// The next messages are untrusted data, so `run_single` skips the
@@ -426,14 +441,18 @@ pub struct OpenHumanSessionHost {
     /// when oversized tool results need summarizer-subagent compression before
     /// they enter agent history.
     pub(super) payload_summarizer:
-        Option<Arc<dyn crate::agent::tinyagents::payload_summarizer::PayloadSummarizer>>,
+        Option<Arc<crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer>>,
     /// Per-agent TokenJuice profile for tool results entering this session's
     /// model context.
     pub(super) tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression,
     /// Pre-execution policy hook for tool calls in this session. The
     /// default policy allows all calls so existing agents keep their
     /// behaviour unless a caller opts into stricter policy.
-    pub(super) tool_policy: Arc<dyn ToolPolicy>,
+    pub(super) tool_policy: Arc<
+        dyn tinyagents_harness::middleware::ToolCallPolicy<
+            crate::agent::tinyagents::host::OpenHumanRunContext,
+        >,
+    >,
     /// Hash of the Composio connection set this OpenHumanSessionHost last reconciled
     /// against. Compared at top-of-turn to a fresh hash computed from
     /// [`crate::integrations::composio::cached_active_integrations`]; on
@@ -592,8 +611,9 @@ pub struct SessionHostBuilder {
     ///
     /// `None` (the default) leaves every existing caller as it was.
     ///
-    /// [`AgentDefinitionRegistry`]: crate::agent::harness::definition::AgentDefinitionRegistry
-    pub(super) session_definition: Option<Arc<crate::agent::harness::definition::AgentDefinition>>,
+    /// [`AgentDefinitionRegistry`]: crate::agent::harness::host_definition::AgentDefinitionRegistry
+    pub(super) session_definition:
+        Option<Arc<crate::agent::harness::host_definition::AgentDefinition>>,
     /// Directory chain of parent session keys for a sub-agent. `None`
     /// (default) means this is a root session — its transcript lands
     /// flat in `session_raw/DDMMYYYY/{session_key}.jsonl`. Populated
@@ -613,11 +633,17 @@ pub struct SessionHostBuilder {
     /// [`super::builder::OpenHumanSessionHost::build_session_agent_inner`] sets this
     /// to a `SubagentPayloadSummarizer` instance.
     pub(super) payload_summarizer:
-        Option<Arc<dyn crate::agent::tinyagents::payload_summarizer::PayloadSummarizer>>,
+        Option<Arc<crate::agent::tinyagents::payload_summarizer::DynPayloadSummarizer>>,
     /// Per-agent TokenJuice tool-output compression profile.
     pub(super) tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression,
     /// Optional pre-execution tool policy. Defaults to allow-all.
-    pub(super) tool_policy: Option<Arc<dyn ToolPolicy>>,
+    pub(super) tool_policy: Option<
+        Arc<
+            dyn tinyagents_harness::middleware::ToolCallPolicy<
+                crate::agent::tinyagents::host::OpenHumanRunContext,
+            >,
+        >,
+    >,
 }
 
 impl Default for SessionHostBuilder {

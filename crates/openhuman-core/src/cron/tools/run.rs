@@ -59,14 +59,15 @@ impl Tool for CronRunTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        self.execute_with_options(args, ToolCallOptions::default())
+        self.execute_with_context(args, ToolCallOptions::default(), None)
             .await
     }
 
-    async fn execute_with_options(
+    async fn execute_with_context(
         &self,
         args: serde_json::Value,
         options: ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
             return Ok(ToolResult::error(
@@ -74,6 +75,7 @@ impl Tool for CronRunTool {
             ));
         }
 
+        let dispatch = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
         let job_id = match args.get("job_id").and_then(serde_json::Value::as_str) {
             Some(v) if !v.trim().is_empty() => v,
             _ => {
@@ -81,16 +83,13 @@ impl Tool for CronRunTool {
             }
         };
 
-        let job = match cron::get_job(&self.config, job_id) {
+        let job = match cron::ops::load_job_for_run(&self.config, job_id) {
             Ok(job) => job,
             Err(e) => {
                 return Ok(ToolResult::error(e.to_string()));
             }
         };
 
-        if let Err(e) = cron::policy::get_policy(&self.config, &job.id) {
-            return Ok(ToolResult::error(e.to_string()));
-        }
         if let Err(e) = cron::limits::check_run(&self.config, &job) {
             return Ok(ToolResult::error(e.to_string()));
         }
@@ -105,7 +104,8 @@ impl Tool for CronRunTool {
 
         let started_at = Utc::now();
         let run_id = uuid::Uuid::new_v4().to_string();
-        let (success, output) = cron::scheduler::execute_job_now(&self.config, &job, &run_id).await;
+        let (success, output) =
+            cron::scheduler::execute_job_now(&dispatch, &self.config, &job, &run_id).await;
         let finished_at = Utc::now();
         let duration_ms = (finished_at - started_at).num_milliseconds();
         let status = if success { "ok" } else { "error" };

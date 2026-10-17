@@ -62,7 +62,11 @@ async fn completion_is_published_before_slow_post_commit_work_finishes() {
 
     let (delivered, pending) = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        complete_then_defer(publish, slow_tail),
+        complete_then_defer(
+            &crate::core::runtime::DispatchCtx::unbound(),
+            publish,
+            slow_tail,
+        ),
     )
     .await
     .expect("completion does not wait for the slow tail");
@@ -88,4 +92,29 @@ async fn completion_is_published_before_slow_post_commit_work_finishes() {
 #[tokio::test]
 async fn await_pending_is_a_no_op_without_deferred_work() {
     await_pending(None).await;
+}
+
+/// The deferred tail acts for the context it was handed, not for whichever
+/// context is active on the task that published the completion.
+#[tokio::test]
+async fn deferred_tail_runs_under_the_handed_context_not_the_active_one() {
+    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
+
+    let handed = CoreContext::for_test(DomainSet::full(), None);
+    let active = CoreContext::for_test(DomainSet::full(), None);
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+    let tail = async move {
+        let _ = seen_tx.send(CoreContext::scoped());
+    };
+    let dispatch = DispatchCtx::new(std::sync::Arc::clone(&handed));
+    let (_, pending) = CoreContext::scope(active, async {
+        complete_then_defer(&dispatch, async { true }, tail).await
+    })
+    .await;
+    pending.await.expect("tail finishes");
+    let seen = seen_rx
+        .await
+        .expect("tail ran")
+        .expect("tail has a context");
+    assert!(std::sync::Arc::ptr_eq(&seen, &handed));
 }

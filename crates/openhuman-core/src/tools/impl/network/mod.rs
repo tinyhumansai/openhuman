@@ -12,9 +12,8 @@ mod gmail_unsubscribe;
 mod host;
 // Leaf-gated: the only consumers of these two are the `#[cfg(feature = "mcp")]`
 // blocks in `tools/ops.rs`, so no stub is needed — nothing names them when the
-// feature is off. (`gitbooks` is deliberately NOT gated: it dials `McpHttpClient`
-// but is a docs tool, not MCP-subsystem code. See the `mcp` family's split
-// facade.)
+// feature is off. (`gitbooks` is deliberately NOT gated: it uses TinyMCP's
+// confidential one-shot module call but is a docs tool, not MCP-subsystem code.)
 #[cfg(feature = "mcp")]
 mod mcp;
 #[cfg(feature = "mcp")]
@@ -22,11 +21,16 @@ mod mcp_server_tools;
 
 pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
 pub use gmail_unsubscribe::GmailUnsubscribeTool;
-pub use host::{http_request_tool, web_fetch_tool};
+#[cfg(feature = "web3")]
+pub(crate) use host::x402_request_tool;
+pub use host::{
+    http_request_tool, routed_curl_tool, routed_http_request_tool, routed_web_fetch_tool,
+    web_fetch_tool,
+};
 #[cfg(feature = "mcp")]
-pub use mcp::mcp_call_tool;
+pub use mcp::{mcp_call_tool, McpListServersTool, McpListToolsTool};
 #[cfg(feature = "mcp")]
-pub use mcp_server_tools::{configured_server_tools, ConfiguredMcpServerTool};
+pub use mcp_server_tools::configured_server_tools_from_presentations;
 
 /// Shared test helper for the network tools' local-only enforcement tests
 /// (privacy epic S7, #4441). Returns a thread-scoped `LocalOnly` privacy

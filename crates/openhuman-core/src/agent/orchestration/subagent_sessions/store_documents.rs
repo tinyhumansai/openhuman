@@ -1,18 +1,18 @@
 //! Durable sub-agent sessions on the `tinystoragedrivers` document port.
 //!
-//! Used instead of `<workspace>/.openhuman/subagent_sessions.json` when the
-//! host configured a storage backend ([`crate::storage`]); `store.rs` picks it
-//! per call, so the sessions live under the acting agent's storage scope
-//! (`local` on a single-user host).
+//! The only store: sessions live under the acting agent's storage scope
+//! (`local` on a single-user host) in the backend the host installed
+//! ([`crate::storage`]), or the workspace default when none is installed
+//! ([`crate::storage::local`]). `store.rs` opens it per call.
 //!
 //! # Layout
 //!
 //! | Collection | Document id | Holds |
 //! | --- | --- | --- |
 //! | `subagent_sessions` | the session id | one [`DurableSubagentSession`] plus `created_at` for ordering |
+//! | `subagent_sessions_import` | `subagent_sessions.json:<workspace key>` | marker: the legacy file was imported (it is left byte-identical) |
 //!
-//! The file store loads and saves the whole list, last writer wins. `save`
-//! keeps that contract for the callers in `ops.rs`, but writes each session as
+//! The callers in `ops.rs` load and save the whole list. `save` writes each session as
 //! its own document, so a session's history stays well under any document-size
 //! limit and two processes only collide on a session they both changed. `save`
 //! never deletes: `ops.rs` only replaces a session (remove then re-add the same
@@ -28,19 +28,30 @@ use crate::storage::documents::Repo;
 use crate::storage::DocumentStoreExt;
 
 const SESSIONS: &str = "subagent_sessions";
+/// Holds the marker document that records the one-time legacy file import, in
+/// a collection of its own so `load` never sees it as a session.
+const IMPORTED: &str = "subagent_sessions_import";
+const LEGACY_MARKER: &str = "subagent_sessions.json";
+
+/// The marker id for one workspace's legacy file, so workspaces sharing a
+/// backend each import their own.
+fn marker_id(source: &std::path::Path) -> String {
+    format!("{LEGACY_MARKER}:{}", crate::storage::source_key(source))
+}
 const DOMAIN: &str = "subagent_sessions::store";
 
 fn collections() -> Vec<CollectionSpec> {
-    vec![CollectionSpec::new(SESSIONS)]
+    vec![CollectionSpec::new(SESSIONS), CollectionSpec::new(IMPORTED)]
 }
 
-/// The document store for this call, when the host configured one.
-pub(super) fn current() -> Result<Option<Docs>> {
+/// The document store for this call: the installed backend, else the
+/// workspace default, in the acting scope.
+pub(super) fn current(workspace_dir: &std::path::Path) -> Result<Docs> {
     #[cfg(test)]
     if let Some(docs) = TEST_OVERRIDE.with(|slot| slot.borrow().clone()) {
-        return Ok(Some(docs));
+        return Ok(docs);
     }
-    Ok(Repo::current(DOMAIN, collections)?.map(Docs))
+    Ok(Docs(Repo::current_for(workspace_dir, DOMAIN, collections)?))
 }
 
 /// Runs `f` with `docs` standing in for the installed backend, on this thread
@@ -82,6 +93,57 @@ impl Docs {
             .into_iter()
             .map(|item| Ok(serde_json::from_value(item.doc)?))
             .collect()
+    }
+
+    /// Whether the one-time legacy file import finished in this scope.
+    pub(super) fn legacy_imported(&self, source: &std::path::Path) -> Result<bool> {
+        let id = marker_id(source);
+        let found = self
+            .0
+            .run(|docs| async move { docs.get(IMPORTED, &id).await })?;
+        Ok(found.is_some())
+    }
+
+    /// Imports `sessions` read from the legacy file (a stored newer copy
+    /// wins), then records the import in a marker document.
+    pub(super) fn import_legacy(
+        &self,
+        source: &std::path::Path,
+        sessions: &[DurableSubagentSession],
+    ) -> Result<()> {
+        let id = marker_id(source);
+        let claimed =
+            crate::storage::import_claim::with_claim(&self.0, IMPORTED, &id.clone(), || {
+                // The process that held the claim before us may have finished.
+                if self.legacy_imported(source)? {
+                    return Ok(());
+                }
+                self.save(sessions)?;
+                let id = id.clone();
+                self.0.run(|docs| async move {
+                    match docs
+                        .put(
+                            IMPORTED,
+                            &id,
+                            serde_json::json!({ "imported": true }),
+                            Precondition::Absent,
+                        )
+                        .await
+                    {
+                        Ok(_) => Ok(()),
+                        Err(error) if error.kind() == tinystoragedrivers::ErrorKind::Conflict => {
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    }
+                })
+            })?;
+        if claimed.is_none() {
+            log::debug!(
+                "[subagent_sessions] another process is importing the legacy file; skipped"
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn save(&self, sessions: &[DurableSubagentSession]) -> Result<()> {

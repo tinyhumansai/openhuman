@@ -183,4 +183,4 @@ listed; cargo unifies it.
 - [`scripts/README.md`](../README.md) for the rest of the tooling, and [`scripts/ci/`](../ci/README.md) for the merge gates.
 - [`docs/dep-audit/`](../../docs/dep-audit/2026-09-19.md), the committed snapshots.
 - [`AGENTS.md`](../../AGENTS.md) for the `assert-shed.sh` / `dep-sim.py` rule before claiming a dependency reduction.
-- [Building the Rust core](../../gitbooks/developing/building-rust-core.md) and the [`vendor/`](../../vendor) submodules the audit walks.
+- [Building the Rust core](../../docs/gitbooks/en/developing/building-rust-core.md) and the [`vendor/`](../../vendor) submodules the audit walks.

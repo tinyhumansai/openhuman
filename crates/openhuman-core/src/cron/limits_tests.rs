@@ -163,12 +163,20 @@ async fn run_now_refuses_a_stored_job_that_breaks_the_limits() {
     let shell =
         add_shell_job(&config, None, Schedule::Every { every_ms: 600_000 }, "echo").unwrap();
     config.cron.agent_jobs_only = true;
-    assert!(crate::cron::ops::run_job_now(&config, &shell.id)
-        .await
-        .is_err());
-    assert!(crate::cron::ops::cron_run(&config, &shell.id)
-        .await
-        .is_err());
+    assert!(crate::cron::ops::run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &shell.id
+    )
+    .await
+    .is_err());
+    assert!(crate::cron::ops::cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &shell.id
+    )
+    .await
+    .is_err());
     assert!(crate::cron::list_runs(&config, &shell.id, 10)
         .unwrap()
         .is_empty());

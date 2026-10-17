@@ -77,12 +77,27 @@ impl FileRoots {
         &self.current
     }
 
+    /// Every vouched-for folder: [`Self::current`] and the trusted ones.
+    pub fn trusted(&self) -> &[PathBuf] {
+        &self.trusted
+    }
+
     /// Whether `root` is one of the vouched-for folders, compared canonically
     /// where the paths exist.
     fn trusts(&self, root: &Path) -> bool {
         let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let root = canon(root);
         self.trusted.iter().any(|t| canon(t) == root)
+    }
+
+    /// Whether an existing path is beneath any folder this host trusts for
+    /// artifact resolution, including prior Files-folder locations.
+    pub(crate) fn contains_path(&self, path: &Path) -> bool {
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.trusted.iter().any(|root| {
+            let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+            path.starts_with(root) || canonical_path.starts_with(&canonical_root)
+        })
     }
 }
 
@@ -256,15 +271,26 @@ pub async fn resolve_ready_file(
     artifact_id: &str,
 ) -> Result<PathBuf, String> {
     let meta = get_artifact(workspace_dir, artifact_id).await?;
-    if !matches!(meta.status, ArtifactStatus::Ready) {
+    resolve_ready_file_meta(workspace_dir, roots, &meta).await
+}
+
+/// Resolve an already-loaded `Ready` artifact record to its existing file.
+/// Callers that list many records can reuse each row instead of loading it a
+/// second time by id.
+pub(crate) async fn resolve_ready_file_meta(
+    workspace_dir: &Path,
+    roots: &FileRoots,
+    meta: &ArtifactMeta,
+) -> Result<PathBuf, String> {
+    if !matches!(&meta.status, ArtifactStatus::Ready) {
         return Err(format!(
-            "[artifacts] artifact id={artifact_id} is not ready (status={:?})",
-            meta.status
+            "[artifacts] artifact id={} is not ready (status={:?})",
+            meta.id, meta.status
         ));
     }
-    let path = resolve_file(workspace_dir, &meta, roots).await?;
+    let path = resolve_file(workspace_dir, meta, roots).await?;
     if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
-        return Err(missing_file_error(artifact_id, &path));
+        return Err(missing_file_error(&meta.id, &path));
     }
     Ok(path)
 }

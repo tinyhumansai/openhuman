@@ -43,6 +43,7 @@ web3 = ["openhuman-rpc/web3"]
 # Storage drivers for `[storage] url` / `OPENHUMAN_STORAGE_URL`.
 storage-sqlite = ["openhuman-rpc/storage-sqlite"]
 storage-mongodb = ["openhuman-rpc/storage-mongodb"]
+storage-s3 = ["openhuman-rpc/storage-s3"]
 storage-file = ["openhuman-rpc/storage-file"]
 media = ["openhuman-rpc/media"]
 flows = ["openhuman-rpc/flows"]

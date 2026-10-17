@@ -3,8 +3,10 @@
 //! The entry points and the process-wide side effects live here; each
 //! config section's overrides live in a submodule below.
 
+mod components;
 mod dictation_context;
 mod embeddings;
+mod modules;
 mod observability;
 mod proxy;
 mod runtime;
@@ -248,6 +250,8 @@ impl Config {
         self.apply_observability_env(env);
         self.apply_embedding_env(env);
         self.apply_update_env(env);
+        self.apply_modules_env(env);
+        self.apply_components_env(env);
         self.apply_dictation_env(env);
         self.apply_context_env(env);
 

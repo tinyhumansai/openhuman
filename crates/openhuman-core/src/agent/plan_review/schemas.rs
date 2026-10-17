@@ -1,6 +1,7 @@
 //! JSON-RPC surface for the plan-review gate: `openhuman.plan_review_decide`
 //! resolves a parked interactive turn (approve / reject / revise-with-feedback).
 
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -81,7 +82,7 @@ struct DecideParams {
     feedback: Option<String>,
 }
 
-fn handle_decide(params: Map<String, Value>) -> ControllerFuture {
+fn handle_decide(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = parse::<DecideParams>(params)?;
         let resolution = match p.decision.trim().to_ascii_lowercase().as_str() {

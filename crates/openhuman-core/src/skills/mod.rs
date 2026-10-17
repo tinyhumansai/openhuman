@@ -27,6 +27,13 @@ pub mod ops_types;
 // outright: it has always-compiled callers in `crates/openhuman-core/src/core/` and is not part of
 // the `skills` gate at all.
 pub mod catalog;
+
+/// Whether the ambient context has the `skills` component on. No ambient
+/// context (a bare library call) counts as on.
+#[must_use]
+pub fn skills_component_enabled() -> bool {
+    crate::core::runtime::CoreContext::current().is_none_or(|ctx| ctx.components().skills)
+}
 pub mod runtime;
 pub mod webhooks;
 

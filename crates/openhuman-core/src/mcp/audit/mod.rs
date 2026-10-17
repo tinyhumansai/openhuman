@@ -42,13 +42,19 @@ pub use schemas::{
 /// Returns an error when the log cannot be opened or the row cannot be
 /// written.
 #[cfg(feature = "mcp")]
-pub fn record_write(
+pub async fn record_write(
     config: &crate::config::Config,
     record: NewMcpWriteRecord,
 ) -> anyhow::Result<i64> {
-    crate::mcp::host::for_config(config)?
-        .audit()
-        .record(&record)
+    let client = crate::mcp::module_client::McpConfiguredClient::for_config(config)
+        .map_err(|error| anyhow::anyhow!("MCP module unavailable: {error}"))?;
+    client
+        .call(
+            &crate::mcp::host::client_config(config),
+            tinymcp_bus::names::methods::AUDIT_RECORD_WRITE,
+            (record,),
+        )
+        .await
         .map_err(|error| anyhow::anyhow!("failed to record an mcp write: {error}"))
 }
 
@@ -58,13 +64,19 @@ pub fn record_write(
 ///
 /// Returns an error when the log cannot be opened or the query fails.
 #[cfg(feature = "mcp")]
-pub fn list_writes(
+pub async fn list_writes(
     config: &crate::config::Config,
     query: &McpWriteListQuery,
 ) -> anyhow::Result<Vec<McpWriteRecord>> {
-    crate::mcp::host::for_config(config)?
-        .audit()
-        .list(query)
+    let client = crate::mcp::module_client::McpConfiguredClient::for_config(config)
+        .map_err(|error| anyhow::anyhow!("MCP module unavailable: {error}"))?;
+    client
+        .call(
+            &crate::mcp::host::client_config(config),
+            tinymcp_bus::names::methods::AUDIT_LIST_WRITES,
+            (query,),
+        )
+        .await
         .map_err(|error| anyhow::anyhow!("failed to list mcp writes: {error}"))
 }
 

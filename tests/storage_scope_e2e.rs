@@ -79,7 +79,12 @@ async fn background_work_visits_every_agent_scope(case: Case) {
     assert!(job_names(&config).is_empty());
 
     // Visited through the live agent context …
-    let live = for_each_scope("e2e", || async { job_names(&config) }).await;
+    let live = for_each_scope(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        "e2e",
+        |_| async { job_names(&config) },
+    )
+    .await;
     assert!(
         live.contains(&(Some("agent-e2e".to_string()), vec!["agent-job".to_string()])),
         "{live:?}"
@@ -87,26 +92,37 @@ async fn background_work_visits_every_agent_scope(case: Case) {
 
     // An event naming only the job resolves to its owner, and handling it
     // there sees the job.
-    let job_id = within_agent(Some("agent-e2e"), async {
-        cron::list_jobs(&config).unwrap()[0].id.clone()
-    })
+    let job_id = within_agent(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        Some("agent-e2e"),
+        async { cron::list_jobs(&config).unwrap()[0].id.clone() },
+    )
     .await
     .expect("the live agent has a context");
-    let owner = find_owner("e2e", || async {
-        Ok(cron::get_job(&config, &job_id).is_ok())
-    })
+    let owner = find_owner(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        "e2e",
+        |_| async { Ok(cron::get_job(&config, &job_id).is_ok()) },
+    )
     .await;
     assert_eq!(owner, Ok(Some(Some("agent-e2e".to_string()))));
-    let missing = find_owner("e2e", || async {
-        Ok(cron::get_job(&config, "nope").is_ok())
-    })
+    let missing = find_owner(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        "e2e",
+        |_| async { Ok(cron::get_job(&config, "nope").is_ok()) },
+    )
     .await;
     assert_eq!(missing, Ok(None));
 
     // … and, once the agent is gone, through the id the backend recorded.
     assert!(AgentContextRegistry::deregister("agent-e2e", &agent));
     drop(agent);
-    let recorded = for_each_scope("e2e", || async { job_names(&config) }).await;
+    let recorded = for_each_scope(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
+        "e2e",
+        |_| async { job_names(&config) },
+    )
+    .await;
     assert!(
         recorded.contains(&(Some("agent-e2e".to_string()), vec!["agent-job".to_string()])),
         "{recorded:?}"

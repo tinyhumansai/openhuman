@@ -20,7 +20,7 @@ through the entry points in this folder.
 A domain exposes an operation by building a `RegisteredController`: a
 `ControllerSchema` (namespace, function, description, typed inputs and
 outputs) paired with a `ControllerHandler`, which is a plain
-`fn(Map<String, Value>) -> ControllerFuture`. The schema types
+`fn(DispatchCtx, Map<String, Value>) -> ControllerFuture`. The schema types
 (`ControllerSchema`, `FieldSchema`, `TypeSchema`) live in [`mod.rs`](./mod.rs).
 `TypeSchema` covers scalars, arrays, maps, options, string enums, nested
 objects, named refs, and `BoundedU64` for fields backed by a narrower
@@ -438,8 +438,8 @@ pnpm debug rust core::
 
 - [runtime/README.md](runtime/README.md)
 - [../security/README.md](../security/README.md)
-- [Architecture overview](../../../../gitbooks/developing/architecture.md)
+- [Architecture overview](../../../../docs/gitbooks/en/developing/architecture.md)
 - [Parent module README](../../README.md)
-- [Building the Rust core](../../../../gitbooks/developing/building-rust-core.md)
-- [Embedding OpenHuman](../../../../gitbooks/developing/embedding.md)
+- [Building the Rust core](../../../../docs/gitbooks/en/developing/building-rust-core.md)
+- [Embedding OpenHuman](../../../../docs/gitbooks/en/developing/embedding.md)
 - [openhuman-rpc crate](../../../openhuman-rpc/README.md)

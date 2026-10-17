@@ -1,8 +1,6 @@
 //! Debug-build harnesses for raw integration coverage of the channel runtime.
 
-pub use super::dispatch::test_support::{
-    build_channel_context_block_for_test, select_acknowledgment_reaction_for_test,
-};
+pub use super::dispatch::test_support::build_channel_context_block_for_test;
 use super::dispatch::{
     process_channel_message, process_channel_runtime_message, RuntimeChannelMessage,
 };
@@ -10,7 +8,6 @@ pub use super::startup::test_support::resolve_yuanbao_app_secret_for_test;
 use crate::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
 use crate::agent::progress::AgentProgress;
 use crate::channels::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
-use crate::channels::traits::{ChannelMessage, SendMessage};
 use crate::channels::Channel;
 use crate::channels::ChannelSystemPrompt;
 use crate::config::{MultimodalConfig, MultimodalFileConfig, ReliabilityConfig};
@@ -24,7 +21,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tinyagents_session::transcript::TranscriptMessage;
+use tinychannels_bus::context::ChatMessage;
+use tinychannels_bus::{ChannelMessage, SendMessage};
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse};
 use tinytools::{Tool, ToolResult};
 
@@ -33,7 +31,7 @@ pub struct DispatchHarnessOptions {
     pub channel_name: String,
     pub content: String,
     pub thread_ts: Option<String>,
-    pub inbound_envelope: Option<tinychannels::ChannelInboundEnvelope>,
+    pub inbound_envelope: Option<tinychannels_bus::ChannelInboundEnvelope>,
     pub streaming: bool,
     pub supports_reactions: bool,
     pub response_text: Option<String>,
@@ -131,7 +129,7 @@ pub struct DispatchHarnessObservation {
     pub sends: Vec<ObservedSend>,
     pub start_typing_calls: usize,
     pub stop_typing_calls: usize,
-    pub received_event_envelope: Option<tinychannels::ChannelInboundEnvelope>,
+    pub received_event_envelope: Option<tinychannels_bus::ChannelInboundEnvelope>,
     pub handler_history_roles: Vec<String>,
     pub handler_history_text: String,
     pub handler_provider_name: String,
@@ -289,7 +287,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         .get()
         .expect("bus initialised")
         .receiver();
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
 
     let handler_roles = Arc::new(Mutex::new(Vec::new()));
     let handler_text = Arc::new(Mutex::new(String::new()));
@@ -398,7 +396,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         conversation_histories.lock().expect("history lock").insert(
             history_key.clone(),
             (0..options.seed_history_len)
-                .map(|idx| TranscriptMessage::assistant(format!("prior {idx} {}", "x".repeat(700))))
+                .map(|idx| ChatMessage::assistant(format!("prior {idx} {}", "x".repeat(700))))
                 .collect(),
         );
     }
@@ -413,6 +411,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         .clone()
         .unwrap_or_else(std::env::temp_dir);
     let ctx = Arc::new(ChannelRuntimeContext {
+        relay_thread: None,
         channels_by_name: Arc::new(channels_by_name),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("harness-provider".to_string()),
@@ -433,6 +432,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         multimodal: MultimodalConfig::default(),
         multimodal_files: MultimodalFileConfig::default(),
         config: None,
+        core: None,
     });
 
     let expected_event_channel = options.channel_name.clone();

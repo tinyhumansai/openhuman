@@ -166,7 +166,10 @@ pub fn redact_endpoint(url: &str) -> String {
     if let Some(rest) = trimmed.split_once("://") {
         let scheme = rest.0;
         let authority = rest.1.split('/').next().unwrap_or("");
-        let host = authority.split('@').next_back().unwrap_or(authority);
+        if authority.contains('@') {
+            return "<redacted>".to_string();
+        }
+        let host = authority;
         let host_no_query = host.split('?').next().unwrap_or(host);
         return format!("{}://{}", scheme, host_no_query);
     }

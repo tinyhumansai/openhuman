@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::harness::definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::core::runtime::DomainSet;
 
 /// The resolver slot is process-wide; every test in the crate that installs
@@ -13,7 +13,7 @@ pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
 
 fn definition(id: &str) -> AgentDefinition {
     let mut definition =
-        crate::agent::harness::definition::AgentDefinitionRegistry::builtins_only()
+        crate::agent::harness::host_definition::AgentDefinitionRegistry::builtins_only()
             .get("orchestrator")
             .cloned()
             .expect("the orchestrator is built in");

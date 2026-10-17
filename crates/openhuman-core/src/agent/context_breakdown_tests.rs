@@ -90,7 +90,8 @@ async fn history_section_is_none_for_an_unknown_thread() {
     // `has_usage: false` (or the RPC itself fails) and this must degrade to
     // `None` rather than propagating an error — the breakdown must still
     // answer with just the prompt/tools sections.
-    let section = history_section("context-breakdown-unknown-thread-id", 0).await;
+    let ctx = DispatchCtx::process_default();
+    let section = history_section(&ctx, "context-breakdown-unknown-thread-id", 0).await;
     assert!(section.is_none());
 }
 

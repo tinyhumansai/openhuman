@@ -31,7 +31,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { stripComments } from '../lib/feature-forwarding.mjs';
+import { LINKED_MODULES_FEATURE as LINKED_FEATURE, parseFeatureTable, stripComments } from '../lib/feature-forwarding.mjs';
 
 /**
  * Package name -> the OpenHuman packages it may name as normal dependencies.
@@ -44,9 +44,20 @@ export const CHAIN = {
   'openhuman-tinyhumans': ['openhuman-embed'],
   'openhuman-rpc': ['openhuman-tinyhumans'],
   'openhuman-app': ['openhuman-rpc'],
-  'openhuman-cli': ['openhuman-rpc'],
+  // The CLI alone may also name the local-development bridge that links module
+  // implementation crates; `checkLinkedBridgeGate` pins HOW (optional, behind
+  // the non-product `linked-modules` feature).
+  'openhuman-cli': ['openhuman-rpc', 'openhuman-modules-linked'],
   'openhuman-tui': ['openhuman-rpc'],
+  'openhuman-modules-linked': ['openhuman-rpc'],
 };
+
+/** The local-development crate that links module implementations. */
+export const LINKED_BRIDGE = 'openhuman-modules-linked';
+// The only feature allowed to enable LINKED_BRIDGE (never a product gate) is
+// LINKED_FEATURE, defined in scripts/lib/feature-forwarding.mjs. It is imported
+// rather than spelled here because scripts/ci/ is scanned for that name by
+// check-ci-module-source.mjs.
 
 /** The host crates whose `src/` must not reach core internals by path. */
 export const HOST_SOURCE_DIRS = [
@@ -127,18 +138,51 @@ export const HOST_RPC_INTERNAL_PATTERNS = [
  * Blank out Rust comments and string literals (contents only), keeping line
  * structure, so a banned path quoted in a doc, log message or fixture is not
  * mistaken for code. Handles nested block comments, escapes and raw strings.
+ * Optional literal preservation and code-whitespace compaction support type
+ * signatures; default masking is unchanged. Compaction leaves literal contents intact.
+ * preserveTokenBoundaries retains separators that prevent lexical token merging.
  */
-export function stripRustComments(text) {
+export function stripRustComments(text, { preserveLiterals = false, compact = false, preserveTokenBoundaries = false } = {}) {
   let out = '';
   let i = 0;
-  const blank = chunk => chunk.replace(/[^\n]/g, ' ');
+  let pendingBoundary = false;
+  const word = char => /[\p{ID_Continue}]/u.test(char);
+  // Rust punctuation spacing can distinguish macro arms, including a third
+  // character completing an operator. Retain all separated punctuation pairs.
+  const punctuation = new Set("=<>!~+-*/%^&|@.,;:#$?'");
+  const append = chunk => {
+    if (!chunk) return;
+    if (compact && preserveTokenBoundaries && pendingBoundary && out) {
+      const tail = out.slice(-2);
+      const left = [...tail].at(-1);
+      const right = String.fromCodePoint(chunk.codePointAt(0));
+      if ((word(left) && word(right)) ||
+          (word(left) && ['"', "'", '#'].includes(right)) ||
+          (['"', "'", '#'].includes(left) && word(right)) ||
+          (left === '#' && right === '"') ||
+          (left === '.' && word(right)) ||
+          (/[0-9]/.test(left) && right === '.') ||
+          (/[eE]/.test(left) && ['+', '-'].includes(right)) ||
+          (['+', '-'].includes(left) && /[0-9]/.test(right)) ||
+          (punctuation.has(left) && punctuation.has(right))) out += ' ';
+    }
+    out += chunk;
+    pendingBoundary = false;
+  };
+  const blank = chunk => {
+    if (compact) {
+      pendingBoundary = true;
+      return '';
+    }
+    return chunk.replace(/[^\n]/g, ' ');
+  };
   while (i < text.length) {
     const rest = text.slice(i);
     let m;
     if (rest.startsWith('//')) {
       const end = text.indexOf('\n', i);
       const stop = end === -1 ? text.length : end;
-      out += blank(text.slice(i, stop));
+      append(blank(text.slice(i, stop)));
       i = stop;
     } else if (rest.startsWith('/*')) {
       let depth = 0;
@@ -153,25 +197,27 @@ export function stripRustComments(text) {
           if (depth === 0) break;
         } else j++;
       }
-      out += blank(text.slice(i, j));
+      append(blank(text.slice(i, j)));
       i = j;
     } else if ((m = /^b?r(#*)"/.exec(rest))) {
       const close = '"' + m[1];
       const end = text.indexOf(close, i + m[0].length);
       const stop = end === -1 ? text.length : end + close.length;
-      out += blank(text.slice(i, stop));
+      append(preserveLiterals ? text.slice(i, stop) : blank(text.slice(i, stop)));
       i = stop;
     } else if ((m = /^b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|.)|[^\\'])'/.exec(rest))) {
-      out += blank(m[0]);
+      append(preserveLiterals ? m[0] : blank(m[0]));
       i += m[0].length;
     } else if (rest.startsWith('"') || rest.startsWith('b"')) {
       let j = i + (rest.startsWith('b') ? 2 : 1);
       while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-      out += blank(text.slice(i, j + 1));
+      append(preserveLiterals ? text.slice(i, j + 1) : blank(text.slice(i, j + 1)));
       i = j + 1;
     } else {
-      out += text[i];
-      i++;
+      const char = String.fromCodePoint(text.codePointAt(i));
+      if (compact && /\s/.test(char)) pendingBoundary = true;
+      else append(char);
+      i += char.length;
     }
   }
   return out;
@@ -325,6 +371,38 @@ export function checkManifestEdges({ crate, deps, workspaceDeps = new Map(), cha
   return violations;
 }
 
+/**
+ * How the CLI may depend on the linked-modules bridge: only as an OPTIONAL
+ * normal dependency enabled by the `linked-modules` feature and by nothing
+ * else (not `default`, not another gate). Returns `{ crate, dependency, reason }`
+ * violations; a CLI that does not name the bridge at all has none.
+ */
+export function checkLinkedBridgeGate(cliToml, crate = 'openhuman-cli') {
+  const violations = [];
+  const fail = reason => violations.push({ crate, dependency: LINKED_BRIDGE, reason });
+  const text = stripComments(cliToml);
+  const dep = parseNormalDependencies(cliToml).find(entry => entry.package === LINKED_BRIDGE);
+  if (!dep) return violations;
+  const declaration = text.match(
+    new RegExp(`^[ \\t]*${dep.key}[ \\t]*=[ \\t]*\\{[^}]*\\}`, 'm')
+  );
+  if (!declaration || !/optional[ \t]*=[ \t]*true/.test(declaration[0])) {
+    fail('must be an `optional = true` dependency so a default build does not link it');
+  }
+  const features = parseFeatureTable(cliToml);
+  const gate = features.get(LINKED_FEATURE);
+  if (!gate || !gate.includes(`dep:${dep.key}`)) {
+    fail(`the \`${LINKED_FEATURE}\` feature must enable it with \`dep:${dep.key}\``);
+  }
+  for (const [name, items] of features) {
+    if (name === LINKED_FEATURE) continue;
+    if (items.some(item => item === LINKED_FEATURE || item === `dep:${dep.key}` || item.startsWith(`${dep.key}/`))) {
+      fail(`feature \`${name}\` enables the linked-module bridge; only \`${LINKED_FEATURE}\` may`);
+    }
+  }
+  return violations;
+}
+
 /** `{ file, line, pattern }` for every forbidden path in one source text. */
 export function findForbiddenPaths(text, file, patterns = FORBIDDEN_HOST_PATTERNS) {
   const hits = [];
@@ -369,6 +447,7 @@ export function checkRepository(root) {
     edgeViolations.push(
       ...checkManifestEdges({ crate, deps: parseNormalDependencies(toml), workspaceDeps })
     );
+    if (crate === 'openhuman-cli') edgeViolations.push(...checkLinkedBridgeGate(toml, crate));
   }
   const sourceViolations = [];
   for (const dir of HOST_SOURCE_DIRS) {

@@ -6,10 +6,10 @@ queries and HTML extraction execute inside that module. This directory owns
 configuration, model callbacks, artifact authorization and savings attribution.
 
 Token compression is one of the ways OpenHuman keeps a turn cheap and fast
-(see [gitbooks/developing/performance.md](../../../../../gitbooks/developing/performance.md)):
+(see [docs/gitbooks/en/developing/performance.md](../../../../../docs/gitbooks/en/developing/performance.md)):
 compressing tool output before it reaches the model shrinks the prompt
 without the model ever seeing less information than it needs. See
-[gitbooks/features/token-compression.md](../../../../../gitbooks/features/token-compression.md)
+[docs/gitbooks/en/features/token-compression.md](../../../../../docs/gitbooks/en/features/token-compression.md)
 for the user-facing feature page.
 
 OpenHuman-owned files:
@@ -21,9 +21,9 @@ OpenHuman-owned files:
 | [`config_patch.rs`](./config_patch.rs) | Partial update shape for the `[tokenjuice]` config block. |
 | [`generate.rs`](./generate.rs) | Turn-bound, single-use summary callbacks. The host registers the model call, sends its opaque ticket through the existing contract, and withdraws the callback when the ticket drops. |
 | [`repl_tools.rs`](./repl_tools.rs) | The three REPL tools (`juice_find`, `juice_extract`, `juice_summarize`) over a stored result. Declarations come from `tinyjuice-bus`; operations execute over `Query` inside the module CCR store. Registered by [`tools/ops.rs`](../../tools/ops.rs) only while `repl_handle_active(config)`. |
-| [`tools.rs`](./tools.rs) | OpenHuman agent tool implementation for the retrieve tool (`RETRIEVE_TOOL_NAME = "juice_retrieve"`; `"tokenjuice_retrieve"` is a recognized recovery-tool alias, not the tool's registered name, see `RECOVERY_TOOL_NAMES`). |
+| [`tools.rs`](./tools.rs) | OpenHuman agent tool implementation for the retrieve tool (`tinyjuice_bus::tools::RETRIEVE` (`"juice_retrieve"`); `"tokenjuice_retrieve"` is a recognized recovery-tool alias, not the tool's registered name, see `RECOVERY_TOOL_NAMES`). |
 | Plain text | Compressed with TinyJuice's deterministic TextCrusher. |
-| [`savings.rs`](./savings.rs) | OpenHuman model-pricing attribution and persisted dashboard stats. |
+| [`savings.rs`](./savings.rs) | Thin adapter: attribution model and `agent::cost` price per input token; the module (`RecordSavings`, `SavingsStats`, `ResetSavings`) does the aggregate math and persists `state/tokenjuice_savings.json`. |
 
 TinyJuice-owned engine pieces:
 
@@ -61,7 +61,7 @@ behavior. There is no linked implementation fallback.
 - `tools/ops.rs` registers `crate::inference::tokenjuice::TokenjuiceRetrieveTool::new()`
   in the agent tool catalog (it is not re-exported through [`tools/mod.rs`](../../tools/mod.rs)) and
   treats every `RECOVERY_TOOL_NAMES` entry as a recovery tool. The registered
-  tool name is `RETRIEVE_TOOL_NAME` (`"juice_retrieve"`);
+  tool name is `tinyjuice_bus::tools::RETRIEVE` (`"juice_retrieve"`);
   `"tokenjuice_retrieve"` and `LEGACY_RETRIEVE_TOOL_NAME`
   (`"retrieve_tool_output"`) are recognized aliases only. Only
   `RECOVERY_TOOL_VISIBLE` (the live tool) is force-added to a curated
@@ -87,3 +87,17 @@ behavior. There is no linked implementation fallback.
 - [tinyjuice](../../../../../vendor/tinyjuice/README.md)
 
 Contract types are imported directly from `tinyjuice_bus::types` and `tinyjuice_bus::wire`; the adapter keeps serialization compatibility tests in `mod_contract_tests.rs`.
+
+## `[components] juice`
+
+`[components] juice = false` (or `OPENHUMAN_COMPONENT_JUICE=0`) removes the
+whole module from a core: `modules::ensure_loaded("tinyjuice")` answers
+`COMPONENT_DISABLED:juice` without downloading or loading anything, the `MlHost`
+callback is not served, `juice_*` / `retrieve_tool_output` tools are not
+registered, the tool-output middleware runs with compaction and the summary
+stage off (per-tool cap and byte-budget truncation only), `install_from_config`
+is a no-op, and every `tokenjuice.*` RPC answers `COMPONENT_DISABLED`.
+`[tokenjuice] router_enabled` stays a sub-setting of the on state. A legacy
+config with `[tokenjuice] router_enabled = false` and no `[components] juice`
+key is migrated on load to `[components] juice = false` (an explicit
+`[components]` key always wins).

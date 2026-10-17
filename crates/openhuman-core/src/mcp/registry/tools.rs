@@ -27,7 +27,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::config::Config;
-use tinymcp::normalize_tool_arguments;
 use tinymcp_bus::agent_tools::{AgentToolEffect, AgentToolSpec, RegistryTool};
 use tinytools::{PermissionLevel, Tool, ToolExposure, ToolResult};
 
@@ -259,13 +258,32 @@ impl Tool for McpRegistryToolCallTool {
         // Tolerant at execution, unchanged in the schema: an object that
         // arrived JSON-encoded in a string is decoded, and anything that
         // cannot hold one is refused here, naming what arrived.
-        let arguments = normalize_tool_arguments(args.get("arguments").cloned())
-            .map(Value::Object)
-            .map_err(|error| anyhow::anyhow!("mcp_registry_tool_call: {error}"))?;
-        emit!(
-            ops::mcp_clients_tool_call(&self.config, sid, tool_name, arguments).await,
-            "mcp_registry_tool_call"
+        let client = crate::mcp::module_client::McpConfiguredClient::for_config(&self.config)
+            .map_err(|_| anyhow::anyhow!("mcp_registry_tool_call: MCP module is unavailable"))?;
+        let normalized: serde_json::Map<String, Value> = client
+            .normalize_tool_arguments(args.get("arguments").cloned())
+            .await
+            .map_err(|_| anyhow::anyhow!("mcp_registry_tool_call: invalid tool arguments"))?;
+        let arguments = Value::Object(normalized);
+        let outcome = ops::mcp_clients_tool_call(
+            &self.config,
+            sid.clone(),
+            tool_name.clone(),
+            arguments.clone(),
         )
+        .await
+        .map_err(|e| anyhow::anyhow!("mcp_registry_tool_call: {e}"))?;
+        let mut result = ToolResult::success(serde_json::to_string(&outcome.value)?);
+        if let Some(raw) = outcome.value.get("result").filter(|raw| raw.is_object()) {
+            let tool_meta =
+                crate::mcp::ui::decorate::installed_tool_meta(&self.config, &sid, &tool_name).await;
+            let view = crate::mcp::ui::resolve::view_from_raw_result(
+                &sid, &tool_name, tool_meta, arguments, raw,
+            );
+            result.metadata = crate::mcp::ui::resolve::presentation_from_view(&view)
+                .map(|presentation| presentation.to_metadata());
+        }
+        Ok(result)
     }
 }
 

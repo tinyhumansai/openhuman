@@ -9,16 +9,13 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use crate::agent::harness::artifact_offload::{new_artifact_offload, offload_oversized_result};
-use crate::agent::harness::definition::{
-    validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, AgentTier, IterationPolicy,
-    PromptSource, SandboxMode as AgentSandboxMode,
-};
+use crate::agent::harness::artifact_offload::offload_run_result;
 use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::harness::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use crate::agent::prompts::{
     render_subagent_system_prompt_with_format, PromptContext, SubagentRenderOptions,
 };
-use crate::agent::subagent_host::subagent_iter_cap_with_autonomous_lift;
+use crate::agent::subagent_host::definition_iter_cap;
 use crate::agent::subagent_host::tool_prep::{
     filter_tool_indices, is_subagent_spawn_tool, load_prompt_source, subagent_prompt_protocol,
 };
@@ -27,6 +24,10 @@ use crate::agent::subagent_host::types::{
 };
 use crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 use crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
+use tinyagents_definition::{
+    validate_tier_transition, AgentTier, IterationPolicy, PromptSource,
+    SandboxMode as AgentSandboxMode,
+};
 use tinyagents_harness::artifacts::{
     effective_offload_threshold, extract_artifact_paths, note_artifact_handoff,
     DEFAULT_OFFLOAD_THRESHOLD_BYTES, HANDOFF_STAGE_RECORDED,
@@ -120,7 +121,7 @@ pub(crate) async fn run_subagent_direct(
     // every caller doesn't have to carry this future's state inline.
     // Tools that delegate run inside the parent agent's already-deep
     // turn poll (the boxed tinyagents harness drive future in
-    // `run_turn_via_tinyagents_shared`), so the parent's stack would
+    // `TurnSpec::run`), so the parent's stack would
     // otherwise pile (parent turn state + dispatch_subagent state +
     // run_subagent's wrapper state + run_typed_mode state + child turn
     // state) onto tokio's 2 MiB worker stack and abort with "thread
@@ -233,6 +234,9 @@ pub(crate) async fn run_subagent_direct(
                 max_depth,
             })?;
         options.run_context.spawn_depth = attempted_depth;
+        // Acts on memory as a child of its parent: same team, own definition.
+        let acting = options.run_context.memory_identity.take().unwrap_or_default();
+        options.run_context.memory_identity = Some(acting.child(&definition.id));
 
         // Runtime spawn-hierarchy (tier) gate — defense-in-depth alongside the
         // depth gate above. The loader validates *declared* `subagents` pairs
@@ -277,7 +281,7 @@ pub(crate) async fn run_subagent_direct(
 
         // Loaded once per spawn (see `LoadedConfig`), after the tier gate so a
         // rejected spawn never initialises config on first run.
-        let loaded_config: LoadedConfig = Box::pin(crate::config::ops::load_current_or_init())
+        let loaded_config: LoadedConfig = Box::pin(crate::config::ops::load_current_or_init(&options.run_context.dispatch_ctx()))
             .await
             .map(std::sync::Arc::new)
             .map_err(|e| e.to_string());
@@ -298,7 +302,7 @@ pub(crate) async fn run_subagent_direct(
         // When the worker opted into git-worktree isolation, its isolated
         // checkout is carried on the `WorkspaceDescriptor` prepared below and
         // threaded onto the run's tinyagents `RunContext`
-        // (`run_turn_via_tinyagents_shared` → `RunContext::with_workspace`).
+        // (`TurnSpec::run` → `RunContext::with_workspace`).
         // Every tool call then receives it via
         // `ToolExecutionContext::from_run_context`, so acting tools (shell, git)
         // resolve their CWD to that worktree (`effective_action_dir_for_context`)
@@ -319,20 +323,17 @@ pub(crate) async fn run_subagent_direct(
             );
         }
         let run_result = Box::pin(with_run_depth(RunDepth { depth: attempted_depth, max_depth }, async {
-            crate::memory::scope::within_agent(&definition.id, with_file_state_agent_id(task_id.clone(), async {
-                async {
-                    Box::pin(run_typed_mode(
-                        definition,
-                        task_prompt,
-                        &options,
-                        &parent_for_subagent,
-                        &task_id,
-                        &loaded_config,
-                    ))
-                    .await
-                }
+            with_file_state_agent_id(task_id.clone(), async {
+                Box::pin(run_typed_mode(
+                    definition,
+                    task_prompt,
+                    &options,
+                    &parent_for_subagent,
+                    &task_id,
+                    &loaded_config,
+                ))
                 .await
-            }))
+            })
             .await
         }))
         .await;
@@ -422,7 +423,7 @@ async fn offload_outcome_artifacts(
     // A worktree-isolated worker offloads into its own checkout; everyone else
     // uses the live policy's action root, which is the same root a parent's
     // relative read resolves the returned path against.
-    let policy = crate::security::live_policy::effective();
+    let policy = crate::security::live_policy::effective_in(&options.run_context.dispatch_ctx());
     let Some(action_dir) = options
         .worktree_action_dir
         .clone()
@@ -473,19 +474,18 @@ async fn offload_outcome_artifacts(
     let threshold =
         effective_offload_threshold(DEFAULT_OFFLOAD_THRESHOLD_BYTES, definition.max_result_chars);
 
-    // Worktree-isolated workers write inside their own checkout, but the parent
-    // that receives the pointer resolves relative paths against ITS action root.
-    // Render against that root so the handed-back path is one the parent can
-    // actually open (relative when the worktree nests inside it, absolute when
-    // it does not) rather than a bare `outputs/…` that silently misses.
-    let render_root = policy
-        .as_ref()
-        .map(|p| p.action_dir.clone())
-        .unwrap_or_else(|| action_dir.clone());
-    let offload = new_artifact_offload(action_dir, policy, outcome.agent_id.clone(), task_id)
-        .with_render_root(render_root);
-    let (output, _artifact) =
-        offload_oversized_result(std::mem::take(&mut outcome.output), &offload, threshold).await;
+    // The parent that receives the pointer resolves relative paths against ITS
+    // action root, so the stored artifact is materialised there (also for a
+    // worktree-isolated worker) and the handed-back `outputs/…` path opens.
+    let (output, _artifact) = offload_run_result(
+        std::mem::take(&mut outcome.output),
+        policy,
+        action_dir,
+        outcome.agent_id.clone(),
+        task_id,
+        threshold,
+    )
+    .await;
     outcome.output = output;
 
     // Merge: the harness pointer (if it fired) plus any worker-authored pointer
@@ -710,15 +710,15 @@ async fn run_typed_mode(
         agent_id = %definition.id,
         model = %model,
         tool_count = allowed_names.len(),
-        max_iterations = subagent_iter_cap_with_autonomous_lift(definition.effective_max_iterations()),
+        max_iterations = definition_iter_cap(&options.run_context, definition),
         iteration_policy = ?definition.iteration_policy,
         "[subagent_host:typed] resolved configuration"
     );
 
     // ── Build the narrow system prompt ─────────────────────────────────
     let render_options = SubagentRenderOptions::from_definition_flags(
-        definition.omit_identity,
-        definition.omit_safety_preamble,
+        definition.extensions.omit_identity,
+        definition.extensions.omit_safety_preamble,
     );
 
     let connected_integrations_for_prompt: Vec<crate::agent::prompts::ConnectedIntegration> =
@@ -772,7 +772,7 @@ async fn run_typed_mode(
         visible_tool_names: &visible_tool_names,
         tool_call_format: prompt_tool_call_format,
         connected_integrations: &connected_integrations_for_prompt,
-        connected_identities_md: crate::agent::prompts::render_connected_identities(),
+        connected_identities_md: options.run_context.connected_identities_md(),
         user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
         personality_roster: vec![],
         agents_md_global: agents_md.global.clone(),
@@ -782,10 +782,10 @@ async fn run_typed_mode(
     let system_prompt = match &definition.system_prompt {
         // The whole prompt, with no sub-agent sections around it.
         PromptSource::Dynamic(_) | PromptSource::Verbatim(_) => {
-            load_prompt_source(&definition.system_prompt, &prompt_ctx)?
+            load_prompt_source(definition, &prompt_ctx)?
         }
         PromptSource::Inline(_) | PromptSource::File { .. } => {
-            let archetype_prompt_body = load_prompt_source(&definition.system_prompt, &prompt_ctx)?;
+            let archetype_prompt_body = load_prompt_source(definition, &prompt_ctx)?;
             render_subagent_system_prompt_with_format(
                 &parent.workspace_dir,
                 &model,
@@ -816,7 +816,7 @@ async fn run_typed_mode(
     let now_str = crate::agent::prompts::current_datetime_line(zone.as_deref());
 
     let mut context_parts: Vec<&str> = Vec::new();
-    if !definition.omit_memory_context {
+    if !definition.extensions.omit_memory_context {
         if let Some(ref mem_ctx) = *parent.memory_context {
             context_parts.push(mem_ctx);
         }
@@ -922,7 +922,7 @@ async fn run_typed_mode(
             Vec::new(),
             filtered_specs.clone(),
             allowed_names,
-            subagent_iter_cap_with_autonomous_lift(definition.effective_max_iterations()),
+            definition_iter_cap(&options.run_context, definition),
             options.run_queue.clone(),
             parent.on_progress.clone(),
             &definition.id,
@@ -943,9 +943,8 @@ async fn run_typed_mode(
             // provenance), distinguishing delegated spend from the parent's
             // own channel in per-thread usage reads.
             "subagent",
-            // Agent-level TokenJuice profile → sub-agent context middleware
-            // (#4466), so sub-agent tool outputs compact like the chat path.
-            definition.effective_tokenjuice_compression(),
+            // Agent TokenJuice profile → sub-agent context middleware (#4466).
+            definition.extensions.tokenjuice_for(&definition.model),
             // The spawn-wide config snapshot supplies the `[context]`
             // knobs the graph used to load for itself.
             config.as_ref().ok().map(|c| c.as_ref()),
@@ -989,7 +988,7 @@ async fn run_typed_mode(
         // result + blocker instead of treating the summary as a finished answer
         // or re-spinning the identical delegation (#4096).
         crate::agent::subagent_host::types::SubagentRunStatus::Incomplete {
-            reason: crate::agent::turn_stop::SUBAGENT_ITERATION_CAP_REASON.into(),
+            reason: tinyagents_harness::turn_stop::SUBAGENT_ITERATION_CAP_REASON.into(),
         }
     } else {
         // A clean final response. (An `ask_user_clarification` early-exit is

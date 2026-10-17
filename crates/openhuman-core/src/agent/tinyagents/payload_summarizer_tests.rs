@@ -1,9 +1,10 @@
 use super::*;
-use crate::agent::harness::definition::{
-    DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope,
-};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tinyagents_definition::{DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope};
+use tinyagents_harness::context::RunConfig;
+use tinyagents_harness::runtime::AgentHarness;
+use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse, ModelStream};
 
 fn dummy_definition() -> AgentDefinition {
@@ -12,9 +13,6 @@ fn dummy_definition() -> AgentDefinition {
         when_to_use: "test".into(),
         display_name: Some("Summarizer".into()),
         system_prompt: PromptSource::Inline("test prompt".into()),
-        omit_identity: true,
-        omit_memory_context: true,
-        omit_safety_preamble: true,
         model: ModelSpec::Hint("summarization".into()),
         temperature: 0.2,
         tools: ToolScope::Named(vec![]),
@@ -30,12 +28,19 @@ fn dummy_definition() -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
-        tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
-        agent_tier: crate::agent::harness::definition::AgentTier::Worker,
-        searches_connected_mcp: false,
+        agent_tier: tinyagents_definition::AgentTier::Worker,
         source: DefinitionSource::Builtin,
+        extensions: crate::agent::harness::host_definition::AgentExt {
+            omit_identity: true,
+            omit_memory_context: true,
+            omit_safety_preamble: true,
+            tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
+            searches_connected_mcp: false,
+            ..Default::default()
+        },
+        role: None,
     }
 }
 

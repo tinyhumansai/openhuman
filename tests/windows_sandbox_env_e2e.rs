@@ -26,11 +26,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 #[cfg(windows)]
-use openhuman_core::agent::harness::definition::SandboxMode;
-#[cfg(windows)]
 use openhuman_core::config::RuntimeConfig;
 #[cfg(windows)]
 use openhuman_core::sandbox::ops::{execute_in_sandbox, resolve_sandbox_policy};
+#[cfg(windows)]
+use tinyagents_definition::SandboxMode;
 
 /// Run `command` through OpenHuman's sandbox execution path under `mode`.
 #[cfg(windows)]

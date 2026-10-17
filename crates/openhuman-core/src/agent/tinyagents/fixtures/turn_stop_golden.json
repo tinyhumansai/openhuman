@@ -1,0 +1,51 @@
+[
+  {
+    "history": [
+      "TranscriptMessage { id: None, role: \"system\", content: \"system-golden-final\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"user\", content: \"user-golden-final\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"assistant\", content: \"\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: Some(\"budgeted-call\"), role: \"tool\", content: \"executed\\n[took 0.0s]\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"assistant\", content: \"done\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }"
+    ],
+    "hit_cap": false,
+    "model_calls": 2,
+    "scenario": "golden-final",
+    "stop_reason": null,
+    "text": "done",
+    "tool_calls": 1,
+    "tool_outcomes": 1,
+    "wind_down_recorded": false
+  },
+  {
+    "history": [
+      "TranscriptMessage { id: None, role: \"system\", content: \"system-golden-budget\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"user\", content: \"user-golden-budget\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"assistant\", content: \"\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: Some(\"budgeted-call\"), role: \"tool\", content: \"executed\\n[took 0.0s]\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }"
+    ],
+    "hit_cap": false,
+    "model_calls": 1,
+    "scenario": "golden-budget",
+    "stop_reason": "turn cost $3.0000 reached cap $1.0000",
+    "text": "Stopping after 1 model call(s): turn cost $3.0000 reached cap $1.0000",
+    "tool_calls": 1,
+    "tool_outcomes": 1,
+    "wind_down_recorded": false
+  },
+  {
+    "history": [
+      "TranscriptMessage { id: None, role: \"system\", content: \"system-golden-wind-down\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"user\", content: \"user-golden-wind-down\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: None, role: \"assistant\", content: \"\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }",
+      "TranscriptMessage { id: Some(\"budgeted-call\"), role: \"tool\", content: \"executed\\n[took 0.0s]\", tool_calls: [], tool_call_id: None, parts: None, legacy: LegacyText(None), extra_metadata: None, cache_breakpoints: [], turn_usage: None, request_id: None, preserve_request_id: false, interrupted: false, tool_failure: None }"
+    ],
+    "hit_cap": false,
+    "model_calls": 1,
+    "scenario": "golden-wind-down",
+    "stop_reason": null,
+    "text": "",
+    "tool_calls": 1,
+    "tool_outcomes": 1,
+    "wind_down_recorded": true
+  }
+]

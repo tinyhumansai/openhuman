@@ -101,9 +101,13 @@ pub(crate) fn run_standalone_subcommand(args: &[String]) -> Result<()> {
             custom_dictionary: config.voice_server.custom_dictionary.clone(),
         };
 
-        run_standalone(config, server_config)
-            .await
-            .map_err(anyhow::Error::msg)
+        run_standalone(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            config,
+            server_config,
+        )
+        .await
+        .map_err(anyhow::Error::msg)
     })?;
 
     Ok(())

@@ -319,3 +319,99 @@ async fn current_returns_inner_origin_on_nested_scope() {
         other => panic!("expected inner TrustedAutomation, got {other:?}"),
     }
 }
+
+/// The origin has one home: the scoped `CoreContext`. A reader that asks the
+/// context (`current_turn_origin`) and one that asks this module (`current`)
+/// must see the same label, so there is no second copy to drift.
+#[tokio::test]
+async fn origin_is_carried_by_the_scoped_core_context_only() {
+    assert!(crate::core::runtime::CoreContext::scoped_for_turn().is_none());
+    let (via_module, via_context, carried) = with_origin(AgentTurnOrigin::DirectChat, async {
+        (
+            current(),
+            crate::core::runtime::CoreContext::current_turn_origin(),
+            crate::core::runtime::CoreContext::scoped_for_turn().is_some(),
+        )
+    })
+    .await;
+    assert!(matches!(via_module, Some(AgentTurnOrigin::DirectChat)));
+    assert!(matches!(via_context, Some(AgentTurnOrigin::DirectChat)));
+    assert!(
+        carried,
+        "with_origin must scope a context, bare if none was booted"
+    );
+    assert!(crate::core::runtime::CoreContext::scoped_for_turn().is_none());
+}
+
+#[derive(Default)]
+struct StateProbe;
+
+/// Regression: with no core booted, `with_origin` carries its origin on a bare
+/// context. That context must be invisible to every other reader: a state slot
+/// read inside the scope is the same slot read outside it (a plan-mode switch
+/// set before a turn is seen by the tool the turn runs), and `current` /
+/// `scoped` answer as they do when nothing is scoped.
+#[tokio::test]
+async fn a_bare_origin_scope_is_invisible_to_every_other_reader() {
+    use crate::core::runtime::{slot_for, CoreContext, DispatchCtx};
+
+    let outside_slot = slot_for::<StateProbe>(&DispatchCtx::ambient());
+    let outside_current = CoreContext::current();
+    let (inside_slot, inside_current, inside_scoped, origin) =
+        with_origin(AgentTurnOrigin::Cli, async {
+            (
+                slot_for::<StateProbe>(&DispatchCtx::ambient()),
+                CoreContext::current(),
+                CoreContext::scoped(),
+                current(),
+            )
+        })
+        .await;
+
+    assert!(
+        std::sync::Arc::ptr_eq(&outside_slot, &inside_slot),
+        "a bare context must not give the turn a state slot of its own"
+    );
+    match (&outside_current, &inside_current) {
+        (None, None) => {}
+        (Some(a), Some(b)) => assert!(std::sync::Arc::ptr_eq(a, b)),
+        _ => panic!("`current` changed inside the scope"),
+    }
+    // No booted core => nothing scoped for anyone but the origin readers.
+    if outside_current.is_none() {
+        assert!(inside_scoped.is_none());
+    }
+    assert!(matches!(origin, Some(AgentTurnOrigin::Cli)));
+}
+
+/// The label survives await points that move the turn between worker threads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn origin_survives_await_points_on_a_multi_thread_runtime() {
+    let observed = with_origin(AgentTurnOrigin::Cli, async {
+        let mut seen = Vec::new();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            seen.push(current().map(|origin| origin.class()));
+        }
+        seen
+    })
+    .await;
+    assert!(observed.iter().all(|class| class.as_deref() == Some("Cli")));
+}
+
+/// Two concurrent turns each read their own label.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_turns_do_not_share_an_origin() {
+    let cli = with_origin(AgentTurnOrigin::Cli, async {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        current().map(|origin| origin.class())
+    });
+    let direct = with_origin(AgentTurnOrigin::DirectChat, async {
+        tokio::task::yield_now().await;
+        current().map(|origin| origin.class())
+    });
+    let (cli, direct) = tokio::join!(cli, direct);
+    assert_eq!(cli.as_deref(), Some("Cli"));
+    assert_eq!(direct.as_deref(), Some("DirectChat"));
+}

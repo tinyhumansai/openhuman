@@ -224,7 +224,7 @@ else is agent-only.
   stays behind `OPENHUMAN_BROWSER_ALLOW_ALL`.
 - Search is configured per provider and per role in `[search]`; disabling all
   providers removes the search tools. User-facing setup is in
-  [`gitbooks/features/native-tools/web-search.md`](../../../../gitbooks/features/native-tools/web-search.md).
+  [`docs/gitbooks/en/features/native-tools/web-search.md`](../../../../docs/gitbooks/en/features/native-tools/web-search.md).
 
 ## Tests
 
@@ -235,7 +235,7 @@ execution and serde). Every other module has a sibling `*_tests.rs`. Run with
 
 ## Further reading
 
-- [Native tools overview](../../../../gitbooks/features/native-tools/README.md)
-- [Agent harness architecture](../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Approval gate](../../../../gitbooks/features/approval-gate.md)
+- [Native tools overview](../../../../docs/gitbooks/en/features/native-tools/README.md)
+- [Agent harness architecture](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Approval gate](../../../../docs/gitbooks/en/features/approval-gate.md)
 - [tinyagents submodule](../../../../vendor/tinyagents/README.md)

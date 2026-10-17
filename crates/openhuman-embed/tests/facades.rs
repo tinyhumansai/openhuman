@@ -24,6 +24,7 @@ async fn an_artifact_resolves_only_once_ready_and_only_under_its_roots() {
         ArtifactKind::Document,
         "Facade note",
         "md",
+        None,
     )
     .await
     .expect("artifact reserved");
@@ -35,7 +36,7 @@ async fn an_artifact_resolves_only_once_ready_and_only_under_its_roots() {
     assert!(pending.contains("not ready"), "{pending}");
 
     tokio::fs::write(&path, b"hello").await.expect("write file");
-    let ready = finalize_artifact(workspace.path(), &meta.id, 5)
+    let ready = finalize_artifact(workspace.path(), &meta.id, 5, None)
         .await
         .expect("finalized");
     assert_eq!(ready.status, ArtifactStatus::Ready);

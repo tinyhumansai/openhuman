@@ -17,8 +17,7 @@ pub use connect::{
 };
 pub use discord::{discord_check_permissions, discord_list_channels, discord_list_guilds};
 pub use messaging::{
-    channel_create_thread, channel_list_threads, channel_send_message, channel_send_reaction,
-    channel_update_thread,
+    channel_create_thread, channel_list_threads, channel_send_reaction, channel_update_thread,
 };
 
 #[cfg(test)]

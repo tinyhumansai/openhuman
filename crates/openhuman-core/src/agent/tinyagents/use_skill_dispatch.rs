@@ -14,7 +14,7 @@
 //! [`UseSkillDispatch`] closes the gap: it resolves the inner tool exactly as
 //! [`crate::tools::toolpacks::tools::UseSkillTool::execute_with_context`]
 //! does, then re-selects the same
-//! [`super::harness_tool_registration::typed_dispatch_for`] the harness would
+//! [`super::tool_registration::typed_dispatch_for`] the harness would
 //! have picked had the inner tool been natively advertised, and hands it the
 //! REAL parent this dispatch itself received. The disclosure half (no `tool`
 //! named), a missing `skill`, and a not-found tool are all delegated verbatim
@@ -31,8 +31,8 @@ use tinyagents_harness::context::RunContext;
 use tinyagents_harness::tool::{ToolDispatch, ToolExecutionContext};
 use tinytools::{Tool, ToolCallOptions, ToolResult};
 
-use super::harness_tool_registration::typed_dispatch_for;
 use super::host::OpenHumanRunContext;
+use super::tool_registration::typed_dispatch_for;
 use crate::tools::toolpacks::registry::CATALOG;
 use tinyagents_harness::tool::packs::{named_tool, PackRegistryHandle};
 
@@ -96,9 +96,8 @@ impl ToolDispatch<(), OpenHumanRunContext> for UseSkillDispatch {
             .get("args")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        let Some(inner_adapter) =
-            super::tools::CanonicalSharedToolAdapter::for_name(vec![tools], name)
-                .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
+        let Some(inner_adapter) = super::tool_registration::shared_tool_adapter(vec![tools], name)
+            .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
         else {
             // Freeze the not-found result too: a target appearing after
             // authorization must not turn a rejected call into an execution.
@@ -167,9 +166,8 @@ impl ToolDispatch<(), OpenHumanRunContext> for UseSkillDispatch {
         // adapter is equivalent to the one that would have been registered
         // had the model reached `name` directly instead of through
         // `use_skill`.
-        let Some(inner_adapter) =
-            super::tools::CanonicalSharedToolAdapter::for_name(vec![tools], &name)
-                .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
+        let Some(inner_adapter) = super::tool_registration::shared_tool_adapter(vec![tools], &name)
+            .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
         else {
             return self
                 .tool

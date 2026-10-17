@@ -51,10 +51,7 @@ async fn retrieve_messages_name_only_the_tool_the_model_can_call() {
         .unwrap()
         .output();
     for msg in [missing, miss_message("deadbeefcafe")] {
-        assert!(
-            msg.contains(crate::inference::tokenjuice::RETRIEVE_TOOL_NAME),
-            "{msg}"
-        );
+        assert!(msg.contains(tinyjuice_bus::tools::RETRIEVE), "{msg}");
         assert!(!msg.contains("tokenjuice_retrieve"), "{msg}");
         assert!(!msg.contains("tinyjuice_retrieve"), "{msg}");
     }

@@ -2,57 +2,57 @@
 
 > Embed OpenHuman runtimes and independently configured agents in Rust applications.
 
-- [Embedding OpenHuman](gitbooks/developing/embed/README.md): `openhuman-embed` runs the OpenHuman core inside your Rust program. Your host owns the user interface, server transport and authentication flow; the core owns agent turns, memory, tools, approvals and execution policy. Calling its typed facades does not require a JSON-RPC server or the desktop shell.
-- [Embedding API reference](gitbooks/developing/embed/api-reference.md): Generate usable local Rust API documentation with `cargo doc -p openhuman-embed --no-deps --open`. Include `--features mcp,skills,channels,storage-sqlite` for the facade gates used by the offline examples, or select the feature set your host actually builds. For all exported optional surfaces use `--all-features`.
-- [Embedding architecture](gitbooks/developing/embed/architecture.md): Embed is the library facade above `openhuman-core`. The TinyHumans layer installs the backend SDK transport and owns product login/session behavior; the RPC layer adds JSON-RPC, server listeners and shipped host boot. A Rust embedder can stay at the facade when it owns those concerns itself.
-- [Concepts](gitbooks/developing/embed/concepts/README.md): Start with Runtime and agents to understand which settings are shared. Then follow the lifecycle of a request through provider selection, tools, approvals and its durable session. The scope tables distinguish runtime composition from the state a host must isolate per agent or profile.
-- [Access and approvals](gitbooks/developing/embed/concepts/access-approvals.md): `Access` groups permission level, origin, standing grants and trusted roots. Choose an origin and tier together: a trusted local host request and an external channel message are different security contexts. `Access::full()` configures both access fields. A sandbox is an additional execution boundary, configured through `AgentDefinitionSpec`.
-- [Agents](gitbooks/developing/embed/concepts/agents.md): Register an `AgentSpec` with `Runtime::agent`. Its ID selects the agent's home, durable session identity and addressed cron/channel work. An `Agent` clone refers to the same instance; it does not copy state or start another core. Runtime-wide credentials remain shared, so two agents are not two authenticated customers.
-- [Channels](gitbooks/developing/embed/concepts/channels.md): `Runtime::channels` creates listeners addressed to a live agent ID. A listener owns its transport task; dropping or stopping it ends that listener. The agent supplies the prompt, provider and tools used for every incoming message instead of handing messages to an operator agent.
-- [Completer](gitbooks/developing/embed/concepts/completer.md): Use `Completer` for one-shot text or structured generation when you do not need an agent, its tool loop or persistent transcript. It takes an explicit route and a `CompletionRequest`; the caller supplies the model and messages for every request.
-- [Cron](gitbooks/developing/embed/concepts/cron.md): The typed `Cron` facade creates named jobs with `JobSpec` and `JobSchedule`. `upsert` preserves a job's identity when the same name is configured again; `runs` exposes execution history. An agent-targeted job resolves the configured agent ID and executes with that agent's provider, prompt, tools and derived context.
-- [Errors](gitbooks/developing/embed/concepts/errors.md): Match the error type at its boundary: `RuntimeError` describes boot/configuration, `AgentError` describes registration/layout, and `CoreError` describes typed facade calls and turns. A missing compiled or selected domain is `CoreError::Unavailable`; it is a capability decision the host can reflect in its UI.
-- [Hooks and seams](gitbooks/developing/embed/concepts/hooks-seams.md): Runtime builders accept host-owned ports for storage, sessions, memory, tools and controller extensions. These are composition seams: the host supplies an implementation of the owning library's contract, while OpenHuman retains access policy, approvals and lifecycle.
-- [MCP](gitbooks/developing/embed/concepts/mcp.md): MCP connects a native agent turn to tools served over an MCP protocol transport. Configure a server on `AgentSpec::mcp`, with its transport, authentication and allowed tool names. Another agent on the same runtime does not inherit that server configuration.
-- [Memory](gitbooks/developing/embed/concepts/memory.md): `Runtime::memory(namespace)` returns a facade bound to that namespace. The caller establishes scope before sending record data; namespace identity is not taken from model arguments or record metadata. Learning and deletion use the selected memory engine contract.
-- [Observability](gitbooks/developing/embed/concepts/observability.md): Subscribe with `Runtime::events` before starting work you want to observe. Each event has a sequence number and runtime identity, with an agent ID and per-call turn ID where applicable. Repeated calls on the same durable session receive different turn IDs; the session ID is not the observation ID.
-- [Profiles and SaaS](gitbooks/developing/embed/concepts/profiles-saas.md): Ordinary runtime agents share an operator's configuration path and credentials. Use `ProfileRuntime` when one server serves different authenticated users who must not share those resources. Provision a profile, install its credential, and retain a `ProfileHandle` while serving that user's requests.
-- [Providers](gitbooks/developing/embed/concepts/providers.md): A runtime provider is the default inference choice for its agents. An agent can override it with an OpenAI-compatible route or a native `ChatModel<()>` through `Provider::custom`. The `providers` facade exposes the request/response contracts so custom adapters do not need to implement an HTTP server.
-- [Runtime defaults](gitbooks/developing/embed/concepts/runtime-defaults.md): The runtime's default provider, access policy and `ModelDefaults` reduce repeated setup. `AgentSpec` can override those defaults for an analyst, a writing agent or another workload without changing its siblings. Temperature and token limits are forwarded to the selected native model request, rather than being merely descriptive builder values.
-- [Runtime](gitbooks/developing/embed/concepts/runtime.md): A `Runtime` boots the in-process core once. It owns the selected domains, background services, module host and runtime defaults. Its agents share that core while using separately derived contexts. Build one runtime and pass an `Arc<Runtime>` to the parts of your application that register agents.
-- [Skills](gitbooks/developing/embed/concepts/skills.md): A skill bundle contains `SKILL.md` plus any referenced resources. `AgentSpec::skills_dir` copies bundles into the agent's `agents/<id>/skills/` tree. Copying is intentional: discovery rejects symlinked bundles, so linking a shared directory does not install it.
-- [Testing](gitbooks/developing/embed/concepts/testing.md): The runnable examples default to loopback fixtures. They assert request bodies, tool results, file effects, transcript scope and event ordering; a successful Rust compilation alone does not prove those behaviors. Live example execution is explicitly opt-in through the documented environment variables.
-- [Tools](gitbooks/developing/embed/concepts/tools.md): An agent's `ToolScopeSpec` chooses built-ins, named tools or `HostOnly`. Host-only mode starts with the host's advertised tools, requires an explicit bare prompt, and does not inherit an orchestrator tool catalog. This is useful when your application already owns read-only data access or tightly scoped actions.
-- [Turns and sessions](gitbooks/developing/embed/concepts/turns-sessions.md): `Agent::run` collects a turn. `Agent::turn` lets you set an explicit session, per-turn options, progress sink and cancellation before sending. Reuse the returned session identity for follow-up messages that should see the same transcript. Two calls on the same durable session remain distinct turn executions and receive distinct observation IDs.
-- [Embedding FAQ](gitbooks/developing/embed/faq.md): An ordinary embed process supports one `Runtime`; a second build returns `AlreadyRunning`. Add agents to the existing runtime. A multi-user host uses `ProfileRuntime` instead and needs a process dedicated to that mode. See runtime and profiles.
-- [Embedding guides](gitbooks/developing/embed/guides/README.md): Choose the guide that matches your host:
-- [CLI chatbot](gitbooks/developing/embed/guides/cli-chatbot.md): Keep one `Runtime` alive for the process and create an `Agent` for the conversation. The executable example starts with a single message, checks the reply, and prints it. A CLI input loop can send subsequent messages through the same agent; choose a stable thread identity when your host exposes separate conversations.
-- [Deploy a server](gitbooks/developing/embed/guides/deploy-server.md): Your HTTP host can keep a runtime alive and invoke its agents directly. The executable example binds a loopback listener, handles one request, and sends back the agent's reply. It exercises the request path without requiring an RPC server dependency in `openhuman-embed`.
-- [Lean and headless hosts](gitbooks/developing/embed/guides/lean-headless.md): `RuntimeBuilder::lean()` selects the agent, memory, and inference families without background services. Runtime module selection controls what is active; Cargo features control what is compiled. A lean preset alone does not shed compiled dependencies.
-- [Test with a mock backend](gitbooks/developing/embed/guides/mock-backend-testing.md): Run `node scripts/run-embed-examples.mjs` from the repository root. The runner builds and executes every example with the union of required features, clears inherited live-example credentials and operator workspace settings, and requires each program's `EXAMPLE_OK` marker after its assertions.
-- [Multiple agents](gitbooks/developing/embed/guides/multi-agent.md): A runtime owns shared services and credentials. Each `AgentSpec` selects its prompt, model route, access policy, and `action_dir`. Internal agent state belongs to its agent home; the action directory is where acting tools operate.
-- [SaaS with multiple tenants](gitbooks/developing/embed/guides/saas-multi-tenant.md): Use `ProfileRuntime` for a process serving multiple users. Provision each profile, install that profile's credential, and open a handle to its workspace. Reusing a thread id in two profiles does not share their conversation history.
-- [Installation](gitbooks/developing/embed/installation.md): `openhuman-embed` is currently an unpublished workspace crate. Use a local path dependency when developing in this repository, or a Git dependency on `https://github.com/tinyhumansai/openhuman` with `package = "openhuman-embed"`. Pin a reviewed Git revision for a deployed application; the nested vendored libraries are part of that revision's build inputs.
-- [Embedding integrations](gitbooks/developing/embed/integrations/README.md): An embedded runtime composes the capabilities its host supplies. Start with the adapter your application needs:
-- [Channels](gitbooks/developing/embed/integrations/channels.md): Enable the `channels` Cargo feature to use channel adapters. Your host configures the channel credential and binds incoming messages to an agent. In the Telegram example, the Bot API endpoint is a loopback stub, so updates and replies exercise the adapter without contacting Telegram.
-- [Composio](gitbooks/developing/embed/integrations/composio.md): Composio calls use the host backend transport. Install that transport before booting a managed runtime; see TinyHumans managed inference. An explicit inference provider route supplies model inference, not the connector transport.
-- [Local and custom models](gitbooks/developing/embed/integrations/local-models.md): For a local server that implements chat completions, use `Provider::openai_compatible` with its API root and model id. The constructor requires a bearer string even when a particular local server ignores it. Set the endpoint explicitly rather than relying on another user's installed configuration. The OpenAI-compatible example controls can point a live example at that local server.
-- [MCP servers](gitbooks/developing/embed/integrations/mcp.md): Enable the `mcp` Cargo feature and declare a server with `AgentSpec::mcp`. `McpServer::http` takes a registered name and endpoint; `allow_tools` narrows the remote tool list. Server configuration and its connections belong to the agent that declared them.
-- [OpenAI-compatible providers and BYOK](gitbooks/developing/embed/integrations/openai-compatible.md): Construct a route with `Provider::openai_compatible(base_url, api_key).model(model_id)`, then set it on the runtime or an individual agent. Pass the API root, such as a provider's `/v1` URL; the adapter appends `/chat/completions`. Supply an explicit model id so the route can register that model for its workload roles.
-- [Storage drivers](gitbooks/developing/embed/integrations/storage-drivers.md): Enable `storage-sqlite` for SQLite or `storage-mongodb` for MongoDB on your Embed dependency. These Cargo gates make the driver available; choosing a URL selects the runtime backend. Set `RuntimeConfig.storage.url`, pass a URL through `RuntimeBuilder::storage`, or set the `url` field in the `[storage]` section of the host's configuration. `OPENHUMAN_STORAGE_URL` is the environment override used by host configuration resolution.
-- [TinyHumans managed inference](gitbooks/developing/embed/integrations/tinyhumans-managed.md): Embed wraps the core; it does not contain a TinyHumans SDK backend client. A managed host must supply a `BackendTransport` through `RuntimeBuilder::backend_transport`, or boot through the SDK-backed builder in `openhuman-tinyhumans`. The connected host layer owns transport and session login. `RuntimeBuilder::backend_url` selects a URL; it does not install a transport.
-- [Web search](gitbooks/developing/embed/integrations/web-search.md): An agent's web-search tools (`web_search_tool`, `web_answer_tool`, `web_contents_tool`) run through the process-wide TinySearch module. Several agents in one runtime can each search with their own provider key: pin it on that agent's config, and it is never written to `config.toml`, the environment, or a log.
-- [Quickstart](gitbooks/developing/embed/quickstart.md): Start from a checkout of the repository and run `cargo run -p openhuman-embed --example run_turn`. The example boots an ephemeral runtime, creates its own local provider/backend fixtures and prints `hello from the stub`. It needs no inference account and does not contact a real backend.
-- [Embedding troubleshooting](gitbooks/developing/embed/troubleshooting.md): Use the typed error and the effective capability report together. A method that was compiled out is a different problem from a configured method with a provider failure. Keep credentials, user prompts and raw provider payloads out of routine diagnostics.
+- [Embedding OpenHuman](docs/gitbooks/en/developing/embed/README.md): `openhuman-embed` runs the OpenHuman core inside your Rust program. Your host owns the user interface, server transport and authentication flow; the core owns agent turns, memory, tools, approvals and execution policy. Calling its typed facades does not require a JSON-RPC server or the desktop shell.
+- [Embedding API reference](docs/gitbooks/en/developing/embed/api-reference.md): Generate usable local Rust API documentation with `cargo doc -p openhuman-embed --no-deps --open`. Include `--features mcp,skills,channels,storage-sqlite` for the facade gates used by the offline examples, or select the feature set your host actually builds. For all exported optional surfaces use `--all-features`.
+- [Embedding architecture](docs/gitbooks/en/developing/embed/architecture.md): Embed is the library facade above `openhuman-core`. The TinyHumans layer installs the backend SDK transport and owns product login/session behavior; the RPC layer adds JSON-RPC, server listeners and shipped host boot. A Rust embedder can stay at the facade when it owns those concerns itself.
+- [Concepts](docs/gitbooks/en/developing/embed/concepts/README.md): Start with Runtime and agents to understand which settings are shared. Then follow the lifecycle of a request through provider selection, tools, approvals and its durable session. The scope tables distinguish runtime composition from the state a host must isolate per agent or profile.
+- [Access and approvals](docs/gitbooks/en/developing/embed/concepts/access-approvals.md): `Access` groups permission level, origin, standing grants and trusted roots. Choose an origin and tier together: a trusted local host request and an external channel message are different security contexts. `Access::full()` configures both access fields. A sandbox is an additional execution boundary, configured through `AgentDefinitionSpec`.
+- [Agents](docs/gitbooks/en/developing/embed/concepts/agents.md): Register an `AgentSpec` with `Runtime::agent`. Its ID selects the agent's home, durable session identity and addressed cron/channel work. An `Agent` clone refers to the same instance; it does not copy state or start another core. Runtime-wide credentials remain shared, so two agents are not two authenticated customers.
+- [Channels](docs/gitbooks/en/developing/embed/concepts/channels.md): `Runtime::channels` creates listeners addressed to a live agent ID. A listener owns its transport task; dropping or stopping it ends that listener. The agent supplies the prompt, provider and tools used for every incoming message instead of handing messages to an operator agent.
+- [Completer](docs/gitbooks/en/developing/embed/concepts/completer.md): Use `Completer` for one-shot text or structured generation when you do not need an agent, its tool loop or persistent transcript. It takes an explicit route and a `CompletionRequest`; the caller supplies the model and messages for every request.
+- [Cron](docs/gitbooks/en/developing/embed/concepts/cron.md): The typed `Cron` facade creates named jobs with `JobSpec` and `JobSchedule`. `upsert` preserves a job's identity when the same name is configured again; `runs` exposes execution history. An agent-targeted job resolves the configured agent ID and executes with that agent's provider, prompt, tools and derived context.
+- [Errors](docs/gitbooks/en/developing/embed/concepts/errors.md): Match the error type at its boundary: `RuntimeError` describes boot/configuration, `AgentError` describes registration/layout, and `CoreError` describes typed facade calls and turns. A missing compiled or selected domain is `CoreError::Unavailable`; it is a capability decision the host can reflect in its UI.
+- [Hooks and seams](docs/gitbooks/en/developing/embed/concepts/hooks-seams.md): Runtime builders accept host-owned ports for storage, sessions, memory, tools and controller extensions. These are composition seams: the host supplies an implementation of the owning library's contract, while OpenHuman retains access policy, approvals and lifecycle.
+- [MCP](docs/gitbooks/en/developing/embed/concepts/mcp.md): MCP connects a native agent turn to tools served over an MCP protocol transport. Configure a server on `AgentSpec::mcp`, with its transport, authentication and allowed tool names. Another agent on the same runtime does not inherit that server configuration.
+- [Memory](docs/gitbooks/en/developing/embed/concepts/memory.md): `Runtime::memory(namespace)` returns a facade bound to that namespace. The caller establishes scope before sending record data; namespace identity is not taken from model arguments or record metadata. Learning and deletion use the selected memory engine contract.
+- [Observability](docs/gitbooks/en/developing/embed/concepts/observability.md): Subscribe with `Runtime::events` before starting work you want to observe. Each event has a sequence number and runtime identity, with an agent ID and per-call turn ID where applicable. Repeated calls on the same durable session receive different turn IDs; the session ID is not the observation ID.
+- [Profiles and SaaS](docs/gitbooks/en/developing/embed/concepts/profiles-saas.md): Ordinary runtime agents share an operator's configuration path and credentials. Use `ProfileRuntime` when one server serves different authenticated users who must not share those resources. Provision a profile, install its credential, and retain a `ProfileHandle` while serving that user's requests.
+- [Providers](docs/gitbooks/en/developing/embed/concepts/providers.md): A runtime provider is the default inference choice for its agents. An agent can override it with an OpenAI-compatible route or a native `ChatModel<()>` through `Provider::custom`. The `providers` facade exposes the request/response contracts so custom adapters do not need to implement an HTTP server.
+- [Runtime defaults](docs/gitbooks/en/developing/embed/concepts/runtime-defaults.md): The runtime's default provider, access policy and `ModelDefaults` reduce repeated setup. `AgentSpec` can override those defaults for an analyst, a writing agent or another workload without changing its siblings. Temperature and token limits are forwarded to the selected native model request, rather than being merely descriptive builder values.
+- [Runtime](docs/gitbooks/en/developing/embed/concepts/runtime.md): A `Runtime` boots the in-process core once. It owns the selected domains, background services, module host and runtime defaults. Its agents share that core while using separately derived contexts. Build one runtime and pass an `Arc<Runtime>` to the parts of your application that register agents.
+- [Skills](docs/gitbooks/en/developing/embed/concepts/skills.md): A skill bundle contains `SKILL.md` plus any referenced resources. `AgentSpec::skills_dir` copies bundles into the agent's `agents/<id>/skills/` tree. Copying is intentional: discovery rejects symlinked bundles, so linking a shared directory does not install it.
+- [Testing](docs/gitbooks/en/developing/embed/concepts/testing.md): The runnable examples default to loopback fixtures. They assert request bodies, tool results, file effects, transcript scope and event ordering; a successful Rust compilation alone does not prove those behaviors. Live example execution is explicitly opt-in through the documented environment variables.
+- [Tools](docs/gitbooks/en/developing/embed/concepts/tools.md): An agent's `ToolScopeSpec` chooses built-ins, named tools or `HostOnly`. Host-only mode starts with the host's advertised tools, requires an explicit bare prompt, and does not inherit an orchestrator tool catalog. This is useful when your application already owns read-only data access or tightly scoped actions.
+- [Turns and sessions](docs/gitbooks/en/developing/embed/concepts/turns-sessions.md): `Agent::run` collects a turn. `Agent::turn` lets you set an explicit session, per-turn options, progress sink and cancellation before sending. Reuse the returned session identity for follow-up messages that should see the same transcript. Two calls on the same durable session remain distinct turn executions and receive distinct observation IDs.
+- [Embedding FAQ](docs/gitbooks/en/developing/embed/faq.md): An ordinary embed process supports one `Runtime`; a second build returns `AlreadyRunning`. Add agents to the existing runtime. A multi-user host uses `ProfileRuntime` instead and needs a process dedicated to that mode. See runtime and profiles.
+- [Embedding guides](docs/gitbooks/en/developing/embed/guides/README.md): Choose the guide that matches your host:
+- [CLI chatbot](docs/gitbooks/en/developing/embed/guides/cli-chatbot.md): Keep one `Runtime` alive for the process and create an `Agent` for the conversation. The executable example starts with a single message, checks the reply, and prints it. A CLI input loop can send subsequent messages through the same agent; choose a stable thread identity when your host exposes separate conversations.
+- [Deploy a server](docs/gitbooks/en/developing/embed/guides/deploy-server.md): Your HTTP host can keep a runtime alive and invoke its agents directly. The executable example binds a loopback listener, handles one request, and sends back the agent's reply. It exercises the request path without requiring an RPC server dependency in `openhuman-embed`.
+- [Lean and headless hosts](docs/gitbooks/en/developing/embed/guides/lean-headless.md): `RuntimeBuilder::lean()` selects the agent, memory, and inference families without background services. Runtime module selection controls what is active; Cargo features control what is compiled. A lean preset alone does not shed compiled dependencies.
+- [Test with a mock backend](docs/gitbooks/en/developing/embed/guides/mock-backend-testing.md): Run `node scripts/run-embed-examples.mjs` from the repository root. The runner builds and executes every example with the union of required features, clears inherited live-example credentials and operator workspace settings, and requires each program's `EXAMPLE_OK` marker after its assertions.
+- [Multiple agents](docs/gitbooks/en/developing/embed/guides/multi-agent.md): A runtime owns shared services and credentials. Each `AgentSpec` selects its prompt, model route, access policy, and `action_dir`. Internal agent state belongs to its agent home; the action directory is where acting tools operate.
+- [SaaS with multiple tenants](docs/gitbooks/en/developing/embed/guides/saas-multi-tenant.md): Use `ProfileRuntime` for a process serving multiple users. Provision each profile, install that profile's credential, and open a handle to its workspace. Reusing a thread id in two profiles does not share their conversation history.
+- [Installation](docs/gitbooks/en/developing/embed/installation.md): `openhuman-embed` is currently an unpublished workspace crate. Use a local path dependency when developing in this repository, or a Git dependency on `https://github.com/tinyhumansai/openhuman` with `package = "openhuman-embed"`. Pin a reviewed Git revision for a deployed application; the nested vendored libraries are part of that revision's build inputs.
+- [Embedding integrations](docs/gitbooks/en/developing/embed/integrations/README.md): An embedded runtime composes the capabilities its host supplies. Start with the adapter your application needs:
+- [Channels](docs/gitbooks/en/developing/embed/integrations/channels.md): Enable the `channels` Cargo feature to use channel adapters. Your host configures the channel credential and binds incoming messages to an agent. In the Telegram example, the Bot API endpoint is a loopback stub, so updates and replies exercise the adapter without contacting Telegram.
+- [Composio](docs/gitbooks/en/developing/embed/integrations/composio.md): Composio calls use the host backend transport. Install that transport before booting a managed runtime; see TinyHumans managed inference. An explicit inference provider route supplies model inference, not the connector transport.
+- [Local and custom models](docs/gitbooks/en/developing/embed/integrations/local-models.md): For a local server that implements chat completions, use `Provider::openai_compatible` with its API root and model id. The constructor requires a bearer string even when a particular local server ignores it. Set the endpoint explicitly rather than relying on another user's installed configuration. The OpenAI-compatible example controls can point a live example at that local server.
+- [MCP servers](docs/gitbooks/en/developing/embed/integrations/mcp.md): Enable the `mcp` Cargo feature and declare a server with `AgentSpec::mcp`. `McpServer::http` takes a registered name and endpoint; `allow_tools` narrows the remote tool list. Server configuration and its connections belong to the agent that declared them.
+- [OpenAI-compatible providers and BYOK](docs/gitbooks/en/developing/embed/integrations/openai-compatible.md): Construct a route with `Provider::openai_compatible(base_url, api_key).model(model_id)`, then set it on the runtime or an individual agent. Pass the API root, such as a provider's `/v1` URL; the adapter appends `/chat/completions`. Supply an explicit model id so the route can register that model for its workload roles.
+- [Storage drivers](docs/gitbooks/en/developing/embed/integrations/storage-drivers.md): Enable `storage-sqlite` for SQLite or `storage-mongodb` for MongoDB on your Embed dependency. These Cargo gates make the driver available; choosing a URL selects the runtime backend. Set `RuntimeConfig.storage.url`, pass a URL through `RuntimeBuilder::storage`, or set the `url` field in the `[storage]` section of the host's configuration. `OPENHUMAN_STORAGE_URL` is the environment override used by host configuration resolution.
+- [TinyHumans managed inference](docs/gitbooks/en/developing/embed/integrations/tinyhumans-managed.md): Embed wraps the core; it does not contain a TinyHumans SDK backend client. A managed host must supply a `BackendTransport` through `RuntimeBuilder::backend_transport`, or boot through the SDK-backed builder in `openhuman-tinyhumans`. The connected host layer owns transport and session login. `RuntimeBuilder::backend_url` selects a URL; it does not install a transport.
+- [Web search](docs/gitbooks/en/developing/embed/integrations/web-search.md): An agent's web-search tools (`web_search_tool`, `web_answer_tool`, `web_contents_tool`) run through the process-wide TinySearch module. Several agents in one runtime can each search with their own provider key: pin it on that agent's config, and it is never written to `config.toml`, the environment, or a log.
+- [Quickstart](docs/gitbooks/en/developing/embed/quickstart.md): Start from a checkout of the repository and run `cargo run -p openhuman-embed --example run_turn`. The example boots an ephemeral runtime, creates its own local provider/backend fixtures and prints `hello from the stub`. It needs no inference account and does not contact a real backend.
+- [Embedding troubleshooting](docs/gitbooks/en/developing/embed/troubleshooting.md): Use the typed error and the effective capability report together. A method that was compiled out is a different problem from a configured method with a provider failure. Keep credentials, user prompts and raw provider payloads out of routine diagnostics.
 - [OpenHuman Embed](crates/openhuman-embed/README.md): A typed Rust facade for running the OpenHuman core inside your application: one Runtime per process, with independently configured Agents.
-- [Embedding OpenHuman](gitbooks/developing/embedding.md): The embedding documentation now lives in the Embedding section.
-- [Cookbook](gitbooks/developing/embed/cookbook.md): Executable recipes are indexed from their source headers. Each entry records the declared run mode and any named Embed feature required by the example. Full source includes the surrounding setup and assertions.
-- [Compiled feature matrix](gitbooks/developing/embed/capability-matrix.md): This matrix comes from the default-feature compiled capability-report example. Runtime presets can narrow enabled domains and services; core Cargo features determine which implementations are available. Named Embed features also gate facade exports: enable `mcp` or `skills` explicitly for their public setters even when core defaults compile those implementations. Embed defaults enable the named `channels` feature. See the installation guide for these separate layers.
-- [RuntimeBuilder setters](gitbooks/developing/embed/builder-setters.md): Public consuming methods that return `Self`, extracted from the RuntimeBuilder implementations. Static host and weight presets, inspection methods and build/run methods are excluded.
-- [API index](gitbooks/developing/embed/api-index.md): Generate the complete local Rust API reference with `cargo doc -p openhuman-embed --all-features --no-deps --open`. This crate is currently unpublished; docs.rs is a future publication target. Names below are source-listed exports, including conditional Cargo-gated items; local rustdoc with your selected features describes availability. Canonical facade source.
+- [Embedding OpenHuman](docs/gitbooks/en/developing/embedding.md): The embedding documentation now lives in the Embedding section.
+- [Cookbook](docs/gitbooks/en/developing/embed/cookbook.md): Executable recipes are indexed from their source headers. Each entry records the declared run mode and any named Embed feature required by the example. Full source includes the surrounding setup and assertions.
+- [Compiled feature matrix](docs/gitbooks/en/developing/embed/capability-matrix.md): This matrix comes from the default-feature compiled capability-report example. Runtime presets can narrow enabled domains and services; core Cargo features determine which implementations are available. Named Embed features also gate facade exports: enable `mcp` or `skills` explicitly for their public setters even when core defaults compile those implementations. Embed defaults enable the named `channels` feature. See the installation guide for these separate layers.
+- [RuntimeBuilder setters](docs/gitbooks/en/developing/embed/builder-setters.md): Public consuming methods that return `Self`, extracted from the RuntimeBuilder implementations. Static host and weight presets, inspection methods and build/run methods are excluded.
+- [API index](docs/gitbooks/en/developing/embed/api-index.md): Generate the complete local Rust API reference with `cargo doc -p openhuman-embed --all-features --no-deps --open`. This crate is currently unpublished; docs.rs is a future publication target. Names below are source-listed exports, including conditional Cargo-gated items; local rustdoc with your selected features describes availability. Canonical facade source.
 - [Embed examples](crates/openhuman-embed/examples/README.md): Cookbook
 
-<!-- Source: gitbooks/developing/embed/README.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/README.md -->
 ---
 description: "Run the OpenHuman core inside a Rust application with one Runtime and independently configured Agents."
 ---
@@ -88,7 +88,7 @@ The snippets in this section are injected from compiled, offline-tested Rust exa
 
 See [FAQ](faq.md) for design choices and [troubleshooting](troubleshooting.md) for setup failures.
 
-<!-- Source: gitbooks/developing/embed/api-reference.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/api-reference.md -->
 ---
 description: "Use local rustdoc and source-derived indexes for the complete Embed public surface."
 ---
@@ -144,7 +144,7 @@ The generated setter list is the authoritative knob inventory. It excludes stati
 
 The report's schema version is explicit. Read its fields rather than inferring capabilities from preset names, and handle future schema changes deliberately. It omits endpoint, credential, prompt and workspace values so hosts can expose build metadata without exposing private configuration.
 
-<!-- Source: gitbooks/developing/embed/architecture.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/architecture.md -->
 ---
 description: "The host composes infrastructure around one core; agents derive scoped contexts over its runtime."
 ---
@@ -214,7 +214,7 @@ An agent handle keeps the core alive after the runtime handle is dropped. Explic
 
 Agent separation is not credential separation: all ordinary runtime agents share the operator's config path and credential root. Use [profiles](concepts/profiles-saas.md) for independently authenticated users. See [storage architecture](../architecture/storage.md) for scope/driver ownership and [agent harness architecture](../architecture/agent-harness.md) for session execution.
 
-<!-- Source: gitbooks/developing/embed/concepts/README.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/README.md -->
 ---
 description: "The ownership and lifecycle rules behind the Embed public API."
 ---
@@ -242,7 +242,7 @@ Start with Runtime and agents to understand which settings are shared. Then foll
 - [Testing](testing.md): Deterministic local providers and explicit observations prove behavior without contacting real inference or backend services.
 - [Errors](errors.md): Typed errors distinguish build availability, expected domain states, host setup failures and removed agent instances.
 
-<!-- Source: gitbooks/developing/embed/concepts/access-approvals.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/access-approvals.md -->
 ---
 description: "Access configures turn identity and permission policy; the host chooses how parked requests receive decisions."
 ---
@@ -324,7 +324,7 @@ The verified example enables autonomy before building the runtime. It starts a r
 
 For asynchronous integration use `AgentSpec::approval_handler` or retain the handle returned by `Agent::handle_approvals`. Dropping a subscription cancels its pending decision future; it does not silently approve the request. Agent removal cancels both builder and live callbacks. Continue with the [approval callback example](../cookbook.md#polling-and-callback-approvals-with-cancellation) and [sandbox guide](../guides/multi-agent.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/agents.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/agents.md -->
 ---
 description: "An Agent combines one identity, derived context and independently configured tool/model behavior on a shared Runtime."
 ---
@@ -385,7 +385,7 @@ IDs stay reserved until teardown completes, including while the last handle's de
 
 An old polling handle or approval callback never follows a reused ID to its replacement. Active host tools cancel cooperatively and may finish their external work after removal; the host still owns those external lifetimes. See [turns and sessions](turns-sessions.md) and [access and approvals](access-approvals.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/channels.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/channels.md -->
 ---
 description: "A channel listener binds external messages to one registered agent and keeps transport lifecycle under host control."
 ---
@@ -480,7 +480,7 @@ The verified Telegram example uses a local Bot API stub, so the channel test doe
 
 External messages use `ExternalChannel` origin and a read-only cap. Model-requested writes and other external effects are not parked for approval from the sender. Keep public-chat tools read-only and perform authorized side effects in host code or a separately configured job. When the bound agent is removed, channel work fails as unavailable instead of falling back to the operator. See [channel integration](../integrations/channels.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/completer.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/completer.md -->
 ---
 description: "Completer sends stateless model requests without booting a Runtime or entering the agent tool loop."
 ---
@@ -536,7 +536,7 @@ A physical timeout is an RPC transport failure, so an explicit `CompletionLadder
 
 A timed-out physical attempt has unknown reported cost. Ladder aggregate cost stays unknown, and a budgeted call keeps its conservative reservation if no authoritative usage arrived. The remaining budget may therefore refuse a fallback before it sends another request. See the [routing guide](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/ROUTING.md) for the explicit ladder API.
 
-<!-- Source: gitbooks/developing/embed/concepts/cron.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/cron.md -->
 ---
 description: "Cron provides durable named jobs, explicit run-now execution and job history addressed to registered agents."
 ---
@@ -592,7 +592,7 @@ The example checks stable upsert identity, executes a job immediately, inspects 
 
 Removing or dropping an agent deregisters its context, leaving addressed cron jobs dormant rather than silently running them as the operator. Hosts can register runtime system-job handlers for work they own outside a model turn. Review [runtime configuration](runtime-defaults.md) and [channels](channels.md) when mixing scheduled work with public chat input.
 
-<!-- Source: gitbooks/developing/embed/concepts/errors.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/errors.md -->
 ---
 description: "Typed errors distinguish build availability, expected domain states, host setup failures and removed agent instances."
 ---
@@ -655,7 +655,7 @@ The example's refused write is handled as a tool result while the turn can still
 
 Bearer routes refuse non-TLS remote endpoints before sending credentials. `BACKEND_UNAVAILABLE` means the embed-only host has no backend transport installed; check the host layer before rotating keys. Agent removal makes later turns on retained handles return `AgentRemoved`, even when its ID now belongs to another instance. See [troubleshooting](../troubleshooting.md) and [provider integration](../integrations/openai-compatible.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/hooks-seams.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/hooks-seams.md -->
 ---
 description: "Host seams replace infrastructure ports; hooks observe or control selected turn and tool boundaries."
 ---
@@ -702,7 +702,7 @@ The example verifies that an agent-local post-turn counter observes the configur
 
 Removing or replacing a builder-installed named hook through the runtime API affects that registration too; the runtime tracks and restores prior process slots when its seam ownership ends. Keep hooks fast, cancellation-aware and free of sensitive logging. Use the generated [setter list](../builder-setters.md) and [API reference](../api-reference.md) for the actual port signatures.
 
-<!-- Source: gitbooks/developing/embed/concepts/mcp.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/mcp.md -->
 ---
 description: "MCP servers add remote tool discovery and execution to one agent, with explicit server configuration and tool allowlists."
 ---
@@ -778,7 +778,7 @@ The example uses a real loopback protocol stub: it verifies initialization, `too
 
 Tool allowlists reduce the remote catalog before model disclosure. Server authentication remains host-owned input, and remote tool side effects still pass through the relevant execution/access policy. Removing the agent evicts its MCP host after old-instance teardown, before the ID can be reused. See the [MCP integration](../integrations/mcp.md) for deployment setup.
 
-<!-- Source: gitbooks/developing/embed/concepts/memory.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/memory.md -->
 ---
 description: "The typed memory facade binds a namespace before learning, retrieving or forgetting records."
 ---
@@ -823,7 +823,7 @@ The example uses the reference in-memory engine and proves that another namespac
 
 Background conversation ingestion can run independently of a completed turn. Tests should disable unrelated learning/ingest activity when asserting ephemeral-workspace cleanup. See [runtime defaults](runtime-defaults.md), [storage drivers](../integrations/storage-drivers.md), and the [memory architecture](../../architecture/memory.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/observability.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/observability.md -->
 ---
 description: "Runtime metadata events track lifecycle and approvals; turn streams carry per-turn progress and the final result."
 ---
@@ -898,7 +898,7 @@ The example checks ordered add/start/end/remove events and confirms that private
 
 When simultaneous turns share an origin thread, approval correlation can be ambiguous and its turn ID is absent rather than guessed. Handle receiver lag by refreshing state, and do not send text from `AgentProgress` to content-free analytics. See [turns and sessions](turns-sessions.md), [approvals](access-approvals.md), and [testing](testing.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/profiles-saas.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/profiles-saas.md -->
 ---
 description: "ProfileRuntime isolates authenticated users by workspace, credentials, conversations and event streams."
 ---
@@ -961,7 +961,7 @@ The example creates Alice and Bob with the same thread name and verifies that ea
 
 Production managed calls need the TinyHumans transport installed by the host layer. `ProfileHandle::call` exposes the reviewed user surface rather than arbitrary operator controllers. Profiles do not make a shared file-system action directory safe automatically; provision external application resources per user too. See [SaaS deployment guide](../guides/saas-multi-tenant.md) and [SaaS architecture](../../saas-profiles.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/providers.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/providers.md -->
 ---
 description: "A provider supplies a route or native ChatModel implementation, with agent overrides and optional ordered fallback."
 ---
@@ -1043,7 +1043,7 @@ Ordered fallback advances only on eligible provider failures before visible outp
 
 Use HTTPS when sending bearer credentials; loopback HTTP is supported for local test/model servers. Managed inference needs the TinyHumans host transport and a runtime credential. See [OpenAI-compatible integration](../integrations/openai-compatible.md), [managed integration](../integrations/tinyhumans-managed.md), and [local models](../integrations/local-models.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/runtime-defaults.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/runtime-defaults.md -->
 ---
 description: "Runtime defaults form the starting point for newly registered agents; explicit agent settings override them."
 ---
@@ -1107,7 +1107,7 @@ The example checks the request bodies actually received by both providers, inclu
 
 Use the generated [builder setters](../builder-setters.md) for the current knob list. [Configuration and installation](../installation.md) explain runtime configuration discovery; [providers](providers.md) cover route selection and native models.
 
-<!-- Source: gitbooks/developing/embed/concepts/runtime.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/runtime.md -->
 ---
 description: "A Runtime owns one initialized core and the process-wide resources that its agents share."
 ---
@@ -1149,7 +1149,7 @@ The process guard rejects a second runtime with `RuntimeError::AlreadyRunning`. 
 
 Dropping the runtime handle does not tear down the core while an agent still holds it. Drop listeners, agents and the runtime before restarting the host in the same process. See [architecture](../architecture.md), [defaults](runtime-defaults.md), and the generated [builder setters](../builder-setters.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/skills.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/skills.md -->
 ---
 description: "Skills are copied bundles of instructions and resources discovered inside an agent\u2019s own home."
 ---
@@ -1198,7 +1198,7 @@ The example writes a bundle, registers an agent, checks the copied contents and 
 
 A resumed session's prompt is frozen, so adding or editing a bundle does not rewrite an existing conversation's recorded prefix. Start a new session when you want updated instructions to become visible. See [turns and sessions](turns-sessions.md) and the generated [builder setters](../builder-setters.md) for runtime policy knobs.
 
-<!-- Source: gitbooks/developing/embed/concepts/testing.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/testing.md -->
 ---
 description: "Deterministic local providers and explicit observations prove behavior without contacting real inference or backend services."
 ---
@@ -1280,7 +1280,7 @@ Run the offline example suite with `node scripts/run-embed-examples.mjs`; it cle
 
 Build your Tokio workers with the documented large stack constants for nested agent turns. Use channels, cancellation guards and bounded waits to prove lifecycle transitions instead of sleeps. The [mock-backend guide](../guides/mock-backend-testing.md) covers host fixtures, and [troubleshooting](../troubleshooting.md) distinguishes compile gates from runtime availability.
 
-<!-- Source: gitbooks/developing/embed/concepts/tools.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/tools.md -->
 ---
 description: "Tool catalogs expose only the allowed execution surface; host tools use the same native Tool contract as built-in tools."
 ---
@@ -1343,7 +1343,7 @@ The example drives an actual host tool call and inspects the provider's advertis
 
 Runtime tool hooks apply across agents; local hooks observe only their configured agent. Tool attachments can be added and removed for later turns, while existing durable sessions retain recorded declarations. See [hooks](hooks-seams.md), [MCP](mcp.md), and [access and approvals](access-approvals.md).
 
-<!-- Source: gitbooks/developing/embed/concepts/turns-sessions.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/concepts/turns-sessions.md -->
 ---
 description: "A turn is one native model/tool loop; a session is the durable identity that makes subsequent turns a conversation."
 ---
@@ -1404,13 +1404,19 @@ description: "A turn is one native model/tool loop; a session is the durable ide
 
 [Complete runnable example](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/streaming.rs). The full file includes imports, runtime setup and local fixtures used by this excerpt.
 
+## Attaching files
+
+A host that already holds a file's bytes (an inbound photo from a channel webhook, an upload) attaches it with `Turn::attach(HostAttachment::new(bytes, mime).named(name))`, or several at once with `Turn::attachments`. Each file is staged into the agent's acting workspace and reaches the model ahead of the message: `image/*` as an image block, anything else as a document block. A model that cannot take a file natively gets the core's fallback instead (extracted text for PDF and Office documents, a vision readout for images, metadata otherwise). The `[multimodal]` and `[multimodal_files]` count and size limits apply, and a turn over them fails before any model call. Blank or `application/octet-stream` types are sniffed from the name and bytes.
+
+No local path is read, so attachments are accepted whatever the turn's origin, including external-channel turns whose `[IMAGE:…]`/`[FILE:…]` text markers are refused. Only a runtime-owned `Agent` carries them: a turn on a caller-built runtime's orchestrator (`Core::agent`) is refused with `attachments_unsupported` rather than run without its files, because `inference.agent_chat` carries only a string.
+
 ## Behavior to account for
 
 The stream example checks that deltas precede the final result and that collected and streaming replies agree. A cancellation token passed to a turn is preserved by streaming; cancellation unblocks forwarding even when the consumer has stopped draining a full buffer.
 
 The harness derives transcript paths from the thread and agent IDs without a timestamp. Resumed sessions reuse their recorded system prompt and tool declarations; edits to prompts, skills or integrations apply to new sessions. Compaction seals a generation and opens a child instead of erasing history. See [observability](observability.md) for session IDs versus per-call turn IDs, and [API reference](../api-reference.md) for the session-store port.
 
-<!-- Source: gitbooks/developing/embed/faq.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/faq.md -->
 ---
 description: "Answers to common host, lifecycle, feature and provider choices."
 ---
@@ -1453,7 +1459,7 @@ A resumed session reuses recorded system messages and tool declarations. Start a
 
 [RuntimeBuilder setters](builder-setters.md) is generated from actual consuming public setters, with source signatures. Host/weight presets and non-setter methods are intentionally documented through [API reference](api-reference.md).
 
-<!-- Source: gitbooks/developing/embed/guides/README.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/README.md -->
 ---
 description: "Build a chatbot, host multiple agents, serve profiles, or test an embedded runtime."
 icon: code
@@ -1472,7 +1478,7 @@ Choose the guide that matches your host:
 
 Start with [Embedding](../README.md) for the library boundary and quickstart. See [Integrations](../integrations/README.md) for providers, storage, MCP, and channels.
 
-<!-- Source: gitbooks/developing/embed/guides/cli-chatbot.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/cli-chatbot.md -->
 ---
 description: "Collect a reply or consume progress events in a Rust command-line host."
 icon: code
@@ -1548,7 +1554,7 @@ For incremental output, consume `agent.stream(...)` until `StreamEvent::Finished
 
 The [complete streaming example](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/streaming.rs) checks that text arrives before completion and that the offline streamed reply equals a collected reply. [Provider configuration](../integrations/openai-compatible.md) covers explicit live inference.
 
-<!-- Source: gitbooks/developing/embed/guides/deploy-server.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/deploy-server.md -->
 ---
 description: "Invoke agents from a host-owned HTTP service without adding RPC to Embed."
 icon: code
@@ -1608,7 +1614,7 @@ Use your HTTP framework for a deployed service. The example's one-request parser
 
 If your host needs OpenHuman's existing JSON-RPC server, depend on `openhuman-rpc`, the layer above Embed. Adding that dependency to Embed would reverse the crate chain. [Channels](../integrations/channels.md) provide another way to deliver messages to bound agents.
 
-<!-- Source: gitbooks/developing/embed/guides/lean-headless.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/lean-headless.md -->
 ---
 description: "Control runtime activity separately from compile-time Cargo features."
 icon: code
@@ -1643,7 +1649,7 @@ A headless host also owns process setup: initialize its encryption key before st
 
 [Storage drivers](../integrations/storage-drivers.md) covers persistent backends. The [complete capability_report example](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/capability_report.rs) reports compiled features and active services without exposing provider keys or URLs.
 
-<!-- Source: gitbooks/developing/embed/guides/mock-backend-testing.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/mock-backend-testing.md -->
 ---
 description: "Run the embedding examples offline and verify behavior, not just compilation."
 icon: code
@@ -1693,7 +1699,7 @@ The [complete host_tools example](https://github.com/tinyhumansai/openhuman/blob
 
 Run a single gated example with `cargo run -p openhuman-embed --example mcp --features mcp`, or use the full runner to select all gates automatically. The individual examples default to offline mode. Only the [explicit live provider options](../integrations/openai-compatible.md) and [MongoDB live option](../integrations/storage-drivers.md) contact configured services.
 
-<!-- Source: gitbooks/developing/embed/guides/multi-agent.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/multi-agent.md -->
 ---
 description: "Share one runtime while configuring independent agent prompts and working folders."
 icon: code
@@ -1780,7 +1786,7 @@ Runtime defaults can supply a provider and model settings; individual agents ove
 
 <!-- END EMBED -->
 
-<!-- Source: gitbooks/developing/embed/guides/saas-multi-tenant.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/guides/saas-multi-tenant.md -->
 ---
 description: "Isolate user credentials, workspaces, and conversation history with ProfileRuntime."
 icon: code
@@ -1832,7 +1838,7 @@ Run `cargo run -p openhuman-embed --example profiles`. The [complete profiles ex
 
 Authenticate users in your host before selecting a profile. Keep the operator's configuration and gateway credential separate from user credentials. [Managed inference](../integrations/tinyhumans-managed.md) explains who provides the backend transport.
 
-<!-- Source: gitbooks/developing/embed/installation.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/installation.md -->
 ---
 description: "Add the Embed dependency, choose compile-time gates, and configure the host\u2019s runtime and state deliberately."
 ---
@@ -1887,7 +1893,7 @@ Initialize the credential master key through `openhuman_embed::process::init_mas
 
 The example checks the effective report after boot and proves that credentials, provider URL and workspace path are absent. The generated matrix uses the fixed default-feature report command; it describes that build, not every feature combination a host might compile.
 
-<!-- Source: gitbooks/developing/embed/integrations/README.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/README.md -->
 ---
 description: "Choose provider, tool, storage, and channel adapters for your host."
 icon: code
@@ -1908,7 +1914,7 @@ An embedded runtime composes the capabilities its host supplies. Start with the 
 
 [Guides](../guides/README.md) show how these pieces fit into a CLI, an HTTP server, or a SaaS host. Every linked executable example defaults to offline mode; a live endpoint requires an explicit choice.
 
-<!-- Source: gitbooks/developing/embed/integrations/channels.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/channels.md -->
 ---
 description: "Bind an incoming channel to an agent and verify the delivered reply."
 icon: code
@@ -1992,7 +1998,7 @@ Keep channel credentials in host configuration and map messages to the intended 
 
 For a live Telegram host, supply the real Bot API configuration through your application's channel setup. This offline example deliberately has no live channel environment switch. [Deploy a server](../guides/deploy-server.md) covers a host-owned HTTP alternative.
 
-<!-- Source: gitbooks/developing/embed/integrations/composio.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/composio.md -->
 ---
 description: "Pin connector credentials per agent while the host supplies backend transport."
 icon: code
@@ -2008,7 +2014,7 @@ The repository's [Composio agent integration test](https://github.com/tinyhumans
 
 Account login, linking, and credential acquisition belong to your connected host and connector layer. Keep secrets out of prompts and capability reports. For multiple users, use [SaaS profiles](../guides/saas-multi-tenant.md); independent action directories on a shared library runtime do not establish tenant isolation.
 
-<!-- Source: gitbooks/developing/embed/integrations/local-models.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/local-models.md -->
 ---
 description: "Use a local OpenAI-compatible server or inject a native ChatModel implementation."
 icon: code
@@ -2079,7 +2085,7 @@ Run `cargo run -p openhuman-embed --example custom_provider`. The [complete cust
 
 For live local inference, configure model availability and authentication in your server. For runtime selection and service controls, see [Lean and headless hosts](../guides/lean-headless.md).
 
-<!-- Source: gitbooks/developing/embed/integrations/mcp.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/mcp.md -->
 ---
 description: "Connect a declared MCP server and verify remote discovery and execution."
 icon: code
@@ -2144,7 +2150,7 @@ The immediately available `mcp_list_tools` and `mcp_call_tool` bridge tools work
 
 MCP transport does not bypass the host's execution policy. Configure agent access and approvals for actions exposed by the server. [Mock testing](../guides/mock-backend-testing.md) keeps this protocol path local during development.
 
-<!-- Source: gitbooks/developing/embed/integrations/openai-compatible.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/openai-compatible.md -->
 ---
 description: "Route inference to an explicit endpoint and bearer without changing shared host configuration."
 icon: code
@@ -2199,7 +2205,7 @@ Examples using `support::example_provider` switch to live inference only with `O
 
 For a non-HTTP implementation, [local and custom models](local-models.md) covers `Provider::custom`, native fallback, and role pins. [Managed inference](tinyhumans-managed.md) uses a different backend transport boundary.
 
-<!-- Source: gitbooks/developing/embed/integrations/storage-drivers.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/storage-drivers.md -->
 ---
 description: "Configure SQLite or MongoDB through Embed and inspect the selected backend."
 icon: code
@@ -2285,7 +2291,7 @@ Run `cargo run -p openhuman-embed --example storage --features storage-sqlite`. 
 
 The only live database path in this example is `OPENHUMAN_EXAMPLE_MONGODB_URL`. To exercise it deliberately, enable both `storage-sqlite` and `storage-mongodb` and supply your own MongoDB URL. The offline CI runner clears this setting. A deployed host supplies its persistent URL and credentials through its own configuration.
 
-<!-- Source: gitbooks/developing/embed/integrations/tinyhumans-managed.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/tinyhumans-managed.md -->
 ---
 description: "Install the host backend transport before using managed inference and hosted services."
 icon: code
@@ -2339,7 +2345,7 @@ See the [complete profiles example](https://github.com/tinyhumansai/openhuman/bl
 
 Use [OpenAI-compatible routing](openai-compatible.md) when your host wants to send inference directly to a BYOK endpoint. That explicit provider route does not supply hosted backend services.
 
-<!-- Source: gitbooks/developing/embed/integrations/web-search.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/integrations/web-search.md -->
 ---
 description: "Pin a web-search provider key per agent, held only in memory."
 icon: code
@@ -2359,7 +2365,7 @@ Provider order per role still comes from `search.roles` and TinySearch's default
 
 The repository's [pinned-key integration test](https://github.com/tinyhumansai/openhuman/blob/main/tests/search_pinned_keys_e2e.rs) runs two agents with different keys against a loopback provider. It checks each call's outgoing key, and that no key reaches the environment, a file or a log line.
 
-<!-- Source: gitbooks/developing/embed/quickstart.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/quickstart.md -->
 ---
 description: "Run one agent against a local fixture, then choose a provider and working directory for your host."
 ---
@@ -2414,7 +2420,7 @@ For managed TinyHumans inference, use the [TinyHumans host integration](integrat
 
 Drop listeners and agent handles before shutting down the runtime. For early removal, await `remove_agent` so retained handles stop admitting turns and the old ID is released only after cleanup.
 
-<!-- Source: gitbooks/developing/embed/troubleshooting.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/troubleshooting.md -->
 ---
 description: "Diagnose missing features, blocked turns, credentials, state paths and lifecycle failures."
 ---
@@ -2467,9 +2473,9 @@ Reproduce behavior with [offline testing](guides/mock-backend-testing.md) before
 
 A typed Rust facade for running the OpenHuman core inside your application: one Runtime per process, with independently configured Agents.
 
-Read the [embedding documentation](https://github.com/tinyhumansai/openhuman/blob/main/gitbooks/developing/embed/README.md), [installation](https://github.com/tinyhumansai/openhuman/blob/main/gitbooks/developing/embed/installation.md), and [quickstart](https://github.com/tinyhumansai/openhuman/blob/main/gitbooks/developing/embed/quickstart.md).
+Read the [embedding documentation](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/README.md), [installation](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/installation.md), and [quickstart](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/quickstart.md).
 
-The [cookbook](https://github.com/tinyhumansai/openhuman/blob/main/gitbooks/developing/embed/cookbook.md) is generated from executable examples. Generate complete local API docs with `cargo doc -p openhuman-embed --all-features --no-deps --open`; this workspace crate is currently unpublished.
+The [cookbook](https://github.com/tinyhumansai/openhuman/blob/main/docs/gitbooks/en/developing/embed/cookbook.md) is generated from executable examples. Generate complete local API docs with `cargo doc -p openhuman-embed --all-features --no-deps --open`; this workspace crate is currently unpublished.
 
 Hosts supply transport, credentials and application resources. Runtime settings establish shared defaults; agents narrow provider, access, prompt and tool behavior. Use ProfileRuntime when users require separate credentials and workspaces.
 
@@ -2494,6 +2500,24 @@ group, including descendants. Other platforms stop the direct command. Host
 tools that spawn independent tasks or processes must provide their own cleanup;
 MCP server lifecycles remain owned by the agent. Keep polling `send()` while
 awaiting cancellation, for example in a spawned task.
+
+## Steering one turn
+
+Acquire `Turn::steering_handle()` before sending a turn to add messages to it
+while it runs. The handle is cloneable and `Send + Sync`; `steer(text)` queues
+a user message that the agent loop applies at its next safe checkpoint:
+before the first model call, after a tool batch has settled, or when the model
+has just written its final answer. In that last case the draft stays on the
+transcript, the steer follows it, and the model is called once more, so a
+message that arrives during a plain chat turn's only model call still shapes
+that turn's reply. Nothing interrupts a model call or a tool already running.
+The model sees each steer as `[User steering message]: <text>`.
+
+Nothing is dropped silently. Steers the turn ended without applying come back
+on `TurnOutcome::unapplied_steers`, or from `TurnSteering::take_unapplied()`
+when the turn failed or was cancelled. A steer sent after the turn ended is
+refused with `SteerRefused`, which carries its text (`into_text()`). The host
+decides whether to run what came back as the next turn.
 
 ## Scoped worker hooks
 
@@ -2552,7 +2576,13 @@ Standalone exact source pins and generated Cargo patches: [consumer setup](CONSU
 Ordered fallbacks and required exploration: [routing](ROUTING.md).
 Host telemetry and the existing exporter: [observers](OBSERVERS.md).
 
-<!-- Source: gitbooks/developing/embedding.md -->
+<!-- Source: docs/gitbooks/en/developing/embedding.md -->
+---
+description: >-
+  How to run the OpenHuman core inside your own Rust program: one Runtime,
+  with any number of separately configured Agents on it.
+icon: code
+---
 # Embedding OpenHuman
 
 The embedding documentation now lives in the [Embedding section](embed/README.md).
@@ -2561,7 +2591,7 @@ Start with [installation](embed/installation.md) and the [quickstart](embed/quic
 
 The public library uses one Runtime per process with independently configured Agents. For isolated authenticated users, read [profiles and SaaS](embed/concepts/profiles-saas.md).
 
-<!-- Source: gitbooks/developing/embed/cookbook.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/cookbook.md -->
 # Cookbook
 
 <!-- Generated by scripts/generate-embed-docs.mjs; do not edit. -->
@@ -2752,7 +2782,7 @@ Two agents with independent prompts and working folders.
 
 Run: `cargo run -p openhuman-embed --example two_agents`
 
-<!-- Source: gitbooks/developing/embed/capability-matrix.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/capability-matrix.md -->
 # Compiled feature matrix
 
 <!-- Generated by scripts/generate-embed-docs.mjs; do not edit. -->
@@ -2779,64 +2809,67 @@ This matrix comes from the default-feature compiled capability-report example. R
 | `skills` | Yes |
 | `storage-file` | No |
 | `storage-mongodb` | No |
+| `storage-s3` | No |
 | `storage-sqlite` | Yes |
 | `tinymemes` | Yes |
 | `voice` | No |
 | `web3` | No |
 | `whatsapp-web` | No |
 
-<!-- Source: gitbooks/developing/embed/builder-setters.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/builder-setters.md -->
 # RuntimeBuilder setters
 
 <!-- Generated by scripts/generate-embed-docs.mjs; do not edit. -->
 
 Public consuming methods that return `Self`, extracted from the RuntimeBuilder implementations. Static host and weight presets, inspection methods and build/run methods are excluded.
 
-- [`access`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L348): `pub fn access(mut self, access: Access) -> Self`
-- [`action_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L305): `pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self`
-- [`agent_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L156): `pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self`
-- [`api_key`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L325): `pub fn api_key(mut self, key: impl Into<ApiKey>) -> Self`
-- [`autonomy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L191): `pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self`
-- [`backend_transport`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L230): `pub fn backend_transport(mut self, transport: Arc<dyn BackendTransport>) -> Self`
-- [`backend_url`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L335): `pub fn backend_url(mut self, url: impl Into<String>) -> Self`
-- [`config`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L465): `pub fn config(mut self, config: Config) -> Self`
-- [`config_source`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L313): `pub fn config_source(mut self, source: ConfigSource) -> Self`
+- [`access`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L387): `pub fn access(mut self, access: Access) -> Self`
+- [`action_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L344): `pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self`
+- [`agent_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L160): `pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self`
+- [`api_key`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L364): `pub fn api_key(mut self, key: impl Into<ApiKey>) -> Self`
+- [`autonomy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L195): `pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self`
+- [`backend_transport`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L234): `pub fn backend_transport(mut self, transport: Arc<dyn BackendTransport>) -> Self`
+- [`backend_url`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L374): `pub fn backend_url(mut self, url: impl Into<String>) -> Self`
+- [`config`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L504): `pub fn config(mut self, config: Config) -> Self`
+- [`config_source`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L352): `pub fn config_source(mut self, source: ConfigSource) -> Self`
 - [`controller_extension`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L415): `pub fn controller_extension(mut self, extension: ControllerExtension) -> Self`
-- [`cron`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L216): `pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self`
-- [`defer_services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L383): `pub fn defer_services(mut self) -> Self`
-- [`definition_base`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L175): `pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self`
-- [`domains`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L395): `pub fn domains(mut self, domains: DomainSet) -> Self`
-- [`host_kind`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L412): `pub fn host_kind(mut self, host_kind: HostKind) -> Self`
-- [`learning`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L211): `pub fn learning(mut self, value: super::LearningSettings) -> Self`
-- [`listen`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L434): `pub fn listen(self, host: impl Into<String>, port: u16) -> Self`
-- [`listen_host`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L439): `pub fn listen_host(mut self, host: impl Into<String>) -> Self`
-- [`listen_port`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L445): `pub fn listen_port(mut self, port: u16) -> Self`
+- [`cron`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L220): `pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self`
+- [`cron_delivery`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L278): `pub fn cron_delivery( mut self, delivery: Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>, ) -> Self`
+- [`cron_job_handler`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L292): `pub fn cron_job_handler( mut self, kind: crate::cron::JobKind, handler: Arc<dyn crate::cron::JobKindHandler>, ) -> Self`
+- [`defer_services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L422): `pub fn defer_services(mut self) -> Self`
+- [`definition_base`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L179): `pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self`
+- [`domains`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L434): `pub fn domains(mut self, domains: DomainSet) -> Self`
+- [`host_kind`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L451): `pub fn host_kind(mut self, host_kind: HostKind) -> Self`
+- [`learning`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L215): `pub fn learning(mut self, value: super::LearningSettings) -> Self`
+- [`listen`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L473): `pub fn listen(self, host: impl Into<String>, port: u16) -> Self`
+- [`listen_host`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L478): `pub fn listen_host(mut self, host: impl Into<String>) -> Self`
+- [`listen_port`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L484): `pub fn listen_port(mut self, port: u16) -> Self`
 - [`live_policy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L464): `pub fn live_policy(mut self, policy: Arc<SecurityPolicy>) -> Self`
-- [`max_agents`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L268): `pub fn max_agents(mut self, limit: usize) -> Self`
-- [`mcp_baseline`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L186): `pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self`
-- [`memory_engine`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L244): `pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self`
-- [`model_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L165): `pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self`
+- [`max_agents`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L307): `pub fn max_agents(mut self, limit: usize) -> Self`
+- [`mcp_baseline`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L190): `pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self`
+- [`memory_engine`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L248): `pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self`
+- [`model_defaults`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L169): `pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self`
 - [`modules`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/selection.rs#L155): `pub fn modules(mut self, modules: impl IntoIterator<Item = RuntimeModule>) -> Self`
 - [`post_turn_hook`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L430): `pub fn post_turn_hook(mut self, hook: Arc<dyn PostTurnHook>) -> Self`
-- [`privacy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L201): `pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self`
-- [`provider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L341): `pub fn provider(mut self, provider: Provider) -> Self`
-- [`sandbox`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L170): `pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self`
-- [`secrets`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L206): `pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self`
+- [`privacy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L205): `pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self`
+- [`provider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L380): `pub fn provider(mut self, provider: Provider) -> Self`
+- [`sandbox`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L174): `pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self`
+- [`secrets`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L210): `pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self`
 - [`server_launcher`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L444): `pub fn server_launcher(mut self, launcher: ServerLauncher) -> Self`
-- [`services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L367): `pub fn services(mut self, services: ServiceSet) -> Self`
-- [`session`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L455): `pub fn session(mut self, session: Session) -> Self`
-- [`session_store`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L259): `pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self`
-- [`skills`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L180): `pub fn skills(mut self, policy: super::SkillsPolicy) -> Self`
+- [`services`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L406): `pub fn services(mut self, services: ServiceSet) -> Self`
+- [`session`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L494): `pub fn session(mut self, session: Session) -> Self`
+- [`session_store`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L263): `pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self`
+- [`skills`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L184): `pub fn skills(mut self, policy: super::SkillsPolicy) -> Self`
 - [`storage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L457): `pub fn storage(mut self, source: impl Into<StorageSource>) -> Self`
-- [`token`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L422): `pub fn token(mut self, token: TokenSource) -> Self`
-- [`tool_groups`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L404): `pub fn tool_groups(mut self, tool_groups: ToolGroups) -> Self`
+- [`token`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L461): `pub fn token(mut self, token: TokenSource) -> Self`
+- [`tool_groups`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L443): `pub fn tool_groups(mut self, tool_groups: ToolGroups) -> Self`
 - [`tool_hook`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L437): `pub fn tool_hook(mut self, hook: Arc<dyn ToolHook>) -> Self`
 - [`tool_ranker`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/seams.rs#L422): `pub fn tool_ranker(mut self, ranker: Arc<dyn ToolRanker>) -> Self`
-- [`tool_rules`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L196): `pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self`
-- [`workspace`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L278): `pub fn workspace(mut self, workspace: Workspace) -> Self`
-- [`workspace_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L292): `pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self`
+- [`tool_rules`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L200): `pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self`
+- [`workspace`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L317): `pub fn workspace(mut self, workspace: Workspace) -> Self`
+- [`workspace_dir`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/runtime/builder.rs#L331): `pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self`
 
-<!-- Source: gitbooks/developing/embed/api-index.md -->
+<!-- Source: docs/gitbooks/en/developing/embed/api-index.md -->
 # API index
 
 <!-- Generated by scripts/generate-embed-docs.mjs; do not edit. -->
@@ -2904,13 +2937,18 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`HarnessBuilder`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`HarnessCore`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`HarnessError`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`HostAttachment`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`HostKind`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`HostTools`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`HostTurnTools`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`HttpHeader`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`InMemorySessionStores`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`JobKind`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`JobKindHandler`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`JobOrigin`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`JobOutcome`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`JobRun`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`JobRunContext`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`JobRunRecord`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`JobSchedule`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`JobSpec`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2960,6 +2998,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`Session`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`SessionStoreProvider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`SkillsPolicy`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`SteerRefused`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`StorageInfo`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`StreamEvent`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`StreamMode`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2982,6 +3021,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`TurnContext`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`TurnOutcome`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`TurnRequest`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`TurnSteering`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`TurnStream`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`UnknownKeyedSearchProvider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`VOICE_COMPILED_IN`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -3045,6 +3085,7 @@ The compiled capability report describes this build:
     "skills": true,
     "storage-file": false,
     "storage-mongodb": false,
+    "storage-s3": false,
     "storage-sqlite": true,
     "tinymemes": true,
     "voice": false,
@@ -3127,7 +3168,7 @@ The compiled capability report describes this build:
 
 <!-- Generated by scripts/generate-embed-docs.mjs; do not edit. -->
 
-[Cookbook](../../../gitbooks/developing/embed/cookbook.md)
+[Cookbook](../../../docs/gitbooks/en/developing/embed/cookbook.md)
 
 - [Polling and callback approvals with cancellation](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/approvals.rs): Allow and deny real parked writes, then cancel an in-flight callback without losing its pending request. (offline with loopback stubs; no live path.)
 - [Stable capability metadata before and after boot](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/capability_report.rs): Stable capability metadata before and after boot. (offline with loopback stubs; no live path.)

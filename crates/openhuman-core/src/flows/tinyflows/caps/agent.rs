@@ -24,7 +24,7 @@ use crate::inference::provider::{is_raw_passthrough_model, role_for_model_tier};
 /// agent kind by one of two paths, chosen by [`route_for_agent_ref`]:
 ///
 /// 1. **Full harness turn** (the common case, Phase A). When `agent_ref` names a
-///    harness [`AgentDefinition`](crate::agent::harness::definition::AgentDefinition),
+///    harness [`AgentDefinition`](crate::agent::harness::host_definition::AgentDefinition),
 ///    the node builds a real session agent
 ///    ([`OpenHumanSessionHost::from_config_for_agent`](crate::agent::OpenHumanSessionHost::from_config_for_agent)
 ///    + `set_agent_definition_name`) and drives one full turn via
@@ -68,6 +68,11 @@ use crate::inference::provider::{is_raw_passthrough_model, role_for_model_tier};
 /// caller's task), so HITL gating still applies to every fanned-out turn.
 pub struct OpenHumanAgentRunner {
     pub config: Arc<Config>,
+    /// The context the run acts under, handed over by whoever started it.
+    pub ctx: crate::core::runtime::DispatchCtx,
+    /// The run's approval context (flow run correlation), handed to the gate
+    /// with every acting dispatch.
+    pub approval: crate::security::approval::ApprovalTurnContext,
 }
 
 /// Process-wide ceiling on **simultaneous harness agent turns started by flow
@@ -133,7 +138,7 @@ pub(crate) fn route_for_agent_ref(agent_ref: &str) -> AgentRoute {
     if crate::agent::host_agents::resolve(agent_ref).is_some() {
         return AgentRoute::HostAgent;
     }
-    let has_definition = crate::agent::harness::definition::AgentDefinitionRegistry::current()
+    let has_definition = crate::agent::harness::host_definition::AgentDefinitionRegistry::current()
         .map(|reg| reg.get(agent_ref).is_some())
         .unwrap_or(false);
     if has_definition {
@@ -156,7 +161,7 @@ pub(crate) fn route_for_agent_ref(agent_ref: &str) -> AgentRoute {
 /// the session builder's generic `chat` role — which inherits
 /// `config.default_model` — to `make_openhuman_backend`, which forwards non-tier
 /// ids to the backend unchanged. Mirrors the per-node routing
-/// [`OpenHumanLlm::complete`] applies via [`resolve_completion_model`].
+/// [`OpenHumanLlm::complete`] applies via `agent_prompt::resolve_completion_model`.
 pub(crate) fn harness_model_default_override(node_model: &str) -> String {
     if is_raw_passthrough_model(node_model) {
         return node_model.to_string();
@@ -172,11 +177,13 @@ impl AgentRunner for OpenHumanAgentRunner {
         request: Value,
         conn: Option<&str>,
     ) -> Result<Value> {
+        // Entry point of a flow agent node: the run's own context.
+        let dispatch = self.ctx.clone();
         // The harness definition registry must be initialised before we can
         // build a named agent. Idempotent: a booted core already did this at
         // startup; a bare flow run (tests, standalone) has not. A failure here
         // is non-fatal — we log and fall through to the registry-entry route.
-        if let Err(e) = crate::agent::harness::definition::AgentDefinitionRegistry::init_global(
+        if let Err(e) = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global(
             &self.config.workspace_dir,
         ) {
             tracing::warn!(
@@ -200,7 +207,7 @@ impl AgentRunner for OpenHumanAgentRunner {
                     "[flows] agent_runner: HOST AGENT path — running the host-registered agent \
                      with its own tools in its own context"
                 );
-                self.run_via_harness(agent_ref, request, conn, None, host)
+                self.run_via_harness(&dispatch, agent_ref, request, conn, None, host)
                     .await
             }
             AgentRoute::Harness => {
@@ -212,7 +219,7 @@ impl AgentRunner for OpenHumanAgentRunner {
                 // A shipped/TOML harness definition has no `entry.model` — the
                 // definition's own `ModelSpec` (already applied by the session
                 // builder) is the only model pin in play here.
-                self.run_via_harness(agent_ref, request, conn, None, None)
+                self.run_via_harness(&dispatch, agent_ref, request, conn, None, None)
                     .await
             }
             AgentRoute::RegistryFallback => {
@@ -253,8 +260,15 @@ impl AgentRunner for OpenHumanAgentRunner {
                         // comment on this PR: this previously regressed to the
                         // default chat model for a custom flow agent with no
                         // per-node override).
-                        self.run_via_harness(agent_ref, request, conn, entry_model.as_deref(), None)
-                            .await
+                        self.run_via_harness(
+                            &dispatch,
+                            agent_ref,
+                            request,
+                            conn,
+                            entry_model.as_deref(),
+                            None,
+                        )
+                        .await
                     }
                     AgentRoute::RegistryFallback => {
                         tracing::info!(
@@ -263,7 +277,7 @@ impl AgentRunner for OpenHumanAgentRunner {
                             "[flows] agent_runner: FALLBACK path — persona-shaping single \
                              completion for a custom registry entry"
                         );
-                        self.run_via_registry_fallback(agent_ref, request, conn)
+                        self.run_via_registry_fallback(&dispatch, agent_ref, request, conn)
                             .await
                     }
                 }
@@ -319,6 +333,7 @@ impl OpenHumanAgentRunner {
     /// reaching for a background sub-agent from inside a single node.
     async fn run_via_harness(
         &self,
+        dispatch: &crate::core::runtime::DispatchCtx,
         agent_ref: &str,
         request: Value,
         conn: Option<&str>,
@@ -372,7 +387,9 @@ impl OpenHumanAgentRunner {
 
         let built = match &host {
             Some(host) => host.session_host(effective.as_ref(), None),
-            None => OpenHumanSessionHost::from_config_for_agent(effective.as_ref(), agent_ref),
+            None => {
+                OpenHumanSessionHost::from_config_for_agent(dispatch, effective.as_ref(), agent_ref)
+            }
         };
         let mut agent = built.map_err(|e| {
             EngineError::Capability(format!(
@@ -434,7 +451,7 @@ impl OpenHumanAgentRunner {
         // Cancellation: the run_registry token aborts the engine future, and the
         // inner turn drops with it (task-local scope unwinds cleanly).
         use crate::agent::turn_origin;
-        let escalated_origin = escalated_origin_for_nested_harness(turn_origin::current());
+        let escalated_origin = escalated_origin_for_nested_harness(self.ctx.turn_origin());
         if let Some(ref escalated) = escalated_origin {
             tracing::debug!(
                 target: "flows",
@@ -449,10 +466,10 @@ impl OpenHumanAgentRunner {
         > = if let Some(escalated) = escalated_origin {
             Box::pin(turn_origin::with_origin(
                 escalated,
-                agent.run_single(&prompt),
+                agent.run_single_with_approval(&prompt, None, self.approval.clone()),
             ))
         } else {
-            Box::pin(agent.run_single(&prompt))
+            Box::pin(agent.run_single_with_approval(&prompt, None, self.approval.clone()))
         };
         // A host agent's turn reads its own context (config, domains, tool
         // groups, session store); the origin task-local is untouched.
@@ -501,19 +518,20 @@ impl OpenHumanAgentRunner {
     /// agents don't regress.
     async fn run_via_registry_fallback(
         &self,
+        dispatch: &crate::core::runtime::DispatchCtx,
         agent_ref: &str,
         request: Value,
         conn: Option<&str>,
     ) -> Result<Value> {
         // Resolve + validate the requested agent kind against the registry.
-        let entry = crate::agent::registry::get_agent(agent_ref)
+        let entry = crate::agent::registry::get_agent(dispatch, agent_ref)
             .await
             .map_err(EngineError::Capability)?
             .ok_or_else(|| {
                 EngineError::Capability(format!(
-                    "agent node: unknown agent_ref '{agent_ref}' (neither a harness definition nor \
+                "agent node: unknown agent_ref '{agent_ref}' (neither a harness definition nor \
                      a custom agent registry entry)"
-                ))
+            ))
             })?;
         if !entry.enabled {
             return Err(EngineError::Capability(format!(
@@ -547,6 +565,7 @@ impl OpenHumanAgentRunner {
         }
 
         OpenHumanLlm {
+            ctx: self.ctx.clone(),
             config: self.config.clone(),
         }
         .complete(request, conn)

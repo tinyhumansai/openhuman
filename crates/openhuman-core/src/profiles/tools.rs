@@ -4,8 +4,10 @@
 //! ([`host::user_domains`](super::host::user_domains)): memory and thread
 //! tools, nothing that reaches the host. Shell and file tools sit in the
 //! `Platform` family, which a user context never enables. The operator opts
-//! users into them per deployment with `tool_allowlist`, one
-//! [`SaasToolGroup`] at a time:
+//! into tools supplied by an embedding host with `tool_allowlist`, one
+//! [`SaasToolGroup`] at a time. The allowlist grants admission, not registration:
+//! the standalone SaaS CLI has no host-tool adapter and exposes neither group.
+//! When an embedding host supplies the corresponding tools:
 //!
 //! - `host_files`: the file tools. They run in-process, confined by the
 //!   user's policy (`layout::profile_config`: autonomy on, workspace-only,
@@ -25,8 +27,8 @@
 
 use std::path::Path;
 
-use crate::core::runtime::is_saas;
 use crate::core::runtime::saas::SaasSandboxConfig;
+use crate::core::runtime::{is_saas, DispatchCtx};
 use crate::sandbox::{DockerOverrides, SandboxBackendKind, SandboxPolicy};
 
 /// A group of host tools an operator can opt users into.
@@ -109,12 +111,13 @@ pub const HARD_DENIED: &[&str] = &[
     "pushover",
 ];
 
-/// Tools outside a profile's domain families that an operator may still admit
-/// by naming them in `tool_scope(ToolScopeSpec::Named(..))`: the scheduler
-/// (`cron`, an Automation tool, bounded by `[cron] agent_jobs_only`) and the
-/// two clock tools (`current_time`, `resolve_time`, Platform tools with no
-/// reach beyond the wall clock). Nothing else in those families qualifies, and
-/// a name not in the operator's scope is never registered.
+/// Tools outside a profile's (or an embedded agent's) domain families that an
+/// operator may still admit by naming them in
+/// `tool_scope(ToolScopeSpec::Named(..))`: the scheduler (`cron`, bounded by
+/// `[cron] agent_jobs_only`) and the two clock tools (`current_time`,
+/// `resolve_time`, Platform tools with no reach beyond the wall clock).
+/// Nothing else in those families qualifies, and a name not in the scope is
+/// never registered. An embedded agent names them in its definition's scope.
 pub const OPERATOR_ADMITTABLE: &[&str] = &["cron", "current_time", "resolve_time"];
 
 /// Whether `tool` is hard-denied to users.
@@ -164,16 +167,23 @@ pub fn allowlisted() -> Vec<SaasToolGroup> {
         .unwrap_or_default()
 }
 
-/// The tool-list filter. Outside SaaS this is the domain filter alone.
+/// The tool-list filter. Outside SaaS this is the domain filter, plus the
+/// [`OPERATOR_ADMITTABLE`] tools the current agent names in its scope.
 pub fn admits(tool: &str, domain_ok: bool) -> bool {
+    // Transitional (#7801): the tool-list filter has no context of its own yet.
+    admits_in(&DispatchCtx::ambient(), tool, domain_ok)
+}
+
+/// [`admits`] for the agent `ctx` runs for.
+pub fn admits_in(ctx: &DispatchCtx, tool: &str, domain_ok: bool) -> bool {
     if !is_saas() {
-        return domain_ok;
+        return domain_ok || admitted_by_name(tool, current_named_tools(ctx).as_deref());
     }
     let mut admitted = admits_with(tool, domain_ok, &allowlisted());
     if !admitted
         && !domain_ok
         && !is_hard_denied(tool)
-        && super::capabilities::ProfileCapabilities::current()
+        && super::capabilities::ProfileCapabilities::in_ctx(ctx)
             .is_some_and(|caps| caps.names_admittable(tool))
     {
         admitted = true;
@@ -182,6 +192,24 @@ pub fn admits(tool: &str, domain_ok: bool) -> bool {
         log::debug!("[profiles][tools] withholding `{tool}` from profiles");
     }
     admitted
+}
+
+/// Whether `tool` is one of the [`OPERATOR_ADMITTABLE`] tools and `named`
+/// lists it.
+pub fn admitted_by_name(tool: &str, named: Option<&std::collections::HashSet<String>>) -> bool {
+    let admitted =
+        OPERATOR_ADMITTABLE.contains(&tool) && named.is_some_and(|names| names.contains(tool));
+    if admitted {
+        log::debug!("[profiles][tools] admitting named `{tool}` outside its domain family");
+    }
+    admitted
+}
+
+/// The named tool scope of the agent `ctx` serves, if any.
+fn current_named_tools(
+    ctx: &DispatchCtx,
+) -> Option<std::sync::Arc<std::collections::HashSet<String>>> {
+    ctx.host_overrides()?.named_tools()
 }
 
 /// The approval gate's answer in SaaS, where it never parks: `Ok` for a tool
@@ -196,11 +224,11 @@ pub fn gate_verdict_with(tool: &str, groups: &[SaasToolGroup]) -> Result<(), Str
 }
 
 /// [`gate_verdict_with`] for the running deployment.
-pub fn gate_verdict(tool: &str) -> Result<(), String> {
-    let verdict = if super::capabilities::ProfileCapabilities::current()
-        .is_some_and(|caps| caps.authorizes_approval(tool))
+pub fn gate_verdict(ctx: &crate::core::runtime::DispatchCtx, tool: &str) -> Result<(), String> {
+    let verdict = if super::capabilities::ProfileCapabilities::in_ctx(ctx)
+        .is_some_and(|caps| caps.authorizes_approval(ctx, tool))
     {
-        super::host::ensure_hosted()
+        super::host::ensure_hosted(ctx)
     } else {
         gate_verdict_with(tool, &allowlisted())
     };

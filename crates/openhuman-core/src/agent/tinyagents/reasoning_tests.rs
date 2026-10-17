@@ -83,20 +83,45 @@ fn thread_choice_wins_over_config_and_clears_back_to_it() {
     let mut config = Config::default();
     config.runtime.reasoning_effort = Some("low".into());
 
-    apply_requested_effort(thread, Some("high")).expect("valid effort");
+    apply_requested_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some("high"),
+    )
+    .expect("valid effort");
     assert_eq!(
-        turn_reasoning(Some(thread), Some(&config)),
+        turn_reasoning(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            Some(thread),
+            Some(&config)
+        ),
         Some(ReasoningConfig::effort(ReasoningEffort::High))
     );
 
     // Absent leaves the thread's choice untouched.
-    apply_requested_effort(thread, None).expect("absent is fine");
-    assert_eq!(thread_effort(thread), Some(ReasoningEffort::High));
-
-    apply_requested_effort(thread, Some("default")).expect("clear");
-    assert_eq!(thread_effort(thread), None);
+    apply_requested_effort(&crate::core::runtime::DispatchCtx::ambient(), thread, None)
+        .expect("absent is fine");
     assert_eq!(
-        turn_reasoning(Some(thread), Some(&config)),
+        thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread),
+        Some(ReasoningEffort::High)
+    );
+
+    apply_requested_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some("default"),
+    )
+    .expect("clear");
+    assert_eq!(
+        thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread),
+        None
+    );
+    assert_eq!(
+        turn_reasoning(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            Some(thread),
+            Some(&config)
+        ),
         Some(ReasoningConfig::effort(ReasoningEffort::Low))
     );
 }
@@ -104,39 +129,63 @@ fn thread_choice_wins_over_config_and_clears_back_to_it() {
 #[test]
 fn unknown_requested_effort_is_rejected_and_keeps_the_prior_choice() {
     let thread = "reasoning-test-thread-reject";
-    apply_requested_effort(thread, Some("off")).expect("valid effort");
-    assert!(apply_requested_effort(thread, Some("turbo")).is_err());
-    assert_eq!(thread_effort(thread), Some(ReasoningEffort::None));
-    set_thread_effort(thread, None);
+    apply_requested_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some("off"),
+    )
+    .expect("valid effort");
+    assert!(apply_requested_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some("turbo")
+    )
+    .is_err());
+    assert_eq!(
+        thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread),
+        Some(ReasoningEffort::None)
+    );
+    set_thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread, None);
 }
 
 #[test]
 fn turn_without_thread_or_config_has_no_reasoning() {
-    assert_eq!(turn_reasoning(None, None), None);
+    assert_eq!(
+        turn_reasoning(&crate::core::runtime::DispatchCtx::ambient(), None, None),
+        None
+    );
 }
 
 #[test]
 fn root_turn_follows_the_thread_choice() {
     let thread = "reasoning-test-thread-root";
-    set_thread_effort(thread, Some(ReasoningEffort::High));
+    set_thread_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some(ReasoningEffort::High),
+    );
     let mut ctx = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     ctx.thread_id = Some(thread.to_string());
     assert_eq!(
         turn_reasoning_for(&ctx, None, None),
         Some(ReasoningConfig::effort(ReasoningEffort::High))
     );
-    set_thread_effort(thread, None);
+    set_thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread, None);
 }
 
 #[test]
 fn subagent_turn_keeps_the_provider_default() {
     let thread = "reasoning-test-thread-subagent";
-    set_thread_effort(thread, Some(ReasoningEffort::High));
+    set_thread_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some(ReasoningEffort::High),
+    );
     let mut ctx = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     ctx.thread_id = Some(thread.to_string());
     ctx.spawn_depth = 1;
     assert_eq!(turn_reasoning_for(&ctx, None, None), None);
-    set_thread_effort(thread, None);
+    set_thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread, None);
 }
 
 #[test]
@@ -156,7 +205,11 @@ fn root_turn_reasoning_reserves_output_room_with_a_budget() {
     // the whole output cap and return `length` with no tool call. A capped
     // turn now also carries a thinking budget of about 55% of that cap.
     let thread = "reasoning-test-thread-budget";
-    set_thread_effort(thread, Some(ReasoningEffort::High));
+    set_thread_effort(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        thread,
+        Some(ReasoningEffort::High),
+    );
     let mut ctx = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     ctx.thread_id = Some(thread.to_string());
     let reasoning = turn_reasoning_for(
@@ -164,7 +217,7 @@ fn root_turn_reasoning_reserves_output_room_with_a_budget() {
         None,
         Some(crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS),
     );
-    set_thread_effort(thread, None);
+    set_thread_effort(&crate::core::runtime::DispatchCtx::ambient(), thread, None);
     assert_eq!(
         reasoning,
         Some(ReasoningConfig {
@@ -238,17 +291,26 @@ async fn reasoning_effort_stays_with_the_agent_that_chose_it() {
     let beta = test_agent_context(&root, "beta");
     let thread = "effort-shared-thread";
 
-    CoreContext::scope(std::sync::Arc::clone(&alpha), async {
-        set_thread_effort(thread, Some(ReasoningEffort::High));
-    })
-    .await;
+    {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&alpha));
+
+        set_thread_effort(&scope_ctx, thread, Some(ReasoningEffort::High));
+    };
 
     assert_eq!(
-        CoreContext::scope(alpha, async { thread_effort(thread) }).await,
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(alpha);
+
+            thread_effort(&scope_ctx, thread)
+        },
         Some(ReasoningEffort::High)
     );
     assert_eq!(
-        CoreContext::scope(beta, async { thread_effort(thread) }).await,
+        {
+            let scope_ctx = crate::core::runtime::DispatchCtx::new(beta);
+
+            thread_effort(&scope_ctx, thread)
+        },
         None
     );
 }

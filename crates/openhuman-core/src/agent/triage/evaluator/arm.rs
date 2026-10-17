@@ -8,7 +8,7 @@ use std::time::Instant;
 use anyhow::anyhow;
 
 use crate::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
-use crate::agent::harness::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::config::MultimodalConfig;
 use crate::core::bus::BUS;
 use crate::inference::provider::error_classify::{
@@ -146,6 +146,8 @@ pub(super) async fn try_arm(
             message_id: envelope.external_id.clone(),
             history_key: None,
         },
+        // Triage is not an interactive chat turn: no approval surface.
+        approval: Default::default(),
     };
 
     let response = match BUS

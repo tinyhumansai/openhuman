@@ -10,7 +10,10 @@ const helper = fileURLToPath(
   new URL("../ci/trust-checkout.sh", import.meta.url),
 );
 
-test("container checkout trust covers its submodules and excludes unrelated repositories", () => {
+test(
+  "container checkout trust covers its submodules and excludes unrelated repositories",
+  { skip: process.platform === "darwin" && "Git ownership checks are unavailable on macOS" },
+  () => {
   const root = mkdtempSync(join(tmpdir(), "checkout-trust-"));
   const env = {
     ...process.env,
@@ -121,4 +124,5 @@ test("container checkout trust covers its submodules and excludes unrelated repo
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+  },
+);

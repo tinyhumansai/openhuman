@@ -20,6 +20,7 @@ async fn prepare_messages_handles_mixed_image_and_file_markers() {
     ))];
 
     let prepared = prepare_messages_for_provider(
+        &DispatchCtx::ambient(),
         &messages,
         &MultimodalConfig::default(),
         &MultimodalFileConfig::default(),
@@ -94,9 +95,14 @@ async fn prepare_messages_rejects_absolute_file_marker_under_untrusted_channel_c
     let messages = vec![TranscriptMessage::user(
         "please summarise [FILE:/etc/passwd]".to_string(),
     )];
-    let err = prepare_messages_for_provider(&messages, &MultimodalConfig::default(), &cfg)
-        .await
-        .expect_err("absolute file marker on a channel turn must be rejected");
+    let err = prepare_messages_for_provider(
+        &DispatchCtx::ambient(),
+        &messages,
+        &MultimodalConfig::default(),
+        &cfg,
+    )
+    .await
+    .expect_err("absolute file marker on a channel turn must be rejected");
     assert!(
         err.to_string().contains("multimodal file limit exceeded"),
         "expected TooManyFiles, got {err}"
@@ -112,9 +118,14 @@ async fn prepare_messages_rejects_relative_file_marker_under_untrusted_channel_c
     let messages = vec![TranscriptMessage::user(
         "what does [FILE:./relative.txt] say?".to_string(),
     )];
-    let err = prepare_messages_for_provider(&messages, &MultimodalConfig::default(), &cfg)
-        .await
-        .expect_err("relative file marker on a channel turn must be rejected");
+    let err = prepare_messages_for_provider(
+        &DispatchCtx::ambient(),
+        &messages,
+        &MultimodalConfig::default(),
+        &cfg,
+    )
+    .await
+    .expect_err("relative file marker on a channel turn must be rejected");
     assert!(
         err.to_string().contains("multimodal file limit exceeded"),
         "expected TooManyFiles, got {err}"
@@ -128,9 +139,14 @@ async fn prepare_messages_under_untrusted_channel_config_passes_plain_text_throu
     // ordinary channel chatter.
     let cfg = MultimodalFileConfig::for_untrusted_channel_input();
     let messages = vec![TranscriptMessage::user("hello, how are you?".to_string())];
-    let prepared = prepare_messages_for_provider(&messages, &MultimodalConfig::default(), &cfg)
-        .await
-        .expect("plain channel text must pass through the hardened config");
+    let prepared = prepare_messages_for_provider(
+        &DispatchCtx::ambient(),
+        &messages,
+        &MultimodalConfig::default(),
+        &cfg,
+    )
+    .await
+    .expect("plain channel text must pass through the hardened config");
     assert!(!prepared.contains_files);
     assert!(!prepared.contains_images);
     assert_eq!(prepared.messages.len(), 1);
@@ -142,7 +158,12 @@ async fn prepare_messages_under_untrusted_channel_config_passes_plain_text_throu
 async fn inline_file_attachments_replaces_marker_with_extracted_text() {
     // base64("hello world") = aGVsbG8gd29ybGQ=
     let msg = "summarize [FILE:data:text/plain;base64,aGVsbG8gd29ybGQ=]";
-    let out = inline_file_attachments(msg, &MultimodalFileConfig::default()).await;
+    let out = inline_file_attachments(
+        &DispatchCtx::ambient(),
+        msg,
+        &MultimodalFileConfig::default(),
+    )
+    .await;
     assert!(
         out.contains("[FILE-EXTRACTED"),
         "extracted block present: {out}"
@@ -158,7 +179,12 @@ async fn inline_file_attachments_replaces_marker_with_extracted_text() {
 #[tokio::test]
 async fn inline_file_attachments_noop_without_marker() {
     let msg = "just a normal message";
-    let out = inline_file_attachments(msg, &MultimodalFileConfig::default()).await;
+    let out = inline_file_attachments(
+        &DispatchCtx::ambient(),
+        msg,
+        &MultimodalFileConfig::default(),
+    )
+    .await;
     assert_eq!(out, msg);
 }
 
@@ -180,8 +206,8 @@ async fn stash_image_attachments_replaces_marker_with_placeholder() {
 }
 
 #[tokio::test]
-async fn image_placeholder_rehydrates_to_disk_path_for_provider() {
-    // Ingress: stash the image to disk and leave a placeholder.
+async fn image_placeholder_rehydrates_to_inline_data_uri_for_provider() {
+    // Ingress: stash the image in the blob store and leave a placeholder.
     let msg = format!("describe [IMAGE:{TINY_PNG_DATA_URI}]");
     let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
     let messages = vec![TranscriptMessage::user(placeholdered)];
@@ -190,7 +216,7 @@ async fn image_placeholder_rehydrates_to_disk_path_for_provider() {
     // Dispatch (vision model): rehydrate to an inline [IMAGE:<path>] marker that
     // points at the on-disk attachment. The index is rebuilt from disk on every
     // call (no in-memory state), so this resolves even after a process restart.
-    let rehydrated = rehydrate_image_placeholders(&messages);
+    let rehydrated = rehydrate_image_placeholders(&messages).await;
     assert_eq!(rehydrated.len(), 1);
     let content = rehydrated[0].content.clone();
     assert!(
@@ -202,19 +228,16 @@ async fn image_placeholder_rehydrates_to_disk_path_for_provider() {
         "placeholder consumed: {content}"
     );
 
-    // The marker points at a real file on disk.
-    let start = content.find("[IMAGE:").unwrap() + "[IMAGE:".len();
-    let end = content[start..].find(']').unwrap() + start;
-    let path = &content[start..end];
-    assert!(path.ends_with(".png"), "disk path carries ext: {path}");
+    // The marker carries the stashed bytes as an inline data URI.
     assert!(
-        std::path::Path::new(path).is_file(),
-        "attachment persisted to disk: {path}"
+        content.contains("[IMAGE:data:image/png;base64,"),
+        "stashed attachment rehydrated inline: {content}"
     );
 
     // Round-trip: the provider prep step re-reads the file back into a data URI,
     // so the model still receives inline image bytes.
     let prepared = prepare_messages_for_provider(
+        &DispatchCtx::ambient(),
         &rehydrated,
         &MultimodalConfig::default(),
         &MultimodalFileConfig::default(),
@@ -230,14 +253,14 @@ async fn image_placeholder_rehydrates_to_disk_path_for_provider() {
     );
 }
 
-#[test]
-fn rehydrate_missing_stash_id_keeps_placeholder_text() {
+#[tokio::test]
+async fn rehydrate_missing_stash_id_keeps_placeholder_text() {
     // A placeholder whose id is absent from the stash (e.g. after a restart) is
     // left verbatim rather than dropped — the model still sees a text mention.
     let messages = vec![TranscriptMessage::user(
         "see [Image: image #att:deadbeefdeadbeef]".to_string(),
     )];
-    let out = rehydrate_image_placeholders(&messages);
+    let out = rehydrate_image_placeholders(&messages).await;
     assert!(out[0]
         .content
         .contains("[Image: image #att:deadbeefdeadbeef]"));
@@ -252,7 +275,7 @@ async fn inline_file_attachments_caps_at_max_files() {
         max_files: 1,
         ..MultimodalFileConfig::default()
     };
-    let out = inline_file_attachments(msg, &cfg).await;
+    let out = inline_file_attachments(&DispatchCtx::ambient(), msg, &cfg).await;
     // First file is extracted; the second is over the cap → placeholder, unread.
     assert!(
         out.contains("[FILE-EXTRACTED"),
@@ -296,7 +319,7 @@ fn extract_image_placeholders_pulls_att_tokens_in_order() {
 #[tokio::test]
 async fn sweep_keeps_fresh_attachments() {
     // A freshly-written attachment (age < TTL) survives the startup sweep, and
-    // the disk index resolves it — the core of restart-survival.
+    // the index resolves it — the core of restart-survival.
     let msg = format!("[IMAGE:{TINY_PNG_DATA_URI}]");
     let placeholdered = stash_image_attachments(&msg, &MultimodalConfig::default()).await;
     let id = placeholdered
@@ -308,9 +331,22 @@ async fn sweep_keeps_fresh_attachments() {
 
     sweep_stale_attachments().await;
 
-    let index = build_attachment_index();
+    let index = build_attachment_index(&[TranscriptMessage::user(placeholdered.clone())]).await;
     assert!(
         index.contains_key(&id),
         "fresh attachment {id} retained after sweep"
     );
+}
+
+#[test]
+fn legacy_sidecar_files_stay_indexed_by_id() {
+    // Conversations written before the blob stash keep `<id>.<ext>` files in the
+    // attachments directory; their placeholders must still resolve.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("abc123.png"), b"png").unwrap();
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    std::fs::write(dir.path().join("bad name.png"), b"png").unwrap();
+    let index = legacy_attachment_index_in(dir.path());
+    assert_eq!(index.len(), 1, "{index:?}");
+    assert_eq!(index["abc123"], dir.path().join("abc123.png"));
 }

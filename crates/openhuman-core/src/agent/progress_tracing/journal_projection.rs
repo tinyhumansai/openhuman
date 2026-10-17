@@ -64,8 +64,8 @@ use replay::{json_content_text, turn_outcome_for_failure, user_message_text, Rep
 
 #[path = "journal_replay.rs"]
 mod replay;
-use crate::tools::status::classify;
 use tinyagents_harness::observability::trace_export::{TraceContext, TraceSpan};
+use tinytools::status::classify;
 
 /// Mutable state threaded across a single run's observations while replaying.
 #[derive(Default)]
@@ -328,8 +328,8 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
             // An unknown tool is `NotFound` from the typed event (#6277),
             // whatever the text classifier made of the echoed names.
             let failure = if was_unknown {
-                Some(crate::tools::status::describe(
-                    crate::tools::status::ToolFailureClass::NotFound,
+                Some(tinytools::status::describe(
+                    tinytools::status::ToolFailureClass::NotFound,
                 ))
             } else {
                 error.as_ref().map(|text| classify(text, false))

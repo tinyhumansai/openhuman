@@ -1,5 +1,15 @@
 //! Domain-family classification used to filter the callable tool catalog.
 
+/// The versioned artifact tools (`tiny-artifacts`). Harness-kept, like the
+/// rest of the agent's own working surface.
+const ARTIFACT_TOOLS: &[&str] = &[
+    "create_artifact",
+    "read_artifact",
+    "update_artifact",
+    "list_artifacts",
+    "delete_artifact",
+];
+
 /// Classify an agent tool into its [`DomainGroup`](crate::core::all::DomainGroup)
 /// by its `name()`, so [`all_tools_with_runtime`](super::all_tools_with_runtime) can drop tools whose family is
 /// disabled under the ambient [`DomainSet`](crate::core::runtime::DomainSet).
@@ -124,6 +134,7 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     }
     // Harness families realigned out of Platform.
     if name.starts_with("artifact_")
+        || ARTIFACT_TOOLS.contains(&name)
         || name.starts_with("learning_")
         || name.contains("subagent")
         || matches!(
@@ -181,6 +192,8 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         || name.starts_with("google_places_")
         || name.starts_with("stock_")
         || name.starts_with("storage_")
+        // Shares an artifact by uploading it to the same cloud storage.
+        || name == "share_artifact"
         || name.starts_with("task_source_")
         // Hosting: `hosting_` is a domain-exclusive prefix, so a NEW hosting
         // tool auto-gates rather than falling through to Platform and staying

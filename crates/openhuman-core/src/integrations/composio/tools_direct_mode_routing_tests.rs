@@ -385,3 +385,50 @@ fn composio_connect_charges_pre_gate_work_to_the_park_bound() {
     // Opting out of the bound stays unbounded.
     assert_eq!(remaining_park_bound(None, pre_gate), None);
 }
+
+/// The list tool answers the same through the run's context carrier as it does
+/// without one: the scope-pref migration it triggers runs for the context of
+/// the run that called the tool, not whichever scope polls it.
+#[tokio::test]
+async fn list_tools_with_a_run_context_carrier_matches_the_bare_call() {
+    use crate::agent::tinyagents::host::OpenHumanRunContext;
+    use crate::config::TEST_ENV_LOCK;
+    use crate::core::runtime::{CoreContext, DomainSet};
+    let _env_guard = TEST_ENV_LOCK.lock().await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _workspace_guard = EnvVarGuard::workspace_unlocked(tmp.path());
+    let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+
+    let mut config = crate::config::Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
+    config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+    config.composio.api_key = Some("test-direct-key".to_string());
+    config.save().await.expect("save fake config to disk");
+
+    let run = OpenHumanRunContext::new()
+        .with_core(Some(CoreContext::for_test(DomainSet::full(), None)))
+        .into_tinyagents(tinyagents_harness::context::RunConfig::new(
+            "list-tools-carrier",
+        ));
+    let carrier = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+        &run,
+        tinyagents_harness::ids::CallId::new("list-tools-carrier-call"),
+    );
+
+    let tool = ComposioListToolsTool::new(Arc::new(config));
+    let bare = tool.execute(serde_json::json!({})).await.unwrap();
+    let carried = tool
+        .execute_with_context(
+            serde_json::json!({}),
+            tinytools::ToolCallOptions::default(),
+            Some(&carrier),
+        )
+        .await
+        .unwrap();
+    assert!(!carried.is_error, "{}", error_text(&carried));
+    assert_eq!(bare.is_error, carried.is_error);
+    assert_eq!(bare.output(), carried.output());
+}

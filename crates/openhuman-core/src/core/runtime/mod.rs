@@ -47,8 +47,12 @@ pub mod agent_scope;
 pub mod boot_guard;
 mod bootstrap;
 pub mod builder;
+pub mod components;
+pub use components::{ComponentSet, COMPONENT_NAMES};
 pub mod context;
+pub mod dispatch_ctx;
 pub mod domain_set;
+pub mod event_ctx;
 mod features;
 pub use features::compiled_features;
 pub mod mode;
@@ -58,12 +62,12 @@ pub mod spawn;
 pub(crate) mod subscribers;
 pub mod tenant;
 
-pub use agent_scope::{agent_scope_dir, current_slot, AgentContextRegistry, AgentScopedState};
+pub use agent_scope::{agent_scope_dir, slot_for, AgentContextRegistry, AgentScopedState};
 pub use builder::{CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
 pub use context::{ContextOverlay, CoreContext};
+pub use dispatch_ctx::DispatchCtx;
 pub use mode::{current_mode, is_saas, Mode};
 pub use saas::SaasConfig;
-pub use spawn::{spawn_blocking_scoped, spawn_scoped};
 pub use tenant::{current_tenant, session_key, session_key_prefix, tenant_key, NoTenant, Tenant};
 
 /// Operator-owned direct inference settings.

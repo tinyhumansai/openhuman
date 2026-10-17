@@ -25,7 +25,7 @@ use crate::core::runtime::Tenant;
 /// with no scope.
 #[must_use]
 pub fn agent_skill_home(workspace_dir: &Path) -> Option<PathBuf> {
-    let tenant = crate::core::runtime::current_tenant().ok()?;
+    let tenant = crate::core::runtime::DispatchCtx::ambient().tenant().ok()?;
     skill_home_for(&tenant, workspace_dir)
 }
 

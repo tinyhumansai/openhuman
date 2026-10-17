@@ -4,6 +4,7 @@
 //! every agent on the runtime. Each request records the agent that parked it,
 //! and an [`Approvals`] handle lists and decides only its own agent's.
 
+use openhuman_core::core::runtime::{CoreContext, DispatchCtx};
 use openhuman_core::security::approval::{ApprovalError, ApprovalGate};
 
 pub use openhuman_core::security::approval::{ApprovalDecision, PendingApproval};
@@ -33,6 +34,8 @@ pub struct Approvals {
     agent_id: String,
     removed: tokio::sync::watch::Receiver<bool>,
     lifecycle: std::sync::Arc<super::lifecycle::ApprovalState>,
+    /// The agent's own context, held weakly so a handle never keeps it alive.
+    core: Option<std::sync::Weak<CoreContext>>,
 }
 
 impl Approvals {
@@ -40,11 +43,21 @@ impl Approvals {
         agent_id: &str,
         removed: tokio::sync::watch::Receiver<bool>,
         lifecycle: std::sync::Arc<super::lifecycle::ApprovalState>,
+        core: Option<std::sync::Weak<CoreContext>>,
     ) -> Self {
         Self {
             agent_id: agent_id.to_string(),
             removed,
             lifecycle,
+            core,
+        }
+    }
+
+    /// The context this agent acts under; unbound once the agent is gone.
+    fn dispatch(&self) -> DispatchCtx {
+        match self.core.as_ref().and_then(std::sync::Weak::upgrade) {
+            Some(core) => DispatchCtx::new(core),
+            None => DispatchCtx::unbound(),
         }
     }
 
@@ -62,7 +75,7 @@ impl Approvals {
         let Some(gate) = ApprovalGate::try_global() else {
             return Ok(Vec::new());
         };
-        gate.list_pending_for_agent(Some(&self.agent_id))
+        gate.list_pending_for_agent(&self.dispatch(), Some(&self.agent_id))
             .map_err(|err| ApprovalsError::Store(err.to_string()))
     }
 

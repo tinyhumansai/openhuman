@@ -412,3 +412,26 @@ fn host_binding_refuses_a_scope_root_outside_saas() {
         None
     );
 }
+
+#[test]
+fn a_disabled_memory_component_binds_no_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_in(&tmp);
+    config.components.memory = false;
+    assert!(off_reason(resolve(&config)).contains("components"));
+    assert!(!is_on(&config));
+    assert!(switched_off(&config));
+    assert!(matches!(
+        bind_with_root(&config, None),
+        Err(MemoryError::Off(_))
+    ));
+}
+
+#[test]
+fn a_disabled_component_overrides_an_installed_test_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_in(&tmp);
+    assert!(!switched_off(&config));
+    config.memory.engine = DISABLED_ENGINE.to_string();
+    assert!(switched_off(&config));
+}

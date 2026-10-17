@@ -406,7 +406,7 @@ fn subagent_failure_records_truncated_error_message_when_capture_on() {
 
 #[test]
 fn failed_tool_records_classified_cause_only_when_capture_on() {
-    use crate::tools::status::{ClassifiedFailure, FailureCategory, ToolFailureClass};
+    use tinytools::status::{ClassifiedFailure, FailureCategory, ToolFailureClass};
     let failed = AgentProgress::ToolCallCompleted {
         call_id: "c1".to_string(),
         tool_name: "shell".to_string(),

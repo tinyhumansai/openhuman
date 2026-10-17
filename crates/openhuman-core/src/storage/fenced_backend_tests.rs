@@ -422,3 +422,164 @@ impl StorageBackend for NoFencing {
         self.0.database(name)
     }
 }
+
+/// The run ledger claims team tasks with `atomic_batch_checked`. The fenced
+/// view must pass it through to a driver that supports it (the default trait
+/// method answers `Unsupported`), and still refuse it for a stale lease.
+#[tokio::test]
+async fn a_checked_batch_reaches_the_driver_through_the_fenced_view() {
+    use tinystoragedrivers::{ExpectedDocument, ReadCheck};
+
+    let shared: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
+    let a = Node::new("a", &shared);
+    let docs = Arc::clone(a.scoped("plain").documents());
+    docs.ensure_collection(&CollectionSpec::new("things"))
+        .await
+        .unwrap();
+
+    let applied = docs
+        .atomic_batch_checked(
+            vec![ReadCheck {
+                collection: "things".into(),
+                id: "dependency".into(),
+                expected: ExpectedDocument::Absent,
+            }],
+            vec![WriteOp::Put {
+                collection: "things".into(),
+                id: "claimed".into(),
+                doc: json!({ "by": "a" }),
+                precondition: Precondition::Absent,
+            }],
+        )
+        .await
+        .expect("the checked batch is not answered Unsupported");
+    assert_eq!(applied.len(), 1);
+    assert!(docs.get("things", "claimed").await.unwrap().is_some());
+
+    // The dependency is validated: a check that no longer holds writes nothing.
+    docs.put("things", "dependency", json!({}), Precondition::Absent)
+        .await
+        .unwrap();
+    let conflict = docs
+        .atomic_batch_checked(
+            vec![ReadCheck {
+                collection: "things".into(),
+                id: "dependency".into(),
+                expected: ExpectedDocument::Absent,
+            }],
+            vec![WriteOp::Put {
+                collection: "things".into(),
+                id: "second".into(),
+                doc: json!({}),
+                precondition: Precondition::Absent,
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.kind(), ErrorKind::Conflict);
+    assert!(docs.get("things", "second").await.unwrap().is_none());
+}
+
+/// The fenced view must not hide what the driver can do: an expiring blob
+/// written through it is stored, reads back, and the view advertises the
+/// capability (before, `FencedBlobs` reported none and `put_expiring` fell to
+/// the trait default, `Unsupported`, on every driver).
+#[tokio::test]
+async fn fenced_blobs_forward_expiry_and_capabilities() {
+    let backend = shared();
+    let node = Node::new("node-a", &backend);
+    node.take("alice").await;
+    let scoped = node.scoped("profile:alice");
+
+    let blobs = scoped.blobs();
+    assert!(blobs.capabilities().contains(Capability::BlobTtl));
+    assert!(!blobs.capabilities().contains(Capability::PresignedUrls));
+    assert_eq!(
+        blobs.max_key_len(),
+        backend
+            .for_scope(&Scope::new("profile:alice").unwrap())
+            .unwrap()
+            .blobs()
+            .max_key_len()
+    );
+
+    blobs
+        .put_expiring("live", b"x".to_vec(), None, Duration::from_secs(3600))
+        .await
+        .unwrap();
+    assert_eq!(blobs.get("live").await.unwrap().unwrap().bytes, b"x");
+    assert!(blobs.get_stream("live").await.unwrap().is_some());
+
+    // A zero lifetime is already expired: written, never visible.
+    blobs
+        .put_expiring("gone", b"x".to_vec(), None, Duration::ZERO)
+        .await
+        .unwrap();
+    assert!(blobs.get("gone").await.unwrap().is_none());
+    assert!(blobs.get_stream("gone").await.unwrap().is_none());
+}
+
+/// An expiring write is a write: a node that lost the lease cannot make one.
+#[tokio::test]
+async fn expiring_blob_writes_are_fenced() {
+    let backend = shared();
+    let (a, b) = (Node::new("node-a", &backend), Node::new("node-b", &backend));
+    a.take("alice").await;
+    b.set_clock(TTL.as_millis() as u64 + 1);
+    b.take("alice").await;
+    a.set_clock(1_000);
+
+    let session = a.scoped("alice~default");
+    assert!(session
+        .blobs()
+        .put_expiring("k", b"x".to_vec(), None, Duration::from_secs(60))
+        .await
+        .is_err());
+    assert!(backend
+        .for_scope(&Scope::new("alice~default").unwrap())
+        .unwrap()
+        .blobs()
+        .get("k")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+/// The wrapper must pass a conditional append through to a driver that has it:
+/// the trait default answers `Unsupported(ConditionalStreamAppend)`, which
+/// refused every conversation append on the default (SQLite) backend.
+async fn conditional_append_passes_through(inner: Arc<dyn StorageBackend>) {
+    let wrapped = wrap(inner);
+    let scoped = wrapped.for_scope(&Scope::local()).unwrap();
+    let streams = scoped.streams();
+    assert_eq!(
+        streams
+            .append_batch_if_offset("log", 0, vec![json!(1)])
+            .await
+            .unwrap(),
+        0
+    );
+    let stale = streams
+        .append_batch_if_offset("log", 0, vec![json!(2)])
+        .await
+        .unwrap_err();
+    assert_eq!(stale.kind(), tinystoragedrivers::ErrorKind::Conflict);
+    assert_eq!(streams.len("log").await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn fenced_memory_backend_passes_conditional_appends_through() {
+    conditional_append_passes_through(shared()).await;
+}
+
+#[cfg(feature = "storage-sqlite")]
+#[tokio::test]
+async fn fenced_sqlite_backend_passes_conditional_appends_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite:{}", dir.path().join("cond.db").display());
+    let backend =
+        tinystoragedrivers::open(&tinystoragedrivers::StorageConfig::parse(&url).unwrap())
+            .await
+            .unwrap();
+    conditional_append_passes_through(backend).await;
+}

@@ -1,16 +1,17 @@
 //! `openhuman-core serve` on a workspace that already has legacy approval
-//! rows: with no storage URL configured (the default), the store opens the
-//! existing `approval.db` through the SQLite storage driver, imports the old
-//! tables once and keeps them as `_legacy_<name>`. Through the real binary
-//! and its JSON-RPC surface.
+//! rows: with no storage URL configured (the default), the host opens
+//! `sqlite:<workspace>/storage`, the importer copies the old `approval.db`
+//! rows into it once, and the legacy file stays byte-for-byte untouched.
+//! Through the real binary and its JSON-RPC surface.
+//!
+//! The second test boots the same workspace on an explicit storage URL, where
+//! the importer does the same into that backend.
 
+use openhuman_core::storage::rusqlite;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use openhuman_core::config::Config;
-use openhuman_core::security::approval::store;
-use openhuman_core::security::approval::types::{ApprovalDecision, PendingApproval};
 use serde_json::{json, Value};
 
 const TOKEN: &str = "storage-default-import-e2e-token";
@@ -24,28 +25,49 @@ impl Drop for Server {
     }
 }
 
-fn pending(id: &str) -> PendingApproval {
-    PendingApproval::new(
-        id,
-        "shell",
-        format!("run {id}"),
-        json!({ "cmd": "ls" }),
-        None,
-    )
-}
-
-/// A legacy `approval.db` under `workspace`, written by the legacy tables'
-/// own code (the `classic` opt-out).
+/// A legacy `approval/approval.db` under `workspace`, laid out as the retired
+/// store wrote it: one undecided request, one approved request and one flow
+/// trust grant.
 fn legacy_workspace(workspace: &Path) {
-    let mut config = Config {
-        workspace_dir: workspace.to_path_buf(),
-        ..Config::default()
-    };
-    config.storage.url = Some("classic".into());
-    store::insert_pending(&config, &pending("still-pending"), "sess").unwrap();
-    store::insert_pending(&config, &pending("already-approved"), "sess").unwrap();
-    store::decide(&config, "already-approved", ApprovalDecision::ApproveOnce).unwrap();
-    store::insert_flow_trust(&config, "flow-1", "shell").unwrap();
+    let db = workspace.join("approval").join("approval.db");
+    std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE pending_approvals (
+             request_id TEXT PRIMARY KEY, tool_name TEXT NOT NULL,
+             action_summary TEXT NOT NULL, args_redacted TEXT NOT NULL,
+             session_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT,
+             decided_at TEXT, decision TEXT, executed_at TEXT, execution_outcome TEXT,
+             execution_error TEXT, source_context TEXT, tool_call_id TEXT, agent_id TEXT);
+         CREATE TABLE flow_tool_trust (
+             flow_id TEXT NOT NULL, tool_name TEXT NOT NULL, created_at TEXT NOT NULL,
+             PRIMARY KEY (flow_id, tool_name));",
+    )
+    .unwrap();
+    let now = chrono::Utc::now();
+    let soon = (now + chrono::Duration::hours(1)).to_rfc3339();
+    for (id, decided) in [("still-pending", false), ("already-approved", true)] {
+        conn.execute(
+            "INSERT INTO pending_approvals
+                (request_id, tool_name, action_summary, args_redacted, session_id,
+                 created_at, expires_at, decided_at, decision)
+             VALUES (?1, 'shell', ?2, '{\"cmd\":\"ls\"}', 'sess', ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                id,
+                format!("run {id}"),
+                now.to_rfc3339(),
+                soon,
+                decided.then(|| now.to_rfc3339()),
+                decided.then_some("approve_once"),
+            ],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "INSERT INTO flow_tool_trust (flow_id, tool_name, created_at) VALUES ('flow-1', 'shell', ?1)",
+        [now.to_rfc3339()],
+    )
+    .unwrap();
 }
 
 fn free_port() -> u16 {
@@ -123,60 +145,82 @@ fn rpc(base: &str, method: &str, params: Value) -> Value {
         .expect("json-rpc response")
 }
 
-fn tables(db: &Path) -> Vec<String> {
-    let conn = rusqlite::Connection::open(db).unwrap();
-    let mut stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-        .unwrap();
-    stmt.query_map([], |row| row.get(0))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect()
+/// Every file under `dir` (relative path, bytes), for proving nothing in it
+/// was modified, created or removed.
+fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        out.push((
+            path.file_name().unwrap().to_string_lossy().into_owned(),
+            std::fs::read(&path).unwrap(),
+        ));
+    }
+    out.sort();
+    out
 }
 
 #[test]
-fn serve_imports_legacy_approvals_by_default_and_classic_leaves_them() {
+fn serve_imports_legacy_approvals_by_default_and_leaves_the_file_untouched() {
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("workspace");
     legacy_workspace(&workspace);
-    let db = workspace.join("approval").join("approval.db");
-    assert!(tables(&db).contains(&"pending_approvals".to_string()));
+    let legacy_dir = workspace.join("approval");
+    let before = snapshot(&legacy_dir);
 
-    // Opted out: the server reads the legacy table and changes nothing.
-    {
-        let (_server, base) = start(tmp.path(), &workspace, Some("classic"));
-        let listed = rpc(&base, "openhuman.approval_list_pending", json!({})).to_string();
-        assert!(listed.contains("still-pending"), "{listed}");
-    }
-    assert!(tables(&db).contains(&"pending_approvals".to_string()));
-    assert!(!tables(&db).contains(&"_legacy_pending_approvals".to_string()));
-
-    // The default: the same rows are served, now from the document tables.
-    {
+    // Two boots: the rows are served from the workspace's default database
+    // each time, and the second one imports nothing again.
+    for boot in 0..2 {
         let (_server, base) = start(tmp.path(), &workspace, None);
         let listed = rpc(&base, "openhuman.approval_list_pending", json!({})).to_string();
-        assert!(listed.contains("still-pending"), "{listed}");
-        assert!(!listed.contains("already-approved"), "{listed}");
+        assert!(listed.contains("still-pending"), "boot {boot}: {listed}");
+        assert!(
+            !listed.contains("already-approved"),
+            "boot {boot}: {listed}"
+        );
         let recent = rpc(&base, "openhuman.approval_list_recent_decisions", json!({})).to_string();
-        assert!(recent.contains("already-approved"), "{recent}");
+        assert!(recent.contains("already-approved"), "boot {boot}: {recent}");
     }
-    let after = tables(&db);
-    assert!(after.contains(&"_legacy_pending_approvals".to_string()));
-    assert!(after.contains(&"_legacy_flow_tool_trust".to_string()));
-    assert!(!after.contains(&"pending_approvals".to_string()));
 
-    // A second boot serves the same rows and does not import again.
-    {
-        let (_server, base) = start(tmp.path(), &workspace, None);
+    assert!(
+        workspace.join("storage").join("storage.db").is_file(),
+        "the default backend lives in the workspace"
+    );
+    assert_eq!(
+        snapshot(&legacy_dir),
+        before,
+        "the legacy database was not modified and no companion file was created"
+    );
+}
+
+#[test]
+fn serve_on_an_explicit_url_imports_legacy_approvals_without_touching_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("workspace");
+    legacy_workspace(&workspace);
+    let legacy_dir = workspace.join("approval");
+    let before = snapshot(&legacy_dir);
+    let url = format!("sqlite:{}", tmp.path().join("storage").display());
+
+    for boot in 0..2 {
+        let (_server, base) = start(tmp.path(), &workspace, Some(&url));
         let listed = rpc(&base, "openhuman.approval_list_pending", json!({})).to_string();
-        assert!(listed.contains("still-pending"), "{listed}");
+        assert!(listed.contains("still-pending"), "boot {boot}: {listed}");
+        assert!(
+            !listed.contains("already-approved"),
+            "boot {boot}: {listed}"
+        );
+        let recent = rpc(&base, "openhuman.approval_list_recent_decisions", json!({})).to_string();
+        assert!(recent.contains("already-approved"), "boot {boot}: {recent}");
     }
-    assert!(!tables(&db).contains(&"pending_approvals".to_string()));
-    let conn = rusqlite::Connection::open(&db).unwrap();
-    let kept: i64 = conn
-        .query_row("SELECT COUNT(*) FROM _legacy_pending_approvals", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(kept, 2, "the retired table is kept as it was");
+
+    assert_eq!(
+        snapshot(&legacy_dir),
+        before,
+        "the legacy database was not modified and no companion file was created"
+    );
+    assert!(
+        !workspace.join("storage").exists(),
+        "an explicit URL replaces the workspace default"
+    );
 }

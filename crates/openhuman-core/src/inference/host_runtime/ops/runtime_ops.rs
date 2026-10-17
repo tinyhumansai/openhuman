@@ -105,7 +105,7 @@ pub async fn local_ai_vision_prompt(
 
     let service = local_ai::global(config);
     let runtime = crate::inference::local_runtime_config(config);
-    let Some(_permit) = crate::cron::scheduler_gate::wait_for_capacity().await else {
+    let Some(_permit) = crate::platform::llm_gate::wait_for_capacity().await else {
         return Err("local AI vision inference is paused while signed out".to_string());
     };
     let output = service

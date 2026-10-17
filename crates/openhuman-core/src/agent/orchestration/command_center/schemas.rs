@@ -2,12 +2,12 @@
 //! center. Exposes `openhuman.agent_work_list` (read-only) over the durable
 //! run ledger. Handlers delegate to [`super::ops`]; no business logic here.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use tinyagents_session::run_ledger::command_center::{apply_control, list_agent_work, ControlVerb};
+use tinyagents_session::run_ledger::command_center::ControlVerb;
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::config::rpc as config_rpc;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -85,11 +85,11 @@ fn schema_for(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_agent_work_list(params: Map<String, Value>) -> ControllerFuture {
+fn handle_agent_work_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "command_center_rpc", "[command_center_rpc][{cid}] list.entry");
-        let config = config_rpc::load_config_with_timeout()
+        let config = ctx.load_config()
             .await
             .inspect_err(|err| {
                 log::warn!(target: "command_center_rpc", "[command_center_rpc][{cid}] list.config_failed err={err}");
@@ -98,7 +98,11 @@ fn handle_agent_work_list(params: Map<String, Value>) -> ControllerFuture {
             .get("limit")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
-        let view = list_agent_work(&config.workspace_dir, limit, &resolve_display_name).map_err(|e| {
+        let view = crate::agent::session_store::with_ledger_async(&config.workspace_dir, |ledger| async move {
+            ledger.list_agent_work(limit, &resolve_display_name).await
+        })
+        .await
+        .map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "command_center_rpc", "[command_center_rpc][{cid}] list.error err={s}");
             s
@@ -107,11 +111,11 @@ fn handle_agent_work_list(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_agent_work_control(params: Map<String, Value>) -> ControllerFuture {
+fn handle_agent_work_control(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let cid = new_correlation_id();
         log::debug!(target: "command_center_rpc", "[command_center_rpc][{cid}] control.entry");
-        let config = config_rpc::load_config_with_timeout()
+        let config = ctx.load_config()
             .await
             .inspect_err(|err| {
                 log::warn!(target: "command_center_rpc", "[command_center_rpc][{cid}] control.config_failed err={err}");
@@ -126,14 +130,23 @@ fn handle_agent_work_control(params: Map<String, Value>) -> ControllerFuture {
         let message = opt_str(&params, "message");
         let reason = opt_str(&params, "reason");
         log::debug!(target: "command_center_rpc", "[command_center_rpc][{cid}] control.parsed run_id={run_id} verb={}", verb.as_str());
-        let row = apply_control(
-            &config.workspace_dir,
-            &run_id,
-            verb,
-            message.as_deref(),
-            reason.as_deref(),
-            &resolve_display_name,
-        )
+        let row = crate::agent::session_store::with_ledger_async(&config.workspace_dir, |ledger| {
+            let run_id = run_id.clone();
+            let message = message.clone();
+            let reason = reason.clone();
+            async move {
+                ledger
+                    .apply_control(
+                        &run_id,
+                        verb,
+                        message.as_deref(),
+                        reason.as_deref(),
+                        &resolve_display_name,
+                    )
+                    .await
+            }
+        })
+        .await
         .map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "command_center_rpc", "[command_center_rpc][{cid}] control.error err={s}");

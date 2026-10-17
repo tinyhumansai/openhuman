@@ -93,12 +93,8 @@ impl Tool for CloseSubagentTool {
         _options: ToolCallOptions,
         tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        self.execute_with_parent_context(
-            args,
-            crate::agent::harness::current_parent(),
-            tool_context,
-        )
-        .await
+        self.execute_with_parent_context(args, None, tool_context)
+            .await
     }
 }
 
@@ -157,6 +153,7 @@ impl CloseSubagentTool {
             ));
         }
         let cancelled = running_subagents::cancel_by_session_in_workspace(
+            &crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context),
             &subagent_session_id,
             &parent.session_id,
             &parent.workspace_dir,

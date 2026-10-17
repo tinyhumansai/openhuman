@@ -3,8 +3,8 @@
 //!
 //! The state under test is what a core leaves when it dies between a
 //! sub-agent finishing and its result being delivered: a pending record in
-//! the profile's completion log (`<workspace>/.openhuman/
-//! background_completions.jsonl`), addressed by thread id. The SaaS user
+//! the profile's completion queue (the `orchestration_completions` documents
+//! of its scope in `<workspace>/storage`), addressed by thread id. The SaaS user
 //! surface does not offer `spawn_async_subagent` (the `agent` domain is off
 //! for profiles), so the record is written here, through the harness's own
 //! store, while the core is down, exactly as `record_completion` would have
@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use openhuman_core::profiles::{ProfileId, ProfileIdMode, ProfileLayout};
 use tinyagents_tasks::{
-    CompletionRecord, CompletionResult, CompletionStatus, CompletionStore, JsonlCompletionStore,
+    CompletionRecord, CompletionResult, CompletionStatus, CompletionStore, DriverCompletionStore,
     NotifyMode,
 };
 
@@ -87,16 +87,25 @@ fn seed_thread(node: &Node, user: &str) {
 }
 
 /// The pending record a core killed before delivery leaves in `user`'s
-/// completion log.
+/// completion queue.
 fn leave_undelivered_result(root: &std::path::Path, user: &str) {
     let id = ProfileId::for_user(user, ProfileIdMode::Raw).unwrap();
     let workspace = ProfileLayout::new(root, &id).workspace_dir;
-    let log = workspace
-        .join(".openhuman")
-        .join("background_completions.jsonl");
-    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
-    let store: Arc<dyn CompletionStore> =
-        Arc::new(JsonlCompletionStore::open(&log).expect("open the completion log"));
+    // The profile's default database, in the profile's own scope: where the
+    // running core keeps (and looks for) its completion queue.
+    let url = openhuman_core::storage::config::default_url(&workspace);
+    std::fs::create_dir_all(workspace.join(openhuman_core::storage::config::DEFAULT_DIR)).unwrap();
+    let backend = openhuman_core::storage::block_on_anyhow(async move {
+        Ok(openhuman_core::storage::open(&url).await?)
+    })
+    .expect("open the profile's database");
+    let scoped = backend
+        .for_scope(&openhuman_core::storage::scope_for_profile(id.as_str()))
+        .expect("the profile's scope");
+    let store: Arc<dyn CompletionStore> = Arc::new(
+        DriverCompletionStore::new(Arc::clone(scoped.documents()))
+            .expect("open the completion queue"),
+    );
     let record = CompletionRecord::new(
         "task-delivery-recovery-1",
         THREAD,

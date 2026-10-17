@@ -3,8 +3,8 @@
 use serde::{de::DeserializeOwned, Serialize};
 use tinycomputer_bus::{names::accessibility as methods, DesktopError, DesktopResponse};
 
-use super::client::{ModuleCallError, ModuleClient};
 use crate::config::Config;
+use tinybus::module::{ModuleCallError, ModuleClient};
 
 pub use tinycomputer_bus::accessibility::{
     FocusQuery, FocusTarget, FocusedTextContext, GlobeBatch, GlobeHandle, GlobeHotkeyStatus,
@@ -34,19 +34,25 @@ impl std::error::Error for AccessibilityError {}
 #[derive(Clone)]
 pub struct AccessibilityClient {
     client: ModuleClient,
+    /// `[components] computer`. Off refuses every call before the module is
+    /// touched; this client is compiled in unconditionally, so it carries the
+    /// ceiling itself.
+    computer_enabled: bool,
 }
 
 impl AccessibilityClient {
     pub fn new(config: &Config) -> Self {
         Self {
-            client: ModuleClient::new(config.clone()),
+            client: crate::modules::client(config.clone()),
+            computer_enabled: config.components.computer,
         }
     }
 
     #[cfg(all(test, feature = "modules"))]
     pub(crate) fn fixture(proxy: tinybus::Proxy) -> Self {
         Self {
-            client: ModuleClient::fixture(proxy),
+            client: crate::modules::ops::fixture_client(proxy),
+            computer_enabled: true,
         }
     }
 
@@ -56,6 +62,16 @@ impl AccessibilityClient {
         args: impl Serialize,
         confidential: bool,
     ) -> Result<T, AccessibilityError> {
+        if !self.computer_enabled {
+            log::debug!("[accessibility] {member} refused, component 'computer' disabled");
+            return Err(AccessibilityError::Operation(DesktopError::new(
+                crate::core::runtime::components::COMPONENT_DISABLED,
+                format!(
+                    "{}:computer",
+                    crate::core::runtime::components::COMPONENT_DISABLED
+                ),
+            )));
+        }
         let raw: serde_json::Value = if confidential {
             self.client.call_confidential(MODULE, member, args).await
         } else {
@@ -63,6 +79,12 @@ impl AccessibilityClient {
         }
         .map_err(AccessibilityError::Bus)?;
         decode(raw)
+    }
+
+    /// Whether `[components] computer` lets this client reach the module.
+    #[must_use]
+    pub fn computer_enabled(&self) -> bool {
+        self.computer_enabled
     }
 
     /// Read native states without requesting permission.
@@ -175,7 +197,7 @@ fn decode<T: DeserializeOwned>(raw: serde_json::Value) -> Result<T, Accessibilit
 }
 
 fn malformed() -> AccessibilityError {
-    ModuleClient::report_malformed_reply(MODULE);
+    crate::modules::report::malformed_reply(MODULE);
     AccessibilityError::Bus(ModuleCallError::ModuleFault)
 }
 

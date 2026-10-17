@@ -26,6 +26,10 @@ use crate::config::Config;
 use crate::security::secret_storage::SecretStore;
 
 const STORE_FILENAME: &str = "http-credentials.json";
+/// The HTTP credentials file a store over `state_dir` keeps.
+pub(crate) fn store_file(state_dir: &Path) -> PathBuf {
+    state_dir.join(STORE_FILENAME)
+}
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// How a credential is presented on the outbound request.
@@ -220,7 +224,7 @@ impl HttpCredentialsStore {
 
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self {
-            path: state_dir.join(STORE_FILENAME),
+            path: store_file(state_dir),
             secret_store: SecretStore::new(state_dir, encrypt_secrets),
         }
     }

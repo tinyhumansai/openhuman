@@ -1,9 +1,8 @@
 //! OpenHuman's model-and-harness implementation of the neutral session driver.
 //!
 //! This adapter deliberately has no transcript, prefix, or generic history
-//! state.  `tinyagents_runtime::Session` owns those concerns and gives this
-//! type the complete immutable model history and tool declaration snapshot for
-//! one invocation.
+//! state. `tinyagents_runtime::Session` owns those and hands this type the
+//! complete immutable model history and tool declaration snapshot per call.
 
 mod grounded_close;
 
@@ -36,7 +35,7 @@ pub struct OpenHumanSessionDriver {
     run_queue:
         Option<Arc<tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
     workspace: Option<tinytools::WorkspaceDescriptor>,
-    sandbox_mode: crate::agent::harness::definition::SandboxMode,
+    sandbox_mode: tinyagents_definition::SandboxMode,
     hosted_base: Option<Arc<OpenHumanHostBase>>,
     agent_id: String,
 }
@@ -54,7 +53,7 @@ impl OpenHumanSessionDriver {
             Arc<tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>>,
         >,
         workspace: Option<tinytools::WorkspaceDescriptor>,
-        sandbox_mode: crate::agent::harness::definition::SandboxMode,
+        sandbox_mode: tinyagents_definition::SandboxMode,
         hosted_base: Option<Arc<OpenHumanHostBase>>,
         agent_id: String,
     ) -> Self {
@@ -109,7 +108,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             .transcript_snapshot
             .get_or_insert_with(|| {
                 Arc::new(std::sync::Mutex::new(
-                    crate::agent::tinyagents::TranscriptSnapshot {
+                    crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot {
                         request_base_len: request.history.len(),
                         ..Default::default()
                     },
@@ -123,7 +122,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
         }
         let sidecar = request.run_context.data.session_sidecar.clone();
         let started = Instant::now();
-        let user_message = crate::agent::tinyagents::last_user_message(&request.history)
+        let user_message = tinyagents_harness::summarization::last_user_message(&request.history)
             .map(crate::agent::message_convert::user_text_with_markers)
             .unwrap_or_default();
         let context_window = self
@@ -146,7 +145,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             .filter_map(tinyagents_runtime::transcript::message_to_native_transcript)
             .collect();
         if crate::agent::multimodal::has_image_placeholders(&messages) {
-            messages = crate::agent::multimodal::rehydrate_image_placeholders(&messages);
+            messages = crate::agent::multimodal::rehydrate_image_placeholders(&messages).await;
         }
 
         // Runtime's `ToolSnapshot` remains the model declaration and final
@@ -184,12 +183,12 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
         // composed for: a text dialect strips schemas off the wire and needs
         // the positional registry to recover P-Format / code-style calls.
         let run_context = request.run_context.data.clone().with_tool_dialect(
-            crate::agent::prompts::tool_call_format_from_dialect(
-                self.dispatcher.tool_call_format(),
-            )
-            .harness_dispatcher(),
+            tinyagents_harness::dialect::dispatcher_for_format(self.dispatcher.tool_call_format()),
         );
-        let mut outcome = match graph::run_chat_turn_graph(ChatTurnGraph {
+        let cancellation = request.run_context.cancellation.clone();
+        // Boxed: the graph future is very large, and holding it inline in the
+        // `select!` below overflows the worker stack in debug builds.
+        let turn = Box::pin(graph::run_chat_turn_graph(ChatTurnGraph {
             turn_models,
             model: self.model_name.clone(),
             messages,
@@ -208,9 +207,22 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             run_context,
             hosted_base: self.hosted_base.clone(),
             agent_id: self.agent_id.clone(),
-        })
-        .await
-        {
+        }));
+        // A Stop hands the runtime the rounds the provider already accepted,
+        // so the stopped turn's prompt and work stay in the session (#7715).
+        let result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                return Err(driver_cancelled_with_snapshot(
+                    &snapshot,
+                    &sidecar,
+                    started.elapsed(),
+                    std::mem::take(&mut request.history),
+                ));
+            }
+            result = turn => result,
+        };
+        let mut outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
                 return Err(driver_error_with_snapshot(
@@ -224,7 +236,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
 
         if outcome.text.trim().is_empty() && outcome.tool_outcomes.is_empty() {
             return Err(driver_error(
-                crate::agent::error::AgentError::EmptyProviderResponse {
+                tinyagents_harness::agent_error::AgentError::EmptyProviderResponse {
                     iteration: outcome.model_calls,
                 },
             ));
@@ -251,17 +263,39 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             outcome.wrap_up_injected = false;
         }
 
-        let close = grounded_close::close_if_needed(
-            &self.turn_model_source,
-            &self.model_name,
-            self.temperature,
-            request.run_context.data.thread_id.as_deref(),
-            self.dispatcher.as_ref(),
-            &request.history,
-            &user_message,
-            &outcome,
-        )
-        .await;
+        // When the close (and any required-output repair after it) must be
+        // done by, so the turn commits before the backstop drops it.
+        let close_by = request.run_context.data.turn_deadline.map(|deadline| {
+            let now = Instant::now();
+            now + deadline.close_budget(now)
+        });
+        // A Stop during the close or the repair after it hands back the
+        // accepted rounds like a Stop during the loop, instead of letting the
+        // runtime's grace expire and drop the turn (#7776).
+        let accepted_history = request.history.clone();
+        let stopped = || {
+            driver_cancelled_with_snapshot(
+                &snapshot,
+                &sidecar,
+                started.elapsed(),
+                accepted_history.clone(),
+            )
+        };
+        let close = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(stopped()),
+            close = grounded_close::close_if_needed(
+                &self.turn_model_source,
+                &self.model_name,
+                self.temperature,
+                request.run_context.data.thread_id.as_deref(),
+                self.dispatcher.as_ref(),
+                &request.history,
+                &user_message,
+                &outcome,
+                close_by.map(|at| at.saturating_duration_since(Instant::now())),
+            ) => close,
+        };
         let mut output = close
             .as_ref()
             .map(|close| close.output.clone())
@@ -305,41 +339,55 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             .breaker_halt
             .as_deref()
             .is_some_and(|reason| reason.starts_with("Stopping after "));
+        let time_left = close_by.map(|at| at.saturating_duration_since(Instant::now()));
+        let mut repair_usage = grounded_close::RepairUsage::for_model(&self.model_name);
         let required_repair = match required_output.as_ref() {
-            Some(contract) if classified_halt => {
-                if !tinyagents_harness::config::output_satisfies_contract(&output, contract) {
-                    output.push_str("\n\n");
-                    output.push_str(&tinyagents_harness::config::synthesize_block(contract));
-                    if history
-                        .last()
-                        .is_some_and(|message| matches!(message, Message::Assistant(_)))
-                    {
-                        history.pop();
-                    }
-                    history.push(Message::assistant(output.clone()));
-                }
+            Some(contract) if classified_halt || time_left.is_some_and(|left| left.is_zero()) => {
+                append_synthesized_block(&mut output, &mut history, contract);
                 None
             }
             Some(contract) => {
-                grounded_close::repair_required_output(
-                    &self.turn_model_source,
-                    &self.model_name,
-                    self.temperature,
-                    request.run_context.data.thread_id.as_deref(),
-                    self.dispatcher.as_ref(),
-                    contract,
-                    &history,
-                    &output,
-                    close.is_none() && request.run_context.data.progress.is_some(),
-                    request.run_context.data.progress.as_ref(),
-                    outcome.model_calls.saturating_add(1) as u32,
-                )
-                .await
+                let repaired = {
+                    let repair = grounded_close::repair_required_output(
+                        &self.turn_model_source,
+                        &self.model_name,
+                        self.temperature,
+                        request.run_context.data.thread_id.as_deref(),
+                        self.dispatcher.as_ref(),
+                        contract,
+                        &history,
+                        &output,
+                        close.is_none() && request.run_context.data.progress.is_some(),
+                        request.run_context.data.progress.as_ref(),
+                        outcome.model_calls.saturating_add(1) as u32,
+                        &mut repair_usage,
+                    );
+                    tokio::pin!(repair);
+                    tokio::select! {
+                        biased;
+                        _ = cancellation.cancelled() => return Err(stopped()),
+                        repaired = async {
+                            match time_left {
+                                // Bound to what is left so the turn still commits;
+                                // on expiry fall back to the deterministic block.
+                                Some(left) => tokio::time::timeout(left, &mut repair).await.ok(),
+                                None => Some((&mut repair).await),
+                            }
+                        } => repaired,
+                    }
+                };
+                match repaired {
+                    Some(repaired) => repaired,
+                    None => {
+                        append_synthesized_block(&mut output, &mut history, contract);
+                        None
+                    }
+                }
             }
             None => None,
         };
-        if let Some(repair) = &required_repair {
-            output = repair.output.clone();
+        if let Some(repaired) = required_repair {
+            output = repaired;
             if history
                 .last()
                 .is_some_and(|message| matches!(message, Message::Assistant(_)))
@@ -354,7 +402,9 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
         // `after_commit`, so a failed/cancelled turn cannot publish its usage
         // or tool outcomes as if they had become durable.
         {
-            let repair_usage = required_repair.as_ref().map(|repair| &repair.usage);
+            // Always billed: a repair that timed out after its call answered
+            // still recorded that call here.
+            let repair_usage = Some(&repair_usage);
             let mut observed = sidecar
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -418,7 +468,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             observed.wrap_up_injected = outcome.wrap_up_injected;
             // How the harness stopped the turn, if it did. The wind-down
             // middleware marked the sidecar during the run.
-            observed.stop = crate::agent::turn_stop::TurnStop::classify(
+            observed.stop = crate::agent::turn_projection::classify_stop(
                 outcome.breaker_halt.as_deref(),
                 observed.wind_down,
                 outcome.hit_cap,
@@ -539,7 +589,7 @@ fn ensure_snapshot_tools_are_executable(
 
 fn driver_error_with_snapshot(
     error: anyhow::Error,
-    snapshot: &crate::agent::tinyagents::TranscriptSnapshotSink,
+    snapshot: &crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshotSink,
     sidecar: &std::sync::Arc<
         std::sync::Mutex<crate::agent::tinyagents::host::run_context::SessionTurnSidecar>,
     >,
@@ -564,29 +614,7 @@ fn driver_error_with_snapshot(
     let guard = snapshot
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // A graph error drops the harness's `AgentRun`, but its snapshot has
-    // already observed provider-accepted usage and completed tool outcomes.
-    // Copy those into the per-turn sidecar *before* producing the partial so
-    // runtime's single atomic append carries the same usage/failure truth as a
-    // successful turn. The partial history below remains accepted-only.
-    {
-        let mut observed = sidecar
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        observed.model_calls = guard.model_calls as usize;
-        observed.tool_calls = guard.tool_outcomes.len();
-        observed.input_tokens = guard.input_tokens;
-        observed.output_tokens = guard.output_tokens;
-        observed.cached_input_tokens = guard.cached_input_tokens;
-        observed.last_call_input_tokens = guard.last_call_input_tokens;
-        observed.last_call_output_tokens = guard.last_call_output_tokens;
-        // Each answered call was priced as it arrived (reported charge, else
-        // catalog estimate, else unknown); nothing is re-estimated here.
-        observed.cost = guard.cost;
-        observed.duration = Some(elapsed);
-        observed.tool_outcomes = guard.tool_outcomes.clone();
-        observed.resolved_route = guard.resolved_route.clone();
-    }
+    record_snapshot_usage(&guard, sidecar, elapsed);
     if guard.messages.is_empty() {
         let mut failure = driver_failure(error);
         failure.outcome = terminal;
@@ -594,8 +622,9 @@ fn driver_error_with_snapshot(
     }
     let accepted_end = guard.accepted_end();
     let history = guard.messages[..accepted_end].to_vec();
-    let unanswered =
-        crate::agent::tinyagents::render_unanswered_steps(&guard.messages[accepted_end..]);
+    let unanswered = crate::agent::tinyagents::middleware::turn_context::render_unanswered_steps(
+        &guard.messages[accepted_end..],
+    );
     let display = if stalled {
         // The model's streamed narration was stopped before it could repeat
         // indefinitely. Preserve the completed tools as a useful, bounded
@@ -627,6 +656,91 @@ fn driver_error_with_snapshot(
         }),
         outcome: terminal,
     }
+}
+
+/// A graph error or a Stop drops the harness's `AgentRun`, but its snapshot
+/// has already observed provider-accepted usage and completed tool outcomes.
+/// Copy those into the per-turn sidecar *before* producing the partial so
+/// runtime's single atomic append carries the same usage/failure truth as a
+/// successful turn. The partial history itself remains accepted-only.
+fn record_snapshot_usage(
+    guard: &crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot,
+    sidecar: &std::sync::Arc<
+        std::sync::Mutex<crate::agent::tinyagents::host::run_context::SessionTurnSidecar>,
+    >,
+    elapsed: std::time::Duration,
+) {
+    let mut observed = sidecar
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    observed.model_calls = guard.model_calls as usize;
+    observed.tool_calls = guard.tool_outcomes.len();
+    observed.input_tokens = guard.input_tokens;
+    observed.output_tokens = guard.output_tokens;
+    observed.cached_input_tokens = guard.cached_input_tokens;
+    observed.last_call_input_tokens = guard.last_call_input_tokens;
+    observed.last_call_output_tokens = guard.last_call_output_tokens;
+    // Each answered call was priced as it arrived (reported charge, else
+    // catalog estimate, else unknown); nothing is re-estimated here.
+    observed.cost = guard.cost;
+    observed.duration = Some(elapsed);
+    observed.tool_outcomes = guard.tool_outcomes.clone();
+    observed.resolved_route = guard.resolved_route.clone();
+}
+
+/// A stopped turn's partial (#7715): the prompt and the accepted rounds, or
+/// just the request before the first model call. No display partial: the
+/// turn_state mirror already records the streamed text.
+fn driver_cancelled_with_snapshot(
+    snapshot: &crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshotSink,
+    sidecar: &std::sync::Arc<
+        std::sync::Mutex<crate::agent::tinyagents::host::run_context::SessionTurnSidecar>,
+    >,
+    elapsed: std::time::Duration,
+    request_history: Vec<Message>,
+) -> DriverFailure {
+    let guard = snapshot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    record_snapshot_usage(&guard, sidecar, elapsed);
+    let history = if guard.messages.is_empty() {
+        request_history
+    } else {
+        guard.messages[..guard.accepted_end()].to_vec()
+    };
+    DriverFailure {
+        error: RuntimeError::Cancelled,
+        partial: Some(DriverOutcome {
+            history,
+            output: None,
+            partial: None,
+            interrupted: true,
+            outcome: None,
+        }),
+        outcome: None,
+    }
+}
+
+/// Append the deterministic required-output block when `output` lacks it, and
+/// make that the durable final assistant row. Used when no model repair may
+/// run: a classified halt, or a turn out of time before the backstop.
+fn append_synthesized_block(
+    output: &mut String,
+    history: &mut Vec<Message>,
+    contract: &tinyagents_harness::config::RequiredOutput,
+) {
+    if tinyagents_harness::config::output_satisfies_contract(output, contract) {
+        return;
+    }
+    output.push_str("\n\n");
+    output.push_str(&tinyagents_harness::config::synthesize_block(contract));
+    if history
+        .last()
+        .is_some_and(|message| matches!(message, Message::Assistant(_)))
+    {
+        history.pop();
+    }
+    history.push(Message::assistant(output.clone()));
 }
 
 #[cfg(test)]

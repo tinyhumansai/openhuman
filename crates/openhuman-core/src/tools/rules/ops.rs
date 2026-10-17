@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tinyagents_harness::tool::ToolRulePolicy;
 use tinytools::{glob_matches, RuleContext, RuleEffect, ToolRule, ToolRuleSet, ToolRules};
 
-use crate::agent::harness::definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::config::Config;
 
 /// Whether any entry of a definition tool list matches `name`.

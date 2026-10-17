@@ -1,6 +1,7 @@
 //! RPC/CLI controller surface for the `commands` domain: one read-only
 //! method, `commands.list`.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
@@ -52,9 +53,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_list(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        super::ops::commands_list()
+        super::ops::commands_list(&ctx)
             .await?
             .into_cli_compatible_json()
     })

@@ -28,14 +28,16 @@ test.describe('Cron jobs settings panel', () => {
     page,
   }) => {
     await openCronJobsPanel(page);
-    const text = await page.locator('#root').innerText();
-    expect(
-      [
-        'Failed to load core cron jobs: Not running in Tauri',
-        'No core cron jobs found.',
-        MORNING_BRIEFING,
-      ].some(marker => text.includes(marker))
-    ).toBe(true);
+    await expect
+      .poll(async () => {
+        const text = await page.locator('#root').innerText();
+        return [
+          'Failed to load core cron jobs: Not running in Tauri',
+          'No core cron jobs found.',
+          MORNING_BRIEFING,
+        ].some(marker => text.includes(marker));
+      })
+      .toBe(true);
   });
 
   test('refresh action is visible in the cron jobs panel', async ({ page }) => {

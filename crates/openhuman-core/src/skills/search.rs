@@ -12,7 +12,7 @@
 //! deciding it should.
 //!
 //! Search is the third way: pay for the one skill that matches, and nothing for
-//! the rest. It is the same bargain [`crate::tools::implementations::meta::deferred`]
+//! the rest. It is the same bargain [`tinytools::deferred`]
 //! makes for deferred tool schemas, over a different corpus.
 //!
 //! # What it returns, and what it does not
@@ -24,8 +24,8 @@
 //!
 //! # The seam
 //!
-//! Ranking is [`tinytools::rank::Bm25Index`], which names nothing from this
-//! crate. The host-owned half is everything else in this file: which roots are
+//! Ranking and the capped projection live in `tinyskills::search`. The
+//! host-owned half is everything else in this file: which roots are
 //! scanned and whether the workspace is trusted. That is the split to preserve
 //! if this ever becomes a loadable module — a module can rank, but it cannot be
 //! the thing that decides whose skills a caller may see.
@@ -39,7 +39,6 @@ use serde_json::{json, Value};
 use super::ops_discover::{discover_workflows, is_workspace_trusted};
 use crate::config::Config;
 use tinyskills::Skill as Workflow;
-use tinytools::rank::Bm25Index;
 use tinytools::{Tool, ToolResult};
 
 /// How many matches a search returns when the caller does not say.
@@ -47,68 +46,12 @@ const DEFAULT_LIMIT: usize = 5;
 /// Ceiling on `limit`. A search that can return everything is `list_workflows`
 /// with extra steps, and would spend exactly what this tool saves.
 const MAX_LIMIT: usize = 20;
-/// Cap on a returned description.
-///
-/// Skill descriptions are third-party metadata. The same 240 the orchestrator
-/// prompt's catalogue uses — see `render_installed_skills` — so a skill cannot
-/// present one size in the catalogue and a different one here.
-const MAX_DESCRIPTION: usize = 240;
-
 pub const SKILL_SEARCH_NAME: &str = "skill_search";
 
-/// The text a skill is matched on.
-///
-/// `dir_name` is included as well as `name` because they diverge — the id the
-/// model must eventually type is `dir_name`, and a skill whose frontmatter
-/// display name differs would otherwise be unfindable by the name it is
-/// actually called by.
-fn searchable_text(workflow: &Workflow) -> String {
-    format!(
-        "{} {} {} {}",
-        workflow.dir_name,
-        workflow.name,
-        workflow.description,
-        workflow.tags.join(" ")
-    )
-}
-
-fn id_of(workflow: &Workflow) -> &str {
-    workflow.id()
-}
-
-/// Rank `workflows` against `query`, best first, at most `limit` results.
-///
-/// Split out from the tool so the ranking is testable without a workspace, a
-/// config or a filesystem.
-pub fn rank<'a>(workflows: &'a [Workflow], query: &str, limit: usize) -> Vec<&'a Workflow> {
-    let texts: Vec<(String, String)> = workflows
-        .iter()
-        .map(|w| (id_of(w).to_string(), searchable_text(w)))
-        .collect();
-    let index = Bm25Index::build(texts.iter().map(|(id, text)| (id.as_str(), text.as_str())));
-    index
-        .search(query, limit)
-        .into_iter()
-        .map(|i| &workflows[i])
-        .collect()
-}
-
-/// The compact per-result projection.
-fn project(workflow: &Workflow) -> Value {
-    json!({
-        "id": id_of(workflow),
-        "name": workflow.name,
-        // Sanitised for the same reason the prompt catalogue sanitises: this is
-        // author-controlled text about to be read by a model as if the host had
-        // said it. `sanitize_for_llm` strips control characters and instruction
-        // fences and caps the length.
-        "description": tinytools_std::sanitize::sanitize_for_llm(
-            &workflow.description,
-            MAX_DESCRIPTION,
-        ),
-        "tags": workflow.tags,
-        "scope": workflow.scope,
-    })
+/// Compact per-result projection, via the module's capped projection with the
+/// host's `sanitize_for_llm` supplied as the sanitiser.
+fn project(workflow: &Workflow) -> tinyskills::SkillHit {
+    tinyskills::project(workflow, tinytools_std::sanitize::sanitize_for_llm)
 }
 
 /// Search installed skills by capability.
@@ -202,7 +145,7 @@ impl Tool for SkillSearchTool {
             .unwrap_or(DEFAULT_LIMIT);
 
         let workflows = self.visible();
-        let matches = rank(&workflows, query, limit);
+        let matches = tinyskills::rank(&workflows, query, limit);
         tracing::debug!(
             installed = workflows.len(),
             matched = matches.len(),

@@ -1,20 +1,14 @@
 //! Tauri commands for exporting agent-generated artifacts (#2779).
 //!
-//! One export path, fed by an artifact id:
-//! [`download_artifact_to_downloads`] resolves the id through the core's
-//! artifact store, copies the file into the user's Downloads directory with a
-//! non-colliding name, and returns the dest path so the UI can offer "Reveal in
-//! Finder". Cross-platform.
+//! Two export paths, both fed by an artifact id:
 //!
-//! **The native Save-As dialog (#3162) was removed.** It was one call into
-//! `rfd`, and `rfd` carried 13 packages — the xdg-desktop-portal client
-//! (`ashpd`), `zbus`, and the `async-io`/`polling` executor stack — into a
-//! binary that already reaches D-Bus through other paths. The frontend's
-//! `saveArtifactViaDialog` had a Downloads fallback for hosts with no
-//! portal from the day it landed, so that fallback is simply the only path
-//! now; the user still gets the file plus "Reveal in Finder", one dialog
-//! fewer. If a real Save-As is wanted again, prefer the destination-picking
-//! surface Tauri itself already links over re-adding a second dialog stack.
+//! - [`save_artifact_as`] asks the user where to save it (the OS save dialog,
+//!   through the `rfd` the shell links for the directory chooser) and copies
+//!   the file there. The preview panel's Download uses it, through the
+//!   frontend's `saveArtifactViaDialog`.
+//! - [`download_artifact_to_downloads`] copies the file into the user's
+//!   Downloads directory with a non-colliding name and returns the dest path,
+//!   so the UI can offer "Reveal in Finder". Cross-platform.
 //!
 //! The renderer names an artifact, never a path (#5505). Artifact files now
 //! live in a visible, user-configurable folder rather than under the data
@@ -49,6 +43,64 @@ async fn copy_to_path(source: &Path, dest: &Path) -> Result<u64, String> {
         .map_err(|e| format!("failed to copy artifact to {:?}: {e}", dest))
 }
 
+/// Ask the user where to save an artifact (the OS save dialog, prefilled with
+/// `filename`) and copy the artifact's file there.
+///
+/// Returns `Ok(Some(path))` once copied, `Ok(None)` when the user cancels.
+/// The file copied is the one the core's artifact store vouches for; for a
+/// versioned artifact that is its latest version.
+#[tauri::command]
+pub async fn save_artifact_as(
+    artifact_id: String,
+    filename: String,
+) -> Result<Option<String>, String> {
+    let config = openhuman_rpc::embed::config::load_host_config().await?;
+    let roots = openhuman_rpc::embed::artifacts::FileRoots::from_config(&config);
+    save_to_chosen_path(
+        &config.workspace_dir,
+        &roots,
+        &artifact_id,
+        &filename,
+        |name| async move {
+            // macOS: NSSavePanel. Windows: IFileSaveDialog. Linux: the GTK chooser.
+            rfd::AsyncFileDialog::new()
+                .set_file_name(&name)
+                .save_file()
+                .await
+                .map(|handle| handle.path().to_path_buf())
+        },
+    )
+    .await
+}
+
+/// [`save_artifact_as`] with the destination chooser passed in, so the checks
+/// run without a dialog: the id must resolve to a file the artifact store
+/// vouches for and the filename must be a plain name, both before `choose` is
+/// asked. `choose` gets the sanitized name and returns `None` on cancel.
+async fn save_to_chosen_path<F, Fut>(
+    workspace_dir: &Path,
+    roots: &openhuman_rpc::embed::artifacts::FileRoots,
+    artifact_id: &str,
+    filename: &str,
+    choose: F,
+) -> Result<Option<String>, String>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Option<PathBuf>>,
+{
+    let source = resolve_source(workspace_dir, roots, artifact_id).await?;
+    let sanitized = sanitize_filename(filename)?;
+    let Some(dest) = choose(sanitized).await else {
+        log::debug!("[artifact_commands] save_artifact_as cancelled by user");
+        return Ok(None);
+    };
+    let bytes = copy_to_path(&source, &dest).await?;
+    // The chosen path carries the user's login and folder names; it is not
+    // logged (see `directory_picker`).
+    log::info!("[artifact_commands] save_artifact_as bytes={bytes}");
+    Ok(Some(dest.display().to_string()))
+}
+
 /// Maximum number of `(N)` suffixes we'll append when picking a
 /// non-colliding filename. After 1000 we give up and append a UUID
 /// suffix instead so the download never silently overwrites.
@@ -62,7 +114,7 @@ pub async fn download_artifact_to_downloads(
     if artifact_id.trim().is_empty() {
         return Err("artifact_id must not be empty".to_string());
     }
-    let config = openhuman_rpc::embed::config::load_config_with_timeout().await?;
+    let config = openhuman_rpc::embed::config::load_host_config().await?;
     let roots = openhuman_rpc::embed::artifacts::FileRoots::from_config(&config);
     let source = resolve_source(&config.workspace_dir, &roots, &artifact_id).await?;
     if filename.trim().is_empty() {

@@ -5,7 +5,7 @@
 //! [`Runtime::agent`](crate::Runtime::agent) assembled from an
 //! [`AgentSpec`]: its own `Config` (provider route and model, MCP servers,
 //! autonomy tier, `action_dir`), its
-//! [`AgentDefinition`](openhuman_core::agent::harness::definition::AgentDefinition)
+//! [`AgentDefinition`](openhuman_core::agent::harness::host_definition::AgentDefinition)
 //! (system prompt, tool scope, sandbox mode), its
 //! derived
 //! [`CoreContext`](openhuman_core::core::runtime::CoreContext) every turn
@@ -33,7 +33,7 @@ pub use spec::{AgentSpec, MemoryBinding};
 use std::path::Path;
 use std::sync::Arc;
 
-use openhuman_core::agent::harness::definition::AgentDefinition;
+use openhuman_core::agent::harness::host_definition::AgentDefinition;
 use openhuman_core::config::Config;
 use openhuman_core::core::runtime::{CoreContext, CoreRuntime};
 
@@ -75,6 +75,11 @@ pub enum AgentError {
         #[source]
         source: std::io::Error,
     },
+
+    /// A module-owned agent resource did not acknowledge cleanup, so its
+    /// workspace could not be purged safely.
+    #[error("agent cleanup is still pending; its workspace was retained")]
+    CleanupPending,
 
     /// A spec input could not be honoured.
     #[error("{0}")]
@@ -139,9 +144,20 @@ pub(crate) struct AgentInner {
 
 impl AgentInner {
     /// Releases what the core keeps for this agent: parked approvals are
-    /// denied with `resolution`, its state slots and MCP host are dropped,
-    /// and its context leaves the registry. Runs once.
+    /// denied with `resolution`, its state slots are cleared, cached MCP
+    /// cleanup is scheduled, and its context leaves the registry. Runs once.
     pub(crate) fn teardown(&self, resolution: &str) {
+        self.teardown_with_cleanup(resolution, true);
+    }
+
+    /// Tears down host state without scheduling a separate close task. The
+    /// removal owner uses this when it transfers cleanup to a deferred
+    /// close-and-purge callback.
+    pub(crate) fn teardown_without_mcp_cleanup(&self, resolution: &str) {
+        self.teardown_with_cleanup(resolution, false);
+    }
+
+    fn teardown_with_cleanup(&self, resolution: &str, schedule_mcp_cleanup: bool) {
         if !self.lifecycle.begin_teardown() {
             return;
         }
@@ -153,12 +169,20 @@ impl AgentInner {
         );
         self.deny_approvals(resolution);
         self.ctx.agent_state().clear();
-        if openhuman_core::mcp::host::take_agent_host(&self.config.workspace_dir, &self.id)
-            .is_some()
-        {
-            log::debug!(
-                "[embed][agent] teardown id={} evicted its MCP host",
-                self.id
+        if schedule_mcp_cleanup {
+            // Keep an ephemeral runtime workspace alive until an outstanding
+            // module close is acknowledged. The cleanup callback is retained
+            // by the path reservation if close needs a later retry, so it
+            // holds only the workspace, never the runtime's process slot.
+            let workspace = self._runtime_guard.workspace_keepalive();
+            let keep_workspace = Arc::new(move || {
+                let _ = &workspace;
+                true
+            });
+            openhuman_core::mcp::host::schedule_agent_close_with_cleanup(
+                &self.config.workspace_dir,
+                &self.id,
+                keep_workspace,
             );
         }
         openhuman_core::core::runtime::AgentContextRegistry::deregister(&self.id, &self.ctx);
@@ -173,7 +197,11 @@ impl AgentInner {
         let Some(gate) = openhuman_core::security::approval::ApprovalGate::try_global() else {
             return;
         };
-        match gate.deny_all_for_agent(&self.id, resolution) {
+        match gate.deny_all_for_agent(
+            &openhuman_core::core::runtime::DispatchCtx::new(Arc::clone(&self.ctx)),
+            &self.id,
+            resolution,
+        ) {
             Ok(denied) => log::debug!(
                 "[embed][agent] id={} denied_approvals={denied} resolution={resolution}",
                 self.id
@@ -189,6 +217,9 @@ impl AgentInner {
 impl Drop for AgentInner {
     fn drop(&mut self) {
         self.teardown("agent_dropped");
+        // Keep the weak registry slot as the id reservation while teardown
+        // drops user-owned state. Its destructors may block or re-enter the
+        // runtime, so do not hold the registry mutex across teardown.
         let mut agents = self.registry.lock().unwrap_or_else(|e| e.into_inner());
         if agents
             .get(&self.id)
@@ -269,6 +300,7 @@ impl Agent {
             handler,
             self.inner.lifecycle.removed(),
             self.inner.lifecycle.approval_state(),
+            Some(Arc::downgrade(&self.inner.ctx)),
         )
     }
 
@@ -289,6 +321,7 @@ impl Agent {
             &self.inner.id,
             self.inner.lifecycle.removed(),
             self.inner.lifecycle.approval_state(),
+            Some(Arc::downgrade(&self.inner.ctx)),
         )
     }
 

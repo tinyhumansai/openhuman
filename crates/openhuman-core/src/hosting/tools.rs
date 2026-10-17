@@ -3,7 +3,12 @@
 use std::path::{Component, Path, PathBuf};
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
+use tinyhosts_bus::preparation::{
+    AuthorizedDirectory, MAX_PREPARATION_BYTES, MAX_PREPARATION_FILES,
+};
+use tinyhosts_bus::rpc::{Operation, Outcome};
+use tinyhosts_bus::tools as hosting_tools;
 use tinyhosts_bus::{PermissionLevel as ContractPermission, ToolDeclaration};
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 
@@ -65,64 +70,65 @@ struct HostingTool {
     declaration: ToolDeclaration,
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+fn pretty(outcome: Outcome) -> anyhow::Result<ToolResult> {
+    let value = serde_json::to_value(outcome)?;
+    let value = value.get("value").cloned().unwrap_or(Value::Null);
+    Ok(ToolResult::success(serde_json::to_string_pretty(&value)?))
+}
+
+fn unexpected() -> anyhow::Error {
+    anyhow::anyhow!(tinybus::module::ModuleCallError::ModuleFault.to_string())
+}
+
 impl HostingTool {
     async fn run(&self, args: Value) -> anyhow::Result<ToolResult> {
-        match self.declaration.name.as_str() {
-            "hosting_launch_site" => self.launch(args).await,
-            "hosting_deployment_status" => {
-                let id = required_str(&args, "deployment_id")?;
-                self.pretty(operation("deployment", json!({"id": id})))
-                    .await
-            }
-            "hosting_list_deployments" => {
-                let site = required_str(&args, "site")?;
-                let limit = bounded(&args, "limit", 20, 1, 100);
-                self.pretty(operation(
-                    "list_deployments",
-                    json!({"site": site, "limit": limit}),
-                ))
-                .await
-            }
-            "hosting_deployment_logs" => {
-                let id = required_str(&args, "deployment_id")?;
-                let limit = bounded(&args, "limit", 100, 1, 1000) as usize;
-                let outcome = self
-                    .account
-                    .execute(operation("deployment_logs", json!({"id": id})))
-                    .await?;
-                let mut logs = outcome;
-                if let Some(items) = logs.as_array_mut() {
-                    if items.len() > limit {
-                        *items = items.split_off(items.len() - limit);
+        let name = self.declaration.name.as_str();
+        tracing::debug!(tool = name, "[hosting] tool call");
+        match name {
+            hosting_tools::TOOL_LAUNCH_SITE => self.launch(args).await,
+            hosting_tools::TOOL_ROLLBACK => self.rollback(args).await,
+            _ => {
+                let operation = Operation::from_tool_args(name, &args, now_ms())?;
+                let outcome = self.account.execute(operation).await?;
+                match (name, outcome) {
+                    (hosting_tools::TOOL_DEPLOYMENT_LOGS, Outcome::DeploymentLogs(logs)) => {
+                        let limit = hosting_tools::bounded(&args, "limit", 100, 1, 1000);
+                        let logs = hosting_tools::tail_logs(logs, limit as usize);
+                        Ok(ToolResult::success(serde_json::to_string_pretty(&logs)?))
                     }
+                    ("hosting_set_env", Outcome::Done) => {
+                        let site = hosting_tools::required_str(&args, "site")?;
+                        let keys: Vec<&str> = args
+                            .get("env")
+                            .and_then(Value::as_object)
+                            .map(|env| env.keys().map(String::as_str).collect())
+                            .unwrap_or_default();
+                        Ok(ToolResult::success(hosting_tools::set_env_summary(
+                            &site, &keys,
+                        )))
+                    }
+                    ("hosting_add_domain", Outcome::Domain(domain)) => {
+                        let site = hosting_tools::required_str(&args, "site")?;
+                        Ok(ToolResult::success(hosting_tools::add_domain_summary(
+                            &site, &domain,
+                        )))
+                    }
+                    (_, outcome) => pretty(outcome),
                 }
-                Ok(ToolResult::success(serde_json::to_string_pretty(&logs)?))
             }
-            "hosting_rollback" => self.rollback(args).await,
-            "hosting_list_sites" => {
-                let limit = bounded(&args, "limit", 20, 1, 100);
-                self.pretty(operation("list_sites", json!({"limit": limit})))
-                    .await
-            }
-            "hosting_set_env" => self.set_env(args).await,
-            "hosting_add_domain" => self.add_domain(args).await,
-            "hosting_domain_status" => {
-                let site = required_str(&args, "site")?;
-                self.pretty(operation("list_domains", json!({"site": site})))
-                    .await
-            }
-            "hosting_analytics" => self.analytics(args).await,
-            _ => Ok(ToolResult::error("hosting tool declaration is unsupported")),
         }
     }
 
-    async fn pretty(&self, request: Value) -> anyhow::Result<ToolResult> {
-        let value = self.account.execute(request).await?;
-        Ok(ToolResult::success(serde_json::to_string_pretty(&value)?))
-    }
-
     async fn launch(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let site = required_str(&args, "site")?;
+        hosting_tools::required_str(&args, "site")?;
         let relative = args.get("path").and_then(Value::as_str).unwrap_or(".");
         let workspace = self
             .account
@@ -133,179 +139,49 @@ impl HostingTool {
         let relative_source = source
             .strip_prefix(&workspace)
             .map_err(|_| anyhow::anyhow!("path escapes the workspace"))?;
-        let prepared = self
-            .account
-            .execute(operation(
-                "prepare_bundle",
-                json!({
-                    "directory": {"workspace": workspace, "path": relative_source}
-                }),
-            ))
-            .await?;
-        let bundle = prepared
-            .get("bundle")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("hosting module returned an invalid prepared bundle"))?;
-        let mut env = Vec::new();
-        if let Some(values) = args.get("env").and_then(Value::as_object) {
-            for (key, value) in values {
-                env.push(json!({"key": key, "value": env_string(key, value)?, "targets": [], "secret": false}));
-            }
-        }
-        let database = args.get("database").and_then(Value::as_str).map(str::trim).filter(|name| !name.is_empty()).map(|name| {
-            json!({"name": name, "kind": args.get("database_kind").and_then(Value::as_str).unwrap_or("postgres")})
-        });
-        let domains: Vec<String> = args
-            .get("domains")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .collect();
-        let target = if args
-            .get("production")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            "production"
-        } else {
-            "preview"
+        let prepare: Operation = Operation::PrepareBundle {
+            directory: AuthorizedDirectory {
+                workspace: workspace.to_string_lossy().into_owned(),
+                path: relative_source.to_string_lossy().into_owned(),
+                max_bytes: MAX_PREPARATION_BYTES,
+                max_files: MAX_PREPARATION_FILES,
+            },
         };
-        let plan = json!({
-            "site": {"name": site}, "bundle": bundle, "database": database,
-            "env": env, "domains": domains, "target": target
-        });
-        let result = self
-            .account
-            .execute(operation("launch", json!({"plan": plan})))
-            .await?;
-        let text = launch_summary(&result);
-        Ok(ToolResult::success_with_markdown(result, text))
-    }
-
-    async fn set_env(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let site = required_str(&args, "site")?;
-        let Some(env) = args.get("env").and_then(Value::as_object) else {
-            return Ok(ToolResult::error("`env` must be an object of variables"));
+        let Outcome::PreparedBundle(prepared) = self.account.execute(prepare).await? else {
+            return Err(unexpected());
         };
-        let targets = if args
-            .get("production_only")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            vec!["production"]
-        } else {
-            Vec::new()
+        let launch = Operation::launch_from_tool_args(&args, prepared.bundle)?;
+        let Outcome::Launch(launch) = self.account.execute(launch).await? else {
+            return Err(unexpected());
         };
-        let secret = args.get("secret").and_then(Value::as_bool).unwrap_or(false);
-        let mut vars = Vec::with_capacity(env.len());
-        for (key, value) in env {
-            vars.push(json!({"key": key, "value": env_string(key, value)?, "targets": targets, "secret": secret}));
-        }
-        self.account
-            .execute(operation("set_env", json!({"site": site, "vars": vars})))
-            .await?;
-        Ok(ToolResult::success(format!(
-            "Set {} on {site}. Redeploy the site for a build-time variable to take effect.",
-            env.keys().cloned().collect::<Vec<_>>().join(", ")
-        )))
-    }
-
-    async fn add_domain(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let site = required_str(&args, "site")?;
-        let domain = required_str(&args, "domain")?;
-        let outcome = self
-            .account
-            .execute(operation(
-                "add_domain",
-                json!({"site": site, "domain": domain}),
-            ))
-            .await?;
-        let name = outcome
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or(&domain);
-        if outcome
-            .get("verified")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            Ok(ToolResult::success(format!(
-                "{name} is attached to {site} and verified."
-            )))
-        } else {
-            Ok(ToolResult::success(format!(
-                "{name} is attached to {site} but not verified yet: its DNS records still have to point at the provider."
-            )))
-        }
+        let text = hosting_tools::launch_summary(&launch);
+        Ok(ToolResult::success_with_markdown(
+            serde_json::to_value(&*launch)?,
+            text,
+        ))
     }
 
     async fn rollback(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let site = required_str(&args, "site")?;
-        let id = required_str(&args, "deployment_id")?;
-        let deployment = self
-            .account
-            .execute(operation("deployment", json!({"id": id})))
-            .await?;
-        if !rollback_target_is_ready(&deployment) {
-            let status = rollback_status(&deployment);
-            return Ok(ToolResult::error(format!(
-                "Deployment `{id}` is {status}, so it cannot be promoted — only a deployment that finished building can serve traffic. Use hosting_list_deployments to find one that is ready."
+        let site = hosting_tools::required_str(&args, "site")?;
+        let id = hosting_tools::required_str(&args, "deployment_id")?;
+        let read = Operation::from_tool_args(hosting_tools::TOOL_ROLLBACK, &args, now_ms())?;
+        let Outcome::Deployment(deployment) = self.account.execute(read).await? else {
+            return Err(unexpected());
+        };
+        if !hosting_tools::rollback_target_is_ready(&deployment) {
+            return Ok(ToolResult::error(hosting_tools::rollback_refusal(
+                &id,
+                &deployment,
             )));
         }
         self.account
-            .execute(operation(
-                "promote",
-                json!({"site": site, "deployment": id}),
-            ))
+            .execute(Operation::promote_from_tool_args(&args)?)
             .await?;
-        Ok(ToolResult::success(
-            match deployment.get("url").and_then(Value::as_str) {
-                Some(url) => format!(
-                    "{site} is now serving deployment `{id}` in production ({url}). The change is at the provider's edge; nothing was rebuilt."
-                ),
-                None => format!(
-                    "{site} is now serving deployment `{id}` in production. The change is at the provider's edge; nothing was rebuilt."
-                ),
-            },
-        ))
-    }
-
-    async fn analytics(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let site = required_str(&args, "site")?;
-        let days = bounded(&args, "days", 7, 1, 365) as u64;
-        let until = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |duration| {
-                u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-            });
-        let breakdown = match args.get("breakdown").and_then(Value::as_str) {
-            None => None,
-            Some("country") => Some("country"),
-            Some("request_path") => Some("request_path"),
-            Some("device_type") => Some("device_type"),
-            Some("browser_name") => Some("browser_name"),
-            Some("os_name") => Some("os_name"),
-            Some("referrer_hostname") => Some("referrer_hostname"),
-            Some("route") => Some("route"),
-            Some(other) => {
-                return Ok(ToolResult::error(format!(
-                    "`breakdown` must be one of country, request_path, device_type, \
-                     browser_name, os_name, referrer_hostname, route — not `{other}`"
-                )));
-            }
-        };
-        self.pretty(operation(
-            "analytics",
-            json!({"query": {
-                "site": site, "since_ms": until.saturating_sub(days * 24 * 60 * 60 * 1000),
-                "until_ms": until, "breakdown": breakdown, "limit": 10
-            }}),
-        ))
-        .await
+        Ok(ToolResult::success(hosting_tools::rollback_summary(
+            &site,
+            &id,
+            &deployment,
+        )))
     }
 }
 
@@ -346,139 +222,3 @@ impl Tool for HostingTool {
         self.execute(args).await
     }
 }
-
-fn operation(name: &str, mut fields: Value) -> Value {
-    if let Some(object) = fields.as_object_mut() {
-        object.insert("operation".into(), json!(name));
-    }
-    fields
-}
-
-fn required_str(args: &Value, key: &str) -> anyhow::Result<String> {
-    args.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("`{key}` is required"))
-}
-
-fn env_string(key: &str, value: &Value) -> anyhow::Result<String> {
-    match value {
-        Value::String(value) => Ok(value.clone()),
-        Value::Number(_) | Value::Bool(_) => Ok(value.to_string()),
-        _ => anyhow::bail!("`env.{key}` must be a string, number, or boolean"),
-    }
-}
-
-fn bounded(args: &Value, key: &str, default: u64, min: u64, max: u64) -> u32 {
-    args.get(key)
-        .and_then(Value::as_i64)
-        .map(|value| value.clamp(min as i64, max as i64) as u64)
-        .or_else(|| args.get(key).and_then(Value::as_u64))
-        .unwrap_or(default)
-        .clamp(min, max) as u32
-}
-
-fn launch_summary(launch: &Value) -> String {
-    let site = launch
-        .pointer("/site/name")
-        .and_then(Value::as_str)
-        .unwrap_or("site");
-    let created = launch
-        .get("created_site")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let deployment = launch
-        .pointer("/deployment/id")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let status = launch
-        .pointer("/deployment/status")
-        .and_then(Value::as_str)
-        .map(status_debug)
-        .unwrap_or("unknown");
-    let mut lines = vec![format!(
-        "Site **{site}** ({}), deployment `{deployment}` is {status}.",
-        if created {
-            "created"
-        } else {
-            "already existed"
-        }
-    )];
-    match launch.pointer("/deployment/url").and_then(Value::as_str) {
-        Some(url) => lines.push(format!("It will serve from {url} once the build finishes — poll `hosting_deployment_status` with the deployment id.")),
-        None => lines.push("The provider has not assigned a URL yet; poll `hosting_deployment_status` with the deployment id.".to_owned()),
-    }
-    if let Some(database) = launch.get("database").filter(|value| !value.is_null()) {
-        let name = database
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("database");
-        let kind = database
-            .pointer("/kind")
-            .and_then(Value::as_str)
-            .unwrap_or("database");
-        let status = database
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let keys = launch
-            .get("database_env_keys")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>();
-        lines.push(format!("Database **{name}** ({kind}) is {status}; it injected {} into the site's environment. The values are the provider's — nothing here can read them.", if keys.is_empty() { "no variables".to_owned() } else { keys.join(", ") }));
-    }
-    if let Some(domains) = launch
-        .get("domains")
-        .and_then(Value::as_array)
-        .filter(|domains| !domains.is_empty())
-    {
-        let unverified = domains
-            .iter()
-            .filter(|domain| {
-                !domain
-                    .get("verified")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-            })
-            .filter_map(|domain| domain.get("name").and_then(Value::as_str))
-            .collect::<Vec<_>>();
-        if unverified.is_empty() {
-            lines.push("Every domain is verified.".to_owned());
-        } else {
-            lines.push(format!("These domains still need their DNS records pointed at the provider before they serve traffic: {}.", unverified.join(", ")));
-        }
-    }
-    lines.join("\n\n")
-}
-
-fn status_debug(status: &str) -> &'static str {
-    match status {
-        "queued" => "Queued",
-        "building" => "Building",
-        "ready" => "Ready",
-        "failed" => "Failed",
-        "canceled" => "Canceled",
-        _ => "Other",
-    }
-}
-
-fn rollback_target_is_ready(deployment: &Value) -> bool {
-    deployment.get("status").and_then(Value::as_str) == Some("ready")
-}
-
-fn rollback_status(deployment: &Value) -> &str {
-    deployment
-        .get("status")
-        .and_then(Value::as_str)
-        .map(status_debug)
-        .unwrap_or("unknown status")
-}
-
-#[cfg(test)]
-#[path = "tools_tests.rs"]
-mod tests;

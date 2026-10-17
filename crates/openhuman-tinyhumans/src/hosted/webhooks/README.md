@@ -25,6 +25,6 @@ Credentials, error mapping and the no-account short-circuit come from
 
 ## Further reading
 
-- [`gitbooks/developing/tinyhumans-api-key.md`](../../../../../gitbooks/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
 - [`crates/openhuman-tinyhumans/src/hosted/README.md`](../README.md): hosted proxies.
 - [`vendor/tinyhumans-sdk/README.md`](../../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

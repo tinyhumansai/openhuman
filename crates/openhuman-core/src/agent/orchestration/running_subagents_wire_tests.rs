@@ -33,6 +33,7 @@ async fn roster_status_labels_are_literal() {
     for id in ["wire-run", "wire-done", "wire-await", "wire-fail"] {
         let (tx, rx) = status_channel();
         register(
+            &crate::core::runtime::DispatchCtx::ambient(),
             id.into(),
             "researcher".into(),
             "wire-parent".into(),
@@ -43,7 +44,8 @@ async fn roster_status_labels_are_literal() {
             super::run_queue(),
             super::dummy_abort(),
             rx,
-        );
+        )
+        .expect("fixture registration admitted");
         senders.push((id, tx));
     }
     for (id, tx) in &senders {
@@ -65,10 +67,11 @@ async fn roster_status_labels_are_literal() {
             _ => {}
         }
     }
-    let labels: Vec<(String, &str)> = snapshot_for_parent("wire-parent")
-        .into_iter()
-        .map(|s| (s.task_id, s.status))
-        .collect();
+    let labels: Vec<(String, &str)> =
+        snapshot_for_parent(&crate::core::runtime::DispatchCtx::ambient(), "wire-parent")
+            .into_iter()
+            .map(|s| (s.task_id, s.status))
+            .collect();
     assert_eq!(
         labels,
         vec![
@@ -126,7 +129,14 @@ async fn durable_fallback_maps_every_store_status_to_literal_wait_outcome() {
         "wire-d-running",
         "wire-d-pending",
     ] {
-        let outcome = wait_in_workspace(id, parent, &ws, timeout).await;
+        let outcome = wait_in_workspace(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            id,
+            parent,
+            &ws,
+            timeout,
+        )
+        .await;
         seen.push(format!("{id}: {outcome:?}"));
     }
     assert_eq!(
@@ -142,15 +152,27 @@ async fn durable_fallback_maps_every_store_status_to_literal_wait_outcome() {
     );
     // A different parent is refused, an unknown id is unknown.
     assert_eq!(
-        wait_in_workspace("wire-d-failed", "someone-else", &ws, timeout)
-            .await
-            .unwrap_err(),
+        wait_in_workspace(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "wire-d-failed",
+            "someone-else",
+            &ws,
+            timeout
+        )
+        .await
+        .unwrap_err(),
         WaitError::NotOwned
     );
     assert_eq!(
-        wait_in_workspace("wire-d-nope", parent, &ws, timeout)
-            .await
-            .unwrap_err(),
+        wait_in_workspace(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "wire-d-nope",
+            parent,
+            &ws,
+            timeout
+        )
+        .await
+        .unwrap_err(),
         WaitError::Unknown
     );
 }
@@ -161,6 +183,7 @@ async fn spawn_ledger_record_has_literal_persisted_shape() {
     let ws = tempfile::tempdir().unwrap();
     let (_tx, rx) = status_channel();
     register(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "wire-shape-1".into(),
         "researcher".into(),
         "wire-shape-parent".into(),
@@ -171,12 +194,13 @@ async fn spawn_ledger_record_has_literal_persisted_shape() {
         super::run_queue(),
         super::dummy_abort(),
         rx,
-    );
-    let text = std::fs::read_to_string(ws.path().join(".openhuman/orchestration_tasks.jsonl"))
-        .expect("ledger file at the product path");
-    let first: serde_json::Value =
-        serde_json::from_str(text.lines().next().expect("a record line")).unwrap();
-    let rendered = first.to_string();
+    )
+    .expect("fixture registration admitted");
+    let record = super::task_ledger::list_task_records(ws.path())
+        .into_iter()
+        .next()
+        .expect("a ledger record in the storage backend");
+    let rendered = serde_json::to_value(&record).unwrap().to_string();
     for needle in [
         r#""parentSession":"wire-shape-parent""#,
         r#""rootSession":"rootrun""#,

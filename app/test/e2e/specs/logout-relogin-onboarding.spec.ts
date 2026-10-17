@@ -16,8 +16,8 @@
  */
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import { hasAppChrome, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
+import { triggerAuthLoopbackBypass } from '../helpers/loopback-auth-helpers';
 import { resetApp } from '../helpers/reset-app';
 import {
   dismissBootCheckGateIfVisible,
@@ -79,7 +79,7 @@ describe('Logout -> re-login onboarding state', function () {
     await dismissBootCheckGateIfVisible(12_000);
 
     clearRequestLog();
-    await triggerAuthDeepLinkBypass('e2e-logout-relogin-first-token');
+    await triggerAuthLoopbackBypass('e2e-logout-relogin-first-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await waitForAppReady(15_000);

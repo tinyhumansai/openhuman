@@ -1,57 +1,72 @@
 use super::*;
 use crate::security::devices::store as live;
-use crate::storage::local::{forget, table_names};
+use crate::storage::import::{run_with, Outcome};
 use tempfile::TempDir;
 
-fn workspace() -> (TempDir, Config, Config) {
+fn workspace() -> (TempDir, Config) {
     let dir = TempDir::new().unwrap();
-    let mut classic = Config {
+    let config = Config {
         workspace_dir: dir.path().to_path_buf(),
         ..Config::default()
     };
-    classic.storage.url = Some("classic".into());
-    let default = Config {
-        workspace_dir: dir.path().to_path_buf(),
-        ..Config::default()
-    };
-    (dir, classic, default)
+    (dir, config)
+}
+
+/// Writes a row the way the retired store did.
+fn seed(config: &Config, channel: &str, label: &str, pubkey: &str, revoked: bool, seen: bool) {
+    with_connection(config, |conn| {
+        conn.execute(
+            "INSERT OR REPLACE INTO paired_devices \
+             (channel_id, label, device_pubkey, core_session_token_hash, \
+              shared_secret_encrypted, created_at, last_seen_at, revoked) \
+             VALUES (?1, ?2, ?3, 'hash', NULL, '2026-01-01T00:00:00+00:00', ?4, ?5)",
+            rusqlite::params![
+                channel,
+                label,
+                pubkey,
+                seen.then_some("2026-02-02T00:00:00+00:00"),
+                i64::from(revoked)
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
-fn legacy_devices_are_imported_once_through_the_public_api() {
-    let (_dir, classic, default) = workspace();
-    live::insert_device(&classic, "chan-a", "Phone", "pk-a", "hash-a").unwrap();
-    live::insert_device(&classic, "chan-b", "Tablet", "pk-b", "hash-b").unwrap();
-    live::insert_device(&classic, "chan-c", "Old laptop", "pk-c", "hash-c").unwrap();
-    live::touch_device(&classic, "chan-a").unwrap();
-    live::revoke_device(&classic, "chan-c").unwrap();
-    let db = live::db_path(&classic);
+fn legacy_devices_are_imported_once_and_the_file_is_left_alone() {
+    let (_dir, config) = workspace();
+    seed(&config, "chan-a", "Phone", "pk-a", false, true);
+    seed(&config, "chan-b", "Tablet", "pk-b", false, false);
+    seed(&config, "chan-c", "Old laptop", "pk-c", true, false);
+    let db = db_path(&config);
+    let before = std::fs::read(&db).unwrap();
 
-    let listed = live::list_devices(&default).unwrap();
+    let backend = crate::storage::local::backend_for(&config.workspace_dir).unwrap();
+    let reports = run_with(&backend, &config, &[super::super::import_source()]);
+    assert!(matches!(
+        reports[0].outcome,
+        Ok(Outcome::Imported {
+            found: 3,
+            written: 3
+        })
+    ));
+
+    let listed = live::list_devices(&config).unwrap();
     let labels: Vec<_> = listed.iter().map(|d| d.label.as_str()).collect();
     assert_eq!(labels, ["Phone", "Tablet"]);
-    let phone = live::get_device(&default, "chan-a").unwrap().unwrap();
+    let phone = live::get_device(&config, "chan-a").unwrap().unwrap();
     assert_eq!(phone.device_pubkey, "pk-a");
     assert!(phone.last_seen_at.is_some(), "last_seen_at survives");
-    assert!(!phone.revoked);
-    let tablet = live::get_device(&default, "chan-b").unwrap().unwrap();
+    let tablet = live::get_device(&config, "chan-b").unwrap().unwrap();
     assert!(tablet.last_seen_at.is_none());
-    let old = live::get_device(&default, "chan-c").unwrap().unwrap();
+    let old = live::get_device(&config, "chan-c").unwrap().unwrap();
     assert!(old.revoked, "a revoked device stays revoked");
+    assert_eq!(std::fs::read(&db).unwrap(), before, "devices.db untouched");
 
-    let tables = table_names(&db);
-    assert!(tables.contains(&"_legacy_paired_devices".to_string()));
-    assert!(!tables.contains(&"paired_devices".to_string()));
-    let conn = rusqlite::Connection::open(&db).unwrap();
-    let kept: i64 = conn
-        .query_row("SELECT COUNT(*) FROM _legacy_paired_devices", [], |r| {
-            r.get(0)
-        })
-        .unwrap();
-    assert_eq!(kept, 3);
-
-    // A restart does not import again.
-    live::revoke_device(&default, "chan-b").unwrap();
-    forget(&db);
-    assert_eq!(live::list_devices(&default).unwrap().len(), 1);
+    // A second run changes nothing, even after the store moved on.
+    live::revoke_device(&config, "chan-b").unwrap();
+    let again = run_with(&backend, &config, &[super::super::import_source()]);
+    assert!(matches!(again[0].outcome, Ok(Outcome::AlreadyDone)));
+    assert_eq!(live::list_devices(&config).unwrap().len(), 1);
 }

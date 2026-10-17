@@ -20,17 +20,17 @@
 //! | `triggers`        | GitHub repos + trigger CRUD + trigger history                      |
 //! | `providers_ops`   | `composio_get_user_profile`, `composio_refresh_all_identities`     |
 //! | `direct_mode`     | `composio_get_mode`, `composio_set_api_key`, `_clear_...`          |
-//! | `user_scopes`     | per-toolkit agent scope prefs, in a workspace JSON file            |
+//! | `scope_prefs`     | per-toolkit agent scope prefs, forwarded to the connector module   |
 
 mod connections;
 mod direct_mode;
 mod error_utils;
 mod execute;
 mod providers_ops;
+mod scope_prefs;
 mod toolkits;
 mod tools_ops;
 mod triggers;
-mod user_scopes;
 
 // ── Public re-exports (match original ops.rs public surface) ───────────────
 
@@ -54,8 +54,9 @@ pub use triggers::{
     composio_list_triggers,
 };
 // The `composio.{get,set}_user_scopes` handlers' storage half.
-pub(crate) use user_scopes::{
-    load_or_default as load_user_scope_pref, save as save_user_scope_pref,
+pub(crate) use scope_prefs::{
+    ensure_migrated as ensure_user_scopes_migrated, load_or_default as load_user_scope_pref,
+    save as save_user_scope_pref,
 };
 
 // ── Re-export connected_integrations public items ──────────────────────────

@@ -24,6 +24,9 @@ fn the_model_label_never_fails() {
     config.workspace_dir = dir.path().join("workspace");
     config.secrets.encrypt = false;
     // Either the resolved model id or an `unavailable (...)` label.
-    assert!(!resolved_model(&config).trim().is_empty());
-    let _model = OpenHumanChatModel::new(config);
+    assert!(
+        !resolved_model(&crate::core::runtime::DispatchCtx::host_default(), &config)
+            .trim()
+            .is_empty()
+    );
 }

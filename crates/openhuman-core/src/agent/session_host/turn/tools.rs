@@ -100,7 +100,7 @@ impl OpenHumanSessionHost {
     /// no longer a way for this to half-apply, so the `bool` it used to hand
     /// back — and the caller rollback keyed on it — had no reachable `false`.
     pub fn refresh_delegation_tools(&mut self) {
-        use crate::agent::harness::definition::AgentDefinitionRegistry;
+        use crate::agent::harness::host_definition::AgentDefinitionRegistry;
         use crate::tools::orchestrator_tools::collect_orchestrator_tools;
 
         let Some(reg) = AgentDefinitionRegistry::current() else {

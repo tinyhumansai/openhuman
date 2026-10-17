@@ -74,5 +74,5 @@ underlying tools/scripts with log capture.
 
 - [`capture-first-inference.mjs`](./capture-first-inference.mjs) and [`prompt-breakdown.mjs`](./prompt-breakdown.mjs), the inference capture proxy and prompt pricer described in [`AGENTS.md`](../../AGENTS.md).
 - [`web-scripts/`](./web-scripts) holds example scenarios for `pnpm debug web`.
-- [Testing strategy](../../gitbooks/developing/testing-strategy.md), [E2E testing](../../gitbooks/developing/e2e-testing.md) and [Agent observability](../../gitbooks/developing/agent-observability.md).
+- [Testing strategy](../../docs/gitbooks/en/developing/testing-strategy.md), [E2E testing](../../docs/gitbooks/en/developing/e2e-testing.md) and [Agent observability](../../docs/gitbooks/en/developing/agent-observability.md).
 - [`scripts/README.md`](../README.md) and [`tests/README.md`](../../tests/README.md).

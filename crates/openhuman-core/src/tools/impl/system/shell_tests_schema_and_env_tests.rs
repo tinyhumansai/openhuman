@@ -196,8 +196,8 @@ async fn shell_destructive_command_is_gated_not_run_inline() {
 /// fresh tempdir (distinct from `workspace_dir` and from `cwd`),
 /// runs `pwd`, and asserts the captured stdout canonicalises to the
 /// same path as `action_dir`. If `ShellTool::run_with_security`
-/// stops passing `&security.action_dir` to `build_shell_command`
-/// (or `build_shell_command` stops calling `current_dir`), this
+/// stops passing `&security.action_dir` as the module request's working
+/// directory, this
 /// test fails before the regression ships.
 #[cfg(not(windows))]
 #[tokio::test]
@@ -241,8 +241,7 @@ async fn shell_pwd_returns_action_dir_not_workspace_dir() {
         expected,
         "pwd must report `action_dir`. got `{}`, expected `{}`. \
          If this fails, `ShellTool::run_with_security` likely stopped \
-         passing `&security.action_dir` to `runtime.build_shell_command`, \
-         or `build_shell_command` stopped calling `current_dir(...)`. See #3238.",
+         passing `&security.action_dir` as the native shell request's cwd. See #3238.",
         actual.display(),
         expected.display(),
     );
@@ -296,7 +295,9 @@ fn shell_timeout_honors_explicit_per_call_value() {
     // Above the cap clamps down to MAX_TIMEOUT_SECS (3600).
     assert_eq!(
         tool.explicit_timeout(Some(9_999)),
-        Some(Duration::from_secs(crate::tools::timeout::MAX_TIMEOUT_SECS))
+        Some(Duration::from_secs(
+            tinytools_std::timeout::MAX_TIMEOUT_SECS
+        ))
     );
 }
 
@@ -334,7 +335,9 @@ fn shell_schema_advertises_timeout_secs() {
     let schema = tool.parameters_schema();
     let timeout = &schema["properties"]["timeout_secs"];
     assert_eq!(timeout["type"], "integer");
-    assert_eq!(timeout["minimum"], 1);
+    // 0 is the documented "no deadline" value, so a schema-validating
+    // provider must accept it.
+    assert_eq!(timeout["minimum"], 0);
     assert_eq!(timeout["maximum"], 3600);
 }
 
@@ -350,35 +353,22 @@ fn shell_output_limit_is_1mb() {
 
 #[test]
 fn shell_safe_env_vars_excludes_secrets() {
-    for var in SAFE_ENV_VARS {
+    for var in crate::sandbox::ops::SANDBOX_ENV_PASSTHROUGH {
         let lower = var.to_lowercase();
         assert!(
             !lower.contains("key") && !lower.contains("secret") && !lower.contains("token"),
-            "SAFE_ENV_VARS must not include sensitive variable: {var}"
+            "the shell environment allowlist must not include sensitive variable: {var}"
         );
     }
 }
 
 #[test]
 fn shell_safe_env_vars_includes_essentials() {
-    assert!(
-        SAFE_ENV_VARS.contains(&"PATH"),
-        "PATH must be in safe env vars"
-    );
-    assert!(
-        SAFE_ENV_VARS.contains(&"HOME"),
-        "HOME must be in safe env vars"
-    );
-    assert!(
-        SAFE_ENV_VARS.contains(&"TERM"),
-        "TERM must be in safe env vars"
-    );
-}
-
-#[test]
-fn shell_safe_env_vars_include_windows_process_essentials() {
-    crate::agent::platform_shell::assert_forwards_windows_bootstrap(
-        SAFE_ENV_VARS,
-        "shell::SAFE_ENV_VARS",
-    );
+    let allowlist = crate::sandbox::ops::SANDBOX_ENV_PASSTHROUGH;
+    for essential in ["PATH", "HOME", "TERM"] {
+        assert!(
+            allowlist.contains(&essential),
+            "{essential} must be in the shell environment allowlist"
+        );
+    }
 }

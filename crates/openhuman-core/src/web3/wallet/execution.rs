@@ -1,12 +1,8 @@
-//! Host adapters over the wallet engine: the read and write operations wrapped
-//! in the controller contract's [`Outcome`].
-//!
-//! The logic (balances, transfers, lookups, the quote store) lives in
-//! `tinywallet_web3::crypto`. What this file adds is the `Outcome` envelope and
-//! its log lines, and the engine the operations run on
-//! ([`crate::web3::seams::engine`]).
+//! Typed TinyWallet module operations adapted to product controller results.
+//! This host supplies configuration, custody, transport and approvals; wallet
+//! algorithms and user-scoped service state remain in the compiled module.
 
-use crate::config::rpc as config_rpc;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::modules::{wallet as wallet_module, wallet_service};
 use tinywallet_bus::names::methods;
@@ -20,12 +16,14 @@ pub use tinywallet_bus::wire::{
 
 use tinywallet_bus::wire::{EvmNetwork, WalletNetworkDefaults};
 
-use tinywallet_web3::crypto::wallet::WalletChain;
+use super::ops::WalletChain;
 
 /// Default row for every supported network, with the host's endpoints.
-pub async fn network_defaults() -> Result<Outcome<Vec<WalletNetworkDefaults>>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+pub async fn network_defaults(
+    ctx: &DispatchCtx,
+) -> Result<Outcome<Vec<WalletNetworkDefaults>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_NETWORK_DEFAULTS,
@@ -42,9 +40,9 @@ pub async fn network_defaults() -> Result<Outcome<Vec<WalletNetworkDefaults>>, S
 }
 
 /// Every asset the wallet catalogues.
-pub async fn supported_assets() -> Result<Outcome<Vec<SupportedAsset>>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+pub async fn supported_assets(ctx: &DispatchCtx) -> Result<Outcome<Vec<SupportedAsset>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_SUPPORTED_ASSETS,
@@ -61,9 +59,9 @@ pub async fn supported_assets() -> Result<Outcome<Vec<SupportedAsset>>, String> 
 }
 
 /// Which chains have an account and a provider.
-pub async fn chain_status() -> Result<Outcome<Vec<ChainStatus>>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+pub async fn chain_status(ctx: &DispatchCtx) -> Result<Outcome<Vec<ChainStatus>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_CHAIN_STATUS,
@@ -80,9 +78,9 @@ pub async fn chain_status() -> Result<Outcome<Vec<ChainStatus>>, String> {
 }
 
 /// Live native balances.
-pub async fn balances() -> Result<Outcome<Vec<BalanceInfo>>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+pub async fn balances(ctx: &DispatchCtx) -> Result<Outcome<Vec<BalanceInfo>>, String> {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_BALANCES,
@@ -100,16 +98,12 @@ pub async fn balances() -> Result<Outcome<Vec<BalanceInfo>>, String> {
 
 /// Validate a transfer and store a quote for it.
 pub async fn prepare_transfer(
+    ctx: &DispatchCtx,
     params: PrepareTransferParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<Outcome<PreparedTransaction>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let owner = crate::security::approval::APPROVAL_CHAT_CONTEXT
-        .try_with(|context| tinywallet_bus::wire::QuoteOwner {
-            thread_id: context.thread_id.clone(),
-            client_id: context.client_id.clone(),
-        })
-        .ok();
-    let quote = wallet_service::prepare_native_transfer(&config, owner, params)
+    let config = ctx.load_config().await?;
+    let quote = wallet_service::prepare_native_transfer(ctx, &config, owner, params)
         .await
         .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
@@ -120,16 +114,12 @@ pub async fn prepare_transfer(
 
 /// Confirm and execute a prepared transfer.
 pub async fn execute_prepared(
+    ctx: &DispatchCtx,
     params: ExecutePreparedParams,
+    owner: Option<tinywallet_bus::wire::QuoteOwner>,
 ) -> Result<Outcome<ExecutionResult>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let owner = crate::security::approval::APPROVAL_CHAT_CONTEXT
-        .try_with(|context| tinywallet_bus::wire::QuoteOwner {
-            thread_id: context.thread_id.clone(),
-            client_id: context.client_id.clone(),
-        })
-        .ok();
-    let result = wallet_service::execute_native_transfer(&config, owner, params)
+    let config = ctx.load_config().await?;
+    let result = wallet_service::execute_native_transfer(ctx, &config, owner, params)
         .await
         .map_err(|error| error.to_string())?;
     Ok(Outcome::new(
@@ -140,12 +130,13 @@ pub async fn execute_prepared(
 
 /// Check the on-chain lifecycle state of a broadcast transaction.
 pub async fn tx_status(
+    ctx: &DispatchCtx,
     chain: WalletChain,
     evm_network: Option<EvmNetwork>,
     hash: &str,
 ) -> Result<Outcome<TxStatusInfo>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_TX_STATUS,
@@ -168,12 +159,13 @@ pub async fn tx_status(
 
 /// Fetch the receipt of a broadcast transaction.
 pub async fn tx_receipt(
+    ctx: &DispatchCtx,
     chain: WalletChain,
     evm_network: Option<EvmNetwork>,
     hash: &str,
 ) -> Result<Outcome<TxReceiptInfo>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_TX_RECEIPT,
@@ -196,12 +188,13 @@ pub async fn tx_receipt(
 
 /// Look up the raw transaction payload by hash.
 pub async fn lookup_tx(
+    ctx: &DispatchCtx,
     chain: WalletChain,
     evm_network: Option<EvmNetwork>,
     hash: &str,
 ) -> Result<Outcome<TxLookupInfo>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
-    let result = wallet_service::with_native_wallet(&config, |service| async {
+    let config = ctx.load_config().await?;
+    let result = wallet_service::with_native_wallet(ctx, &config, |service| async {
         wallet_module::call(
             &config,
             methods::NATIVE_WALLET_LOOKUP_TX,
@@ -220,6 +213,18 @@ pub async fn lookup_tx(
         result,
         vec!["wallet tx looked up".to_string()],
     ))
+}
+
+/// Encode ERC-20 transfer calldata in the loaded wallet module.
+pub async fn encode_erc20_transfer(
+    ctx: &DispatchCtx,
+    to_address: &str,
+    amount_raw: &str,
+) -> Result<String, String> {
+    let config = ctx.load_config().await?;
+    wallet_module::encode_erc20_transfer(&config, to_address, amount_raw)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The quotes that can still be executed. Test support and the introspection

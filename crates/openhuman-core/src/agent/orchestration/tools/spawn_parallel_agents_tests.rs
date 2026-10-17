@@ -1,14 +1,10 @@
 use super::*;
-use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::agent::harness::definition::{
-    AgentDefinition, AgentTier, DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope,
-};
-use crate::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
-use crate::agent::orchestration::spawn_parallel_graph::{
+use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::harness::host_definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
+use crate::agent::orchestration::spawn_parallel::{
     prepare_spawn_parallel_tasks_from_defs, ParallelTaskRejectionKind, SpawnParallelTaskPreflight,
-    WorkerDispatchMode,
 };
-use crate::agent::prompts::ToolCallFormat;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::OpenHumanSessionHost;
 use crate::config::AgentConfig;
@@ -20,13 +16,18 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use tinyagents_definition::{
+    AgentTier, DefinitionSource, ModelSpec, PromptSource, SandboxMode, ToolScope,
+};
 use tinyagents_harness::tool::ToolDispatch;
+use tinyagents_orchestration::parallel::WorkerDispatchMode;
 use tinyinference_llm::message::{AssistantMessage, Message};
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall;
 use tinytools::ToolTimeout;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 use tinytools_agent::dialect::NativeDialect;
+use tinytools_agent::dialect::ToolCallFormat;
 use tinytools_agent::dialect::TranscriptEntry;
 use tokio::time::{sleep, timeout, Duration};
 
@@ -80,6 +81,7 @@ fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 
@@ -110,7 +112,7 @@ async fn typed_dispatch_uses_the_parent_token_for_fanout_cancellation() {
         .into_tinyagents(tinyagents_harness::context::RunConfig::new("parent"));
 
     cancellation.cancel();
-    let result = with_parent_context(parent, async {
+    let result = (async {
         dispatch
             .execute(
                 &(),
@@ -148,9 +150,6 @@ fn definition_with_tool_scope(
         when_to_use: "test definition".into(),
         display_name: None,
         system_prompt: PromptSource::Inline("test prompt".into()),
-        omit_identity: true,
-        omit_memory_context: true,
-        omit_safety_preamble: true,
         model: ModelSpec::Inherit,
         temperature: 0.0,
         tools,
@@ -166,12 +165,19 @@ fn definition_with_tool_scope(
         timeout_secs: None,
         sandbox_mode,
         background: false,
-        tokenjuice_compression: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
         agent_tier: AgentTier::Worker,
-        searches_connected_mcp: false,
         source: DefinitionSource::Builtin,
+        extensions: crate::agent::harness::host_definition::AgentExt {
+            omit_identity: true,
+            omit_memory_context: true,
+            omit_safety_preamble: true,
+            tokenjuice_compression: Default::default(),
+            searches_connected_mcp: false,
+            ..Default::default()
+        },
+        role: None,
     }
 }
 

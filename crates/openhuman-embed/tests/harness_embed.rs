@@ -207,20 +207,22 @@ fn a_harness_runs_a_turn_against_the_provider_it_was_given() {
             let requests = common::chat_requests(&provider_server).await;
             assert_eq!(requests.len(), 102, "two serial + 100 concurrent turns");
 
-            // The session database landed in the harness's workspace.
+            // The first session's transcript landed in the harness agent's
+            // own store under the workspace (the path-based transcript files
+            // are gone). A harness session id is its thread id.
+            let transcripts =
+                tinyagents_session::port::WorkspaceStores::open(&workspace_dir, "harness")
+                    .expect("the harness agent's workspace store")
+                    .transcripts();
             assert!(
-                workspace_dir.join("session_db/sessions.db").exists(),
-                "sessions were not persisted under the harness workspace"
+                transcripts.root_for_thread(&first.session_id).is_some(),
+                "the first session's transcript was not persisted"
             );
 
             // The harness is one runtime plus one agent, and says so.
             assert_eq!(harness.agent().id(), "harness");
             assert_eq!(harness.runtime().workspace_dir(), harness.workspace_dir());
             assert_eq!(harness.runtime().agent_ids(), vec!["harness".to_string()]);
-            assert!(
-                harness.agent().transcripts_dir().is_dir(),
-                "the harness agent's transcripts were written"
-            );
 
             // A second harness — a second runtime — in this process must be
             // refused rather than silently sharing process-global core state.
@@ -243,6 +245,14 @@ fn a_harness_runs_a_turn_against_the_provider_it_was_given() {
                 "got {err:?}"
             );
 
+            // Dropping the agent only schedules its MCP close, and the deferred
+            // close keeps the ephemeral workspace until it is acknowledged;
+            // removing the agent awaits the close first.
+            harness
+                .runtime()
+                .remove_agent("harness")
+                .await
+                .expect("the harness agent is removed and its cleanup acknowledged");
             drop(harness);
             assert!(
                 !workspace_dir.exists(),

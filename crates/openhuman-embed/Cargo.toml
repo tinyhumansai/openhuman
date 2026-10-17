@@ -8,8 +8,13 @@ repository.workspace = true
 readme = "README.md"
 publish = false
 
+# Core errors are intentionally carried by this facade's public fallible APIs;
+# keep the same size baseline as the underlying core crate under `-D warnings`.
+[lints.clippy]
+result_large_err = "allow"
+
 [features]
-langfuse = ["openhuman-core/langfuse"]
+langfuse = ["openhuman-core/langfuse", "tinyagents-harness/langfuse"]
 # `channels` is in core's default set already; enabling it here too compiles
 # the `Runtime::channels` facade in a default build.
 default = ["openhuman-core/default", "channels", "modules"]
@@ -18,12 +23,13 @@ inference = ["openhuman-core/inference"]
 documents = ["openhuman-core/documents"]
 hosting = ["openhuman-core/hosting"]
 tinymemes = ["openhuman-core/tinymemes"]
-modules = ["openhuman-core/modules"]
+modules = ["openhuman-core/modules", "tinybus/modules"]
 voice = ["openhuman-core/voice"]
 web3 = ["openhuman-core/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
 storage-sqlite = ["openhuman-core/storage-sqlite"]
 storage-mongodb = ["openhuman-core/storage-mongodb"]
+storage-s3 = ["openhuman-core/storage-s3"]
 storage-file = ["openhuman-core/storage-file"]
 media = ["openhuman-core/media"]
 flows = ["openhuman-core/flows"]
@@ -72,6 +78,7 @@ tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus" }
 # conversations in its own database, and the in-memory provider; same path as
 # the core's so one copy resolves.
 tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
+tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
 # Native persisted todo codec exposed by the existing session-store contract.
 tinyagents-graph = { path = "../../vendor/tinyagents/crates/tinyagents-graph", default-features = false }
@@ -85,6 +92,7 @@ tinyinference-embeddings = { path = "../../vendor/tinyagents/vendor/tinyinferenc
 # path as the core's so the trait unifies.
 # `AgentDefinitionSpec::tool_rules` takes the shared tool-rule vocabulary too.
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
+tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -93,6 +101,12 @@ uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["conformance"] }
 dirs = "6"
+# `cron_tests` builds core `CronJob`s, whose schedule types live in the
+# tinyflows bus contract.
+tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }
+# The real tinyflows module, linked into the test binaries (never the product):
+# the scheduler runtime and job store that `cron` reaches over the bus.
+tinyflows-module = { path = "../../vendor/tinyflows/crates/tinyflows-module", features = ["static-link"] }
 env_logger = "0.11"
 # The profile tests and example implement a stub `BackendTransport`, whose
 # `http_client` hands out a `reqwest::Client`. Same features as the core's, so

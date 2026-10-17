@@ -5,10 +5,11 @@
 //!   - `specs`    — tool spec builders, schema helpers, and the conversion to
 //!     `tinymcp_bus::ServerToolSpec`
 //!   - `params`   — OpenHuman's per-tool argument policy and RPC param
-//!     construction, over `tinymcp::server::args`' generic validators
+//!     construction, with generic MCP argument validation delegated to the
+//!     configured TinyMCP module
 //!   - `dispatch` — `call_tool`, `list_tool_specs`, agent/subagent handlers
 //!
-//! `ToolCallError` is `tinymcp`'s, re-exported here for the sibling modules.
+//! `ToolCallError` is part of `tinymcp_bus` and shared with the module.
 
 //! ## Compile-time gate (`mcp` feature)
 //!
@@ -44,11 +45,11 @@ pub use crate::config::rpc as config_rpc;
 #[cfg(all(test, feature = "mcp"))]
 pub use crate::core::all;
 #[cfg(all(test, feature = "mcp"))]
-pub use params::build_rpc_params;
+pub(crate) use params::build_rpc_params_for_test;
 #[cfg(all(test, feature = "mcp"))]
 pub use serde_json::{json, Value};
 #[cfg(all(test, feature = "mcp"))]
-pub use types::{MEMORY_FORGET_MAX_IDS, MEMORY_MAX_LIMIT, SEARCH_MAX_RESULTS};
+pub use types::{MEMORY_FORGET_MAX_IDS, MEMORY_MAX_LIMIT};
 
 #[cfg(all(test, feature = "mcp"))]
 #[path = "../tools_tests.rs"]

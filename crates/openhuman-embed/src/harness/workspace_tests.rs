@@ -19,6 +19,20 @@ fn ephemeral_creates_both_dirs_and_removes_them_on_drop() {
     assert!(!root.exists(), "ephemeral workspace outlived its owner");
 }
 
+/// A deferred agent cleanup holds only the ephemeral root, not the runtime:
+/// the files outlive the runtime's own handle until that cleanup lets go, and
+/// are removed when the last holder drops.
+#[test]
+fn an_ephemeral_root_lives_until_its_last_holder_drops() {
+    let mut ws = ResolvedWorkspace::resolve(&Workspace::Ephemeral, None).unwrap();
+    let root = ws.workspace_dir.parent().unwrap().to_path_buf();
+    let cleanup = ws._temp.clone().expect("an ephemeral workspace has a root");
+    drop(ws._temp.take());
+    assert!(root.exists(), "a pending cleanup still holds the root");
+    drop(cleanup);
+    assert!(!root.exists(), "the last holder removes the root");
+}
+
 #[test]
 fn the_action_dir_is_never_inside_the_workspace() {
     // `is_workspace_internal_path` blocks agent writes beneath the workspace

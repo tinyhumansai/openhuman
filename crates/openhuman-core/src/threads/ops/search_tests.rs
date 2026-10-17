@@ -47,10 +47,13 @@ fn request_limit_is_optional() {
 
 #[tokio::test]
 async fn blank_query_answers_no_hits() {
-    let out = thread_search(ThreadSearchRequest {
-        query: "   ".into(),
-        limit: None,
-    })
+    let out = thread_search(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        ThreadSearchRequest {
+            query: "   ".into(),
+            limit: None,
+        },
+    )
     .await
     .unwrap();
     let json = out.into_cli_compatible_json().unwrap();

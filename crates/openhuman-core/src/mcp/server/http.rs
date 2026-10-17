@@ -17,7 +17,8 @@ use futures_util::stream;
 use serde_json::{Map, Value};
 use tinymcp_bus::{ServerHttpSessionMethod, ServerHttpSessionRequest, HEADER_SESSION_ID};
 
-use crate::{config::Config, modules::client::ModuleCallError};
+use crate::config::Config;
+use tinybus::module::ModuleCallError;
 
 use super::module::{headers_object, ServerError, ServerPort, ServerSession};
 
@@ -32,7 +33,7 @@ pub struct HttpServerConfig {
 struct HttpState {
     port: Arc<dyn ServerPort>,
     auth_token: Option<String>,
-    sessions: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<ServerSession>>>>>,
+    sessions: Arc<tokio::sync::Mutex<HashMap<String, Arc<ServerSession>>>>,
 }
 
 /// Serve the OpenHuman MCP surface over module-owned HTTP protocol state.
@@ -98,13 +99,12 @@ async fn handle_post(State(state): State<HttpState>, headers: HeaderMap, body: B
         )
         .await
         {
-            Ok(session) => Arc::new(tokio::sync::Mutex::new(session)),
+            Ok(session) => Arc::new(session),
             Err(error) => return server_error(error),
         },
     };
     let is_temporary = !known_session;
-    let protocol = session.lock().await;
-    let response = match protocol
+    let response = match session
         .submit(
             request_headers(&headers),
             line,
@@ -127,7 +127,7 @@ async fn handle_post(State(state): State<HttpState>, headers: HeaderMap, body: B
                 .lock()
                 .await
                 .insert(wire_id, Arc::clone(&session));
-        } else if let Err(error) = protocol.close().await {
+        } else if let Err(error) = session.close().await {
             tracing::warn!(?error, "[mcp_server] temporary HTTP session cleanup failed");
         }
     }
@@ -172,10 +172,7 @@ async fn http_session_request(
     } else {
         None
     };
-    let internal_session_id = match session.as_ref() {
-        Some(session) => Some(session.lock().await.id().to_owned()),
-        None => None,
-    };
+    let internal_session_id = session.as_ref().map(|session| session.id().to_owned());
     let request = ServerHttpSessionRequest {
         method: method.clone(),
         requested_session_id: requested_session_id.clone(),
@@ -197,8 +194,15 @@ async fn http_session_request(
             .into_response();
     }
     if method == ServerHttpSessionMethod::Delete && response.status() == StatusCode::NO_CONTENT {
+        let local_cleanup = match session.as_ref() {
+            Some(session) => session.terminate_callbacks().await.err(),
+            None => None,
+        };
         if let Some(requested_session_id) = requested_session_id {
             state.sessions.lock().await.remove(&requested_session_id);
+        }
+        if let Some(error) = local_cleanup {
+            return server_error(error);
         }
     }
     response
@@ -207,7 +211,7 @@ async fn http_session_request(
 async fn close_http_sessions(state: &HttpState) {
     let sessions = std::mem::take(&mut *state.sessions.lock().await);
     for (_, session) in sessions {
-        if let Err(error) = session.lock().await.close().await {
+        if let Err(error) = session.close().await {
             tracing::warn!(?error, "[mcp_server] HTTP session cleanup failed");
         }
     }
@@ -232,6 +236,14 @@ fn check_auth(state: &HttpState, headers: &HeaderMap) -> Option<Response> {
 
 fn request_headers(headers: &HeaderMap) -> Map<String, Value> {
     headers_object(headers.iter().filter_map(|(name, value)| {
+        // Authentication is checked by the host. Its credentials are never
+        // protocol input for the module's ordinary bus calls.
+        if matches!(
+            name.as_str(),
+            "authorization" | "proxy-authorization" | "cookie"
+        ) {
+            return None;
+        }
         value
             .to_str()
             .ok()

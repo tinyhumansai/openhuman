@@ -11,30 +11,125 @@
 //! `core_notifications` rows carry no workspace, so they take the fixed
 //! `LOCAL_WORKSPACE` key the per-workspace default file filters on (not the
 //! directory path, which changes when the workspace is moved).
-//! (The content-dedup window needs no import: it lasts a minute.) The driver
-//! ([`crate::storage::local`]) writes the documents and then renames the
-//! tables to `_legacy_<name>`.
+//! (The content-dedup window needs no import: it lasts a minute.) The legacy
+//! file is only ever opened here, by the storage importer, on a scratch copy.
 
+use crate::storage::rusqlite;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde_json::json;
 
-use super::super::store_documents::{
-    core_id, to_doc, CORE, LOCAL_WORKSPACE, NOTIFICATIONS, SETTINGS,
-};
-use crate::config::Config;
-use crate::storage::local::{table_exists, ImportDoc};
+#[path = "store_import_rows.rs"]
+mod store_rows;
+use store_rows::rows_to_notifications;
 
-/// The legacy tables this import retires.
-pub(crate) const TABLES: &[&str] = &[
-    "integration_notifications",
-    "notification_settings",
-    "core_notifications",
-];
+use super::store_documents::{core_id, to_doc, CORE, LOCAL_WORKSPACE, NOTIFICATIONS, SETTINGS};
+use crate::config::Config;
+use crate::storage::import::{table_exists, ImportDoc};
+
+/// SQL schema of the legacy database, applied on every `with_connection` call.
+const SCHEMA: &str = "
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS integration_notifications (
+    id               TEXT PRIMARY KEY,
+    provider         TEXT NOT NULL,
+    account_id       TEXT,
+    title            TEXT NOT NULL,
+    body             TEXT NOT NULL,
+    raw_payload      TEXT NOT NULL,
+    importance_score REAL,
+    triage_action    TEXT,
+    triage_reason    TEXT,
+    status           TEXT NOT NULL DEFAULT 'unread',
+    received_at      TEXT NOT NULL,
+    scored_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_integration_notifications_provider
+    ON integration_notifications(provider);
+CREATE INDEX IF NOT EXISTS idx_integration_notifications_status
+    ON integration_notifications(status);
+CREATE INDEX IF NOT EXISTS idx_integration_notifications_dedup
+    ON integration_notifications(provider, account_id, title, body, received_at);
+
+CREATE TABLE IF NOT EXISTS notification_settings (
+    provider              TEXT PRIMARY KEY,
+    enabled               INTEGER NOT NULL DEFAULT 1,
+    importance_threshold  REAL NOT NULL DEFAULT 0.0,
+    route_to_orchestrator INTEGER NOT NULL DEFAULT 1
+);
+
+-- #3805: core notification events (cron completions, webhook failures,
+-- sub-agent results, triaged alerts, …) are broadcast over an in-memory
+-- channel that drops the event when no client is connected. Persist them
+-- here so a notification fired while the app is closed/minimised/disconnected
+-- survives and is surfaced on the next app open. The full wire payload is
+-- stored as JSON; `id` is the PK so re-publishes dedupe naturally.
+CREATE TABLE IF NOT EXISTS core_notifications (
+    id            TEXT PRIMARY KEY,
+    payload       TEXT NOT NULL,
+    timestamp_ms  INTEGER NOT NULL,
+    read          INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_core_notifications_read
+    ON core_notifications(read);
+CREATE INDEX IF NOT EXISTS idx_core_notifications_ts
+    ON core_notifications(timestamp_ms);
+";
+
+/// Open (and migrate) the notifications DB, then call `f` with the live
+/// connection. Mirrors the `with_connection` helper in `cron/store.rs`.
+pub(crate) fn db_path(config: &Config) -> std::path::PathBuf {
+    config
+        .workspace_dir
+        .join("notifications")
+        .join("notifications.db")
+}
+
+pub(crate) fn with_connection<T>(
+    config: &Config,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let db_path = db_path(config);
+
+    tracing::trace!(
+        path = %db_path.display(),
+        "[notifications::store] opening DB connection"
+    );
+
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "[notifications::store] failed to create dir {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let conn = Connection::open(&db_path).with_context(|| {
+        format!(
+            "[notifications::store] failed to open DB at {}",
+            db_path.display()
+        )
+    })?;
+
+    conn.execute_batch(SCHEMA)
+        .context("[notifications::store] schema migration failed")?;
+
+    tracing::trace!("[notifications::store] schema migration applied, running operation");
+    f(&conn)
+}
 
 /// Reads every legacy row.
 pub(crate) fn read(config: &Config) -> Result<Vec<ImportDoc>> {
-    super::with_connection(config, |conn| read_rows(conn, LOCAL_WORKSPACE))
+    read_for(config, LOCAL_WORKSPACE)
+}
+
+/// [`read`] with core notifications filed under `workspace` instead of the
+/// fixed local key.
+pub(crate) fn read_for(config: &Config, workspace: &str) -> Result<Vec<ImportDoc>> {
+    with_connection(config, |conn| read_rows(conn, workspace))
 }
 
 fn read_rows(conn: &Connection, workspace: &str) -> Result<Vec<ImportDoc>> {
@@ -51,7 +146,7 @@ fn read_rows(conn: &Connection, workspace: &str) -> Result<Vec<ImportDoc>> {
         let rows = stmt
             .query(())
             .context("[notifications::import] query integration_notifications")?;
-        for notification in super::rows_to_notifications(rows)? {
+        for notification in rows_to_notifications(rows)? {
             docs.push(ImportDoc {
                 collection: NOTIFICATIONS,
                 id: notification.id.clone(),

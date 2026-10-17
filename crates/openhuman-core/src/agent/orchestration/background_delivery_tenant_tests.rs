@@ -4,6 +4,7 @@
 //! profile owns. Driven through `drain_schedule_in(true, ..)` with an injected
 //! resolver, so the process-wide SaaS mode flag stays untouched.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,7 +46,8 @@ fn seen_by(drain: &Drain) -> (Option<String>, String, Vec<String>) {
     let ctx = drain.owner.clone().expect("a SaaS drain carries its owner");
     let profile = ctx.profile().map(str::to_owned);
     let pending = CoreContext::sync_scope(ctx, || {
-        let ws = workspace_for_thread(&drain.thread_id).expect("owner knows its thread");
+        let ws = workspace_for_thread(&DispatchCtx::ambient(), &drain.thread_id)
+            .expect("owner knows its thread");
         pending_for(&ws, &drain.thread_id)
             .into_iter()
             .map(|r| r.task_id)
@@ -67,16 +69,14 @@ async fn an_off_task_completion_drains_only_its_owners_thread() {
     let (task_a, task_b) = (unique("sub-a"), unique("sub-b"));
 
     for (ctx, ws, task) in [(&alice, &ws_a, &task_a), (&bob, &ws_b, &task_b)] {
-        CoreContext::scope(
-            Arc::clone(ctx),
-            record_completion(
-                ws.path(),
-                &session,
-                task.as_str(),
-                "r",
-                "done",
-                Some(thread.into()),
-            ),
+        record_completion(
+            &DispatchCtx::new(Arc::clone(ctx)),
+            ws.path(),
+            &session,
+            task.as_str(),
+            "r",
+            "done",
+            Some(thread.into()),
         )
         .await;
     }
@@ -144,4 +144,41 @@ fn an_unknown_session_is_dropped_in_saas() {
     let drains = drain_schedule_in(false, &turn_done, resolve);
     assert_eq!(drains.len(), 1);
     assert!(drains[0].owner.is_none());
+}
+
+/// The busy marks follow the explicit context: with no scope anywhere, one
+/// profile's in-flight turn defers only its own thread, and a Stop clears only
+/// its own marks.
+#[tokio::test]
+async fn busy_marks_are_keyed_by_the_explicit_context() {
+    use super::busy_guard::{clear_busy_for_thread, is_busy, TurnBusy};
+    let _guard = crate::config::TEST_ENV_LOCK.lock().await;
+    let (ws_a, ws_b) = (TestWorkspace::new(), TestWorkspace::new());
+    let alice = DispatchCtx::new(profile(&unique("b-alice"), ws_a.path()));
+    let bob = DispatchCtx::new(profile(&unique("b-bob"), ws_b.path()));
+    let session = unique("busy-session");
+    let thread = unique("busy-thread");
+    note_session_thread(&alice, &session, &thread);
+    note_session_thread(&bob, &session, &thread);
+
+    let held = TurnBusy::start(&alice, &session);
+    // Across an await and on a spawned task, nothing leans on a task scope.
+    tokio::task::yield_now().await;
+    let (a, b) = tokio::spawn({
+        let (alice, bob, thread) = (alice.clone(), bob.clone(), thread.clone());
+        async move { (is_busy(&alice, &thread), is_busy(&bob, &thread)) }
+    })
+    .await
+    .expect("probe ran");
+    assert!(a, "alice's turn is in flight on her thread");
+    assert!(!b, "bob's thread of the same id is idle");
+
+    assert_eq!(clear_busy_for_thread(&bob, &thread), 0);
+    assert!(
+        is_busy(&alice, &thread),
+        "bob's Stop cleared nothing of hers"
+    );
+    assert_eq!(clear_busy_for_thread(&alice, &thread), 1);
+    assert!(!is_busy(&alice, &thread));
+    drop(held);
 }

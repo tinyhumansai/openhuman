@@ -21,10 +21,10 @@ use openhuman_core::integrations::composio::ops::{
     cached_active_integrations, composio_authorize, composio_execute, composio_list_connections,
     composio_list_toolkits, composio_list_tools, fetch_connected_integrations_status,
 };
+use openhuman_core::integrations::composio::tools::ComposioListToolsTool;
 use openhuman_core::integrations::composio::{
     invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
 };
-use openhuman_core::tools::ComposioListToolsTool;
 use tinytools::{Tool, ToolCallOptions};
 
 static ENV_LOCK: &OnceLock<tokio::sync::Mutex<()>> = &crate::SHARED_ENV_LOCK;
@@ -58,7 +58,8 @@ fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 async fn setup_direct_config(base: &str) -> Harness {
@@ -130,10 +131,13 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
         .value;
     assert!(toolkits.toolkits.is_empty());
 
-    let connections = composio_list_connections(&harness.config)
-        .await
-        .expect("direct list connections")
-        .value;
+    let connections = composio_list_connections(
+        &openhuman_core::core::runtime::DispatchCtx::ambient(),
+        &harness.config,
+    )
+    .await
+    .expect("direct list connections")
+    .value;
     assert_eq!(connections.connections.len(), 3);
     assert!(connections
         .connections
@@ -141,6 +145,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
         .any(|conn| conn.id == "acct-gmail" && conn.normalized_toolkit() == "gmail"));
 
     let listed = composio_list_tools(
+        &openhuman_core::core::runtime::DispatchCtx::ambient(),
         &harness.config,
         None,
         Some(vec![" readOnlyHint ".into(), " ".into()]),
@@ -166,6 +171,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
     assert_eq!(markdown.output(), "{\"tools\":[]}");
 
     let authorize = composio_authorize(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
         &harness.config,
         " gmail ",
         Some(json!({ "ignored_in_direct": true })),

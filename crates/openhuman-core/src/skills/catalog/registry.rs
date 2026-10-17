@@ -5,7 +5,7 @@
 //! | `OPENHUMAN_SKILL_REGISTRY_CATALOG_URL` | Read the Hermes index from this URL instead of the public one |
 //! | `OPENHUMAN_SKILL_REGISTRY_DOWNLOAD_BASE_URL` | Serve every `SKILL.md` from `<base>/<name>/SKILL.md` |
 //! | `OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP=1` | Allow plain `http` to loopback (fixtures, local mirrors) |
-//! | `OPENHUMAN_SKILL_REGISTRY_CACHE_DIR` | Catalog store directory; default `~/.openhuman/skill-registry` |
+//! | `OPENHUMAN_SKILL_REGISTRY_CACHE_DIR` | Cache directory (legacy catalog files to import; default `~/.openhuman/skill-registry`) |
 //!
 //! A failed catalog refresh is not attempted again for [`REFRESH_COOLDOWN`]
 //! (or longer when the upstream sends `Retry-After`); reads in that window
@@ -19,11 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
-use tinyskills::{
-    FetchPolicy, FileCatalogStore, HermesIndexSource, RegistryLimits, RegistryTimeouts,
-    SkillRegistry,
-};
+use tinyskills::{FetchPolicy, HermesIndexSource, RegistryLimits, RegistryTimeouts, SkillRegistry};
 
+use super::store::HostCatalogStore;
 use super::transport::ReqwestTransport;
 
 const CATALOG_URL_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_CATALOG_URL";
@@ -115,7 +113,7 @@ impl RegistryConfig {
         match &self.cache_dir {
             Some(dir) => {
                 remove_legacy_cache(dir);
-                builder.store(FileCatalogStore::new(dir.clone())).build()
+                builder.store(HostCatalogStore::new(dir.clone())).build()
             }
             None => {
                 tracing::warn!("[skill_registry] no home directory; catalog cached in memory only");

@@ -39,7 +39,7 @@ async fn a_failed_task_is_reported_as_an_error_with_its_reason_and_hint() {
         .expect_err("a failed task must not be a success");
     let text = error.to_string();
     assert!(
-        text.starts_with(crate::tools::status::TASK_FAILED_MARKER),
+        text.starts_with(tinytools::status::TASK_FAILED_MARKER),
         "{text}"
     );
     assert!(text.contains("HTTP 504"), "{text}");

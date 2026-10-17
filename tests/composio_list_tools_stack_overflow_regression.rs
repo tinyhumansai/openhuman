@@ -108,18 +108,19 @@
 #![cfg(not(coverage))]
 
 use async_trait::async_trait;
-use openhuman_core::agent::harness::definition::{AgentDefinitionRegistry, ModelSpec};
-use openhuman_core::agent::harness::{with_parent_context, ParentExecutionContext};
-use openhuman_core::agent::prompts::ToolCallFormat;
+use openhuman_core::agent::harness::host_definition::AgentDefinitionRegistry;
+use openhuman_core::agent::harness::ParentExecutionContext;
 use openhuman_core::agent::subagent_host::{run_subagent, SubagentRunOptions};
 use openhuman_core::config::AgentConfig;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::tempdir;
+use tinyagents_definition::ModelSpec;
 use tinyinference_llm::message::AssistantMessage;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall;
+use tinytools_agent::dialect::ToolCallFormat;
 
 /// Worker stack for this guard: 3 MiB, deliberately far below the production
 /// `AGENT_WORKER_STACK_BYTES` (16 MiB, which stays the real budget).
@@ -332,6 +333,7 @@ async fn drive_subagent() {
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     };
 
     let mut def = AgentDefinitionRegistry::global()
@@ -349,13 +351,8 @@ async fn drive_subagent() {
     // stack the cargo-test process aborts (SIGABRT / SIGBUS) and no
     // test report is emitted. We don't care whether the sub-agent
     // semantically "succeeded" — only that the runtime did not abort.
-    let _ = with_parent_context(parent, async move {
-        run_subagent(
-            &def,
-            "list available gmail actions",
-            SubagentRunOptions::default(),
-        )
-        .await
-    })
-    .await;
+    // The parent is an explicit value on the run options, not ambient state.
+    let mut options = SubagentRunOptions::default();
+    options.run_context.parent = Some(parent);
+    let _ = run_subagent(&def, "list available gmail actions", options).await;
 }

@@ -22,5 +22,5 @@ back into this host module.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Automatic model routing](../../../../../gitbooks/features/model-routing/README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Automatic model routing](../../../../../docs/gitbooks/en/features/model-routing/README.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

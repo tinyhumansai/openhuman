@@ -20,21 +20,26 @@ use parking_lot::Mutex;
 use tinyinference_llm::model::{ReasoningConfig, ReasoningEffort};
 
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 
 type ThreadEfforts = Mutex<HashMap<String, ReasoningEffort>>;
 
-fn thread_efforts() -> Arc<ThreadEfforts> {
-    crate::core::runtime::current_slot::<ThreadEfforts>()
+fn thread_efforts(ctx: &DispatchCtx) -> Arc<ThreadEfforts> {
+    crate::core::runtime::slot_for::<ThreadEfforts>(ctx)
 }
 
 /// The effort a thread's user picked, if any.
-pub(crate) fn thread_effort(thread_id: &str) -> Option<ReasoningEffort> {
-    thread_efforts().lock().get(thread_id).copied()
+pub(crate) fn thread_effort(ctx: &DispatchCtx, thread_id: &str) -> Option<ReasoningEffort> {
+    thread_efforts(ctx).lock().get(thread_id).copied()
 }
 
 /// Records (`Some`) or clears (`None`) a thread's chosen effort.
-pub(crate) fn set_thread_effort(thread_id: &str, effort: Option<ReasoningEffort>) {
-    let efforts = thread_efforts();
+pub(crate) fn set_thread_effort(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    effort: Option<ReasoningEffort>,
+) {
+    let efforts = thread_efforts(ctx);
     let mut map = efforts.lock();
     let previous = match effort {
         Some(effort) => map.insert(thread_id.to_string(), effort),
@@ -55,7 +60,11 @@ pub(crate) fn set_thread_effort(thread_id: &str, effort: Option<ReasoningEffort>
 /// path never send it); `""`/`default`/`auto` clears it back to config; any
 /// other value must parse, otherwise the request is rejected so a typo'd
 /// client cannot silently run at the wrong level.
-pub(crate) fn apply_requested_effort(thread_id: &str, raw: Option<&str>) -> Result<(), String> {
+pub(crate) fn apply_requested_effort(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    raw: Option<&str>,
+) -> Result<(), String> {
     let Some(raw) = raw else {
         return Ok(());
     };
@@ -64,12 +73,12 @@ pub(crate) fn apply_requested_effort(thread_id: &str, raw: Option<&str>) -> Resu
         || trimmed.eq_ignore_ascii_case("default")
         || trimmed.eq_ignore_ascii_case("auto")
     {
-        set_thread_effort(thread_id, None);
+        set_thread_effort(ctx, thread_id, None);
         return Ok(());
     }
     let effort = parse_reasoning_effort(trimmed)
         .ok_or_else(|| format!("unknown reasoning_effort '{trimmed}'"))?;
-    set_thread_effort(thread_id, Some(effort));
+    set_thread_effort(ctx, thread_id, Some(effort));
     Ok(())
 }
 
@@ -92,7 +101,7 @@ pub(crate) fn turn_reasoning_for(
     if ctx.spawn_depth > 0 {
         return None;
     }
-    let reasoning = turn_reasoning(ctx.thread_id.as_deref(), config)
+    let reasoning = turn_reasoning(&ctx.dispatch_ctx(), ctx.thread_id.as_deref(), config)
         .map(|reasoning| with_output_room(reasoning, max_output_tokens));
     if let Some(reasoning) = reasoning.as_ref() {
         log::debug!(
@@ -108,10 +117,11 @@ pub(crate) fn turn_reasoning_for(
 /// The reasoning config one agent turn should request: the thread's own
 /// choice, else [`reasoning_for_config`].
 pub(crate) fn turn_reasoning(
+    dispatch: &DispatchCtx,
     thread_id: Option<&str>,
     config: Option<&Config>,
 ) -> Option<ReasoningConfig> {
-    if let Some(effort) = thread_id.and_then(thread_effort) {
+    if let Some(effort) = thread_id.and_then(|thread_id| thread_effort(dispatch, thread_id)) {
         return Some(ReasoningConfig::effort(effort));
     }
     config.and_then(reasoning_for_config)

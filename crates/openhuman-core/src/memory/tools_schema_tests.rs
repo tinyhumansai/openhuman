@@ -14,7 +14,6 @@ fn expected_memory() -> serde_json::Value {
             "query": {"type": "string", "description": "fetch: what to search for."},
             "mode": {"type": "string", "enum": ["hybrid", "keyword", "vector"], "description": "fetch: retrieval mode; only the engine's declared modes work (hybrid is always safe)."},
             "filter": {"type": "object", "description": "recall/fetch: metadata filter, e.g. {\"kinds\": [\"learning\"], \"workspace\": \"/path\", \"repo\": \"owner/name\"}."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "recall/fetch: most results."},
             "cursor": {"type": "string", "description": "fetch: next-page cursor."},
             "refers_to": {
                 "type": "object",

@@ -401,7 +401,7 @@ pub(crate) fn schemas(function: &str) -> ControllerSchema {
             namespace: "threads",
             function: "transcript_get",
             description:
-                "Project a thread's settled transcript (derived from session_raw/*.jsonl) into typed display items, newest-first paginated.",
+                "Project a thread's settled transcript (read from the session store) into typed display items, newest-first paginated.",
             inputs: vec![
                 FieldSchema {
                     name: "thread_id",

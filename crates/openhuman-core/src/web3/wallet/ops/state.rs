@@ -385,10 +385,7 @@ pub(super) fn current_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
-pub(super) fn to_status(
-    config: &Config,
-    state: Option<StoredWalletState>,
-) -> tinywallet_web3::crypto::wallet::WalletStatus {
+pub(super) fn to_status(config: &Config, state: Option<StoredWalletState>) -> super::WalletStatus {
     match state {
         Some(state) => {
             // A mnemonic is "stored" if it's either in the JSON field (headless path)
@@ -399,7 +396,7 @@ pub(super) fn to_status(
                 .map(|v| !v.trim().is_empty())
                 .unwrap_or(false);
             let secret_stored = secret_in_json || keychain_has_mnemonic(config);
-            tinywallet_web3::crypto::wallet::WalletStatus {
+            super::WalletStatus {
                 configured: true,
                 onboarding_completed: state.consent_granted && !state.accounts.is_empty(),
                 consent_granted: state.consent_granted,
@@ -410,7 +407,7 @@ pub(super) fn to_status(
                 updated_at_ms: Some(state.updated_at_ms),
             }
         }
-        None => tinywallet_web3::crypto::wallet::WalletStatus {
+        None => super::WalletStatus {
             configured: false,
             onboarding_completed: false,
             consent_granted: false,

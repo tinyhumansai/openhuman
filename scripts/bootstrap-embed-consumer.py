@@ -8,8 +8,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tomllib
 from urllib.parse import urlsplit
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 in the Ubuntu 22.04 CI image.
+    import tomli as tomllib
 
 REPOSITORY = "https://github.com/tinyhumansai/openhuman.git"
 

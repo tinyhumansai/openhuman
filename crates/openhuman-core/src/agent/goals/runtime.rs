@@ -247,12 +247,12 @@ impl GoalBudgetStopHook {
 }
 
 #[async_trait]
-impl StopHook<crate::agent::cost::TurnCost> for GoalBudgetStopHook {
+impl StopHook<tinyagents_harness::cost::TurnCost> for GoalBudgetStopHook {
     fn name(&self) -> &str {
         "thread_goal_budget"
     }
 
-    async fn check(&self, ctx: &TurnState<'_, crate::agent::cost::TurnCost>) -> StopDecision {
+    async fn check(&self, ctx: &TurnState<'_, tinyagents_harness::cost::TurnCost>) -> StopDecision {
         let store = goals_store(&self.workspace_dir);
         let in_flight = turn_tokens(ctx.cost.input_tokens, ctx.cost.output_tokens);
         match self.guard.check(&store, in_flight).await {

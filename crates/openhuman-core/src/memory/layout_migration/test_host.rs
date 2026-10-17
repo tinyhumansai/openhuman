@@ -7,16 +7,17 @@ use tinymemory_api::conformance::ReferenceEngine;
 use tinymemory_api::{
     LearningKind, ListRequest, MemoryEngine, MemoryMeta, MetaFilter, Namespace, StoreItem,
 };
+use tinymemory_tools::layout_migration::{
+    Engines, FlowPlacement, LayoutHost, LegacyClaim, MigrationStateStore, Placement, Result,
+};
 use tinymemory_tools::MemoryLayout;
 
 use super::claim::ClaimKey;
-use super::copy::Engines;
-use super::job::LayoutHost;
-use super::map::{FlowPlacement, Placement};
+use super::state::FileStateStore;
 use crate::config::Config;
-use crate::memory::error::{MemoryError, MemoryResult};
 
-/// Two in-memory engines and the switches a real host keeps.
+/// Two in-memory engines and the switches a real host keeps, with the real
+/// file-backed state of the config's workspace.
 pub(crate) struct FakeHost {
     pub(crate) legacy: Arc<ReferenceEngine>,
     pub(crate) tree: Arc<ReferenceEngine>,
@@ -28,10 +29,12 @@ pub(crate) struct FakeHost {
     pub(crate) free_for: AtomicUsize,
     /// Written to the legacy tree as the switch happens (a turn racing it).
     pub(crate) racing_write: Mutex<Option<StoreItem>>,
+    store: FileStateStore,
+    workspace: std::path::PathBuf,
 }
 
 impl FakeHost {
-    pub(crate) async fn with(learnings: usize) -> Self {
+    pub(crate) async fn with(learnings: usize, config: &Config) -> Self {
         let legacy = Arc::new(ReferenceEngine::new());
         for i in 0..learnings {
             legacy.store(fact(&format!("fact {i}"))).await.unwrap();
@@ -44,6 +47,8 @@ impl FakeHost {
             claim: None,
             free_for: AtomicUsize::new(usize::MAX),
             racing_write: Mutex::new(None),
+            store: FileStateStore::new(&config.workspace_dir),
+            workspace: config.workspace_dir.clone(),
         }
     }
 }
@@ -69,28 +74,31 @@ pub(crate) async fn count(engine: &dyn MemoryEngine) -> usize {
 
 #[async_trait::async_trait]
 impl LayoutHost for FakeHost {
-    fn engines(&self, _: &Config) -> MemoryResult<Engines> {
+    fn store(&self) -> &dyn MigrationStateStore {
+        &self.store
+    }
+
+    fn engines(&self) -> Result<Engines> {
         Ok(Engines {
             legacy: self.legacy.clone(),
             tree: self.tree.clone(),
         })
     }
 
-    fn placement(&self, _: &Config) -> MemoryResult<Placement> {
+    fn placement(&self) -> Result<Placement> {
         Ok(Placement {
-            layout: MemoryLayout::new(Namespace::ROOT)
-                .map_err(|e| MemoryError::invalid(e.to_string()))?,
+            layout: MemoryLayout::new(Namespace::ROOT).unwrap(),
             chat_node: "ws:main".parse().unwrap(),
             flows: FlowPlacement::WithRoot,
             split_github_by_repo: false,
         })
     }
 
-    fn is_switched(&self, _: &Config) -> bool {
+    fn is_switched(&self) -> bool {
         self.switched.load(Ordering::SeqCst)
     }
 
-    async fn switch(&self, _: &Config) -> MemoryResult<()> {
+    async fn switch(&self) -> Result<()> {
         let racing = self.racing_write.lock().unwrap().take();
         if let Some(item) = racing {
             self.legacy.store(item).await.unwrap();
@@ -99,12 +107,21 @@ impl LayoutHost for FakeHost {
         Ok(())
     }
 
-    async fn free_now(&self, _: &Config) -> bool {
+    async fn free_now(&self) -> bool {
         let left = self.free_for.fetch_sub(1, Ordering::SeqCst);
         self.free.load(Ordering::SeqCst) && left > 0
     }
 
-    fn legacy_claim(&self, _: &Config) -> MemoryResult<Option<ClaimKey>> {
-        Ok(self.claim.clone())
+    fn legacy_claim(&self) -> Result<Option<Box<dyn LegacyClaim>>> {
+        Ok(self
+            .claim
+            .clone()
+            .map(|key| Box::new(key) as Box<dyn LegacyClaim>))
     }
+
+    fn listed_unconfirmed(&self) -> bool {
+        crate::memory::import::listed_unconfirmed(&self.workspace)
+    }
+
+    async fn wait_for_listing(&self) {}
 }

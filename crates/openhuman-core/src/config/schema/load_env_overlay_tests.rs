@@ -544,3 +544,42 @@ tts_config_download_url = "https://example.invalid/voice.onnx.json"
         Some("http://127.0.0.1:11434")
     );
 }
+
+#[test]
+fn env_overlay_component_switches_apply_and_ignore_garbage() {
+    let env = HashMapEnv::new()
+        .with("OPENHUMAN_COMPONENT_FLOWS", "0")
+        .with("OPENHUMAN_COMPONENT_VOICE", "off")
+        .with("OPENHUMAN_COMPONENT_MCP", "maybe");
+    let mut cfg = Config::default();
+    cfg.components.hosting = false;
+    cfg.apply_env_overlay_with(&env);
+    assert!(!cfg.components.flows);
+    assert!(!cfg.components.voice);
+    assert!(
+        cfg.components.mcp,
+        "invalid value must leave the switch alone"
+    );
+    assert!(
+        !cfg.components.hosting,
+        "unset env must not touch the config"
+    );
+
+    let env = HashMapEnv::new().with("OPENHUMAN_COMPONENT_HOSTING", "1");
+    cfg.apply_env_overlay_with(&env);
+    assert!(cfg.components.hosting, "env can switch a component back on");
+}
+
+#[test]
+fn legacy_disable_channel_listeners_env_folds_into_channels_component() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_DISABLE_CHANNEL_LISTENERS", "1"));
+    assert!(!cfg.components.channels);
+
+    let mut cfg = Config::default();
+    let env = HashMapEnv::new()
+        .with("OPENHUMAN_DISABLE_CHANNEL_LISTENERS", "true")
+        .with("OPENHUMAN_COMPONENT_CHANNELS", "1");
+    cfg.apply_env_overlay_with(&env);
+    assert!(cfg.components.channels, "explicit component env wins");
+}

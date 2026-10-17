@@ -30,6 +30,15 @@ describe('todoProgress', () => {
     expect(finished.current?.text).toBe('B');
   });
 
+  it('counts a skipped step as closed, never as the current one', () => {
+    const progress = todoProgress([
+      { id: '1', text: 'A', status: 'done' },
+      { id: '2', text: 'B', status: 'skipped', reason: 'not needed' },
+    ]);
+    expect(progress).toMatchObject({ done: 2, total: 2, allDone: true });
+    expect(progress.current?.text).toBe('A');
+  });
+
   it('handles an empty list', () => {
     expect(todoProgress([])).toMatchObject({ total: 0, position: 0, allDone: false });
   });

@@ -30,9 +30,49 @@ pub(crate) const CHROME_NOT_FOUND_HINT: &str = "Chrome was not found. Ask the us
     Chrome path (for example /Applications/Google Chrome.app/Contents/MacOS/Google Chrome), \
     then try again. Do not install or download a browser yourself.";
 
+/// What the agent is told when the Chrome path the user set names no Chrome
+/// the module can start: refused when a task starts, or when the browser
+/// launches. Left without it, the agent reads TinyComputer's own field name
+/// (`browser_executable`), which is nothing the user can find.
+pub(crate) const CHROME_PATH_HINT: &str = "Chrome could not be started from the Chrome \
+    path the user set. Ask the user to set Connections > Computer Control > Browser > Chrome \
+    path to the Chrome program itself (for example /Applications/Google Chrome.app/Contents/\
+    MacOS/Google Chrome), then try again. Do not install or download a browser yourself.";
+
+/// How TinyComputer says no Chrome was found: agent-browser's own words
+/// before TinyComputer 0.11, and the module's since.
+const CHROME_MISSING: &[&str] = &["chrome not found", "no chrome or chromium was found"];
+
+/// How TinyComputer says the browser binary it was given would not start, or
+/// is no executable at all (refused before a task starts).
+const CHROME_UNUSABLE: &[&str] = &[
+    "browser binary given could not be started",
+    "browser_executable must be the absolute path",
+];
+
 /// Whether a module error or task failure says Chrome could not be found.
 pub(crate) fn chrome_not_found(text: &str) -> bool {
-    text.to_ascii_lowercase().contains("chrome not found")
+    let text = text.to_ascii_lowercase();
+    CHROME_MISSING.iter().any(|said| text.contains(said))
+}
+
+/// Whether a module error or task failure says the Chrome path the user set
+/// names no Chrome the module can start.
+pub(crate) fn chrome_path_unusable(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    CHROME_UNUSABLE.iter().any(|said| text.contains(said))
+}
+
+/// What the agent is told to ask of the user when `text`, a module error or a
+/// task failure, says Chrome is missing or its path is unusable.
+pub(crate) fn chrome_hint(text: &str) -> Option<&'static str> {
+    if chrome_not_found(text) {
+        Some(CHROME_NOT_FOUND_HINT)
+    } else if chrome_path_unusable(text) {
+        Some(CHROME_PATH_HINT)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,10 +110,9 @@ impl BrowserCallError {
             .and_then(serde_json::Value::as_str)
             .map(|name| name.rsplit('.').next().unwrap_or(name).to_owned())
             .unwrap_or_else(|| error.code.clone());
-        let message = if chrome_not_found(&error.message) {
-            format!("{} {CHROME_NOT_FOUND_HINT}", error.message)
-        } else {
-            error.message.clone()
+        let message = match chrome_hint(&error.message) {
+            Some(hint) => format!("{} {hint}", error.message),
+            None => error.message.clone(),
         };
         Self::Bus { name, message }
     }
@@ -132,7 +171,7 @@ impl BrowserClient {
     ) -> Result<SessionInfo, BrowserCallError> {
         self.ensure_ready().await?;
         let domains = self.browser_domains();
-        if domains.is_empty() && !browser_allow_all() {
+        if domains.is_empty() && !browser_allow_all() && !self.allows_any_site() {
             return Err(BrowserCallError::Policy(
                 "allowed websites list is empty".into(),
             ));
@@ -165,11 +204,23 @@ impl BrowserClient {
         } else {
             None
         };
+        let claimed = claim_profile(
+            &self.config,
+            &mut options,
+            super::profile_claim::SESSION_WAIT_MS,
+        )
+        .await;
         options.download_dir = browser.download_dir.clone();
         options.default_timeout_ms = browser.task_timeout_secs.saturating_mul(1000);
         options.allowed_origins =
             origin.map_or_else(|| self.browser_origins(), |origin| vec![origin]);
-        self.call(names::methods::OPEN_SESSION, options).await
+        let opened = self.call(names::methods::OPEN_SESSION, options).await;
+        // An open session's Chrome holds the profile itself; one that did
+        // not open holds nothing.
+        if let Some(profile) = claimed {
+            super::profile_claim::release(&self.config, &profile).await;
+        }
+        opened
     }
 
     /// Open a session bound to the host tree of an explicit destination.
@@ -321,6 +372,7 @@ impl BrowserClient {
             )));
         }
         if !allow_all
+            && !self.allows_any_site()
             && !self.browser_domains().iter().any(|allowed| {
                 host.eq_ignore_ascii_case(allowed)
                     || host
@@ -345,6 +397,18 @@ impl BrowserClient {
         self.check_url(raw)
     }
 
+    /// Whether the allowed websites are "Allow all" (`*`): the browser may
+    /// open any public site, as web fetch may. Private and local addresses
+    /// stay refused, here by `check_url` and in the module by its own `*`
+    /// rule. The browser itself is off until the user turns it on.
+    fn allows_any_site(&self) -> bool {
+        self.config
+            .http_request
+            .allowed_domains
+            .iter()
+            .any(|domain| domain.trim() == "*")
+    }
+
     fn browser_domains(&self) -> Vec<String> {
         self.config
             .http_request
@@ -355,9 +419,11 @@ impl BrowserClient {
             .collect()
     }
 
-    /// Origins a TinyComputer task may load: the allowed websites, in the
-    /// module's `https://.host` spelling. Empty when none are allowed, which a
-    /// task refuses, since an empty list means any origin to the module.
+    /// Origins a TinyComputer task may open pages on: `*` (any public site)
+    /// under "Allow all", else the allowed websites in the module's
+    /// `https://.host` spelling. Empty when none are allowed, which a task
+    /// refuses, since an empty list means any origin, private ones included,
+    /// to the module.
     pub(crate) fn task_origins(&self) -> Vec<String> {
         self.browser_origins()
     }
@@ -371,6 +437,9 @@ impl BrowserClient {
             // A nonempty, unmatchable origin keeps TinyComputer's document
             // guard active before the caller supplies an explicit URL.
             return vec!["https://.".to_owned()];
+        }
+        if self.allows_any_site() {
+            return vec!["*".to_owned()];
         }
         self.browser_domains()
             .iter()
@@ -421,6 +490,30 @@ fn parsed_browser_url(raw: &str) -> Result<url::Url, BrowserCallError> {
     url::Url::parse(raw)
         .or_else(|_| url::Url::parse(&format!("https://{raw}")))
         .map_err(|_| BrowserCallError::Policy("invalid URL".into()))
+}
+
+/// Claims `options`' persistent profile for the session's browser, or leaves
+/// it a fresh profile when another browser still holds the folder after
+/// `wait`; the folder it claimed. Chrome lets one browser at a time use a
+/// profile folder: a second one hands its window to the first and exits, and
+/// a session in one conversation found the profile held by another
+/// conversation's browser, or a task's.
+async fn claim_profile(
+    config: &Config,
+    options: &mut SessionOptions,
+    wait_ms: u64,
+) -> Option<String> {
+    let profile = options.user_data_dir.clone()?;
+    match super::profile_claim::claim(config, &profile, wait_ms).await {
+        super::profile_claim::Claim::Claimed(path) => Some(path),
+        super::profile_claim::Claim::Fresh => {
+            tracing::warn!(
+                "[browser] another browser holds the persistent profile; this session uses a fresh profile"
+            );
+            options.user_data_dir = None;
+            None
+        }
+    }
 }
 
 fn browser_allow_all() -> bool {

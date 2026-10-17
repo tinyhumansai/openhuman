@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[test]
 fn lists_single_diag_controller() {
@@ -30,6 +31,8 @@ fn diag_schema_outputs_a_diag_payload_field() {
 
 #[tokio::test]
 async fn handle_diag_returns_json_object() {
-    let value = handle_diag(Map::new()).await.expect("diag handler ok");
+    let value = handle_diag(DispatchCtx::process_default(), Map::new())
+        .await
+        .expect("diag handler ok");
     assert!(value.is_object(), "payload should be a JSON object");
 }

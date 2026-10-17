@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ArtifactSnapshot } from '../../../../store/chatRuntimeSlice';
-import { ArtifactCardAdapter } from '../ArtifactCardAdapter';
+import { ArtifactCardAdapter, SAVED_NOT_SHOWN } from '../ArtifactCardAdapter';
 
 describe('ArtifactCardAdapter', () => {
   it('renders the generating (in_progress) state', () => {
@@ -59,5 +59,27 @@ describe('ArtifactCardAdapter', () => {
     };
     render(<ArtifactCardAdapter artifact={artifact} />);
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('a saved version the card could not show says so, opens, and offers no Retry', async () => {
+    const artifact: ArtifactSnapshot = {
+      artifactId: 'a-3',
+      kind: 'document',
+      title: 'Report',
+      status: 'failed',
+      error: `${SAVED_NOT_SHOWN} version 2 is saved, but the file could not be written`,
+      updatedAt: 0,
+    };
+    const onRetry = vi.fn();
+    const onOpenPreview = vi.fn();
+    render(
+      <ArtifactCardAdapter artifact={artifact} onRetry={onRetry} onOpenPreview={onOpenPreview} />
+    );
+    expect(screen.getByText(/Saved, but not updated in your Files folder/)).toBeTruthy();
+    expect(screen.queryByText('Retry')).toBeNull();
+    // Its one button opens the preview, which reads the saved version.
+    await userEvent.click(screen.getByRole('button'));
+    expect(onOpenPreview).toHaveBeenCalledWith('a-3');
+    expect(onRetry).not.toHaveBeenCalled();
   });
 });

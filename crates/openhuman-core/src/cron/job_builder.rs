@@ -9,10 +9,10 @@
 
 use crate::config::Config;
 use {
-    crate::cron, tinyflows_schedule::types::delivery_mode, tinyflows_schedule::types::CronJob,
-    tinyflows_schedule::types::DeliveryConfig, tinyflows_schedule::types::JobOrigin,
-    tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget,
-    tinyflows_sqlite::schedule::AgentJobSpec,
+    crate::cron, tinyflows_bus::schedule::types::delivery_mode,
+    tinyflows_bus::schedule::types::CronJob, tinyflows_bus::schedule::types::DeliveryConfig,
+    tinyflows_bus::schedule::types::JobOrigin, tinyflows_bus::schedule::types::Schedule,
+    tinyflows_bus::schedule::types::SessionTarget, tinyflows_bus::schedule::AgentJobSpec,
 };
 
 /// What an agent job creation request carries; everything defaults.
@@ -45,122 +45,25 @@ fn allowed_users_for_channel<'a>(config: &'a Config, channel: &str) -> Option<&'
     }
 }
 
-/// The default delivery for an agent job: back to the conversation it was
-/// created in, or the in-app stream when there is none.
-pub fn default_delivery(origin: Option<&JobOrigin>) -> DeliveryConfig {
-    DeliveryConfig {
-        mode: if origin.is_some() {
-            delivery_mode::ORIGIN
-        } else {
-            delivery_mode::PROACTIVE
-        }
-        .to_string(),
-        channel: None,
-        to: None,
-        best_effort: true,
-    }
-}
-
-/// Reject a session target or delivery that needs a conversation the job does
-/// not have. Shared with the RPC `cron.add` path.
-pub fn check_origin_requirements(
-    session_target: &SessionTarget,
-    delivery: &DeliveryConfig,
-    origin: Option<&JobOrigin>,
-) -> Result<(), String> {
-    if origin.is_some() {
-        return Ok(());
-    }
-    if delivery
-        .mode
-        .trim()
-        .eq_ignore_ascii_case(delivery_mode::ORIGIN)
-    {
-        return Err(
-            "delivery mode 'origin' needs the conversation the job is created from; this \
-             job has none (use 'proactive' or 'announce')"
-                .to_string(),
-        );
-    }
-    if matches!(session_target, SessionTarget::Current) {
-        return Err(
-            "session_target 'current' needs the conversation the job is created from; this \
-             job has none (use 'isolated')"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// Validate a `DeliveryConfig` at creation time.
-///
-/// `announce` needs `channel` and `to`, and `to` must be in the channel's
-/// `allowed_users` (no cross-tenant `to`, #928) unless it is exactly the
-/// reply target of the conversation the job is created from: the asker is the
-/// recipient. `origin` needs an origin. `proactive` and `none` are not
-/// channel-targeted.
-pub fn validate_delivery(
+/// Validate `delivery` at creation time: the module rules
+/// (the module's `ValidateDelivery`) plus the channel's
+/// configured `allowed_users`, which only the host knows.
+fn validate_delivery_for_config(
     config: &Config,
     delivery: &DeliveryConfig,
     origin: Option<&JobOrigin>,
 ) -> Result<(), String> {
-    let mode = delivery.mode.trim().to_ascii_lowercase();
-    if mode == delivery_mode::ORIGIN {
-        return check_origin_requirements(&SessionTarget::Isolated, delivery, origin);
-    }
-    if mode != delivery_mode::ANNOUNCE {
-        return Ok(());
-    }
-
-    let channel = delivery
+    let allowed = delivery
         .channel
         .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "delivery.channel is required for announce mode".to_string())?;
-    let to = delivery
-        .to
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "delivery.to is required for announce mode".to_string())?;
-
-    if let Some(JobOrigin::Channel {
-        channel: origin_channel,
-        reply_target,
-        ..
-    }) = origin
-    {
-        if channel.eq_ignore_ascii_case(origin_channel) && to == reply_target {
-            tracing::debug!(
-                channel = %channel,
-                "[cron] announce target is the origin reply target; skipping allowed_users check"
-            );
-            return Ok(());
-        }
-    }
-
-    // "web" announce is a degenerate case (web has no allowed_users gate).
-    if channel.eq_ignore_ascii_case("web") {
-        return Ok(());
-    }
-
-    match allowed_users_for_channel(config, channel) {
-        Some([]) => Ok(()),
-        Some(list) => {
-            if list.iter().any(|u| u == to) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "delivery target '{to}' on channel '{channel}' is not in allowed_users \
-                     for that channel; refusing to schedule cross-tenant delivery"
-                ))
-            }
-        }
-        None => Err(format!(
-            "delivery channel '{channel}' is not configured; cannot validate target"
-        )),
-    }
+        .and_then(|channel| allowed_users_for_channel(config, channel));
+    let (delivery, origin) = (delivery.clone(), origin.cloned());
+    let allowed = allowed.map(<[String]>::to_vec);
+    cron::client::blocking(config, move |config| async move {
+        cron::client::validate_delivery(&config, &delivery, origin.as_ref(), allowed.as_deref())
+            .await
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Create an agent job from the current turn.
@@ -182,12 +85,32 @@ pub fn create_agent_job(
     } else {
         SessionTarget::Isolated
     });
-    let delivery = input
-        .delivery
-        .unwrap_or_else(|| default_delivery(origin.as_ref()));
+    let delivery = match input.delivery {
+        Some(delivery) => delivery,
+        None => {
+            let origin = origin.clone();
+            cron::client::blocking(config, move |config| async move {
+                cron::client::default_delivery(&config, origin.as_ref()).await
+            })
+            .map_err(|e| e.to_string())?
+        }
+    };
 
-    validate_delivery(config, &delivery, origin.as_ref())?;
-    check_origin_requirements(&session_target, &delivery, origin.as_ref())?;
+    validate_delivery_for_config(config, &delivery, origin.as_ref())?;
+    {
+        let (session_target, delivery, origin) =
+            (session_target.clone(), delivery.clone(), origin.clone());
+        cron::client::blocking(config, move |config| async move {
+            cron::client::check_origin_requirements(
+                &config,
+                &session_target,
+                &delivery,
+                origin.as_ref(),
+            )
+            .await
+        })
+        .map_err(|e| e.to_string())?;
+    }
 
     let uses_origin = matches!(session_target, SessionTarget::Current)
         || delivery

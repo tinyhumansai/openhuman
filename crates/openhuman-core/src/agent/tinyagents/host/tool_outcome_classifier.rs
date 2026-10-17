@@ -5,8 +5,8 @@
 //! call returned; it does not know whether the thing that came back is a
 //! success, something to re-dispatch, or a dead end. OpenHuman already owns that
 //! judgement in [`crate::tool_status`], whose
-//! [`classify`](crate::tools::status::classify) turns raw tool error
-//! text into a [`ClassifiedFailure`](crate::tools::status::ClassifiedFailure)
+//! [`classify`](tinytools::status::classify) turns raw tool error
+//! text into a [`ClassifiedFailure`](tinytools::status::ClassifiedFailure)
 //! (a [`ToolFailureClass`] plus a user-facing category). This adapter is the one
 //! place that mapping is projected onto the crate's three-way
 //! [`OutcomeClass`].
@@ -75,10 +75,10 @@ use std::sync::Arc;
 use tinyagents_harness::host::{OutcomeClass, ToolOutcomeClassifier};
 use tinytools::ToolResult;
 
-use crate::tools::status::{classify, ToolFailureClass};
+use tinytools::status::{classify, ToolFailureClass};
 
 /// OpenHuman's [`ToolOutcomeClassifier`], backed by
-/// [`crate::tools::status::classify`].
+/// [`tinytools::status::classify`].
 ///
 /// Zero-sized and stateless: the classifier's whole knowledge base is the
 /// keyword heuristic in the `tool_status` domain, which is itself pure. Every

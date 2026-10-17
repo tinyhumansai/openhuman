@@ -60,9 +60,16 @@ impl OpenHumanTurnPrelude {
     }
 
     /// Records the user text a turn begins with, for its user-side effects.
-    pub(super) fn begin_user_effects(&self, request: &SessionTurnRequest) {
-        let user_text =
-            crate::agent::turn_origin::current_is_user_authored().then(|| request.input.text());
+    pub(super) fn begin_user_effects(
+        &self,
+        request: &SessionTurnRequest,
+        run_context: &OpenHumanRunContext,
+    ) {
+        let user_text = run_context
+            .dispatch_ctx()
+            .turn_origin_or_scoped()
+            .is_some_and(|origin| origin.is_user_authored())
+            .then(|| request.input.text());
         self.mutable
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

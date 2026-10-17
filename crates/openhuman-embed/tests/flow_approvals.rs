@@ -7,8 +7,8 @@ use std::time::Duration;
 use openhuman_core::agent::turn_origin::{self, TrustedAutomationSource};
 use openhuman_core::core::events::DomainEvent;
 use openhuman_core::core::runtime::{AgentContextRegistry, CoreContext};
-use openhuman_core::security::approval::gate::{FlowRunContext, APPROVAL_FLOW_RUN_CONTEXT};
 use openhuman_core::security::approval::{ApprovalGate, ApprovalSourceContext, GateOutcome};
+use openhuman_core::security::approval::{ApprovalTurnContext, FlowRunContext};
 use openhuman_embed::{
     Access, AgentDefinitionSpec, AgentSpec, AgentTurnOrigin, ApprovalDecision, Runtime,
     ToolScopeSpec, TrustedAccess, Workspace,
@@ -92,17 +92,16 @@ fn flow_surfaces_correlate_decisions_and_closed_instances_never_publish() {
             let park = tokio::spawn(CoreContext::scope(
                 context,
                 turn_origin::with_origin(origin("flow-live"), async move {
-                    APPROVAL_FLOW_RUN_CONTEXT
-                        .scope(run_context("flow-live", "run-direct"), async move {
-                            parking_gate
-                                .intercept_audited_for_call(
-                                    "shell",
-                                    "flow action",
-                                    serde_json::json!({"command": "redacted"}),
-                                    Some("flow-call"),
-                                )
-                                .await
-                        })
+                    let turn = ApprovalTurnContext::default()
+                        .with_flow_run(run_context("flow-live", "run-direct"));
+                    parking_gate
+                        .intercept_audited_for_call(
+                            &turn,
+                            "shell",
+                            "flow action",
+                            serde_json::json!({"command": "redacted"}),
+                            Some("flow-call"),
+                        )
                         .await
                 }),
             ));
@@ -182,7 +181,12 @@ fn flow_surfaces_correlate_decisions_and_closed_instances_never_publish() {
                 assert_eq!(payload["summary"], "flow action");
                 assert_eq!(payload["decision"], action.action_id);
             }
-            let rows = gate.list_pending_for_agent(Some("flow-agent")).unwrap();
+            let rows = gate
+                .list_pending_for_agent(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient(),
+                    Some("flow-agent"),
+                )
+                .unwrap();
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0].request_id, request_id);
             assert!(matches!(&rows[0].source_context,
@@ -229,11 +233,10 @@ fn flow_surfaces_correlate_decisions_and_closed_instances_never_publish() {
             // must produce a denied tool result and never create the marker.
             let turn_agent = agent.clone();
             let turn = tokio::spawn(async move {
-                APPROVAL_FLOW_RUN_CONTEXT
-                    .scope(
-                        run_context("flow-live", "run-tool"),
-                        turn_agent.turn("write the marker").send(),
-                    )
+                turn_agent
+                    .turn("write the marker")
+                    .flow_run("flow-live", "run-tool")
+                    .send()
                     .await
             });
             let request = common::eventually("flow tool to park", || {
@@ -273,13 +276,12 @@ fn flow_surfaces_correlate_decisions_and_closed_instances_never_publish() {
                     old_context,
                     turn_origin::with_origin(
                         origin("flow-closed"),
-                        APPROVAL_FLOW_RUN_CONTEXT.scope(
-                            run_context("flow-closed", "run-closed"),
-                            gate.intercept_audited(
-                                "shell",
-                                "late flow action",
-                                serde_json::json!({}),
-                            ),
+                        gate.intercept_audited(
+                            &ApprovalTurnContext::default()
+                                .with_flow_run(run_context("flow-closed", "run-closed")),
+                            "shell",
+                            "late flow action",
+                            serde_json::json!({}),
                         ),
                     ),
                 ),
@@ -291,7 +293,10 @@ fn flow_surfaces_correlate_decisions_and_closed_instances_never_publish() {
             );
             assert!(request.is_none());
             assert!(gate
-                .list_pending_for_agent(Some("flow-removed"))
+                .list_pending_for_agent(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient(),
+                    Some("flow-removed")
+                )
                 .unwrap()
                 .is_empty());
             assert!(

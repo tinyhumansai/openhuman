@@ -28,7 +28,7 @@ fn all_definitions_present() {
 
 #[test]
 fn test_main_allows_test_inherit_workers() {
-    use super::super::definition::SubagentEntry;
+    use tinyagents_definition::SubagentEntry;
     let def = all()
         .into_iter()
         .find(|d| d.id == "main")
@@ -47,7 +47,7 @@ fn test_main_allows_test_inherit_workers() {
 
 #[test]
 fn test_inherit_echo_is_present_and_inherits() {
-    use super::super::definition::ModelSpec;
+    use tinyagents_definition::ModelSpec;
     let def = all()
         .into_iter()
         .find(|d| d.id == "__test_inherit_echo")
@@ -60,7 +60,7 @@ fn test_inherit_echo_is_present_and_inherits() {
 
 #[test]
 fn test_inherit_parallel_worker_is_present_and_inherits() {
-    use super::super::definition::{ModelSpec, ToolScope};
+    use tinyagents_definition::{ModelSpec, ToolScope};
     let def = all()
         .into_iter()
         .find(|d| d.id == "__test_inherit_parallel_worker")

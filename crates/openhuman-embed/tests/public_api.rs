@@ -38,6 +38,23 @@ fn exposes_the_host_facing_embedding_contract() {
     fn removes_agent<'a>(runtime: &'a Runtime, id: &str) -> RemoveAgent<'a> {
         runtime.remove_agent(id).purge()
     }
+    fn steers_a_turn(
+        turn: &mut openhuman_embed::Turn,
+    ) -> Result<openhuman_embed::TurnSteering, openhuman_embed::SteerRefused> {
+        let steering = turn.steering_handle();
+        steering.steer("one more thing")?;
+        Ok(steering)
+    }
+    fn hands_back_steers(
+        steering: &openhuman_embed::TurnSteering,
+        outcome: &openhuman_embed::TurnOutcome,
+        refused: openhuman_embed::SteerRefused,
+    ) -> Vec<String> {
+        let mut left = outcome.unapplied_steers.clone();
+        left.extend(steering.take_unapplied());
+        left.push(refused.into_text());
+        left
+    }
     fn lifecycle_errors(error: &AgentError) -> Option<usize> {
         match error {
             AgentError::AgentLimit { limit } => Some(*limit),
@@ -48,6 +65,8 @@ fn exposes_the_host_facing_embedding_contract() {
     }
 
     let _ = accepts_core;
+    let _ = steers_a_turn;
+    let _ = hands_back_steers;
     let _ = accepts_builder;
     let _ = accepts_runtime;
     let _ = accepts_harness;

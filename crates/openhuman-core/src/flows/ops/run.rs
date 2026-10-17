@@ -23,6 +23,7 @@ use super::*;
 /// [`tinyflows::engine::RunInput`]. A declared-input problem (missing required
 /// value, wrong type, undeclared key) is rejected before any run row exists.
 pub async fn flows_run(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     flow_id: &str,
     input: Value,
@@ -46,6 +47,7 @@ pub async fn flows_run(
     publish_flow_run_started(flow_id, &thread_id);
 
     run_flow_body(
+        ctx.clone(),
         Arc::new(config.clone()),
         prepared.flow,
         flow_id.to_string(),
@@ -84,6 +86,7 @@ pub async fn flows_run(
 /// payload and the flow's declared inputs. Both are validated synchronously, so
 /// the agent still gets an immediate, actionable error for a bad call.
 pub async fn flows_run_detached(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     flow_id: &str,
     input: Value,
@@ -115,12 +118,14 @@ pub async fn flows_run_detached(
     );
 
     let config_arc = Arc::new(config.clone());
+    let body_ctx = ctx.clone();
     let flow = prepared.flow;
     let flow_id_owned = flow_id.to_string();
     let body_thread_id = thread_id.clone();
     tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
         async move {
             if let Err(e) = run_flow_body(
+                body_ctx,
                 config_arc,
                 flow,
                 flow_id_owned,

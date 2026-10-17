@@ -44,5 +44,5 @@ across, and check that the manifest diff matches the DDL diff.
 ## See also
 
 - [`tests/README.md`](../../README.md), the layout of the Rust test targets.
-- [`memory` domain README](../../../crates/openhuman-core/src/memory/README.md) and [Memory architecture](../../../gitbooks/developing/architecture/memory.md).
+- [`memory` domain README](../../../crates/openhuman-core/src/memory/README.md) and [Memory architecture](../../../docs/gitbooks/en/developing/architecture/memory.md).
 - [`vendor/tinymemory/`](../../../vendor/tinymemory), which owns the engine contracts and migrations.

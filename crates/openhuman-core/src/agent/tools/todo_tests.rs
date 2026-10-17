@@ -148,11 +148,12 @@ fn every_agent_binds_to_its_own_thread() {
         session_id: "orchestrator_thread-live".into(),
         channel: "test".into(),
         connected_integrations: Vec::new(),
-        tool_call_format: crate::agent::prompts::ToolCallFormat::Native,
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::Native,
         session_key: "parent-key".into(),
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     };
 
     assert_eq!(
@@ -206,11 +207,12 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
         session_id: "client-1|thread-legacy".into(),
         channel: "test".into(),
         connected_integrations: Vec::new(),
-        tool_call_format: crate::agent::prompts::ToolCallFormat::Native,
+        tool_call_format: tinytools_agent::dialect::ToolCallFormat::Native,
         session_key: "parent-key".into(),
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     };
 
     // Seed the legacy session-keyed list directly through the store, as if a

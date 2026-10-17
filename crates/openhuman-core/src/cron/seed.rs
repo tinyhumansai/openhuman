@@ -21,8 +21,9 @@ use crate::config::Config;
 use anyhow::Result;
 use {
     crate::cron::add_agent_job_with_definition, crate::cron::dedup_named_jobs,
-    crate::cron::list_jobs, crate::cron::remove_job, tinyflows_schedule::types::DeliveryConfig,
-    tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget,
+    crate::cron::list_jobs, crate::cron::remove_job,
+    tinyflows_bus::schedule::types::DeliveryConfig, tinyflows_bus::schedule::types::Schedule,
+    tinyflows_bus::schedule::types::SessionTarget,
 };
 
 /// Well-known job names used to detect whether seeding has already run.
@@ -129,7 +130,7 @@ pub fn prune_retired_jobs(config: &Config) -> Result<usize> {
 /// cron entry fire alongside that would double-deliver. Best-effort:
 /// log but don't fail seeding on a prune error, and scan all entries
 /// because the ID is a UUID — we key on the stable `name` field.
-fn prune_legacy_welcome(config: &Config, existing: &[tinyflows_schedule::types::CronJob]) {
+fn prune_legacy_welcome(config: &Config, existing: &[tinyflows_bus::schedule::types::CronJob]) {
     let stale_ids: Vec<String> = existing
         .iter()
         .filter(|j| j.name.as_deref() == Some(LEGACY_WELCOME_JOB_NAME))

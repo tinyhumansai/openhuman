@@ -1,0 +1,85 @@
+# Local-development bridge that links module implementation crates into a host
+# executable and registers them with the core's `register_linked` seam
+# (`openhuman_rpc::embed::modules`), so `[modules] source = "linked"` serves a
+# module from the running binary instead of a downloaded release.
+#
+# This is the ONLY crate allowed to depend on module implementation crates
+# (`scripts/ci/module-boundaries.json`), and the only crate allowed to depend on
+# it is `openhuman-cli`, as an optional dependency behind the non-product
+# `linked-modules` feature (`scripts/ci/check-crate-chain.mjs`). The desktop
+# app, the TUI and the core never reach it, and `linked-modules` is in no
+# product feature set (`scripts/ci/check-feature-forwarding.mjs`). CI and
+# shipped builds load pinned, digest-checked releases.
+#
+# One feature per registry module id, plus `all`. Every module crate is built
+# with its `static-link` feature, which swaps the C ABI exports for a Rust
+# `linked_module()` so several can share one executable without duplicate
+# `TINYBUS_MODULE_ABI_V1` symbols. They all resolve against the single
+# `vendor/tinybus` through the root `[patch]` tables: every module repo
+# requires `tinybus >=0.1.3, <0.2` and patches its nested copy for standalone
+# builds only. `cargo build -p openhuman-modules-linked --features all` is the
+# proof (and `lib_tests.rs` admits each factory's module).
+
+[package]
+name = "openhuman-modules-linked"
+description = "Local-development registration of in-process linked modules (never part of a product build)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+all = [
+    "tinybox",
+    "tinychannels",
+    "tinycomputer",
+    "tinyconnectors",
+    "tinydocs",
+    "tinyflows",
+    "tinyhosts",
+    "tinyjuice",
+    "tinymcp",
+    "tinysearch",
+    "tinyvoice",
+    "tinywallet",
+]
+tinybox = ["dep:tinybox-module"]
+tinychannels = ["dep:tinychannels-module"]
+tinycomputer = ["dep:tinycomputer"]
+tinyconnectors = ["dep:tinyconnectors"]
+tinydocs = ["dep:tinydocs-module"]
+tinyflows = ["dep:tinyflows-module"]
+tinyhosts = ["dep:tinyhosts"]
+tinyjuice = ["dep:tinyjuice-module"]
+tinymcp = ["dep:tinymcp"]
+tinysearch = ["dep:tinysearch"]
+tinyvoice = ["dep:tinyvoice-module"]
+tinywallet = ["dep:tinywallet-module"]
+
+[dependencies]
+# The host reaches the core only through the rpc facade (crate chain).
+openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features = ["modules"] }
+log = "0.4"
+
+tinybox-module = { path = "../../vendor/tinybox/crates/tinybox-module", features = ["static-link"], optional = true }
+tinychannels-module = { path = "../../vendor/tinychannels/crates/tinychannels-module", features = ["static-link"], optional = true }
+tinycomputer = { path = "../../vendor/tinycomputer/crates/tinycomputer", features = ["static-link"], optional = true }
+tinyconnectors = { path = "../../vendor/tinyconnectors/crates/tinyconnectors", features = ["static-link"], optional = true }
+tinydocs-module = { path = "../../vendor/tinydocs/crates/tinydocs-module", features = ["static-link"], optional = true }
+tinyflows-module = { path = "../../vendor/tinyflows/crates/tinyflows-module", features = ["static-link"], optional = true }
+tinyhosts = { path = "../../vendor/tinyhosts", features = ["static-link"], optional = true }
+tinyjuice-module = { path = "../../vendor/tinyjuice/crates/tinyjuice-module", features = ["static-link"], optional = true }
+tinymcp = { path = "../../vendor/tinymcp/crates/tinymcp", features = ["static-link"], optional = true }
+tinysearch = { path = "../../vendor/tinysearch/crates/tinysearch", features = ["static-link"], optional = true }
+tinyvoice-module = { path = "../../vendor/tinyvoice/crates/tinyvoice-module", features = ["static-link"], optional = true }
+tinywallet-module = { path = "../../vendor/tinywallet/crates/tinywallet-module", features = ["static-link"], optional = true }
+
+[dev-dependencies]
+tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["modules"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 #[test]
 fn registers_four_live_controllers_in_the_voice_namespace() {
@@ -26,12 +27,15 @@ fn registers_four_live_controllers_in_the_voice_namespace() {
 #[tokio::test]
 async fn handlers_reject_bad_params() {
     let bad = |v: serde_json::Value| v.as_object().unwrap().clone();
-    assert!(handle_live_test_provider(bad(serde_json::json!({})))
-        .await
-        .is_err());
     assert!(
-        handle_live_settings_set(bad(serde_json::json!({"gemini": 5})))
+        handle_live_test_provider(DispatchCtx::process_default(), bad(serde_json::json!({})))
             .await
             .is_err()
     );
+    assert!(handle_live_settings_set(
+        DispatchCtx::process_default(),
+        bad(serde_json::json!({"gemini": 5}))
+    )
+    .await
+    .is_err());
 }

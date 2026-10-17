@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 pub(crate) fn resolve_subagent_source(
-    spec: &crate::agent::harness::definition::ModelSpec,
+    spec: &tinyagents_definition::ModelSpec,
     agent_id: &str,
     config: Option<&crate::config::Config>,
     parent_source: crate::agent::tinyagents::TurnModelSource,
@@ -15,7 +15,7 @@ pub(crate) fn resolve_subagent_source(
     model_override: Option<&str>,
     temperature: f64,
 ) -> (crate::agent::tinyagents::TurnModelSource, String) {
-    use crate::agent::harness::definition::ModelSpec;
+    use tinyagents_definition::ModelSpec;
     if let Some(model) = model_override
         .map(str::trim)
         .filter(|model| !model.is_empty())
@@ -38,7 +38,8 @@ pub(crate) fn resolve_subagent_source(
     match spec {
         ModelSpec::Hint(workload) => match config {
             Some(config) => {
-                match crate::inference::provider::create_chat_model_with_model_id(
+                match crate::inference::provider::create_chat_model_with_model_id_in(
+                    &parent_source.dispatch_ctx(),
                     workload,
                     config,
                     temperature,
@@ -52,6 +53,7 @@ pub(crate) fn resolve_subagent_source(
                         );
                         (
                             crate::agent::tinyagents::TurnModelSource::new_crate_native(
+                                &parent_source.dispatch_ctx(),
                                 workload.clone(),
                                 Arc::new(config.clone()),
                             ),

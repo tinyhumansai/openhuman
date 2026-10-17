@@ -55,7 +55,7 @@ Nothing is written to disk during extraction, no office application is launched,
 
 ## Where it runs
 
-Document work happens in the `tinydocs` module. It is a signed native library that downloads on first use and is checked against a SHA-256 pinned in OpenHuman. The document writers and the PDF reader are not part of the app's own code in any build. With the `documents` feature off, the two tools are simply missing from the agent's list instead of failing, and a PDF attachment becomes a file reference instead of extracted text.
+Document work happens in the `tinydocs` module. It is a signed native library that downloads on first use and is checked against a SHA-256 pinned in OpenHuman. The document writers, PDF and Office readers, and image inspection are not part of the app's own code in any build. With the `documents` feature off, the generation tools are absent and PDF/Office extraction and image inspection are unavailable.
 
 ## See also
 

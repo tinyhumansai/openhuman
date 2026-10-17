@@ -12,11 +12,16 @@
 //! One handler per name; a later registration replaces an earlier one, and
 //! dropping a [`SystemJobRegistration`] removes its handler only while it is
 //! still the registered one.
+//!
+//! The handlers live in the job-kind registry ([`crate::cron::handlers`]): a
+//! system job is a `flow`-type row, so the `flow` kind handler looks the name
+//! up there. This file is the registration surface embedders already use.
 
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, PoisonError, RwLock};
+use std::sync::Arc;
 
 use futures::future::BoxFuture;
+
+use super::handlers;
 
 /// The job a handler is asked to run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,9 +36,6 @@ pub struct SystemJobContext {
 pub type SystemJobHandler =
     Arc<dyn Fn(SystemJobContext) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
 
-static HANDLERS: LazyLock<RwLock<HashMap<String, SystemJobHandler>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
 /// Keeps a handler registered while held.
 #[must_use = "the handler is unregistered when the registration drops"]
 pub struct SystemJobRegistration {
@@ -43,14 +45,7 @@ pub struct SystemJobRegistration {
 
 impl Drop for SystemJobRegistration {
     fn drop(&mut self) {
-        let mut handlers = HANDLERS.write().unwrap_or_else(PoisonError::into_inner);
-        if handlers
-            .get(&self.name)
-            .is_some_and(|current| Arc::ptr_eq(current, &self.handler))
-        {
-            handlers.remove(&self.name);
-            tracing::debug!(job = %self.name, "[cron:system_handlers] handler unregistered");
-        }
+        handlers::unregister_system(&self.name, &self.handler);
     }
 }
 
@@ -64,11 +59,7 @@ impl std::fmt::Debug for SystemJobRegistration {
 
 /// Register `handler` for system job `name`, replacing any earlier handler.
 pub fn register(name: &str, handler: SystemJobHandler) -> SystemJobRegistration {
-    HANDLERS
-        .write()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(name.to_string(), Arc::clone(&handler));
-    tracing::debug!(job = %name, "[cron:system_handlers] handler registered");
+    handlers::register_system(name, Arc::clone(&handler));
     SystemJobRegistration {
         name: name.to_string(),
         handler,
@@ -77,19 +68,12 @@ pub fn register(name: &str, handler: SystemJobHandler) -> SystemJobRegistration 
 
 /// Whether `name` has a handler.
 pub fn has_handler(name: &str) -> bool {
-    HANDLERS
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .contains_key(name)
+    handlers::has_system(name)
 }
 
 /// Run the handler registered for `ctx.name`. `None` when there is none.
 pub async fn dispatch(ctx: SystemJobContext) -> Option<Result<(), String>> {
-    let handler = HANDLERS
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&ctx.name)
-        .cloned()?;
+    let handler = handlers::system_handler(&ctx.name)?;
     tracing::debug!(job = %ctx.name, job_id = %ctx.job_id, "[cron:system_handlers] dispatching");
     let result = handler(ctx.clone()).await;
     tracing::debug!(

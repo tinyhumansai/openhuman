@@ -1,7 +1,7 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::config::workspace::rpc as workspace_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
@@ -115,9 +115,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_file_read(params: Map<String, Value>) -> ControllerFuture {
+fn handle_file_read(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let filename = read_required::<String>(&params, "filename")?;
         let filename = filename.trim();
         log::debug!("[workspace][rpc] handle_file_read filename='{filename}'");
@@ -129,9 +129,9 @@ fn handle_file_read(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_file_write(params: Map<String, Value>) -> ControllerFuture {
+fn handle_file_write(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let filename = read_required::<String>(&params, "filename")?;
         let contents = read_required::<String>(&params, "contents")?;
         let filename = filename.trim();
@@ -148,9 +148,9 @@ fn handle_file_write(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_file_reset(params: Map<String, Value>) -> ControllerFuture {
+fn handle_file_reset(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let filename = read_required::<String>(&params, "filename")?;
         let filename = filename.trim();
         log::debug!("[workspace][rpc] handle_file_reset filename='{filename}'");

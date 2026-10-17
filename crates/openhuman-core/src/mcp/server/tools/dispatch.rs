@@ -1,9 +1,9 @@
+use crate::core::runtime::DispatchCtx;
 use serde_json::{json, Map, Value};
 use tinyinference_llm::tool::ToolSchema;
 
-use crate::agent::harness::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::OpenHumanSessionHost;
-use crate::config::rpc as config_rpc;
 use crate::core::all;
 use crate::security::{SecurityPolicy, ToolOperation};
 
@@ -16,8 +16,8 @@ use tinymcp_bus::ToolCallError;
 /// The tools `tools/list` advertises and `tools/call` accepts: every tool the
 /// loaded config can serve, or only the config-independent base set when the
 /// config will not load. `method` names the MCP method for the log line.
-async fn available_tool_specs(method: &str) -> Vec<McpToolSpec> {
-    match config_rpc::load_config_with_timeout().await {
+async fn available_tool_specs(ctx: &DispatchCtx, method: &str) -> Vec<McpToolSpec> {
+    match ctx.load_config().await {
         Ok(config) => tool_specs_for_loaded_config(&config),
         Err(err) => {
             log::warn!(
@@ -28,27 +28,29 @@ async fn available_tool_specs(method: &str) -> Vec<McpToolSpec> {
     }
 }
 
-pub async fn list_tool_specs() -> Vec<McpToolSpec> {
-    available_tool_specs("tools/list").await
+pub async fn list_tool_specs(ctx: &DispatchCtx) -> Vec<McpToolSpec> {
+    available_tool_specs(ctx, "tools/list").await
 }
 
 pub async fn call_tool(
+    ctx: &DispatchCtx,
     name: &str,
     arguments: Value,
     client_info: &str,
 ) -> Result<Value, ToolCallError> {
-    let specs = available_tool_specs("tools/call").await;
+    let specs = available_tool_specs(ctx, "tools/call").await;
     let spec = specs
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| ToolCallError::InvalidParams(format!("unknown MCP tool `{name}`")))?;
 
     let audit_arguments = arguments.clone();
-    let params = match build_rpc_params(spec.name, arguments) {
+    let params = match build_rpc_params(ctx, spec.name, arguments).await {
         Ok(params) => params,
         Err(err) => {
             if write_dispatch::is_write_tool(spec.name) {
                 write_dispatch::audit_write_rejection_without_config(
+                    ctx,
                     spec.name,
                     &audit_arguments,
                     client_info,
@@ -60,23 +62,23 @@ pub async fn call_tool(
     };
     match spec.name {
         "core.list_tools" => {
-            enforce_read_policy(spec.name).await?;
-            return list_core_tools().await;
+            enforce_read_policy(ctx, spec.name).await?;
+            return list_core_tools(ctx).await;
         }
         "core.tool_instructions" => {
-            enforce_read_policy(spec.name).await?;
-            return core_tool_instructions().await;
+            enforce_read_policy(ctx, spec.name).await?;
+            return core_tool_instructions(ctx).await;
         }
         "agent.list_subagents" => {
-            enforce_read_policy(spec.name).await?;
-            return list_subagents().await;
+            enforce_read_policy(ctx, spec.name).await?;
+            return list_subagents(ctx).await;
         }
         "agent.run_subagent" => {
-            enforce_act_policy(spec.name).await?;
-            return run_subagent_tool(&params).await;
+            enforce_act_policy(ctx, spec.name).await?;
+            return run_subagent_tool(ctx, &params).await;
         }
         "memory.learn" | "memory.forget" => {
-            let config = write_dispatch::load_write_config(spec.name).await?;
+            let config = write_dispatch::load_write_config(ctx, spec.name).await?;
             if let Err(err) = write_dispatch::enforce_write_policy_for_config(spec.name, &config) {
                 write_dispatch::audit_write_rejection(
                     &config,
@@ -106,6 +108,7 @@ pub async fn call_tool(
                 ))
             })?;
             return write_dispatch::dispatch_write_tool(
+                ctx,
                 spec.name,
                 rpc_method,
                 &params,
@@ -119,7 +122,7 @@ pub async fn call_tool(
     }
 
     validate_controller_params(&spec, &params)?;
-    enforce_read_policy(spec.name).await?;
+    enforce_read_policy(ctx, spec.name).await?;
 
     let rpc_method = spec.rpc_method.ok_or_else(|| {
         ToolCallError::Internal(format!(
@@ -135,7 +138,7 @@ pub async fn call_tool(
         params.keys().collect::<Vec<_>>()
     );
 
-    match all::try_invoke_registered_rpc(rpc_method, params).await {
+    match all::try_invoke_registered_rpc(ctx.clone(), rpc_method, params).await {
         Some(Ok(value)) => {
             log::debug!("[mcp_server] tools/call success tool={}", spec.name);
             Ok(tool_success(value))
@@ -162,11 +165,11 @@ pub async fn call_tool(
     }
 }
 
-async fn enforce_read_policy(tool_name: &str) -> Result<(), ToolCallError> {
+async fn enforce_read_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), ToolCallError> {
     // Config-load failure is an internal/server issue (disk error, corrupt
     // config), not bad client input — report it as `-32603 Internal error`
     // rather than `-32602 Invalid params`.
-    let config = match config_rpc::load_config_with_timeout().await {
+    let config = match ctx.load_config().await {
         Ok(config) => config,
         Err(err) => {
             log::warn!(
@@ -187,8 +190,8 @@ async fn enforce_read_policy(tool_name: &str) -> Result<(), ToolCallError> {
         .map_err(ToolCallError::InvalidParams)
 }
 
-async fn enforce_act_policy(tool_name: &str) -> Result<(), ToolCallError> {
-    let config = match config_rpc::load_config_with_timeout().await {
+async fn enforce_act_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), ToolCallError> {
+    let config = match ctx.load_config().await {
         Ok(config) => config,
         Err(err) => {
             log::warn!(
@@ -206,8 +209,11 @@ async fn enforce_act_policy(tool_name: &str) -> Result<(), ToolCallError> {
         .map_err(ToolCallError::InvalidParams)
 }
 
-async fn load_config_and_init_registry() -> Result<crate::config::Config, ToolCallError> {
-    let config = config_rpc::load_config_with_timeout()
+async fn load_config_and_init_registry(
+    ctx: &DispatchCtx,
+) -> Result<crate::config::Config, ToolCallError> {
+    let config = ctx
+        .load_config()
         .await
         .map_err(|err| ToolCallError::Internal(format!("failed to load config: {err}")))?;
     AgentDefinitionRegistry::init_global(&config.workspace_dir).map_err(|err| {
@@ -218,10 +224,12 @@ async fn load_config_and_init_registry() -> Result<crate::config::Config, ToolCa
     Ok(config)
 }
 
-async fn build_orchestrator_agent() -> Result<OpenHumanSessionHost, ToolCallError> {
-    let config = load_config_and_init_registry().await?;
-    let mut agent =
-        OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator").map_err(|err| {
+async fn build_orchestrator_agent(
+    ctx: &DispatchCtx,
+) -> Result<OpenHumanSessionHost, ToolCallError> {
+    let config = load_config_and_init_registry(ctx).await?;
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, "orchestrator")
+        .map_err(|err| {
             ToolCallError::Internal(format!("failed to build orchestrator agent: {err}"))
         })?;
     agent.fetch_connected_integrations().await;
@@ -229,8 +237,8 @@ async fn build_orchestrator_agent() -> Result<OpenHumanSessionHost, ToolCallErro
     Ok(agent)
 }
 
-async fn list_core_tools() -> Result<Value, ToolCallError> {
-    let agent = build_orchestrator_agent().await?;
+async fn list_core_tools(ctx: &DispatchCtx) -> Result<Value, ToolCallError> {
+    let agent = build_orchestrator_agent(ctx).await?;
     let tools = agent
         .tool_specs()
         .iter()
@@ -245,8 +253,8 @@ async fn list_core_tools() -> Result<Value, ToolCallError> {
     Ok(tool_success(json!({ "tools": tools })))
 }
 
-async fn core_tool_instructions() -> Result<Value, ToolCallError> {
-    let agent = build_orchestrator_agent().await?;
+async fn core_tool_instructions(ctx: &DispatchCtx) -> Result<Value, ToolCallError> {
+    let agent = build_orchestrator_agent(ctx).await?;
     let schemas: Vec<_> = agent
         .tool_specs()
         .iter()
@@ -266,8 +274,8 @@ async fn core_tool_instructions() -> Result<Value, ToolCallError> {
     ))
 }
 
-async fn list_subagents() -> Result<Value, ToolCallError> {
-    let config = load_config_and_init_registry().await?;
+async fn list_subagents(ctx: &DispatchCtx) -> Result<Value, ToolCallError> {
+    let config = load_config_and_init_registry(ctx).await?;
     let registry = AgentDefinitionRegistry::current().ok_or_else(|| {
         ToolCallError::Internal("AgentDefinitionRegistry missing after init".to_string())
     })?;
@@ -315,12 +323,14 @@ async fn list_subagents() -> Result<Value, ToolCallError> {
     }))
 }
 
-async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCallError> {
+async fn run_subagent_tool(
+    ctx: &DispatchCtx,
+    params: &Map<String, Value>,
+) -> Result<Value, ToolCallError> {
     use super::super::subagent_depth;
-    use tinymcp::server::args::required_non_empty_string;
 
-    let agent_id = required_non_empty_string(params, "agent_id")?;
-    let prompt = required_non_empty_string(params, "prompt")?;
+    let agent_id = validated_param(params, "agent_id")?;
+    let prompt = validated_param(params, "prompt")?;
     // Bound nested recursion per delegation chain (CC → run_subagent → CC → …).
     // `current_depth()` is the depth of THIS chain (carried across the loopback
     // MCP hop via the depth header); the subagent we're about to spawn sits one
@@ -337,9 +347,9 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
         subagent_depth::MAX_SUBAGENT_DEPTH
     )))?;
 
-    let config = load_config_and_init_registry().await?;
+    let config = load_config_and_init_registry(ctx).await?;
     let mut agent =
-        OpenHumanSessionHost::from_config_for_agent(&config, &agent_id).map_err(|err| {
+        OpenHumanSessionHost::from_config_for_agent(ctx, &config, agent_id).map_err(|err| {
             ToolCallError::InvalidParams(format!("failed to build agent `{agent_id}`: {err}"))
         })?;
     agent.set_event_context(
@@ -361,7 +371,7 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
         // Leave sender unset; the gate's per-channel TTL-deny still
         // gates any external_effect tool the agent tries to run.
         sender: None,
-        reply_target: agent_id.clone(),
+        reply_target: agent_id.to_string(),
         message_id: uuid::Uuid::new_v4().to_string(),
         history_key: None,
     };
@@ -371,7 +381,7 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
     // `handle_json_value` dispatch above it) keeps a small stack frame.
     let response = Box::pin(subagent_depth::scope(
         child_depth,
-        crate::agent::turn_origin::with_origin(origin, agent.run_single(&prompt)),
+        crate::agent::turn_origin::with_origin(origin, agent.run_single(prompt)),
     ))
     .await
     .map_err(|err| ToolCallError::Internal(format!("subagent `{agent_id}` failed: {err}")))?;
@@ -386,6 +396,16 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
             "response": response,
         }
     }))
+}
+
+fn validated_param<'a>(
+    params: &'a Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, ToolCallError> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| ToolCallError::Internal("MCP module returned invalid arguments".into()))
 }
 
 pub fn tool_success(value: Value) -> Value {

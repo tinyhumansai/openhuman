@@ -131,5 +131,5 @@ port has no `GROUP BY`. With no backend configured (the desktop default)
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Notifications and activity](../../../../../gitbooks/features/notifications-and-activity.md)
-- [Tauri shell](../../../../../gitbooks/developing/architecture/tauri-shell.md)
+- [Notifications and activity](../../../../../docs/gitbooks/en/features/notifications-and-activity.md)
+- [Tauri shell](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)

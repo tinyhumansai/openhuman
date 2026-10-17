@@ -8,7 +8,8 @@ const MAX_CACHE_BYTES: u64 = 1024 * 1024;
 impl AttachmentModel {
     pub(super) fn fallback_key(&self, path: &str, mime: &str, bytes: &[u8]) -> String {
         let route = if mime.starts_with("image/") || mime == "application/pdf" {
-            crate::inference::provider::factory::create_chat_model_with_model_id(
+            crate::inference::provider::factory::create_chat_model_with_model_id_in(
+                &self.dispatch_ctx(),
                 "vision",
                 &self.config,
                 0.0,

@@ -1,4 +1,4 @@
-use super::*;
+use tinyjuice_bus::types::ContentKind;
 use tinyjuice_bus::types::{CompressOptions, ContentHint};
 
 #[test]

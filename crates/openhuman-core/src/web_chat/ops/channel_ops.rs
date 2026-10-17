@@ -4,10 +4,11 @@
 
 use serde_json::{json, Value};
 
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::web_chat::WebChannelEvent;
 
-use super::super::event_bus::publish_web_channel_event;
+use super::super::event_bus::publish_web_channel_event_in;
 use super::super::types::ChatRequestMetadata;
 use super::parallel_turn::{cancel_parallel_turn_by_request_id, cancel_parallel_turns_for_thread};
 use super::start_chat::start_chat;
@@ -22,13 +23,16 @@ use super::state::{cancel_in_flight_gracefully, cancel_should_target, in_flight,
 /// whatever is running on the thread (primary + every parallel) — the "stop
 /// everything" behaviour used by session teardown / a Stop button.
 pub async fn cancel_chat_scoped(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: Option<&str>,
 ) -> Result<Option<String>, String> {
-    Ok(cancel_chat_inner(client_id, thread_id, request_id, false)
-        .await?
-        .request_id)
+    Ok(
+        cancel_chat_inner(ctx, client_id, thread_id, request_id, false)
+            .await?
+            .request_id,
+    )
 }
 
 /// The placeholder `client_id` a lease-loss teardown logs under. It carries no
@@ -39,11 +43,11 @@ const FENCE_CLIENT_ID: &str = "profile-fence";
 /// lease was lost does before it closes. Each thread is torn down as an
 /// unscoped stop would (primary, parallel turns and detached sub-agents).
 /// Returns how many threads had something to stop.
-pub async fn cancel_all_turns() -> usize {
-    let threads = super::state::live_thread_ids().await;
+pub async fn cancel_all_turns(ctx: &DispatchCtx) -> usize {
+    let threads = super::state::live_thread_ids(ctx).await;
     let mut stopped = 0;
     for thread_id in &threads {
-        match cancel_chat_inner(FENCE_CLIENT_ID, thread_id, None, true).await {
+        match cancel_chat_inner(ctx, FENCE_CLIENT_ID, thread_id, None, true).await {
             Ok(outcome) if outcome.request_id.is_some() => stopped += 1,
             Ok(_) => {}
             Err(error) => {
@@ -67,6 +71,7 @@ struct CancelOutcome {
 }
 
 async fn cancel_chat_inner(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: Option<&str>,
@@ -84,12 +89,12 @@ async fn cancel_chat_inner(
         return Err("thread_id is required".to_string());
     }
 
-    let map_key = key_for(thread_id);
+    let map_key = key_for(ctx, thread_id);
     let mut removed_request_id: Option<String> = None;
     let mut removed_client_id: Option<String> = None;
 
     {
-        let mut in_flight = in_flight().lock_owned().await;
+        let mut in_flight = in_flight(ctx).lock_owned().await;
         // #4760: only tear down the primary turn when the cancel is unscoped OR
         // targets exactly the request that is running. A stale cancel for an
         // already-superseded request must be a no-op so the newer turn lives.
@@ -116,8 +121,8 @@ async fn cancel_chat_inner(
     // only the named parallel turn (if it is one); an unscoped cancel/stop
     // covers every parallel turn on the thread, not just the primary one.
     let cancelled_parallel = match request_id {
-        Some(rid) => cancel_parallel_turn_by_request_id(thread_id, rid).await,
-        None => cancel_parallel_turns_for_thread(thread_id).await,
+        Some(rid) => cancel_parallel_turn_by_request_id(ctx, thread_id, rid).await,
+        None => cancel_parallel_turns_for_thread(ctx, thread_id).await,
     };
 
     // #4760: a scoped cancel that matched only a parallel (forked) turn — not the
@@ -144,11 +149,11 @@ async fn cancel_chat_inner(
     //
     // Only once nothing is left running on the thread: a scoped cancel can leave
     // the primary or a parallel turn alive, and those still owe a terminal event.
-    if cancelled_any.is_some() && !thread_has_live_turn(thread_id, &map_key).await {
-        crate::agent::orchestration::busy_guard::clear_busy_for_thread(thread_id);
+    if cancelled_any.is_some() && !thread_has_live_turn(ctx, thread_id, &map_key).await {
+        crate::agent::orchestration::busy_guard::clear_busy_for_thread(ctx, thread_id);
         // A drain that fired while the cancelled turn counted as busy returned
         // without claiming anything; ask for another.
-        crate::agent::orchestration::background_delivery::kick_delivery(thread_id);
+        crate::agent::orchestration::background_delivery::kick_delivery(ctx, thread_id);
     }
     let subagents_cancelled = if request_id.is_none() {
         // Gate completion recording before aborting: Tokio abort is
@@ -156,11 +161,12 @@ async fn cancel_chat_inner(
         // the gap between abort and the queue sweep.
         let discarded =
             crate::agent::orchestration::background_completions::discard_pending_for_thread(
-                thread_id,
+                ctx, thread_id,
             );
-        let stopped = crate::agent::orchestration::running_subagents::stop_for_thread(thread_id);
+        let stopped =
+            crate::agent::orchestration::running_subagents::stop_for_thread(ctx, thread_id);
         crate::agent::orchestration::background_completions::finish_stop_for_thread(
-            thread_id, &stopped,
+            ctx, thread_id, &stopped,
         );
         log::info!(
             "[web-channel] stop thread_id={} turn={:?} parallel={} subagents_cancelled={} completions_discarded={}",
@@ -192,23 +198,29 @@ async fn cancel_chat_inner(
             (true, Some(started_by)) => started_by,
             _ => client_id.to_string(),
         };
-        publish_web_channel_event(WebChannelEvent {
-            event: "chat_error".to_string(),
-            client_id: client_id.clone(),
-            thread_id: thread_id.to_string(),
-            request_id: request_id.clone(),
-            message: Some("Cancelled".to_string()),
-            error_type: Some("cancelled".to_string()),
-            ..Default::default()
-        });
-        publish_web_channel_event(WebChannelEvent {
-            event: "chat_cancelled".to_string(),
-            client_id,
-            thread_id: thread_id.to_string(),
-            request_id,
-            cancel_reason: Some("user_stop".to_string()),
-            ..Default::default()
-        });
+        publish_web_channel_event_in(
+            ctx,
+            WebChannelEvent {
+                event: "chat_error".to_string(),
+                client_id: client_id.clone(),
+                thread_id: thread_id.to_string(),
+                request_id: request_id.clone(),
+                message: Some("Cancelled".to_string()),
+                error_type: Some("cancelled".to_string()),
+                ..Default::default()
+            },
+        );
+        publish_web_channel_event_in(
+            ctx,
+            WebChannelEvent {
+                event: "chat_cancelled".to_string(),
+                client_id,
+                thread_id: thread_id.to_string(),
+                request_id,
+                cancel_reason: Some("user_stop".to_string()),
+                ..Default::default()
+            },
+        );
     }
 
     Ok(CancelOutcome {
@@ -218,11 +230,15 @@ async fn cancel_chat_inner(
 }
 
 /// Is a primary or parallel turn still running on `thread_id`?
-async fn thread_has_live_turn(thread_id: &str, map_key: &str) -> bool {
-    if super::state::in_flight().lock().await.contains_key(map_key) {
+async fn thread_has_live_turn(ctx: &DispatchCtx, thread_id: &str, map_key: &str) -> bool {
+    if super::state::in_flight(ctx)
+        .lock()
+        .await
+        .contains_key(map_key)
+    {
         return true;
     }
-    super::state::parallel_in_flight()
+    super::state::parallel_in_flight(ctx)
         .lock()
         .await
         .values()
@@ -230,6 +246,7 @@ async fn thread_has_live_turn(thread_id: &str, map_key: &str) -> bool {
 }
 
 pub async fn channel_web_chat(
+    ctx: &crate::core::runtime::DispatchCtx,
     client_id: &str,
     thread_id: &str,
     message: &str,
@@ -252,7 +269,7 @@ pub async fn channel_web_chat(
     if let Some(run_mode) = run_mode.as_deref() {
         match crate::agent::tinyagents::run_mode::parse_mode_label(run_mode) {
             Some(mode) => {
-                crate::agent::tinyagents::run_mode::set_mode(thread_id, mode);
+                crate::agent::tinyagents::run_mode::set_mode(ctx, thread_id, mode);
             }
             None => log::warn!(
                 "[web_chat] channel_web_chat thread_id={thread_id} ignoring unrecognized run_mode={run_mode}"
@@ -261,6 +278,7 @@ pub async fn channel_web_chat(
     }
 
     let result = start_chat(
+        ctx,
         client_id,
         thread_id,
         message,
@@ -300,9 +318,12 @@ fn queue_item_json(
     })
 }
 
-pub async fn channel_web_queue_status(thread_id: &str) -> Result<Outcome<Value>, String> {
-    let map_key = key_for(thread_id);
-    let in_flight = in_flight().lock_owned().await;
+pub async fn channel_web_queue_status(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+) -> Result<Outcome<Value>, String> {
+    let map_key = key_for(ctx, thread_id);
+    let in_flight = in_flight(ctx).lock_owned().await;
     if let Some(entry) = in_flight.get(&map_key) {
         let status = entry.run_queue.status().await;
         let items: Vec<Value> = entry
@@ -347,6 +368,7 @@ pub async fn channel_web_queue_status(thread_id: &str) -> Result<Outcome<Value>,
 /// removal; a no-op removal (unknown id, or no active turn) is silently
 /// `removed: false` — the item is already gone either way.
 pub async fn channel_web_queue_remove(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     item_id: &str,
@@ -357,8 +379,8 @@ pub async fn channel_web_queue_remove(
     if item_id.is_empty() {
         return Err("item_id is required".to_string());
     }
-    let map_key = key_for(thread_id);
-    let in_flight = in_flight().lock_owned().await;
+    let map_key = key_for(ctx, thread_id);
+    let in_flight = in_flight(ctx).lock_owned().await;
     let Some(entry) = in_flight.get(&map_key) else {
         return Ok(Outcome::single_log(
             json!({
@@ -376,17 +398,20 @@ pub async fn channel_web_queue_remove(
     drop(in_flight);
     if removed > 0 {
         log::info!("[web-channel] removed queued item thread_id={thread_id} item_id={item_id}");
-        publish_web_channel_event(WebChannelEvent {
-            event: "queue_item_removed".to_string(),
-            client_id: client_id.to_string(),
-            thread_id: thread_id.to_string(),
-            queue_item: Some(crate::web_chat::QueueItemPayload {
-                id: item_id.to_string(),
-                lane: None,
-                text_preview: None,
-            }),
-            ..Default::default()
-        });
+        publish_web_channel_event_in(
+            ctx,
+            WebChannelEvent {
+                event: "queue_item_removed".to_string(),
+                client_id: client_id.to_string(),
+                thread_id: thread_id.to_string(),
+                queue_item: Some(crate::web_chat::QueueItemPayload {
+                    id: item_id.to_string(),
+                    lane: None,
+                    text_preview: None,
+                }),
+                ..Default::default()
+            },
+        );
     }
     Ok(Outcome::single_log(
         json!({
@@ -398,9 +423,12 @@ pub async fn channel_web_queue_remove(
     ))
 }
 
-pub async fn channel_web_queue_clear(thread_id: &str) -> Result<Outcome<Value>, String> {
-    let map_key = key_for(thread_id);
-    let in_flight = in_flight().lock_owned().await;
+pub async fn channel_web_queue_clear(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+) -> Result<Outcome<Value>, String> {
+    let map_key = key_for(ctx, thread_id);
+    let in_flight = in_flight(ctx).lock_owned().await;
     if let Some(entry) = in_flight.get(&map_key) {
         let dropped = entry.run_queue.clear().await;
         log::info!(
@@ -429,11 +457,12 @@ pub async fn channel_web_queue_clear(thread_id: &str) -> Result<Outcome<Value>, 
 }
 
 pub async fn channel_web_cancel(
+    ctx: &DispatchCtx,
     client_id: &str,
     thread_id: &str,
     request_id: Option<&str>,
 ) -> Result<Outcome<Value>, String> {
-    let outcome = cancel_chat_inner(client_id, thread_id, request_id, false).await?;
+    let outcome = cancel_chat_inner(ctx, client_id, thread_id, request_id, false).await?;
 
     // `request_id` is set only when a turn was torn down, and only then does a
     // `cancelled` chat_error follow. A client that sees `request_id: null` knows

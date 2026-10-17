@@ -67,6 +67,16 @@ export function auditGraph(metadata, roots, policy, contract = null) {
       if (seen.has(id)) continue;
       seen.add(id);
       const name = packages.get(id).name;
+      // The one crate that may link module implementations (local development
+      // only). It is a legitimate edge only directly under an allowed host
+      // crate, and its own subtree is not audited: that is the point of it. Any
+      // other route to it (the app, the TUI, the core, a wrapper) is a finding.
+      if (!contract && policy.linkedHost?.package === name && path.length > 1) {
+        const parent = packages.get(path.at(-2)).name;
+        if (path.length === 2 && policy.linkedHost.allowedParents.includes(parent)) continue;
+        violations.push({ scope: 'hosts', package: name, path: path.map(id => packages.get(id).name) });
+        continue;
+      }
       if (path.length > 1) {
         const sourceMismatch = !contract && policy.contractManifests?.[name] &&
           packages.get(id).manifest_path !== policy.contractManifests[name];
@@ -89,12 +99,50 @@ export function auditGraph(metadata, roots, policy, contract = null) {
   return { violations, exceptions };
 }
 
+/**
+ * Roots that reach the linked-modules bridge through normal or build edges.
+ * Used on a metadata resolve WITHOUT `--all-features`: neither the CLI built
+ * without `linked-modules`, nor the TUI, nor the core may reach it. Returns
+ * violation findings shaped like {@link auditGraph}'s.
+ */
+export function bridgeReach(metadata, roots, policy) {
+  const target = policy.linkedHost?.package;
+  if (!target) return [];
+  const { packages, edges } = graph(metadata);
+  const found = [];
+  for (const root of roots) {
+    const candidates = [...packages.values()].filter(pkg => pkg.name === root);
+    if (candidates.length !== 1) throw new Error(`expected exactly one root package ${root}`);
+    const queue = [[candidates[0].id]];
+    const seen = new Set();
+    for (let at = 0; at < queue.length; at++) {
+      const path = queue[at];
+      const id = path.at(-1);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (packages.get(id).name === target) {
+        found.push({ scope: 'hosts', package: target, path: path.map(item => packages.get(item).name) });
+        continue;
+      }
+      for (const next of edges(id)) queue.push([...path, next]);
+    }
+  }
+  return found;
+}
+
 export function validatePolicy(policy) {
   for (const key of ['implementationPackages', 'implementationPrefixes', 'contracts', 'pendingContracts', 'exceptions']) {
     if (!Array.isArray(policy[key])) throw new Error(`policy.${key} must be an array`);
   }
   if (!policy.contracts.length || !policy.implementationPackages.length || !policy.implementationPrefixes.length) {
     throw new Error('boundary inventory may not be empty');
+  }
+  if (policy.linkedHost !== undefined) {
+    const { package: pkg, allowedParents } = policy.linkedHost;
+    if (!pkg || !Array.isArray(allowedParents) || allowedParents.length === 0 || !allowedParents.every(Boolean)) {
+      throw new Error('policy.linkedHost needs a package and a non-empty allowedParents list');
+    }
+    if (isImplementation(pkg, policy)) throw new Error('policy.linkedHost.package may not itself be an implementation package');
   }
   const names = new Set();
   for (const contract of [...policy.contracts, ...policy.pendingContracts]) {
@@ -161,6 +209,12 @@ export function run(root, strict = false) {
     const metadata = cargo(root, ['--manifest-path', join(root, manifest), '--locked', '--all-features']);
     results.push(auditGraph(metadata, roots, policy));
   }
+  // Without `linked-modules` (default features) no host reaches the bridge.
+  results.push({
+    violations: bridgeReach(cargo(root, ['--manifest-path', join(root, 'Cargo.toml'), '--locked']),
+      ['openhuman-cli', 'openhuman-tui', 'openhuman'], policy),
+    exceptions: [],
+  });
   for (const contract of policy.contracts) {
     for (const all of [false, true]) {
       results.push(auditGraph(contractMetadata(root, contract, all), [contract.name], policy, contract.name));

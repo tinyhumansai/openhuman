@@ -1,7 +1,7 @@
 //! Hosting provider configuration (`[hosting]`).
 //!
-//! Where the credential for a hosting provider comes from, and whether the
-//! `hosting_*` agent tools are offered at all. Read by
+//! Where the credential for a hosting provider comes from. Whether the
+//! `hosting_*` agent tools are offered at all is `[components] hosting`. Read by
 //! [`crate::hosting::Account`] when it resolves an account, and
 //! by the tool registry when it decides whether to register the tools.
 //!
@@ -16,11 +16,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct HostingConfig {
-    /// Master switch. When `false`, no hosting tool is registered, whatever
-    /// credentials exist.
-    #[serde(default)]
-    pub enabled: bool,
-
     /// The provider slug to act on — today, `vercel`.
     #[serde(default = "default_provider")]
     pub provider: String,
@@ -41,7 +36,6 @@ impl std::fmt::Debug for HostingConfig {
     /// so a nested `{:?}` must never render the raw credential.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostingConfig")
-            .field("enabled", &self.enabled)
             .field("provider", &self.provider)
             .field(
                 "api_key",
@@ -59,7 +53,6 @@ fn default_provider() -> String {
 impl Default for HostingConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             provider: default_provider(),
             api_key: String::new(),
             team: String::new(),

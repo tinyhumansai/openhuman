@@ -136,17 +136,33 @@ pub(crate) async fn search_catalog(
     // re-exported; see `ListConnectableToolkitsTool::execute` for why (#5560).
     use crate::integrations::composio::contract::agent_ready_toolkits;
 
+    // Curated-catalog lookups below read the module's process snapshot.
+    // A failure leaves the lookups reading every toolkit as uncurated, which
+    // the search already handles (it falls back to the live catalog).
+    let _ = crate::integrations::composio::module_client::ensure_catalogs(config).await;
+
     let terms: Vec<String> = query
         .split_whitespace()
         .map(|t| t.to_ascii_lowercase())
         .collect();
 
+    // The host's offered-toolkit policy also bounds an explicit search: a denied
+    // toolkit's actions are not shown to the agent by naming it.
+    let offered = tinyconnectors_bus::vocabulary::OfferedToolkits {
+        allow: config.composio.offered_toolkits_allow.clone(),
+        deny: config.composio.offered_toolkits_deny.clone(),
+    };
     let toolkits: Vec<String> = match toolkit_filter {
-        Some(tk) if !tk.trim().is_empty() => vec![tk.trim().to_ascii_lowercase()],
-        _ => agent_ready_toolkits()
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
+        Some(tk) if !tk.trim().is_empty() => {
+            let toolkit = tk.trim().to_ascii_lowercase();
+            if offered.permits(&toolkit) {
+                vec![toolkit]
+            } else {
+                tracing::debug!(%toolkit, "[flows] catalog search skipped: toolkit not offered");
+                Vec::new()
+            }
+        }
+        _ => agent_ready_toolkits(),
     };
 
     // Fetch every candidate toolkit's live catalog concurrently — a bare

@@ -81,7 +81,7 @@ Capability {
         name: "Desktop Control",
         domain: "desktop",
         category: CapabilityCategory::Settings,
-        description: "Let agents inspect and control native desktop apps through a local, permission-aware connection. Desktop actions are discovered on demand.",
+        description: "Let agents inspect and control native desktop apps through a local, permission-aware connection. Desktop actions are discovered on demand. Switched off by [components] computer = false, which unregisters the desktop tools and answers the desktop.* RPCs with COMPONENT_DISABLED:computer while keeping this machine's own consent setting untouched.",
         how_to: "Connections → Computer → Desktop; enable access and grant operating system permissions when requested",
         status: CapabilityStatus::Beta,
         privacy: DESKTOP_TO_JEV,
@@ -386,7 +386,7 @@ Capability {
                       Configurable per agent/session/channel with safe defaults for non-main sessions.",
         how_to: "Set sandbox_mode = \"sandboxed\" in agent.toml, or configure runtime.kind = \
                  \"docker\" in the TOML config. Use openhuman.sandbox_status / \
-                 openhuman.sandbox_resolve_policy RPC to inspect.",
+                 openhuman.sandbox_resolve_policy RPC to inspect. Switched off by [components] sandbox = false (also set by the legacy [sandbox] enabled = false), which never loads the TinyBox module, runs commands unjailed under the Rust path checks, and answers COMPONENT_DISABLED:sandbox.",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

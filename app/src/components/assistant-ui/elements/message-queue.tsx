@@ -11,9 +11,11 @@
  *   remove button's accessible name are props with English defaults, for
  *   `useT()` — see `ComposerMessageQueue` in
  *   `features/conversations/aui/ComposerMessageQueue.tsx`, the only caller.
+ * - No decorative send arrow on a queued row: it read as a send-now button
+ *   that does nothing, and the core queue has no send-now action (#7730).
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
-import { ArrowUpIcon, XIcon } from 'lucide-react';
+import { XIcon } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { field, ghostButton, mono, paper } from './surfaces';
@@ -113,7 +115,6 @@ export function MessageQueueItem({
         {position}
       </span>
       <span className="text-muted-foreground min-w-0 flex-1 truncate text-[13.5px]">{text}</span>
-      <ArrowUpIcon aria-hidden className="text-muted-foreground size-3 shrink-0" />
       {action}
     </li>
   );

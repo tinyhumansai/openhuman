@@ -199,10 +199,10 @@ fn keys_split_back_into_their_parts() {
 async fn profile_keys_drop_the_agent() {
     let root = CoreContext::for_test(DomainSet::full(), None);
     let user = root.derive_with(overlay().profile("p1").session_agent("a1"));
-    let key = CoreContext::scope(user, async { profile_key("t1") }).await;
+    let key = profile_key_in(&Tenant::of(&user), "t1");
     assert_eq!(key, tenant_key(&tenant(Some("p1"), None), "t1"));
     let agent_only = root.derive_with(overlay().session_agent("a1"));
-    let key = CoreContext::scope(agent_only, async { profile_key("t1") }).await;
+    let key = profile_key_in(&Tenant::of(&agent_only), "t1");
     assert_eq!(
         key, "t1",
         "no profile: the bare id, embedded agents included"

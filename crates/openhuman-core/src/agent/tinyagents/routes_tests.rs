@@ -1,5 +1,9 @@
 use super::*;
 use std::sync::Arc;
+use tinyinference_llm::model::workload::{
+    ROUTE_AGENTIC, ROUTE_BURST, ROUTE_CHAT, ROUTE_CODING, ROUTE_REASONING, ROUTE_SUMMARIZATION,
+    ROUTE_VISION, WORKLOAD_ROUTE_TIERS,
+};
 
 use async_trait::async_trait;
 use futures::StreamExt;

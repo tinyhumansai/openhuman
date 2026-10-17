@@ -12,22 +12,6 @@
 /// The agent tool that fetches a public URL (`tinytools` `web_fetch`).
 pub(super) const WEB_FETCH_TOOL: &str = "web_fetch";
 
-/// The HTTP status of a `web_fetch` error result. Anchored to the start of the
-/// text, so a status quoted later (a response excerpt, another tool's output)
-/// is not read, and to the whole shape, so a bare `HTTP 403` or `403 Forbidden`
-/// from some other source is not either.
-pub(super) fn fetched_site_status(text: &str) -> Option<u16> {
-    let rest = text.trim_start().strip_prefix("HTTP ")?;
-    let code = rest
-        .get(..3)
-        .filter(|c| c.bytes().all(|b| b.is_ascii_digit()))?;
-    let rest = rest[3..].strip_prefix(' ')?;
-    let status: u16 = code.parse().ok().filter(|s| (400..=599).contains(s))?;
-    let (_reason, after_from) = rest.lines().next()?.split_once(" from ")?;
-    let (host, _guidance) = after_from.split_once(';')?;
-    (!host.is_empty() && !host.contains(char::is_whitespace)).then_some(status)
-}
-
 /// Recovery policy for a `web_fetch` error carrying a fetched site's status:
 /// `None` when `tool`/`error` are not that shape (the caller classifies as
 /// usual), otherwise the policy to return, itself `None` for an ordinary
@@ -45,7 +29,7 @@ pub(super) fn fetched_site_policy(
     if tool != WEB_FETCH_TOOL {
         return None;
     }
-    let status = fetched_site_status(error)?;
+    let status = tinytools_std::network::web_fetch::status_of(error)?;
     tracing::debug!(
         status,
         "[tinyagents::mw] web_fetch site status — not a credential failure"

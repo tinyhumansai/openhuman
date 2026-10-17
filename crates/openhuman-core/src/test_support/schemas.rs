@@ -1,6 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::test_support::{introspect, rpc};
@@ -269,15 +270,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_reset(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_reset(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(rpc::reset().await?) })
 }
 
-fn handle_workspace_root(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_workspace_root(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(introspect::workspace_root().await?) })
 }
 
-fn handle_list_workspace_files(params: Map<String, Value>) -> ControllerFuture {
+fn handle_list_workspace_files(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let rel_root = params
             .get("rel_root")
@@ -291,7 +292,7 @@ fn handle_list_workspace_files(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_read_workspace_file(params: Map<String, Value>) -> ControllerFuture {
+fn handle_read_workspace_file(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let rel_path = params
             .get("rel_path")
@@ -303,11 +304,14 @@ fn handle_read_workspace_file(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_in_flight_chats(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(introspect::in_flight_chats().await?) })
+fn handle_in_flight_chats(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(introspect::in_flight_chats(&ctx).await?) })
 }
 
-fn handle_wallet_prepared_quotes(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_wallet_prepared_quotes(
+    _ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move { to_json(introspect::wallet_prepared_quotes().await?) })
 }
 

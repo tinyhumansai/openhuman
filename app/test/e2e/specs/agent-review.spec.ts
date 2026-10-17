@@ -10,7 +10,7 @@
  *   - inspect screenshots + page source at each checkpoint,
  *   - inspect mock backend request evidence.
  *
- * See gitbooks/developing/agent-observability.md for how artifacts are laid out.
+ * See docs/gitbooks/en/developing/agent-observability.md for how artifacts are laid out.
  *
  * This spec intentionally keeps assertions loose: its primary contract is
  * "the flow reaches each checkpoint and captures artifacts", not a strict

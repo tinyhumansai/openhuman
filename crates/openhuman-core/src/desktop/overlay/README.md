@@ -52,5 +52,5 @@ None. State is purely an in-memory broadcast channel; events not consumed when p
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Tauri shell](../../../../../gitbooks/developing/architecture/tauri-shell.md)
-- [The mascot](../../../../../gitbooks/features/mascot/README.md)
+- [Tauri shell](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [The mascot](../../../../../docs/gitbooks/en/features/mascot/README.md)

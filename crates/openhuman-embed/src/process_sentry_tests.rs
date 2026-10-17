@@ -62,7 +62,7 @@ fn each_known_noise_class_is_dropped() {
             event(
                 &format!(
                     "{}: 50",
-                    openhuman_core::agent::error::MAX_ITERATIONS_ERROR_PREFIX
+                    tinyagents_harness::agent_error::MAX_ITERATIONS_ERROR_PREFIX
                 ),
                 &[],
             ),

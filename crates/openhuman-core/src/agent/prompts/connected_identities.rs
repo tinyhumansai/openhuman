@@ -17,39 +17,46 @@
 /// `block_in_place` + current-runtime-handle bridge. Best-effort: no runtime, a
 /// single-threaded runtime, or a config-load/driver failure all render an
 /// empty section rather than panicking or blocking a prompt on a memory read.
-pub fn render_connected_identities() -> String {
-    let identities = fetch_identities_blocking();
-    crate::integrations::composio::contract::render_connected_identities_section(&identities)
-}
-
-fn fetch_identities_blocking() -> Vec<crate::integrations::composio::contract::ConnectedIdentity> {
+pub fn render_connected_identities(ctx: &crate::core::runtime::DispatchCtx) -> String {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return Vec::new();
+        return String::new();
     };
     if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
-        return Vec::new();
+        return String::new();
     }
-    tokio::task::block_in_place(|| {
-        handle.block_on(async move {
-            let config = match crate::config::rpc::load_config_with_timeout().await {
-                Ok(config) => config,
-                Err(error) => {
-                    tracing::debug!(
-                        %error,
-                        "[prompts] render_connected_identities: config load failed"
-                    );
-                    return Vec::new();
-                }
-            };
-            crate::integrations::composio::identity_store::load_connected_identities(&config)
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::debug!(
-                        %error,
-                        "[prompts] render_connected_identities: load_connected_identities failed"
-                    );
-                    Vec::new()
-                })
-        })
+    tokio::task::block_in_place(|| handle.block_on(render_section(ctx)))
+}
+
+async fn render_section(ctx: &crate::core::runtime::DispatchCtx) -> String {
+    let config = match ctx.load_config().await {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::debug!(%error, "[prompts] render_connected_identities: config load failed");
+            return String::new();
+        }
+    };
+    let identities = match crate::integrations::composio::identity_store::load_connected_identities(
+        ctx, &config,
+    )
+    .await
+    {
+        Ok(identities) => identities,
+        Err(error) => {
+            tracing::debug!(
+                %error,
+                "[prompts] render_connected_identities: load_connected_identities failed"
+            );
+            return String::new();
+        }
+    };
+    // The section is rendered by the connector module (`NormalizeIdentities`).
+    crate::integrations::composio::contract::render_connected_identities_section(
+        &config,
+        &identities,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        tracing::debug!(%error, "[prompts] render_connected_identities: render failed");
+        String::new()
     })
 }

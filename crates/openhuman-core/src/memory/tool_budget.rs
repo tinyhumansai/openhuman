@@ -13,6 +13,22 @@ const RUN_TIME_BUDGET: Duration = Duration::from_secs(30);
 const MAX_CALLS: usize = 8;
 const MAX_TRACKED_RUNS: usize = 128;
 const CONTINUE: &str = "Continue answering the user's request without memory. Do not retry memory in this run. A timed-out write may already have been accepted; do not claim it failed or repeat it.";
+/// Host-only metadata key on a call the budget refused without running it.
+const REFUSAL_METADATA_KEY: &str = "openhuman.memory_budget";
+
+/// A refusal: the budget's own verdict, not the tool failing.
+fn refusal(text: String) -> ToolResult {
+    ToolResult::error(text).with_metadata(serde_json::json!({ REFUSAL_METADATA_KEY: "refused" }))
+}
+
+/// Whether the budget refused `result` without running the action. Failure
+/// ladders skip these: a parallel batch past the cap must not halt the run.
+pub fn is_budget_refusal(result: &ToolResult) -> bool {
+    result
+        .metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.get(REFUSAL_METADATA_KEY).is_some())
+}
 
 #[derive(Default)]
 pub(super) struct ToolBudget {
@@ -91,7 +107,7 @@ impl ToolBudget {
                     .position(|id| runs.states[id].in_flight == 0)
                 else {
                     tracing::debug!(run_id, cutoff = "tracking_full", "[memory:budget] cutoff");
-                    return Err(ToolResult::error(format!(
+                    return Err(refusal(format!(
                         "Memory is busy with other runs. {CONTINUE}"
                     )));
                 };
@@ -110,7 +126,7 @@ impl ToolBudget {
                 remaining_ms = state.remaining.as_millis(),
                 "[memory:budget] cutoff"
             );
-            return Err(ToolResult::error(format!(
+            return Err(refusal(format!(
                 "Memory budget exhausted for this run. {CONTINUE}"
             )));
         }

@@ -50,5 +50,5 @@ Declared via `pub mod tls;` in `crates/openhuman-core/src/util/mod.rs`; not re-e
 ## Further reading
 
 - [Parent module (`util`)](../README.md)
-- [Architecture overview](../../../../../gitbooks/developing/architecture.md)
-- [Testing strategy](../../../../../gitbooks/developing/testing-strategy.md)
+- [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)
+- [Testing strategy](../../../../../docs/gitbooks/en/developing/testing-strategy.md)

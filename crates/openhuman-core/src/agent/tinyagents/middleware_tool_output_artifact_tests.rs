@@ -3,16 +3,17 @@
 //! `middleware_tool_output_tests.rs` to keep each file under the layout limit.
 
 use super::*;
+use crate::agent::tinyagents::middleware::tool_output::ToolOutputMiddleware;
 
 fn artifact_mw(
-    summarizer: Option<Arc<dyn PayloadSummarizer>>,
+    summarizer: Option<Arc<DynPayloadSummarizer>>,
     storage_dir: &std::path::Path,
 ) -> ToolOutputMiddleware {
     ToolOutputMiddleware {
         budget_bytes: 1_000,
         payload_summarizer: summarizer,
         artifact_store: Some(
-            crate::agent::harness::tool_result_artifacts::new_tool_result_store(
+            crate::agent::harness::tool_result_artifacts::in_memory_tool_result_store(
                 storage_dir.to_path_buf(),
                 "session",
             ),
@@ -29,7 +30,7 @@ fn artifact_mw(
     }
 }
 
-fn summarized(summary: &str) -> Arc<dyn PayloadSummarizer> {
+fn summarized(summary: &str) -> Arc<DynPayloadSummarizer> {
     StubSummarizer::replying(Ok(summary.to_string()))
 }
 
@@ -75,17 +76,14 @@ async fn a_wrapped_read_of_a_persisted_artifact_is_paged_not_resummarized_or_rep
     );
 }
 
-/// The detached store's own pointer is absolute; a read of it is recognised
-/// and paged the same way, not summarized or stored again.
+/// The store's own pointer is a blob key; a read of it is recognised and paged
+/// the same way, not summarized or stored again.
 #[tokio::test]
-async fn a_read_of_an_absolute_artifact_pointer_is_paged_not_repersisted() {
+async fn a_read_of_a_blob_key_pointer_is_paged_not_repersisted() {
     let tmp = tempfile::tempdir().unwrap();
     let storage = tmp.path();
     let mw = artifact_mw(Some(summarized("SUMMARY")), storage);
-    let pointer = storage
-        .join("tool-results/session/shell/earlier.txt")
-        .to_string_lossy()
-        .into_owned();
+    let pointer = "tool-results/session/shell/earlier.txt".to_string();
     let mut call = TaToolCall::new("c1", "file_read", json!({"path": pointer}));
     let mut ctx = ctx();
     mw.before_tool(&mut ctx, &(), &mut call).await.unwrap();
@@ -105,10 +103,16 @@ async fn a_read_of_an_absolute_artifact_pointer_is_paged_not_repersisted() {
         rendered.contains(&format!(
             "Continue with file_read {{\"path\":\"{pointer}\",\"offset\":"
         )),
-        "the continuation must name the same absolute pointer: {rendered}"
+        "the continuation must name the same blob key: {rendered}"
     );
     assert!(
-        !storage.join("tool-results/session/file_read").exists(),
+        mw.artifact_store
+            .as_ref()
+            .unwrap()
+            .read("tool-results/session/file_read/c1.txt")
+            .await
+            .unwrap()
+            .is_none(),
         "reading an artifact must not persist it again as a new artifact"
     );
 }
@@ -132,7 +136,13 @@ async fn an_oversized_result_is_stored_as_the_tool_returned_it_not_as_rewritten(
         "an over-budget result is persisted: {}",
         result_text(&result)
     );
-    let stored = std::fs::read_to_string(tmp.path().join("tool-results/session/echo/c1.txt"))
+    let stored = mw
+        .artifact_store
+        .as_ref()
+        .unwrap()
+        .read("tool-results/session/echo/c1.txt")
+        .await
+        .unwrap()
         .expect("artifact written");
     assert_eq!(
         stored, raw,
@@ -158,7 +168,13 @@ async fn a_raw_result_file_read_cannot_open_is_stored_as_the_processed_copy() {
         .0
         .unwrap();
 
-    let stored = std::fs::read_to_string(tmp.path().join("tool-results/session/echo/c1.txt"))
+    let stored = mw
+        .artifact_store
+        .as_ref()
+        .unwrap()
+        .read("tool-results/session/echo/c1.txt")
+        .await
+        .unwrap()
         .expect("artifact written");
     assert_eq!(
         stored, summary,

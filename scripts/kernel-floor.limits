@@ -691,4 +691,40 @@
 # 326/304/2 2026-10-11 Combined released module adapters on current main,
 #                      including the existing managed-runtime removal.
 #                      Measured with dep-sim --cut-nothing; no size claim.
-flows:326:304:2
+# 323/298/2 2026-10-12 Re-measure merged upstream main at dc3ef0735281.
+#                      Both cargo tree and dep-sim --cut-nothing resolve 323
+#                      packages / 298 names / 2 native builds on Linux. Record
+#                      the existing reduction so it cannot silently grow back;
+#                      this ratchet change adds no dependency or size claim.
+# 326/302/2 2026-10-13 tinyflows v0.8.14 drops its own SQLite store and brings
+#                      `tinyflows-import` (the one-time legacy importer, behind
+#                      `flows`) in its place: dep-sim --cut tinyflows-import
+#                      removes exactly one name, and `tinyflows-sqlite` is gone,
+#                      so the importer is net zero. Re-measured on this branch
+#                      with dep-sim --cut-nothing: 326 packages / 302 names / 2
+#                      native builds on Linux. No size claim.
+# 330/305/2 2026-10-14 GROWTH, not a shed. openhuman-core takes a direct
+#                      `tinymcp` dependency with only the `ui` feature (the MCP
+#                      Apps rules: capability advertisement and tool-UI
+#                      resolution that render inline widgets in chat). It is
+#                      always on in product builds through `mcp`. Measured with
+#                      `scripts/kernel-floor.sh flows`, with and without the
+#                      `tinymcp` line: without it the merged tree resolves 328
+#                      packages / 304 names / 2 native (already above the
+#                      recorded 326/302); with it, 330 / 305 / 2. The delta
+#                      is two packages and one name: `tinymcp` (new name) and a
+#                      second major of `dirs` (v7.0.0; the name was already
+#                      present). Measured on macOS; CI re-measures on Linux.
+# 328/304/2 2026-10-15 The profile gateway reuses the `hmac` 0.12 and `sha2`
+#                      0.10 versions already in the flows graph for its
+#                      HMAC-SHA256 user-header signature, instead of adding
+#                      hmac 0.13 / sha2 0.11 and their digest closure. The
+#                      measured graph sheds two package versions and one
+#                      unique name with no native change.
+# 326/303/2 2026-10-16 Ratchet to the measured graph. CI (Linux, EX63 run
+#                      38878335779 on merge base 63c951aea7) reports flows at
+#                      326 packages / 303 names / 2 native against 328/304.
+# 321/301/2 2026-10-16 Re-measure after the upstream/main merge at ba83482245.
+#                      CI (Linux, EX63) reports five fewer packages and two
+#                      fewer unique crate names; native builds remain at two.
+flows:321:301:2

@@ -1,9 +1,0 @@
-{
-  "type": "object",
-  "properties": {
-    "app": {
-      "type": "string",
-      "description": "Optional application name"
-    }
-  }
-}

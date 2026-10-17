@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::tinyagents::middleware::repeated_failure::RepeatedToolFailureMiddleware;
 
 const FETCH_403: &str =
     "HTTP 403 Forbidden from example.test; the site refused the request. Try another source.";
@@ -238,32 +239,4 @@ fn web_fetch_failure_scope_is_the_host_not_the_page() {
         scope("web_fetch", &fetch_args("https://example.test/a")),
         scope("web_fetch", &fetch_args("https://other.test/a"))
     );
-}
-
-#[test]
-fn fetched_site_status_reads_only_the_web_fetch_error_shape() {
-    let status = super::super::fetched_site::fetched_site_status;
-    assert_eq!(status(FETCH_403), Some(403));
-    assert_eq!(status(FETCH_429), Some(429));
-    assert_eq!(status(FETCH_404), Some(404));
-    assert_eq!(status(FETCH_503), Some(503));
-    assert_eq!(
-        status("  HTTP 403 Forbidden from 127.0.0.1; the site refused it."),
-        Some(403)
-    );
-    // Bare statuses, other tools' wording, success codes, and the shape
-    // buried mid-text are not the shape.
-    for text in [
-        "HTTP 403 Forbidden",
-        "HTTP 403",
-        "403 Forbidden",
-        "Gmail API error: 403 insufficient scopes",
-        "Command failed (exit 1)\nHTTP 403 Forbidden from example.test; x",
-        "HTTP 2000 Weird from example.test; x",
-        "HTTP 200 OK from example.test; x",
-        "HTTP 403 Forbidden from ; x",
-        "HTTP 403 Forbidden from example.test no semicolon",
-    ] {
-        assert_eq!(status(text), None, "{text}");
-    }
 }

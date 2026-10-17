@@ -356,7 +356,7 @@ async fn propose_workflow_rejects_an_incompatible_saved_child_reference() {
             { "from_node": "c", "to_node": "m" }
         ]
     });
-    let child_graph = crate::flows::ops::migrate_and_deserialize_graph(legacy_child)
+    let child_graph = tinyflows::migrate::deserialize_graph(legacy_child)
         .expect("legacy child should deserialize");
     tinyflows::validate::validate(&child_graph)
         .expect("legacy child should remain structurally valid");

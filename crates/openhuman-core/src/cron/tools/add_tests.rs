@@ -1,9 +1,8 @@
 use super::*;
 use crate::config::Config;
-use crate::cron::job_builder::validate_delivery;
 use crate::security::AutonomyLevel;
 use tempfile::TempDir;
-use tinyflows_schedule::types::ActiveHours;
+use tinyflows_bus::schedule::types::ActiveHours;
 
 async fn test_config(tmp: &TempDir) -> Arc<Config> {
     let config = Config {
@@ -337,43 +336,6 @@ async fn agent_job_announce_missing_target_rejected() {
 
     assert!(result.is_error);
     assert!(result.output().contains("delivery.to is required"));
-}
-
-#[test]
-fn validate_delivery_skips_proactive_and_none_modes() {
-    let tmp = TempDir::new().unwrap();
-    let cfg = cfg_with_telegram(&tmp, vec!["alice".into()]);
-
-    let proactive = DeliveryConfig {
-        mode: "proactive".into(),
-        channel: None,
-        to: None,
-        best_effort: true,
-    };
-    assert!(validate_delivery(&cfg, &proactive, None).is_ok());
-
-    let none = DeliveryConfig {
-        mode: "none".into(),
-        channel: None,
-        to: None,
-        best_effort: true,
-    };
-    assert!(validate_delivery(&cfg, &none, None).is_ok());
-}
-
-#[test]
-fn validate_delivery_announce_web_is_a_no_op() {
-    // "web" doesn't have an allowed_users gate; announce to web is
-    // a degenerate but valid configuration (in-app explicit).
-    let tmp = TempDir::new().unwrap();
-    let cfg = test_config_sync(&tmp);
-    let cfg_unused = DeliveryConfig {
-        mode: "announce".into(),
-        channel: Some("web".into()),
-        to: Some("any".into()),
-        best_effort: true,
-    };
-    assert!(validate_delivery(&cfg, &cfg_unused, None).is_ok());
 }
 
 // ── GHSA-f46p-6vf9-64mm: approval gate must fire for cron_add ────

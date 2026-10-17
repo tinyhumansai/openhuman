@@ -3,6 +3,7 @@
 //! (`post`/`get`/`patch`/`delete`/`upload_multipart`).
 
 use super::construct::IntegrationClient;
+use crate::security::approval::ApprovalTurnContext;
 
 pub(super) fn managed_budget_applies_to_path(path: &str) -> bool {
     path != "/agent-integrations/pricing" && path.starts_with("/agent-integrations/")
@@ -33,8 +34,11 @@ pub(super) fn backend_egress_descriptor(path: &str) -> crate::security::egress::
 /// Egress spine (privacy epic S2, #4436): disclose an OpenHuman managed-backend
 /// round-trip before it leaves the device. Fire-and-forget — never fails the
 /// caller.
-pub(super) fn emit_backend_egress(path: &str) {
-    crate::security::egress::emit_external_transfer(backend_egress_descriptor(path));
+pub(super) fn emit_backend_egress(approval: &ApprovalTurnContext, path: &str) {
+    crate::security::egress::emit_external_transfer(
+        approval.chat.as_ref(),
+        backend_egress_descriptor(path),
+    );
 }
 
 /// Local-only enforcement (privacy epic S7, #4441): refuse a managed-backend
@@ -100,20 +104,27 @@ impl IntegrationClient {
     /// POST JSON to a backend endpoint and parse the response `data` field.
     pub async fn post<T: serde::de::DeserializeOwned>(
         &self,
+        approval: &ApprovalTurnContext,
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
-        self.request_json(reqwest::Method::POST, path, Some(body))
+        self.request_json(approval, reqwest::Method::POST, path, Some(body))
             .await
     }
 
     /// GET from a backend endpoint and parse the response `data` field.
-    pub async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        self.request_json(reqwest::Method::GET, path, None).await
+    pub async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        approval: &ApprovalTurnContext,
+        path: &str,
+    ) -> anyhow::Result<T> {
+        self.request_json(approval, reqwest::Method::GET, path, None)
+            .await
     }
 
     pub(super) async fn request_json<T: serde::de::DeserializeOwned>(
         &self,
+        approval: &ApprovalTurnContext,
         method: reqwest::Method,
         path: &str,
         body: Option<&serde_json::Value>,
@@ -121,7 +132,7 @@ impl IntegrationClient {
         self.validate_credential_endpoint()?;
         reject_privileged_backend_path(method.as_str(), path)?;
         enforce_backend_egress(path)?;
-        emit_backend_egress(path);
+        emit_backend_egress(approval, path);
         self.ensure_budget_available(path).await?;
         let url = crate::util::url::join_url(&self.backend_url, path);
         let method_name = method.as_str().to_ascii_lowercase();
@@ -139,18 +150,24 @@ impl IntegrationClient {
     /// classification).
     pub async fn patch<T: serde::de::DeserializeOwned>(
         &self,
+        approval: &ApprovalTurnContext,
         path: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
-        self.request_json(reqwest::Method::PATCH, path, Some(body))
+        self.request_json(approval, reqwest::Method::PATCH, path, Some(body))
             .await
     }
 
     /// DELETE a backend resource and parse the response `data` field.
     /// Mirrors [`Self::post`] (auth header, 401 → session-expiry, error
     /// classification).
-    pub async fn delete<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        self.request_json(reqwest::Method::DELETE, path, None).await
+    pub async fn delete<T: serde::de::DeserializeOwned>(
+        &self,
+        approval: &ApprovalTurnContext,
+        path: &str,
+    ) -> anyhow::Result<T> {
+        self.request_json(approval, reqwest::Method::DELETE, path, None)
+            .await
     }
 
     /// POST a `multipart/form-data` body to a backend endpoint and parse the
@@ -159,13 +176,14 @@ impl IntegrationClient {
     /// content type is set by reqwest from the form boundary.
     pub async fn upload_multipart<T: serde::de::DeserializeOwned>(
         &self,
+        approval: &ApprovalTurnContext,
         path: &str,
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<T> {
         self.validate_credential_endpoint()?;
         reject_privileged_backend_path("POST", path)?;
         enforce_backend_egress(path)?;
-        emit_backend_egress(path);
+        emit_backend_egress(approval, path);
         self.ensure_budget_available(path).await?;
         let url = crate::util::url::join_url(&self.backend_url, path);
         tracing::debug!("[integrations] POST(multipart) {}", url);

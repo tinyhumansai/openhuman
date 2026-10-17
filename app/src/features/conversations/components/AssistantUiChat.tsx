@@ -16,6 +16,7 @@ import { ChatConversationMap } from '../aui/ChatConversationMap';
 import { ComposerTriggers } from '../aui/ComposerTriggers';
 import { ContextUsage } from '../aui/ContextUsage';
 import { InterruptedTurnNotice } from '../aui/InterruptedTurnNotice';
+import { MessageArtifactCards } from '../aui/MessageArtifactCards';
 import { ActiveTurnTaskCards, TurnTaskCards, TurnTaskProvider } from '../aui/TurnTaskCards';
 import { ChatSources } from './aui/ChatSources';
 import { ChatToolFallback } from './ChatToolParts';
@@ -112,6 +113,7 @@ export function AssistantUiChat({
   composerHeader,
   composerFooterExtras,
   composerReplacement,
+  afterMessages,
   inputValue,
   onInputValueChange,
   onEscape,
@@ -144,6 +146,7 @@ export function AssistantUiChat({
    * normal composer.
    */
   composerReplacement?: ReactNode;
+  afterMessages?: ReactNode;
   inputValue: string;
   onInputValueChange: (value: string) => void;
   /** Returns whether Escape acted (stopped a run); `false` lets the key through. */
@@ -234,6 +237,13 @@ export function AssistantUiChat({
   composerReplacementRef.current = composerReplacement;
   const hasComposerReplacement = composerReplacement !== undefined;
   const ComposerReplacement = useCallback(() => <>{composerReplacementRef.current}</>, []);
+  // Artifact cards from versioned tools render as part of the transcript
+  // (after the last message), not in the composer header — the cards are
+  // messages' content, not attachments. Stable type through a ref, same
+  // pattern as composerHeader above.
+  const afterMessagesRef = useRef(afterMessages);
+  afterMessagesRef.current = afterMessages;
+  const AfterMessages = useCallback(() => <>{afterMessagesRef.current}</>, []);
   const ComposerAttachments = useCallback(() => {
     const { attachments, attachmentInteractionBlocked, onRemoveAttachment } = slotPropsRef.current;
     return (
@@ -327,6 +337,15 @@ export function AssistantUiChat({
       RunningStatus: AgentRunningStatus,
       // A crashed turn's partial reply and its "Interrupted" marker.
       TranscriptFooter: InterruptedTurnNotice,
+      // Versioned-artifact cards live in the transcript after the last
+      // message (see `AfterMessages` slot in thread.tsx).
+      AfterMessages,
+      // Artifact cards render INSIDE the message that produced them
+      // (matched by requestId), not just at the end of the transcript.
+      // Pass the component itself: an inline arrow is a new component type
+      // each time this memo recomputes (e.g. when a turn starts or ends), which
+      // remounts every card and replays its fade-in, so the cards flicker.
+      MessageArtifacts: MessageArtifactCards,
       // The web pages the turn fetched, grouped from its `source` parts into
       // one collapsed disclosure under the answer.
       SourceGroup: ChatSources,

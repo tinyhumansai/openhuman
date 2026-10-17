@@ -13,7 +13,13 @@ async fn missing_historical_media_does_not_block_latest_valid_media() {
     let mut config = Config::default();
     config.action_dir = temp.path().into();
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config), "gpt-4o", "openai");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "gpt-4o",
+        "openai",
+    );
     let image = |path: &str| {
         Message::User(tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Image(ImageRef {

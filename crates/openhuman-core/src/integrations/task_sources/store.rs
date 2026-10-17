@@ -1,25 +1,17 @@
-//! SQLite persistence for the `task_sources` domain.
+//! Persistence for the `task_sources` domain.
 //!
-//! Two tables live in `<workspace>/task_sources/sources.db`:
+//! Two collections of the storage backend (`store_documents.rs`):
 //!   * `task_sources` — the configured sources (provider + filter +
 //!     schedule + routing target).
 //!   * `ingested_tasks` — per-(source, external task) dedup ledger with
 //!     an edit-aware `content_hash`, plus the normalized task payload so
 //!     the UI can list recently ingested items.
 //!
-//! Mirrors the `cron` domain's `with_connection` + migrate-on-open
-//! pattern. With a storage backend configured ([`crate::storage`]) every
-//! function here is served from the document port instead
-//! (`store_documents.rs`).
+//! The `task_sources/sources.db` older installs wrote is read once,
+//! read-only, by the storage importer (`store_import.rs`).
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -87,84 +79,30 @@ pub fn add_source(
     let name = name.filter(|s| !s.trim().is_empty());
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
-    let filter_json = serde_json::to_string(&filter).context("serialize task source filter")?;
-    let target_json = serde_json::to_string(&target).context("serialize task source target")?;
-
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.add_source(&TaskSource {
-            id,
-            provider,
-            connection_id,
-            name,
-            enabled: true,
-            filter,
-            interval_secs,
-            target,
-            max_tasks_per_fetch,
-            created_at: now,
-            last_fetch_at: None,
-            last_status: None,
-        });
-    }
-
-    // SQLite-only bound: the document store holds the full `u64`.
-    let interval_i64 = i64::try_from(interval_secs)
-        .context("task source interval_secs exceeds SQLite INTEGER range")?;
-    with_connection(config, |conn| {
-        conn.execute(
-            "INSERT INTO task_sources (
-                id, provider, connection_id, name, enabled, filter, interval_secs,
-                target, max_tasks_per_fetch, created_at
-             ) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                id,
-                provider.as_str(),
-                connection_id,
-                name,
-                filter_json,
-                interval_i64,
-                target_json,
-                i64::from(max_tasks_per_fetch),
-                now.to_rfc3339(),
-            ],
-        )
-        .context("Failed to insert task source")?;
-        Ok(())
-    })?;
-
-    get_source(config, &id)
+    super::store_documents::current(config)?.add_source(&TaskSource {
+        id,
+        provider,
+        connection_id,
+        name,
+        enabled: true,
+        filter,
+        interval_secs,
+        target,
+        max_tasks_per_fetch,
+        created_at: now,
+        last_fetch_at: None,
+        last_status: None,
+    })
 }
 
 pub fn get_source(config: &Config, id: &str) -> Result<TaskSource> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.get_source(id);
-    }
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(&format!("{SELECT_SOURCE_COLUMNS} WHERE id = ?1"))?;
-        let mut rows = stmt.query(params![id])?;
-        if let Some(row) = rows.next()? {
-            map_source_row(row).map_err(Into::into)
-        } else {
-            anyhow::bail!("Task source '{id}' not found")
-        }
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.get_source(id)
 }
 
 pub fn list_sources(config: &Config) -> Result<Vec<TaskSource>> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.list_sources();
-    }
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(&format!(
-            "{SELECT_SOURCE_COLUMNS} ORDER BY created_at ASC, id ASC"
-        ))?;
-        let rows = stmt.query_map([], map_source_row)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.list_sources()
 }
 
 /// Applies `patch` to `source`, as both stores do.
@@ -214,53 +152,13 @@ pub(super) fn apply_patch(source: &mut TaskSource, patch: TaskSourcePatch) -> Re
 /// a SQL `UPDATE … RETURNING` pattern. The document store applies the patch
 /// under compare-and-swap, so it has no such window.
 pub fn update_source(config: &Config, id: &str, patch: TaskSourcePatch) -> Result<TaskSource> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.update_source(id, patch);
-    }
-    let mut source = get_source(config, id)?;
-    apply_patch(&mut source, patch)?;
-    let filter_json = serde_json::to_string(&source.filter).context("serialize filter")?;
-    let target_json = serde_json::to_string(&source.target).context("serialize target")?;
-    let interval_i64 = i64::try_from(source.interval_secs)
-        .context("task source interval_secs exceeds SQLite INTEGER range")?;
-
-    with_connection(config, |conn| {
-        conn.execute(
-            "UPDATE task_sources
-             SET provider = ?1, connection_id = ?2, name = ?3, enabled = ?4, filter = ?5,
-                 interval_secs = ?6, target = ?7, max_tasks_per_fetch = ?8
-             WHERE id = ?9",
-            params![
-                source.provider.as_str(),
-                source.connection_id,
-                source.name,
-                if source.enabled { 1 } else { 0 },
-                filter_json,
-                interval_i64,
-                target_json,
-                i64::from(source.max_tasks_per_fetch),
-                id,
-            ],
-        )
-        .context("Failed to update task source")?;
-        Ok(())
-    })?;
-
-    get_source(config, id)
+    let docs = super::store_documents::current(config)?;
+    docs.update_source(id, patch)
 }
 
 pub fn remove_source(config: &Config, id: &str) -> Result<()> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.remove_source(id);
-    }
-    let changed = with_connection(config, |conn| {
-        conn.execute("DELETE FROM task_sources WHERE id = ?1", params![id])
-            .context("Failed to delete task source")
-    })?;
-    if changed == 0 {
-        anyhow::bail!("Task source '{id}' not found");
-    }
-    Ok(())
+    let docs = super::store_documents::current(config)?;
+    docs.remove_source(id)
 }
 
 /// Update a source's `last_fetch_at` / `last_status` after a fetch pass.
@@ -271,18 +169,8 @@ pub fn record_fetch(
     reason: FetchReason,
     status: &str,
 ) -> Result<()> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.record_fetch(id, finished_at, reason, status);
-    }
-    let line = format!("{}: {status}", reason.as_str());
-    with_connection(config, |conn| {
-        conn.execute(
-            "UPDATE task_sources SET last_fetch_at = ?1, last_status = ?2 WHERE id = ?3",
-            params![finished_at.to_rfc3339(), line, id],
-        )
-        .context("Failed to record task source fetch")?;
-        Ok(())
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.record_fetch(id, finished_at, reason, status)
 }
 
 /// True when this `(source, external_id)` was already ingested with the
@@ -294,22 +182,8 @@ pub fn is_ingested(
     external_id: &str,
     hash: &str,
 ) -> Result<bool> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.is_ingested(source_id, external_id, hash);
-    }
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT content_hash FROM ingested_tasks WHERE source_id = ?1 AND external_id = ?2",
-        )?;
-        let mut rows = stmt.query(params![source_id, external_id])?;
-        match rows.next()? {
-            Some(row) => {
-                let existing: String = row.get(0)?;
-                Ok(existing == hash)
-            }
-            None => Ok(false),
-        }
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.is_ingested(source_id, external_id, hash)
 }
 
 /// Record a routed task in the dedup ledger (idempotent upsert).
@@ -318,82 +192,29 @@ pub fn is_ingested(
 /// todo board, the ledger row itself is the record. The column stays so
 /// older databases open unchanged.
 pub fn mark_ingested(config: &Config, source_id: &str, task: &NormalizedTask) -> Result<()> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.mark_ingested(source_id, task);
-    }
-    let hash = content_hash(task);
-    let payload = serde_json::to_string(task).context("serialize ingested task payload")?;
-    let now = Utc::now().to_rfc3339();
-    with_connection(config, |conn| {
-        conn.execute(
-            "INSERT INTO ingested_tasks (source_id, external_id, content_hash, title, payload, ingested_at, card_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)
-             ON CONFLICT(source_id, external_id) DO UPDATE SET
-                content_hash = excluded.content_hash,
-                title = excluded.title,
-                payload = excluded.payload,
-                ingested_at = excluded.ingested_at,
-                card_id = NULL",
-            params![source_id, task.external_id, hash, task.title, payload, now],
-        )
-        .context("Failed to mark task ingested")?;
-        Ok(())
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.mark_ingested(source_id, task)
 }
 
 /// Whether `(source_id, external_id)` has been ingested before under any
 /// content hash. The pipeline uses it to tell an edited upstream task from a
 /// brand-new one in its logs.
 pub fn was_ingested(config: &Config, source_id: &str, external_id: &str) -> Result<bool> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.was_ingested(source_id, external_id);
-    }
-    with_connection(config, |conn| {
-        let mut stmt =
-            conn.prepare("SELECT 1 FROM ingested_tasks WHERE source_id = ?1 AND external_id = ?2")?;
-        let mut rows = stmt.query(params![source_id, external_id])?;
-        Ok(rows.next()?.is_some())
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.was_ingested(source_id, external_id)
 }
 
 /// Return ingested task ids for one source. Used by reconciliation to prune
 /// ledger rows that no longer match the upstream source/filter.
 pub fn list_ingested_refs(config: &Config, source_id: &str) -> Result<Vec<IngestedTaskRef>> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.list_ingested_refs(source_id);
-    }
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT external_id FROM ingested_tasks
-             WHERE source_id = ?1
-             ORDER BY ingested_at ASC, external_id ASC",
-        )?;
-        let rows = stmt.query_map(params![source_id], |row| {
-            Ok(IngestedTaskRef {
-                external_id: row.get(0)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.list_ingested_refs(source_id)
 }
 
 /// Delete one ingested ledger row after its board card has been reconciled.
 pub fn remove_ingested(config: &Config, source_id: &str, external_id: &str) -> Result<bool> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.remove_ingested(source_id, external_id);
-    }
-    let changed = with_connection(config, |conn| {
-        conn.execute(
-            "DELETE FROM ingested_tasks WHERE source_id = ?1 AND external_id = ?2",
-            params![source_id, external_id],
-        )
-        .context("Failed to delete ingested task")
-    })?;
-    Ok(changed > 0)
+    let docs = super::store_documents::current(config)?;
+    docs.remove_ingested(source_id, external_id)
 }
 
 /// List the most recently ingested tasks for a source (newest first).
@@ -402,320 +223,15 @@ pub fn list_ingested(
     source_id: &str,
     limit: usize,
 ) -> Result<Vec<NormalizedTask>> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.list_ingested(source_id, limit);
-    }
-    // Floor of 1: a caller passing `limit = 0` still gets at least one row
-    // rather than a confusing empty result; `unwrap_or(50)` is the fallback
-    // in the unlikely event that `limit` exceeds `i64::MAX`.
-    let lim = i64::try_from(limit.max(1)).unwrap_or(50);
-    with_connection(config, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT payload FROM ingested_tasks
-             WHERE source_id = ?1 AND payload IS NOT NULL
-             ORDER BY ingested_at DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![source_id, lim], |row| row.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            let payload = row?;
-            if let Ok(task) = serde_json::from_str::<NormalizedTask>(&payload) {
-                out.push(task);
-            }
-        }
-        Ok(out)
-    })
+    let docs = super::store_documents::current(config)?;
+    docs.list_ingested(source_id, limit)
 }
 
 /// Delete every task source (+ cascade ingested rows). Used by the E2E
 /// `test_reset` RPC.
 pub fn clear_all(config: &Config) -> Result<usize> {
-    if let Some(docs) = super::store_documents::current(config)? {
-        return docs.clear_all();
-    }
-    with_connection(config, |conn| {
-        let removed = conn
-            .execute("DELETE FROM task_sources", params![])
-            .context("Failed to clear task sources")?;
-        // ingested_tasks rows cascade via the FK.
-        Ok(removed)
-    })
-}
-
-mod store_rows;
-use store_rows::{map_source_row, SELECT_SOURCE_COLUMNS};
-#[path = "store_import.rs"]
-pub(super) mod import;
-
-/// Tracks which task_sources database files have already had their schema DDL
-/// (the `CREATE TABLE`/`CREATE INDEX` batch plus the `add_column_if_missing`
-/// migration probes) run against them in this process. `with_connection`
-/// deliberately keeps opening a fresh `rusqlite::Connection` per call —
-/// `Connection` is `!Sync`, so caching a single shared one would need a
-/// process-wide mutex that serializes every caller. What repeats needlessly on
-/// every open is the DDL batch itself (2 `CREATE TABLE` + 1 `CREATE INDEX`) plus
-/// the 2 `PRAGMA table_info(...)` migration scans — paid before every store op,
-/// and the periodic-poll fetch loop hits three of them per task (`is_ingested`,
-/// `was_ingested`, `mark_ingested`). Gating just that batch behind a per-path
-/// "already initialized" set keeps it to one execution per process per database
-/// file while every call still gets its own connection.
-///
-/// This mirrors `flows::store`'s `INITIALIZED_SCHEMAS` (R-m8) and the companion
-/// `cron::store` gating — the `task_sources` store was itself derived from the
-/// `cron` `with_connection` idiom.
-///
-/// Keyed by path rather than a single flag: tests each open an independent
-/// per-`TempDir` workspace within the same test binary, and a bare
-/// `OnceLock<()>` would silently skip schema creation for every database path
-/// after the first test to run in the process.
-static INITIALIZED_SCHEMAS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-
-/// On-disk schema version stamped into `PRAGMA user_version` by [`init_schema`]
-/// and checked by [`ensure_schema_initialized`] on a cache hit. **Bump this
-/// whenever a table or `add_column_if_missing` migration is added to
-/// [`init_schema`]** so a database replaced at runtime with an older/partial
-/// schema is re-migrated rather than trusted.
-const TASK_SOURCES_SCHEMA_VERSION: i64 = 1;
-
-/// Ensures the schema on `conn` (a connection to `db_path`) is present and fully
-/// migrated, running the DDL + migrations at most once per process per path.
-///
-/// **The on-disk `PRAGMA user_version` is the authority, and the fast path is
-/// lock-free.** [`init_schema`] stamps [`TASK_SOURCES_SCHEMA_VERSION`] only after
-/// a full, successful migration, so a connection whose `user_version >=
-/// TASK_SOURCES_SCHEMA_VERSION` is known-good and returns without touching any
-/// process-global state — the common case (an already-initialized store) never
-/// acquires the initialization mutex. Reading `user_version` is a single
-/// database-header read, far cheaper than the DDL batch + metadata scans it
-/// replaces. Treating newer on-disk versions as already-initialized avoids
-/// needlessly downgrading the stamp on a database created by a newer binary
-/// (mirroring `security/approval/store.rs`'s idiom).
-///
-/// **Initialization is serialized and atomic per process.** Only a version
-/// *mismatch* takes the [`INITIALIZED_SCHEMAS`] lock, and `user_version` is
-/// re-read under it, so two first callers racing on the same fresh path run the
-/// DDL exactly once — the loser observes the winner's stamp on the recheck and
-/// returns (CodeRabbit: initialization must be atomic per path). Independent db
-/// paths contend only during that rare init window, never on the hot path.
-///
-/// **Trust, but verify.** Before this gating existed the DDL ran on every
-/// `with_connection` call, so a database deleted or replaced at runtime (a
-/// workspace reset, a manual deletion, a disk-recovery restore) self-healed on
-/// the next call. The version gate restores that: a `user_version` lower than
-/// the expected version — 0 for a fresh file, or an older/partial schema
-/// swapped in under a live process (missing `ingested_tasks` or a migrated
-/// column such as `card_id`) — falls through to the
-/// idempotent [`init_schema`] and is re-migrated rather than trusted and later
-/// failing on the incomplete schema (CodeRabbit / Codex review on #5709). An
-/// on-disk version *higher* than expected is treated as already-initialized
-/// (forward-compatible: an older binary opening a newer database does not
-/// downgrade the stamp).
-///
-/// [`INITIALIZED_SCHEMAS`] no longer gates the DDL — the on-disk version does —
-/// and is kept purely as a **diagnostic marker**: a path present in the set
-/// whose on-disk version no longer matches was initialized by *this* process and
-/// has since been deleted or replaced, which is worth a warning; a path absent
-/// from the set is an ordinary first-ever init and stays silent.
-fn ensure_schema_initialized(conn: &mut Connection, db_path: &Path) -> Result<()> {
-    let is_current = || -> bool {
-        let version = conn
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap_or(0);
-        // Treat any on-disk version >= expected as already initialized.
-        // This avoids downgrading the stamp when an older binary opens a
-        // database created by a newer version (the repo's own idiom,
-        // mirroring `security/approval/store.rs`).
-        version >= TASK_SOURCES_SCHEMA_VERSION
-    };
-
-    // Lock-free fast path: an already-migrated database carries
-    // TASK_SOURCES_SCHEMA_VERSION in its header, so the common case never
-    // acquires the process-global initialization mutex.
-    if is_current() {
-        return Ok(());
-    }
-
-    // Mismatch ⇒ (re-)initialization is required. Serialize it so two first
-    // callers for the same path cannot both run the DDL, and re-read the version
-    // under the lock — another thread may have migrated between the lock-free
-    // read above and acquiring the guard.
-    let initialized = INITIALIZED_SCHEMAS.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut guard = initialized
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if is_current() {
-        return Ok(());
-    }
-
-    // Diagnostic only (see the doc comment): a cached path whose on-disk schema
-    // no longer matches was deleted or replaced under a live process — a
-    // first-ever init leaves the path absent and stays silent.
-    if guard.contains(db_path) {
-        tracing::warn!(
-            target: "task_sources",
-            db = %db_path.display(),
-            expected_version = TASK_SOURCES_SCHEMA_VERSION,
-            "[task_sources:store] a database this process already initialized no longer matches the expected schema version (deleted or replaced at runtime?) — re-running schema init"
-        );
-    }
-
-    init_schema(conn)?;
-    guard.insert(db_path.to_path_buf());
-    Ok(())
-}
-
-/// The actual schema DDL + post-hoc column migrations, split out of
-/// `with_connection` so [`ensure_schema_initialized`] can gate it. Does **not**
-/// carry the open-time pragmas (`busy_timeout`, `journal_mode = WAL`,
-/// `foreign_keys = ON`): those are (re)applied on every open in
-/// `with_connection`, outside this gate.
-///
-/// **Wrapped in an immediate transaction** so the schema version stamp is
-/// atomic with the DDL. The transaction is begun *before* the DDL runs, and
-/// `user_version` is re-read under it — if another process has already
-/// completed initialization between the caller's lock-free check and the
-/// `BEGIN IMMEDIATE`, we bail early. This prevents stamping a stale version
-/// on a database a concurrent process already migrated (CodeRabbit #5709).
-fn init_schema(conn: &mut Connection) -> Result<()> {
-    // Immediate transaction: blocks other writers (and readers in WAL mode
-    // with IMMEDIATE) so no two processes can migrate the same database
-    // concurrently. `BEGIN IMMEDIATE` succeeds even in WAL mode.
-    let tx = conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .context("Failed to begin transaction for task_sources schema init")?;
-
-    // Re-check the version under the transaction — another process may have
-    // completed initialization between the lock-free check in
-    // `ensure_schema_initialized` and this `BEGIN IMMEDIATE`.
-    let current_version: i64 = tx
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap_or(0);
-    if current_version >= TASK_SOURCES_SCHEMA_VERSION {
-        // Another process got there first. Roll back the empty transaction
-        // and return — the schema is already up to date.
-        return Ok(());
-    }
-
-    tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS task_sources (
-            id                  TEXT PRIMARY KEY,
-            provider            TEXT NOT NULL,
-            connection_id       TEXT,
-            name                TEXT,
-            enabled             INTEGER NOT NULL DEFAULT 1,
-            filter              TEXT NOT NULL,
-            interval_secs       INTEGER NOT NULL,
-            target              TEXT NOT NULL,
-            max_tasks_per_fetch INTEGER NOT NULL,
-            created_at          TEXT NOT NULL,
-            last_fetch_at       TEXT,
-            last_status         TEXT
-         );
-         CREATE TABLE IF NOT EXISTS ingested_tasks (
-            source_id    TEXT NOT NULL,
-            external_id  TEXT NOT NULL,
-            content_hash TEXT NOT NULL,
-            title        TEXT,
-            payload      TEXT,
-            ingested_at  TEXT NOT NULL,
-            card_id      TEXT,
-            PRIMARY KEY (source_id, external_id),
-            FOREIGN KEY (source_id) REFERENCES task_sources(id) ON DELETE CASCADE
-         );
-         CREATE INDEX IF NOT EXISTS idx_ingested_source ON ingested_tasks(source_id, ingested_at);",
-    )
-    .context("Failed to initialize task_sources schema")?;
-
-    // Additive migration: add card_id to existing databases that pre-date
-    // this column. Tolerate "duplicate column" in case of a concurrent open.
-    add_column_if_missing(&tx, "ingested_tasks", "card_id", "TEXT")?;
-
-    // Stamp the schema version last, so [`ensure_schema_initialized`] only
-    // trusts a cache hit whose on-disk schema is fully migrated. Bump
-    // TASK_SOURCES_SCHEMA_VERSION whenever a table or migration is added above.
-    tx.pragma_update(None, "user_version", TASK_SOURCES_SCHEMA_VERSION)
-        .context("Failed to stamp task_sources schema version")?;
-
-    tx.commit()
-        .context("Failed to commit task_sources schema init transaction")?;
-
-    Ok(())
-}
-
-pub(super) fn db_path(config: &Config) -> PathBuf {
-    config.workspace_dir.join("task_sources").join("sources.db")
-}
-
-pub(super) fn with_connection<T>(
-    config: &Config,
-    f: impl FnOnce(&Connection) -> Result<T>,
-) -> Result<T> {
-    let db_path = db_path(config);
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "Failed to create task_sources directory: {}",
-                parent.display()
-            )
-        })?;
-    }
-    let mut conn = Connection::open(&db_path)
-        .with_context(|| format!("Failed to open task_sources DB: {}", db_path.display()))?;
-    // Open-time pragmas, reapplied on every open regardless of the schema-init
-    // cache below (they configure the connection, not the schema). Overlapping
-    // periodic-poll + UI writes can otherwise hit "database is locked"; WAL + a
-    // busy timeout match the other stores, and `foreign_keys` is required on
-    // every connection for the `ingested_tasks` ON DELETE CASCADE FK to be
-    // enforced. `foreign_keys` was moved out of the gated DDL batch to here so
-    // it still runs on every open once the batch stops doing so. (`journal_mode
-    // = WAL` is persisted in the db file and need only run once, but is kept
-    // here with the other open-time pragmas to keep the connection setup
-    // byte-identical; it is idempotent per open.)
-    conn.busy_timeout(Duration::from_secs(5))
-        .context("Failed to configure task_sources DB busy timeout")?;
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .context("Failed to enable WAL for task_sources DB")?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
-        .context("Failed to set task_sources DB connection pragmas")?;
-
-    ensure_schema_initialized(&mut conn, &db_path)?;
-
-    f(&conn)
-}
-
-/// Add a column to a table only when it is absent. Mirrors the pattern used
-/// in `cron/store.rs` to keep migrations idempotent across DB versions.
-fn add_column_if_missing(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    sql_type: &str,
-) -> Result<()> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let col_name: String = row.get(1)?;
-        if col_name == column {
-            return Ok(()); // already present
-        }
-    }
-    drop(rows);
-    drop(stmt);
-    match conn.execute(
-        &format!("ALTER TABLE {table} ADD COLUMN {column} {sql_type}"),
-        [],
-    ) {
-        Ok(_) => Ok(()),
-        Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
-            if msg.contains("duplicate column name") =>
-        {
-            tracing::debug!(
-                "[task_sources:store] column {table}.{column} already exists (concurrent migration)"
-            );
-            Ok(())
-        }
-        Err(e) => Err(e).with_context(|| format!("Failed to add {table}.{column}")),
-    }
+    let docs = super::store_documents::current(config)?;
+    docs.clear_all()
 }
 
 #[cfg(test)]

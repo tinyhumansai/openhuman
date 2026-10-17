@@ -1,21 +1,25 @@
 use super::*;
 
 fn visible_names(agent_id: &str) -> std::collections::HashSet<String> {
-    let definition = crate::agent::harness::AgentDefinitionRegistry::builtins_only()
-        .get(agent_id)
-        .cloned()
-        .unwrap_or_else(|| panic!("built-in agent definition not found: {agent_id}"));
+    let definition =
+        crate::agent::harness::host_definition::AgentDefinitionRegistry::builtins_only()
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("built-in agent definition not found: {agent_id}"));
     visible_names_for(&definition)
 }
 
 fn visible_names_for(
-    definition: &crate::agent::harness::definition::AgentDefinition,
+    definition: &crate::agent::harness::host_definition::AgentDefinition,
 ) -> std::collections::HashSet<String> {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, definition)
-            .unwrap_or_else(|e| panic!("{} session build: {e}", definition.id));
+    let agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        definition,
+    )
+    .unwrap_or_else(|e| panic!("{} session build: {e}", definition.id));
     agent
         .visible_tool_specs_arc()
         .iter()
@@ -28,9 +32,12 @@ fn resetting_wildcard_visibility_keeps_collapsed_exposure() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
     let definition = super::wildcard_probe_def();
-    let mut agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
-            .expect("build wildcard agent");
+    let mut agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &definition,
+    )
+    .expect("build wildcard agent");
 
     agent.set_visible_tool_names(std::collections::HashSet::new());
 
@@ -44,9 +51,12 @@ fn hiding_and_reseeding_wildcard_visibility_keeps_collapsed_exposure() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
     let definition = super::wildcard_probe_def();
-    let mut agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
-            .expect("build wildcard agent");
+    let mut agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &definition,
+    )
+    .expect("build wildcard agent");
 
     agent.set_visible_tool_names(std::collections::HashSet::new());
     agent.hide_tools(&["todo"]);
@@ -160,13 +170,10 @@ fn wildcard_belt_defers_but_keeps_reachable() {
 /// it, and the belt's own `Direct` entries stay exactly as written.
 #[test]
 fn named_belt_opts_into_discovery_by_naming_tool_search() {
-    let visible: std::collections::HashSet<String> = [
-        "plain",
-        crate::tools::implementations::meta::TOOL_SEARCH_NAME,
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let visible: std::collections::HashSet<String> = ["plain", tinytools::TOOL_SEARCH_NAME]
+        .into_iter()
+        .map(String::from)
+        .collect();
     let agent = build_with(direct_and_deferred(), visible);
 
     assert_eq!(
@@ -220,13 +227,17 @@ fn named_belt_keeps_its_listed_members() {
 fn orchestrator_reaches_the_replaced_specialists_tools_through_discovery() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let definition = crate::agent::harness::AgentDefinitionRegistry::builtins_only()
-        .get("orchestrator")
-        .cloned()
-        .expect("orchestrator built-in definition");
-    let agent =
-        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
-            .expect("orchestrator session build");
+    let definition =
+        crate::agent::harness::host_definition::AgentDefinitionRegistry::builtins_only()
+            .get("orchestrator")
+            .cloned()
+            .expect("orchestrator built-in definition");
+    let agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &definition,
+    )
+    .expect("orchestrator session build");
     let deferred = agent.deferred_tool_names_for_test();
     let visible = agent.visible_tool_names_for_test();
     let policy = agent.tool_policy_session_for_test();

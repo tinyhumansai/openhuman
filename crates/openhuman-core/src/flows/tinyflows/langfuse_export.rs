@@ -4,38 +4,46 @@
 //! this module the run's durable [`GraphObservation`] slice (captured by the
 //! per-run in-memory journal that `tinyflows`' journaled entry points fill)
 //! and it exports the run as one Langfuse trace via the backend's Langfuse
-//! proxy route, `/telemetry/langfuse/ingestion`.
+//! OTLP proxy route, `/telemetry/langfuse/otel/v1/traces` (Langfuse v4; the
+//! legacy `/telemetry/langfuse/ingestion` batch path is not used for traces).
 //!
-//! The batch is built by `tinyagents`' [`GraphLangfuseExporter`], which turns
+//! The trace is built by `tinyagents`' [`GraphLangfuseExporter`], which turns
 //! each superstep and node into a timed span and stamps the Langfuse **Agent
 //! Graph view** keys (`langgraph_node` / `langgraph_step`) on node spans, so
-//! the Langfuse UI can render the flow run as a graph. A host span-metadata
+//! the Langfuse UI can render the flow run as a graph, then projects it to
+//! v4 OTLP: trace name, session, tags, release and flow metadata ride on every
+//! span, since v4 filters observations directly. A host span-metadata
 //! injector additionally stamps `flow_id` on every span for filtering.
 //!
 //! Transport mirrors the agent-turn tracing path
 //! (`agent::progress_tracing::otlp::push_spans`): the endpoint is derived
 //! from the **current backend hostname** (`effective_backend_api_url`), auth
 //! is the live OpenHuman session bearer (the backend injects the real
-//! Langfuse keys server-side), the send is capped at 10s, `207 Multi-Status`
-//! is tolerated, and every failure is logged and swallowed — exporting is
-//! best-effort and never fails the run. Gated on
+//! Langfuse keys server-side, stamps the authenticated user on every span and
+//! adds `x-langfuse-ingestion-version: 4`), the send is capped at 10s, a
+//! partial OTLP rejection counts as a failure, and every failure is logged and
+//! swallowed — exporting is best-effort and never fails the run. Gated on
 //! `observability.share_usage_data`.
 
 use std::time::Duration;
 
-use serde_json::{json, Map};
+use serde_json::{json, Map, Value};
 use tinyagents_graph::{GraphLangfuseExporter, GraphObservation};
 use tinyagents_harness::{LangfuseAuth, LangfuseClient, LangfuseTraceConfig};
 use tinyflows::engine::GraphObservation as FlowObservation;
+use tinyflows::observe::to_exporter_observations;
 
 use crate::config::Config;
 use crate::security::credentials::session_support::direct_backend_credential;
 use tinyflows_catalog::FlowRunTrigger;
 
 const LOG_TARGET: &str = "flows::langfuse";
-/// Backend proxy route for Langfuse ingestion (relative to the backend
-/// origin). The backend authenticates the session JWT, injects the Langfuse
-/// project keys, and forwards to Langfuse's real `/api/public/ingestion`.
+/// Backend proxy route for legacy Langfuse ingestion (relative to the backend
+/// origin). Only the client's base: [`LangfuseClient::otlp_endpoint`] derives
+/// the OTLP route `/telemetry/langfuse/otel/v1/traces` beside it, which is
+/// where flow traces go. The backend authenticates the session JWT, injects
+/// the Langfuse project keys, and forwards to Langfuse's
+/// `/api/public/otel/v1/traces`.
 const INGESTION_PATH: &str = "/telemetry/langfuse/ingestion";
 /// Cap the push so a slow/hung Langfuse never stalls run teardown (same
 /// posture as the agent-turn exporter).
@@ -105,40 +113,19 @@ fn build_flow_exporter(client: LangfuseClient, flow_id: &str) -> GraphLangfuseEx
     })
 }
 
-/// Re-types the engine's observations for the exporter.
-///
-/// The engine now emits `tinyflows::engine::GraphObservation` — tinyflows
-/// vendored its state-graph runtime in PR #43 — while the Langfuse batch is
-/// still built by `tinyagents`' exporter, which names its own. The two types
-/// are the same shape (`tinyagents` is where tinyflows' copy came from) down
-/// to the `GraphEvent` payload, so this re-types through their shared serde
-/// representation rather than duplicating a 20-field mapping that would then
-/// have to be kept in step by hand.
-///
-/// An observation that fails to convert is **dropped, not fatal**: exporting
-/// is best-effort throughout this module, and losing one span from a trace is
-/// a better outcome than losing the trace. A drop is logged at `warn` because
-/// the only way it can happen is the two types drifting apart, which is worth
-/// hearing about — `re_typing_preserves_every_field` is the guard that should
-/// catch it first.
-fn to_exporter_observations(observations: &[FlowObservation]) -> Vec<GraphObservation> {
-    observations
-        .iter()
-        .filter_map(|obs| {
-            match serde_json::to_value(obs).and_then(serde_json::from_value::<GraphObservation>) {
-                Ok(converted) => Some(converted),
-                Err(err) => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        error = %err,
-                        "[flows] dropped an observation the exporter could not read — \
-                         tinyflows and tinyagents GraphObservation have drifted"
-                    );
-                    None
-                }
-            }
-        })
-        .collect()
+/// The Langfuse v4 OTLP requests for one flow run, under the product's
+/// `service.name` (the same one agent-turn traces use).
+fn flow_otlp_requests(
+    exporter: &GraphLangfuseExporter,
+    trace: LangfuseTraceConfig,
+    observations: &[GraphObservation],
+) -> tinyagents_harness::error::Result<Vec<Value>> {
+    exporter.build_otlp_requests(trace, observations, flow_service_name())
+}
+
+/// The OTLP `service.name` for flow traces.
+fn flow_service_name() -> &'static str {
+    crate::agent::progress_tracing::export_brand().product
 }
 
 /// Exports one settled flow run to Langfuse as a single trace. Best-effort:
@@ -210,7 +197,7 @@ pub async fn export_flow_run_trace(
         }
     };
 
-    let observations = to_exporter_observations(journal_observations);
+    let observations = to_exporter_observations::<GraphObservation>(journal_observations);
     if observations.is_empty() {
         tracing::warn!(
             target: LOG_TARGET,
@@ -231,24 +218,40 @@ pub async fn export_flow_run_trace(
         status = %status,
         trigger = %trigger.as_str(),
         observation_count,
-        endpoint = %exporter.endpoint(),
+        endpoint = %exporter.client().otlp_endpoint(),
         "[flows] pushing flow run trace to Langfuse"
     );
 
-    // `send_observations` already tolerates 207 Multi-Status; the outer
-    // timeout caps a hung connection the same way the agent exporter does.
-    match tokio::time::timeout(
-        PUSH_TIMEOUT,
-        exporter.send_observations(trace, &observations),
-    )
-    .await
-    {
+    let requests = match flow_otlp_requests(&exporter, trace, &observations) {
+        Ok(requests) => requests,
+        Err(err) => {
+            tracing::warn!(
+                target: LOG_TARGET,
+                flow_id = %flow_id,
+                thread_id = %thread_id,
+                error = %err,
+                "[flows] langfuse export skipped: could not build OTLP requests"
+            );
+            return;
+        }
+    };
+    let request_count = requests.len();
+    // `send_otlp` fails on a partial OTLP rejection; the outer timeout caps
+    // the whole export the same way the agent exporter does.
+    let send = async {
+        for request in requests {
+            exporter.client().send_otlp(request).await?;
+        }
+        Ok::<(), tinyagents_harness::TinyAgentsError>(())
+    };
+    match tokio::time::timeout(PUSH_TIMEOUT, send).await {
         Ok(Ok(_)) => {
             tracing::debug!(
                 target: LOG_TARGET,
                 flow_id = %flow_id,
                 thread_id = %thread_id,
                 observation_count,
+                request_count,
                 "[flows] pushed flow run trace to Langfuse"
             );
         }

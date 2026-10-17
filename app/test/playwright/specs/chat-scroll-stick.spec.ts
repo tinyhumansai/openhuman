@@ -38,6 +38,8 @@ import { bootAuthenticatedPage, dismissWalkthroughIfPresent } from '../helpers/c
 
 const MOCK_ADMIN_BASE = `http://127.0.0.1:${process.env.E2E_MOCK_PORT || '18473'}`;
 const USER_ID = 'pw-chat-scroll-stick';
+const FIRST_PROMPT = 'First long answer please';
+const SECOND_PROMPT = 'Second long answer please';
 
 /** A long reply, so the transcript overflows and there is somewhere to scroll. */
 const LONG_REPLY = Array.from(
@@ -212,15 +214,15 @@ test.describe('Chat transcript stick-to-bottom', () => {
 
   test('a new message does NOT yank a reader who has scrolled up', async ({ page }) => {
     await setMockBehavior(
-      'llmForcedResponses',
+      'llmKeywordRules',
       JSON.stringify([
-        { content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
-        { content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
+        { keyword: FIRST_PROMPT, content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
+        { keyword: SECOND_PROMPT, content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
       ])
     );
     await openChat(page);
 
-    await completeTurn(page, 'First long answer please', 'FIRST-REPLY-END');
+    await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const overflowing = await scrollState(page);
     test.skip(
@@ -240,7 +242,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     const beforeAnchor = await anchorY(page, 'FIRST-REPLY-END');
 
     // Now a second turn arrives and grows the transcript underneath them.
-    await completeTurn(page, 'Second long answer please', 'SECOND-REPLY-END');
+    await completeTurn(page, SECOND_PROMPT, 'SECOND-REPLY-END');
 
     const after = await scrollState(page);
     const afterAnchor = await anchorY(page, 'FIRST-REPLY-END');
@@ -278,15 +280,15 @@ test.describe('Chat transcript stick-to-bottom', () => {
     // What the user actually needs is that the new turn is brought into view,
     // and that is what this asserts.
     await setMockBehavior(
-      'llmForcedResponses',
+      'llmKeywordRules',
       JSON.stringify([
-        { content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
-        { content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
+        { keyword: FIRST_PROMPT, content: `${LONG_REPLY}\n\nFIRST-REPLY-END` },
+        { keyword: SECOND_PROMPT, content: `${LONG_REPLY}\n\nSECOND-REPLY-END` },
       ])
     );
     await openChat(page);
 
-    await completeTurn(page, 'First long answer please', 'FIRST-REPLY-END');
+    await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const first = await scrollState(page);
     test.skip(
@@ -297,7 +299,6 @@ test.describe('Chat transcript stick-to-bottom', () => {
     await scrollTo(page, first.scrollHeight);
     expect((await scrollState(page)).distanceFromBottom).toBeLessThanOrEqual(80);
 
-    const SECOND_PROMPT = 'Second long answer please';
     await completeTurn(page, SECOND_PROMPT, 'SECOND-REPLY-END');
 
     // The end of the streamed reply must be on screen.

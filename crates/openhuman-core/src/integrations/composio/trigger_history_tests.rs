@@ -13,13 +13,40 @@ async fn disabled_archive_operations_leave_the_host_filesystem_untouched() {
         fixture: None,
     };
     assert!(owner
-        .read(&config, Some(10))
+        .read(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Some(10)
+        )
         .await
         .unwrap_err()
         .contains("module unavailable"));
     assert!(!workspace.path().join("state").exists());
     assert!(owner.lease.lock().await.is_none());
-    owner.close().await.unwrap();
+    owner
+        .close(&crate::core::runtime::DispatchCtx::default())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn close_releases_under_the_explicit_ctx_not_the_scoped_one() {
+    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
+    let owner = TriggerHistory {
+        initial_workspace: std::path::PathBuf::from("unused"),
+        lease: Arc::new(Mutex::new(None)),
+        #[cfg(feature = "modules")]
+        fixture: None,
+    };
+    let scoped = CoreContext::for_test(DomainSet::full(), None);
+    let explicit = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
+    // A scope for another context is active; the release task is spawned by the
+    // explicit context and completes without consulting the scoped one.
+    CoreContext::scope(scoped, async {
+        owner.close(&explicit).await.unwrap();
+    })
+    .await;
+    assert!(owner.lease.lock().await.is_none());
 }
 
 #[cfg(feature = "modules")]
@@ -81,7 +108,7 @@ async fn connected_owner(fixture: Fixture) -> (Arc<TriggerHistory>, tinybus::Con
         .await
         .unwrap();
     service.request_name("test.ConnectorArchive").await.unwrap();
-    let client = ModuleClient::fixture(
+    let client = crate::modules::ops::fixture_client(
         caller
             .proxy(
                 "test.ConnectorArchive",
@@ -112,11 +139,31 @@ async fn changing_users_releases_the_old_archive_before_opening_the_next_scope()
     );
     let mut config = Config::default();
     config.workspace_dir = PathBuf::from("first");
-    owner.read(&config, Some(2)).await.unwrap();
+    owner
+        .read(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Some(2),
+        )
+        .await
+        .unwrap();
     config.workspace_dir = PathBuf::from("second");
-    owner.read(&config, Some(2)).await.unwrap();
-    owner.close().await.unwrap();
-    owner.close().await.unwrap();
+    owner
+        .read(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            Some(2),
+        )
+        .await
+        .unwrap();
+    owner
+        .close(&crate::core::runtime::DispatchCtx::default())
+        .await
+        .unwrap();
+    owner
+        .close(&crate::core::runtime::DispatchCtx::default())
+        .await
+        .unwrap();
     assert_eq!(
         *calls.lock().await,
         vec![
@@ -144,13 +191,24 @@ async fn cancelling_a_pending_open_retains_a_handle_that_shutdown_can_release() 
     config.workspace_dir = PathBuf::from("cancelled");
     let opening = tokio::spawn({
         let owner = owner.clone();
-        async move { owner.read(&config, Some(1)).await }
+        async move {
+            owner
+                .read(
+                    &crate::core::runtime::DispatchCtx::ambient(),
+                    &config,
+                    Some(1),
+                )
+                .await
+        }
     });
     observed.open_started.notified().await;
     opening.abort();
     assert!(opening.await.unwrap_err().is_cancelled());
     observed.open_continue.notify_one();
-    owner.close().await.unwrap();
+    owner
+        .close(&crate::core::runtime::DispatchCtx::default())
+        .await
+        .unwrap();
     assert_eq!(
         *observed.calls.lock().await,
         vec!["open:cancelled/state", "close:cancelled/state"]

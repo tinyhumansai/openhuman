@@ -64,7 +64,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// Complete definition accepted by [`AgentDefinitionSpec::from_base`].
-pub use openhuman_core::agent::harness::definition::AgentDefinition;
+pub use openhuman_core::agent::harness::host_definition::AgentDefinition;
 pub use openhuman_core::agent::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 /// The origin of the executing turn, with its original chat or channel route.
@@ -91,7 +91,7 @@ pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};
 // vendored tinytools. An embedder that took `tinytools` as its own dependency
 // would build tools of a different, incompatible type.
 pub use openhuman_core::agent::tinyagents::host::LastTurnUsage;
-pub use openhuman_core::agent::{HostTools, HostTurnTools, TurnContext};
+pub use openhuman_core::agent::{HostAttachment, HostTools, HostTurnTools, TurnContext};
 pub use openhuman_core::{
     CoreBuilder, CoreRuntime, DaemonConfig, DomainSet, HostKind, ServiceSet, TokenSource,
 };
@@ -102,9 +102,7 @@ pub use tinytools::{PermissionLevel, Tool, ToolExposure, ToolResult};
 /// Live agent-turn progress for in-process embedders.
 pub mod agent_progress {
     pub use openhuman_core::agent::progress::AgentProgress;
-    pub use openhuman_core::agent::progress_sink::{
-        current_progress_sink, with_progress_sink, ProgressSink, AGENT_PROGRESS_SINK,
-    };
+    pub use openhuman_core::agent::progress_sink::ProgressSink;
 }
 
 /// The skill registry: the host transport an embedder passes to
@@ -150,6 +148,7 @@ pub mod secret_storage;
 mod turn;
 mod turn_cancellation;
 mod turn_meter;
+mod turn_steering;
 
 /// Core internals for `openhuman-tinyhumans` and `openhuman-rpc` only; see
 /// the module docs. Not part of the host-facing API.
@@ -178,8 +177,8 @@ pub use channels::{ChannelError, ChannelListener, Channels, StreamMode, Telegram
 pub use config::{Config, RuntimeFlags};
 pub use core_agent::CoreAgent;
 pub use cron::{
-    Cron, CronError, JobRun, JobRunRecord, JobSchedule, JobSpec, JobTarget, ScheduledJob,
-    SystemJobContext,
+    Cron, CronError, JobKind, JobKindHandler, JobOutcome, JobRun, JobRunContext, JobRunRecord,
+    JobSchedule, JobSpec, JobTarget, ScheduledJob, SystemJobContext,
 };
 pub use error::CoreError;
 pub use harness::{
@@ -187,11 +186,15 @@ pub use harness::{
 };
 #[cfg(feature = "mcp")]
 pub use harness::{HttpHeader, McpAuthConfig, McpServer};
+/// Host-routed delivery of scheduled replies, for [`RuntimeBuilder::cron_delivery`]
+/// and the profile runtime alike.
+pub use openhuman_core::cron::host_delivery::{CronDelivery, CronReply};
+pub use openhuman_core::cron::JobOrigin;
 #[cfg(feature = "profiles")]
 pub use profiles::{
-    ChatReply, CronDelivery, CronReply, CronSweepReport, DirectProfileProvider, JobOrigin,
-    OpenError, ProfileError, ProfileEvents, ProfileHandle, ProfileId, ProfileIdMode,
-    ProfileRuntime, ProfileRuntimeBuilder, ProfileSummary, Provisioned, SaasConfig,
+    ChatReply, CronSweepReport, DirectProfileProvider, OpenError, ProfileError, ProfileEvents,
+    ProfileHandle, ProfileId, ProfileIdMode, ProfileRuntime, ProfileRuntimeBuilder, ProfileSummary,
+    Provisioned, SaasConfig,
 };
 #[cfg(all(feature = "profiles", feature = "channels"))]
 pub use profiles::{RelayAccepted, RelayMessage};
@@ -215,7 +218,8 @@ pub mod seams {
     pub use openhuman_core::agent::hooks::{PostTurnHook, ToolHook};
     pub use openhuman_core::agent::hooks::{ToolHookContext, ToolHookDecision, TurnContext};
     pub use openhuman_core::agent::stop_hooks::BudgetStopHook;
-    pub use openhuman_core::agent::stop_hooks::TurnCost;
+    pub use tinyagents_harness::cost::TurnCost;
+    pub use tinyagents_harness::middleware::{PolicyDecision, ToolCallPolicy};
     pub use tinyagents_harness::middleware::{StopDecision, StopHook};
     /// Product cost snapshot passed to harness-owned stop policies.
     pub type TurnState<'a> = tinyagents_harness::middleware::TurnState<'a, TurnCost>;
@@ -245,7 +249,6 @@ pub mod session_store {
     pub use tinyagents_session::testkit::conformance::{
         session_store_conformance, session_store_isolation_conformance,
     };
-    pub use tinyagents_session::transcript::import::types::{JournalMessage, SessionDescriptor};
     /// The transcript seam a provider's [`AgentStores::transcripts`] implements.
     pub use tinyagents_session::transcript::{
         SessionRef, SessionTranscript, TranscriptHistory, TranscriptLocator, TranscriptMessage,
@@ -263,6 +266,7 @@ pub use complete::{
 pub use session_store::{InMemorySessionStores, SessionStoreProvider};
 pub use turn::{absolute, Route, Turn, TurnOutcome, TurnRequest};
 pub use turn_cancellation::TurnCancellation;
+pub use turn_steering::{SteerRefused, TurnSteering};
 
 use std::sync::Arc;
 

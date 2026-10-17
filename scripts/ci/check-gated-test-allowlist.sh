@@ -17,7 +17,8 @@ cd "$(dirname "$0")/../.."
 
 EXPECTED=$(cat <<'EOF'
 agent/harness/builtin_definitions_tests.rs
-agent/harness/definition_tests.rs
+agent/harness/host_definition_tests.rs
+agent/session_host/mod.rs
 agent/session_host/prelude_integrations.rs
 agent/session_host/runtime_session.rs
 agent/session_host/runtime_session_tests.rs
@@ -26,6 +27,8 @@ agent/registry/agents/loader_tests_specialist_agents_tests.rs
 agent/tinyagents/mod.rs
 commands/ops.rs
 config/migrations/retire_local_whisper_stt_tests.rs
+cron/bus_host.rs
+cron/bus_host_tests.rs
 core/all.rs
 core/all_tests.rs
 core/cli_tests.rs
@@ -35,20 +38,30 @@ core/legacy_aliases_tests.rs
 core/runtime/services.rs
 core/runtime/subscribers.rs
 inference/provider/factory.rs
-memory/layout_migration/map_tests.rs
 mcp/server/resources.rs
-mcp/server/mod.rs
+mcp/ui/tools.rs
 mcp/server/tools/mod.rs
-modules/host.rs
-modules/host_tests.rs
+modules/mod.rs
+modules/ops_components_tests.rs
 modules/registry_tests.rs
+modules/runtime.rs
+modules/runtime_tests.rs
+modules/storage_grant_tinywallet_tests.rs
 platform/socket/event_handlers.rs
 profiles/surface_tests.rs
+threads/store/mod.rs
+agent/session_host/transcript_compat_tests.rs
+channels/mod.rs
+mcp/host.rs
+modules/registry_contract_tests.rs
+modules/registry.rs
 security/credentials/ops/credential.rs
+storage/import/tinyflows.rs
 skills/bundled/mod.rs
 skills/mod.rs
 skills/search.rs
 tools/impl/network/host.rs
+tools/impl/network/host_tests.rs
 tools/ops.rs
 tools/ops_tests.rs
 tools/ops_tests_capability_gating_tests.rs
@@ -61,6 +74,12 @@ web3/stub.rs
 web3/wallet/stub.rs
 web3/x402/stub.rs
 profiles/surface_tests.rs
+threads/store/mod.rs
+agent/session_host/transcript_compat_tests.rs
+channels/mod.rs
+mcp/host.rs
+modules/registry_contract_tests.rs
+modules/registry.rs
 EOF
 )
 

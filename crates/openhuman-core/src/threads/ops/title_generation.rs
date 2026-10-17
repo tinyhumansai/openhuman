@@ -3,6 +3,7 @@
 
 use super::support::{counts, envelope, thread_to_summary, update_thread_with_fallback_title};
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::inference::provider;
 use crate::threads::store as conversations;
@@ -44,13 +45,14 @@ pub(crate) fn is_replaceable_title(
 
 /// Generates a durable thread title from the first user message and assistant reply.
 pub async fn thread_generate_title(
+    ctx: &DispatchCtx,
     request: GenerateConversationThreadTitleRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, ThreadsError> {
     let config = Config::load_or_init()
         .await
         .map_err(|e| format!("load config: {e}"))?;
     let dir = config.workspace_dir.clone();
-    let Some(thread) = conversations::blocking::list_threads(dir.clone())
+    let Some(thread) = conversations::blocking::list_threads(ctx.clone(), dir.clone())
         .await?
         .into_iter()
         .find(|thread| thread.id == request.thread_id)
@@ -59,7 +61,8 @@ pub async fn thread_generate_title(
     };
 
     let messages =
-        conversations::blocking::get_messages(dir.clone(), request.thread_id.clone()).await?;
+        conversations::blocking::get_messages(ctx.clone(), dir.clone(), request.thread_id.clone())
+            .await?;
     let first_user_message = messages
         .iter()
         .find(|message| message.sender == "user" && !message.content.trim().is_empty())
@@ -113,7 +116,8 @@ pub async fn thread_generate_title(
             thread_id = %request.thread_id,
             "{THREAD_TITLE_LOG_PREFIX} no assistant message yet; applying fallback title"
         );
-        let updated = update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
+        let updated =
+            update_thread_with_fallback_title(ctx, dir, thread, &first_user_message).await?;
         return Ok(envelope(
             thread_to_summary(updated),
             Some(counts([("num_threads", 1)])),
@@ -125,7 +129,7 @@ pub async fn thread_generate_title(
     // reports the model this call actually dispatches on, and only the factory
     // knows what the `summarization` role resolved to for this configuration.
     let (chat_model, resolved_model) =
-        match provider::create_chat_model_with_model_id("summarization", &config, 0.2) {
+        match provider::create_chat_model_with_model_id_in(ctx, "summarization", &config, 0.2) {
             Ok(resolved) => resolved,
             Err(error) => {
                 tracing::warn!(
@@ -134,7 +138,8 @@ pub async fn thread_generate_title(
                     "{THREAD_TITLE_LOG_PREFIX} provider init failed; applying fallback title"
                 );
                 let updated =
-                    update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
+                    update_thread_with_fallback_title(ctx, dir, thread, &first_user_message)
+                        .await?;
                 return Ok(envelope(
                     thread_to_summary(updated),
                     Some(counts([("num_threads", 1)])),
@@ -166,7 +171,7 @@ pub async fn thread_generate_title(
                 "{THREAD_TITLE_LOG_PREFIX} title generation failed; applying fallback title"
             );
             let updated =
-                update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
+                update_thread_with_fallback_title(ctx, dir, thread, &first_user_message).await?;
             return Ok(envelope(
                 thread_to_summary(updated),
                 Some(counts([("num_threads", 1)])),
@@ -182,7 +187,8 @@ pub async fn thread_generate_title(
             raw_title_hash = %title_log_fingerprint(&raw_title),
             "{THREAD_TITLE_LOG_PREFIX} generated empty title after sanitization; applying fallback title"
         );
-        let updated = update_thread_with_fallback_title(dir, thread, &first_user_message).await?;
+        let updated =
+            update_thread_with_fallback_title(ctx, dir, thread, &first_user_message).await?;
         return Ok(envelope(
             thread_to_summary(updated),
             Some(counts([("num_threads", 1)])),
@@ -199,6 +205,7 @@ pub async fn thread_generate_title(
     }
 
     let updated = conversations::blocking::update_thread_title(
+        ctx.clone(),
         dir,
         request.thread_id.clone(),
         title,

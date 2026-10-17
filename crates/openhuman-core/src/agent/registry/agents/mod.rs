@@ -6,7 +6,7 @@
 //!
 //! * `agent.toml`  — id, `when_to_use`, model, tool scope, sandbox mode,
 //!   iteration cap, tier, and `omit_*` flags. Parsed directly into
-//!   [`crate::agent::harness::definition::AgentDefinition`]; ships without
+//!   [`crate::agent::harness::host_definition::AgentDefinition`]; ships without
 //!   a `system_prompt`.
 //! * `prompt.md`   — the static archetype body. `prompt.rs` embeds it with
 //!   `include_str!`; nothing else reads it.

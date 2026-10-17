@@ -83,7 +83,9 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 | `schemas.rs`                                                  | Controller schemas + handler dispatch.                                    |
 | `mod.rs`                                                      | Re-exports of the public surface above.                                   |
 | `live_policy.rs`, `scrub.rs`, `tools.rs`                      | Live-policy lookup, the host scrubbing policy (`scrub::host_policy`), and the domain's own agent tools. |
-| `approval/`, `credentials/`, `devices/`, `egress/`, `encryption/`, `keyring_consent/`, `pii/`, `prompt_injection/` | Sibling kernel-security domains under the same module. Each owns its own surface. This page covers the policy core only. |
+| `approval/`, `credentials/`, `devices/`, `egress/`, `encryption/`, `keyring_consent/`, `prompt_injection/` | Sibling kernel-security domains under the same module. Each owns its own surface. This page covers the policy core only. |
+
+Local PII detection belongs to [`tinymemory_api::safety`](https://github.com/tinyhumansai/tinymemory/blob/d1b06334faf7f8abb62bd1bd4ec4c4d4862f53a4/crates/tinymemory-api/src/safety/README.md) behind its `local-safety` feature. OpenHuman keeps privacy policy and redaction decisions.
 
 ## Calls into
 

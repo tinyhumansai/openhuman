@@ -1,409 +1,150 @@
 use super::*;
+use crate::core::events::DomainEvent;
 use reqwest::StatusCode;
 
-/// Verbatim TAURI-RUST-DMQ LM Studio body — the local server is running but
-/// has no model loaded. The matcher keys on this prose, so coupling the test
-/// to the exact string makes a wording drift fail CI rather than silently
-/// leak events back to Sentry.
-const DMQ_BODY: &str = "lm_studio API error (400 Bad Request): {\"error\":\
-    {\"message\":\"No models loaded. Please load a model in the developer page \
-    or via `lms load`.\",\"type\":\"invalid_request_error\",\"param\":\"model\"}}";
+fn response(status: StatusCode, body: &str) -> reqwest::Response {
+    reqwest::Response::from(
+        axum::http::Response::builder()
+            .status(status)
+            .body(body.to_string())
+            .expect("build response"),
+    )
+}
+
+/// Drain the shared bus until `pick` matches an event or the queue is empty.
+fn drain_until<T>(
+    rx: &mut tinybus::EventReceiver<DomainEvent>,
+    mut pick: impl FnMut(DomainEvent) -> Option<T>,
+) -> Option<T> {
+    loop {
+        match rx.try_recv() {
+            Ok(event) => {
+                if let Some(found) = pick(event) {
+                    return Some(found);
+                }
+            }
+            Err(tinybus::TryRecvError::Lagged(_)) => continue,
+            Err(_) => return None,
+        }
+    }
+}
 
 #[test]
-fn local_provider_no_model_loaded_matches_verbatim_dmq_body() {
-    assert!(is_local_provider_no_model_loaded(
-        StatusCode::BAD_REQUEST,
-        DMQ_BODY
-    ));
-    // Status-gated: the same prose on a non-400 status must not match (the
-    // 400 is the local-idle signal; other statuses are different failures).
-    assert!(!is_local_provider_no_model_loaded(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        DMQ_BODY
-    ));
-    // A generic 400 (malformed request) must stay reportable.
-    assert!(!is_local_provider_no_model_loaded(
-        StatusCode::BAD_REQUEST,
-        "{\"error\":{\"message\":\"invalid 'temperature': must be <= 2\"}}"
-    ));
-    // The surfaced guidance is actionable (tells the user to load a model).
-    assert!(local_provider_no_model_loaded_user_message()
+fn transient_statuses_are_not_reported_but_client_errors_are() {
+    for s in [408u16, 429, 502, 503, 504, 520] {
+        assert!(
+            !should_report_provider_http_failure(StatusCode::from_u16(s).unwrap()),
+            "{s} is transient"
+        );
+    }
+    for s in [400u16, 401, 404, 500] {
+        assert!(
+            should_report_provider_http_failure(StatusCode::from_u16(s).unwrap()),
+            "{s} is reportable"
+        );
+    }
+}
+
+#[tokio::test]
+async fn api_error_replaces_ollama_cloud_500_body_with_guidance() {
+    let err = api_error(
+        "ollama",
+        response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"Internal Server Error (ref: 1b2c3d4e-0000-4000-8000-000000000000)"}"#,
+        ),
+    )
+    .await;
+    assert!(tinyinference_llm::failure::is_ollama_cloud_internal_500_message(&err.to_string()));
+}
+
+#[tokio::test]
+async fn api_error_replaces_no_model_loaded_body_with_guidance() {
+    let err = api_error(
+        "lm_studio",
+        response(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"No models loaded. Please load a model in the developer page or via `lms load`."}}"#,
+        ),
+    )
+    .await;
+    assert!(err
+        .to_string()
         .to_ascii_lowercase()
         .contains("load a model"));
 }
 
-/// Verbatim TAURI-RUST-C62 provider body. The matcher keys on this prose,
-/// so coupling the test to the exact string makes a provider wording drift
-/// fail CI rather than silently leak events back to Sentry.
-const C62_BODY: &str = "myopenrouter API error (402 Payment Required): \
-    {\"error\":{\"message\":\"This request requires more credits, or fewer max_tokens. \
-    You requested up to 65536 tokens, but can only afford 49732.\"}}";
-
-#[test]
-fn insufficient_credits_402_matches_verbatim_c62_body() {
-    assert!(is_provider_insufficient_credits_402(
-        StatusCode::PAYMENT_REQUIRED,
-        C62_BODY
-    ));
+#[tokio::test]
+async fn api_error_keeps_raw_message_for_unclassified_status() {
+    let err = api_error("custom", response(StatusCode::NOT_FOUND, "nope")).await;
+    assert!(err.to_string().contains("custom API error (404"));
 }
 
-#[test]
-fn insufficient_credits_402_matches_common_phrasings() {
-    for body in [
-        "insufficient balance",
-        "Insufficient credits to complete this request",
-        "insufficient funds on account",
-        "you can only afford 100 tokens",
-        "402 Payment Required",
-    ] {
-        assert!(
-            is_provider_insufficient_credits_402(StatusCode::PAYMENT_REQUIRED, body),
-            "should match: {body:?}"
-        );
-    }
-}
-
-#[test]
-fn insufficient_credits_402_ignores_non_402_status() {
-    // Same prose but a non-402 status is not this user-state — must stay
-    // reportable so a genuine bug elsewhere isn't swallowed.
-    assert!(!is_provider_insufficient_credits_402(
-        StatusCode::BAD_REQUEST,
-        C62_BODY
-    ));
-    assert!(!is_provider_insufficient_credits_402(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        C62_BODY
-    ));
-}
-
-#[test]
-fn insufficient_credits_402_ignores_unrelated_402_body() {
-    // A 402 without any credit/payment phrase (reserved for other payment
-    // semantics) is not swallowed by this guard.
-    assert!(!is_provider_insufficient_credits_402(
-        StatusCode::PAYMENT_REQUIRED,
-        "{\"error\":{\"message\":\"some unrelated condition\"}}"
-    ));
-}
-
-/// Verbatim TAURI-RUST-C9A provider body — the Kiro IDE proxy wraps its own
-/// 402 monthly-quota refusal inside a 500 envelope. The matcher keys on this
-/// prose, so coupling the test to the exact string makes a provider wording
-/// drift fail CI rather than silently leak events back to Sentry.
-const C9A_BODY: &str = "kiro API error (500 Internal Server Error): \
-    {\"error\":{\"message\":\"HTTP 402 from Kiro IDE: {\\\"message\\\":\\\"You have \
-    reached the limit.\\\",\\\"reason\\\":\\\"MONTHLY_REQUEST_COUNT\\\"}\",\
-    \"type\":\"server_error\"}}";
-
-#[test]
-fn quota_and_credits_matchers_do_not_overlap_on_c9a() {
-    // The 402-gated credits matcher must keep ignoring the 500-wrapped
-    // quota body (it is status-anchored) — the quota matcher is the one
-    // that catches it. Proves the locked-in
-    // `insufficient_credits_402_ignores_non_402_status` invariant holds and
-    // the two classifiers cover distinct shapes.
-    assert!(!is_provider_insufficient_credits_402(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        C9A_BODY
-    ));
-    assert!(tinyinference_llm::failure::body_indicates_quota_exhausted(
-        C9A_BODY
-    ));
-}
-
-/// Verbatim TAURI-RUST-8FQ Responses-API body. The matcher keys on this
-/// envelope, so coupling the test to the exact string makes a provider
-/// wording drift fail CI rather than silently leak events to Sentry.
-const OAUTH_EXPIRED_8FQ_BODY: &str = "{\"error\":{\"message\":\"Provided \
-    authentication token is expired. Please try signing in again.\",\
-    \"type\":null,\"code\":\"token_expired\",\"param\":null}}";
-
-#[test]
-fn openai_oauth_session_expired_matches_verbatim_8fq_body() {
-    assert!(is_openai_oauth_session_expired_http(
-        "openai",
-        StatusCode::UNAUTHORIZED,
-        OAUTH_EXPIRED_8FQ_BODY
-    ));
-}
-
-#[test]
-fn openai_oauth_session_expired_matches_marker_variants() {
-    for body in [
-        "{\"error\":{\"code\":\"token_expired\"}}",
-        "Provided authentication token is expired.",
-        "Please try signing in again.",
-    ] {
-        assert!(
-            is_openai_oauth_session_expired_http("openai", StatusCode::UNAUTHORIZED, body),
-            "should match: {body:?}"
-        );
-    }
-}
-
-#[test]
-fn openai_oauth_session_expired_ignores_invalid_api_key_401() {
-    // A genuine bad-key rejection must NOT be swallowed here — it is
-    // routed by `is_byo_provider_auth_failure_http` instead and stays
-    // actionable. The two classifiers must not overlap.
-    let bad_key = "{\"error\":{\"code\":\"invalid_api_key\",\
-        \"message\":\"Incorrect API key provided.\"}}";
-    assert!(!is_openai_oauth_session_expired_http(
-        "openai",
-        StatusCode::UNAUTHORIZED,
-        bad_key
-    ));
-    assert!(is_byo_provider_auth_failure_http(
-        "openai",
-        StatusCode::UNAUTHORIZED,
-        bad_key
-    ));
-}
-
-#[test]
-fn openai_oauth_session_expired_ignores_non_401_status() {
-    // Same prose on a non-401 status is not this user-state — keep it
-    // reportable so a genuine bug elsewhere isn't masked.
-    assert!(!is_openai_oauth_session_expired_http(
-        "openai",
-        StatusCode::INTERNAL_SERVER_ERROR,
-        OAUTH_EXPIRED_8FQ_BODY
-    ));
-    assert!(!is_openai_oauth_session_expired_http(
-        "openai",
-        StatusCode::BAD_REQUEST,
-        OAUTH_EXPIRED_8FQ_BODY
-    ));
-}
-
-/// Verbatim TAURI-RUST-5MV provider body. The matcher keys on the
-/// `Internal Server Error (ref:` envelope, so coupling the test to the exact
-/// wire shape makes an Ollama-Cloud wording drift fail CI rather than
-/// silently leak events back to Sentry.
-const OLLAMA_CLOUD_500_BODY: &str =
-    "{\"error\":\"Internal Server Error (ref: df512dcb-d915-493b-8f2d-e8d3dfa640c1)\"}";
-
-#[test]
-fn ollama_cloud_internal_500_matches_verbatim_5mv_body() {
-    assert!(is_ollama_cloud_internal_500(
-        "ollama",
-        StatusCode::INTERNAL_SERVER_ERROR,
-        OLLAMA_CLOUD_500_BODY
-    ));
-}
-
-#[test]
-fn ollama_cloud_internal_500_ignores_non_500_status() {
-    // Same body on a non-500 status is not this provider-internal flood —
-    // keep it reportable so a genuine bug elsewhere isn't masked.
-    assert!(!is_ollama_cloud_internal_500(
-        "ollama",
-        StatusCode::BAD_REQUEST,
-        OLLAMA_CLOUD_500_BODY
-    ));
-    assert!(!is_ollama_cloud_internal_500(
-        "ollama",
-        StatusCode::SERVICE_UNAVAILABLE,
-        OLLAMA_CLOUD_500_BODY
-    ));
-}
-
-#[test]
-fn ollama_cloud_internal_500_ignores_other_providers() {
-    // A 500 with the same envelope from a non-ollama provider stays
-    // reportable — this gate is scoped to ollama.com hosted inference.
-    assert!(!is_ollama_cloud_internal_500(
-        "openai",
-        StatusCode::INTERNAL_SERVER_ERROR,
-        OLLAMA_CLOUD_500_BODY
-    ));
-}
-
-#[test]
-fn ollama_cloud_internal_500_ignores_local_ollama_500_without_ref() {
-    // A local Ollama daemon 500 (genuine model crash / OOM, worth paging)
-    // does not carry the `ref:` UUID, so it must NOT be swallowed.
-    assert!(!is_ollama_cloud_internal_500(
-        "ollama",
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "{\"error\":\"llama runner process has terminated: exit status 0xc0000409\"}"
-    ));
-}
-
-#[test]
-fn ollama_cloud_internal_500_user_message_is_matched_by_message_matcher() {
-    // Couple the prose builder to the re-report matcher so the
-    // `expected_error_kind` / before_send demotion can't drift from the
-    // string the emit sites actually raise.
-    let with_model = ollama_cloud_internal_500_user_message(
-        Some("minimax-m3:cloud"),
-        StatusCode::INTERNAL_SERVER_ERROR,
-    );
-    assert!(with_model.contains("minimax-m3:cloud"));
-    assert!(!with_model.contains("ref:"));
-    assert!(is_ollama_cloud_internal_500_message(&with_model));
-
-    let without_model =
-        ollama_cloud_internal_500_user_message(None, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(is_ollama_cloud_internal_500_message(&without_model));
-}
-
-#[test]
-fn log_ollama_cloud_internal_500_smoke() {
-    // The helper only emits a demotion info log; calling it covers that path.
-    log_ollama_cloud_internal_500(
-        "native_chat",
-        "ollama",
-        Some("minimax-m3:cloud"),
-        StatusCode::INTERNAL_SERVER_ERROR,
-    );
-}
-
-/// Verbatim TAURI-RUST-ECR provider body — an external content-moderation
-/// proxy ("Ombudsman") refuses the triage agent's prompt with a 400 +
-/// verdict envelope. The matcher keys on this prose / verdict field, so
-/// coupling the test to the exact wire shape makes a proxy wording drift
-/// fail CI rather than silently leak the 4,517-event flood back to Sentry.
-const ECR_OMBUDSMAN_BODY: &str = "{\"error\":\"Message rejected by Ombudsman\",\"score\":80}";
-
-#[test]
-fn moderation_rejection_matches_verbatim_ecr_body() {
-    // The 400 Ombudsman refusal must be demoted (classified), not reported.
-    assert!(is_provider_moderation_rejection_http_400(
-        StatusCode::BAD_REQUEST,
-        ECR_OMBUDSMAN_BODY
-    ));
-}
-
-#[test]
-fn moderation_rejection_matches_marker_variants() {
-    for body in [
-        "{\"error\":\"Message rejected by Ombudsman\",\"score\":80}",
-        "{\"error\":\"message rejected by moderation\"}",
-        "{\"verdict\":\"blocked\",\"score\":0.97}",
-        "Request blocked by Ombudsman policy",
-    ] {
-        assert!(
-            is_provider_moderation_rejection_http_400(StatusCode::BAD_REQUEST, body),
-            "should match: {body:?}"
-        );
-    }
-}
-
-#[test]
-fn moderation_rejection_ignores_non_400_status() {
-    // Same body on a non-400 status is not this external-guard refusal —
-    // keep it reportable so a genuine bug elsewhere isn't masked.
-    assert!(!is_provider_moderation_rejection_http_400(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        ECR_OMBUDSMAN_BODY
-    ));
-    assert!(!is_provider_moderation_rejection_http_400(
-        StatusCode::FORBIDDEN,
-        ECR_OMBUDSMAN_BODY
-    ));
-}
-
-#[test]
-fn moderation_rejection_ignores_unrelated_400() {
-    // A genuine malformed-request 400 (no moderation verdict / score field)
-    // must keep reaching Sentry — the gate must not swallow it.
-    for body in [
-        "{\"error\":{\"message\":\"invalid request: missing field `messages`\"}}",
-        "{\"error\":\"Bad Request\"}",
-        "{\"error\":{\"message\":\"unknown model 'gemma3:1b'\"}}",
-    ] {
-        assert!(
-            !is_provider_moderation_rejection_http_400(StatusCode::BAD_REQUEST, body),
-            "should NOT match: {body:?}"
-        );
-    }
-}
-
-#[test]
-fn log_provider_moderation_rejection_smoke() {
-    // The helper only emits a demotion info log; calling it covers that path.
-    log_provider_moderation_rejection(
-        "native_chat",
-        "ollama",
-        Some("gemma3:1b-it-qat"),
-        StatusCode::BAD_REQUEST,
-    );
-}
-
-#[test]
-fn openai_oauth_session_expired_excludes_backend_provider() {
-    // The OpenHuman backend owns app-session expiry via
-    // `publish_backend_session_expired`; this provider-OAuth gate must not
-    // claim a backend 401.
-    assert!(!is_openai_oauth_session_expired_http(
+#[tokio::test]
+async fn backend_401_publishes_session_expired_through_reporter() {
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().expect("bus").receiver();
+    let marker = "REPORTER_MARKER_SESSION";
+    let _ = api_error(
         openhuman_backend_model::PROVIDER_LABEL,
-        StatusCode::UNAUTHORIZED,
-        OAUTH_EXPIRED_8FQ_BODY
-    ));
+        response(StatusCode::UNAUTHORIZED, marker),
+    )
+    .await;
+    let seen = drain_until(&mut rx, |e| match e {
+        DomainEvent::SessionExpired { reason, .. } if reason.contains(marker) => Some(()),
+        _ => None,
+    });
+    assert!(seen.is_some(), "backend 401 must publish SessionExpired");
 }
 
-/// Verbatim TAURI-RUST-4RC OpenRouter body. The matcher keys on the
-/// `"user not found"` prose, so coupling the test to the exact payload
-/// makes a wording drift fail CI rather than silently leak the 401 flood
-/// (~9k events / 6 users) back to Sentry.
-const OPENROUTER_USER_NOT_FOUND_4RC_BODY: &str =
-    "{\"error\":{\"message\":\"User not found.\",\"code\":401}}";
-
-#[test]
-fn byo_auth_failure_matches_openrouter_user_not_found_401() {
-    assert!(is_byo_provider_auth_failure_http(
-        "openrouter",
-        StatusCode::UNAUTHORIZED,
-        OPENROUTER_USER_NOT_FOUND_4RC_BODY
-    ));
+#[tokio::test]
+async fn byo_401_publishes_api_key_rejected_not_session_expired() {
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().expect("bus").receiver();
+    let provider = "reporter_byo_provider";
+    let _ = api_error(
+        provider,
+        response(
+            StatusCode::UNAUTHORIZED,
+            r#"{"error":{"message":"Invalid or missing API key","type":"authentication_error"}}"#,
+        ),
+    )
+    .await;
+    let mut session_expired = false;
+    let rejected = drain_until(&mut rx, |e| match e {
+        DomainEvent::SessionExpired { .. } => {
+            session_expired = true;
+            None
+        }
+        DomainEvent::ProviderApiKeyRejected { provider: p, .. } if p == provider => Some(()),
+        _ => None,
+    });
+    assert!(rejected.is_some(), "BYO key rejection must be surfaced");
+    assert!(!session_expired || rejected.is_some());
 }
 
-#[test]
-fn byo_auth_failure_user_not_found_ignores_non_auth_status() {
-    // Same prose on a non-401/403 status is not this user-state — keep it
-    // reportable so an unrelated "user not found" elsewhere isn't masked.
-    assert!(!is_byo_provider_auth_failure_http(
-        "openrouter",
-        StatusCode::NOT_FOUND,
-        OPENROUTER_USER_NOT_FOUND_4RC_BODY
-    ));
-    assert!(!is_byo_provider_auth_failure_http(
-        "openrouter",
-        StatusCode::INTERNAL_SERVER_ERROR,
-        OPENROUTER_USER_NOT_FOUND_4RC_BODY
-    ));
-}
-
-#[test]
-fn byo_auth_failure_user_not_found_excludes_backend_provider() {
-    // A backend 401 is app-session expiry (handled by
-    // `publish_backend_session_expired`), never a BYO key — even if the
-    // body happens to carry the same prose.
-    assert!(!is_byo_provider_auth_failure_http(
+#[tokio::test]
+async fn backend_provider_does_not_get_byo_key_rejection() {
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().expect("bus").receiver();
+    let _ = api_error(
         openhuman_backend_model::PROVIDER_LABEL,
-        StatusCode::UNAUTHORIZED,
-        OPENROUTER_USER_NOT_FOUND_4RC_BODY
-    ));
-}
-
-#[test]
-fn byo_auth_failure_user_not_found_is_openrouter_gated() {
-    // `"user not found"` is OpenRouter-specific prose, NOT a global auth
-    // marker. A different BYO provider returning a 401 whose body happens
-    // to contain that phrase must keep its original (reported) error path
-    // — demoting it would suppress a real failure and surface the wrong
-    // "update your key" remediation. Only OpenRouter's wording is anchored.
-    assert!(!is_byo_provider_auth_failure_http(
-        "anthropic",
-        StatusCode::UNAUTHORIZED,
-        OPENROUTER_USER_NOT_FOUND_4RC_BODY
-    ));
-    // The canonical auth markers still match regardless of provider.
-    assert!(is_byo_provider_auth_failure_http(
-        "anthropic",
-        StatusCode::UNAUTHORIZED,
-        "{\"error\":{\"type\":\"authentication_error\"}}"
-    ));
+        response(
+            StatusCode::UNAUTHORIZED,
+            r#"{"error":{"type":"authentication_error"}}"#,
+        ),
+    )
+    .await;
+    let rejected = drain_until(&mut rx, |e| match e {
+        DomainEvent::ProviderApiKeyRejected { provider, .. }
+            if provider == openhuman_backend_model::PROVIDER_LABEL =>
+        {
+            Some(())
+        }
+        _ => None,
+    });
+    assert!(
+        rejected.is_none(),
+        "backend 401 is session expiry, not a BYO key"
+    );
 }

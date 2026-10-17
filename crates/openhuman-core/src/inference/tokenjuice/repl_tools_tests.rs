@@ -8,7 +8,7 @@ struct RecordingSource(Mutex<Vec<QueryRequest>>);
 
 #[async_trait]
 impl QuerySource for RecordingSource {
-    async fn query(&self, request: QueryRequest) -> Result<QueryResponse, String> {
+    async fn query(&self, _: &DispatchCtx, request: QueryRequest) -> Result<QueryResponse, String> {
         self.0.lock().unwrap().push(request);
         Ok(Ok(ReplOutput::Text {
             text: "needle in the middle".into(),
@@ -19,8 +19,20 @@ impl QuerySource for RecordingSource {
 struct FailingSource;
 #[async_trait]
 impl QuerySource for FailingSource {
-    async fn query(&self, _: QueryRequest) -> Result<QueryResponse, String> {
+    async fn query(&self, _: &DispatchCtx, _: QueryRequest) -> Result<QueryResponse, String> {
         Err("module unavailable".into())
+    }
+}
+
+/// Records the core of the context each query was handed.
+#[derive(Default)]
+struct CoreRecordingSource(Mutex<Vec<Option<Arc<crate::core::runtime::CoreContext>>>>);
+
+#[async_trait]
+impl QuerySource for CoreRecordingSource {
+    async fn query(&self, ctx: &DispatchCtx, _: QueryRequest) -> Result<QueryResponse, String> {
+        self.0.lock().unwrap().push(ctx.core().cloned());
+        Ok(Ok(ReplOutput::Text { text: "ok".into() }))
     }
 }
 
@@ -39,7 +51,7 @@ fn declarations_preserve_names_schemas_and_read_only_caps() {
     let tools = repl_tools();
     assert_eq!(
         tools.iter().map(|t| t.name()).collect::<Vec<_>>(),
-        REPL_TOOL_NAMES
+        tinyjuice_bus::tools::REPL_TOOLS
     );
     for (tool, declaration) in tools
         .iter()
@@ -117,12 +129,24 @@ async fn an_unavailable_module_is_a_tool_error() {
     assert!(result.output().contains("module unavailable"));
 }
 
-#[test]
-fn handle_normalization_only_accepts_alphanumeric_tokens() {
-    assert_eq!(normalize_handle(" abc123 "), Some("abc123"));
-    assert_eq!(normalize_handle("⟦tj:abc123⟧"), Some("abc123"));
-    assert_eq!(normalize_handle("../x"), None);
-    assert_eq!(normalize_handle(&"f".repeat(MAX_HANDLE_LEN + 1)), None);
+#[tokio::test]
+async fn marker_and_bare_handles_reach_the_source_and_junk_does_not() {
+    let source = Arc::new(RecordingSource::default());
+    let tools = repl_tools_with(source.clone(), ReplLimits::default());
+    for ok in ["abc123", " abc123 ", "\u{27e6}tj:abc123\u{27e7}"] {
+        let r = tools[0]
+            .execute(json!({"handle": ok, "query":"x"}))
+            .await
+            .unwrap();
+        assert!(!r.output().contains("not a juice handle"), "{ok}");
+    }
+    for bad in ["call_abc", "../x", &"f".repeat(65)] {
+        let r = tools[0]
+            .execute(json!({"handle": bad, "query":"x"}))
+            .await
+            .unwrap();
+        assert!(r.is_error, "{bad}");
+    }
 }
 
 /// A workspace whose tool-results dir holds one persisted shell output, the
@@ -316,4 +340,47 @@ fn a_canonical_artifact_path_is_accepted_when_the_workspace_is_a_symlink() {
     let err =
         read_tool_result_artifact(&dir, &canonical_secret.to_string_lossy(), 1 << 20).unwrap_err();
     assert!(!err.contains("needle secret"), "{err}");
+}
+
+/// A query runs for the context of the run that called the tool, never for the
+/// scope of the task that polls it: two runs under two contexts do not cross,
+/// even with a third context ambient.
+#[tokio::test]
+async fn queries_run_for_the_tool_runs_context_not_the_ambient_one() {
+    use crate::agent::tinyagents::host::OpenHumanRunContext;
+    use crate::core::runtime::{CoreContext, DomainSet};
+
+    let context_for = |core: Arc<CoreContext>| {
+        let run = OpenHumanRunContext::new()
+            .with_core(Some(core))
+            .into_tinyagents(tinyagents_harness::context::RunConfig::new("juice-carrier"));
+        tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+            &run,
+            tinyagents_harness::ids::CallId::new("juice-carrier-call"),
+        )
+    };
+    let (a, b, ambient) = (
+        CoreContext::for_test(DomainSet::full(), None),
+        CoreContext::for_test(DomainSet::full(), None),
+        CoreContext::for_test(DomainSet::full(), None),
+    );
+    let source = Arc::new(CoreRecordingSource::default());
+    let tools = repl_tools_with(source.clone(), ReplLimits::default());
+    let args = json!({"handle":"⟦tj:abc123⟧", "query":"needle"});
+
+    CoreContext::scope(ambient.clone(), async {
+        for core in [&a, &b] {
+            let context = context_for(core.clone());
+            tools[0]
+                .execute_with_context(args.clone(), ToolCallOptions::default(), Some(&context))
+                .await
+                .unwrap();
+        }
+    })
+    .await;
+
+    let seen = source.0.lock().unwrap();
+    assert!(Arc::ptr_eq(seen[0].as_ref().expect("bound"), &a));
+    assert!(Arc::ptr_eq(seen[1].as_ref().expect("bound"), &b));
+    assert!(!Arc::ptr_eq(seen[0].as_ref().unwrap(), &ambient));
 }

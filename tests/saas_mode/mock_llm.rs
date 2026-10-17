@@ -204,7 +204,7 @@ fn reply_for(request: &Value) -> Reply {
         .find(|m| m["role"] == "user")
         .map(content_text)
         .unwrap_or_default();
-    if agent_turn && text.contains(HANG) {
+    if text.contains(HANG) {
         return Reply::Hang;
     }
     if agent_turn {

@@ -4,12 +4,15 @@
 //! controllers (e.g., memory, skills, config) and providing a unified
 //! interface for both the CLI and RPC layers to invoke them.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 use serde_json::{Map, Value};
 
+use crate::core::runtime::DispatchCtx;
 use crate::core::ControllerSchema;
 
 /// A pinned, boxed future returned by a controller handler.
@@ -17,8 +20,10 @@ pub type ControllerFuture = Pin<Box<dyn Future<Output = Result<Value, String>> +
 
 /// A function pointer type for controller handlers.
 ///
-/// Handlers take a map of parameters and return a [`ControllerFuture`].
-pub type ControllerHandler = fn(Map<String, Value>) -> ControllerFuture;
+/// Handlers take the call's explicit [`DispatchCtx`] and a map of parameters,
+/// and return a [`ControllerFuture`]. The transport that accepted the call
+/// builds the context; the registry passes it through untouched.
+pub type ControllerHandler = fn(DispatchCtx, Map<String, Value>) -> ControllerFuture;
 
 /// A function pointer type for domain-specific CLI handlers.
 pub type CliHandler = fn(&[String]) -> anyhow::Result<()>;
@@ -47,6 +52,10 @@ impl RegisteredController {
 }
 
 pub use super::domain_group::DomainGroup;
+mod components_gate;
+mod validate;
+pub use components_gate::disabled_component_for_method;
+use validate::validate_registry;
 
 /// A [`RegisteredController`] tagged with the [`DomainGroup`] it belongs to.
 ///
@@ -352,11 +361,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::desktop::dashboard::all_dashboard_registered_controllers(),
     );
-    // MCP client subsystem: Smithery registry browser, local server install/connect, tool dispatch
     push(
         &mut controllers,
         DomainGroup::Mcp,
-        crate::mcp::registry::all_mcp_registry_registered_controllers(),
+        crate::mcp::all_registered_controllers(),
     );
     // Agent definition and prompt inspection
     push(
@@ -815,6 +823,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "mcp_clients" => Some(
             "Browse the MCP registries, declare the user's servers in one mcp.json document, manage their connections and credentials, and expose their tools to the agent.",
         ),
+        "mcp_ui" => Some("Serve MCP tool widgets their documents and run their tool calls."),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),
         "doctor" => Some("Run diagnostics for workspace and runtime health."),
         "hooks" => Some(
@@ -1135,122 +1144,6 @@ fn kind(matches: bool, expected: &'static str) -> Result<(), TypeMismatch> {
     matches.then_some(()).ok_or(TypeMismatch::Kind(expected))
 }
 
-/// Attempts to invoke a registered RPC method by name.
-///
-/// Checks both the agent-facing controller registry and the internal-only registry,
-/// so internal-only write paths (e.g. the MCP write-audit list) are routable
-/// even though they are not included in agent tool listings.
-///
-/// Returns `None` if the method is not found in either registry.
-pub async fn try_invoke_registered_rpc(
-    method: &str,
-    params: Map<String, Value>,
-) -> Option<Result<Value, String>> {
-    let view = registry_view();
-    let grouped = view
-        .iter()
-        .chain(internal_registry().iter())
-        .find(|g| g.controller.rpc_method_name() == method)?;
-
-    // DomainSet gate (#4796): a method whose group is disabled under the ambient
-    // context reports as an unknown method (`None`) — the same result a caller
-    // gets for a genuinely-unregistered method, so a gated domain's controllers
-    // are indistinguishable from absent. Enforced HERE (dispatch), not in
-    // schema/validation lookups, to avoid a validate/dispatch split.
-    if !visible(grouped) {
-        log::debug!(
-            "[rpc][domain-gate] method '{method}' suppressed — group {:?} disabled or method \
-             outside the user surface in the active scope",
-            grouped.group
-        );
-        return None;
-    }
-
-    let handler = grouped.controller.handler;
-
-    // Establish the ambient CoreContext for the duration of the handler so
-    // `CoreContext::current()` resolves inside handler bodies (Phase 2).
-    // `current()` inherits an already-active scope (so a handler that dispatches
-    // a nested RPC stays in the same tenant context) and otherwise resolves to
-    // the process default. Before any context is built (some unit tests) it is
-    // `None` and the handler runs unscoped.
-    //
-    // The scoped future is re-boxed back into a `ControllerFuture` so the
-    // concrete `TaskLocalFuture` type does not escape into this fn's future —
-    // without the type erasure the `Send` auto-trait solver overflows on the
-    // largest handler futures (E0275).
-    use crate::core::runtime::context::CoreContext;
-    let fut = handler(params);
-    let scoped: ControllerFuture = match CoreContext::current() {
-        Some(ctx) => Box::pin(CoreContext::scope(ctx, fut)),
-        None => fut,
-    };
-    Some(scoped.await)
-}
-
-/// Validates the consistency of the controller registry.
-///
-/// The registry is the single source of truth: each [`RegisteredController`]
-/// carries its own schema, and [`all_controller_schemas`] derives the public
-/// list. No separate declaration can drift from handlers (Phase 2).
-///
-/// Ensures that:
-/// - There are no duplicate controllers or RPC methods.
-/// - Namespaces and functions are not empty.
-/// - Required input names are unique within a controller.
-fn validate_registry(registered: &[GroupedController]) -> Result<(), String> {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    let mut errors: Vec<String> = Vec::new();
-    let mut registered_keys = BTreeSet::new();
-    let mut registered_rpc_methods = BTreeSet::new();
-
-    for grouped in registered {
-        let controller = &grouped.controller;
-        let schema = &controller.schema;
-        let key = format!("{}.{}", schema.namespace, schema.function);
-        if !registered_keys.insert(key.clone()) {
-            errors.push(format!("duplicate registered controller `{key}`"));
-        }
-
-        let rpc_method = controller.rpc_method_name();
-        if !registered_rpc_methods.insert(rpc_method.clone()) {
-            errors.push(format!("duplicate registered rpc method `{rpc_method}`"));
-        }
-
-        if schema.namespace.trim().is_empty() {
-            errors.push(format!(
-                "invalid registered controller `{key}`: namespace must not be empty"
-            ));
-        }
-        if schema.function.trim().is_empty() {
-            errors.push(format!(
-                "invalid registered controller `{key}`: function must not be empty"
-            ));
-        }
-
-        let mut required_inputs = BTreeSet::new();
-        let mut required_dupes: BTreeMap<String, usize> = BTreeMap::new();
-        for input in schema.inputs.iter().filter(|input| input.required) {
-            if !required_inputs.insert(input.name.to_string()) {
-                *required_dupes.entry(input.name.to_string()).or_default() += 1;
-            }
-        }
-        for (name, _) in required_dupes {
-            errors.push(format!(
-                "duplicate required input `{name}` in `{}`",
-                schema.method_name()
-            ));
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct HttpMethodSchemaDefinition {
     pub method: String,
@@ -1327,6 +1220,10 @@ pub(crate) fn assert_schema_controller_parity(
         "expected a `{known_function}` controller schema to be registered",
     );
 }
+
+#[path = "all_invoke.rs"]
+mod invoke_registered;
+pub use invoke_registered::try_invoke_registered_rpc;
 
 #[cfg(test)]
 #[path = "all_tests.rs"]

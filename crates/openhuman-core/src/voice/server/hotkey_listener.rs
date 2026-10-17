@@ -51,6 +51,7 @@ impl HotkeyListenerKind {
 /// with `EXC_BREAKPOINT` (`dispatch_assert_queue_fail`). Configure
 /// `hotkey = "fn"` to avoid this. (#2677)
 pub(crate) async fn start_hotkey_listener(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &crate::config::Config,
     hotkey_str: &str,
     mode: hotkey::ActivationMode,
@@ -65,7 +66,7 @@ pub(crate) async fn start_hotkey_listener(
     #[cfg(target_os = "macos")]
     {
         if hotkey_str.trim().eq_ignore_ascii_case("fn") {
-            return start_globe_hotkey_listener(config, mode, server_cancel).await;
+            return start_globe_hotkey_listener(ctx, config, mode, server_cancel).await;
         }
         // rdev calls TSMGetInputSourceProperty off the main thread; macOS 26
         // enforces main-queue-only access and crashes the process. Only the
@@ -83,12 +84,13 @@ pub(crate) async fn start_hotkey_listener(
     // Non-macOS: TinyVoice owns its native listener and cleanup worker.
     #[cfg(not(target_os = "macos"))]
     {
-        start_module_hotkey_listener(config, hotkey_str, mode, server_cancel).await
+        start_module_hotkey_listener(ctx, config, hotkey_str, mode, server_cancel).await
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 async fn start_module_hotkey_listener(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &crate::config::Config,
     hotkey_str: &str,
     mode: hotkey::ActivationMode,
@@ -121,7 +123,7 @@ async fn start_module_hotkey_listener(
     let (events_tx, events_rx) = tokio::sync::mpsc::channel(65);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let worker_handle = handle.clone();
-    let task = crate::core::runtime::spawn_scoped(async move {
+    let task = ctx.spawn(async move {
         let generation = loop {
             if worker_cancel.is_cancelled() || events_tx.is_closed() {
                 break None;
@@ -306,6 +308,7 @@ impl HotkeyDelivery {
 /// still leaves an owner to recover a lost start reply and close the native lease.
 #[cfg(target_os = "macos")]
 async fn start_globe_hotkey_listener(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &crate::config::Config,
     mode: hotkey::ActivationMode,
     server_cancel: &CancellationToken,
@@ -317,6 +320,7 @@ async fn start_globe_hotkey_listener(
     String,
 > {
     start_globe_with_client(
+        ctx,
         crate::modules::accessibility::AccessibilityClient::new(config),
         mode,
         server_cancel,
@@ -326,6 +330,7 @@ async fn start_globe_hotkey_listener(
 
 #[cfg(any(target_os = "macos", test))]
 async fn start_globe_with_client(
+    ctx: &crate::core::runtime::DispatchCtx,
     client: crate::modules::accessibility::AccessibilityClient,
     mode: hotkey::ActivationMode,
     server_cancel: &CancellationToken,
@@ -344,7 +349,7 @@ async fn start_globe_with_client(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let cancel = server_cancel.child_token();
     let task_cancel = cancel.clone();
-    let task = crate::core::runtime::spawn_scoped(async move {
+    let task = ctx.spawn(async move {
         let _admission = admission;
         let started = match client.globe_start().await {
             Ok(started) => started,
@@ -352,8 +357,8 @@ async fn start_globe_with_client(
                 let recover = matches!(
                     error,
                     crate::modules::accessibility::AccessibilityError::Bus(
-                        crate::modules::client::ModuleCallError::TransportFailed
-                            | crate::modules::client::ModuleCallError::ModuleFault
+                        tinybus::module::ModuleCallError::TransportFailed
+                            | tinybus::module::ModuleCallError::ModuleFault
                     )
                 );
                 let _ = ready_tx.send(Err(error.to_string()));

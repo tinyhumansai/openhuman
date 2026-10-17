@@ -8,6 +8,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
+use crate::core_host::core::runtime::DispatchCtx;
+
 /// Query parameters for the dictation WebSocket endpoint.
 ///
 /// Browser `WebSocket` cannot attach an `Authorization` header on upgrade, so
@@ -30,6 +32,7 @@ pub(super) struct DictationQuery {
 /// or wrong credentials are rejected with 401 and the socket is never upgraded.
 pub(super) async fn dictation_ws_handler(
     headers: axum::http::HeaderMap,
+    ctx: Option<axum::extract::Extension<DispatchCtx>>,
     Query(query): Query<DictationQuery>,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -39,8 +42,11 @@ pub(super) async fn dictation_ws_handler(
         return error.into_response();
     }
 
+    // The context the serving middleware attached; the upgraded socket runs on
+    // its own task, so the config is read under it, not the task's.
+    let ctx = ctx.map_or_else(DispatchCtx::unbound, |axum::extract::Extension(ctx)| ctx);
     ws.on_upgrade(|socket| async move {
-        let config = match crate::core_host::config::rpc::load_config_with_timeout().await {
+        let config = match ctx.load_config().await {
             Ok(c) => Arc::new(c),
             Err(e) => {
                 log::error!("[ws] failed to load config for dictation: {e}");

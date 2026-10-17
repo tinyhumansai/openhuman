@@ -7,8 +7,10 @@ use serde_json::{json, Value};
 
 use super::live_config::live_composio_config;
 use super::redact::redact_composio_outcome;
+use crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool;
 use crate::config::Config;
-use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
+use crate::core::runtime::DispatchCtx;
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolRunContext};
 
 use super::super::client::{resolve_composio_route, ComposioRoute};
 use super::super::module_client::{self as connectors};
@@ -58,13 +60,27 @@ impl Tool for ComposioAuthorizeTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = dispatch_ctx_for_tool(context);
+        let outcome = Box::pin(self.execute_unredacted(&ctx, args)).await;
         redact_composio_outcome(&self.config, outcome)
     }
 }
 
 impl ComposioAuthorizeTool {
-    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute_unredacted(
+        &self,
+        ctx: &DispatchCtx,
+        args: Value,
+    ) -> anyhow::Result<ToolResult> {
         let toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -130,6 +146,7 @@ impl ComposioAuthorizeTool {
                         toolkit: toolkit.clone(),
                         connection_id: resp.connection_id.clone(),
                         connect_url: resp.connect_url.clone(),
+                        tenant: ctx.event_tenant(),
                     },
                 );
                 Ok(ToolResult::success(format!(

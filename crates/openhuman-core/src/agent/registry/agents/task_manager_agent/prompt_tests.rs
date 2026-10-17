@@ -1,6 +1,6 @@
 use super::*;
-use crate::agent::prompts::ToolCallFormat;
 use std::collections::HashSet;
+use tinytools_agent::dialect::ToolCallFormat;
 
 #[test]
 fn build_returns_task_manager_contract() {

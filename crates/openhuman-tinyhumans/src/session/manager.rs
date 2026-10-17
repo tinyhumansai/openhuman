@@ -76,6 +76,7 @@ pub struct SessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)] // Keep the public event's state inline.
 pub enum SessionEvent {
     /// The credential or the current user changed.
     Changed(SessionState),

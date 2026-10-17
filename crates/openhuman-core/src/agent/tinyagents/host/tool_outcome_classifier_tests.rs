@@ -1,5 +1,5 @@
 use super::*;
-use crate::security::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
+use tinytools::status::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
 
 fn result(error: Option<&str>, content: &str) -> ToolResult {
     match error {
@@ -142,7 +142,7 @@ fn recoverable_flag_is_deliberately_not_the_retry_signal() {
     // `Unknown` is `FailureCategory::Recoverable` in the domain, yet must be
     // permanent here — this divergence is the whole point of the adapter and
     // regressing to `if failure.recoverable` would resurrect it.
-    let unknown = crate::tools::status::describe(ToolFailureClass::Unknown);
+    let unknown = tinytools::status::describe(ToolFailureClass::Unknown);
     assert!(
         unknown.recoverable,
         "domain still calls Unknown recoverable"

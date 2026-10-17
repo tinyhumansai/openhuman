@@ -11,6 +11,7 @@ impl SpawnAsyncSubagentTool {
             >,
         >,
     ) -> anyhow::Result<ToolResult> {
+        let dispatch = run_context.dispatch_ctx();
         let AsyncSpawnArgs {
             agent_id,
             prompt,
@@ -21,15 +22,8 @@ impl SpawnAsyncSubagentTool {
             force_fresh,
         } = decode_async_spawn_args(&args);
 
-        if agent_id.is_empty() {
-            return Ok(ToolResult::error(
-                "spawn_async_subagent: `agent_id` is required",
-            ));
-        }
-        if prompt.is_empty() {
-            return Ok(ToolResult::error(
-                "spawn_async_subagent: `prompt` is required",
-            ));
+        if let Some(refusal) = refuse_empty_spawn_args(&agent_id, &prompt) {
+            return Ok(refusal);
         }
         let Some(detached_parent) = detached_parent else {
             return Ok(ToolResult::error(
@@ -45,6 +39,14 @@ impl SpawnAsyncSubagentTool {
                 ));
             }
         };
+
+        // Preserve the actual caller's authority before any filesystem/session
+        // effects. A scoped refusal cannot become an accepted/running reference.
+        if let Err(error) = running_subagents::admit_spawn(&dispatch, &parent.workspace_dir) {
+            return Ok(ToolResult::error(format!(
+                "spawn_async_subagent: registration refused: {error}"
+            )));
+        }
 
         let registry = match AgentDefinitionRegistry::current() {
             Some(registry) => registry,
@@ -65,12 +67,6 @@ impl SpawnAsyncSubagentTool {
             }
         };
 
-        // The follow-up vocabulary offered back to the parent is limited to
-        // the fleet tools visible on *this turn* (see `fleet_tools`), not
-        // just the parent definition's static scope: a hide or named
-        // restriction can narrow the turn's real tool surface below what the
-        // definition alone would suggest, and offering a control the parent
-        // cannot currently call invites a denied tool call.
         let fleet = if parent.visible_tool_names.is_empty() {
             FleetToolSet::for_parent(&parent.agent_definition_id)
         } else {
@@ -97,34 +93,12 @@ impl SpawnAsyncSubagentTool {
             .or(run_context.thread_id.as_deref())
             .map(str::to_owned);
 
-        // Async delivery is thread-addressed: the finished result is inserted back into the
-        // parent chat thread as a follow-up turn (`background_delivery`). Outside a chat turn
-        // (flow `agent` nodes, CLI and cron runs intentionally have no parent thread to deliver
-        // into, so `background_delivery::deliver_batch` logs "dropping headless batch" and the
-        // (possibly real, completed) work is silently discarded — the caller sees "Accepted" and
-        // never learns the result never arrived. Fail loudly instead: the caller has a
-        // synchronous alternative (`spawn_subagent` with `blocking: true`, or a `delegate_*`
-        // tool). Both of those self-heal to blocking dispatch in this situation rather than
-        // reaching this guard — see the `has_delivery_thread` checks in `spawn_subagent.rs` and
-        // `dispatch.rs::dispatch_subagent`. Only a *direct* `spawn_async_subagent` call lands
-        // here.
-        if parent_thread_id.is_none() {
-            log::warn!(
-                "[spawn_async_subagent] refusing fire-and-forget spawn with no delivery thread \
-                 parent={} requested={} — directing caller to synchronous delegation (flow node / \
-                 CLI / cron context, background result would be discarded)",
-                parent.agent_definition_id,
-                definition.id
-            );
-            return Ok(ToolResult::error(
-                "spawn_async_subagent: no parent chat thread available to deliver the result \
-                 into (this looks like a flow node, CLI, or cron run rather than an interactive \
-                 chat turn). Fire-and-forget delegation has nowhere to land its result here and \
-                 the sub-agent's work would be silently discarded. Use synchronous delegation \
-                 instead: a `delegate_*` tool with `blocking: true` runs the sub-agent inline \
-                 and hands you its output in this turn. For parallel work, model it as \
-                 parallel flow nodes rather than background sub-agents.",
-            ));
+        if let Some(refusal) = refuse_missing_delivery_thread(
+            parent_thread_id.as_deref(),
+            &parent.agent_definition_id,
+            &definition.id,
+        ) {
+            return Ok(refusal);
         }
         let store = SubagentSessionStore::new(parent.workspace_dir.clone());
         let workspace_descriptor = tool_context
@@ -141,7 +115,8 @@ impl SpawnAsyncSubagentTool {
                 workspace.root.clone()
             })
             .or_else(|| {
-                crate::security::live_policy::effective().map(|policy| policy.action_dir.clone())
+                crate::security::live_policy::effective_in(&dispatch)
+                    .map(|policy| policy.action_dir.clone())
             });
         let selector = SubagentSessionSelector {
             parent_session: parent_session.clone(),
@@ -157,6 +132,7 @@ impl SpawnAsyncSubagentTool {
             match subagent_sessions::find_reusable(&store, &selector) {
                 Ok(Some(session)) => {
                     let _ = running_subagents::cancel_by_session_in_workspace(
+                        &dispatch,
                         &session.subagent_session_id,
                         &parent_session,
                         &parent.workspace_dir,
@@ -207,6 +183,7 @@ impl SpawnAsyncSubagentTool {
             if session.status == DurableSubagentStatus::Running {
                 if let Some(ref running_task_id) = session.current_task_id {
                     match running_subagents::steer(
+                        &dispatch,
                         running_task_id,
                         &parent_session,
                         follow_up_prompt.clone(),
@@ -269,6 +246,7 @@ impl SpawnAsyncSubagentTool {
             .or_else(|| {
                 parent_thread_id.as_ref().and_then(|parent_thread_id| {
                     super::worker_thread::create_worker_thread(
+                        &dispatch,
                         parent.workspace_dir.clone(),
                         parent_thread_id,
                         &definition.id,
@@ -282,22 +260,15 @@ impl SpawnAsyncSubagentTool {
             (reusable.as_ref(), worker_thread_id.as_ref())
         {
             if session.worker_thread_id.as_deref() == Some(worker_thread_id.as_str()) {
-                if let Err(err) = super::worker_thread::append_worker_user_message(
+                super::worker_thread::append_reuse_follow_up(
+                    &dispatch,
                     parent.workspace_dir.clone(),
                     worker_thread_id,
                     &definition.id,
                     &task_id,
                     &follow_up_prompt,
-                ) {
-                    log::warn!(
-                        "[subagent_reuse] worker follow-up append failed parent_thread_id={} subagent_session_id={} worker_thread_id={} task_id={} error={}",
-                        parent_thread_id.as_deref().unwrap_or("none"),
-                        session.subagent_session_id,
-                        worker_thread_id,
-                        task_id,
-                        err
-                    );
-                }
+                    (parent_thread_id.as_deref(), &session.subagent_session_id),
+                );
             }
         }
         let durable_session = match subagent_sessions::upsert_running(
@@ -368,21 +339,22 @@ impl SpawnAsyncSubagentTool {
                 .await;
         }
 
-        // Steering channel + status channel so the parent can `steer_subagent`
-        // this run mid-flight and `wait_subagent` for its result. The engine
-        // drains `steer_queue` at iteration boundaries; `status_tx` publishes
-        // the terminal state to any waiter.
+        // Steering + status channels so the parent can `steer_subagent` this run
+        // mid-flight and `wait_subagent` for its result: the engine drains `steer_queue`
+        // at iteration boundaries; `status_tx` publishes the terminal state.
         let steer_queue = Arc::new(RunQueue::new());
         let task_queue = steer_queue.clone();
         let (status_tx, status_rx) = running_subagents::status_channel();
 
         let background_workspace_dir = parent.workspace_dir.clone();
+        let background_dispatch = dispatch.clone();
         let background_definition = definition.clone();
         let background_agent_id = definition.id.clone();
         let background_task_id = task_id.clone();
         let background_parent_session = parent_session.clone();
         let completion_target =
             crate::agent::orchestration::background_completions::CompletionTarget::new(
+                dispatch.clone(),
                 parent.workspace_dir.clone(),
                 parent_session.clone(),
                 parent_thread_id.clone(),
@@ -421,8 +393,8 @@ impl SpawnAsyncSubagentTool {
         // the off-task delivery subscriber resolves.
         let detached_run_context = detached_parent.data.child();
         let mut abort_report = AbortReport::arm(progress_sink.clone(), &definition.id, &task_id);
-        let join = crate::core::runtime::spawn_scoped(crate::agent::turn_origin::propagate(
-            crate::agent::turn_workspace::propagate(async move {
+        let join = dispatch.spawn(crate::agent::turn_origin::propagate(
+            async move {
                 let options = SubagentRunOptions {
                     skill_filter_override: None,
                     context,
@@ -465,13 +437,12 @@ impl SpawnAsyncSubagentTool {
                                         err
                                     );
                                 }
-                                // A workflow proposal produced inside the child's tool
-                                // history is durable state, not prose: persist it into
-                                // the parent chat thread (survives reload / reconnect —
-                                // the old socket-only delivery could silently drop it)
-                                // and carry the full payload in the delivery notice so
-                                // the follow-up turn can present it faithfully.
+                                // A workflow proposal from the child's tool history is
+                                // durable state, not prose: persist it into the parent chat
+                                // thread (survives reload / reconnect) and carry the full
+                                // payload in the delivery notice for the follow-up turn.
                                 let delivery_summary = attach_workflow_proposal(
+                                    &background_dispatch,
                                     &background_workspace_dir,
                                     background_parent_thread_id.as_deref(),
                                     &outcome.task_id,
@@ -553,6 +524,7 @@ impl SpawnAsyncSubagentTool {
                                 // proposal before stalling — preserve it durably too.
                                 let status_output = framed.clone();
                                 let framed = attach_workflow_proposal(
+                                    &background_dispatch,
                                     &background_workspace_dir,
                                     background_parent_thread_id.as_deref(),
                                     &outcome.task_id,
@@ -656,11 +628,9 @@ impl SpawnAsyncSubagentTool {
                                         err
                                     );
                                 }
-                                // #4896: a detached child that pauses for input won't
-                                // continue on its own — queue a framed notice so the
-                                // parent chat learns the delegated task needs input,
-                                // instead of finalizing silently on "Accepted". Rides the
-                                // same idle-gated background_delivery path as a success.
+                                // #4896: a detached child that pauses for input won't continue
+                                // on its own — queue a framed notice so the parent chat learns it
+                                // needs input, not "Accepted". Same idle-gated path as a success.
                                 completion_target
                                     .awaiting_input(
                                         &outcome.task_id,
@@ -737,12 +707,13 @@ impl SpawnAsyncSubagentTool {
                     }
                 }
                 abort_report.disarm();
-            }),
+            },
         ));
 
         // Register *after* spawn so the AbortHandle is available. The task owns
         // `status_tx`; this side holds `status_rx` for `wait_subagent`.
-        running_subagents::register(
+        let registration = running_subagents::register(
+            &dispatch,
             task_id.clone(),
             definition.id.clone(),
             parent_session.clone(),
@@ -754,38 +725,23 @@ impl SpawnAsyncSubagentTool {
             join.abort_handle(),
             status_rx,
         );
+        if let Err(error) = finish_spawn_registration(
+            registration,
+            &store,
+            &durable_session.subagent_session_id,
+            &task_id,
+        ) {
+            return Ok(ToolResult::error(error));
+        }
 
-        let payload = async_subagent_ref_payload(
+        Ok(accepted_spawn_result(
             &task_id,
             &durable_session.subagent_session_id,
             &definition.id,
             worker_thread_id.as_deref(),
             reusable.is_some(),
             reuse_decision.as_str(),
-            "running",
             &fleet,
-        );
-        let payload_json = match serde_json::to_string(&payload) {
-            Ok(serialized) => {
-                log::debug!(
-                    "[spawn_async_subagent] serialized async reference payload bytes={}",
-                    serialized.len()
-                );
-                serialized
-            }
-            Err(error) => {
-                log::debug!(
-                    "[spawn_async_subagent] failed to serialize async reference payload: {}",
-                    error
-                );
-                "{}".to_string()
-            }
-        };
-        log::debug!("[spawn_async_subagent] formatting accepted response");
-        Ok(ToolResult::success(format_async_subagent_accepted(
-            payload["agent_id"].as_str().unwrap_or("subagent"),
-            &payload_json,
-            &fleet,
-        )))
+        ))
     }
 }

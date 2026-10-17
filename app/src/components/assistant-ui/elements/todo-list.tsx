@@ -18,12 +18,22 @@
  *   leaves in the transcript. Every string they show is a prop.
  */
 import { cn } from '@/components/assistant-ui/lib/utils';
-import { CheckIcon, ChevronRightIcon, ListChecksIcon, Loader2Icon, XIcon } from 'lucide-react';
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ListChecksIcon,
+  Loader2Icon,
+  MinusIcon,
+  XIcon,
+} from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { mono } from './surfaces';
 
-export type TodoStatus = 'pending' | 'active' | 'done' | 'failed';
+export type TodoStatus = 'pending' | 'active' | 'done' | 'failed' | 'skipped';
+
+/** A step that needs no more work: done, or skipped (cancelled with a reason). */
+export const isClosedTodo = (status: TodoStatus) => status === 'done' || status === 'skipped';
 
 export interface TodoItem {
   id: string;
@@ -43,7 +53,7 @@ export function TodoList({
   revision?: number;
   title?: string;
 }) {
-  const done = items.filter(item => item.status === 'done').length;
+  const done = items.filter(item => isClosedTodo(item.status)).length;
 
   return (
     <div data-slot="todo-list" className={cn('flex w-full flex-col gap-3', className)} {...props}>
@@ -89,6 +99,10 @@ export function TodoItems({
               <span className="border-foreground/20 bg-foreground/[0.06] flex size-3.5 items-center justify-center rounded-[5px] border">
                 <CheckIcon className="text-muted-foreground size-2.5" />
               </span>
+            ) : item.status === 'skipped' ? (
+              <span className="border-foreground/15 flex size-3.5 items-center justify-center rounded-[5px] border">
+                <MinusIcon className="text-muted-foreground size-2.5" />
+              </span>
             ) : item.status === 'failed' ? (
               <span className="flex size-3.5 items-center justify-center rounded-[5px] border border-red-600/25 bg-red-600/[0.08] dark:border-red-400/25 dark:bg-red-400/[0.08]">
                 <XIcon className="size-2.5 text-red-600 dark:text-red-400" />
@@ -110,11 +124,13 @@ export function TodoItems({
                   ),
                 item.status === 'active' && 'text-foreground/90',
                 item.status === 'pending' && 'text-muted-foreground',
+                item.status === 'skipped' &&
+                  'text-muted-foreground line-through decoration-[1.5px]',
                 item.status === 'failed' && 'text-red-600 dark:text-red-400'
               )}>
               {item.text}
             </span>
-            {item.status === 'failed' && item.reason ? (
+            {(item.status === 'failed' || item.status === 'skipped') && item.reason ? (
               <p className="text-muted-foreground text-xs leading-4 break-words">{item.reason}</p>
             ) : null}
           </div>
@@ -137,7 +153,7 @@ export interface TodoProgress {
 
 /** Counts and the "current step" a collapsed progress line shows. */
 export function todoProgress(items: readonly TodoItem[]): TodoProgress {
-  const done = items.filter(item => item.status === 'done').length;
+  const done = items.filter(item => isClosedTodo(item.status)).length;
   let index = items.findIndex(item => item.status === 'active');
   if (index < 0) index = items.findIndex(item => item.status === 'pending');
   if (index < 0) {

@@ -3,7 +3,7 @@
 mod active_workspace;
 mod branches;
 mod dirs;
-mod env;
+pub(in crate::config::schema) mod env;
 mod env_overlay;
 mod impl_load;
 mod migrate;

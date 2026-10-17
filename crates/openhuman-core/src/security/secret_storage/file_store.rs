@@ -26,11 +26,12 @@
 //! the other.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use fs2::FileExt;
+use sha2::{Digest, Sha256};
 
 use crate::security::secret_storage::error::SecretStorageError;
 
@@ -76,18 +77,47 @@ pub fn lock_for_write(path: &Path) -> Result<WriteLock, SecretStorageError> {
             ))
         })?;
     }
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|e| {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(&lock_path).map_err(|e| {
+        SecretStorageError::Backend(format!(
+            "could not open the keyring lock at {}: {e}",
+            lock_path.display()
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata = file.metadata().map_err(|error| {
             SecretStorageError::Backend(format!(
-                "could not open the keyring lock at {}: {e}",
+                "could not inspect the keyring lock at {}: {error}",
                 lock_path.display()
             ))
         })?;
+        // A lock owned by another user is not authority over this store. Old
+        // OpenHuman lock files may have inherited wider modes, so tighten an
+        // owned regular file before the stricter TinyDrivers sidecar opens it.
+        if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(SecretStorageError::Backend(format!(
+                "keyring lock at {} is not a regular file owned by this user",
+                lock_path.display()
+            )));
+        }
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|error| {
+                    SecretStorageError::Backend(format!(
+                        "could not restrict permissions on the keyring lock at {}: {error}",
+                        lock_path.display()
+                    ))
+                })?;
+        }
+    }
     file.lock_exclusive().map_err(|e| {
         SecretStorageError::Backend(format!(
             "could not lock the keyring at {}: {e}",
@@ -102,6 +132,51 @@ pub fn lock_path_for(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".lock");
     path.with_file_name(name)
+}
+
+/// Fingerprint the current regular file without retaining its contents.
+///
+/// Callers use this around a separately locked read to detect whether another
+/// writer replaced the file before they acquire [`lock_for_write`].
+pub fn fingerprint(path: &Path) -> Result<Option<[u8; 32]>, SecretStorageError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(SecretStorageError::Backend(format!(
+                "could not inspect {} for the keyring: {error}",
+                path.display()
+            )));
+        }
+    };
+    if !metadata.file_type().is_file() {
+        return Err(SecretStorageError::Backend(format!(
+            "refusing to fingerprint a non-regular keyring file at {}",
+            path.display()
+        )));
+    }
+
+    let mut file = File::open(path).map_err(|error| {
+        SecretStorageError::Backend(format!(
+            "could not read {} for the keyring: {error}",
+            path.display()
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| {
+            SecretStorageError::Backend(format!(
+                "could not fingerprint {} for the keyring: {error}",
+                path.display()
+            ))
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(Some(hasher.finalize().into()))
 }
 
 fn parent_dir(path: &Path) -> &Path {

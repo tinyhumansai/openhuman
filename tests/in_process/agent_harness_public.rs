@@ -72,7 +72,11 @@ async fn fire_hooks_dispatches_all_hooks_even_when_one_fails() {
         }),
     ];
 
-    fire_hooks(&hooks, sample_turn());
+    fire_hooks(
+        &hooks,
+        &openhuman_core::core::runtime::DispatchCtx::unbound(),
+        sample_turn(),
+    );
 
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {

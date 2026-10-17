@@ -11,9 +11,29 @@ Feature gates decide what compiles into the binary. Modules decide what the runn
 
 The trade is explicit. A module shares the core's address space and crash domain, so it is trusted code and the admission checks matter. In return, a user who never generates a document never pays for the document writer in download size, memory or dependencies.
 
+## Host access and contracts
+
+Hosts reach module clients through the `openhuman-rpc` facade chain. The shared
+`openhuman_rpc::embed::modules::client(config)` returns a
+`tinybus::module::ModuleClient` built from explicit configuration
+over the process-wide lazy loader before or after core startup. Constructing
+a client starts nothing and requires no signed-in session. Set bundled-artifact
+discovery before its first call. A build without the `modules` feature has no client; with modules disabled
+in configuration a call returns an explicit unavailable error.
+
+A `*-bus` crate contains serialized vocabulary, errors, identifiers, versions,
+schemas and static tool declarations. Parsing, provider dispatch, cryptography,
+processes and device access execute inside the compiled module. Hosts retain
+configuration, credentials, approvals and execution policy. They never link an
+implementation fallback when a module is unavailable. Stateful adapters release
+module-owned resources through explicit close, cancellation and shutdown calls.
+
+The remaining migration work and temporary dependency exceptions are tracked
+in [the module-boundary inventory](../../../module-boundary-inventory.md).
+
 ## The registry
 
-`crates/openhuman-core/src/modules/registry/` compiles in fourteen records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.
+`crates/openhuman-core/src/modules/registry/` compiles eleven records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.
 
 | Module | Provides |
 | --- | --- |
@@ -23,14 +43,14 @@ The trade is explicit. A module shares the core's address space and crash domain
 | `tinywallet` | Key derivation and transaction signing |
 | `tinyjuice` | Tool-output compression and recovery |
 | `tinyvoice` | Audio framing, VAD, wake-word gating, hallucination detection |
-| `tinyruntime` + `tinyruntime-nodejs` + `tinyruntime-python` | Runtime discovery and warm interpreter pools |
 | `tinymcp` | The MCP client and registry |
 | `tinyconnectors` | OAuth connector actions and triggers |
-| `tinybox` | Sandbox capability discovery |
+| `tinybox` | Sandbox/resource lifecycle, bounded and supervised execution, jail and Docker operations, shell execution, file transfer and port forwarding |
 | `tinychannels` | Messaging channel transports |
+| `tinyflows` | Scheduled jobs: scheduler runtime, cron job store and schedule maths (`tinyflows-bus` schedule contract) |
 | `tinyhosts` | Hosting provider operations |
 
-Each record carries a version, the release it came from, and one `PlatformAsset` per supported build. Thirteen of the fourteen publish eleven builds: `ubuntu-24.04` and `ubuntu-22.04` on `x86_64` and `arm64`, `macos-26` and `macos-15` on `arm64` and `x86_64`, `windows-2025-x86_64`, `windows-2022-x86_64` and `windows-11-arm64`. `tinycomputer` publishes seven because it has no Linux backend.
+Each record carries a version, the release it came from, and one `PlatformAsset` per supported build. Seven records publish eleven builds: `ubuntu-24.04` and `ubuntu-22.04` on `x86_64` and `arm64`, `macos-26` and `macos-15` on `arm64` and `x86_64`, `windows-2025-x86_64`, `windows-2022-x86_64` and `windows-11-arm64`. TinyComputer publishes sixteen assets; TinyBox, TinyMCP and TinyWallet each publish seventeen, adding Arch Linux and Fedora builds. Asset availability is module-specific, so a release's count should not be inferred from another module's matrix.
 
 Every asset carries a SHA-256 copied verbatim from the published release's own checksum file. Do not compute a replacement pin from a local build. The digest must describe the artifact the release workflow signed, not the one on your machine.
 
@@ -39,7 +59,7 @@ Every asset carries a SHA-256 copied verbatim from the published release's own c
 Each step avoids the cost of the next:
 
 1. Already serving on the host's broker.
-2. An operator override: a path in `[modules].overrides`, or a `*_TEST_MODULE` environment variable.
+2. An operator override: a path in `[modules].overrides`, or a source mode (`[modules] source` / `OPENHUMAN_MODULE_SOURCE`, local development only; CI uses `release`). `linked` serves a module compiled into the running `openhuman-core` (build it with `--features linked-modules`, which links `crates/openhuman-modules-linked`; no product build or other host can reach that crate). `source` serves a library built from the module's vendored gitlink by `node scripts/modules/build.mjs <id|all>` (it writes `target/module-sources/<id>/` with an operator-trust `modules.toml`; set `OPENHUMAN_MODULE_SOURCE_DIR` to that directory). Local digests are never registry pins. `node scripts/modules/pin-status.mjs` reports whether each gitlink is in sync with, ahead of or behind its registry pin (ahead means you are running a locally compiled module that CI will refuse), and `node scripts/modules/release-and-repin.mjs <id>` publishes a release and re-pins from its `checksum.toml`. The strict `check-module-pins.mjs` is unchanged.
 3. The module search path: `OPENHUMAN_MODULE_PATH`, then the platform data directories.
 4. Bundled releases staged into the app at build time.
 5. The release cache, downloading only if `[modules].allow_download` is true.

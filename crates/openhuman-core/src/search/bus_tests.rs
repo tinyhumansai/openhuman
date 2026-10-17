@@ -11,6 +11,7 @@ fn subscriber_identity_and_domain() {
 fn credential_changed_is_an_auth_event() {
     let event = DomainEvent::CredentialChanged {
         kind: "session".into(),
+        tenant: None,
     };
     assert_eq!(event.domain(), "auth");
 }
@@ -33,6 +34,7 @@ async fn refresh_is_a_no_op_while_the_module_is_not_loaded() {
     CredentialRefreshSubscriber
         .handle(&DomainEvent::CredentialChanged {
             kind: "cleared".into(),
+            tenant: None,
         })
         .await;
 }

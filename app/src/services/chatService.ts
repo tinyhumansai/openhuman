@@ -434,7 +434,9 @@ export interface ChatPlanReviewRequestEvent {
  */
 export interface ChatThreadTodoItem {
   content: string;
-  status: 'pending' | 'in_progress' | 'completed';
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  /** Why the step was cancelled; only on a `cancelled` item. */
+  reason?: string;
 }
 
 /**
@@ -527,6 +529,11 @@ export interface ArtifactReadyEvent {
    * deck — see `ArtifactSnapshot.toolCallId`.
    */
   tool_call_id?: string;
+  /**
+   * The turn that made the artifact (`turn_request_id` on the wire). Places
+   * the card in that turn's reply while the turn runs.
+   */
+  request_id?: string;
 }
 
 /**
@@ -546,6 +553,8 @@ export interface ArtifactFailedEvent {
   error: string;
   /** See {@link ArtifactReadyEvent.tool_call_id}. */
   tool_call_id?: string;
+  /** See {@link ArtifactReadyEvent.request_id}. */
+  request_id?: string;
 }
 
 /**
@@ -568,6 +577,8 @@ export interface ArtifactPendingEvent {
   path: string;
   /** See {@link ArtifactReadyEvent.tool_call_id}. */
   tool_call_id?: string;
+  /** See {@link ArtifactReadyEvent.request_id}. */
+  request_id?: string;
 }
 
 /** Emitted when the agent turn begins (before the first LLM call). */
@@ -1385,16 +1396,27 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
   const readEnvelope = (
     payload: unknown
-  ): { thread_id: string; client_id?: string; args: Record<string, unknown> } | null => {
+  ): {
+    thread_id: string;
+    client_id?: string;
+    request_id?: string;
+    args: Record<string, unknown>;
+  } | null => {
     if (!payload || typeof payload !== 'object') return null;
-    const env = payload as { thread_id?: unknown; client_id?: unknown; args?: unknown };
+    const env = payload as {
+      thread_id?: unknown;
+      client_id?: unknown;
+      turn_request_id?: unknown;
+      args?: unknown;
+    };
     if (!isNonEmptyString(env.thread_id)) return null;
     const client_id = typeof env.client_id === 'string' ? env.client_id : undefined;
+    const request_id = isNonEmptyString(env.turn_request_id) ? env.turn_request_id : undefined;
     const args =
       env.args && typeof env.args === 'object' && !Array.isArray(env.args)
         ? (env.args as Record<string, unknown>)
         : {};
-    return { thread_id: env.thread_id, client_id, args };
+    return { thread_id: env.thread_id, client_id, request_id, args };
   };
 
   if (listeners.onArtifactPending) {
@@ -1429,6 +1451,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         workspace_dir: args.workspace_dir,
         path: args.path,
         tool_call_id: isNonEmptyString(args.tool_call_id) ? args.tool_call_id : undefined,
+        request_id: env.request_id,
       };
       chatLog(
         '%s thread_id=%s artifact_id=%s kind=%s',
@@ -1476,6 +1499,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         path: args.path,
         size_bytes: args.size_bytes,
         tool_call_id: isNonEmptyString(args.tool_call_id) ? args.tool_call_id : undefined,
+        request_id: env.request_id,
       };
       chatLog(
         '%s thread_id=%s artifact_id=%s kind=%s size=%d',
@@ -1522,6 +1546,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         workspace_dir: args.workspace_dir,
         error: args.error,
         tool_call_id: isNonEmptyString(args.tool_call_id) ? args.tool_call_id : undefined,
+        request_id: env.request_id,
       };
       // Defence-in-depth: producer is expected to pre-truncate, but
       // cap the log preview again so a leaky producer cannot blast

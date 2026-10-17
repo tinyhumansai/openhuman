@@ -14,8 +14,7 @@ use chrono::{Duration, Utc};
 
 use crate::config::Config;
 use crate::cron::{
-    delivery_mode, list_jobs, runs_closer_than, CronJob, CronJobPatch, DeliveryConfig, JobType,
-    Schedule,
+    delivery_mode, list_jobs, CronJob, CronJobPatch, DeliveryConfig, JobType, Schedule,
 };
 
 /// Whether `config` restricts cron to agent jobs.
@@ -32,7 +31,13 @@ fn check_type(job_type: &JobType) -> Result<()> {
 
 fn check_schedule(config: &Config, schedule: &Schedule) -> Result<()> {
     let min = Duration::seconds(i64::try_from(config.cron.min_interval_secs).unwrap_or(i64::MAX));
-    if let Some(too_frequent) = runs_closer_than(schedule, Utc::now(), min) {
+    // The cadence walk runs in the module (`RunsCloserThan`); a module that
+    // cannot answer fails the check closed rather than waving a job through.
+    let schedule = schedule.clone();
+    let too_frequent = crate::cron::client::blocking(config, move |config| async move {
+        crate::cron::client::runs_closer_than(&config, &schedule, Utc::now(), min).await
+    })?;
+    if let Some(too_frequent) = too_frequent {
         bail!(
             "recurring cron jobs must run at least {}s apart, but this schedule {too_frequent}",
             config.cron.min_interval_secs

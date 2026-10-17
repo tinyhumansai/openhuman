@@ -3,7 +3,6 @@
 //! (which rebuilds the tool policy snapshot on every change).
 
 use super::super::types::{OpenHumanSessionHost, SessionHostBuilder};
-use crate::tools::agent_policy::ToolPolicyEngine;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tinytools::{Tool, ToolSpec};
@@ -119,9 +118,7 @@ impl OpenHumanSessionHost {
     }
 
     #[cfg(test)]
-    pub(crate) fn tool_policy_session_for_test(
-        &self,
-    ) -> &crate::tools::agent_policy::ToolPolicySession {
+    pub(crate) fn tool_policy_session_for_test(&self) -> &tinytools::ToolPolicySession {
         &self.tool_policy_session
     }
 
@@ -147,9 +144,9 @@ impl OpenHumanSessionHost {
     /// them replaced by a same-id registry entry.
     pub(crate) fn resolved_definition(
         &self,
-    ) -> Option<Arc<crate::agent::harness::definition::AgentDefinition>> {
+    ) -> Option<Arc<crate::agent::harness::host_definition::AgentDefinition>> {
         self.definition.clone().or_else(|| {
-            crate::agent::harness::definition::AgentDefinitionRegistry::current()
+            crate::agent::harness::host_definition::AgentDefinitionRegistry::current()
                 .and_then(|registry| registry.get(&self.agent_definition_id).cloned())
                 .map(Arc::new)
         })
@@ -252,11 +249,71 @@ impl OpenHumanSessionHost {
             .unwrap_or_default()
     }
 
+    /// Restricts integration task-fetch tools to tasks touched within `window`
+    /// on every later turn of this agent; `None` clears the restriction.
+    pub fn set_task_recency_window(&mut self, window: Option<std::time::Duration>) {
+        self.task_recency_window = window;
+    }
+
+    /// Hands the host environment of the turns this session runs (shared
+    /// model budget, cancellation, deadline, hooks, tool-belt authority).
+    ///
+    /// Call it after building the session and before its first turn: the
+    /// completed-turn callbacks join the learning sink's set and the tool belt
+    /// authority is read when the runtime session is first created.
+    pub fn set_host_env(&mut self, env: crate::agent::turn_env::HostTurnEnv) {
+        for hook in env.hooks.post_turn_hooks() {
+            if !self
+                .post_turn_hooks
+                .iter()
+                .any(|existing| Arc::ptr_eq(existing, hook))
+            {
+                self.post_turn_hooks.push(Arc::clone(hook));
+            }
+        }
+        tracing::debug!(
+            env = ?env,
+            "[session_host] host turn env installed"
+        );
+        self.host_env = env;
+    }
+
+    /// The context this session's turns run under: the one its host
+    /// environment carries, else the calling task's.
+    pub(crate) fn dispatch_ctx(&self) -> crate::core::runtime::DispatchCtx {
+        crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref())
+    }
+
+    /// The host environment installed with [`Self::set_host_env`].
+    pub fn host_env(&self) -> &crate::agent::turn_env::HostTurnEnv {
+        &self.host_env
+    }
+
+    /// Runs this agent as an unattended autonomous tree: sub-agent iteration
+    /// caps are lifted to `cap` on every later turn; `None` clears the lift.
+    pub fn set_autonomous_iter_cap(&mut self, cap: Option<usize>) {
+        self.autonomous_iter_cap = cap;
+    }
+
     pub fn set_event_context(&mut self, session_id: impl Into<String>, channel: impl Into<String>) {
         self.event_session_id = session_id.into();
         self.event_channel = channel.into();
         self.rebuild_tool_policy_session();
         self.sync_runtime_tool_surface();
+    }
+
+    /// Route this session's transcripts to `locator` instead of the store its
+    /// agent key resolves to. Must be set before the first turn: the session
+    /// binds its transcript target once.
+    pub fn set_session_history_locator(
+        &mut self,
+        locator: std::sync::Arc<dyn tinyagents_session::transcript::TranscriptLocator>,
+    ) {
+        if self.runtime_session.is_some() {
+            tracing::debug!("transcript store already bound for this session; keeping it");
+            return;
+        }
+        self.session_history_locator = Some(locator);
     }
 
     /// Bind the OpenHuman conversation thread for the next and subsequent
@@ -419,7 +476,7 @@ impl OpenHumanSessionHost {
         );
         // Durable `Hidden` members leave the wire here; the deferred split
         // over both sets is the shared recompute below.
-        let _ = crate::tools::implementations::meta::strip_deferred_from_visible(
+        let _ = tinytools::strip_deferred_from_visible(
             &mut self.visible_tool_names,
             self.tools.as_slice(),
         );
@@ -437,7 +494,7 @@ impl OpenHumanSessionHost {
             self.deferred_tool_names.clear();
             return;
         }
-        let mut deferred = crate::tools::implementations::meta::deferred_set(
+        let mut deferred = tinytools::deferred_set(
             self.tools.as_slice(),
             self.synthesized_tools.as_slice(),
             &self.requested_deferred_tools,
@@ -502,7 +559,7 @@ impl OpenHumanSessionHost {
         // at all.
         let all_tools = self.all_tool_refs();
         let reachable = self.reachable_tool_names();
-        let mut session = ToolPolicyEngine::build_session_from_refs(
+        let mut session = crate::tools::policy_session::build_policy_session(
             &self.agent_definition_name,
             &self.event_channel,
             "session",
@@ -553,6 +610,19 @@ impl OpenHumanSessionHost {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .pending_turn_overrides = overrides;
+    }
+
+    /// Ask the **next** turn to shape every model call (response format,
+    /// output cap) and report its final call into `scope`. Consumed at the
+    /// start of that turn, like [`Self::set_next_turn_overrides`].
+    pub fn set_next_turn_response_shape(
+        &mut self,
+        scope: Option<Arc<tinyagents_harness::middleware::ResponseShapeScope>>,
+    ) {
+        self.runtime_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pending_response_shape = scope;
     }
 
     /// Set the reply-language instruction every following user message

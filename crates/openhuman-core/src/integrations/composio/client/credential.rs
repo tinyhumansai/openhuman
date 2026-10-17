@@ -153,6 +153,7 @@ impl DirectCredential {
             entity_id: None,
             base_url: self.base_v3.clone(),
             transport: super::network::module_transport(self.effective_base()),
+            webhooks: false,
         }
     }
 }

@@ -341,7 +341,7 @@ For your first contribution, `pnpm dev` is all you need.
 | -------------------- | ------------------------------------ | ----------------- |
 | UI components        | `app/src/`                           | React, TypeScript |
 | Styles / design      | `app/src/styles/`, `app/src/index.css` | CSS, Tailwind v4  |
-| Documentation        | `*.md` files, `gitbooks/`            | Writing           |
+| Documentation        | `*.md` files, `docs/gitbooks/en/`            | Writing           |
 | Bug fixes (frontend) | `app/src/`                           | React, TypeScript |
 
 **Avoid for now**: anything under `crates/` (Rust core and Tauri shell) until you're comfortable with the codebase.
@@ -487,6 +487,6 @@ The desktop build requires the full Rust toolchain and vendored Tauri setup. For
 
 - Join the [Discord](https://guild.tinyhumans.ai/) and ask in the contributors channel
 - Comment on the issue you're working on
-- Check [`gitbooks/developing/getting-set-up.md`](../gitbooks/developing/getting-set-up.md) for deeper setup docs
+- Check [`docs/gitbooks/en/developing/getting-set-up.md`](../docs/gitbooks/en/developing/getting-set-up.md) for deeper setup docs
 
 Thank you for contributing to OpenHuman!

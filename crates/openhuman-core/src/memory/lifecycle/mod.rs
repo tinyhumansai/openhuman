@@ -22,6 +22,7 @@ pub mod jobs;
 pub(crate) mod prefetch;
 pub mod sender;
 pub mod views;
+pub mod window;
 
 use std::sync::Arc;
 
@@ -80,20 +81,24 @@ pub fn agent_memory(config: &Config, identity: &ResolvedIdentity) -> MemoryResul
     agent_memory_on(bound.engine, config, identity)
 }
 
-/// The memory of the identity in scope (the default agent outside one).
-pub fn current_agent_memory(config: &Config) -> MemoryResult<(AgentMemory, ResolvedIdentity)> {
-    let identity = super::scope::resolve_current(config);
+/// The memory of `identity` (the default agent for the root identity).
+pub fn current_agent_memory(
+    config: &Config,
+    identity: &super::scope::MemoryIdentity,
+) -> MemoryResult<(AgentMemory, ResolvedIdentity)> {
+    let identity = identity.resolve(config);
     let memory = agent_memory(config, &identity)?;
     Ok((memory, identity))
 }
 
-/// An agent id the caller named, resolved under the in-scope root; the
-/// identity in scope when none is named.
+/// An agent id the caller named, resolved under `identity`'s root; `identity`
+/// itself when none is named.
 pub fn named_agent_memory(
     config: &Config,
+    identity: &super::scope::MemoryIdentity,
     agent_id: Option<&str>,
 ) -> MemoryResult<(AgentMemory, ResolvedIdentity)> {
-    let mut identity = super::scope::resolve_current(config);
+    let mut identity = identity.resolve(config);
     if let Some(agent_id) = agent_id.map(str::trim).filter(|id| !id.is_empty()) {
         identity.agent_id = agent_id.to_string();
     }

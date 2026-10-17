@@ -125,7 +125,7 @@ revives a device another process revoked. With no backend configured (the deskto
 ## Further reading
 
 - [Parent module (`security`)](../README.md)
-- [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
-- [Privacy and security](../../../../../gitbooks/features/privacy-and-security.md)
-- [Approval gate](../../../../../gitbooks/features/approval-gate.md)
-- [OS keyring and secret storage](../../../../../gitbooks/features/os-keyring-and-secret-storage.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
+- [Privacy and security](../../../../../docs/gitbooks/en/features/privacy-and-security.md)
+- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
+- [OS keyring and secret storage](../../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)

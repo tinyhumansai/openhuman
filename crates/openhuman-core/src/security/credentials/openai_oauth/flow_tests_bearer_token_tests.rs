@@ -203,6 +203,8 @@ fn disconnect_openai_oauth_clears_profile() {
     store.upsert_profile(profile, true).unwrap();
     assert!(openai_oauth_status(&config).unwrap().connected);
 
-    disconnect_openai_oauth(&config).unwrap();
+    runtime()
+        .block_on(disconnect_openai_oauth(&config))
+        .unwrap();
     assert!(!openai_oauth_status(&config).unwrap().connected);
 }

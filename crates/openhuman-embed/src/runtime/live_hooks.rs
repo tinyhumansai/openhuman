@@ -28,6 +28,13 @@ impl ToolHook for NamedToolHook {
     async fn before_tool_decision(&self, context: &ToolHookContext) -> ToolHookDecision {
         self.1.before_tool_decision(context).await
     }
+    async fn before_tool_decision_in(
+        &self,
+        dispatch: &openhuman_core::core::runtime::DispatchCtx,
+        context: &ToolHookContext,
+    ) -> ToolHookDecision {
+        self.1.before_tool_decision_in(dispatch, context).await
+    }
     async fn after_tool_context(&self, context: &ToolHookContext) -> Option<String> {
         self.1.after_tool_context(context).await
     }

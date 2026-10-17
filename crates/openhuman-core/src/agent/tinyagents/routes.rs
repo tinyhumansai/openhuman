@@ -8,79 +8,26 @@ use tinyagents_harness::events::AgentEvent;
 use tinyagents_harness::middleware::{MiddlewareModelOutcome, ModelHandler, ModelMiddleware};
 use tinyagents_harness::retry::FallbackPolicy;
 use tinyagents_registry::{WorkloadRoute, WorkloadRouter};
+use tinyinference_llm::model::workload::WORKLOAD_ROUTES;
 use tinyinference_llm::model::{CapabilitySet, ModelRequest};
 
-/// Role aliases the workload router is keyed by: the `hint:<role>` string a
-/// caller pins (an agent manifest's `hint = "coding"`, a flow node's
-/// `config.model`). The inference provider factory resolves each alias to the
-/// role's configured route — the managed default model, or the BYOK/local
-/// model routed to that workload.
-pub(super) const ROUTE_CHAT: &str = "hint:chat";
-pub(super) const ROUTE_REASONING: &str = "hint:reasoning";
-pub(super) const ROUTE_AGENTIC: &str = "hint:agentic";
-pub(super) const ROUTE_CODING: &str = "hint:coding";
-pub(super) const ROUTE_BURST: &str = "hint:burst";
-pub(super) const ROUTE_SUMMARIZATION: &str = "hint:summarization";
-pub(super) const ROUTE_VISION: &str = "hint:vision";
-
-/// The workload routes projected into the registry, keyed by role alias.
-///
-/// This is the canonical workload inventory (`chat`, `reasoning`, `agentic`,
-/// `coding`, `burst`, `summarization`, `vision`). `memory` is
-/// intentionally absent — it is a role alias that rides the chat route rather
-/// than a distinct router entry.
-pub(super) const WORKLOAD_ROUTE_TIERS: &[&str] = &[
-    ROUTE_CHAT,
-    ROUTE_REASONING,
-    ROUTE_AGENTIC,
-    ROUTE_CODING,
-    ROUTE_BURST,
-    ROUTE_SUMMARIZATION,
-    ROUTE_VISION,
-];
-
-/// The OpenHuman workload-tier routing table as a crate
-/// [`WorkloadRouter`](tinyagents_registry::WorkloadRouter) — the single declarative
-/// source for cross-route **fallback chains** and per-tier **required-capability
-/// gates** (issue #4249, Phase 3 routing consolidation).
-///
-/// The router owns the policy this module previously open-coded as
-/// `same_family_fallbacks` +
-/// `turn_required_capabilities`: it answers [`route_fallback_policy`] and
-/// [`turn_required_capabilities`] from one declarative table.
-///
-/// Built once — the route set + fallback ordering + vision gate are static:
-/// - light/fast conversational siblings `chat ⇄ burst`;
-/// - heavy reasoning/agentic siblings `reasoning ⇄ agentic`;
-/// - `coding → agentic` (coding is tool-heavy, agentic-adjacent);
-/// - `summarization → chat` (summarization rides a general chat model);
-/// - `vision` is `image_in`-gated and primary-only — a text fallback cannot
-///   satisfy the gate.
-///
-/// On the managed backend every role resolves to the same default model, so a
-/// sibling fallback there re-dispatches the same model; the chain earns its
-/// keep when a role is routed to a BYOK/local provider that fails.
+/// The workload routing table (fallback chains and the vision `image_in` gate)
+/// projected into the crate [`WorkloadRouter`] from the upstream declarative
+/// [`WORKLOAD_ROUTES`] table, which owns the policy.
 static OH_WORKLOAD_ROUTER: LazyLock<WorkloadRouter> = LazyLock::new(|| {
-    let vision_gate = CapabilitySet {
-        image_in: true,
-        ..CapabilitySet::default()
-    };
-    WorkloadRouter::new()
-        .with_route(WorkloadRoute::new(ROUTE_CHAT, ROUTE_CHAT).with_fallbacks([ROUTE_BURST]))
-        .with_route(WorkloadRoute::new(ROUTE_BURST, ROUTE_BURST).with_fallbacks([ROUTE_CHAT]))
-        .with_route(
-            WorkloadRoute::new(ROUTE_REASONING, ROUTE_REASONING).with_fallbacks([ROUTE_AGENTIC]),
-        )
-        .with_route(
-            WorkloadRoute::new(ROUTE_AGENTIC, ROUTE_AGENTIC).with_fallbacks([ROUTE_REASONING]),
-        )
-        .with_route(WorkloadRoute::new(ROUTE_CODING, ROUTE_CODING).with_fallbacks([ROUTE_AGENTIC]))
-        .with_route(
-            WorkloadRoute::new(ROUTE_SUMMARIZATION, ROUTE_SUMMARIZATION)
-                .with_fallbacks([ROUTE_CHAT]),
-        )
-        // Vision is image_in-gated with no fallback (primary-only).
-        .with_route(WorkloadRoute::new(ROUTE_VISION, ROUTE_VISION).requiring(vision_gate))
+    WORKLOAD_ROUTES
+        .iter()
+        .fold(WorkloadRouter::new(), |router, spec| {
+            let mut route = WorkloadRoute::new(spec.name, spec.name)
+                .with_fallbacks(spec.fallbacks.iter().copied());
+            if spec.requires_image_in {
+                route = route.requiring(CapabilitySet {
+                    image_in: true,
+                    ..CapabilitySet::default()
+                });
+            }
+            router.with_route(route)
+        })
 });
 
 /// The capability needs a turn imposes on every model call, derived from what is

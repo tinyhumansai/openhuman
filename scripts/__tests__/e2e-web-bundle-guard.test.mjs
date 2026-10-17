@@ -72,7 +72,14 @@ function makeTree(script) {
   // reporting ready; otherwise a fast runner can race the child process.
   writeExecutable(
     path.join(bin, "node"),
-    `#!/usr/bin/env bash\n${record("node")}\ntouch "${mockStarted}"\n`,
+    `#!/usr/bin/env bash
+${record("node")}
+if [[ "$*" == *"randomBytes"* ]]; then
+  printf '%064d' 0
+else
+  touch "${mockStarted}"
+fi
+`,
   );
   writeExecutable(
     path.join(bin, "curl"),
@@ -123,7 +130,7 @@ fi
   return { root, bin, calls, cleanup };
 }
 
-function run(tree, script) {
+function run(tree, script, extraEnv = {}) {
   const env = {
     ...process.env,
     PATH: `${tree.bin}:${process.env.PATH}`,
@@ -134,7 +141,9 @@ function run(tree, script) {
     OPENHUMAN_CORE_PORT: "17788",
     RUST_HOST_TRIPLE: "test-triple",
     OPENHUMAN_WORKSPACE: path.join(tree.root, "workspace"),
+    OPENHUMAN_KEYRING_MASTER_KEY: "11".repeat(32),
     E2E_WEB_CORE_TARGET_DIR: path.join(tree.root, "target"),
+    ...extraEnv,
   };
   const file = path.join(tree.root, "app", "scripts", script);
   try {
@@ -173,6 +182,53 @@ test("the session refuses a dist-web that e2e-web-build.sh did not produce", () 
   }
 });
 
+test("an explicit workspace requires its own keyring key", () => {
+  const tree = makeTree("e2e-web-session.sh");
+  try {
+    const workspace = path.join(tree.root, "persistent-workspace");
+    const res = run(tree, "e2e-web-session.sh", {
+      OPENHUMAN_WORKSPACE: workspace,
+      OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "",
+      OPENHUMAN_KEYRING_MASTER_KEY: "",
+      OPENHUMAN_KEYRING_MASTER_KEY_FILE: "",
+    });
+
+    assert.equal(res.status, 2, res.output);
+    assert.match(res.output, /explicit OPENHUMAN_WORKSPACE requires/);
+    assert.equal(fs.existsSync(workspace), false, "refuse before creating the supplied workspace");
+  } finally {
+    tree.cleanup();
+  }
+});
+
+test("an ephemeral explicit workspace can generate a private key", () => {
+  const tree = makeTree("e2e-web-session.sh");
+  try {
+    const distWeb = path.join(tree.root, "app", "dist-web");
+    fs.mkdirSync(distWeb, { recursive: true });
+    fs.writeFileSync(path.join(distWeb, MARKER), "VITE_OPENHUMAN_TARGET=web\n");
+    fs.writeFileSync(
+      path.join(distWeb, ".e2e-build-ports.json"),
+      '{"e2e_mock_port":"18473","openhuman_core_port":"17788"}\n',
+    );
+
+    const res = run(tree, "e2e-web-session.sh", {
+      OPENHUMAN_WORKSPACE: path.join(tree.root, "ci-workspace"),
+      OPENHUMAN_E2E_ALLOW_EPHEMERAL_KEY: "1",
+      OPENHUMAN_KEYRING_MASTER_KEY: "",
+      OPENHUMAN_KEYRING_MASTER_KEY_FILE: "/host/master.key",
+    });
+
+    assert.match(res.output, /standalone core binary is missing/);
+    assert.ok(
+      tree.calls().some((call) => call.includes("randomBytes")),
+      "an explicitly marked ephemeral workspace gets a fresh key",
+    );
+  } finally {
+    tree.cleanup();
+  }
+});
+
 test("the session accepts a marked bundle and proceeds past the guard", () => {
   // Pins that the guard is not simply always-fail. With the marker present the
   // session starts the mock backend and reaches its next precondition — the
@@ -187,10 +243,18 @@ test("the session accepts a marked bundle and proceeds past the guard", () => {
       '{"e2e_mock_port":"18473","openhuman_core_port":"17788"}\n',
     );
 
-    const res = run(tree, "e2e-web-session.sh");
+    const res = run(tree, "e2e-web-session.sh", {
+      OPENHUMAN_WORKSPACE: "",
+      OPENHUMAN_KEYRING_MASTER_KEY: "",
+      OPENHUMAN_KEYRING_MASTER_KEY_FILE: "/host/master.key",
+    });
 
     assert.doesNotMatch(res.output, /was not built for E2E/);
     assert.match(res.output, /standalone core binary is missing/);
+    assert.ok(
+      tree.calls().some((call) => call.includes("randomBytes")),
+      "a disposable workspace gets a fresh key",
+    );
     assert.ok(
       tree.calls().some((c) => c.includes("mock-api-server.mjs")),
       `expected the mock backend to be started:\n${tree.calls().join("\n")}`,

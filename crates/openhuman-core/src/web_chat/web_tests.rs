@@ -75,7 +75,8 @@ fn fp(
 async fn wait_for_in_flight<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(String, String)> {
     timeout(Duration::from_secs(5), async {
         loop {
-            let entries = in_flight_entries_for_test().await;
+            let entries =
+                in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient()).await;
             if pred(&entries) {
                 return entries;
             }
@@ -110,7 +111,9 @@ fn make_block() -> TestRunChatTaskBlock {
 async fn wait_for_parallel<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(String, String)> {
     timeout(Duration::from_secs(5), async {
         loop {
-            let entries = parallel_in_flight_entries_for_test().await;
+            let entries =
+                parallel_in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient())
+                    .await;
             if pred(&entries) {
                 return entries;
             }

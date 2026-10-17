@@ -43,7 +43,7 @@ Replies are final messages only: the relay sink takes no streaming drafts or rea
 
 ## How a message runs
 
-1. `params.rs` validates the message and derives its thread with `tinychannels::channel::derive_inbound_thread_id`: `channel:<channel>/<sender>/<chat>`, the same id as the backend-relayed inbound path. A user cannot create such a thread through `threads_upsert`, which reserves `channel:`.
+1. `params.rs` validates the message. The confidential `PrepareChannelIdentity` operation returns the canonical thread id, `channel:<channel>/<sender>/<chat>`, shared with the backend-relayed inbound path. A user cannot create such a thread through `threads_upsert`, which reserves `channel:`.
 2. `store.rs` creates the thread in the workspace of the caller's config and appends the message (`user:<message_id>`). In a single-user core the process-wide channel persistence subscriber is told to skip this turn (`threads::store::claim_channel_turn`), so it is not mirrored under a second id; in SaaS that subscriber is not registered and the claim is a no-op.
 3. `ops.rs` builds a one-message `ChannelRuntimeContext` from the caller's config and policy (`channels::runtime::build_channel_turn_parts` with `PromptToolDescs::Registered`, then `runtime_context`): the caller's tools, model and workspace, never the process's channel runtime. The pipeline's per-chat history is seeded from the thread's earlier rows. The turn runs in the background under the caller's scope (`spawn_scoped`).
 4. `process_channel_message` runs it like any channel message: slash commands, approval replies, then the orchestrator over `agent.run_turn` under the `ExternalChannel` origin.

@@ -193,3 +193,21 @@ fn storage_config_and_explicit_sources_are_credential_safe() {
     assert_eq!(info.storage.driver.as_deref(), Some("memory"));
     assert_eq!(info.storage.source, "explicit");
 }
+
+#[test]
+fn a_stateless_builder_reports_the_memory_storage_it_will_install() {
+    let info = RuntimeBuilder::new()
+        .workspace(crate::Workspace::Stateless)
+        .describe();
+    assert_eq!(info.storage.source, "backend");
+    assert_eq!(info.storage.driver.as_deref(), Some("memory"));
+    assert!(info.storage.configured);
+
+    let info = RuntimeBuilder::new()
+        .workspace(crate::Workspace::Inherit)
+        .describe();
+    assert_eq!(
+        info.storage.source, "workspace",
+        "only a stateless workspace defaults"
+    );
+}

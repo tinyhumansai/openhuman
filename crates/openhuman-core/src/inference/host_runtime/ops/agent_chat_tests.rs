@@ -82,3 +82,38 @@ fn explicit_turn_temperature_overrides_the_definition_without_mutating_it() {
     ));
     assert_eq!(definition_for_turn(&definition, None).temperature, 0.6);
 }
+
+fn chat_origin(thread: &str) -> crate::agent::turn_origin::AgentTurnOrigin {
+    crate::agent::turn_origin::AgentTurnOrigin::WebChat {
+        thread_id: thread.into(),
+        client_id: "client".into(),
+        request_id: format!("req-{thread}").into(),
+    }
+}
+
+fn chat_thread(origin: crate::agent::turn_origin::AgentTurnOrigin) -> String {
+    match origin {
+        crate::agent::turn_origin::AgentTurnOrigin::WebChat { thread_id, .. } => thread_id.into(),
+        crate::agent::turn_origin::AgentTurnOrigin::DirectChat => "direct".into(),
+        other => panic!("unexpected origin {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn agent_chat_origin_comes_from_the_turn_context_before_the_task_scope() {
+    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
+    let base = CoreContext::for_test(DomainSet::full(), None);
+    let own = DispatchCtx::new(base.derive_channel_turn(None, Some(chat_origin("own"))));
+    let scoped = base.derive_channel_turn(None, Some(chat_origin("scoped")));
+    CoreContext::scope(scoped, async {
+        // The turn's own context wins over whatever the task scope carries.
+        assert_eq!(chat_thread(effective_agent_chat_origin(&own)), "own");
+        // A context with no origin of its own falls back to the task scope.
+        let bare = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
+        assert_eq!(chat_thread(effective_agent_chat_origin(&bare)), "scoped");
+    })
+    .await;
+    // Neither: the trusted direct-chat label.
+    let bare = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
+    assert_eq!(chat_thread(effective_agent_chat_origin(&bare)), "direct");
+}

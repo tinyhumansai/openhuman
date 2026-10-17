@@ -5,19 +5,18 @@
 //! 1. Validate the JSON-Schema input early (`types::validate_input`)
 //!    so the agent gets a structured `InvalidInput` it can self-correct
 //!    on instead of a low-level error.
-//! 2. Allocate an artifact dir via `artifacts::create_artifact`. The
-//!    returned `meta` starts at `ArtifactStatus::Pending` so an
-//!    interrupted run never surfaces as Ready.
+//! 2. Start a [`Production`]: it reserves `<title>.pptx` in the files folder
+//!    (the card shows "generating…") and opens the versioned artifact — or,
+//!    with an `artifact_id` arg or a regenerate in scope, a new version of
+//!    that artifact under the same id and file.
 //! 3. Generate the deck bytes via [`engine::generate`] — pure Rust,
 //!    `ppt-rs`-backed, no Python runtime, no subprocess. Wrapped in
 //!    `spawn_blocking` + `tokio::time::timeout` so the synchronous
 //!    library work neither blocks the async executor nor can wedge
 //!    the agent loop.
-//! 4. Write the bytes to the artifact's output path, stat for size,
-//!    flip artifact to `Ready` via `artifacts::finalize_artifact`,
-//!    return the artifact id + path.
-//! 5. On failure: flip artifact to `Failed` via
-//!    `artifacts::fail_artifact` so the UI can surface the reason.
+//! 4. Write the bytes and [`Production::complete`]: the file becomes the
+//!    artifact's newest version and the card turns ready.
+//! 5. On failure: [`Production::fail`] so the UI can surface the reason.
 //!
 //! Originally shipped in #2778 against a managed python-pptx venv;
 //! refactored to a native-Rust engine in #2780-follow-up to drop the
@@ -27,6 +26,8 @@
 //! #3026 Files panel, and the orchestrator grounding rule in #3029
 //! continue to work without change.
 
+use crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool;
+use crate::core::runtime::DispatchCtx;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,9 +35,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::agent::artifacts::{
-    create_artifact, fail_artifact, finalize_artifact, read_artifact_bytes, ArtifactKind,
-};
+use crate::agent::artifacts::production::Production;
+use crate::agent::artifacts::read_artifact_bytes;
 use crate::security::SecurityPolicy;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
@@ -47,9 +47,11 @@ mod types;
 #[path = "presentation_tests.rs"]
 mod tests;
 
+use crate::tools::implementations::document::format::spec::SlideImage;
+
 use self::types::{
-    validate_input, GeneratePresentationInput, GeneratePresentationOutput, ResolvedSlideImage,
-    SlideImage, SlideImageSource, MAX_IMAGE_BYTES,
+    validate_input, GeneratePresentationInput, GeneratePresentationOutput, SlideImageRequest,
+    SlideImageSource, MAX_IMAGE_BYTES,
 };
 
 /// Generation timeout. `ppt-rs` typically completes the full 64-slide
@@ -70,6 +72,7 @@ trait ImageInspector: Sync {
 
 struct ModuleImageInspector<'a> {
     config: Option<&'a crate::config::Config>,
+    ctx: &'a DispatchCtx,
 }
 
 #[async_trait]
@@ -79,7 +82,9 @@ impl ImageInspector for ModuleImageInspector<'_> {
         let config = match self.config {
             Some(config) => config,
             None => {
-                loaded = crate::config::ops::load_config_with_timeout()
+                loaded = self
+                    .ctx
+                    .load_config()
                     .await
                     .map_err(|error| format!("config unavailable: {error}"))?;
                 &loaded
@@ -113,6 +118,9 @@ pub struct PresentationTool {
     /// `validate_path` checks (allowed-location, symlink-escape, forbidden
     /// dirs) as any other file-read operation.
     security: Arc<SecurityPolicy>,
+    /// The artifact id a Retry re-dispatches this generation under
+    /// (`artifacts::ops::ai_regenerate`); `None` mints a fresh artifact.
+    regenerate_target: Option<String>,
 }
 
 impl PresentationTool {
@@ -130,6 +138,7 @@ impl PresentationTool {
             files_dir: files_dir.into(),
             config: None,
             security,
+            regenerate_target: None,
         }
     }
 
@@ -156,7 +165,15 @@ impl PresentationTool {
             files_dir: files_dir.into(),
             config: Some(config),
             security,
+            regenerate_target: None,
         }
+    }
+
+    /// Re-dispatch this generation under an existing artifact id, so the
+    /// failed card is replaced in place (#3162).
+    pub(crate) fn with_regenerate_target(mut self, artifact_id: impl Into<String>) -> Self {
+        self.regenerate_target = Some(artifact_id.into());
+        self
     }
 }
 
@@ -242,6 +259,10 @@ impl Tool for PresentationTool {
                     "description": "Deck title. Surfaced on the title slide and used as the artifact's human-readable name. Required, non-empty.",
                     "maxLength": types::MAX_TEXT_CHARS,
                 },
+                "artifact_id": {
+                    "type": "string",
+                    "description": "Optional artifact id to update. Pass an id from a prior generate_presentation call to save this deck as a new version of that artifact instead of creating a new one.",
+                },
                 "author": {
                     "type": "string",
                     "description": "Optional author byline shown on the title slide.",
@@ -274,6 +295,34 @@ impl Tool for PresentationTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.run(args, None, &dispatch_ctx_for_tool(None)).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
+        self.run(
+            args,
+            approval.chat.as_ref(),
+            &dispatch_ctx_for_tool(context),
+        )
+        .await
+    }
+}
+
+impl PresentationTool {
+    /// Produces the deck for a turn whose chat routing is `chat` (`None`
+    /// outside a chat turn).
+    pub(crate) async fn run(
+        &self,
+        args: Value,
+        chat: Option<&crate::security::approval::ApprovalChatContext>,
+        ctx: &DispatchCtx,
+    ) -> anyhow::Result<ToolResult> {
         let input: GeneratePresentationInput = match serde_json::from_value(args.clone()) {
             Ok(v) => v,
             Err(err) => {
@@ -299,7 +348,7 @@ impl Tool for PresentationTool {
         // Resolve + validate per-slide images at the async boundary. A
         // bad image is skipped with a warning (partial success) rather
         // than failing the whole deck — mirrors the #3076 ethos.
-        let (resolved_images, image_warnings) = self.resolve_images(&input).await;
+        let (resolved_images, image_warnings) = self.resolve_images(&input, ctx).await;
         if !image_warnings.is_empty() {
             tracing::info!(
                 target: "presentation",
@@ -308,28 +357,41 @@ impl Tool for PresentationTool {
             );
         }
 
-        let (meta, output_path) = create_artifact(
+        // Reserve the file and open the artifact: a new one, or a new version
+        // of `artifact_id` / the regenerate target (same id, same file,
+        // history kept).
+        let production = Production::start(
             &self.workspace_dir,
-            &self.files_dir,
-            ArtifactKind::Presentation,
+            self.files_dir.clone(),
+            tiny_artifacts::ArtifactKind::File,
             &input.title,
             "pptx",
+            None,
+            input
+                .artifact_id
+                .as_deref()
+                .or(self.regenerate_target.as_deref()),
+            chat,
         )
         .await
         .map_err(anyhow::Error::msg)?;
+        let output_path = production.path().to_path_buf();
 
         // Persist the verbatim args next to meta.json so a failed card's
         // Retry can re-dispatch this exact spec deterministically (#3162).
         // Best-effort: a write failure only forfeits future regeneration,
         // it must not abort an otherwise-successful generation.
-        if let Err(err) =
-            crate::agent::artifacts::store::save_artifact_args(&self.workspace_dir, &meta.id, &args)
-                .await
+        if let Err(err) = crate::agent::artifacts::store::save_artifact_args(
+            &self.workspace_dir,
+            production.id(),
+            &args,
+        )
+        .await
         {
             tracing::warn!(
                 target: "presentation",
                 err = %err,
-                artifact_id = %meta.id,
+                artifact_id = %production.id(),
                 "[presentation] failed to persist args.json; artifact will not be regenerable"
             );
         }
@@ -344,13 +406,7 @@ impl Tool for PresentationTool {
         {
             Ok(bytes) => bytes,
             Err(err) => {
-                let _ = fail_artifact(
-                    &self.workspace_dir,
-                    &self.files_dir,
-                    &meta.id,
-                    &err.to_string(),
-                )
-                .await;
+                production.fail(&err.to_string()).await;
                 tracing::warn!(
                     target: "presentation",
                     err = %err,
@@ -366,35 +422,26 @@ impl Tool for PresentationTool {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let reason = format!("failed to write generated deck ({filename}): {err}");
-            let _ = fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &reason).await;
+            production.fail(&reason).await;
             tracing::warn!(
                 target: "presentation",
                 err = %err,
-                artifact_id = %meta.id,
+                artifact_id = %production.id(),
                 filename = %filename,
                 "[presentation] artifact file write failed"
             );
             return Ok(ToolResult::error(reason));
         }
 
-        let size_bytes = bytes.len() as u64;
-        let updated = match finalize_artifact(&self.workspace_dir, &meta.id, size_bytes).await {
-            Ok(updated) => updated,
-            Err(err) => {
-                let reason = format!("failed to finalize artifact: {err}");
-                // File is already on disk but the ledger transition failed.
-                // Flip the artifact to Failed so the UI surfaces the error
-                // instead of leaving it stuck in `Pending`. Fail-artifact
-                // errors are swallowed — they can only happen if the same
-                // ledger backend is unavailable, in which case nothing we
-                // do here will help.
-                let _ =
-                    fail_artifact(&self.workspace_dir, &self.files_dir, &meta.id, &reason).await;
+        // Record the file as the artifact's newest version; the card turns
+        // ready from that record.
+        let size_bytes = match production.complete().await {
+            Ok(size) => size,
+            Err(reason) => {
                 tracing::warn!(
                     target: "presentation",
-                    err = %err,
-                    artifact_id = %meta.id,
-                    "[presentation] finalize_artifact failed; flipped to Failed"
+                    artifact_id = %production.id(),
+                    "[presentation] {reason}"
                 );
                 return Ok(ToolResult::error(reason));
             }
@@ -402,14 +449,14 @@ impl Tool for PresentationTool {
 
         tracing::info!(
             target: "presentation",
-            artifact_id = %updated.id,
+            artifact_id = %production.id(),
             size_bytes,
             slide_count = input.slides.len(),
             "[presentation] generation complete"
         );
 
         let out = GeneratePresentationOutput {
-            artifact_id: updated.id.clone(),
+            artifact_id: production.id().to_string(),
             artifact_path: output_path.display().to_string(),
             slide_count: input.slides.len(),
             size_bytes,
@@ -441,11 +488,13 @@ impl PresentationTool {
     async fn resolve_images(
         &self,
         input: &GeneratePresentationInput,
-    ) -> (Vec<Vec<ResolvedSlideImage>>, Vec<String>) {
+        ctx: &DispatchCtx,
+    ) -> (Vec<Vec<SlideImage>>, Vec<String>) {
         self.resolve_images_with_inspector(
             input,
             &ModuleImageInspector {
                 config: self.config.as_ref(),
+                ctx,
             },
         )
         .await
@@ -455,8 +504,8 @@ impl PresentationTool {
         &self,
         input: &GeneratePresentationInput,
         inspector: &impl ImageInspector,
-    ) -> (Vec<Vec<ResolvedSlideImage>>, Vec<String>) {
-        let mut per_slide: Vec<Vec<ResolvedSlideImage>> = Vec::with_capacity(input.slides.len());
+    ) -> (Vec<Vec<SlideImage>>, Vec<String>) {
+        let mut per_slide: Vec<Vec<SlideImage>> = Vec::with_capacity(input.slides.len());
         let mut warnings: Vec<String> = Vec::new();
 
         for (slide_idx, spec) in input.slides.iter().enumerate() {
@@ -481,15 +530,15 @@ impl PresentationTool {
         (per_slide, warnings)
     }
 
-    /// Resolve a single [`SlideImage`] to validated, embeddable bytes.
+    /// Resolve a single [`SlideImageRequest`] to validated, embeddable bytes.
     /// Returns `Err(reason)` (a short human-readable string) when the
     /// image cannot be embedded — the caller turns that into a skip
     /// warning.
     async fn resolve_one_image(
         &self,
-        image: &SlideImage,
+        image: &SlideImageRequest,
         inspector: &impl ImageInspector,
-    ) -> Result<ResolvedSlideImage, String> {
+    ) -> Result<SlideImage, String> {
         let bytes = match &image.source {
             SlideImageSource::Artifact { artifact_id } => {
                 read_artifact_bytes(&self.workspace_dir, &self.files_dir, artifact_id)
@@ -534,7 +583,7 @@ impl PresentationTool {
 
         let facts = inspector.inspect(&bytes).await?;
 
-        Ok(ResolvedSlideImage {
+        Ok(SlideImage {
             bytes,
             format: facts.format,
             width_px: facts.width_px,

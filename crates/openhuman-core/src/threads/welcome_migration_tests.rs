@@ -28,6 +28,7 @@ fn migration_updates_thread_labels_and_transcripts() {
     let workspace = tmp.path();
 
     ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         workspace.to_path_buf(),
         make_thread(
             "welcome-thread",
@@ -42,14 +43,20 @@ fn migration_updates_thread_labels_and_transcripts() {
     fs::create_dir_all(md.parent().unwrap()).unwrap();
     fs::write(&md, "# Session transcript — welcome_thread-abc\n").unwrap();
 
-    let result = migrate_welcome_agent_artifacts(workspace).unwrap();
+    let result =
+        migrate_welcome_agent_artifacts(&crate::core::runtime::DispatchCtx::ambient(), workspace)
+            .unwrap();
 
     assert_eq!(result.threads_updated, 1);
     assert_eq!(result.transcripts_updated, 1);
     assert_eq!(result.transcript_files_renamed, 1);
     assert_eq!(result.markdown_files_renamed, 1);
 
-    let threads = list_threads(workspace.to_path_buf()).unwrap();
+    let threads = list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        workspace.to_path_buf(),
+    )
+    .unwrap();
     let thread = threads
         .iter()
         .find(|thread| thread.id == "welcome-thread")
@@ -79,7 +86,9 @@ fn migration_is_idempotent_after_marker() {
     fs::create_dir_all(workspace.join("state/migrations")).unwrap();
     fs::write(workspace.join(MIGRATION_MARKER), b"done\n").unwrap();
 
-    let result = migrate_welcome_agent_artifacts(workspace).unwrap();
+    let result =
+        migrate_welcome_agent_artifacts(&crate::core::runtime::DispatchCtx::ambient(), workspace)
+            .unwrap();
     assert!(result.already_done);
     assert_eq!(result.threads_updated, 0);
     assert_eq!(result.transcripts_updated, 0);
@@ -95,7 +104,9 @@ fn migration_returns_error_without_marker_when_destination_exists() {
     let dest = workspace.join("session_raw/1715000000_orchestrator_thread-abc.jsonl");
     write_transcript(&dest, "orchestrator_thread-abc", "thread-abc");
 
-    let err = migrate_welcome_agent_artifacts(workspace).unwrap_err();
+    let err =
+        migrate_welcome_agent_artifacts(&crate::core::runtime::DispatchCtx::ambient(), workspace)
+            .unwrap_err();
 
     assert!(
         err.contains("partial migration"),

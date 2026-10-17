@@ -7,6 +7,13 @@ import { test } from 'node:test';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const script = join(root, 'scripts/bootstrap-embed-consumer.py');
+// CI hands the lanes their pinned interpreter explicitly; locally use PATH.
+const python = process.env.OPENHUMAN_CI_PYTHON || 'python3';
+// The toolcache interpreter is shared-linked and finds libpython only through
+// LD_LIBRARY_PATH, which is no longer exported; give it to this child alone.
+const env = process.env.OPENHUMAN_CI_PYTHON
+  ? { ...process.env, LD_LIBRARY_PATH: [join(dirname(dirname(python)), 'lib'), process.env.LD_LIBRARY_PATH].filter(Boolean).join(':') }
+  : process.env;
 function fixture() {
   mkdirSync(join(root, 'target'), { recursive: true });
   const directory = mkdtempSync(join(root, 'target/embed-bootstrap-fixture-'));
@@ -32,7 +39,7 @@ test('a pinned consumer generates patches, excludes local secrets and builds bot
   const { directory, source, rev } = fixture();
   try {
     const destination = join(directory, 'consumer');
-    execFileSync('python3', [script, '--offline', '--source', source, '--rev', rev, '--destination', destination]);
+    execFileSync(python, [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { env });
     const manifest = readFileSync(join(destination, 'Cargo.toml'), 'utf8');
     assert.match(manifest, /default = \[\]/);
     assert.match(manifest, /optional = true, default-features = false/);
@@ -49,7 +56,7 @@ test('a pinned consumer generates patches, excludes local secrets and builds bot
     assert.doesNotMatch(readFileSync(join(destination, 'Cargo.lock'), 'utf8'), /patch\.unused/);
     const tree = execFileSync('cargo', ['tree', '--offline', '--manifest-path', join(destination, 'Cargo.toml'), '-e', 'normal'], { encoding: 'utf8' });
     assert.doesNotMatch(tree, /openhuman-embed|reqwest/);
-    const again = spawnSync('python3', [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { encoding: 'utf8' });
+    const again = spawnSync(python, [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { encoding: 'utf8', env });
     assert.equal(again.status, 1);
     assert.equal(readFileSync(join(destination, 'OPENHUMAN_REV'), 'utf8').trim(), rev);
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -60,7 +67,7 @@ test('symbolic and missing pins fail without leaving a partial consumer', () => 
   try {
     for (const rev of ['main', '0'.repeat(40)]) {
       const destination = join(directory, 'consumer');
-      const result = spawnSync('python3', [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { encoding: 'utf8' });
+      const result = spawnSync(python, [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { encoding: 'utf8', env });
       assert.equal(result.status, 1);
       assert.equal(existsSync(destination), false);
       assert.doesNotMatch(result.stderr, /PRIVATE_FIXTURE_TOKEN/);
@@ -72,7 +79,7 @@ test('credential-bearing source URLs are refused before Git sees them', () => {
   const { directory, source, rev } = fixture();
   try {
     const destination = join(directory, 'consumer');
-    const result = spawnSync('python3', [script, '--offline', '--source', `file://${source}?token=PRIVATE_FIXTURE_TOKEN`, '--rev', rev, '--destination', destination], { encoding: 'utf8' });
+    const result = spawnSync(python, [script, '--offline', '--source', `file://${source}?token=PRIVATE_FIXTURE_TOKEN`, '--rev', rev, '--destination', destination], { encoding: 'utf8', env });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /credential-bearing/);
     assert.doesNotMatch(result.stderr, /PRIVATE_FIXTURE_TOKEN/);
@@ -89,7 +96,7 @@ test('unsupported and escaping patch specifications fail closed', () => {
       execFileSync('git', ['-C', source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.org', 'commit', '--quiet', '-m', 'invalid patch']);
       const rev = execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
       const destination = join(directory, 'consumer');
-      const result = spawnSync('python3', [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { encoding: 'utf8' });
+      const result = spawnSync(python, [script, '--offline', '--source', source, '--rev', rev, '--destination', destination], { encoding: 'utf8', env });
       assert.equal(result.status, 1);
       assert.match(result.stderr, /Unsupported workspace patch form|leaves the source checkout/);
       assert.equal(existsSync(destination), false);

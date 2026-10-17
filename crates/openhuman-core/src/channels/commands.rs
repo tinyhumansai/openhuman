@@ -6,7 +6,6 @@
 
 use super::runtime::hydrate_channel_credentials;
 use crate::config::Config;
-use crate::modules::client::ModuleClient;
 use anyhow::Result;
 use std::time::Duration;
 use tinychannels_bus::{ChannelHealthState, HttpProxyPolicy};
@@ -50,7 +49,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
             service_selectors: selectors,
         }
     };
-    let client = ModuleClient::new(config.clone())
+    let client = crate::modules::client(config.clone())
         .with_timeout(Duration::from_secs(configured.len() as u64 * 10 + 5));
     let channels =
         crate::modules::channel_health::check(&client, hydrate_channel_credentials(&config), proxy)
@@ -86,7 +85,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
 
 /// Selecting configured providers is host configuration orchestration. The
 /// module owns construction, platform support, health I/O and timeout handling.
-fn configured_providers(config: &Config) -> Vec<&'static str> {
+pub(crate) fn configured_providers(config: &Config) -> Vec<&'static str> {
     let channels = &config.channels_config;
     [
         ("telegram", channels.telegram.is_some()),
@@ -108,6 +107,17 @@ fn configured_providers(config: &Config) -> Vec<&'static str> {
     .into_iter()
     .filter_map(|(channel, configured)| configured.then_some(channel))
     .collect()
+}
+
+/// Whether config contains a channel or relay that needs the native module
+/// runtime. Push webhooks remain host-server work and do not start listeners.
+pub(crate) fn has_listener_configuration(config: &Config) -> bool {
+    !configured_providers(config).is_empty()
+        || config
+            .channels_config
+            .relay
+            .as_ref()
+            .is_some_and(|relay| !relay.url.trim().is_empty() && !relay.identities.is_empty())
 }
 
 #[cfg(test)]

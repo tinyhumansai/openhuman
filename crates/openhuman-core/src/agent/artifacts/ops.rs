@@ -6,13 +6,11 @@ use crate::core::Outcome;
 // Imports used only by the `documents`-gated presentation regeneration helper
 // below; when the feature is off the PresentationTool is compiled out.
 #[cfg(feature = "documents")]
-use crate::security::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+use crate::security::approval::ApprovalChatContext;
 #[cfg(feature = "documents")]
 use crate::security::SecurityPolicy;
 #[cfg(feature = "documents")]
 use crate::tools::PresentationTool;
-#[cfg(feature = "documents")]
-use tinytools::Tool;
 
 use super::store;
 use super::types::ArtifactKind;
@@ -151,15 +149,16 @@ pub async fn ai_delete_artifact(
 ///    "not regenerable" error rather than a silent no-op.
 /// 3. Rebuild the producer tool + a fresh [`SecurityPolicy`] from the
 ///    live config and run it inside both:
-///    - `REGENERATE_TARGET_ID.scope(artifact_id, …)` so `create_artifact`
+///    - `PresentationTool::with_regenerate_target(artifact_id)` so `create_artifact`
 ///      reuses the id + directory instead of minting a new one, and
-///    - `APPROVAL_CHAT_CONTEXT.scope({thread_id, client_id}, …)` so the
+///    - the chat context `{thread_id, client_id}` handed to the tool so the
 ///      Pending/Ready/Failed events route back to the originating chat
 ///      surface (the RPC carries no ambient chat context of its own).
 ///
 /// The returned value is a thin ack — the card's live state is driven by
 /// the socket events the re-run publishes, not by this RPC's result.
 pub async fn ai_regenerate(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     artifact_id: &str,
     thread_id: &str,
@@ -187,7 +186,7 @@ pub async fn ai_regenerate(
         ));
     }
 
-    regenerate_presentation(config, artifact_id, thread_id, client_id).await
+    regenerate_presentation(ctx, config, artifact_id, thread_id, client_id).await
 }
 
 /// Re-run the presentation producer tool against an existing artifact id.
@@ -196,6 +195,7 @@ pub async fn ai_regenerate(
 /// a thin, always-compiled RPC handler.
 #[cfg(feature = "documents")]
 async fn regenerate_presentation(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     artifact_id: &str,
     thread_id: &str,
@@ -210,12 +210,16 @@ async fn regenerate_presentation(
         &config.workspace_dir,
         &config.action_dir,
     ));
+    // The regenerate target is an explicit constructor argument of the tool
+    // that produces the artifact: its `create_artifact_regenerating` call
+    // reuses this id instead of minting a new one.
     let tool = PresentationTool::with_config(
         config.workspace_dir.clone(),
         super::files::FileRoots::from_config(config),
         security,
         config.clone(),
-    );
+    )
+    .with_regenerate_target(artifact_id);
 
     let chat_ctx = ApprovalChatContext {
         thread_id: thread_id.to_string(),
@@ -225,12 +229,7 @@ async fn regenerate_presentation(
         request_id: None,
     };
 
-    let result = store::REGENERATE_TARGET_ID
-        .scope(
-            artifact_id.to_string(),
-            APPROVAL_CHAT_CONTEXT.scope(chat_ctx, async move { tool.execute(args).await }),
-        )
-        .await;
+    let result = tool.run(args, Some(&chat_ctx), ctx).await;
 
     match result {
         Ok(tool_result) => {
@@ -260,6 +259,7 @@ async fn regenerate_presentation(
 /// limitation rather than pretend to regenerate.
 #[cfg(not(feature = "documents"))]
 async fn regenerate_presentation(
+    _ctx: &crate::core::runtime::DispatchCtx,
     _config: &Config,
     artifact_id: &str,
     _thread_id: &str,
@@ -276,3 +276,74 @@ async fn regenerate_presentation(
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+/// Save the user's edit of a versioned artifact as a new operator version
+/// (the preview panel's autosave). See
+/// [`super::tiny_store::save_operator_version`].
+pub async fn ai_save_artifact_version(
+    config: &Config,
+    artifact_id: &str,
+    body: &str,
+) -> Result<Outcome<Value>, String> {
+    let saved = super::tiny_store::save_operator_version(
+        &config.workspace_dir,
+        super::files::FileRoots::from_config(config),
+        artifact_id,
+        body,
+    )
+    .await?;
+    log::debug!(
+        "[artifacts] ai_save_artifact_version id={artifact_id} version={} saved={}",
+        saved.version,
+        saved.saved
+    );
+    Ok(Outcome::new(
+        json!({ "artifact_id": artifact_id, "version": saved.version, "saved": saved.saved }),
+        vec![],
+    ))
+}
+
+/// Share a version of an artifact through cloud file storage (the preview
+/// panel's Share button): uploads it and returns its link, which is also
+/// recorded on the version. A version that already has a live link of the same
+/// kind returns it without uploading again.
+pub async fn ai_share_artifact(
+    config: &Config,
+    artifact_id: &str,
+    version: Option<u32>,
+    public: bool,
+) -> Result<Outcome<Value>, String> {
+    let publisher = crate::integrations::file_storage::artifact_publisher(config)
+        .ok_or_else(|| "sign in to share artifacts".to_string())?;
+    let artifacts = super::tiny_store::artifacts_service(
+        &config.workspace_dir,
+        super::files::FileRoots::from_config(config),
+        None,
+        None,
+    )
+    .with_publisher(publisher);
+    let options = tiny_artifacts::PublishOptions {
+        public,
+        ..tiny_artifacts::PublishOptions::default()
+    };
+    let shared = artifacts
+        .publish(artifact_id, version, &options)
+        .await
+        .map_err(|e| e.to_string())?;
+    log::debug!(
+        "[artifacts] ai_share_artifact id={artifact_id} version={} public={public} reused={}",
+        shared.version,
+        shared.reused
+    );
+    Ok(Outcome::new(
+        json!({
+            "artifact_id": artifact_id,
+            "version": shared.version,
+            "url": shared.link.url,
+            "public": shared.link.public,
+            "expires_at_millis": shared.link.expires_at_millis,
+            "reused": shared.reused,
+        }),
+        vec![],
+    ))
+}

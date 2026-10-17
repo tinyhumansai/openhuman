@@ -25,9 +25,9 @@ named = [
     "task_source_add",
     "task_source_update",
     "task_source_remove",
-    "artifact_list",
-    "artifact_get",
-    "artifact_delete",
+    "list_artifacts",
+    "read_artifact",
+    "delete_artifact",
     "current_time",
     # Resolve due-date / reminder windows to exact timestamps instead of
     # hand-computing epoch seconds.

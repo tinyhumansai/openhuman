@@ -3,7 +3,7 @@
 //! [`ApprovalGate`] (in [`gate`]) is the single approval path — async
 //! middleware between the agent and any tool whose
 //! [`tinytools::Tool::external_effect`] returns `true`. It
-//! persists pending rows in SQLite, parks the tool-call future on a oneshot,
+//! persists pending rows in the storage backend, parks the tool-call future on a oneshot,
 //! and resumes when the UI dispatches `approval_decide`. Introduced for issue
 //! #1339 so external-channel writes (Slack post, email send, calendar create,
 //! …) cannot fire without explicit user consent.
@@ -22,12 +22,13 @@ pub mod rpc;
 pub mod schemas;
 pub mod store;
 mod store_documents;
+mod store_import;
+pub(crate) use store_documents::import_source;
 pub mod types;
 
 pub use gate::{
     is_detached_request, is_unanswered_approval_reason, parse_approval_reply, ApprovalChatContext,
-    ApprovalError, ApprovalGate, FlowRunContext, APPROVAL_CHAT_CONTEXT,
-    APPROVAL_COPILOT_STREAM_CONTEXT, APPROVAL_FLOW_RUN_CONTEXT, APPROVAL_UNANSWERED_PHRASE,
+    ApprovalError, ApprovalGate, ApprovalTurnContext, FlowRunContext, APPROVAL_UNANSWERED_PHRASE,
 };
 pub use redact::{redact_args, summarize_action};
 pub use schemas::all_controller_schemas as all_approval_controller_schemas;

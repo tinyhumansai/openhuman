@@ -1,14 +1,12 @@
 //! Tool: `spawn_parallel_agents` — fan out independent sub-agent tasks.
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 #[cfg(test)]
-use crate::agent::orchestration::spawn_parallel_graph::with_ownership_boundary;
+use crate::agent::orchestration::spawn_parallel::ParallelAgentLineage;
 #[cfg(test)]
-use crate::agent::orchestration::spawn_parallel_graph::ParallelAgentLineage;
-#[cfg(test)]
-use crate::agent::orchestration::spawn_parallel_graph::ParallelAgentResult;
-use crate::agent::orchestration::spawn_parallel_graph::ParallelAgentTask;
-use crate::agent::orchestration::spawn_parallel_graph::{
+use crate::agent::orchestration::spawn_parallel::ParallelAgentResult;
+use crate::agent::orchestration::spawn_parallel::ParallelAgentTask;
+use crate::agent::orchestration::spawn_parallel::{
     format_spawn_parallel_success, run_spawn_parallel_tasks_with_cancellation_and_workspace,
     SpawnParallelGraphOutcome,
 };
@@ -217,7 +215,7 @@ impl Tool for SpawnParallelAgentsTool {
 
     /// Run **without** the global per-tool wall-clock deadline. This is a
     /// fan-out primitive: it spawns N independent sub-agents and awaits them
-    /// concurrently via `spawn_parallel_graph`'s bounded `map_reduce`. Under the
+    /// concurrently via `spawn_parallel`'s bounded `map_reduce`. Under the
     /// default `Inherit` policy the whole fan-out is hard-killed at the
     /// single-tool timeout (120s by default) — so a group of long workers is
     /// truncated at one worker's budget instead of running to ~the slowest, and
@@ -241,25 +239,40 @@ impl Tool for SpawnParallelAgentsTool {
         tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let parent_call_id = crate::tools::host_extensions::tool_call_id(tool_context);
-        if let Some(live_parent) = super::ambient_parent_run_context("direct-spawn-parallel") {
-            return execute_spawn_parallel_agents(
-                args,
-                live_parent.cancellation.clone(),
-                live_parent.workspace.clone(),
-                live_parent.data.child(),
-                Some(&live_parent),
-                parent_call_id,
-            )
-            .await;
-        }
         let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace().cloned());
         execute_spawn_parallel_agents(
             args,
             tinyagents_harness::CancellationToken::new(),
             workspace_descriptor,
-            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+            crate::agent::tinyagents::host::OpenHumanRunContext::new().with_core(
+                crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                    .into_core(),
+            ),
             None,
             parent_call_id,
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+impl SpawnParallelAgentsTool {
+    /// Drive the tool the way a live parent turn does, over an explicit
+    /// `parent` execution context. Tests only: production turns reach the tool
+    /// through [`SpawnParallelAgentsDispatch`] with their own carrier.
+    pub(crate) async fn execute_under_parent(
+        &self,
+        args: serde_json::Value,
+        parent: crate::agent::harness::ParentExecutionContext,
+    ) -> anyhow::Result<ToolResult> {
+        let live_parent = super::live_parent_run_context("direct-spawn-parallel", parent);
+        execute_spawn_parallel_agents(
+            args,
+            live_parent.cancellation.clone(),
+            live_parent.workspace.clone(),
+            live_parent.data.child(),
+            Some(&live_parent),
+            None,
         )
         .await
     }

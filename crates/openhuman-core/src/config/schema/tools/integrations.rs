@@ -33,8 +33,6 @@ fn default_composio_mode() -> String {
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ComposioConfig {
-    #[serde(default)]
-    pub enabled: bool,
     #[serde(default = "default_entity_id")]
     pub entity_id: String,
     /// When true, the triage pipeline is disabled for all Composio
@@ -78,6 +76,21 @@ pub struct ComposioConfig {
     #[serde(default)]
     pub gmail_sync_query: String,
 
+    /// Toolkits offered to the agent: when non-empty, only these are listed
+    /// (case-insensitive; `_` and `-` are ignored, so `google_calendar` is
+    /// `googlecalendar`). An empty list offers every toolkit. Narrows what the
+    /// connector module lists (tools, toolkits, agent-ready toolkits) without
+    /// touching existing connections or scope preferences. Sent in the module's
+    /// load blob, so an edit applies on the next launch; a connector module
+    /// loaded from the module search path (`OPENHUMAN_MODULE_PATH`) gets no
+    /// host blob and offers every toolkit.
+    #[serde(default)]
+    pub offered_toolkits_allow: Vec<String>,
+    /// Toolkits never offered to the agent, even when `offered_toolkits_allow`
+    /// names them. Same matching and timing as the allow list.
+    #[serde(default)]
+    pub offered_toolkits_deny: Vec<String>,
+
     /// A direct-mode credential an embedder pinned for one agent. Never
     /// persisted. While set, Composio tools resolve against this config
     /// rather than reloading `config_path`, and its key wins over the
@@ -99,13 +112,14 @@ impl ComposioConfig {
 impl std::fmt::Debug for ComposioConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ComposioConfig")
-            .field("enabled", &self.enabled)
             .field("entity_id", &self.entity_id)
             .field("triage_disabled", &self.triage_disabled)
             .field("triage_disabled_toolkits", &self.triage_disabled_toolkits)
             .field("mode", &self.mode)
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("gmail_sync_query", &self.gmail_sync_query)
+            .field("offered_toolkits_allow", &self.offered_toolkits_allow)
+            .field("offered_toolkits_deny", &self.offered_toolkits_deny)
             .field("host_credential", &self.host_credential)
             .finish()
     }
@@ -190,13 +204,14 @@ fn default_entity_id() -> String {
 impl Default for ComposioConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
             entity_id: default_entity_id(),
             triage_disabled: false,
             triage_disabled_toolkits: Vec::new(),
             mode: default_composio_mode(),
             api_key: None,
             gmail_sync_query: String::new(),
+            offered_toolkits_allow: Vec::new(),
+            offered_toolkits_deny: Vec::new(),
             host_credential: None,
         }
     }

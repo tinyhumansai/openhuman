@@ -18,20 +18,41 @@ async fn an_inbound_message_is_recorded_once() {
     let p = params("m1", "hello");
     let thread = p.thread_id();
     assert_eq!(
-        record_inbound(tmp.path(), &p, &thread).await,
+        record_inbound(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            tmp.path(),
+            &p,
+            &thread
+        )
+        .await,
         Ok(Recorded::New)
     );
     assert_eq!(
-        record_inbound(tmp.path(), &p, &thread).await,
+        record_inbound(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            tmp.path(),
+            &p,
+            &thread
+        )
+        .await,
         Ok(Recorded::Duplicate),
         "a gateway retry is not recorded twice"
     );
 
-    let threads = crate::threads::store::list_threads(tmp.path().to_path_buf()).unwrap();
+    let threads = crate::threads::store::list_threads(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path().to_path_buf(),
+    )
+    .unwrap();
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].id, thread);
     assert_eq!(threads[0].title, "telegram · 42 · -100");
-    let messages = crate::threads::store::get_messages(tmp.path().to_path_buf(), &thread).unwrap();
+    let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path().to_path_buf(),
+        &thread,
+    )
+    .unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].id, "user:m1");
     assert_eq!(messages[0].sender, "user");
@@ -43,17 +64,51 @@ async fn replies_are_recorded_and_seed_the_next_turn() {
     let tmp = tempfile::tempdir().unwrap();
     let first = params("m1", "hello");
     let thread = first.thread_id();
-    record_inbound(tmp.path(), &first, &thread).await.unwrap();
-    record_reply(tmp.path(), &first, &thread, &[])
-        .await
-        .expect("nothing sent, nothing recorded");
-    record_reply(tmp.path(), &first, &thread, &["hi".into(), "there".into()])
-        .await
-        .unwrap();
+    record_inbound(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path(),
+        &first,
+        &thread,
+    )
+    .await
+    .unwrap();
+    record_reply(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path(),
+        &first,
+        &thread,
+        &[],
+    )
+    .await
+    .expect("nothing sent, nothing recorded");
+    record_reply(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path(),
+        &first,
+        &thread,
+        &["hi".into(), "there".into()],
+    )
+    .await
+    .unwrap();
     let second = params("m2", "again");
-    record_inbound(tmp.path(), &second, &thread).await.unwrap();
+    record_inbound(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path(),
+        &second,
+        &thread,
+    )
+    .await
+    .unwrap();
 
-    let prior = prior_turns(tmp.path(), &thread, "m2", 10).await.unwrap();
+    let prior = prior_turns(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path(),
+        &thread,
+        "m2",
+        10,
+    )
+    .await
+    .unwrap();
     let rows: Vec<(String, String)> = prior
         .iter()
         .map(|m| (m.role.clone(), m.content.clone()))
@@ -66,7 +121,15 @@ async fn replies_are_recorded_and_seed_the_next_turn() {
         ],
         "earlier turns only, not the message being answered"
     );
-    let limited = prior_turns(tmp.path(), &thread, "m2", 1).await.unwrap();
+    let limited = prior_turns(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path(),
+        &thread,
+        "m2",
+        1,
+    )
+    .await
+    .unwrap();
     assert_eq!(limited.len(), 1);
     assert_eq!(limited[0].content, "hi\n\nthere", "the most recent rows");
 }
@@ -81,7 +144,13 @@ async fn concurrent_retries_of_one_message_record_it_once() {
         let dir = tmp.path().to_path_buf();
         let (p, thread) = (p.clone(), thread.clone());
         tasks.push(tokio::spawn(async move {
-            record_inbound(&dir, &p, &thread).await
+            record_inbound(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                &dir,
+                &p,
+                &thread,
+            )
+            .await
         }));
     }
     let mut new = 0;
@@ -91,6 +160,11 @@ async fn concurrent_retries_of_one_message_record_it_once() {
         }
     }
     assert_eq!(new, 1, "exactly one concurrent retry is the new message");
-    let messages = crate::threads::store::get_messages(tmp.path().to_path_buf(), &thread).unwrap();
+    let messages = crate::threads::store::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        tmp.path().to_path_buf(),
+        &thread,
+    )
+    .unwrap();
     assert_eq!(messages.len(), 1);
 }

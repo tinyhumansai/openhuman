@@ -59,19 +59,22 @@ impl ToolDispatch<(), crate::agent::tinyagents::host::OpenHumanRunContext> for T
         let context = ToolExecutionContext::from_run_context(parent, call_id);
         let workspace_dir = match parent.data.parent.as_ref() {
             Some(parent_ctx) => parent_ctx.workspace_dir.clone(),
-            None => crate::config::ops::load_current_or_init()
+            None => crate::config::ops::load_current_or_init(&parent.data.dispatch_ctx())
                 .await
                 .map(|c| c.workspace_dir)
                 .map_err(|e| anyhow::anyhow!("[tool][todo] load config: {e}"))?,
         };
-        let is_write = arguments.get("todos").is_some();
+        let is_write = ["todos", "complete", "cancel"]
+            .iter()
+            .any(|key| arguments.get(*key).is_some());
         let scope = current_scope(parent.data.parent.as_ref(), Some(&context));
         let result = TodoTool::new(workspace_dir)
             .execute_with_parent_context(arguments, parent.data.parent.clone(), Some(&context))
             .await?;
-        // Only a whole-list write changes anything the frontend's todo drawer
-        // needs to hear about; a bare read (`{}`) re-reports the same list and
-        // would just be a redundant socket event.
+        // Only a write (the whole list, a `complete` or a `cancel`) changes
+        // anything the frontend's todo drawer needs to hear about; a bare read
+        // (`{}`) re-reports the same list and would just be a redundant socket
+        // event.
         if is_write && !result.is_error {
             if let Some(id) = scope.session_id() {
                 match serde_json::from_str::<serde_json::Value>(&result.output())

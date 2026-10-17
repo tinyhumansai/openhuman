@@ -1,7 +1,7 @@
 ---
 description: >-
   Memory: a pluggable engine that stores your documents, conversations and
-  learnings, recalls what matters before every turn, and answers questions
+  learnings, refreshes context in the background, and answers questions
   with citations.
 icon: brain
 ---
@@ -16,9 +16,9 @@ Open it from **Connections > Memory**. It has eight tabs: Engine, Ask, Explorer,
 
 Memory works around every turn, and the agent does not have to ask for it.
 
-- **Before the model answers**, OpenHuman logs what you said and recalls a short *memory pack* for the turn, sized to a token budget. The pack holds relevant learnings (and beliefs the engine built from them), documents from your brain, this agent's earlier conversations and, briefly, other agents' conversations. The pack is added to the model request for that turn only. It is never written into the chat, so your conversation stays exactly as you had it.
-- **After the answer**, the reply is logged with a one-line result for each tool it used.
-- **When a long chat is compacted**, OpenHuman recalls what the folded-away turns covered and adds it to the summary that replaces them.
+- **Before the model answers**, OpenHuman takes a completed *memory pack* from its short-lived cache, when one is available, and starts logging your message and refreshing memory in the background. The first turn can have no pack. A cached pack can hold learnings, beliefs, documents and earlier conversations from a previous lookup; it is labelled as cached context, so the agent can use explicit recall when it needs a current answer. The pack is added to requests for that turn only and never written into the chat.
+- **After the answer**, the reply is logged in the background with a one-line result for each tool it used.
+- **When a long chat is compacted**, OpenHuman can add completed cached memory to the summary and starts refreshing recall of the folded-away turns. Memory reads never hold up the summary.
 - **In the background**, every few minutes, the engine builds beliefs from what was stored, such as "the user prefers short answers" or "deploys happen on Fridays".
 
 Memory chips on an answer show which stored items the pack cited. To see what a turn would get, open **Ask > Pack preview**.
@@ -32,7 +32,7 @@ An engine stores your memory and answers questions about it. There are two.
 | TinyHumans | Hosted CortexDB run by TinyHumans, reached through the TinyHumans backend | You are signed in, or the host supplies a TinyHumans API key (headless and library hosts) |
 | CortexDB | Your own CortexDB, called directly (managed `api-v1.cortexdb.ai` or self-hosted) | A CortexDB API key (kept in the OS keychain), and an endpoint if it is not the managed one |
 
-With either engine your memory items live in CortexDB, not on your computer. OpenHuman keeps only bookkeeping locally, such as queued jobs and sync progress. See [Where your memory is stored](privacy-and-security.md#where-your-memory-is-stored).
+With either engine, committed memory items live in CortexDB. OpenHuman also keeps scrubbed pending agent writes in a private local queue until they are delivered, plus job and sync bookkeeping. Cached packs stay in process memory for a short time. See [Where your memory is stored](privacy-and-security.md#where-your-memory-is-stored).
 
 Pick an engine on the **Engine** tab. If you are signed out and have neither a CortexDB key nor a host-supplied TinyHumans API key, memory is off. The agent has no memory tool, nothing is stored, and the Memory page tells you why.
 
@@ -62,11 +62,11 @@ Sources sync when you press sync and on a schedule you set for each source. An u
 
 ### Conversations
 
-Every turn is logged as it happens: your message before the model runs, and the reply after. Each agent's turns are kept apart. Tool calls are stored by name and id with a one-line result, never their arguments. You can switch turn logging off on the **Conversations** tab, which also lists each agent's stored turns.
+Turn logging runs in the background: your message is queued before the model runs, and the reply after it commits. A slow or unavailable memory engine does not delay the answer. Each agent's turns are kept apart. Tool calls are stored by name and id with a one-line result, never their arguments. You can switch turn logging off on the **Conversations** tab, which also lists each agent's stored turns.
 
 ### Learnings
 
-A learning is one lasting statement: a preference, fact, procedure or correction. The agent saves them with its `memory` tool (the `learn` action), and you can add or delete them on the **Learnings** tab. Beliefs the engine built are listed there too, marked "Built belief".
+A learning is one lasting statement: a preference, fact, procedure or correction. The agent queues them with its `memory` tool (the `learn` action), and you can add or delete them on the **Learnings** tab. A tool acknowledgement saying "queued; not yet saved to memory" confirms local acceptance, not a completed save by the engine. Beliefs the engine built are listed there too, marked "Built belief".
 
 Everything is scrubbed for secrets and personal identifiers before it leaves your machine.
 
@@ -94,7 +94,7 @@ A host that runs OpenHuman agents as part of something larger, such as an AI com
 
 ## The agent's memory tool
 
-The agent has one tool, `memory`, with four actions: `recall`, `fetch`, `learn` and `forget`. OpenHuman's own [MCP server](../developing/mcp-server.md) offers the same abilities to other apps as `memory.recall`, `memory.fetch`, `memory.list`, `memory.learn` and `memory.forget`.
+The agent has one tool, `memory`, with four actions: `recall`, `fetch`, `learn` and `forget`. Explicit reads have a deadline and a shared budget for the current run; when memory is too slow, the agent gets an error and continues without retrying it in that run. Agent `learn` and `forget` requests are queued locally and delivered in the background, so their acknowledgements do not confirm a remote save or deletion. OpenHuman's own [MCP server](../developing/mcp-server.md) offers the same abilities to other apps as `memory.recall`, `memory.fetch`, `memory.list`, `memory.learn` and `memory.forget`.
 
 ## Settings and background work
 

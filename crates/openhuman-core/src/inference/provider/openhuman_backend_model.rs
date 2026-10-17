@@ -198,7 +198,7 @@ impl OpenHumanBackendModel {
             );
             return Ok(key);
         }
-        if crate::cron::scheduler_gate::is_signed_out() {
+        if crate::platform::llm_gate::is_signed_out() {
             anyhow::bail!(
                 "SESSION_EXPIRED: backend session not active — sign in to resume LLM work"
             );
@@ -541,7 +541,7 @@ fn managed_bearer(
 /// re-auths exactly as it would on a real backend 401. Deduped via the
 /// scheduler gate so N parallel managed turns in one tick don't emit N events.
 fn maybe_publish_local_session_expiry() {
-    if crate::cron::scheduler_gate::is_signed_out() {
+    if crate::platform::llm_gate::is_signed_out() {
         return;
     }
     log::warn!(

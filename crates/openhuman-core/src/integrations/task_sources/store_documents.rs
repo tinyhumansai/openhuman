@@ -29,12 +29,22 @@ use super::types::{
 use crate::config::Config;
 use crate::integrations::composio::contract::NormalizedTask;
 use crate::storage::documents::{compare_and_swap, text, Repo};
-use crate::storage::local::{self, ImportPlan};
 use crate::storage::{DocumentStoreExt, StorageError};
 
 pub(super) const SOURCES: &str = "task_sources";
 pub(super) const INGESTED: &str = "ingested_tasks";
 const DOMAIN: &str = "task_sources::store";
+
+/// The legacy `sources.db`, as the storage importer reads it.
+pub(crate) fn import_source() -> crate::storage::import::Source {
+    crate::storage::import::Source {
+        domain: "task_sources",
+        db: "task_sources/sources.db",
+        collections,
+        read_legacy: |scratch, _real| super::store_import::read(scratch),
+        rekey: |record, _config| record,
+    }
+}
 
 fn collections() -> Vec<CollectionSpec> {
     vec![
@@ -44,17 +54,13 @@ fn collections() -> Vec<CollectionSpec> {
     ]
 }
 
-/// The document store for this call: the host's configured backend or, by
-/// default, the document tables in `sources.db` (the legacy tables imported
-/// on first open). `None` keeps the legacy tables.
-pub(super) fn current(config: &Config) -> Result<Option<Docs>> {
-    let plan = ImportPlan {
-        domain: DOMAIN,
-        tables: super::store::import::TABLES,
-        read: &|| super::store::import::read(config),
-    };
-    let db_path = super::store::db_path(config);
-    Ok(local::repo(config, &db_path, DOMAIN, collections, &plan)?.map(Docs))
+/// The document store for this call: the storage backend, in the acting scope.
+pub(super) fn current(config: &Config) -> Result<Docs> {
+    Ok(Docs(Repo::current_for(
+        &config.workspace_dir,
+        DOMAIN,
+        collections,
+    )?))
 }
 
 /// The ledger id for one `(source, external task)`; the length prefix keeps
@@ -283,6 +289,8 @@ impl Docs {
             "payload": serde_json::to_string(task).context("serialize ingested task payload")?,
             "ingested_at": now.to_rfc3339(),
             "ingested_ms": now.timestamp_millis(),
+            // Breaks ties between arrivals in one millisecond.
+            "ingested_ns": now.timestamp_nanos_opt().unwrap_or(i64::MAX),
         });
         self.0.run(|docs| async move {
             docs.put(INGESTED, &key, doc, Precondition::None)
@@ -294,6 +302,7 @@ impl Docs {
     pub(super) fn list_ingested_refs(&self, source_id: &str) -> Result<Vec<IngestedTaskRef>> {
         let query = Query::filter(Filter::eq("source_id", source_id))
             .sort(Sort::asc("ingested_ms"))
+            .sort(Sort::asc("ingested_ns"))
             .sort(Sort::asc("external_id"));
         self.0.run(|docs| async move {
             Ok(docs
@@ -323,6 +332,7 @@ impl Docs {
         let query =
             Query::filter(Filter::eq("source_id", source_id).and(Filter::exists("payload", true)))
                 .sort(Sort::desc("ingested_ms"))
+                .sort(Sort::desc("ingested_ns"))
                 .limit(limit.max(1));
         self.0.run(|docs| async move {
             let page = docs.query(INGESTED, &query).await?;

@@ -1,5 +1,4 @@
 use super::*;
-use crate::voice::audio_capture::RecordingResult;
 use crate::voice::server::types::{MAX_INITIAL_PROMPT_CHARS, MAX_RECENT_TRANSCRIPTS};
 
 #[test]
@@ -22,38 +21,22 @@ async fn server_status_initial() {
     assert!(status.last_error.is_none());
 }
 
-#[tokio::test]
-async fn stale_processing_cannot_reset_newer_recording_state() {
-    let state = Arc::new(Mutex::new(ServerState::Recording));
-    let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(2));
-
-    update_state_if_current(
-        &state,
-        &session_generation,
-        1,
-        ServerState::Idle,
-        "stale_test",
-    )
-    .await;
-
-    assert_eq!(*state.lock().await, ServerState::Recording);
-}
-
-#[tokio::test]
-async fn current_processing_can_update_state() {
-    let state = Arc::new(Mutex::new(ServerState::Recording));
-    let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(2));
-
-    update_state_if_current(
-        &state,
-        &session_generation,
-        2,
-        ServerState::Idle,
-        "current_test",
-    )
-    .await;
-
-    assert_eq!(*state.lock().await, ServerState::Idle);
+#[test]
+fn server_state_follows_the_module_session_phase() {
+    use crate::modules::voice::SessionPhase;
+    assert_eq!(
+        ServerState::from(SessionPhase::Stopped),
+        ServerState::Stopped
+    );
+    assert_eq!(ServerState::from(SessionPhase::Idle), ServerState::Idle);
+    assert_eq!(
+        ServerState::from(SessionPhase::Recording),
+        ServerState::Recording
+    );
+    assert_eq!(
+        ServerState::from(SessionPhase::Transcribing),
+        ServerState::Transcribing
+    );
 }
 
 #[test]
@@ -150,95 +133,28 @@ async fn capture_expected_app_name_is_none_off_macos() {
 #[tokio::test]
 async fn process_recording_sets_last_error_when_stop_fails() {
     let handle = RecordingHandle::from_test_result(Err("stop failed".to_string()));
-
     let state = Arc::new(Mutex::new(ServerState::Recording));
+    let recorder = recorder::Recorder::new(
+        crate::modules::voice::RecorderSession::unopened_for_test(),
+        state,
+    );
     let last_error = Arc::new(Mutex::new(None));
-    let generation = 1;
-    let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(generation));
 
     process_recording_bg(
         "test",
         handle,
         &Config::default(),
         &VoiceServerConfig::default(),
-        state.clone(),
+        recorder,
         Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        session_generation,
-        generation,
+        1,
         last_error.clone(),
         Arc::new(Mutex::new(Vec::new())),
         None,
     )
     .await;
 
-    assert_eq!(*state.lock().await, ServerState::Idle);
     assert_eq!(last_error.lock().await.as_deref(), Some("stop failed"));
-}
-
-#[tokio::test]
-async fn process_recording_short_audio_returns_to_idle_without_error() {
-    let handle = RecordingHandle::from_test_result(Ok(RecordingResult {
-        wav_bytes: vec![1, 2, 3],
-        duration_secs: 0.1,
-        sample_count: 3,
-        peak_rms: 0.5,
-    }));
-
-    let state = Arc::new(Mutex::new(ServerState::Recording));
-    let last_error = Arc::new(Mutex::new(None));
-    let generation = 1;
-    let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(generation));
-
-    process_recording_bg(
-        "test",
-        handle,
-        &Config::default(),
-        &VoiceServerConfig::default(),
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        session_generation,
-        generation,
-        last_error.clone(),
-        Arc::new(Mutex::new(Vec::new())),
-        None,
-    )
-    .await;
-
-    assert_eq!(*state.lock().await, ServerState::Idle);
-    assert!(last_error.lock().await.is_none());
-}
-
-#[tokio::test]
-async fn process_recording_silence_skips_transcription() {
-    let handle = RecordingHandle::from_test_result(Ok(RecordingResult {
-        wav_bytes: vec![1, 2, 3],
-        duration_secs: 1.0,
-        sample_count: 3,
-        peak_rms: 0.0,
-    }));
-
-    let state = Arc::new(Mutex::new(ServerState::Recording));
-    let last_error = Arc::new(Mutex::new(None));
-    let generation = 1;
-    let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(generation));
-
-    process_recording_bg(
-        "test",
-        handle,
-        &Config::default(),
-        &VoiceServerConfig::default(),
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        session_generation,
-        generation,
-        last_error.clone(),
-        Arc::new(Mutex::new(Vec::new())),
-        None,
-    )
-    .await;
-
-    assert_eq!(*state.lock().await, ServerState::Idle);
-    assert!(last_error.lock().await.is_none());
 }
 
 // ── truncate_for_log ───────────────────────────────────────────

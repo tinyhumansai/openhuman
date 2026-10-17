@@ -1,6 +1,7 @@
 //! ChatGPT / OpenAI Codex subscription OAuth for the `openai` cloud provider slug.
 
 mod flow;
+mod pending;
 mod store;
 
 #[cfg(test)]

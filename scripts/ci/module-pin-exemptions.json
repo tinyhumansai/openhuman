@@ -11,5 +11,11 @@
     "Delete an entry the moment the pins are reconciled. An exemption that has",
     "stopped being true fails the gate too \u2014 `expect` must still match."
   ],
-  "exemptions": []
+  "exemptions": [
+    {
+      "id": "tinyconnectors",
+      "expect": "v0.19.3-50-g00c5609b",
+      "reason": "The pinned TinyConnectors workspace package is still 0.19.3, matching the registry artifact; the gitlink sits 50 commits past that tag at the additive contract 1.22 (opt-in direct-route Composio triggers, off by default). Re-pin both once a release carrying it is cut."
+    }
+  ]
 }

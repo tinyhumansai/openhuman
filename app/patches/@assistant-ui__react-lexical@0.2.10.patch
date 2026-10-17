@@ -1,13 +1,16 @@
 diff --git a/dist/plugins/SyncPlugin.js b/dist/plugins/SyncPlugin.js
-index 579658dba..ee276a8e9 100644
+index 579658dba449d109e71c8645063ab3d8252e40b8..ee4724e1bb8216b6c291e2a59849c894bf85f3a2 100644
 --- a/dist/plugins/SyncPlugin.js
 +++ b/dist/plugins/SyncPlugin.js
-@@ -371,7 +371,7 @@ function SyncPlugin({ formatter: propFormatter } = {}) {
- 			if (isSyncingFromLexicalRef.current) return;
- 			const runtimeText = composerRuntime.getState().text;
- 			if (runtimeText === lastSyncedTextRef.current) return;
--			applyRuntimeText(runtimeText, void 0);
-+			applyRuntimeText(runtimeText, lastAppliedParserRef.current);
- 		});
- 	}, [
- 		editor,
+@@ -326,7 +326,10 @@ function SyncPlugin({ formatter: propFormatter } = {}) {
+ 					if (fullText !== lastSyncedTextRef.current) {
+ 						textDirtySinceSyncRef.current = true;
+ 						lastSyncedTextRef.current = fullText;
+-						composer.setText(fullText);
++						queueMicrotask(() => {
++							if (editor.isComposing()) return;
++							composer.setText(fullText);
++						});
+ 					}
+ 				} finally {
+ 					isSyncingFromLexicalRef.current = false;

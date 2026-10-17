@@ -2,33 +2,37 @@
 
 use std::collections::HashMap;
 
-use crate::agent::harness::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::OpenHumanSessionHost;
-use crate::config::rpc as config_rpc;
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 
 use super::defaults::default_agents;
 use super::types::{AgentRegistryEntry, AgentRegistryPatch, AgentRegistrySource, AgentToolInfo};
 
 const ORCHESTRATOR_AGENT_ID: &str = "orchestrator";
 
-pub async fn list_agents(include_disabled: bool) -> Result<Vec<AgentRegistryEntry>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
+pub async fn list_agents(
+    ctx: &DispatchCtx,
+    include_disabled: bool,
+) -> Result<Vec<AgentRegistryEntry>, String> {
+    let config = ctx.load_config().await?;
     Ok(merge_entries(
         &config.agent_registry.entries,
         include_disabled,
     ))
 }
 
-pub async fn get_agent(id: &str) -> Result<Option<AgentRegistryEntry>, String> {
+pub async fn get_agent(ctx: &DispatchCtx, id: &str) -> Result<Option<AgentRegistryEntry>, String> {
     let id = id.trim();
-    Ok(list_agents(true)
+    Ok(list_agents(ctx, true)
         .await?
         .into_iter()
         .find(|agent| agent.id == id))
 }
 
 pub async fn upsert_custom_agent(
+    ctx: &DispatchCtx,
     mut entry: AgentRegistryEntry,
 ) -> Result<AgentRegistryEntry, String> {
     entry.source = AgentRegistrySource::Custom;
@@ -41,7 +45,7 @@ pub async fn upsert_custom_agent(
         ));
     }
 
-    let mut config = config_rpc::load_config_with_timeout().await?;
+    let mut config = ctx.load_config().await?;
     match config
         .agent_registry
         .entries
@@ -59,6 +63,7 @@ pub async fn upsert_custom_agent(
 }
 
 pub async fn update_agent(
+    ctx: &DispatchCtx,
     id: &str,
     patch: AgentRegistryPatch,
 ) -> Result<AgentRegistryEntry, String> {
@@ -68,7 +73,7 @@ pub async fn update_agent(
     }
 
     let defaults = default_agents();
-    let mut config = config_rpc::load_config_with_timeout().await?;
+    let mut config = ctx.load_config().await?;
     let entry = match config
         .agent_registry
         .entries
@@ -102,8 +107,13 @@ pub async fn update_agent(
     Ok(updated)
 }
 
-pub async fn set_agent_enabled(id: &str, enabled: bool) -> Result<AgentRegistryEntry, String> {
+pub async fn set_agent_enabled(
+    ctx: &DispatchCtx,
+    id: &str,
+    enabled: bool,
+) -> Result<AgentRegistryEntry, String> {
     update_agent(
+        ctx,
         id,
         AgentRegistryPatch {
             enabled: Some(enabled),
@@ -113,13 +123,13 @@ pub async fn set_agent_enabled(id: &str, enabled: bool) -> Result<AgentRegistryE
     .await
 }
 
-pub async fn remove_agent(id: &str) -> Result<bool, String> {
+pub async fn remove_agent(ctx: &DispatchCtx, id: &str) -> Result<bool, String> {
     let id = id.trim();
     if id.is_empty() {
         return Err("id is required".to_string());
     }
 
-    let mut config = config_rpc::load_config_with_timeout().await?;
+    let mut config = ctx.load_config().await?;
     let before = config.agent_registry.entries.len();
     config.agent_registry.entries.retain(|agent| agent.id != id);
     let removed = config.agent_registry.entries.len() < before;
@@ -144,11 +154,11 @@ pub async fn remove_agent(id: &str) -> Result<bool, String> {
 /// live in a separate set and are intentionally not included — the picker
 /// surfaces the stable built-in surface only. Sorted + deduped by name for a
 /// stable picker UI.
-pub async fn available_tools() -> Result<Vec<AgentToolInfo>, String> {
-    let config = config_rpc::load_config_with_timeout().await?;
+pub async fn available_tools(ctx: &DispatchCtx) -> Result<Vec<AgentToolInfo>, String> {
+    let config = ctx.load_config().await?;
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .map_err(|e| format!("failed to initialise AgentDefinitionRegistry: {e}"))?;
-    let agent = OpenHumanSessionHost::from_config_for_agent(&config, ORCHESTRATOR_AGENT_ID)
+    let agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, ORCHESTRATOR_AGENT_ID)
         .map_err(|e| format!("failed to build tools-catalog agent: {e}"))?;
 
     let mut tools: Vec<AgentToolInfo> = agent

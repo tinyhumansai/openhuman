@@ -2,23 +2,56 @@
 //! document layout (`store_documents.rs`): one `paired_devices` document per
 //! `channel_id`, with the columns as fields and `revoked` as a boolean.
 //! `shared_secret_encrypted` was never written by the store and is not
-//! carried over. The driver ([`crate::storage::local`]) writes the documents
-//! and then renames the table to `_legacy_paired_devices`.
+//! carried over. The legacy file is only ever opened by the storage importer
+//! (on a scratch copy of it), never by the running store.
 
+use crate::storage::rusqlite;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use super::super::store_documents::DEVICES;
+use super::store_documents::DEVICES;
 use crate::config::Config;
-use crate::storage::local::{table_exists, ImportDoc};
+use crate::storage::import::{table_exists, ImportDoc};
 
-/// The legacy tables this import retires.
-pub(crate) const TABLES: &[&str] = &["paired_devices"];
+/// The legacy database, `<workspace>/devices/devices.db`.
+pub(crate) fn db_path(config: &Config) -> std::path::PathBuf {
+    config.workspace_dir.join("devices").join("devices.db")
+}
+
+/// Opens the legacy database (creating the table when absent, which only
+/// happens on the importer's scratch copy) and runs `f` on it.
+pub(crate) fn with_connection<T>(
+    config: &Config,
+    f: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let db_path = db_path(config);
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create devices dir: {}", parent.display()))?;
+    }
+    let conn = Connection::open(&db_path)
+        .with_context(|| format!("open devices DB: {}", db_path.display()))?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS paired_devices (
+             channel_id                  TEXT PRIMARY KEY,
+             label                       TEXT NOT NULL,
+             device_pubkey               TEXT NOT NULL,
+             core_session_token_hash     TEXT NOT NULL,
+             shared_secret_encrypted     BLOB,
+             created_at                  TEXT NOT NULL,
+             last_seen_at                TEXT,
+             revoked                     INTEGER NOT NULL DEFAULT 0
+         );",
+    )
+    .context("devices DDL failed")?;
+    f(&conn)
+}
 
 /// Reads every legacy row.
 pub(crate) fn read(config: &Config) -> Result<Vec<ImportDoc>> {
-    super::with_connection(config, read_rows)
+    with_connection(config, read_rows)
 }
 
 fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
-use {crate::cron, tinyflows_schedule::types::CronJobPatch};
+use {crate::cron, tinyflows_bus::schedule::types::CronJobPatch};
 
 pub struct CronUpdateTool {
     config: Arc<Config>,

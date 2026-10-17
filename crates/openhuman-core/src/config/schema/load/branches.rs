@@ -9,8 +9,8 @@ use super::dirs::{default_action_dir, resolve_action_dir, ConfigResolutionSource
 use super::env::EnvLookup;
 use super::impl_load::migration_source;
 use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_legacy_inference_url, migrate_legacy_memory_backend,
-    migrate_legacy_memory_sources, migrate_search_settings,
+    migrate_cloud_provider_slugs, migrate_components, migrate_legacy_inference_url,
+    migrate_legacy_memory_backend, migrate_legacy_memory_sources, migrate_search_settings,
 };
 use super::secrets::decrypt_config_secrets;
 use anyhow::Result;
@@ -174,6 +174,7 @@ impl Config {
         migrate_legacy_inference_url(&mut config);
         let migration_raw = migration_source(&config_path, &contents).await;
         migrate_legacy_memory_backend(&mut config, &migration_raw);
+        migrate_components(&mut config, &migration_raw);
         migrate_cloud_provider_slugs(&mut config);
         migrate_search_settings(&mut config);
         migrate_legacy_memory_sources(&mut config);

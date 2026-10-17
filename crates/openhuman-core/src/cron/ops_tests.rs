@@ -1,7 +1,7 @@
 use super::*;
 use crate::cron::get_job;
 use tempfile::TempDir;
-use tinyflows_schedule::types::ActiveHours;
+use tinyflows_bus::schedule::types::ActiveHours;
 
 fn test_config(tmp: &TempDir) -> Config {
     let config = Config {
@@ -196,67 +196,15 @@ fn update_rejects_expression_for_non_cron_schedule() {
         .contains("Cannot update expression/tz on a non-cron schedule"));
 }
 
-// ── parse_delay ─────────────────────────────────────────────────
-
-#[test]
-fn parse_delay_accepts_seconds_minutes_hours_days() {
-    assert_eq!(
-        parse_human_delay("5s").unwrap(),
-        chrono::Duration::seconds(5)
-    );
-    assert_eq!(
-        parse_human_delay("10m").unwrap(),
-        chrono::Duration::minutes(10)
-    );
-    assert_eq!(parse_human_delay("2h").unwrap(), chrono::Duration::hours(2));
-    assert_eq!(parse_human_delay("3d").unwrap(), chrono::Duration::days(3));
-}
-
-#[test]
-fn parse_delay_defaults_to_minutes_when_no_unit() {
-    assert_eq!(
-        parse_human_delay("15").unwrap(),
-        chrono::Duration::minutes(15)
-    );
-}
-
-#[test]
-fn parse_delay_trims_whitespace() {
-    assert_eq!(
-        parse_human_delay("  7m  ").unwrap(),
-        chrono::Duration::minutes(7)
-    );
-}
-
-#[test]
-fn parse_delay_rejects_empty_input() {
-    let err = parse_human_delay("").unwrap_err();
-    assert!(err.to_string().contains("delay must not be empty"));
-    let err = parse_human_delay("   ").unwrap_err();
-    assert!(err.to_string().contains("delay must not be empty"));
-}
-
-#[test]
-fn parse_delay_rejects_unsupported_unit() {
-    let err = parse_human_delay("5x").unwrap_err();
-    assert!(err.to_string().contains("unsupported delay unit"));
-    // Multi-char unit not matched in the parse branch either.
-    let err = parse_human_delay("5wk").unwrap_err();
-    assert!(err.to_string().contains("unsupported delay unit"));
-}
-
-#[test]
-fn parse_delay_rejects_non_numeric_prefix() {
-    // No ascii-digit prefix at all → empty num, parse() fails.
-    assert!(parse_human_delay("abc").is_err());
-}
-
 // ── add_once ────────────────────────────────────────────────────
 
 #[test]
 fn add_once_creates_future_at_schedule() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
+    // The first call in a process starts the module runtime and attaches the
+    // module (seconds); take the baseline after it so only the call is timed.
+    crate::cron::list_jobs(&config).unwrap();
     let before = chrono::Utc::now();
     let job = add_once(&config, "5m", "echo hello").unwrap();
     match job.schedule {
@@ -426,7 +374,9 @@ async fn cron_runs_returns_empty_history_for_new_job() {
 async fn cron_run_rejects_empty_job_id() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = cron_run(&config, "").await.unwrap_err();
+    let err = cron_run(&crate::core::runtime::DispatchCtx::ambient(), &config, "")
+        .await
+        .unwrap_err();
     assert!(err.contains("Missing 'job_id'"));
 }
 
@@ -434,7 +384,13 @@ async fn cron_run_rejects_empty_job_id() {
 async fn cron_run_rejects_whitespace_job_id() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = cron_run(&config, "   ").await.unwrap_err();
+    let err = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "   ",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("Missing 'job_id'"));
 }
 
@@ -442,7 +398,13 @@ async fn cron_run_rejects_whitespace_job_id() {
 async fn cron_run_errors_when_cron_disabled() {
     let tmp = TempDir::new().unwrap();
     let config = disabled_cron_config(&tmp);
-    let err = cron_run(&config, "some-id").await.unwrap_err();
+    let err = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "some-id",
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("cron is disabled"));
 }
 
@@ -452,7 +414,13 @@ async fn cron_run_returns_queued_immediately_for_valid_job() {
     let config = test_config(&tmp);
     let job = make_job(&config, "*/5 * * * *", None, "echo hello");
 
-    let out = cron_run(&config, &job.id).await.unwrap();
+    let out = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert_eq!(out.value["job_id"], json!(job.id));
     assert_eq!(out.value["status"], json!("queued"));
     assert!(out.logs.iter().any(|l| l.contains("enqueued")));
@@ -473,7 +441,13 @@ async fn cron_run_response_conforms_to_its_declared_schema() {
     let config = test_config(&tmp);
     let job = make_job(&config, "*/5 * * * *", None, "echo hello");
 
-    let out = cron_run(&config, &job.id).await.unwrap();
+    let out = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
     let result = out.value.as_object().expect("result payload is an object");
 
     let schema = cron_schemas("run");
@@ -535,11 +509,17 @@ async fn cron_run_rejects_duplicate_concurrent_execution() {
     let config = test_config(&tmp);
     let job = make_job(&config, "*/5 * * * *", None, "echo hello");
 
-    // Seed ACTIVE_RUNS directly to simulate an in-flight execution without
+    // Hold the run claim directly to simulate an in-flight execution without
     // spawning a real long-running subprocess (deterministic, no timing dependency).
-    ACTIVE_RUNS.lock().unwrap().insert(job.id.clone());
-    let err = cron_run(&config, &job.id).await.unwrap_err();
-    ACTIVE_RUNS.lock().unwrap().remove(&job.id);
+    let running = try_acquire_run(&job.id).expect("the job is free");
+    let err = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap_err();
+    drop(running);
 
     assert!(
         err.contains("already running"),
@@ -558,12 +538,15 @@ fn single_flight_system_job(config: &Config, name: &str) -> CronJob {
         },
     )
     .unwrap();
-    crate::cron::policy::set_policy(
+    crate::cron::update_job(
         config,
         &job.id,
-        crate::cron::policy::JobPolicy {
-            retries: Some(0),
-            single_flight: true,
+        CronJobPatch {
+            policy: Some(tinyflows_bus::schedule::JobPolicy {
+                retries: Some(0),
+                single_flight: true,
+            }),
+            ..CronJobPatch::default()
         },
     )
     .unwrap();
@@ -579,7 +562,13 @@ async fn run_job_now_runs_and_records_the_handler_result() {
         std::sync::Arc::new(|_ctx| Box::pin(async { Err("nope".to_string()) })),
     );
     let job = single_flight_system_job(&config, "ops-run-now");
-    let (success, output) = run_job_now(&config, &job.id).await.unwrap();
+    let (success, output) = run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap();
     assert!(!success);
     assert!(output.contains("nope"), "{output}");
     let runs = cron::list_runs(&config, &job.id, 10).unwrap();
@@ -600,9 +589,21 @@ async fn run_job_now_refuses_a_job_that_is_already_running() {
     let config = test_config(&tmp);
     let job = single_flight_system_job(&config, "ops-run-now-busy");
     let _running = try_acquire_run(&job.id).expect("the job is free");
-    let err = run_job_now(&config, &job.id).await.unwrap_err();
+    let err = run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("already running"), "{err}");
-    let err = cron_run(&config, &job.id).await.unwrap_err();
+    let err = cron_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &job.id,
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("already running"), "{err}");
 }
 
@@ -610,5 +611,11 @@ async fn run_job_now_refuses_a_job_that_is_already_running() {
 async fn run_job_now_reports_an_unknown_job() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    assert!(run_job_now(&config, "no-such-job").await.is_err());
+    assert!(run_job_now(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "no-such-job"
+    )
+    .await
+    .is_err());
 }

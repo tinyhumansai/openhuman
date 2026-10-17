@@ -1,6 +1,6 @@
 # .fly/fly.toml — openhuman-core on Fly.io
 #
-# See gitbooks/features/cloud-deploy.md for the full deployment guide.
+# See docs/gitbooks/en/features/cloud-deploy.md for the full deployment guide.
 # See https://fly.io/docs/reference/configuration/ for fly.toml reference.
 #
 # Quickstart:

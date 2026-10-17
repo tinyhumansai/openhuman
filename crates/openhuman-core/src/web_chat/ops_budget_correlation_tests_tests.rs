@@ -1,5 +1,9 @@
 use super::*;
 
+fn ctx() -> DispatchCtx {
+    DispatchCtx::ambient()
+}
+
 #[test]
 fn classify_budget_correlation_matrix() {
     // A budget error always records + surfaces budget copy, regardless of
@@ -47,44 +51,50 @@ const BINDING: &str = "openhuman-managed";
 #[tokio::test]
 async fn record_then_fresh_then_clear() {
     let thread = "budget-corr-test-lifecycle";
-    clear_budget_signal(thread).await; // isolate from other tests
-    assert!(!has_fresh_budget_signal(thread, BINDING).await);
+    clear_budget_signal(&ctx(), thread).await; // isolate from other tests
+    assert!(!has_fresh_budget_signal(&ctx(), thread, BINDING).await);
 
-    record_budget_signal(thread, BINDING).await;
-    assert!(has_fresh_budget_signal(thread, BINDING).await);
+    record_budget_signal(&ctx(), thread, BINDING).await;
+    assert!(has_fresh_budget_signal(&ctx(), thread, BINDING).await);
 
-    clear_budget_signal(thread).await;
-    assert!(!has_fresh_budget_signal(thread, BINDING).await);
+    clear_budget_signal(&ctx(), thread).await;
+    assert!(!has_fresh_budget_signal(&ctx(), thread, BINDING).await);
 }
 
 #[tokio::test]
 async fn stale_signal_is_not_fresh_and_is_evicted() {
     let thread = "budget-corr-test-stale";
     // Seed a signal older than the TTL.
-    record_budget_signal_aged(thread, BINDING, BUDGET_SIGNAL_TTL + Duration::from_secs(1)).await;
+    record_budget_signal_aged(
+        &ctx(),
+        thread,
+        BINDING,
+        BUDGET_SIGNAL_TTL + Duration::from_secs(1),
+    )
+    .await;
     // Reads as not-fresh and self-evicts.
-    assert!(!has_fresh_budget_signal(thread, BINDING).await);
+    assert!(!has_fresh_budget_signal(&ctx(), thread, BINDING).await);
     // Confirm eviction: still not fresh, and a later in-window seed works.
-    assert!(!has_fresh_budget_signal(thread, BINDING).await);
-    record_budget_signal_aged(thread, BINDING, Duration::from_secs(1)).await;
-    assert!(has_fresh_budget_signal(thread, BINDING).await);
-    clear_budget_signal(thread).await;
+    assert!(!has_fresh_budget_signal(&ctx(), thread, BINDING).await);
+    record_budget_signal_aged(&ctx(), thread, BINDING, Duration::from_secs(1)).await;
+    assert!(has_fresh_budget_signal(&ctx(), thread, BINDING).await);
+    clear_budget_signal(&ctx(), thread).await;
 }
 
 #[tokio::test]
 async fn signal_does_not_cross_provider_bindings() {
     let thread = "budget-corr-test-binding";
-    clear_budget_signal(thread).await;
+    clear_budget_signal(&ctx(), thread).await;
     // Budget hit on the managed route.
-    record_budget_signal(thread, "openhuman-managed").await;
+    record_budget_signal(&ctx(), thread, "openhuman-managed").await;
     // A turn re-routed to a different (BYO/local) provider must NOT inherit
     // the managed exhaustion — its empty response is unrelated.
-    assert!(!has_fresh_budget_signal(thread, "byo-deepseek").await);
+    assert!(!has_fresh_budget_signal(&ctx(), thread, "byo-deepseek").await);
     // The same managed binding still reads fresh (mismatch read above
     // evicted it, so re-record to prove the same-binding path).
-    record_budget_signal(thread, "openhuman-managed").await;
-    assert!(has_fresh_budget_signal(thread, "openhuman-managed").await);
-    clear_budget_signal(thread).await;
+    record_budget_signal(&ctx(), thread, "openhuman-managed").await;
+    assert!(has_fresh_budget_signal(&ctx(), thread, "openhuman-managed").await);
+    clear_budget_signal(&ctx(), thread).await;
 }
 
 #[tokio::test]
@@ -93,22 +103,25 @@ async fn record_prunes_other_threads_stale_entries() {
     let active = "budget-corr-test-active";
     // An abandoned thread leaves a stale entry behind...
     record_budget_signal_aged(
+        &ctx(),
         abandoned,
         BINDING,
         BUDGET_SIGNAL_TTL + Duration::from_secs(1),
     )
     .await;
     // ...which a later budget event on a DIFFERENT thread sweeps away.
-    record_budget_signal(active, BINDING).await;
+    record_budget_signal(&ctx(), active, BINDING).await;
     {
-        let signals = thread_budget_signals().lock_owned().await;
+        let signals = thread_budget_signals(&crate::core::runtime::DispatchCtx::ambient())
+            .lock_owned()
+            .await;
         assert!(
             !signals.contains_key(abandoned),
             "stale entry should be pruned"
         );
         assert!(signals.contains_key(active));
     }
-    clear_budget_signal(active).await;
+    clear_budget_signal(&ctx(), active).await;
 }
 
 #[tokio::test]
@@ -130,19 +143,19 @@ async fn budget_signals_stay_with_the_agent_that_recorded_them() {
     let thread = "budget-shared-thread";
 
     CoreContext::scope(std::sync::Arc::clone(&alpha), async {
-        record_budget_signal(thread, "managed").await;
+        record_budget_signal(&ctx(), thread, "managed").await;
     })
     .await;
 
     assert!(
         CoreContext::scope(alpha, async {
-            has_fresh_budget_signal(thread, "managed").await
+            has_fresh_budget_signal(&ctx(), thread, "managed").await
         })
         .await
     );
     assert!(
         !CoreContext::scope(beta, async {
-            has_fresh_budget_signal(thread, "managed").await
+            has_fresh_budget_signal(&ctx(), thread, "managed").await
         })
         .await
     );

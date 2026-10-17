@@ -344,7 +344,7 @@ async fn a_run_without_a_thread_keeps_one_scope() {
 fn repl_tools_are_exempt_from_compaction_but_not_from_the_cap() {
     // Compacting a `juice_find` answer would store it behind a second handle.
     // The byte cap must still apply: each REPL tool declares its own limit.
-    for tool in crate::inference::tokenjuice::REPL_TOOL_NAMES {
+    for tool in tinyjuice_bus::tools::REPL_TOOLS {
         assert!(is_compaction_exempt(tool), "{tool} must not be compacted");
         assert!(
             !is_truncation_exempt(tool),

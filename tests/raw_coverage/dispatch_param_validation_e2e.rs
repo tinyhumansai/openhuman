@@ -17,6 +17,7 @@
 //! is easy to write a test that looks like it covers the dispatch path and does
 //! not. These tests pin the observable behaviour on both sides of that line.
 
+use openhuman_core::core::runtime::DispatchCtx;
 use serde_json::{json, Map};
 
 use openhuman_core::core::all::{
@@ -44,9 +45,14 @@ async fn missing_required_param_is_refused_with_the_schema_comment() {
         .expect("`id` input")
         .comment;
 
-    let err = dispatch(state(), "openhuman.run_ledger_get", json!({}))
-        .await
-        .expect_err("`id` is required");
+    let err = dispatch(
+        DispatchCtx::process_default(),
+        state(),
+        "openhuman.run_ledger_get",
+        json!({}),
+    )
+    .await
+    .expect_err("`id` is required");
 
     assert_eq!(err, format!("missing required param 'id': {comment}"));
 
@@ -62,6 +68,7 @@ async fn missing_required_param_is_refused_with_the_schema_comment() {
 #[tokio::test]
 async fn unknown_param_is_refused_by_the_gate_alone() {
     let err = dispatch(
+        DispatchCtx::process_default(),
         state(),
         "openhuman.memory_engines_list",
         json!({ "nonsense_param": 1 }),
@@ -69,7 +76,10 @@ async fn unknown_param_is_refused_by_the_gate_alone() {
     .await
     .expect_err("unknown params are refused");
 
-    assert_eq!(err, "unknown param 'nonsense_param' for memory.engines_list");
+    assert_eq!(
+        err,
+        "unknown param 'nonsense_param' for memory.engines_list"
+    );
 }
 
 /// Declared types are enforced at the same gate, so a handler's own
@@ -77,6 +87,7 @@ async fn unknown_param_is_refused_by_the_gate_alone() {
 #[tokio::test]
 async fn mistyped_param_is_refused_with_the_declared_type() {
     let err = dispatch(
+        DispatchCtx::process_default(),
         state(),
         "openhuman.session_import_run",
         json!({ "dry_run": "yes" }),
@@ -97,9 +108,14 @@ async fn mistyped_param_is_refused_with_the_declared_type() {
 /// directory call controllers.
 #[tokio::test]
 async fn handler_refusal_differs_from_the_dispatcher_refusal_for_an_absent_param() {
-    let dispatched = dispatch(state(), "openhuman.memory_recall", json!({}))
-        .await
-        .expect_err("`question` is required");
+    let dispatched = dispatch(
+        DispatchCtx::process_default(),
+        state(),
+        "openhuman.memory_recall",
+        json!({}),
+    )
+    .await
+    .expect_err("`question` is required");
     assert!(
         dispatched.starts_with("missing required param 'question': "),
         "got: {dispatched}"
@@ -110,7 +126,7 @@ async fn handler_refusal_differs_from_the_dispatcher_refusal_for_an_absent_param
         .iter()
         .find(|controller| rpc_method_name(&controller.schema) == "openhuman.memory_recall")
         .expect("memory_recall is registered unconditionally");
-    let direct = (controller.handler)(Map::new())
+    let direct = (controller.handler)(DispatchCtx::process_default(), Map::new())
         .await
         .expect_err("the handler refuses too");
 
@@ -132,6 +148,7 @@ async fn handler_refusal_differs_from_the_dispatcher_refusal_for_an_absent_param
 #[tokio::test]
 async fn explicit_null_passes_the_gate_and_the_handler_refuses_instead() {
     let err = dispatch(
+        DispatchCtx::process_default(),
         state(),
         "openhuman.memory_recall",
         json!({ "question": null }),
@@ -156,6 +173,7 @@ async fn explicit_null_passes_the_gate_and_the_handler_refuses_instead() {
 #[tokio::test]
 async fn out_of_range_integer_is_refused_with_the_bound_named() {
     let err = dispatch(
+        DispatchCtx::process_default(),
         state(),
         "openhuman.config_update_autonomy_settings",
         json!({ "max_actions_per_hour": 4_294_967_296u64 }),
@@ -169,6 +187,7 @@ async fn out_of_range_integer_is_refused_with_the_bound_named() {
     );
 
     let err = dispatch(
+        DispatchCtx::process_default(),
         state(),
         "openhuman.config_update_autonomy_settings",
         json!({ "max_actions_per_hour": 0 }),

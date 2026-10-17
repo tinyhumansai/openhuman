@@ -15,7 +15,7 @@ fn failed_tool_completed(call_id: &str, tool: &str, output: &str) -> AgentProgre
         arguments: None,
         elapsed_ms: 5,
         iteration: 1,
-        failure: Some(crate::tools::status::classify(output, false)),
+        failure: Some(tinytools::status::classify(output, false)),
         display_label: None,
         display_detail: None,
         structured: None,
@@ -155,7 +155,7 @@ fn tool_spans_carry_the_model_that_requested_them() {
                 arguments: None,
                 elapsed_ms: 1,
                 iteration: 1,
-                failure: Some(crate::tools::status::classify(
+                failure: Some(tinytools::status::classify(
                     "Command failed (exit code 1)",
                     false,
                 )),

@@ -11,13 +11,12 @@
 
 use super::*;
 use chrono::{Duration, Utc};
+
 use tempfile::TempDir;
 
 fn test_config(dir: &TempDir) -> Config {
     let mut config = Config::default();
     config.workspace_dir = dir.path().to_path_buf();
-    // These tests exercise the legacy SQLite tables themselves.
-    config.storage.url = Some("classic".into());
     config
 }
 
@@ -78,19 +77,57 @@ fn exists_recent_returns_true_without_account_id_when_matching() {
 
 // ── exists_recent: negative cases (expired window) ─────────────────────────
 
+/// Files an arrival of the content `secs_ago` seconds in the past, as the
+/// store would have when the notification came in then.
+fn stamp_arrival(config: &Config, n: &IntegrationNotification, secs_ago: i64) {
+    let opened = crate::storage::local::open("notifications::test", &config.workspace_dir).unwrap();
+    let docs = std::sync::Arc::clone(opened.scoped().unwrap().documents());
+    let id = super::super::store_documents::dedup_id(
+        &n.provider,
+        n.account_id.as_deref(),
+        &n.title,
+        &n.body,
+    );
+    let last_ms = (Utc::now() - Duration::seconds(secs_ago)).timestamp_millis();
+    crate::storage::block_on(async move {
+        docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new(
+            super::super::store_documents::DEDUP,
+        ))
+        .await?;
+        docs.put(
+            super::super::store_documents::DEDUP,
+            &id,
+            serde_json::json!({ "last_ms": last_ms }),
+            tinystoragedrivers::Precondition::None,
+        )
+        .await
+    })
+    .unwrap();
+}
+
 #[test]
 fn exists_recent_returns_false_for_entries_older_than_60s() {
     let dir = TempDir::new().unwrap();
     let config = test_config(&dir);
 
-    let mut n = sample_notification_with("old-1", "slack", Some("acct-1"), "Hello", "World");
-    n.received_at = Utc::now() - Duration::seconds(61);
-    insert(&config, &n).unwrap();
+    let n = sample_notification_with("old-1", "slack", Some("acct-1"), "Hello", "World");
+    stamp_arrival(&config, &n, 61);
 
     assert!(
         !exists_recent(&config, "slack", Some("acct-1"), "Hello", "World").unwrap(),
         "notification older than 60s should not be considered recent"
     );
+}
+
+#[test]
+fn exists_recent_returns_true_for_content_that_arrived_just_now() {
+    let dir = TempDir::new().unwrap();
+    let config = test_config(&dir);
+
+    let n = sample_notification_with("new-1", "slack", Some("acct-1"), "Hello", "World");
+    insert(&config, &n).unwrap();
+
+    assert!(exists_recent(&config, "slack", Some("acct-1"), "Hello", "World").unwrap());
 }
 
 #[test]
@@ -260,14 +297,13 @@ fn insert_if_not_recent_after_expiry_inserts_again() {
     let dir = TempDir::new().unwrap();
     let config = test_config(&dir);
 
-    // Write an expired duplicate directly (bypass insert_if_not_recent to
-    // set received_at in the past).
-    let mut old = sample_notification_with("old-id", "slack", None, "Alert", "Server down");
-    old.received_at = Utc::now() - Duration::seconds(120);
+    // The same content arrived two minutes ago.
+    let old = sample_notification_with("old-id", "slack", None, "Alert", "Server down");
     insert(&config, &old).unwrap();
+    stamp_arrival(&config, &old, 120);
 
     // Now insert_if_not_recent should allow the same content because the
-    // prior entry is older than 60 s.
+    // prior arrival is older than 60 s.
     let fresh = sample_notification_with("fresh-id", "slack", None, "Alert", "Server down");
     assert!(
         insert_if_not_recent(&config, &fresh).unwrap(),

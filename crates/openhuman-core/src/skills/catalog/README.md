@@ -36,7 +36,8 @@ into the user skills directory.
 | File | Purpose |
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Feature gate (`skills` Cargo feature) and module wiring; re-exports the controller aggregators, `skill_registry`, `ReqwestTransport` and `HERMES_REGISTRY_ID` |
-| [`registry.rs`](./registry.rs) | `RegistryConfig` (environment knobs below), the process registry handle, the `FileCatalogStore` location |
+| [`registry.rs`](./registry.rs) | `RegistryConfig` (environment knobs below), the process registry handle |
+| [`store.rs`](./store.rs) | `HostCatalogStore`, the registry's `CatalogStore` on the storage backend (`tinyskills_catalogs/<registry>` documents under the acting scope); imports a legacy `<cache dir>/<registry>.json` once, never modifies it |
 | [`transport.rs`](./transport.rs) | `ReqwestTransport`, the `tinyskills::RegistryTransport` implementation (pinned addresses, no redirects, no proxy, cached clients) |
 | [`ops.rs`](./ops.rs) | Boot warm-up, paged browse/search, facets, detail, `install_from_catalog`, registry error messages and Sentry reporting |
 | [`tools.rs`](./tools.rs) | LLM-callable tools `skill_registry_browse`, `skill_registry_search`, `skill_registry_sources`, `skill_registry_install`, `skill_registry_uninstall` |
@@ -119,7 +120,7 @@ Environment overrides for prod scripts and deterministic tests:
 | --- | --- |
 | `OPENHUMAN_SKILL_REGISTRY_CATALOG_URL` | Read the Hermes index from this URL |
 | `OPENHUMAN_SKILL_REGISTRY_DOWNLOAD_BASE_URL` | Serve every `SKILL.md` from `<base>/<name>/SKILL.md` |
-| `OPENHUMAN_SKILL_REGISTRY_CACHE_DIR` | Catalog store directory (default `~/.openhuman/skill-registry`, file `hermes.json`) |
+| `OPENHUMAN_SKILL_REGISTRY_CACHE_DIR` | Cache directory (default `~/.openhuman/skill-registry`): the legacy `hermes.json` to import and, with no backend installed, the workspace holding the default backend's `storage/` |
 | `OPENHUMAN_SKILL_REGISTRY_REFRESH_ON_BOOT=0` | Skip the startup warm-up |
 | `OPENHUMAN_SKILL_INSTALL_ALLOW_LOCAL_HTTP=1` | Allow plain `http` to loopback hosts (fixtures, local mirrors) |
 
@@ -168,6 +169,6 @@ Security notes:
 ## Further reading
 
 - [Parent module (`skills`)](../README.md)
-- [MCP servers and skills](../../../../../gitbooks/features/integrations/mcp-and-skills.md)
+- [MCP servers and skills](../../../../../docs/gitbooks/en/features/integrations/mcp-and-skills.md)
 - [tinyskills submodule](../../../../../vendor/tinyskills/README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

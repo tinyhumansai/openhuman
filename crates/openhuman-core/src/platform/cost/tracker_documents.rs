@@ -1,10 +1,10 @@
 //! The cost ledger on the `tinystoragedrivers` document port.
 //!
-//! Used instead of `state/costs.jsonl` when the host configured a storage
-//! backend ([`crate::storage`]); `CostStorage` in `tracker.rs` picks it per
-//! call, so records live under the acting agent's storage scope (`local` on a
-//! single-user host). Without a backend the JSONL file at today's path is
-//! used unchanged.
+//! The only ledger: `CostStorage` in `tracker.rs` opens it per call, so
+//! records live under the acting agent's storage scope (`local` on a
+//! single-user host) in the installed backend, or the workspace default when
+//! none is installed ([`crate::storage::local`]). A legacy `state/costs.jsonl`
+//! is imported once.
 //!
 //! # Layout
 //!
@@ -31,13 +31,18 @@ fn collections() -> Vec<CollectionSpec> {
     vec![CollectionSpec::new(RECORDS).index(IndexSpec::new("by_time", ["ts_ms"]))]
 }
 
-/// The document store for this call, when the host configured one.
-pub(super) fn current() -> Result<Option<CostDocs>> {
+/// The document store for this call: the installed backend, else the
+/// workspace default, in the acting scope.
+pub(super) fn current(workspace_dir: &std::path::Path) -> Result<CostDocs> {
     #[cfg(test)]
     if let Some(docs) = TEST_OVERRIDE.with(|slot| slot.borrow().clone()) {
-        return Ok(Some(docs));
+        return Ok(docs);
     }
-    Ok(Repo::current(DOMAIN, collections)?.map(CostDocs))
+    Ok(CostDocs(Repo::current_for(
+        workspace_dir,
+        DOMAIN,
+        collections,
+    )?))
 }
 
 /// Runs `f` with `docs` standing in for the installed backend, on this thread

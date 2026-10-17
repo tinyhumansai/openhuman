@@ -9,7 +9,7 @@
 //! [`DetachedTaskRegistry`](tinyagents_tasks::DetachedTaskRegistry),
 //! keyed by its `task_id`, with:
 //! - an `Arc<RunQueue>` — the same steering channel the steering forwarder in
-//!   `run_turn_via_tinyagents_shared` drains mid-turn, so `steer_subagent` can
+//!   `TurnSpec::run` drains mid-turn, so `steer_subagent` can
 //!   inject a message when no crate-native steering handle is registered;
 //! - a TinyAgents `SteeringHandle` in the process-local
 //!   `SteeringRegistry` while the child TinyAgents run is active, so
@@ -21,7 +21,8 @@
 //!
 //! TinyAgents owns the process-local watch/cancel/abort/steering mechanics.
 //! OpenHuman retains product metadata, durable task-store projection, and the
-//! legacy `RunQueue` steering fallback. Ownership is enforced by parent session;
+//! legacy `RunQueue` steering fallback. Ownership is enforced by captured profile
+//! and parent session; user controls retain the profile without requiring a parent ID.
 //! terminal entries are pruned on `wait` and swept at the registry soft cap.
 //!
 //! ## Typed lifecycle ledger (issue #4249)
@@ -55,7 +56,6 @@ mod resolve;
 mod roster;
 mod steering;
 mod task_ledger;
-mod task_ledger_documents;
 mod wait;
 
 #[cfg(test)]
@@ -70,7 +70,7 @@ pub(crate) use cancel::{
     cancel_all, cancel_by_session_in_workspace, cancel_by_task, cancel_for_thread, stop_for_thread,
     CancelledSubagent,
 };
-pub(crate) use registry::{register, status_channel};
+pub(crate) use registry::{admit_spawn, register, status_channel, RegistrationError};
 pub(crate) use resolve::{resume_ref_for_task_in_workspace, task_id_for_session_in_workspace};
 pub(crate) use roster::active_subagents_context_block;
 pub(crate) use steering::steer_control;

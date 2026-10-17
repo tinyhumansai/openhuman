@@ -1,6 +1,7 @@
 //! [`ApprovalSecurityMiddleware`]: route external-effect tool calls through
 //! OpenHuman's human-in-the-loop approval gate at the tool boundary.
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -75,7 +76,12 @@ impl ApprovalSecurityMiddleware {
             .unwrap_or(false)
     }
 
-    pub(crate) async fn requires_approval(&self, name: &str, args: &serde_json::Value) -> bool {
+    pub(crate) async fn requires_approval(
+        &self,
+        dispatch: &DispatchCtx,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> bool {
         #[cfg(feature = "modules")]
         let desktop_approval_disabled = match self
             .tool_sets
@@ -83,7 +89,9 @@ impl ApprovalSecurityMiddleware {
             .flat_map(|set| set.iter())
             .find(|tool| tool.name() == name)
         {
-            Some(tool) => crate::desktop::control::approvals_disabled_for(tool.as_ref()).await,
+            Some(tool) => {
+                crate::desktop::control::approvals_disabled_for(dispatch, tool.as_ref()).await
+            }
             None => false,
         };
         #[cfg(not(feature = "modules"))]
@@ -94,19 +102,21 @@ impl ApprovalSecurityMiddleware {
 
 /// Host side of the harness approval seam: the tool-set lookup, the global
 /// [`ApprovalGate`] hookup and the terminal audit row. The harness
-/// `ApprovalGateMiddleware` drives it (see `harness_assembly`).
+/// `ApprovalGateMiddleware` drives it (see `turn_middleware`).
 #[async_trait]
 impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
     for ApprovalSecurityMiddleware
 {
     async fn requires_approval(
         &self,
-        _ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         call: &TaToolCall,
     ) -> bool {
         // Resolve external-effect up front so no tool borrow is held across the
         // approval await.
-        let has_ext = self.requires_approval(&call.name, &call.arguments).await;
+        let has_ext = self
+            .requires_approval(&ctx.data.dispatch_ctx(), &call.name, &call.arguments)
+            .await;
         tracing::debug!(
             tool = %call.name,
             has_external_effect = has_ext,
@@ -117,7 +127,7 @@ impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
 
     async fn resolve(
         &self,
-        _ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         call: &TaToolCall,
     ) -> ApprovalResolution {
         let Some(gate) = ApprovalGate::try_global() else {
@@ -136,7 +146,12 @@ impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
         let summary = summarize_action(&call.name, &call.arguments);
         let redacted = redact_args(&call.arguments);
         let (outcome, request_id) = gate
-            .intercept_audited(approval_name.as_ref(), &summary, redacted)
+            .intercept_audited(
+                &ctx.data.approval,
+                approval_name.as_ref(),
+                &summary,
+                redacted,
+            )
             .await;
         match outcome {
             GateOutcome::Deny { reason } => {

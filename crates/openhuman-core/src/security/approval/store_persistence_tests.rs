@@ -240,130 +240,6 @@ fn record_execution_unknown_id_is_safe_noop() {
 }
 
 #[test]
-fn migrate_columns_is_idempotent_on_v1_databases() {
-    // Simulate an older build by creating the v1 table shape
-    // manually (no executed_at / execution_outcome / execution_error)
-    // then opening the store via with_connection — the migration
-    // must add the missing columns without losing existing rows.
-    let dir = TempDir::new().unwrap();
-    let workspace = dir.path().to_path_buf();
-    let db_path = workspace.join("approval").join("approval.db");
-    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE pending_approvals (
-                request_id      TEXT PRIMARY KEY,
-                tool_name       TEXT NOT NULL,
-                action_summary  TEXT NOT NULL,
-                args_redacted   TEXT NOT NULL,
-                session_id      TEXT NOT NULL,
-                created_at      TEXT NOT NULL,
-                expires_at      TEXT,
-                decided_at      TEXT,
-                decision        TEXT
-            );",
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO pending_approvals
-                (request_id, tool_name, action_summary, args_redacted,
-                 session_id, created_at)
-             VALUES ('legacy', 'composio', 'legacy row', '{}', 'sess-X', ?1)",
-            params![Utc::now().to_rfc3339()],
-        )
-        .unwrap();
-    }
-    let mut config = Config {
-        workspace_dir: workspace,
-        ..Config::default()
-    };
-    config.storage.url = Some("classic".into());
-    // First open triggers the migration; existing row survives.
-    let rows = list_pending(&config).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].request_id, "legacy");
-    // After migration, record_execution must work end-to-end.
-    decide(&config, "legacy", ApprovalDecision::ApproveOnce).unwrap();
-    assert!(record_execution(&config, "legacy", ExecutionOutcome::Success, None).unwrap());
-    // Second open must be a no-op (migration is idempotent).
-    let rows = list_pending(&config).unwrap();
-    assert!(rows.is_empty(), "decided rows should not appear in pending");
-}
-
-#[test]
-fn migrate_session_id_scrub_overwrites_legacy_values_and_bumps_user_version() {
-    // Simulate an older build that wrote credential-shaped values
-    // into `session_id`. After opening the store via
-    // `with_connection`, every pre-existing session_id must be
-    // overwritten with the redaction sentinel, and re-opening the
-    // store must be a no-op (idempotent — guarded by user_version).
-    let dir = TempDir::new().unwrap();
-    let workspace = dir.path().to_path_buf();
-    let db_path = workspace.join("approval").join("approval.db");
-    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    // The bearer-shaped value below is a fixture, NOT a real
-    // credential — picked to be obviously recognizable in any
-    // diff if the scrub ever regresses.
-    let bearer_shaped = "deadbeefcafebabe1234567890abcdef";
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch(SCHEMA).unwrap();
-        conn.execute(
-            "INSERT INTO pending_approvals
-                (request_id, tool_name, action_summary, args_redacted,
-                 session_id, created_at)
-             VALUES ('legacy', 'composio', 'legacy row', '{}', ?1, ?2)",
-            params![bearer_shaped, Utc::now().to_rfc3339()],
-        )
-        .unwrap();
-        // Sanity-check: a fresh DB starts at user_version = 0.
-        let v: i64 = conn
-            .query_row("PRAGMA user_version", params![], |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, 0);
-    }
-    let mut config = Config {
-        workspace_dir: workspace,
-        ..Config::default()
-    };
-    config.storage.url = Some("classic".into());
-    // First open runs the scrub.
-    let _ = list_pending(&config).unwrap();
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        let stored: String = conn
-            .query_row(
-                "SELECT session_id FROM pending_approvals WHERE request_id = 'legacy'",
-                params![],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            stored, PRE_MIGRATION_SESSION_ID,
-            "scrub must overwrite legacy session_id with the redaction sentinel"
-        );
-        let v: i64 = conn
-            .query_row("PRAGMA user_version", params![], |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, 1, "user_version must be bumped to 1 after scrub");
-    }
-    // Second open must NOT touch already-scrubbed rows.
-    let _ = list_pending(&config).unwrap();
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        let stored: String = conn
-            .query_row(
-                "SELECT session_id FROM pending_approvals WHERE request_id = 'legacy'",
-                params![],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(stored, PRE_MIGRATION_SESSION_ID);
-    }
-}
-
-#[test]
 fn list_pending_expires_stale_rows_before_returning() {
     let (config, _dir) = test_config();
     insert_pending(
@@ -517,58 +393,6 @@ fn list_recent_decisions_clamps_zero_limit_to_one() {
 }
 
 #[test]
-fn list_recent_decisions_rejects_unknown_decision_values() {
-    let (config, _dir) = test_config();
-    insert_pending(&config, &sample("corrupt-decision", "sess-A"), "sess-A").unwrap();
-    with_connection(&config, |conn| {
-        conn.execute(
-            "UPDATE pending_approvals
-             SET decided_at = ?1, decision = ?2
-             WHERE request_id = ?3",
-            params![Utc::now().to_rfc3339(), "maybe", "corrupt-decision"],
-        )?;
-        Ok(())
-    })
-    .unwrap();
-
-    let err = list_recent_decisions(&config, 10).unwrap_err();
-
-    assert!(
-        err.to_string().contains("Invalid column type")
-            || err.to_string().contains("unknown approval decision"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn list_recent_decisions_rejects_invalid_audit_timestamps() {
-    let (config, _dir) = test_config();
-    insert_pending(&config, &sample("corrupt-time", "sess-A"), "sess-A").unwrap();
-    with_connection(&config, |conn| {
-        conn.execute(
-            "UPDATE pending_approvals
-             SET decided_at = ?1, decision = ?2
-             WHERE request_id = ?3",
-            params![
-                "not-a-date",
-                ApprovalDecision::Deny.as_str(),
-                "corrupt-time"
-            ],
-        )?;
-        Ok(())
-    })
-    .unwrap();
-
-    let err = list_recent_decisions(&config, 10).unwrap_err();
-
-    assert!(
-        err.to_string().contains("Invalid column type")
-            || err.to_string().contains("premature end of input"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
 fn insert_pending_round_trips_flow_source_context() {
     let (config, _dir) = test_config();
     let pending = flow_sample("flow-req-1", "flow-1", "run-1");
@@ -637,37 +461,6 @@ fn list_pending_for_flow_run_filters_to_the_matching_flow_and_run() {
 }
 
 #[test]
-fn list_recent_decisions_marks_unparseable_args_instead_of_failing() {
-    let (config, _dir) = test_config();
-    insert_pending(&config, &sample("corrupt-json", "sess-A"), "sess-A").unwrap();
-    with_connection(&config, |conn| {
-        conn.execute(
-            "UPDATE pending_approvals
-             SET args_redacted = ?1, decided_at = ?2, decision = ?3
-             WHERE request_id = ?4",
-            params![
-                "{not valid json",
-                Utc::now().to_rfc3339(),
-                ApprovalDecision::Deny.as_str(),
-                "corrupt-json"
-            ],
-        )?;
-        Ok(())
-    })
-    .unwrap();
-
-    let rows = list_recent_decisions(&config, 10).unwrap();
-    let row = rows
-        .iter()
-        .find(|row| row.request_id == "corrupt-json")
-        .expect("corrupt audit row is still listed");
-    assert_eq!(
-        row.args_redacted,
-        json!({ "_error": "args_redacted not valid JSON" })
-    );
-}
-
-#[test]
 fn agent_id_round_trips_and_older_rows_read_as_the_process() {
     let (config, _dir) = test_config();
     let mut owned = PendingApproval::new("owned", "shell", "run it", json!({}), None);
@@ -680,11 +473,18 @@ fn agent_id_round_trips_and_older_rows_read_as_the_process() {
     )
     .unwrap();
 
-    let alpha = list_pending_for_agent(&config, Some("alpha")).unwrap();
+    let alpha = list_pending_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Some("alpha"),
+    )
+    .unwrap();
     assert_eq!(alpha.len(), 1);
     assert_eq!(alpha[0].request_id, "owned");
     assert_eq!(alpha[0].agent_id.as_deref(), Some("alpha"));
-    let process = list_pending_for_agent(&config, None).unwrap();
+    let process =
+        list_pending_for_agent(&crate::core::runtime::DispatchCtx::ambient(), &config, None)
+            .unwrap();
     assert_eq!(process.len(), 1);
     assert_eq!(process[0].request_id, "process");
 
@@ -696,54 +496,4 @@ fn agent_id_round_trips_and_older_rows_read_as_the_process() {
     assert_eq!(pending_agent(&config, "missing").unwrap(), None);
     decide(&config, "owned", ApprovalDecision::Deny).unwrap();
     assert_eq!(pending_agent(&config, "owned").unwrap(), None);
-}
-
-#[test]
-fn migration_adds_the_agent_column_and_index_to_an_existing_table() {
-    let (config, _dir) = test_config();
-    let db_path = config.workspace_dir.join("approval").join("approval.db");
-    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    Connection::open(&db_path)
-        .unwrap()
-        .execute_batch(
-            "CREATE TABLE pending_approvals (
-                request_id      TEXT PRIMARY KEY,
-                tool_name       TEXT NOT NULL,
-                action_summary  TEXT NOT NULL,
-                args_redacted   TEXT NOT NULL,
-                session_id      TEXT NOT NULL,
-                created_at      TEXT NOT NULL,
-                expires_at      TEXT,
-                decided_at      TEXT,
-                decision        TEXT
-            );
-            INSERT INTO pending_approvals
-                (request_id, tool_name, action_summary, args_redacted, session_id, created_at)
-            VALUES ('legacy', 'shell', 'legacy row', '{}', 'sess-X', '2030-01-01T00:00:00Z');",
-        )
-        .unwrap();
-
-    let rows = list_pending(&config).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].agent_id.is_none(),
-        "a legacy row is the process's own"
-    );
-    let conn = Connection::open(&db_path).unwrap();
-    let columns: Vec<String> = conn
-        .prepare("PRAGMA table_info(pending_approvals)")
-        .unwrap()
-        .query_map(params![], |row| row.get::<_, String>(1))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    assert!(columns.iter().any(|c| c == "agent_id"));
-    let indexes: Vec<String> = conn
-        .prepare("PRAGMA index_list(pending_approvals)")
-        .unwrap()
-        .query_map(params![], |row| row.get::<_, String>(1))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    assert!(indexes.iter().any(|i| i == "idx_pending_approvals_agent"));
 }

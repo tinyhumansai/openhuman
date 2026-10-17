@@ -464,6 +464,9 @@ export function formatReport(result, { coreDefaults, shell, allowlist = {} }) {
  * "excluded on purpose" from "forgotten" without going archaeology.
  */
 export const CHAIN_GATES_NOT_FORWARDED = {
+  'openhuman-tinyhumans': {
+    profiles: 'The headless ProfileRuntime API belongs to openhuman-embed; the TinyHumans layer does not expose a standalone profiles gate. Its channels gate already enables embed profiles for channel relays.',
+  },
   'openhuman-embed': {
     'rss-bench':
       'Library-side hook for the embedded-RSS benchmark (#5046). Its binaries live in tinyhumansai/openhuman-benchmarks (`profile/`, #6944), which enables the core gate directly; no host in this repository turns it on.',
@@ -478,6 +481,9 @@ export const CHAIN_GATES_NOT_FORWARDED = {
  * catch. An entry here says "this one is local by design".
  */
 export const CHAIN_LOCAL_GATES = {
+  'openhuman-embed': {
+    profiles: 'The in-process ProfileRuntime facade is implemented in openhuman-embed and has no core gate; channels also enables it for profile relays.',
+  },
   'openhuman-tinyhumans': {
     jev: 'This crate owns the gate: the Jev-backed `tool_search` ranker (`tinytools-jev` over the TinyHumans System One proxy).',
   },
@@ -492,8 +498,42 @@ export const CHAIN_LOCAL_GATES = {
   },
   'openhuman-cli': {
     'bin-tools': 'CLI argument parsing + logger init for the `openhuman-fleet` binary.',
+    'linked-modules':
+      'Local development only: links module implementation crates into this binary through `openhuman-modules-linked`. Never a product gate (see checkLinkedModulesIsolation).',
   },
 };
+
+/** The non-product feature that links module implementations, and its crate. */
+export const LINKED_MODULES_FEATURE = 'linked-modules';
+export const LINKED_MODULES_CRATE = 'openhuman-modules-linked';
+
+/**
+ * `linked-modules` is a local-development gate and must never ship. Returns a
+ * list of human-readable violations:
+ *
+ *   * it appears in the product feature set (`product-features.txt`), which the
+ *     CI product lanes pass to cargo and the app must forward;
+ *   * the desktop app manifest names the gate or the bridge crate at all;
+ *   * the CLI's `default` features enable it (a bare `cargo build` would link
+ *     every module).
+ */
+export function checkLinkedModulesIsolation({ productFeatures, shellToml, cliFeatures }) {
+  const violations = [];
+  if (productFeatures.includes(LINKED_MODULES_FEATURE)) {
+    violations.push(`${LINKED_MODULES_FEATURE} is listed in the product feature set`);
+  }
+  const shell = stripComments(shellToml);
+  for (const needle of [LINKED_MODULES_FEATURE, LINKED_MODULES_CRATE]) {
+    if (shell.includes(needle)) {
+      violations.push(`the desktop app manifest names \`${needle}\``);
+    }
+  }
+  const defaults = cliFeatures.get('default') ?? [];
+  if (defaults.includes(LINKED_MODULES_FEATURE)) {
+    violations.push(`the CLI's default features enable ${LINKED_MODULES_FEATURE}`);
+  }
+  return violations;
+}
 
 /**
  * The `[features]` table of any manifest, as `name -> [items]`.

@@ -285,16 +285,16 @@ and reaches the mock backend must call `tinyhumans_boot::boot()` from
 [`tests/support/tinyhumans_boot.rs`](../../tests/support/tinyhumans_boot.rs) first.
 
 Further reading:
-[`gitbooks/developing/architecture.md`](../../gitbooks/developing/architecture.md),
-[`gitbooks/developing/engines.md`](../../gitbooks/developing/engines.md)
+[`docs/gitbooks/en/developing/architecture.md`](../../docs/gitbooks/en/developing/architecture.md),
+[`docs/gitbooks/en/developing/engines.md`](../../docs/gitbooks/en/developing/engines.md)
 (inference providers),
-[`gitbooks/developing/jev.md`](../../gitbooks/developing/jev.md) (the Jev
+[`docs/gitbooks/en/developing/jev.md`](../../docs/gitbooks/en/developing/jev.md) (the Jev
 ranker), and
-[`gitbooks/developing/embedding.md`](../../gitbooks/developing/embedding.md)
+[`docs/gitbooks/en/developing/embedding.md`](../../docs/gitbooks/en/developing/embedding.md)
 (embedding the core).
 
 ## Further reading
 
-- [Building the Rust core](../../gitbooks/developing/building-rust-core.md)
+- [Building the Rust core](../../docs/gitbooks/en/developing/building-rust-core.md)
 - [Crates overview](../README.md)
 - [Repository conventions (AGENTS.md)](../../AGENTS.md)

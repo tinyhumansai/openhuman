@@ -15,5 +15,5 @@ events; there is no `openhuman.todos_*` JSON-RPC API.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Goals and todos](../../../../../gitbooks/features/goals-and-todos.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Goals and todos](../../../../../docs/gitbooks/en/features/goals-and-todos.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

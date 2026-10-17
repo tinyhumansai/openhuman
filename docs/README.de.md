@@ -117,7 +117,7 @@ Die meisten Agent-Harnesses starten pro Agent einen schweren Prozess und senden 
 
 <h3>Für Entwickler gebaut</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust-Schnellstart</a> · <a href="../gitbooks/developing/embed/README.md">Einbettungsanleitung</a> · <a href="../crates/openhuman-embed/examples">Beispiele</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust-Schnellstart</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">Einbettungsanleitung</a> · <a href="../crates/openhuman-embed/examples">Beispiele</a></p>
 
 <p>Nutze es als Rust-Bibliothek: Rufe einen Agenten wie jede andere Funktion auf oder betreibe eine ganze Flotte auf einem kleinen Server.</p>
 
@@ -224,9 +224,9 @@ OpenHuman denkt die teuersten Teile neu: wie viel Text die KI lesen muss, wie si
 
 <p align="center">
  <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
-  <source media="(prefers-color-scheme: light)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
-  <img alt="SWE-bench-Verified-Lauf swe-x86-1: OpenHuman gegen sechs andere Harnesses in zehn Diagrammen" src="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench-Verified-Lauf swe-x86-1: OpenHuman gegen sechs andere Harnesses in zehn Diagrammen" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
  </picture>
 </p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-Als Nächstes: der [Rust-Schnellstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), die [Einbettungsanleitung](../gitbooks/developing/embed/README.md) und die [Entwicklerdokumentation](https://tinyhumans.gitbook.io/openhuman/developing).
+Als Nächstes: der [Rust-Schnellstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), die [Einbettungsanleitung](../docs/gitbooks/en/developing/embed/README.md) und die [Entwicklerdokumentation](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

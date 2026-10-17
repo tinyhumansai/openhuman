@@ -62,13 +62,18 @@
     "HarnessBuilder",
     "HarnessCore",
     "HarnessError",
+    "HostAttachment",
     "HostKind",
     "HostTools",
     "HostTurnTools",
     "HttpHeader",
     "InMemorySessionStores",
+    "JobKind",
+    "JobKindHandler",
     "JobOrigin",
+    "JobOutcome",
     "JobRun",
+    "JobRunContext",
     "JobRunRecord",
     "JobSchedule",
     "JobSpec",
@@ -118,6 +123,7 @@
     "Session",
     "SessionStoreProvider",
     "SkillsPolicy",
+    "SteerRefused",
     "StorageInfo",
     "StreamEvent",
     "StreamMode",
@@ -140,6 +146,7 @@
     "TurnContext",
     "TurnOutcome",
     "TurnRequest",
+    "TurnSteering",
     "TurnStream",
     "UnknownKeyedSearchProvider",
     "VOICE_COMPILED_IN",
@@ -183,55 +190,55 @@
       "name": "access",
       "signature": "pub fn access(mut self, access: Access) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 348
+      "line": 387
     },
     {
       "name": "action_dir",
       "signature": "pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 305
+      "line": 344
     },
     {
       "name": "agent_defaults",
       "signature": "pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 156
+      "line": 160
     },
     {
       "name": "api_key",
       "signature": "pub fn api_key(mut self, key: impl Into<ApiKey>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 325
+      "line": 364
     },
     {
       "name": "autonomy",
       "signature": "pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 191
+      "line": 195
     },
     {
       "name": "backend_transport",
       "signature": "pub fn backend_transport(mut self, transport: Arc<dyn BackendTransport>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 230
+      "line": 234
     },
     {
       "name": "backend_url",
       "signature": "pub fn backend_url(mut self, url: impl Into<String>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 335
+      "line": 374
     },
     {
       "name": "config",
       "signature": "pub fn config(mut self, config: Config) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 465
+      "line": 504
     },
     {
       "name": "config_source",
       "signature": "pub fn config_source(mut self, source: ConfigSource) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 313
+      "line": 352
     },
     {
       "name": "controller_extension",
@@ -243,55 +250,67 @@
       "name": "cron",
       "signature": "pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 216
+      "line": 220
+    },
+    {
+      "name": "cron_delivery",
+      "signature": "pub fn cron_delivery( mut self, delivery: Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>, ) -> Self",
+      "source": "crates/openhuman-embed/src/runtime/builder.rs",
+      "line": 278
+    },
+    {
+      "name": "cron_job_handler",
+      "signature": "pub fn cron_job_handler( mut self, kind: crate::cron::JobKind, handler: Arc<dyn crate::cron::JobKindHandler>, ) -> Self",
+      "source": "crates/openhuman-embed/src/runtime/builder.rs",
+      "line": 292
     },
     {
       "name": "defer_services",
       "signature": "pub fn defer_services(mut self) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 383
+      "line": 422
     },
     {
       "name": "definition_base",
       "signature": "pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 175
+      "line": 179
     },
     {
       "name": "domains",
       "signature": "pub fn domains(mut self, domains: DomainSet) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 395
+      "line": 434
     },
     {
       "name": "host_kind",
       "signature": "pub fn host_kind(mut self, host_kind: HostKind) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 412
+      "line": 451
     },
     {
       "name": "learning",
       "signature": "pub fn learning(mut self, value: super::LearningSettings) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 211
+      "line": 215
     },
     {
       "name": "listen",
       "signature": "pub fn listen(self, host: impl Into<String>, port: u16) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 434
+      "line": 473
     },
     {
       "name": "listen_host",
       "signature": "pub fn listen_host(mut self, host: impl Into<String>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 439
+      "line": 478
     },
     {
       "name": "listen_port",
       "signature": "pub fn listen_port(mut self, port: u16) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 445
+      "line": 484
     },
     {
       "name": "live_policy",
@@ -303,25 +322,25 @@
       "name": "max_agents",
       "signature": "pub fn max_agents(mut self, limit: usize) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 268
+      "line": 307
     },
     {
       "name": "mcp_baseline",
       "signature": "pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 186
+      "line": 190
     },
     {
       "name": "memory_engine",
       "signature": "pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 244
+      "line": 248
     },
     {
       "name": "model_defaults",
       "signature": "pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 165
+      "line": 169
     },
     {
       "name": "modules",
@@ -339,25 +358,25 @@
       "name": "privacy",
       "signature": "pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 201
+      "line": 205
     },
     {
       "name": "provider",
       "signature": "pub fn provider(mut self, provider: Provider) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 341
+      "line": 380
     },
     {
       "name": "sandbox",
       "signature": "pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 170
+      "line": 174
     },
     {
       "name": "secrets",
       "signature": "pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 206
+      "line": 210
     },
     {
       "name": "server_launcher",
@@ -369,25 +388,25 @@
       "name": "services",
       "signature": "pub fn services(mut self, services: ServiceSet) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 367
+      "line": 406
     },
     {
       "name": "session",
       "signature": "pub fn session(mut self, session: Session) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 455
+      "line": 494
     },
     {
       "name": "session_store",
       "signature": "pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 259
+      "line": 263
     },
     {
       "name": "skills",
       "signature": "pub fn skills(mut self, policy: super::SkillsPolicy) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 180
+      "line": 184
     },
     {
       "name": "storage",
@@ -399,13 +418,13 @@
       "name": "token",
       "signature": "pub fn token(mut self, token: TokenSource) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 422
+      "line": 461
     },
     {
       "name": "tool_groups",
       "signature": "pub fn tool_groups(mut self, tool_groups: ToolGroups) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 404
+      "line": 443
     },
     {
       "name": "tool_hook",
@@ -423,19 +442,19 @@
       "name": "tool_rules",
       "signature": "pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 196
+      "line": 200
     },
     {
       "name": "workspace",
       "signature": "pub fn workspace(mut self, workspace: Workspace) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 278
+      "line": 317
     },
     {
       "name": "workspace_dir",
       "signature": "pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 292
+      "line": 331
     }
   ],
   "capabilities": {
@@ -460,6 +479,7 @@
       "skills": true,
       "storage-file": false,
       "storage-mongodb": false,
+      "storage-s3": false,
       "storage-sqlite": true,
       "tinymemes": true,
       "voice": false,
@@ -536,53 +556,53 @@
     "weight": "custom"
   },
   "pages": [
-    "gitbooks/developing/embed/README.md",
-    "gitbooks/developing/embed/api-reference.md",
-    "gitbooks/developing/embed/architecture.md",
-    "gitbooks/developing/embed/concepts/README.md",
-    "gitbooks/developing/embed/concepts/access-approvals.md",
-    "gitbooks/developing/embed/concepts/agents.md",
-    "gitbooks/developing/embed/concepts/channels.md",
-    "gitbooks/developing/embed/concepts/completer.md",
-    "gitbooks/developing/embed/concepts/cron.md",
-    "gitbooks/developing/embed/concepts/errors.md",
-    "gitbooks/developing/embed/concepts/hooks-seams.md",
-    "gitbooks/developing/embed/concepts/mcp.md",
-    "gitbooks/developing/embed/concepts/memory.md",
-    "gitbooks/developing/embed/concepts/observability.md",
-    "gitbooks/developing/embed/concepts/profiles-saas.md",
-    "gitbooks/developing/embed/concepts/providers.md",
-    "gitbooks/developing/embed/concepts/runtime-defaults.md",
-    "gitbooks/developing/embed/concepts/runtime.md",
-    "gitbooks/developing/embed/concepts/skills.md",
-    "gitbooks/developing/embed/concepts/testing.md",
-    "gitbooks/developing/embed/concepts/tools.md",
-    "gitbooks/developing/embed/concepts/turns-sessions.md",
-    "gitbooks/developing/embed/faq.md",
-    "gitbooks/developing/embed/guides/README.md",
-    "gitbooks/developing/embed/guides/cli-chatbot.md",
-    "gitbooks/developing/embed/guides/deploy-server.md",
-    "gitbooks/developing/embed/guides/lean-headless.md",
-    "gitbooks/developing/embed/guides/mock-backend-testing.md",
-    "gitbooks/developing/embed/guides/multi-agent.md",
-    "gitbooks/developing/embed/guides/saas-multi-tenant.md",
-    "gitbooks/developing/embed/installation.md",
-    "gitbooks/developing/embed/integrations/README.md",
-    "gitbooks/developing/embed/integrations/channels.md",
-    "gitbooks/developing/embed/integrations/composio.md",
-    "gitbooks/developing/embed/integrations/local-models.md",
-    "gitbooks/developing/embed/integrations/mcp.md",
-    "gitbooks/developing/embed/integrations/openai-compatible.md",
-    "gitbooks/developing/embed/integrations/storage-drivers.md",
-    "gitbooks/developing/embed/integrations/tinyhumans-managed.md",
-    "gitbooks/developing/embed/integrations/web-search.md",
-    "gitbooks/developing/embed/quickstart.md",
-    "gitbooks/developing/embed/troubleshooting.md",
+    "docs/gitbooks/en/developing/embed/README.md",
+    "docs/gitbooks/en/developing/embed/api-reference.md",
+    "docs/gitbooks/en/developing/embed/architecture.md",
+    "docs/gitbooks/en/developing/embed/concepts/README.md",
+    "docs/gitbooks/en/developing/embed/concepts/access-approvals.md",
+    "docs/gitbooks/en/developing/embed/concepts/agents.md",
+    "docs/gitbooks/en/developing/embed/concepts/channels.md",
+    "docs/gitbooks/en/developing/embed/concepts/completer.md",
+    "docs/gitbooks/en/developing/embed/concepts/cron.md",
+    "docs/gitbooks/en/developing/embed/concepts/errors.md",
+    "docs/gitbooks/en/developing/embed/concepts/hooks-seams.md",
+    "docs/gitbooks/en/developing/embed/concepts/mcp.md",
+    "docs/gitbooks/en/developing/embed/concepts/memory.md",
+    "docs/gitbooks/en/developing/embed/concepts/observability.md",
+    "docs/gitbooks/en/developing/embed/concepts/profiles-saas.md",
+    "docs/gitbooks/en/developing/embed/concepts/providers.md",
+    "docs/gitbooks/en/developing/embed/concepts/runtime-defaults.md",
+    "docs/gitbooks/en/developing/embed/concepts/runtime.md",
+    "docs/gitbooks/en/developing/embed/concepts/skills.md",
+    "docs/gitbooks/en/developing/embed/concepts/testing.md",
+    "docs/gitbooks/en/developing/embed/concepts/tools.md",
+    "docs/gitbooks/en/developing/embed/concepts/turns-sessions.md",
+    "docs/gitbooks/en/developing/embed/faq.md",
+    "docs/gitbooks/en/developing/embed/guides/README.md",
+    "docs/gitbooks/en/developing/embed/guides/cli-chatbot.md",
+    "docs/gitbooks/en/developing/embed/guides/deploy-server.md",
+    "docs/gitbooks/en/developing/embed/guides/lean-headless.md",
+    "docs/gitbooks/en/developing/embed/guides/mock-backend-testing.md",
+    "docs/gitbooks/en/developing/embed/guides/multi-agent.md",
+    "docs/gitbooks/en/developing/embed/guides/saas-multi-tenant.md",
+    "docs/gitbooks/en/developing/embed/installation.md",
+    "docs/gitbooks/en/developing/embed/integrations/README.md",
+    "docs/gitbooks/en/developing/embed/integrations/channels.md",
+    "docs/gitbooks/en/developing/embed/integrations/composio.md",
+    "docs/gitbooks/en/developing/embed/integrations/local-models.md",
+    "docs/gitbooks/en/developing/embed/integrations/mcp.md",
+    "docs/gitbooks/en/developing/embed/integrations/openai-compatible.md",
+    "docs/gitbooks/en/developing/embed/integrations/storage-drivers.md",
+    "docs/gitbooks/en/developing/embed/integrations/tinyhumans-managed.md",
+    "docs/gitbooks/en/developing/embed/integrations/web-search.md",
+    "docs/gitbooks/en/developing/embed/quickstart.md",
+    "docs/gitbooks/en/developing/embed/troubleshooting.md",
     "crates/openhuman-embed/README.md",
-    "gitbooks/developing/embedding.md",
-    "gitbooks/developing/embed/cookbook.md",
-    "gitbooks/developing/embed/capability-matrix.md",
-    "gitbooks/developing/embed/builder-setters.md",
-    "gitbooks/developing/embed/api-index.md"
+    "docs/gitbooks/en/developing/embedding.md",
+    "docs/gitbooks/en/developing/embed/cookbook.md",
+    "docs/gitbooks/en/developing/embed/capability-matrix.md",
+    "docs/gitbooks/en/developing/embed/builder-setters.md",
+    "docs/gitbooks/en/developing/embed/api-index.md"
   ]
 }

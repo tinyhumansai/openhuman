@@ -7,6 +7,7 @@
 
 use crate::env_guard::EnvVarGuard;
 use crate::rpc_harness::{error_message, payload};
+use openhuman_core::core::runtime::DispatchCtx;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -22,15 +23,16 @@ use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::mcp::registry::connections;
 use openhuman_core::mcp::registry::types::{CommandKind, InstalledServer, Transport};
 use openhuman_core::security::approval::gate::{
-    ApprovalChatContext, ApprovalGate, APPROVAL_CHAT_CONTEXT,
+    ApprovalChatContext, ApprovalGate, ApprovalTurnContext,
 };
 use openhuman_core::security::approval::{
     all_approval_controller_schemas, all_approval_registered_controllers, ExecutionOutcome,
     GateOutcome,
 };
 use openhuman_core::security::{live_policy, SecurityPolicy};
-use openhuman_core::tools::registry::{denials, registry_entries, registry_entries_for_config};
+use openhuman_core::tools::registry::{registry_entries, registry_entries_for_config};
 use openhuman_rpc::server::build_core_http_router;
+use tinytools::registry::denials;
 
 const TEST_RPC_TOKEN: &str = "tool-registry-approval-raw-e2e-token";
 
@@ -53,7 +55,8 @@ fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 fn ensure_rpc_auth() {
@@ -213,13 +216,38 @@ fn test_mcp_server() -> InstalledServer {
     }
 }
 
-fn install_test_mcp_server(config: &Config, server: &InstalledServer) {
-    openhuman_core::mcp::host::for_config(config)
-        .expect("open test MCP host")
-        .dynamic()
-        .store()
-        .insert_server(server)
-        .expect("install test MCP server");
+async fn install_test_mcp_server(config: &Config, server: &InstalledServer) -> InstalledServer {
+    openhuman_core::mcp::registry::config_ops::mcp_clients_config_set(
+        config,
+        json!({
+            "mcpServers": {
+                server.qualified_name.clone(): {
+                    "command": server.command.clone(),
+                    "args": server.args.clone(),
+                    "enabled": false,
+                }
+            }
+        }),
+    )
+    .await
+    .expect("install test MCP server through the module-owned config document");
+    let status = openhuman_core::mcp::registry::ops::mcp_clients_status(config)
+        .await
+        .expect("read module-owned MCP server status");
+    let server_id = status.value["servers"]
+        .as_array()
+        .and_then(|servers| {
+            servers
+                .iter()
+                .find(|entry| entry["qualified_name"] == server.qualified_name)
+        })
+        .and_then(|entry| entry["server_id"].as_str())
+        .expect("the installed server has a module-owned id")
+        .to_owned();
+    let mut installed = server.clone();
+    installed.server_id = server_id;
+    installed.enabled = false;
+    installed
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -369,7 +397,7 @@ enabled = true
 
 #[tokio::test(flavor = "current_thread")]
 async fn tool_registry_entries_fall_back_on_current_thread_runtime() {
-    let entries = registry_entries();
+    let entries = registry_entries(&openhuman_core::core::runtime::DispatchCtx::host_default());
     assert!(entries
         .iter()
         .any(|entry| entry.tool_id == "tools.web_search"));
@@ -385,8 +413,14 @@ async fn tool_registry_entries_include_connected_mcp_client_tools() {
         workspace_dir: tmp.path().to_path_buf(),
         ..Config::default()
     };
-    let server = test_mcp_server();
-    install_test_mcp_server(&config, &server);
+    let server = install_test_mcp_server(&config, &test_mcp_server()).await;
+    openhuman_core::mcp::registry::ops::mcp_clients_set_enabled(
+        &config,
+        server.server_id.clone(),
+        true,
+    )
+    .await
+    .expect("enable test MCP server");
     let tools = connections::connect(&config, &server)
         .await
         .expect("connect test mcp server");
@@ -400,8 +434,14 @@ async fn tool_registry_entries_include_connected_mcp_client_tools() {
         workspace_dir: other_tmp.path().to_path_buf(),
         ..Config::default()
     };
-    let other_server = test_mcp_server();
-    install_test_mcp_server(&other_config, &other_server);
+    let other_server = install_test_mcp_server(&other_config, &test_mcp_server()).await;
+    openhuman_core::mcp::registry::ops::mcp_clients_set_enabled(
+        &other_config,
+        other_server.server_id.clone(),
+        true,
+    )
+    .await
+    .expect("enable second test MCP server");
     connections::connect(&other_config, &other_server)
         .await
         .expect("connect second test mcp server");
@@ -460,12 +500,17 @@ async fn tool_registry_diagnostics_reports_config_and_audit_store_failures() {
         .expect_err("workspace file should prevent config load");
     assert!(err.contains("failed to load config for tool registry diagnostics"));
 
-    let broken_audit_config = Config {
+    // The write audit lives in the TinyMCP module (605ca6e841), which picks its
+    // storage provider once per process at load, so a broken workspace no
+    // longer reaches it. Fail it at the module seam instead; storage failures
+    // inside the audit are covered by tinymcp's `storage/failing.rs`.
+    let mut broken_audit_config = Config {
         workspace_dir: workspace_file,
         ..Config::default()
     };
+    broken_audit_config.modules.enabled = false;
     let diagnostics =
-        openhuman_core::tools::registry::ops::diagnostics_for_config(&broken_audit_config);
+        openhuman_core::tools::registry::ops::diagnostics_for_config(&broken_audit_config).await;
     assert!(diagnostics.value.mcp_write_audit.enabled);
     assert_eq!(diagnostics.value.mcp_write_audit.recent_rows, None);
     assert!(diagnostics
@@ -473,7 +518,7 @@ async fn tool_registry_diagnostics_reports_config_and_audit_store_failures() {
         .mcp_write_audit
         .last_error
         .as_deref()
-        .is_some_and(|error| !error.is_empty()));
+        .is_some_and(|error| error.contains("MCP module unavailable")));
 }
 
 #[tokio::test]
@@ -505,7 +550,9 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         .find(|controller| controller.schema.function == "list_pending")
         .expect("list pending controller")
         .handler;
-    let list_value = list_handler(Map::new()).await.expect("list pending value");
+    let list_value = list_handler(DispatchCtx::process_default(), Map::new())
+        .await
+        .expect("list pending value");
     assert!(list_value
         .get("result")
         .or(Some(&list_value))
@@ -519,27 +566,33 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         .handler;
     let mut invalid_limit = Map::new();
     invalid_limit.insert("limit".to_string(), json!("ten"));
-    assert!(recent_handler(invalid_limit)
-        .await
-        .expect_err("string limit")
-        .contains("expected unsigned integer"));
+    assert!(
+        recent_handler(DispatchCtx::process_default(), invalid_limit)
+            .await
+            .expect_err("string limit")
+            .contains("expected unsigned integer")
+    );
     for invalid in [json!(true), json!([]), json!({ "limit": 10 })] {
         let mut invalid_limit = Map::new();
         invalid_limit.insert("limit".to_string(), invalid);
-        assert!(recent_handler(invalid_limit)
-            .await
-            .expect_err("non-numeric limit")
-            .contains("expected unsigned integer"));
+        assert!(
+            recent_handler(DispatchCtx::process_default(), invalid_limit)
+                .await
+                .expect_err("non-numeric limit")
+                .contains("expected unsigned integer")
+        );
     }
     let mut negative_limit = Map::new();
     negative_limit.insert("limit".to_string(), json!(-1));
-    assert!(recent_handler(negative_limit)
-        .await
-        .expect_err("negative limit")
-        .contains("expected unsigned integer"));
+    assert!(
+        recent_handler(DispatchCtx::process_default(), negative_limit)
+            .await
+            .expect_err("negative limit")
+            .contains("expected unsigned integer")
+    );
     let mut null_limit = Map::new();
     null_limit.insert("limit".to_string(), Value::Null);
-    let recent_value = recent_handler(null_limit)
+    let recent_value = recent_handler(DispatchCtx::process_default(), null_limit)
         .await
         .expect("null limit should use default");
     assert!(recent_value
@@ -553,17 +606,19 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         .find(|controller| controller.schema.function == "decide")
         .expect("decide controller")
         .handler;
-    assert!(decide_handler(Map::new())
+    assert!(decide_handler(DispatchCtx::process_default(), Map::new())
         .await
         .expect_err("missing request id")
         .contains("missing required param 'request_id'"));
     let mut numeric_request = Map::new();
     numeric_request.insert("request_id".to_string(), json!(42));
     numeric_request.insert("decision".to_string(), json!("deny"));
-    assert!(decide_handler(numeric_request)
-        .await
-        .expect_err("numeric request id")
-        .contains("expected string"));
+    assert!(
+        decide_handler(DispatchCtx::process_default(), numeric_request)
+            .await
+            .expect_err("numeric request id")
+            .contains("expected string")
+    );
     for invalid in [
         Value::Null,
         json!(false),
@@ -573,55 +628,69 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         let mut invalid_request = Map::new();
         invalid_request.insert("request_id".to_string(), invalid);
         invalid_request.insert("decision".to_string(), json!("deny"));
-        assert!(decide_handler(invalid_request)
-            .await
-            .expect_err("non-string request id")
-            .contains("expected string"));
+        assert!(
+            decide_handler(DispatchCtx::process_default(), invalid_request)
+                .await
+                .expect_err("non-string request id")
+                .contains("expected string")
+        );
     }
     let mut numeric_decision = Map::new();
     numeric_decision.insert("request_id".to_string(), json!("missing"));
     numeric_decision.insert("decision".to_string(), json!(42));
-    assert!(decide_handler(numeric_decision)
-        .await
-        .expect_err("numeric decision")
-        .contains("expected string"));
+    assert!(
+        decide_handler(DispatchCtx::process_default(), numeric_decision)
+            .await
+            .expect_err("numeric decision")
+            .contains("expected string")
+    );
     let mut invalid_decision = Map::new();
     invalid_decision.insert("request_id".to_string(), json!("missing"));
     invalid_decision.insert("decision".to_string(), json!("maybe"));
-    assert!(decide_handler(invalid_decision)
-        .await
-        .expect_err("invalid decision")
-        .contains("approve_once|approve_always_for_tool|approve_always_for_flow|deny"));
+    assert!(
+        decide_handler(DispatchCtx::process_default(), invalid_decision)
+            .await
+            .expect_err("invalid decision")
+            .contains("approve_once|approve_always_for_tool|approve_always_for_flow|deny")
+    );
 
     let preauthorize_handler = controllers
         .iter()
         .find(|controller| controller.schema.function == "preauthorize_flow")
         .expect("preauthorize flow controller")
         .handler;
-    assert!(preauthorize_handler(Map::new())
-        .await
-        .expect_err("missing flow id")
-        .contains("missing required param 'flow_id'"));
+    assert!(
+        preauthorize_handler(DispatchCtx::process_default(), Map::new())
+            .await
+            .expect_err("missing flow id")
+            .contains("missing required param 'flow_id'")
+    );
     let mut missing_tools = Map::new();
     missing_tools.insert("flow_id".to_string(), json!("flow-1"));
-    assert!(preauthorize_handler(missing_tools)
-        .await
-        .expect_err("missing tool names")
-        .contains("missing required param 'tool_names'"));
+    assert!(
+        preauthorize_handler(DispatchCtx::process_default(), missing_tools)
+            .await
+            .expect_err("missing tool names")
+            .contains("missing required param 'tool_names'")
+    );
     let mut non_array_tools = Map::new();
     non_array_tools.insert("flow_id".to_string(), json!("flow-1"));
     non_array_tools.insert("tool_names".to_string(), json!("slack_post"));
-    assert!(preauthorize_handler(non_array_tools)
-        .await
-        .expect_err("non-array tool names")
-        .contains("expected array of strings"));
+    assert!(
+        preauthorize_handler(DispatchCtx::process_default(), non_array_tools)
+            .await
+            .expect_err("non-array tool names")
+            .contains("expected array of strings")
+    );
     let mut mixed_tools = Map::new();
     mixed_tools.insert("flow_id".to_string(), json!("flow-1"));
     mixed_tools.insert("tool_names".to_string(), json!(["ok", 42]));
-    assert!(preauthorize_handler(mixed_tools)
-        .await
-        .expect_err("non-string tool name entry")
-        .contains("expected string"));
+    assert!(
+        preauthorize_handler(DispatchCtx::process_default(), mixed_tools)
+            .await
+            .expect_err("non-string tool name entry")
+            .contains("expected string")
+    );
     // Success-path behavior (gate-absent tolerance, idempotent grants, audit
     // rows) is pinned by the unit tests in `approval::rpc`/`approval::store`;
     // asserting it here would be order-dependent on whether a sibling test
@@ -648,28 +717,27 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
                 client_id: "approval-raw-client".to_string(),
                 request_id: None,
             },
-            APPROVAL_CHAT_CONTEXT.scope(
-                ApprovalChatContext {
+            async move {
+                let turn = ApprovalTurnContext::chat(ApprovalChatContext {
                     thread_id: "approval-raw-thread".to_string(),
                     client_id: "approval-raw-client".to_string(),
                     // No turn in scope in this fixture; the field is documented as
                     // carried only when the caller has one (`gate.rs:91-95`).
                     request_id: None,
-                },
-                async move {
-                    gate_for_task
-                        .intercept_audited(
-                            "tools.composio_execute",
-                            "tools.composio_execute(action=execute, 123 bytes)",
-                            json!({
-                                "action": "execute",
-                                "tool_slug": "GMAIL_SEND_EMAIL",
-                                "body": "<redacted: string (500 chars)>"
-                            }),
-                        )
-                        .await
-                },
-            ),
+                });
+                gate_for_task
+                    .intercept_audited(
+                        &turn,
+                        "tools.composio_execute",
+                        "tools.composio_execute(action=execute, 123 bytes)",
+                        json!({
+                            "action": "execute",
+                            "tool_slug": "GMAIL_SEND_EMAIL",
+                            "body": "<redacted: string (500 chars)>"
+                        }),
+                    )
+                    .await
+            },
         )
         .await
     });
@@ -792,6 +860,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     // caller that forgot to scope a label.
     let no_chat = gate
         .intercept_audited(
+            &Default::default(),
             "tools.web_search",
             "tools.web_search(query=coverage)",
             json!({ "query": "coverage" }),
@@ -812,6 +881,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     );
     assert!(matches!(
         gate.intercept(
+            &Default::default(),
             "tools.web_search",
             "tools.web_search(query=legacy)",
             json!({ "query": "legacy" }),
@@ -841,6 +911,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             request_id: None,
         },
         gate.intercept_audited(
+            &Default::default(),
             "tools.composio_execute",
             "tools.composio_execute(action=execute)",
             json!({ "action": "execute" }),
@@ -865,20 +936,18 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         config.workspace_dir.clone(),
         config.workspace_dir.clone(),
     );
-    let live_policy_auto_approved = APPROVAL_CHAT_CONTEXT
-        .scope(
-            ApprovalChatContext {
+    let live_policy_auto_approved = gate
+        .intercept_audited(
+            &ApprovalTurnContext::chat(ApprovalChatContext {
                 thread_id: "approval-live-policy-thread".to_string(),
                 client_id: "approval-live-policy-client".to_string(),
                 // No turn in scope in this fixture; the field is documented as
                 // carried only when the caller has one (`gate.rs:91-95`).
                 request_id: None,
-            },
-            gate.intercept_audited(
-                "tools.live_policy_allowed",
-                "tools.live_policy_allowed(action=coverage)",
-                json!({ "action": "coverage" }),
-            ),
+            }),
+            "tools.live_policy_allowed",
+            "tools.live_policy_allowed(action=coverage)",
+            json!({ "action": "coverage" }),
         )
         .await;
     assert!(matches!(live_policy_auto_approved.0, GateOutcome::Allow));
@@ -895,24 +964,23 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
                 client_id: "approval-deny-client".to_string(),
                 request_id: None,
             },
-            APPROVAL_CHAT_CONTEXT.scope(
-                ApprovalChatContext {
+            async move {
+                let turn = ApprovalTurnContext::chat(ApprovalChatContext {
                     thread_id: "approval-deny-thread".to_string(),
                     client_id: "approval-deny-client".to_string(),
                     // No turn in scope in this fixture; the field is documented as
                     // carried only when the caller has one (`gate.rs:91-95`).
                     request_id: None,
-                },
-                async move {
-                    gate_for_deny_task
-                        .intercept_audited(
-                            "tools.web_search",
-                            "tools.web_search(query=deny)",
-                            json!({ "query": "deny" }),
-                        )
-                        .await
-                },
-            ),
+                });
+                gate_for_deny_task
+                    .intercept_audited(
+                        &turn,
+                        "tools.web_search",
+                        "tools.web_search(query=deny)",
+                        json!({ "query": "deny" }),
+                    )
+                    .await
+            },
         )
         .await
     });
@@ -972,11 +1040,15 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     let second_init = ApprovalGate::init_global(Config::default(), "session-ignored-second");
     assert_eq!(second_init.session_id(), gate.session_id());
 
-    let approval_dir = config.workspace_dir.join("approval");
-    if approval_dir.exists() {
-        std::fs::remove_dir_all(&approval_dir).expect("remove approval dir before failure branch");
+    // Approvals are documents in the workspace's default storage database
+    // (`sqlite:<workspace>/storage`, 5995128210). Drop the cached handle and
+    // block that directory, so the store's next open fails.
+    openhuman_core::storage::local::forget(&config.workspace_dir);
+    let storage_dir = config.workspace_dir.join("storage");
+    if storage_dir.exists() {
+        std::fs::remove_dir_all(&storage_dir).expect("remove storage dir before failure branch");
     }
-    std::fs::write(&approval_dir, "not a directory").expect("replace approval dir with file");
+    std::fs::write(&storage_dir, "not a directory").expect("replace storage dir with file");
 
     gate.record_execution(
         &request_id,
@@ -1017,19 +1089,17 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             client_id: "approval-persist-failure-client".to_string(),
             request_id: None,
         },
-        APPROVAL_CHAT_CONTEXT.scope(
-            ApprovalChatContext {
+        gate.intercept_audited(
+            &ApprovalTurnContext::chat(ApprovalChatContext {
                 thread_id: "approval-persist-failure-thread".to_string(),
                 client_id: "approval-persist-failure-client".to_string(),
                 // No turn in scope in this fixture; the field is documented as
                 // carried only when the caller has one (`gate.rs:91-95`).
                 request_id: None,
-            },
-            gate.intercept_audited(
-                "tools.persistence_failure",
-                "tools.persistence_failure(action=coverage)",
-                json!({ "action": "coverage" }),
-            ),
+            }),
+            "tools.persistence_failure",
+            "tools.persistence_failure(action=coverage)",
+            json!({ "action": "coverage" }),
         ),
     )
     .await;

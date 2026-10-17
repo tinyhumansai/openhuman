@@ -11,12 +11,12 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import type { CoreTodoStatus } from '../../../store/threadTodosSlice';
 
 /**
- * Adapts the core wire shape of a `todo` tool call — `{content, status}` with
- * `status: 'pending'|'in_progress'|'completed'` — onto the vendored
- * `TodoList` element's `TodoItem` shape (`{id, text, status}` with
- * `status: 'pending'|'active'|'done'|'failed'`). The core never sends
- * `'failed'` today, so that status never maps — kept here anyway so the
- * mapping stays honest if the core ever adds it.
+ * Adapts the core wire shape of a `todo` tool call — `{content, status,
+ * reason?}` with `status: 'pending'|'in_progress'|'completed'|'cancelled'` —
+ * onto the vendored `TodoList` element's `TodoItem` shape (`{id, text, status,
+ * reason?}` with `status: 'pending'|'active'|'done'|'failed'|'skipped'`). A
+ * cancelled step shows as skipped, never as pending. The core never sends
+ * `'failed'`, so that status never maps.
  */
 export function mapCoreTodoStatus(status: unknown): TodoStatus {
   switch (status) {
@@ -24,6 +24,8 @@ export function mapCoreTodoStatus(status: unknown): TodoStatus {
       return 'active';
     case 'completed':
       return 'done';
+    case 'cancelled':
+      return 'skipped';
     case 'pending':
       return 'pending';
     default:
@@ -34,6 +36,7 @@ export function mapCoreTodoStatus(status: unknown): TodoStatus {
 interface CoreTodoItem {
   content?: unknown;
   status?: unknown;
+  reason?: unknown;
 }
 
 function isCoreTodoItem(value: unknown): value is CoreTodoItem {
@@ -52,6 +55,9 @@ export function toAuiTodoItems(raw: unknown): TodoItem[] {
       id: `${index}-${content}`,
       text: content,
       status: mapCoreTodoStatus(candidate.status),
+      ...(typeof candidate.reason === 'string' && candidate.reason
+        ? { reason: candidate.reason }
+        : {}),
     });
   });
   return items;

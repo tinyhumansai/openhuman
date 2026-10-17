@@ -114,6 +114,12 @@ fn one_core_at_a_time(storage_url: Option<&str>) {
         Duration::from_secs(30),
         || call(&one, "alice", "core.ping", json!({})).0 == 200,
     );
+    wait_until(
+        "core 1 to recover alice's interrupted turn",
+        &one,
+        Duration::from_secs(30),
+        || turn_state(&one, "alice", "t-kill").as_deref() == Some("interrupted"),
+    );
     assert_eq!(
         turn_state(&one, "alice", "t-kill").as_deref(),
         Some("interrupted"),

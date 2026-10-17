@@ -1,22 +1,23 @@
 use super::*;
-use openhuman_core::agent::tool_policy::{ToolCallContext, ToolPolicyDecision};
 struct Deny;
 #[async_trait::async_trait]
-impl ToolPolicy for Deny {
+impl ToolCallPolicy<OpenHumanRunContext> for Deny {
     fn name(&self) -> &str {
         "deny"
     }
-    async fn check(&self, _: &ToolPolicyRequest) -> ToolPolicyDecision {
-        ToolPolicyDecision::Deny {
+    async fn check(&self, _: &RunContext<OpenHumanRunContext>, _: &ToolCall) -> PolicyDecision {
+        PolicyDecision::Deny {
             reason: "host denied".into(),
         }
     }
 }
-fn request(name: &str) -> ToolPolicyRequest {
-    ToolPolicyRequest::new(
-        name,
-        serde_json::json!({}),
-        ToolCallContext::session("s", "c", "a", "call", 0),
+fn request(name: &str) -> (RunContext<OpenHumanRunContext>, ToolCall) {
+    (
+        RunContext::new(
+            tinyagents_harness::context::RunConfig::new("attachments-test"),
+            OpenHumanRunContext::new(),
+        ),
+        ToolCall::new("call", name, serde_json::json!({})),
     )
 }
 #[tokio::test]
@@ -32,15 +33,24 @@ async fn attachment_policy_does_not_replace_original_host_authority() {
         ],
     };
     assert!(matches!(
-        policy.check(&request("hivemind_message")).await,
-        ToolPolicyDecision::Allow
+        {
+            let (ctx, call) = request("hivemind_message");
+            policy.check(&ctx, &call).await
+        },
+        PolicyDecision::Allow
     ));
     assert!(matches!(
-        policy.check(&request("host_original")).await,
-        ToolPolicyDecision::Deny { .. }
+        {
+            let (ctx, call) = request("host_original");
+            policy.check(&ctx, &call).await
+        },
+        PolicyDecision::Deny { .. }
     ));
     assert!(matches!(
-        policy.check(&request("hivemind_create")).await,
-        ToolPolicyDecision::Deny { .. }
+        {
+            let (ctx, call) = request("hivemind_create");
+            policy.check(&ctx, &call).await
+        },
+        PolicyDecision::Deny { .. }
     ));
 }

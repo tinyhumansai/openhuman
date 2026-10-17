@@ -4,7 +4,7 @@
 //! The user asks the assistant in chat to build an automation; the agent
 //! calls this tool with a candidate `tinyflows::model::WorkflowGraph`. The
 //! tool runs the graph through the exact same
-//! [`crate::flows::ops::validate_and_migrate_graph`] path
+//! [`tinyflows::authoring::validate_and_migrate_graph`] path
 //! `flows_create` uses, and returns a `workflow_proposal` summary for the
 //! chat UI's `WorkflowProposalCard` — it never persists anything itself.
 //!
@@ -23,7 +23,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::flows::ops::{build_builder_proposal, validate_and_migrate_graph};
+use crate::flows::ops::build_builder_proposal;
+use tinyflows::authoring::validate_and_migrate_graph;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 pub struct ProposeWorkflowTool {
@@ -52,7 +53,7 @@ impl Tool for ProposeWorkflowTool {
         // `workflow_builder`'s prompt carries an index — and it shipped on
         // every request of every agent holding this tool.
         //
-        // `render_node_kinds_required()` reduces it to the one thing a caller
+        // `tinyflows::catalog::render_node_kinds_required` reduces it to the one thing a caller
         // cannot recover from a failed call: which kinds exist and what config
         // each cannot be built without (401 bytes). Everything else is one
         // `get_node_kind_contract { kind }` away.
@@ -88,7 +89,9 @@ impl Tool for ProposeWorkflowTool {
                  Call `get_node_kind_contract {{ kind }}` for a kind's optional fields, ports, \
                  a worked example, and its gotchas — it is generated from the catalog the \
                  validator enforces, so it is always current.",
-                    kinds = crate::flows::render_node_kinds_required()
+                    kinds = tinyflows::catalog::render_node_kinds_required(
+                        &crate::flows::all_node_kind_contracts()
+                    )
                 )
             })
             .as_str()
@@ -110,6 +113,17 @@ impl Tool for ProposeWorkflowTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context);
         let name = match args.get("name").and_then(Value::as_str).map(str::trim) {
             Some(name) if !name.is_empty() => name.to_string(),
             _ => return Ok(ToolResult::error("Missing 'name' parameter".to_string())),
@@ -154,6 +168,7 @@ impl Tool for ProposeWorkflowTool {
         // compatibility checks for literal workflow_id children, which cannot
         // be detected by graph-only validation because they require the store.
         match build_builder_proposal(
+            &ctx,
             &self.config,
             "propose_workflow",
             &name,
@@ -181,7 +196,7 @@ impl Tool for ProposeWorkflowTool {
 }
 
 /// Runs a **saved** workflow by id so the `workflow-builder` agent can *test*
-/// it end-to-end. Unlike [`crate::flows::builder_tools::DryRunWorkflowTool`]
+/// it end-to-end. Unlike `tinyflows_copilot::tools::DryRunWorkflowTool`
 /// (a MOCK sandbox), this is a **real** run — so it is `PermissionLevel::Write`
 /// with `external_effect() == true`. Two safety layers remain: the flow's own
 /// `require_approval` gate still pauses outbound-action nodes mid-run, and the
@@ -258,6 +273,17 @@ impl Tool for RunFlowTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: tinytools::ToolCallOptions,
+        tool_context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context);
         let flow_id = match args.get("flow_id").and_then(Value::as_str).map(str::trim) {
             Some(id) if !id.is_empty() => id.to_string(),
             _ => {
@@ -300,6 +326,7 @@ impl Tool for RunFlowTool {
         // task, and returns `{ run_id, status: "running" }` in well under 120s.
         // The copilot then polls `get_flow_run(run_id)` to observe completion.
         match crate::flows::ops::flows_run_detached(
+            &ctx,
             &self.config,
             &flow_id,
             input,

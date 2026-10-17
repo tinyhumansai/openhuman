@@ -1,7 +1,7 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -74,17 +74,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_encrypt_secret(params: Map<String, Value>) -> ControllerFuture {
+fn handle_encrypt_secret(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let plaintext = read_required::<String>(&params, "plaintext")?;
         to_json(crate::security::encryption::rpc::encrypt_secret(&config, &plaintext).await?)
     })
 }
 
-fn handle_decrypt_secret(params: Map<String, Value>) -> ControllerFuture {
+fn handle_decrypt_secret(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let ciphertext = read_required::<String>(&params, "ciphertext")?;
         to_json(crate::security::encryption::rpc::decrypt_secret(&config, &ciphertext).await?)
     })

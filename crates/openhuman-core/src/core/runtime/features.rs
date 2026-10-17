@@ -6,6 +6,7 @@ pub fn compiled_features() -> std::collections::BTreeMap<String, bool> {
         ("storage-sqlite", cfg!(feature = "storage-sqlite")),
         ("storage-mongodb", cfg!(feature = "storage-mongodb")),
         ("storage-file", cfg!(feature = "storage-file")),
+        ("storage-s3", cfg!(feature = "storage-s3")),
         ("default", cfg!(feature = "default")),
         ("http-server", cfg!(feature = "http-server")),
         ("inference", cfg!(feature = "inference")),

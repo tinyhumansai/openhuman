@@ -4,17 +4,15 @@ use serde_json::json;
 use tinyflows_drivers::catalog::FlowCatalogDocuments;
 
 fn documents(namespace: &str) -> FlowState {
-    let scoped = MemoryStorage::new()
-        .for_scope(&Scope::new("local").unwrap())
-        .unwrap();
+    documents_on(&MemoryStorage::new(), namespace)
+}
+
+fn documents_on(storage: &MemoryStorage, namespace: &str) -> FlowState {
+    let scoped = storage.for_scope(&Scope::new("local").unwrap()).unwrap();
     FlowState::Documents(FlowStateDocuments::new(
         FlowCatalogDocuments::new(Arc::clone(scoped.documents())),
         namespace,
     ))
-}
-
-fn sqlite(dir: &std::path::Path, namespace: &str) -> FlowState {
-    FlowState::Sqlite(SqliteStateStore::new(dir, namespace))
 }
 
 /// What a run stores through `StateStore` is what dedup settlement reads
@@ -34,15 +32,22 @@ async fn the_document_store_backs_both_views() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_sqlite_store_backs_both_views() {
+async fn the_workspace_database_backs_both_views() {
     let dir = tempfile::tempdir().unwrap();
-    engine_and_dedup_share_records(sqlite(dir.path(), "flow:a")).await;
+    let config = Config {
+        workspace_dir: dir.path().to_path_buf(),
+        ..Config::default()
+    };
+    engine_and_dedup_share_records(FlowState::open(&config, "flow:a")).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn namespaces_keep_flows_apart() {
-    let dir = tempfile::tempdir().unwrap();
-    let (a, b) = (sqlite(dir.path(), "flow:a"), sqlite(dir.path(), "flow:b"));
+    let storage = MemoryStorage::new();
+    let (a, b) = (
+        documents_on(&storage, "flow:a"),
+        documents_on(&storage, "flow:b"),
+    );
     a.store("k", json!(1)).await.unwrap();
     assert_eq!(b.load("k").await.unwrap(), None);
 }
@@ -59,7 +64,7 @@ async fn an_unresolved_scope_fails_every_call() {
 }
 
 #[test]
-fn without_a_backend_the_flow_state_is_sqlite() {
+fn without_a_backend_the_flow_state_is_in_the_workspace_default_database() {
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
         workspace_dir: dir.path().to_path_buf(),
@@ -69,6 +74,7 @@ fn without_a_backend_the_flow_state_is_sqlite() {
     assert!(crate::storage::installed().is_none());
     assert!(matches!(
         FlowState::open(&config, "flow:a"),
-        FlowState::Sqlite(_)
+        FlowState::Documents(_)
     ));
+    assert!(config.workspace_dir.join("storage/storage.db").is_file());
 }

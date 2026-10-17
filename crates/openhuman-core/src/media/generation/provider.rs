@@ -30,6 +30,7 @@ use tinyagents_harness::tinyinference_video::{
 
 use crate::backend::BackendClient;
 use crate::config::Config;
+use crate::security::approval::ApprovalChatContext;
 use crate::security::credentials::session_support::{
     resolve_backend_credential, BackendCredential,
 };
@@ -37,12 +38,54 @@ use crate::security::credentials::session_support::{
 /// Backend route prefix that proxies OpenRouter's media API.
 pub const OPENROUTER_PROXY_PATH: &str = "/agent-integrations/openrouter";
 
+/// Rebuilds the generators so their egress disclosures reach `chat`.
+type GeneratorRouter = Arc<
+    dyn Fn(Option<ApprovalChatContext>) -> (Arc<dyn ImageGenerator>, Arc<dyn VideoGenerator>)
+        + Send
+        + Sync,
+>;
+
 /// The image and video generators for this process.
 pub struct MediaGenerators {
     /// Image generation.
     pub image: Arc<dyn ImageGenerator>,
     /// Video generation.
     pub video: Arc<dyn VideoGenerator>,
+    /// Binds the generators to a turn's chat so their egress disclosures reach
+    /// it. `None` for generators with no disclosures to route (mocks).
+    router: Option<GeneratorRouter>,
+}
+
+impl MediaGenerators {
+    /// Generators with no egress routing.
+    pub fn new(image: Arc<dyn ImageGenerator>, video: Arc<dyn VideoGenerator>) -> Self {
+        Self {
+            image,
+            video,
+            router: None,
+        }
+    }
+
+    /// The generators for one call of a turn whose chat routing is `chat`: the
+    /// egress disclosures they raise are surfaced to that chat. An explicit
+    /// value, so a call made off the chat task still discloses to its own chat.
+    pub fn routed(&self, chat: Option<&ApprovalChatContext>) -> MediaGenerators {
+        match &self.router {
+            Some(router) => {
+                let (image, video) = router(chat.cloned());
+                MediaGenerators {
+                    image,
+                    video,
+                    router: self.router.clone(),
+                }
+            }
+            None => MediaGenerators {
+                image: Arc::clone(&self.image),
+                video: Arc::clone(&self.video),
+                router: None,
+            },
+        }
+    }
 }
 
 /// Builds generators against the managed backend, or `None` when no backend
@@ -74,17 +117,30 @@ pub fn managed_generators(config: &Config) -> Option<MediaGenerators> {
         .with_client(http)
         .with_base_url(base.as_str());
     tracing::debug!(base = %base, "[media_generation] managed OpenRouter media generators ready");
-    Some(MediaGenerators {
-        image: Arc::new(GuardedImage {
+    // The generators are built once per chat binding: `routed` rebuilds them
+    // around a guard that discloses to that chat.
+    let build = Arc::new(move |chat: Option<ApprovalChatContext>| {
+        let image: Arc<dyn ImageGenerator> = Arc::new(GuardedImage {
             inner: OpenRouterImageGenerator::with_transport(transport.clone()),
             guard: Guard {
                 config: Arc::clone(&config),
+                chat: chat.clone(),
             },
-        }),
-        video: Arc::new(GuardedVideo {
-            inner: OpenRouterVideoGenerator::with_transport(transport),
-            guard: Guard { config },
-        }),
+        });
+        let video: Arc<dyn VideoGenerator> = Arc::new(GuardedVideo {
+            inner: OpenRouterVideoGenerator::with_transport(transport.clone()),
+            guard: Guard {
+                config: Arc::clone(&config),
+                chat,
+            },
+        });
+        (image, video)
+    });
+    let (image, video) = build(None);
+    Some(MediaGenerators {
+        image,
+        video,
+        router: Some(build),
     })
 }
 
@@ -100,6 +156,9 @@ pub(crate) fn bearer_resolver(config: Arc<Config>) -> BearerResolver {
 /// Host policy applied before a request leaves the device.
 struct Guard {
     config: Arc<Config>,
+    /// The chat the call's disclosures are surfaced to; `None` outside a chat
+    /// turn.
+    chat: Option<ApprovalChatContext>,
 }
 
 impl Guard {
@@ -113,7 +172,7 @@ impl Guard {
             tracing::info!(route, %error, "[media_generation] blocked by privacy policy");
             ti_image::Error::Validation(format!("blocked by the privacy policy: {error}"))
         })?;
-        crate::security::egress::emit_external_transfer(descriptor);
+        crate::security::egress::emit_external_transfer(self.chat.as_ref(), descriptor);
         Ok(())
     }
 
@@ -196,3 +255,7 @@ impl VideoGenerator for GuardedVideo {
         self.inner.list_models().await
     }
 }
+
+#[cfg(test)]
+#[path = "provider_tests.rs"]
+mod tests;

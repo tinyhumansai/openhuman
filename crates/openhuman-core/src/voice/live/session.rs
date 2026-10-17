@@ -7,6 +7,7 @@
 //! `voice` external-channel origin and an approval chat context for the
 //! thread, so approval prompts reach the user's open conversation.
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use tinyagents_harness::context::RunConfig;
@@ -20,7 +21,7 @@ use crate::agent::tinyagents::live_harness::{assemble_live_tool_harness, LIVE_MA
 use crate::agent::turn_origin::{with_origin, AgentTurnOrigin};
 use crate::config::schema::voice_live::is_live_provider;
 use crate::config::Config;
-use crate::security::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+use crate::security::approval::{ApprovalChatContext, ApprovalTurnContext};
 use crate::threads::store::{ConversationMessage, CreateConversationThread};
 
 /// The agent a live session borrows its tools from.
@@ -94,6 +95,7 @@ pub(crate) fn system_prompt(recent: &[ConversationMessage]) -> String {
 /// Makes sure the session's thread exists, creating a voice thread when the
 /// client is not on one.
 async fn ensure_thread(
+    ctx: &DispatchCtx,
     config: &Config,
     thread_id: Option<String>,
 ) -> Result<String, LiveVoiceError> {
@@ -101,6 +103,7 @@ async fn ensure_thread(
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| format!("voice-{}", uuid::Uuid::new_v4()));
     crate::threads::store::blocking::ensure_thread(
+        ctx.clone(),
         config.workspace_dir.clone(),
         CreateConversationThread {
             id: id.clone(),
@@ -119,12 +122,13 @@ async fn ensure_thread(
 
 /// Starts a live session.
 pub(crate) async fn start(
+    ctx: &DispatchCtx,
     config: Arc<Config>,
     request: LiveStartRequest,
     session_id: &str,
 ) -> Result<StartedLiveSession, LiveVoiceError> {
     let provider = resolve_provider(&config, request.provider.as_deref())?;
-    let thread_id = ensure_thread(&config, request.thread_id).await?;
+    let thread_id = ensure_thread(ctx, &config, request.thread_id).await?;
     tracing::debug!(
         session_id,
         provider = %provider,
@@ -132,13 +136,14 @@ pub(crate) async fn start(
         "[voice-live] starting session"
     );
 
-    let mut host = OpenHumanSessionHost::from_config_for_agent(&config, LIVE_AGENT_ID)
+    let mut host = OpenHumanSessionHost::from_config_for_agent(ctx, &config, LIVE_AGENT_ID)
         .map_err(|e| LiveVoiceError::internal(format!("agent build failed: {e}")))?;
     host.set_event_context(format!("voice_live_{session_id}"), "voice");
     host.set_thread_id(Some(&thread_id));
     let harness = assemble_live_tool_harness(host.live_tool_surface());
 
     let recent = crate::threads::store::blocking::get_messages(
+        ctx.clone(),
         config.workspace_dir.clone(),
         thread_id.clone(),
     )
@@ -176,14 +181,6 @@ pub(crate) async fn start(
         message_id: format!("voice-live-{session_id}"),
         history_key: None,
     };
-    let mut context = OpenHumanRunContext::new();
-    context.origin = Some(origin.clone());
-    context.thread_id = Some(thread_id.clone());
-    context.workspace = host.live_workspace_descriptor();
-    let run_config =
-        RunConfig::new(format!("voice-live-{session_id}")).with_max_tool_calls(LIVE_MAX_TOOL_CALLS);
-    let ctx = context.into_tinyagents(run_config);
-
     let approval = ApprovalChatContext {
         thread_id: thread_id.clone(),
         client_id: request
@@ -191,18 +188,25 @@ pub(crate) async fn start(
             .unwrap_or_else(|| format!("voice-live-{session_id}")),
         request_id: None,
     };
-    // The approval gate still reads the turn origin and chat context from
-    // task-locals (an unlabelled call is treated as `Unknown` and denied), so
-    // the tool worker — a spawned task — must be scoped explicitly. Baselined
-    // in `agent-runtime-boundary-baseline.json` with the other entry points
-    // until the gate reads the origin from the run context.
+    let mut context = OpenHumanRunContext::new();
+    context.origin = Some(origin.clone());
+    // The chat the session's approvals surface in rides the run context, which
+    // reaches the gate and every tool the live agent runs.
+    context.approval = ApprovalTurnContext::chat(approval);
+    context.thread_id = Some(thread_id.clone());
+    context.workspace = host.live_workspace_descriptor();
+    let run_config =
+        RunConfig::new(format!("voice-live-{session_id}")).with_max_tool_calls(LIVE_MAX_TOOL_CALLS);
+    let ctx = context.into_tinyagents(run_config);
+
+    // The approval gate still reads the turn origin from a task-local (an
+    // unlabelled call is treated as `Unknown` and denied), so the tool worker
+    // -- a spawned task -- must be scoped explicitly. Baselined in
+    // `agent-runtime-boundary-baseline.json` with the other entry points until
+    // the gate reads the origin from the run context.
     let scope: TaskScope = Arc::new(move |task| {
         let origin = origin.clone();
-        let approval = approval.clone();
-        Box::pin(with_origin(
-            origin,
-            APPROVAL_CHAT_CONTEXT.scope(approval, task),
-        ))
+        Box::pin(with_origin(origin, task))
     });
     let agent = LiveAgent::new(Arc::new(harness), Arc::new(())).with_task_scope(scope);
     let session = agent

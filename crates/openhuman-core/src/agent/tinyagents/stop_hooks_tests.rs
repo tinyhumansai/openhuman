@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn a_poisoned_halt_summary_does_not_abort_stop_reporting() {
-    let slot: super::super::HaltSummarySlot = Arc::new(std::sync::Mutex::new(None));
+    let slot: tinyagents_harness::turn_outcome::HaltSummarySlot =
+        Arc::new(std::sync::Mutex::new(None));
     let poisoned = Arc::clone(&slot);
     assert!(std::thread::spawn(move || {
         let _guard = poisoned.lock().unwrap();

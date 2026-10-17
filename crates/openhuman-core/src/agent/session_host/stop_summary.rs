@@ -132,7 +132,8 @@ impl StopReasonKind {
 
     /// Read the kind from a breaker stop note. The notes come from a fixed
     /// set of host and harness templates (`ClassifiedFailureTracker`,
-    /// `NoProgressTracker`, `inference::failure_copy::halt`), so this matches
+    /// `NoProgressTracker`, `RepeatProgressMiddleware`,
+    /// `inference::failure_copy::halt`), so this matches
     /// their fixed wording, never the tool output they quote.
     pub(crate) fn from_stop_note(note: &str) -> Self {
         let note = note.trim();
@@ -177,7 +178,12 @@ impl StopReasonKind {
             "uncertain_side_effect" => Self::UncertainSideEffect,
             "authentication" => Self::Authentication,
             "permission" => Self::Permission,
-            "policy" => Self::Policy,
+            // `policy` is the user's denial; `blocked_by_policy` is the
+            // security policy refusing the call (read-only mode, a forbidden
+            // path). Both are the user's security settings, and the refusal
+            // used to fall through to `Generic` ("my tool calls were not
+            // getting anywhere").
+            "policy" | "blocked_by_policy" => Self::Policy,
             "unsupported" | "missing_app" => Self::MissingProgram,
             "not_found" | "missing_window" => Self::NotFound,
             "validation" | "invalid_arguments" => Self::InvalidCalls,

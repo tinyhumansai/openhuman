@@ -2,7 +2,7 @@
 
 Global context management for agent sessions: system-prompt assembly, per-session context bookkeeping (utilisation stats, budget configuration), and the shared microcompact constants. Agents hold one `ContextManager` per session. This is a **pure logic / state-tracking domain**: no RPC controllers, no agent tools, no event-bus subscribers, no persisted store.
 
-> **Status (#4249): live history reduction/summarization moved out of this directory.** The in-turn compaction that used to live here (`ContextManager::reduce_before_call`, the `Summarizer` trait, `ProviderSummarizer`, `SegmentRecapSummarizer`, `microcompact.rs`, `pipeline.rs`, `guard.rs`) is gone: see [History](#history-4249). Folding an over-budget transcript into a summary now runs as the vendored `tinyagents_harness::middleware::ContextCompressionMiddleware` (with the seam-owned `ImageAwareMessageTrimMiddleware` as the deterministic backstop) inside `run_turn_via_tinyagents_shared` ([`agent/tinyagents/turn_runner.rs`](../tinyagents/turn_runner.rs)), backed by `agent/tinyagents/summarize.rs::ModelSummarizer`. Tool-result body clearing runs in `tinyagents_harness::middleware::MicrocompactMiddleware`. [`stats.rs`](./stats.rs) keeps the data model behind `ContextManager::stats()`.
+> **Status (#4249): live history reduction/summarization moved out of this directory.** The in-turn compaction that used to live here (`ContextManager::reduce_before_call`, the `Summarizer` trait, `ProviderSummarizer`, `SegmentRecapSummarizer`, `microcompact.rs`, `pipeline.rs`, `guard.rs`) is gone: see [History](#history-4249). Folding an over-budget transcript into a summary now runs as the vendored `tinyagents_harness::middleware::ContextCompressionMiddleware` (with the seam-owned `ImageAwareMessageTrimMiddleware` as the deterministic backstop) inside `TurnSpec::run` ([`agent/tinyagents/turn_exec.rs`](../tinyagents/turn_exec.rs)), backed by `agent/tinyagents/summarize.rs::ModelSummarizer`. Tool-result body clearing runs in `tinyagents_harness::middleware::MicrocompactMiddleware`. [`stats.rs`](./stats.rs) keeps the data model behind `ContextManager::stats()`.
 
 ## Responsibilities
 
@@ -73,7 +73,7 @@ No `store.rs`. State is per-session and in-memory:
 ## Used by
 
 - `agent::harness`: the primary consumer: `session/builder/builder_build.rs` constructs the `ContextManager`; `session/turn/core/harness_turn.rs` reads the budget/compaction getters into the tinyagents turn config; `session/turn/session_io/{transcript_persist,background_tasks}.rs` read `stats()`; `fork_context.rs` and [`../subagent_host/`](../subagent_host/) consume prompt types.
-- `agent::tinyagents`: `harness_assembly.rs` reads `CLEARED_PLACEHOLDER` when configuring `MicrocompactMiddleware`; `payload_summarizer.rs` and `host/context_composer.rs` build `PromptContext`s through `agent::prompts`.
+- `agent::tinyagents`: `turn_middleware.rs` reads `CLEARED_PLACEHOLDER` when configuring `MicrocompactMiddleware`; `payload_summarizer.rs` and `host/context_composer.rs` build `PromptContext`s through `agent::prompts`.
 - **`agent::registry::agents/*/prompt.rs`**, `flows/agents/*/prompt.rs`, `skills/*/agent/*/prompt.rs`: archetype prompt modules pull prompt sections/builder through `agent::prompts`.
 - `channels`: [`channels/system_prompt.rs`](../../channels/system_prompt.rs) (`ChannelSystemPrompt`, used by [`channels/runtime/startup/start_channels.rs`](../../channels/runtime/startup/start_channels.rs)) calls `channels_prompt::build_system_prompt_with_identity`; [`channels/mod.rs`](../../channels/mod.rs) re-exports `build_system_prompt`; the `channels/tests/*` prompt/identity tests call it directly.
 - `agent::triage`, `agent::debug`, `agent::orchestration::tools` (spawn_subagent and friends), `tools::orchestrator_tools`, `integrations::composio`: consume prompt types (`PromptContext`, `PromptSection`, `ToolCallFormat`, `ConnectedIntegration`, …) via `agent::prompts`.
@@ -89,5 +89,5 @@ No `store.rs`. State is per-session and in-memory:
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Smart token compression](../../../../../gitbooks/features/token-compression.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Smart token compression](../../../../../docs/gitbooks/en/features/token-compression.md)

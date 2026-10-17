@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 // ── get_data_paths user scoping (#4950) ─────────────────────
 
@@ -14,7 +15,9 @@ async fn handle_get_data_paths_scopes_to_explicit_user_id() {
         Value::String("clear-me-4950".to_string()),
     );
 
-    let value = handle_get_data_paths(params).await.unwrap();
+    let value = handle_get_data_paths(DispatchCtx::process_default(), params)
+        .await
+        .unwrap();
     // `get_data_paths_for_user` attaches a log, so the outcome is wrapped as
     // `{ "result": <paths>, "logs": [...] }`.
     let current = value

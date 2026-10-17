@@ -38,7 +38,7 @@
 use super::types::{EgressDescriptor, EgressReason};
 use crate::config::PrivacyMode;
 use crate::security::live_policy::current_privacy_mode;
-use crate::security::POLICY_BLOCKED_MARKER;
+use tinytools::status::POLICY_BLOCKED_MARKER;
 
 /// Pure decision: under privacy `mode`, is the transfer described by `desc`
 /// blocked? `true` only when the mode is [`PrivacyMode::LocalOnly`], the

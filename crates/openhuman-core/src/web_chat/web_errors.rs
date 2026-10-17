@@ -16,5 +16,6 @@ pub(crate) use budget::{
 pub(crate) use classify::{classify_inference_error, ClassifiedError};
 pub(crate) use retry::{is_non_retryable_rate_limit_text, retry_after_hint};
 pub(crate) use timeout::{
-    is_outer_backstop_timeout, is_turn_timeout_error, turn_timeout_error_message,
+    is_outer_backstop_timeout, is_turn_timeout_error, turn_idle_error_message,
+    turn_timeout_error_message,
 };

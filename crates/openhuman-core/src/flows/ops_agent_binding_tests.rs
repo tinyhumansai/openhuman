@@ -17,7 +17,8 @@ async fn agent_ref_plain_node_without_ref_is_accepted() {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     }));
-    let errors = validate_agent_refs(&config, &g).await;
+    let errors =
+        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
     assert!(errors.is_empty(), "{errors:?}");
 }
 
@@ -35,7 +36,8 @@ async fn agent_ref_blank_string_is_treated_as_absent() {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     }));
-    let errors = validate_agent_refs(&config, &g).await;
+    let errors =
+        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
     assert!(errors.is_empty(), "{errors:?}");
 }
 
@@ -61,7 +63,8 @@ async fn agent_ref_resolving_to_a_harness_definition_is_accepted() {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     }));
-    let errors = validate_agent_refs(&config, &g).await;
+    let errors =
+        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
     assert!(
         errors.is_empty(),
         "a real harness agent_ref must never be rejected: {errors:?}"
@@ -86,7 +89,8 @@ async fn agent_ref_unknown_is_rejected() {
         ],
         "edges": [ { "from_node": "t", "to_node": "a" } ]
     }));
-    let errors = validate_agent_refs(&config, &g).await;
+    let errors =
+        validate_agent_refs(&crate::core::runtime::DispatchCtx::ambient(), &config, &g).await;
     assert!(!errors.is_empty(), "an unknown agent_ref must be rejected");
     assert!(
         errors.iter().any(|e| e.contains("no_such_agent_xyz")),
@@ -141,7 +145,7 @@ async fn inference_gate_reports_signed_out_for_dynamic_agent_ref_only_graph() {
     //
     // Built as a struct literal for that reason: `graph()` would reject it,
     // and going through `graph()` would only prove the rule above twice.
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
@@ -169,7 +173,9 @@ async fn inference_gate_reports_signed_out_for_dynamic_agent_ref_only_graph() {
         ..Default::default()
     };
 
-    let errors = validate_inference_readiness(&config, &g).await;
+    let errors =
+        validate_inference_readiness(&crate::core::runtime::DispatchCtx::ambient(), &config, &g)
+            .await;
     assert!(
         !errors.is_empty(),
         "a signed-out session must still be reported even though the only agent node's \
@@ -207,6 +213,7 @@ async fn proposal_includes_inference_status_for_agent_graph() {
     }));
 
     let payload = build_builder_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "propose_workflow",
         "agent-flow",
@@ -244,6 +251,7 @@ async fn proposal_omits_inference_status_for_tool_call_only_graph() {
     }));
 
     let payload = build_builder_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "propose_workflow",
         "tool-flow",
@@ -283,7 +291,7 @@ async fn proposal_omits_inference_status_for_tool_call_only_graph() {
 /// negative-cache test below (through `cached_probe_inference_readiness`).
 #[tokio::test]
 async fn flows_run_fails_cleanly_without_invoking_engine_when_inference_not_ready() {
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
@@ -301,6 +309,7 @@ async fn flows_run_fails_cleanly_without_invoking_engine_when_inference_not_read
         .expect("creating (authoring) an agent-node flow must succeed even when signed out");
 
     let err = flows_run(
+        &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &created.value.id,
         json!({}),
@@ -348,7 +357,7 @@ async fn flows_run_fails_cleanly_without_invoking_engine_when_inference_not_read
 #[tokio::test]
 async fn local_agent_flow_is_ready_without_openhuman_session() {
     let _inference = crate::inference::inference_test_guard_async().await;
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.chat_provider = Some("omlx:test-model".into());
@@ -360,7 +369,9 @@ async fn local_agent_flow_is_ready_without_openhuman_session() {
         ],
         "edges": [{ "from_node": "t", "to_node": "a" }]
     }));
-    let errors = validate_inference_readiness(&config, &g).await;
+    let errors =
+        validate_inference_readiness(&crate::core::runtime::DispatchCtx::ambient(), &config, &g)
+            .await;
     assert!(
         errors.is_empty(),
         "local flow must not need a session: {errors:?}"
@@ -370,7 +381,7 @@ async fn local_agent_flow_is_ready_without_openhuman_session() {
 #[tokio::test]
 async fn claude_agent_flow_readiness_does_not_require_an_openhuman_session() {
     let _inference = crate::inference::inference_test_guard_async().await;
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
     // Isolate the caller's session classification from CLI installation/auth
     // and provider availability. Layer 1 must still reject managed inference
     // even while the Layer 2 probe has an injected model.
@@ -393,7 +404,12 @@ async fn claude_agent_flow_readiness_does_not_require_an_openhuman_session() {
         let tmp = TempDir::new().unwrap();
         let mut config = test_config(&tmp);
         config.memory_provider = Some(provider.into());
-        let errors = validate_inference_readiness(&config, &g).await;
+        let errors = validate_inference_readiness(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            &g,
+        )
+        .await;
         if provider == "openhuman" {
             assert!(
                 errors.iter().any(|e| e.contains("signed out")),
@@ -436,7 +452,7 @@ fn harness_readiness_uses_runtime_role_and_node_override() {
 #[tokio::test]
 async fn harness_readiness_checks_session_for_execution_provider() {
     let _inference = crate::inference::inference_test_guard_async().await;
-    let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(true);
+    let _signed_out = crate::platform::llm_gate::SignedOutTestGuard::set(true);
     let _model =
         crate::inference::provider::factory::test_provider_override::install_model(Arc::new(
             tinyagents_harness::testkit::ScriptedModel::replies(vec!["OK"]),
@@ -458,7 +474,12 @@ async fn harness_readiness_checks_session_for_execution_provider() {
         config.default_model = Some("hint:reasoning".into());
         config.reasoning_provider = Some(runtime.into());
         config.memory_provider = Some(summary.into());
-        let errors = validate_inference_readiness(&config, &g).await;
+        let errors = validate_inference_readiness(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &config,
+            &g,
+        )
+        .await;
         assert_eq!(
             errors.iter().any(|e| e.contains("signed out")),
             should_reject,
@@ -468,4 +489,65 @@ async fn harness_readiness_checks_session_for_execution_provider() {
             assert!(errors.is_empty(), "{errors:?}");
         }
     }
+}
+
+/// The agent-ref gate resolves a custom agent through the context it is handed,
+/// not the one the calling task happens to run under: two tenants' registries
+/// never cross.
+#[tokio::test]
+async fn agent_ref_gate_reads_the_registry_of_the_explicit_context() {
+    use crate::agent::registry::types::{AgentRegistryEntry, AgentRegistrySource};
+    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
+
+    let entry = AgentRegistryEntry {
+        id: "tenant_a_only_agent".to_string(),
+        name: "A".to_string(),
+        description: "registered for tenant A".to_string(),
+        source: AgentRegistrySource::Custom,
+        enabled: true,
+        model: None,
+        system_prompt: None,
+        tool_allowlist: Vec::new(),
+        tool_denylist: Vec::new(),
+        tool_rules: None,
+        subagents: Default::default(),
+        tags: Vec::new(),
+        metadata: Value::Null,
+    };
+    let tmp_a = TempDir::new().unwrap();
+    let tmp_b = TempDir::new().unwrap();
+    let mut config_a = test_config(&tmp_a);
+    config_a.agent_registry.entries.push(entry);
+    let config_b = test_config(&tmp_b);
+    let core_a = CoreContext::for_test_with_config(DomainSet::full(), config_a.clone());
+    let core_b = CoreContext::for_test_with_config(DomainSet::full(), config_b.clone());
+    let ctx_a = DispatchCtx::new(core_a);
+    let ctx_b = DispatchCtx::new(std::sync::Arc::clone(&core_b));
+
+    let g = graph(json!({
+        "nodes": [
+            { "id": "t", "kind": "trigger", "name": "Manual" },
+            { "id": "a", "kind": "agent", "name": "Plan",
+              "config": { "agent_ref": "tenant_a_only_agent", "prompt": "go" } }
+        ],
+        "edges": [ { "from_node": "t", "to_node": "a" } ]
+    }));
+
+    // Both calls run scoped to tenant B, so an ambient read would answer B's
+    // registry for A's call.
+    let (for_a, for_b) = CoreContext::scope(core_b, async {
+        (
+            validate_agent_refs(&ctx_a, &config_a, &g).await,
+            validate_agent_refs(&ctx_b, &config_b, &g).await,
+        )
+    })
+    .await;
+    assert!(
+        for_a.is_empty(),
+        "tenant A's own agent must resolve: {for_a:?}"
+    );
+    assert!(
+        for_b.iter().any(|e| e.contains("tenant_a_only_agent")),
+        "tenant B must not see tenant A's agent: {for_b:?}"
+    );
 }

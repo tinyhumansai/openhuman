@@ -73,28 +73,6 @@ pub(crate) fn model_response_to_completion_value(
     })
 }
 
-/// Select the model an `agent` node completion actually runs on.
-///
-/// `resolved_model` is what [`create_chat_provider`] returned for the node's
-/// mapped workload role. A node may instead pin a **raw/BYOK** model id
-/// (e.g. `claude-opus-4`) that [`role_for_model_tier`] collapsed to the `chat`
-/// role — in that case the pinned id, not the role default, is the model the
-/// user selected, so it is forwarded verbatim (issue #4598). Managed tiers and
-/// every `hint:*` alias fall through to `resolved_model` unchanged.
-pub(crate) fn resolve_completion_model(node_model: Option<&str>, resolved_model: String) -> String {
-    match node_model {
-        Some(pinned) if is_raw_passthrough_model(pinned) => {
-            tracing::debug!(
-                target: "flows",
-                raw_model = pinned,
-                "[flows] llm.complete: forwarding raw/BYOK node model verbatim (not a managed tier)"
-            );
-            pinned.to_string()
-        }
-        _ => resolved_model,
-    }
-}
-
 #[cfg(test)]
 #[path = "prompt_tests.rs"]
 mod tests;

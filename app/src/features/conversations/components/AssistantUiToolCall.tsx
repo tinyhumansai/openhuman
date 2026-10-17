@@ -15,6 +15,8 @@ import type {
 import { openUrl } from '../../../utils/openUrl';
 import { ToolFailureCard } from '../aui/ToolFailureCard';
 import { useLiveElapsed, useRunningSince } from '../aui/useLiveElapsed';
+import { McpUiBody } from '../tools/mcpUi/McpUiBody';
+import { readMcpUiPresentation } from '../tools/mcpUi/types';
 import { isSearchBalanceError } from '../tools/parseWebSearchResult';
 import {
   FetchBody,
@@ -168,6 +170,7 @@ export function AssistantUiToolCallCard({
           ? FileBody({ args: parsedArgs, result: output })
           : null;
   const showOutput = !searchBody && hasDisplayValue(parsedValue(output));
+  const mcpUi = !running && readMcpUiPresentation(structured) ? structured : undefined;
   // Managed search out of balance: say so plainly instead of leaving the user
   // to decode the raw error.
   const balanceHint =
@@ -249,6 +252,11 @@ export function AssistantUiToolCallCard({
           {/* Search results are the call's whole point: visible without
               opening the disclosure, as in assistant-ui's own web-search. */}
           {searchBody ? <div className="ps-5.5 pt-1 pb-2">{searchBody}</div> : null}
+          {mcpUi !== undefined ? (
+            <div className="ps-5.5 pt-1 pb-2">
+              <McpUiBody structured={mcpUi} />
+            </div>
+          ) : null}
         </>
       }>
       {richBody ? <div className="mt-2 ps-5.5">{richBody}</div> : undefined}

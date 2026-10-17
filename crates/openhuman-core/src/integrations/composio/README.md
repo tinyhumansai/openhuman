@@ -55,8 +55,8 @@ triggers) from a real transport failure.
 | `crates/openhuman-core/src/integrations/composio/client/{credential,network,direct}.rs` | The direct (BYO-key) reads. `credential.rs` is the key plus a validated base URL (HTTPS-or-loopback guard); `network.rs` resolves the host's `tool.composio` proxy and TLS policy for the module; `direct.rs` calls the module's stateless `ListConnectionsDirect` / `ListToolsDirect` members (the credential rides on the request, so the configured route is untouched and an unsaved key can be probed) under the host's invalid-key gate (`direct_auth`). Redirects are refused and failures are rendered with the messages users see by the module; the v3 paths and reshaping are `tinyconnectors::client::DirectRoute`. |
 | [`crates/openhuman-core/src/integrations/composio/action_tool.rs`](./action_tool.rs) | `ComposioActionTool`: a `Tool` wrapping exactly one Composio action, constructed as a `ToolExposure::Deferred` tool per action of every connected toolkit ([`tools/orchestrator_tools.rs`](../../tools/orchestrator_tools.rs), and [`agent/session_host/recorded_tools.rs`](../../agent/session_host/recorded_tools.rs) when a resumed thread rebuilds its recorded actions), reached by the orchestrator through `tool_search`. |
 | [`crates/openhuman-core/src/integrations/composio/contract_gate.rs`](./contract_gate.rs) | Late-bound action contract gate (#4853): on an action's first call this turn, surfaces the full live contract (via `catalog::fetch_live_toolkit_catalog`) as a recoverable tool error before executing, so the retry has the real schema in context. |
-| [`crates/openhuman-core/src/integrations/composio/catalog.rs`](./catalog.rs) + `catalog/` (`contract.rs`, `lookups.rs`, `probe.rs`) | Live Composio tool contracts (`fetch_live_toolkit_catalog`, `ToolContract`, in [`catalog/contract.rs`](./catalog/contract.rs)): the unfiltered mode-aware `list_tools` schema (the module's `ListTools` member on the backend route, or direct v3 `direct_list_tools`) plus a bounded read-only response probe (`probe_tool_output_sample`, [`catalog/probe.rs`](./catalog/probe.rs)) when a schema publishes no `output_parameters`. |
-| [`crates/openhuman-core/src/integrations/composio/connected_integrations.rs`](./connected_integrations.rs) + `connected_integrations/` (`cache.rs`, `fetch.rs`, `fetch_uncached.rs`) | Cached active-connections lookups (`cached_active_integrations`, `fetch_connected_integrations*`) reconciled against `list_connections`. |
+| [`crates/openhuman-core/src/integrations/composio/catalog.rs`](./catalog.rs) | Call surface over the module's `ListToolContracts` / `ProbeToolOutput` members (`fetch_live_toolkit_catalog`, `probe_tool_output_sample`, `ToolContract` = `tinyconnectors_bus::ComposioToolContract`). The module owns the live fetch, the 30-minute cache, the confirmed-Read probe and its overlay; unit tests seed contracts through the test-only `catalog_seed.rs`. |
+| [`crates/openhuman-core/src/integrations/composio/connected_integrations.rs`](./connected_integrations.rs) + `connected_integrations/` (`cache.rs`, `fetch.rs`) | Process cache over the module's `ListConnectedIntegrations` (`cached_active_integrations`, `fetch_connected_integrations*`) reconciled against `list_connections`; `fetch.rs` picks the backend/direct mode and maps the reply to the prompt types. |
 | [`crates/openhuman-core/src/integrations/composio/execute_dispatch.rs`](./execute_dispatch.rs) | Host entry for running one action: applies egress enforcement/disclosure, then calls the module's `EXECUTE` member (prepare → retry → error mapping all run in `tinyconnectors`). Used by the `composio_execute` agent tool, `tools.composio_execute`, the memory host, LinkedIn enrichment and the output probe. |
 | [`crates/openhuman-core/src/integrations/composio/googlecalendar_args.rs`](./googlecalendar_args.rs) | Host IANA time-zone lookup; the calendar defaulting itself is `tinyconnectors::execute::apply_calendar_query_defaults` (#1714). |
 | [`crates/openhuman-core/src/integrations/composio/identity.rs`](./identity.rs) | Resolves the connected account username for a toolkit via the connector module profile-fetch path (used by skill preflight identity gate). |
@@ -65,7 +65,7 @@ triggers) from a real transport failure.
 | [`crates/openhuman-core/src/integrations/composio/direct_auth/mod.rs`](./direct_auth/mod.rs) | Direct-mode API-key health tracking: a process-local consecutive-401-failure counter (keyed by a non-logged key fingerprint) that short-circuits repeated invalid-key polling. |
 | [`crates/openhuman-core/src/integrations/composio/trigger_history.rs`](./trigger_history.rs) | Lazy host lifecycle owner of a module-side opaque archive handle (`init_global`/`global`). |
 | [`crates/openhuman-core/src/integrations/composio/bus.rs`](./bus.rs) + `bus/` | Trigger, connection-created and config-changed subscribers, and their registration. |
-| [`crates/openhuman-core/src/integrations/composio/contract/`](./contract/) | The Composio vocabulary: catalogs, scopes, profiles, run shapes, task shapes. Plain data and pure functions. |
+| [`crates/openhuman-core/src/integrations/composio/contract/`](./contract/) | The Composio vocabulary: catalogs (a process snapshot of the connector module's `ListCuratedCatalog` and `GetVocabulary` replies, `curated.rs`), scopes, profiles, run shapes, task shapes. Plain data and pure functions. |
 | `*_tests.rs` | Sibling test suites for each file. |
 
 ## Ops layout
@@ -82,7 +82,7 @@ triggers) from a real transport failure.
 | `triggers` | GitHub repos + trigger CRUD + trigger history |
 | `providers_ops` | `composio_get_user_profile`, `composio_refresh_all_identities` |
 | `direct_mode` | `composio_get_mode`, `composio_set_api_key`, `_clear_...` |
-| `user_scopes` | per-toolkit agent scope prefs in `<workspace>/integrations/composio_user_scopes.json` |
+| `scope_prefs` | per-toolkit agent scope prefs, forwarded to the connector module (`GetUserScopes` / `SetUserScopes`); moves a legacy `composio_user_scopes.json` into the module once |
 
 There is no periodic loop here, and Composio data is not synced into memory.
 
@@ -127,7 +127,7 @@ Namespace `composio`, exposed as `openhuman.composio_*`:
 | `composio.get_mode` | Current routing mode + whether a direct-mode key is set (never returns the key). |
 | `composio.set_api_key` / `composio.clear_api_key` | Store/clear direct-mode Composio API key (key never logged/returned). |
 
-Handlers delegate to `ops/`; scope handlers delegate to `ops::user_scopes`. Exports wired into [`crates/openhuman-core/src/core/all.rs`](../../core/all.rs).
+Handlers delegate to `ops/`; scope handlers delegate to `ops::scope_prefs`. Exports wired into [`crates/openhuman-core/src/core/all.rs`](../../core/all.rs).
 
 ## Agent tools
 
@@ -147,7 +147,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 
 - **Trigger history** (`trigger_history.rs`): JSONL records under `<workspace>/state/triggers/YYYY-MM-DD.jsonl`, partitioned by UTC day, written inside the TinyConnectors module (exclusive file lock on append). The host keeps an opaque lease, closes it on sign-out/shutdown, and releases the old lease before switching user directories. Exposed via `composio.list_trigger_history`.
 - **Direct-mode API key**: stored in the encrypted keychain (via `credentials`); never logged/returned. `direct_auth/mod.rs` additionally tracks a process-local (non-persisted) consecutive-401 counter for the same key.
-- **Connected identities**: `<workspace>/integrations/composio_identities.json` (`identity_store.rs`). **User scope prefs**: `<workspace>/integrations/composio_user_scopes.json` (`ops::user_scopes`). Both written atomically (temp file + rename) under one process-wide lock (`file_store.rs`).
+- **Connected identities**: `<workspace>/integrations/composio_identities.json` (`identity_store.rs`). **User scope prefs**: held by the connector module (`<workspace>/state/composio-user-scopes/`), with the legacy `<workspace>/integrations/composio_user_scopes.json` migrated by `ops::scope_prefs`. The identities file is written atomically (temp file + rename) under one process-wide lock (`file_store.rs`).
 - **Integrations cache**: warmed in the background after app startup/sign-in, then kept for the process lifetime. Connection create/delete, config changes, and a divergent `list_connections` response invalidate it; the change paths eagerly re-warm it. Idle time does not trigger a backend fetch on a chat turn (`connected_integrations.rs`).
 
 ## Dependencies
@@ -158,7 +158,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - `tinyconnectors_bus`: the wire contract (member names, payload types) for the `tinyconnectors` module call surface; a plain dependency, not feature-gated.
 - `crate::agent::tinyagents::host::run_context`: explicit sandbox mode projected
   from the typed tool execution context for per-action and dispatcher gating.
-- [`task_recency_context.rs`](./task_recency_context.rs): Composio-owned morning briefing recency scope; `tools/execute.rs` forwards its window through the connector bus.
+- Task recency window: carried as `OpenHumanRunExt::task_recency_window` (`agent/tinyagents/host/run_context.rs`); `tools/execute.rs` reads it from the tool execution context and forwards it through the connector bus.
 - `tinytools`: `Tool`, `ToolResult`, `ToolCategory`, `PermissionLevel`, `ToolCallOptions`.
 - `crate::security`: `SecurityPolicy` / `ToolOperation` for direct-tool gating.
 - `crate::security::credentials`: encrypted store for the direct-mode API key.
@@ -198,7 +198,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Third-party integrations](../../../../../gitbooks/features/integrations/README.md)
+- [Third-party integrations](../../../../../docs/gitbooks/en/features/integrations/README.md)
 - [tinyconnectors](../../../../../vendor/tinyconnectors/README.md)
 
 Connector argument preparation, calendar defaults, task-window filtering and

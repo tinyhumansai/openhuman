@@ -50,10 +50,10 @@ If the process has no usable embedding provider, `TinyHumansJevRanker` declines 
 
 The decision model is set in `[computer] decision_model`: Jev (through the hosted proxy when signed in, or your OpenRouter key), OpenJev or Sage. A failed step goes to the rescue model (`[computer] rescue_model`, up to `max_rescues` times) before the task fails. An irreversible step pauses as `needs_approval`. The browser tool holds it behind a one-use token, and only `confirm_pending`, through the host approval gate, answers `ContinueTask`.
 
-`crates/openhuman-core/src/modules/browser_sites.rs` keeps what finished browser tasks learned, per site, in `<workspace>/state/computer/sites/`. It hands that to the next task on the same site:
+The TinyComputer module keeps what finished browser tasks learned, per site, through the host's `SiteMemoryHost` interface (`crates/openhuman-core/src/modules/site_memory_host.rs` stores it in `<workspace>/state/computer/sites/`). `StartTask.site` makes the module load that and hand it to the task on the same site:
 
-- The plan a run finished with goes in as `StartTask.flow` for the same goal and facts, so no planning is needed.
-- The elements it found go in as `StartTask.memory`. A remembered element costs one yes/no instead of a search.
+- The plan a run finished with goes in as the task's flow for the same goal and facts, so no planning is needed.
+- The elements it found go in as its grounding hints. A remembered element costs one yes/no instead of a search.
 
 Only a finished run (`done`, or its payment checkpoint) teaches anything. A plan is kept only when its run needed no rescue and holds no fact value its goal does not. A reused plan that fails or needs a rescue is forgotten. Elements holding a fact value or page text are not kept. Entries expire after 30 days unused, and none of it reaches the agent's memory or prompts. `[browser] learn_from_tasks` turns this off, and `modules.browser_forget_sites` forgets one site or all.
 

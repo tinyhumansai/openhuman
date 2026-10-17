@@ -62,7 +62,7 @@ async fn committed_progress_uses_each_turns_receipt_sender() {
 #[tokio::test]
 async fn committed_progress_carries_the_sidecar_stop_on_turn_completed() {
     use crate::agent::progress::AgentProgress;
-    use crate::agent::turn_stop::{TurnStop, TurnStopKind};
+    use tinyagents_harness::turn_stop::TurnStopKind;
     use tinyagents_runtime::{
         CommitReceipt, ResumeMode, SessionTurnOutcome, TranscriptTurnOptions,
     };
@@ -70,10 +70,11 @@ async fn committed_progress_carries_the_sidecar_stop_on_turn_completed() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let mut context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     context.progress = Some(tx);
-    context.session_sidecar.lock().unwrap().stop = Some(TurnStop::breaker(
-        "Stopping after 2 attempt(s): failure class `uncertain_side_effect` still blocks \
+    context.session_sidecar.lock().unwrap().stop =
+        Some(crate::agent::turn_projection::breaker_stop(
+            "Stopping after 2 attempt(s): failure class `uncertain_side_effect` still blocks \
          operation `web_answer_tool` on `x`. Resolve this blocker before retrying.",
-    ));
+        ));
     let receipt = CommitReceipt {
         outcome: SessionTurnOutcome {
             history: Vec::new(),
@@ -113,9 +114,12 @@ fn clearing_progress_releases_warm_prelude_sender() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    let mut host =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
-            .expect("orchestrator");
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("orchestrator");
     host.ensure_runtime_session().expect("warm runtime");
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -192,10 +196,7 @@ fn spec(name: &str) -> ToolSpec {
 #[cfg(feature = "mcp")]
 #[test]
 fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
-    use crate::mcp::registry::action_tool::searchable_name;
-    use crate::mcp::registry::types::{ConnectedServerOverview, McpTool};
-
-    crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin definitions");
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::config::Config {
@@ -204,9 +205,12 @@ fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    let mut host =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
-            .expect("orchestrator");
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("orchestrator");
     host.ensure_runtime_session().expect("runtime session");
     let prelude = host
         .runtime_state
@@ -219,20 +223,20 @@ fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
         .mutable
         .lock()
         .expect("prelude state")
-        .connected_mcp_tools = vec![ConnectedServerOverview {
+        .mcp_tools
+        .connected = vec![tinymcp_bus::McpToolPresentation {
+        name: "mcp_weather_forecast_abc123".into(),
+        legacy_name: "mcp_forecast_legacy".into(),
         server_id: "server-1".into(),
-        qualified_name: "example/weather".into(),
-        display_name: "Weather".into(),
-        description: None,
-        instructions: None,
-        tools: vec![McpTool {
-            name: "forecast".into(),
-            description: Some("Get weather forecast".into()),
-            input_schema: serde_json::json!({"type":"object","properties":{}}),
-        }],
+        remote_name: "forecast".into(),
+        family: "example/weather".into(),
+        description: "Weather forecast".into(),
+        parameters: serde_json::json!({"type":"object","properties":{}}),
+        deferred: true,
+        tags: vec!["mcp.server:example/weather".into()],
     }];
 
-    let action = searchable_name("server-1", "example/weather", "forecast");
+    let action = "mcp_weather_forecast_abc123".to_string();
     prelude.refresh_delegation_tool_surface().unwrap();
     assert!(prelude.synthesized_tool_names_for_test().contains(&action));
     {
@@ -245,7 +249,8 @@ fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
         .mutable
         .lock()
         .expect("prelude state")
-        .connected_mcp_tools
+        .mcp_tools
+        .connected
         .clear();
     prelude.refresh_delegation_tool_surface().unwrap();
     assert!(!prelude.synthesized_tool_names_for_test().contains(&action));
@@ -255,6 +260,99 @@ fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
         .expect("tool surface")
         .deferred_tool_names
         .contains(&action));
+}
+
+#[cfg(feature = "mcp")]
+#[tokio::test]
+async fn resumed_mcp_snapshot_survives_a_cold_catalog_and_keeps_its_frozen_spec() {
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
+        .expect("builtin definitions");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..Default::default()
+    };
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("orchestrator");
+    host.ensure_runtime_session().expect("runtime session");
+    let prelude = host
+        .runtime_state
+        .lock()
+        .expect("runtime state")
+        .prelude
+        .clone()
+        .expect("prelude");
+
+    let name = "mcp_weather_forecast_abc123";
+    let mut recorded_spec = spec(name);
+    recorded_spec.description = "frozen MCP description".into();
+    recorded_spec.parameters = serde_json::json!({"type":"object","frozen":true});
+    let recorded = ToolSnapshot::new(vec![recorded_spec.clone()]).expect("recorded snapshot");
+    prelude.adopt_recorded_tools(Some(&recorded));
+    prelude
+        .refresh_delegation_tool_surface()
+        .expect("cold refresh");
+
+    let cold = prelude
+        .prepare(false)
+        .await
+        .expect("prepared cold surface")
+        .tools
+        .expect("cold tool snapshot");
+    let (cold_with_recorded, retained) = cold
+        .with_retained(&recorded)
+        .expect("retain the transcript declaration");
+    assert_eq!(retained, 1, "the cold catalog supplied no MCP executor");
+    let cold_spec = cold_with_recorded
+        .specs()
+        .iter()
+        .find(|spec| spec.name == name)
+        .expect("recorded MCP name survives the cold catalog");
+    assert_eq!(
+        serde_json::to_value(cold_spec).expect("serialize restored declaration"),
+        serde_json::to_value(&recorded_spec).expect("serialize frozen declaration")
+    );
+
+    prelude
+        .mutable
+        .lock()
+        .expect("prelude state")
+        .mcp_tools
+        .connected = vec![tinymcp_bus::McpToolPresentation {
+        name: name.into(),
+        legacy_name: "mcp_forecast_legacy".into(),
+        server_id: "server-1".into(),
+        remote_name: "forecast".into(),
+        family: "example/weather".into(),
+        description: "changed current catalog description".into(),
+        parameters: serde_json::json!({"type":"object","current":true}),
+        deferred: true,
+        tags: vec!["mcp.server_id:server-1".into()],
+    }];
+    prelude
+        .refresh_delegation_tool_surface()
+        .expect("refresh from recovered catalog");
+    let recovered = prelude
+        .prepare(false)
+        .await
+        .expect("prepared recovered surface")
+        .tools
+        .expect("recovered tool snapshot");
+    let recovered_spec = recovered
+        .specs()
+        .iter()
+        .find(|spec| spec.name == name)
+        .expect("recorded MCP name remains present");
+    assert_eq!(
+        serde_json::to_value(recovered_spec).expect("serialize restored declaration"),
+        serde_json::to_value(&recorded_spec).expect("serialize frozen declaration")
+    );
 }
 
 #[cfg(feature = "modules")]
@@ -279,9 +377,12 @@ async fn desktop_browser_setting_keeps_deferred_tools_in_fresh_and_resumed_surfa
     };
     config.browser.enabled = true;
     config.http_request.allowed_domains = vec!["example.com".into()];
-    let mut host =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
-            .expect("desktop orchestrator");
+    let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("desktop orchestrator");
     for name in ["browser", "browser_open"] {
         assert!(host.deferred_tool_names_for_test().contains(name), "{name}");
         assert!(!host
@@ -319,9 +420,12 @@ async fn desktop_browser_setting_keeps_deferred_tools_in_fresh_and_resumed_surfa
     }
 
     config.browser.enabled = false;
-    let disabled =
-        crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
-            .expect("browser-disabled orchestrator");
+    let disabled = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "orchestrator",
+    )
+    .expect("browser-disabled orchestrator");
     for name in ["browser", "browser_open"] {
         assert!(
             !disabled.deferred_tool_names_for_test().contains(name),
@@ -337,7 +441,7 @@ async fn desktop_browser_setting_keeps_deferred_tools_in_fresh_and_resumed_surfa
 /// current integration authorization snapshot confirms Gmail is connected.
 #[tokio::test]
 async fn a_resumed_orchestrator_keeps_the_integration_actions_it_was_sent() {
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
     let action_dir = tempfile::tempdir().expect("tempdir");
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
@@ -345,6 +449,7 @@ async fn a_resumed_orchestrator_keeps_the_integration_actions_it_was_sent() {
         .chat_model(model)
         .tools(Vec::new())
         .action_dir(action_dir.path().to_path_buf())
+        .workspace_dir(action_dir.path().to_path_buf())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
         .agent_definition_name("orchestrator")
         .build()
@@ -415,6 +520,7 @@ async fn session_locator_is_memoized_across_calls() {
         .chat_model(model)
         .tools(Vec::new())
         .action_dir(action_dir.path().to_path_buf())
+        .workspace_dir(action_dir.path().to_path_buf())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
         .agent_definition_name("orchestrator")
         .build()
@@ -439,7 +545,7 @@ const SURFACED_GOAL_TOOL: &str = "goal_complete";
 fn text_dialect_host(
     thread_id: Option<&str>,
 ) -> (crate::agent::OpenHumanSessionHost, tempfile::TempDir) {
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
     let action_dir = tempfile::tempdir().expect("tempdir");
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
@@ -448,6 +554,7 @@ fn text_dialect_host(
         .chat_model(model)
         .tools(tools)
         .action_dir(action_dir.path().to_path_buf())
+        .workspace_dir(action_dir.path().to_path_buf())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
         .build()
         .expect("session build");
@@ -555,7 +662,7 @@ async fn newly_connected_action_cannot_shadow_a_permanent_source() {
             Ok(tinytools::ToolResult::success("host"))
         }
     }
-    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let _ = crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins();
     let action_dir = tempfile::tempdir().unwrap();
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
@@ -564,6 +671,7 @@ async fn newly_connected_action_cannot_shadow_a_permanent_source() {
         .tools(vec![Box::new(AttachedAction)])
         .permanent_tool_names(std::collections::HashSet::from(["GMAIL_SEND_EMAIL".into()]))
         .action_dir(action_dir.path().to_path_buf())
+        .workspace_dir(action_dir.path().to_path_buf())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
         .agent_definition_name("orchestrator")
         .build()

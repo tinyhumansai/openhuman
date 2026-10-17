@@ -1,90 +1,80 @@
-//! OpenHuman's [`RemoteControlHost`]: the host state behind `/status`,
-//! `/sessions` and `/new` on every chat channel.
-//!
-//! Command parsing, rendering and the chat → thread bindings live in
-//! `tinychannels::remote`. This adapter answers from the channel runtime
-//! context (model routes, in-memory history), the conversation store and the
-//! web-chat session cache.
+//! Captured host conversation and session state supplied to the channel module.
 
-use async_trait::async_trait;
-use tinychannels::remote::{NewRemoteThread, RemoteControlHost, RemoteRoute, RemoteThreadSummary};
-
-use crate::channels::context::{
-    clear_sender_history, ChannelRouteSelection, ChannelRuntimeContext,
-};
+use crate::channels::context::{clear_sender_history, ChannelRuntimeContext};
+use crate::core::runtime::DispatchCtx;
 use crate::threads::store::{self as conversations, CreateConversationThread};
 
-/// Remote-control host state for one command, borrowed from the runtime.
-pub(crate) struct RuntimeRemoteControl<'a> {
-    pub(crate) ctx: &'a ChannelRuntimeContext,
-}
-
-#[async_trait]
-impl RemoteControlHost for RuntimeRemoteControl<'_> {
-    fn route(&self, sender_key: &str) -> RemoteRoute {
-        let selection = self
-            .ctx
-            .route_overrides
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(sender_key)
-            .cloned()
-            .unwrap_or_else(|| ChannelRouteSelection {
-                provider: self.ctx.default_provider.as_str().to_string(),
-                model: self.ctx.model.as_str().to_string(),
-            });
-        RemoteRoute {
-            provider: selection.provider,
-            model: selection.model,
+/// Serves product-owned conversation state to the captured module runtime.
+pub(crate) async fn dispatch_callback(
+    dispatch: &DispatchCtx,
+    ctx: &ChannelRuntimeContext,
+    tenant: &crate::core::runtime::Tenant,
+    cancellation: &tokio_util::sync::CancellationToken,
+    request: tinychannels_bus::module_remote::RemoteHostRequest,
+) -> tinybus::Result<tinychannels_bus::module_remote::RemoteHostResult> {
+    use tinychannels_bus::module_remote::{
+        RemoteHostRequest as Request, RemoteHostResult as Response,
+    };
+    if cancellation.is_cancelled() {
+        return Err(tinybus::Error::failed("channel session ended"));
+    }
+    match request {
+        Request::ListThreads => {
+            let threads = conversations::list_threads(dispatch, ctx.workspace_dir.to_path_buf())
+                .map_err(|_| tinybus::Error::failed("conversation state unavailable"))?;
+            Ok(Response::Threads(
+                threads
+                    .into_iter()
+                    .map(
+                        |thread| tinychannels_bus::module_remote::RemoteThreadSummary {
+                            id: thread.id,
+                            title: thread.title,
+                            message_count: thread.message_count,
+                            last_message_at: thread.last_message_at,
+                        },
+                    )
+                    .collect(),
+            ))
         }
-    }
-
-    fn history_len(&self, sender_key: &str) -> usize {
-        self.ctx
-            .conversation_histories
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(sender_key)
-            .map(Vec::len)
-            .unwrap_or(0)
-    }
-
-    fn clear_history(&self, sender_key: &str) {
-        clear_sender_history(self.ctx, sender_key);
-    }
-
-    async fn list_threads(&self) -> anyhow::Result<Vec<RemoteThreadSummary>> {
-        let threads = conversations::list_threads(self.ctx.workspace_dir.to_path_buf())
-            .map_err(anyhow::Error::msg)?;
-        Ok(threads
-            .into_iter()
-            .map(|thread| RemoteThreadSummary {
-                id: thread.id,
-                title: thread.title,
-                message_count: thread.message_count,
-                last_message_at: thread.last_message_at,
-            })
-            .collect())
-    }
-
-    async fn create_thread(&self, thread: NewRemoteThread) -> anyhow::Result<()> {
-        conversations::ensure_thread(
-            self.ctx.workspace_dir.to_path_buf(),
-            CreateConversationThread {
-                id: thread.id,
-                title: thread.title,
-                created_at: thread.created_at,
-                parent_thread_id: None,
-                labels: Some(thread.labels),
-                personality_id: None,
-                working_dir: None,
-            },
-        )
-        .map(drop)
-        .map_err(anyhow::Error::msg)
-    }
-
-    async fn invalidate_thread(&self, thread_id: &str) {
-        crate::web_chat::invalidate_thread_sessions(thread_id).await;
+        Request::CreateThread(thread) => {
+            if cancellation.is_cancelled() {
+                return Err(tinybus::Error::failed("channel session ended"));
+            }
+            conversations::ensure_thread(
+                dispatch,
+                ctx.workspace_dir.to_path_buf(),
+                CreateConversationThread {
+                    id: thread.id,
+                    title: thread.title,
+                    created_at: thread.created_at,
+                    parent_thread_id: None,
+                    labels: Some(thread.labels),
+                    personality_id: None,
+                    working_dir: None,
+                },
+            )
+            .map_err(|_| tinybus::Error::failed("conversation state unavailable"))?;
+            Ok(Response::Completed)
+        }
+        Request::ClearHistory { sender_key } => {
+            if cancellation.is_cancelled() {
+                return Err(tinybus::Error::failed("channel session ended"));
+            }
+            clear_sender_history(&ctx.conversation_histories, &sender_key);
+            Ok(Response::Completed)
+        }
+        Request::InvalidateThread { thread_id } => {
+            let _removed = crate::web_chat::invalidate_thread_sessions_for_tenant(
+                dispatch,
+                tenant,
+                &thread_id,
+                cancellation,
+            )
+            .await;
+            if cancellation.is_cancelled() {
+                return Err(tinybus::Error::failed("channel session ended"));
+            }
+            Ok(Response::Completed)
+        }
     }
 }

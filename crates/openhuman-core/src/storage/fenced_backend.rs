@@ -24,13 +24,14 @@
 
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tinystoragedrivers::{
-    Blob, BlobMeta, BlobStore, Capabilities, Capability, CollectionSpec, ErrorKind, Filter, Page,
-    Precondition, Query, Result, SearchHit, Sort, StorageError, StreamEntry, StreamStore, Version,
-    Versioned, WriteOp, WriteResult,
+    Blob, BlobMeta, BlobStore, BlobStream, Capabilities, Capability, CollectionSpec, ErrorKind,
+    Filter, Page, Precondition, Query, ReadCheck, Result, SearchHit, Sort, StorageError,
+    StreamEntry, StreamStore, Version, Versioned, WriteOp, WriteResult,
 };
 
 use super::fence::{FenceRegistry, LeaseFence};
@@ -70,6 +71,7 @@ pub fn wrap(inner: Arc<dyn StorageBackend>) -> Arc<dyn StorageBackend> {
     Arc::new(FencedBackend::new(inner, super::fence::registry()))
 }
 
+#[async_trait]
 impl StorageBackend for FencedBackend {
     fn driver(&self) -> &'static str {
         self.inner.driver()
@@ -102,6 +104,13 @@ impl StorageBackend for FencedBackend {
                 guard,
             }),
         ))
+    }
+
+    /// Reclaiming blobs that already read as absent changes nothing a reader
+    /// can see, so it needs no fence: it goes straight to the inner driver's
+    /// own implementation rather than the trait default over the fenced view.
+    async fn sweep_expired_blobs(&self, scope: &Scope) -> Result<u64> {
+        self.inner.sweep_expired_blobs(scope).await
     }
 
     fn database(&self, name: &str) -> Result<Arc<dyn StorageBackend>> {
@@ -280,6 +289,18 @@ impl DocumentStore for FencedDocuments {
         fenced_write!(self, "documents.atomic_batch", documents.atomic_batch(ops))
     }
 
+    async fn atomic_batch_checked(
+        &self,
+        checks: Vec<ReadCheck>,
+        ops: Vec<WriteOp>,
+    ) -> Result<Vec<WriteResult>> {
+        fenced_write!(
+            self,
+            "documents.atomic_batch_checked",
+            documents.atomic_batch_checked(checks, ops)
+        )
+    }
+
     async fn search(&self, collection: &str, text: &str, limit: usize) -> Result<Vec<SearchHit>> {
         self.inner.search(collection, text, limit).await
     }
@@ -290,6 +311,23 @@ impl DocumentStore for FencedDocuments {
             "documents.drop_collection",
             documents.drop_collection(collection)
         )
+    }
+
+    async fn watch(
+        &self,
+        collection: &str,
+        filter: &Filter,
+        options: &tinystoragedrivers::WatchOptions,
+    ) -> Result<Box<dyn tinystoragedrivers::DocumentWatch>> {
+        self.inner.watch(collection, filter, options).await
+    }
+
+    async fn validate_collection_spec(&self, required: &CollectionSpec) -> Result<()> {
+        self.inner.validate_collection_spec(required).await
+    }
+
+    async fn collections(&self, prefix: &str) -> Result<Vec<String>> {
+        self.inner.collections(prefix).await
     }
 }
 
@@ -317,6 +355,22 @@ impl StreamStore for FencedStreams {
             self,
             "streams.append_batch",
             streams.append_batch(stream, values)
+        )
+    }
+
+    /// Forwarded (and fenced): without it the trait default answers
+    /// `Unsupported(ConditionalStreamAppend)` even on a driver that has it,
+    /// which refuses every conversation append.
+    async fn append_batch_if_offset(
+        &self,
+        stream: &str,
+        expected_next_offset: u64,
+        values: Vec<Value>,
+    ) -> Result<u64> {
+        fenced_write!(
+            self,
+            "streams.append_batch_if_offset",
+            streams.append_batch_if_offset(stream, expected_next_offset, values)
         )
     }
 
@@ -360,6 +414,35 @@ impl std::fmt::Debug for FencedBlobs {
 
 #[async_trait]
 impl BlobStore for FencedBlobs {
+    fn max_key_len(&self) -> usize {
+        self.inner.max_key_len()
+    }
+
+    /// The driver's abilities, minus presigned URLs: a presigned PUT is a write
+    /// the fence never sees, so the view does not offer them (the trait
+    /// default for `presign_get`/`presign_put` is `Unsupported`).
+    fn capabilities(&self) -> Capabilities {
+        self.inner.capabilities().without(Capability::PresignedUrls)
+    }
+
+    async fn put_expiring(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        content_type: Option<&str>,
+        ttl: Duration,
+    ) -> Result<BlobMeta> {
+        fenced_write!(
+            self,
+            "blobs.put_expiring",
+            blobs.put_expiring(key, bytes, content_type, ttl)
+        )
+    }
+
+    async fn get_stream(&self, key: &str) -> Result<Option<BlobStream>> {
+        self.inner.get_stream(key).await
+    }
+
     async fn put(&self, key: &str, bytes: Vec<u8>, content_type: Option<&str>) -> Result<BlobMeta> {
         fenced_write!(self, "blobs.put", blobs.put(key, bytes, content_type))
     }

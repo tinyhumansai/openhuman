@@ -4,6 +4,7 @@ use base64::Engine as _;
 use rand::RngExt as _;
 
 use crate::core_host::config;
+use crate::core_host::core::runtime::DispatchCtx;
 use crate::core_host::security::credentials::session_support;
 use crate::http_host::types::HostedDirAuth;
 use crate::http_host::LOG_PREFIX;
@@ -55,8 +56,8 @@ fn unauthorized_response() -> Response {
     response
 }
 
-pub(crate) async fn resolve_default_auth_username() -> Option<String> {
-    let config = match config::load_config_with_timeout().await {
+pub(crate) async fn resolve_default_auth_username(ctx: &DispatchCtx) -> Option<String> {
+    let config = match config::ops::load_config_in(ctx).await {
         Ok(config) => config,
         Err(error) => {
             log::debug!("{LOG_PREFIX} default auth username config load failed: {error}");

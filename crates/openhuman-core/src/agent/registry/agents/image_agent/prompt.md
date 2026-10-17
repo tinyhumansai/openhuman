@@ -11,7 +11,8 @@ images you generate.
 
 - **Create** images from a text prompt (`media_generate_image`).
 - **Edit / restyle** a supplied image by passing it in `references` (https
-  URLs, `data:` URLs, or workspace file paths).
+  URLs, `data:` URLs, workspace file paths, or the absolute path returned by an
+  earlier image/video call in the configured Files folder).
 - **Pick the right model** when it matters — call `media_list_models`
   (`kind: "image"`, optional `search`) to see the catalog. The default suits
   most requests.
@@ -27,8 +28,9 @@ images you generate.
   matter. `n` asks for several variants; `seed` makes a result reproducible.
 - For edits, pass the source image(s) in `references` and describe the change
   precisely.
-- Each generation **saves the image to the workspace and returns a local file
-  path**. Always report that path back so the deck/answer can reference the
+- Each generation **saves the image to the configured Files folder and returns
+  a local file path**. That absolute path can be reused in `references` on a
+  later call. Always report it back so the deck/answer can reference the
   concrete artifact. Do not paste raw base64 or invent URLs.
 - Generation is billed. Don't loop on near-identical prompts — generate, inspect
   the result, and only re-run if it materially misses the brief.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
 #[test]
@@ -49,7 +50,9 @@ fn required_tool_id_rejects_wrong_type() {
 
 #[tokio::test]
 async fn handle_list_returns_registry_object() {
-    let value = handle_list(Map::new()).await.expect("list json");
+    let value = handle_list(DispatchCtx::process_default(), Map::new())
+        .await
+        .expect("list json");
     let tools = value
         .get("tools")
         .and_then(Value::as_array)
@@ -74,7 +77,9 @@ async fn handle_get_returns_one_registry_entry() {
     let mut params = Map::new();
     params.insert("tool_id".to_string(), json!("tools.web_search"));
 
-    let value = handle_get(params).await.expect("get json");
+    let value = handle_get(DispatchCtx::process_default(), params)
+        .await
+        .expect("get json");
     assert_eq!(
         value.get("tool_id").and_then(Value::as_str),
         Some("tools.web_search")
@@ -83,7 +88,7 @@ async fn handle_get_returns_one_registry_entry() {
 
 #[tokio::test]
 async fn handle_diagnostics_returns_counts() {
-    let value = handle_diagnostics(Map::new())
+    let value = handle_diagnostics(DispatchCtx::process_default(), Map::new())
         .await
         .expect("diagnostics json");
     let diagnostics = value.get("diagnostics").unwrap_or(&value);

@@ -149,6 +149,23 @@ pub fn state_dir_from_config(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+/// The files holding OpenHuman's own credentials for `config`, at the paths
+/// their stores write: the encrypted keyring (`secrets.enc`), the auth
+/// profiles, the HTTP credentials and the account config. A path may not
+/// exist.
+#[cfg(any(feature = "modules", test))]
+pub(crate) fn credential_files(config: &Config) -> Vec<PathBuf> {
+    let state_dir = state_dir_from_config(config);
+    vec![
+        crate::security::secret_storage::encrypted_file_backend::secrets_file(
+            &crate::security::secret_storage::store::workspace_dir_for_file_backend(),
+        ),
+        super::profiles::profiles_file(&state_dir),
+        super::http_creds::store_file(&state_dir),
+        config.config_path.clone(),
+    ]
+}
+
 pub fn default_profile_id(provider: &str) -> String {
     profile_id(provider, DEFAULT_PROFILE_NAME)
 }

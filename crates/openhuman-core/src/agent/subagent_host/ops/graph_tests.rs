@@ -9,20 +9,127 @@ use tinyinference_llm::tool::ToolCall;
 use tinytools::Tool;
 use tinytools::ToolResult;
 
+/// Reads the transcript a sub-agent run wrote under `stem` back through the
+/// store it wrote to.
+fn read_stem(
+    locator: &dyn tinyagents_session::transcript::TranscriptLocator,
+    stem: &str,
+) -> tinyagents_session::transcript::SessionTranscript {
+    let seed = tinyagents_session::transcript::TranscriptMeta {
+        agent_name: String::new(),
+        agent_id: None,
+        agent_type: None,
+        dispatcher: String::new(),
+        provider: None,
+        model: None,
+        created: String::new(),
+        updated: String::new(),
+        turn_count: 0,
+        prefix_message_count: None,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+        thread_id: None,
+        task_id: None,
+        session_id: None,
+        parent_session_id: None,
+    };
+    locator
+        .open_stem(stem, seed)
+        .expect("open the child stem")
+        .read_session()
+        .expect("read the child transcript")
+        .expect("the child transcript was written")
+}
+
+#[test]
+fn a_subagent_writes_to_its_turn_trees_store_else_its_contexts() {
+    let workspace = tempfile::tempdir().unwrap();
+    let tree = crate::agent::session_store::transcripts_or_files("tree-key", workspace.path());
+    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    run_context.transcripts = Some(tree.clone());
+    let chosen = super::transcript::subagent_transcripts(&run_context, workspace.path());
+    assert!(
+        Arc::ptr_eq(&chosen, &tree),
+        "the root session's store is used as is"
+    );
+
+    // No session handed a store over: the default agent's store of the run's
+    // (here unbound, desktop) tenant.
+    let unbound = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    let fallback = super::transcript::subagent_transcripts(&unbound, workspace.path())
+        .destination_key()
+        .expect("a workspace store names its destination");
+    assert!(
+        fallback.ends_with(&format!(
+            "/{}/transcripts",
+            crate::agent::session_store::DEFAULT_AGENT
+        )),
+        "{fallback}"
+    );
+}
+
+#[test]
+fn a_detached_subagent_uses_the_store_its_carried_context_selects() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+    use tinyagents_session::port::{InMemorySessionStores, SessionStoreProvider};
+    let workspace = tempfile::tempdir().unwrap();
+    let provider: Arc<dyn SessionStoreProvider> = Arc::new(InMemorySessionStores::new());
+    let mut overrides = crate::agent::host_overrides::HostOverrides::default();
+    overrides.session_store = Some(Arc::clone(&provider));
+    let overlay = ContextOverlay::new(
+        crate::config::Config::default(),
+        DomainSet::kernel(),
+        crate::tools::toolpacks::ToolGroups::none(),
+    )
+    .host_overrides(Arc::new(overrides));
+    let core = CoreContext::for_test(DomainSet::full(), None).derive_with(overlay);
+
+    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    run_context.core = Some(Arc::downgrade(&core));
+    // No ambient context is in scope here, as on a bare `tokio::spawn`.
+    assert!(CoreContext::current().is_none());
+    let chosen = super::transcript::subagent_transcripts_in(&run_context, workspace.path(), false);
+    let expected = provider
+        .for_agent(crate::agent::session_store::DEFAULT_AGENT)
+        .transcripts
+        .destination_key();
+    assert_eq!(chosen.destination_key(), expected);
+}
+
+#[test]
+fn a_saas_subagent_without_a_context_or_tree_store_is_kept_in_memory() {
+    let workspace = tempfile::tempdir().unwrap();
+    let unbound = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    let chosen = super::transcript::subagent_transcripts_in(&unbound, workspace.path(), true);
+    let operator = crate::agent::session_store::transcripts_or_files(
+        crate::agent::session_store::DEFAULT_AGENT,
+        workspace.path(),
+    );
+    assert_ne!(chosen.destination_key(), operator.destination_key());
+    assert!(
+        !workspace.path().join("storage").exists(),
+        "nothing is written under the operator workspace"
+    );
+}
+
 #[test]
 fn subagent_transcript_keeps_cumulative_spend_separate_from_unknown_last_call() {
     let workspace = tempfile::tempdir().unwrap();
+    let locator =
+        crate::agent::session_store::transcripts_or_files("orchestrator", workspace.path());
     let usage = AggregatedUsage {
         input_tokens: 120,
         output_tokens: 30,
         cached_input_tokens: 40,
-        cost: crate::agent::cost::CostTally {
+        cost: tinyagents_harness::cost::CostTally {
             known_usd: 0.01,
-            source: crate::agent::cost::CostSource::Charged,
+            source: tinyagents_harness::cost::CostSource::Charged,
         },
     };
     super::transcript::persist_subagent_transcript(
-        workspace.path(),
+        locator.as_ref(),
         "root__usage",
         "worker",
         "task",
@@ -35,10 +142,7 @@ fn subagent_transcript_keeps_cumulative_spend_separate_from_unknown_last_call() 
         "test",
         2,
     );
-    let root = crate::agent::session_store::transcript_root(workspace.path());
-    let path = tinyagents_session::transcript::resolve_keyed_transcript_path(&root, "root__usage")
-        .unwrap();
-    let transcript = tinyagents_session::transcript::read_transcript(&path).unwrap();
+    let transcript = read_stem(locator.as_ref(), "root__usage");
     let recorded = &transcript
         .messages
         .last()
@@ -149,8 +253,11 @@ fn parallel_worker_without_thread_keeps_parent_transcript_affinity() {
 #[tokio::test]
 async fn explicit_worker_thread_replaces_parent_for_model_run_and_transcript() {
     let workspace = tempfile::tempdir().expect("workspace");
+    let locator =
+        crate::agent::session_store::transcripts_or_files("orchestrator", workspace.path());
     let mut parent = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     parent.thread_id = Some("parent-thread".to_owned());
+    parent.transcripts = Some(locator.clone());
     let mut history = vec![TranscriptMessage::user("finish this")];
 
     run_subagent_via_graph(
@@ -185,13 +292,7 @@ async fn explicit_worker_thread_replaces_parent_for_model_run_and_transcript() {
     .await
     .expect("worker run");
 
-    let path = tinyagents_session::transcript::resolve_keyed_transcript_path(
-        workspace.path(),
-        "root__worker-thread",
-    )
-    .expect("transcript path");
-    let persisted =
-        tinyagents_session::transcript::read_transcript(&path).expect("worker transcript");
+    let persisted = read_stem(locator.as_ref(), "root__worker-thread");
     assert_eq!(persisted.meta.thread_id.as_deref(), Some("worker-thread"));
     assert_ne!(persisted.meta.thread_id.as_deref(), Some("parent-thread"));
 }

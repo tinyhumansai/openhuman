@@ -84,12 +84,16 @@ fn guard_serial() -> &'static tokio::sync::Mutex<()> {
 fn acquire_await_rejects_the_same_key_reentrantly() {
     let _s = guard_serial().blocking_lock();
     let key = "reentry-test\u{1}null".to_string();
-    let held = super::guard::acquire_await(key.clone()).expect("first acquire");
-    let again = super::guard::acquire_await(key.clone());
+    let held =
+        super::guard::acquire_await(&crate::core::runtime::DispatchCtx::ambient(), key.clone())
+            .expect("first acquire");
+    let again =
+        super::guard::acquire_await(&crate::core::runtime::DispatchCtx::ambient(), key.clone());
     assert!(again.is_err(), "the same key while held must be rejected");
     assert!(again.err().unwrap().contains("re-entrant"));
     drop(held); // frees the key
-    super::guard::acquire_await(key).expect("after drop the key is free again");
+    super::guard::acquire_await(&crate::core::runtime::DispatchCtx::ambient(), key)
+        .expect("after drop the key is free again");
 }
 
 #[test]
@@ -98,14 +102,27 @@ fn acquire_await_caps_concurrent_awaits() {
     // MAX_ACTIVE_AWAITS is 8; hold 8 distinct keys, then the 9th must reject.
     let mut held = Vec::new();
     for i in 0..8 {
-        held.push(super::guard::acquire_await(format!("cap-test-{i}")).expect("under the cap"));
+        held.push(
+            super::guard::acquire_await(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                format!("cap-test-{i}"),
+            )
+            .expect("under the cap"),
+        );
     }
-    let ninth = super::guard::acquire_await("cap-test-9".to_string());
+    let ninth = super::guard::acquire_await(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "cap-test-9".to_string(),
+    );
     assert!(ninth.is_err(), "the 9th concurrent await must reject");
     assert!(ninth.err().unwrap().contains("already being awaited"));
     // Free one slot → the next acquire succeeds.
     held.pop();
-    super::guard::acquire_await("cap-test-9".to_string()).expect("a freed slot is reusable");
+    super::guard::acquire_await(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "cap-test-9".to_string(),
+    )
+    .expect("a freed slot is reusable");
 }
 
 #[tokio::test]
@@ -119,7 +136,7 @@ async fn unknown_workflow_id_does_not_burn_a_spawn_slot() {
     // DELTA is zero (the counter is global + monotonic, so absolute value is
     // shared with the backstop test — hence the serial lock + delta check).
     let _s = guard_serial().lock().await;
-    let before = super::guard::total_spawns();
+    let before = super::guard::total_spawns(&crate::core::runtime::DispatchCtx::ambient());
     let t = RunWorkflowTool::new();
     // wait_seconds: 0 → fire-and-forget path (no await slot taken); the
     // unknown id makes the spawn fail before accounting.
@@ -136,7 +153,7 @@ async fn unknown_workflow_id_does_not_burn_a_spawn_slot() {
         "error should reference the unknown workflow: {}",
         res.output()
     );
-    let after = super::guard::total_spawns();
+    let after = super::guard::total_spawns(&crate::core::runtime::DispatchCtx::ambient());
     assert_eq!(
         before, after,
         "a rejected spawn must not increment the spawn backstop counter"
@@ -154,7 +171,7 @@ fn account_spawn_trips_the_process_backstop() {
     // path does, and that runs in a separate process).
     let mut last = Ok(());
     for _ in 0..600 {
-        last = super::guard::account_spawn();
+        last = super::guard::account_spawn(&crate::core::runtime::DispatchCtx::ambient());
         if last.is_err() {
             break;
         }
@@ -172,16 +189,23 @@ async fn each_agent_owns_its_workflow_await_guard() {
     let beta = test_agent_context(&root, "beta");
     let key = "agent-guard-shared-key".to_string();
 
-    let held = CoreContext::scope(std::sync::Arc::clone(&alpha), async {
-        super::guard::acquire_await(key.clone()).expect("alpha acquires")
-    })
-    .await;
+    let held = {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&alpha));
 
-    let beta_result =
-        CoreContext::scope(beta, async { super::guard::acquire_await(key.clone()) }).await;
+        super::guard::acquire_await(&scope_ctx, key.clone()).expect("alpha acquires")
+    };
+
+    let beta_result = {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(beta);
+
+        super::guard::acquire_await(&scope_ctx, key.clone())
+    };
     assert!(beta_result.is_ok(), "beta is not blocked by alpha's await");
-    let alpha_again =
-        CoreContext::scope(alpha, async { super::guard::acquire_await(key.clone()) }).await;
+    let alpha_again = {
+        let scope_ctx = crate::core::runtime::DispatchCtx::new(alpha);
+
+        super::guard::acquire_await(&scope_ctx, key.clone())
+    };
     assert!(alpha_again.is_err(), "alpha still holds its own key");
     drop(held);
 }

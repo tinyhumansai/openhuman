@@ -15,6 +15,7 @@ import {
   completeDeepLinkAuthProcessing,
   failDeepLinkAuthProcessing,
 } from '../store/deepLinkAuthState';
+import { E2E_RESTART_APP_AS_RELOAD } from './config';
 import { getStoredCoreMode } from './configPersistence';
 import {
   CORE_CONFIG_UNREADABLE_I18N_KEY,
@@ -301,6 +302,14 @@ const handleAuthDeepLink = async (parsed: URL, requireStateNonce = true) => {
       );
     } else {
       const kind = classifyAuthStoreFailure(error);
+      // The native E2E harness cannot observe WebView console warnings. Expose
+      // only this stable, PII-free bucket so failed auth setup can be diagnosed
+      // without leaking the backend response or credential into test logs.
+      if (E2E_RESTART_APP_AS_RELOAD && typeof window !== 'undefined') {
+        (
+          window as Window & { __OPENHUMAN_E2E_AUTH_STORE_FAILURE__?: string }
+        ).__OPENHUMAN_E2E_AUTH_STORE_FAILURE__ = kind;
+      }
       // Capture a SYNTHETIC error keyed only by `kind` — never the raw error.
       // Two reasons (both raised in review):
       //  1. PII: the upstream `/auth/me` failure embeds the verbatim backend
@@ -399,7 +408,7 @@ export const classifyAuthStoreFailure = (failure: unknown): string => {
   if (/\b401\b|unauthorized/.test(m)) return 'auth_me_unauthorized';
   if (/\b50[234]\b|bad gateway|service unavailable|gateway timeout/.test(m))
     return 'auth_me_gateway';
-  if (/network|fetch failed|connection|dns|unreachable/.test(m)) return 'network';
+  if (/network|fetch failed|connection|connect|refused|dns|unreachable/.test(m)) return 'network';
   if (/auth\/me|session validation failed/.test(m)) return 'auth_me_other';
   // The owner's remaining prefixes (Rust `SessionError::{Core, Backend,
   // Invalid}`), checked after the content buckets above so a `CORE:`-wrapped

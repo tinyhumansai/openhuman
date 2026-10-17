@@ -9,6 +9,44 @@ icon: desktop
 
 `crates/openhuman-app/` is the desktop host for OpenHuman. It provides the Tauri v2 webview, IPC commands and window management, and bridges to the embedded `openhuman-core` Rust runtime over core JSON-RPC. It does not duplicate the domain stack. That lives in `crates/openhuman-core` (library `openhuman_core`; the `openhuman-core` binary is `crates/openhuman-cli/src/main.rs`).
 
+### Where the shell sits
+
+The shell is one of three hosts on top of a strict crate chain, and
+`openhuman-rpc` is the only OpenHuman crate in its `Cargo.toml`:
+
+```text
+  openhuman-app (this crate)
+        |  [dependencies] openhuman-rpc  (http-client, server, jev + the product gates)
+        v
+  openhuman-rpc ----------> host::desktop / host::cli, server, client
+        |                    re-exports `embed` and `tinyhumans`
+        v
+  openhuman-tinyhumans ---> SDK transport, session owner (`session/` uses it)
+        |
+        v
+  openhuman-embed --------> Runtime, process helpers (tokio runtime, logging,
+        |                    Sentry options), config/artifacts/modules facades
+        v
+  openhuman-core
+```
+
+| Shell code | Goes through |
+| --- | --- |
+| Embedded server (`core_process.rs`) | `openhuman_rpc::host::desktop(DesktopOptions { port, rpc_token, .. }, shutdown, ready_tx)` |
+| `OpenHuman core …` / `mcp` subcommands (`lib.rs::run_core_from_args`) | `openhuman_rpc::host::cli(args)` |
+| Tauri async runtime sizing (`lib.rs::run`) | `openhuman_rpc::embed::process::tokio_runtime()` |
+| Sentry client (`lib.rs::run`) | `openhuman_rpc::embed::process::sentry::client_options` (the shared `before_send` chain; fallback user id from `session::peek_user_id`) |
+| File logging (`file_logging.rs`), data reset log handle | `openhuman_rpc::embed::process::{init_for_embedded, log_directory, shutdown_file_guard}` |
+| Config / workspace paths, artifacts, bundled modules | `openhuman_rpc::embed::{config, artifacts, modules}` |
+| Session owner (`session/`) | `openhuman_rpc::tinyhumans` |
+| Compile-time asserts | `openhuman_rpc::embed::{VOICE_COMPILED_IN, HTTP_SERVER_COMPILED_IN}` |
+
+`scripts/ci/check-crate-chain.mjs` fails if the shell's manifest names
+another OpenHuman crate or its `src/` names `__host`, `core_host` or
+`openhuman_core::`. One embed runtime exists per process: when the shell
+restarts its embedded server, `CoreProcessHandle` waits for the old task (and
+the runtime it owns) to drop before it spawns the next one.
+
 ## Responsibilities
 
 1. Web UI. Load the Vite build from `app/dist` (or dev server on port 1420).
@@ -159,8 +197,8 @@ install's data, and *this* machine's audio, so routing them to a remote gateway 
 wrong rather than incomplete.
 
 Gated by the shell-local `gateways` Cargo feature (default on). That gate is unrelated to
-the feature-forwarding rules in `AGENTS.md`, which govern which `openhuman_core` gates the
-shell forwards; nothing here belongs in `scripts/ci/product-features.txt`.
+the feature-forwarding rules in `AGENTS.md`, which govern which core gates the shell
+forwards on its `openhuman-rpc` dependency; nothing here belongs in `scripts/ci/product-features.txt`.
 
 Frontend: `app/src/services/gatewayService.ts`, surfaced in Settings → Core connection
 (`components/settings/panels/core/GatewaySection.tsx`).
@@ -301,7 +339,7 @@ The Tauri crate does not embed a duplicate Socket.io server or Telegram client; 
 
 ### `CoreProcessHandle` (`core_process.rs`)
 
-- Runs the core's HTTP/JSON-RPC server as a tokio task inside the Tauri host via `openhuman_rpc::host::desktop`: no sidecar binary.
+- Runs the core's HTTP/JSON-RPC server as a tokio task inside the Tauri host via `openhuman_rpc::host::desktop`: no sidecar binary. The runtime the task builds is dropped when the task ends; `shutdown` and the startup-timeout abort wait for that before a respawn, because a process holds one embed runtime at a time.
 - Generates a per-launch 256-bit hex bearer token (`generate_rpc_token`) and hands it to the embedded server; the renderer reads it via the `core_rpc_token` command.
 - Stale-listener policy: if the core port is already occupied, probes whether the listener is an old OpenHuman core (terminate + respawn) or something foreign (surface the conflict). `OPENHUMAN_CORE_REUSE_EXISTING=1` opts back into attach-to-existing for debugging.
 - Managed as Tauri state in `lib.rs` (`app.manage(core_handle)`).

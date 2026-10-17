@@ -8,7 +8,7 @@ struct StubProvider {
 }
 
 #[async_trait]
-impl EmbeddingProvider for StubProvider {
+impl EmbeddingModel for StubProvider {
     fn name(&self) -> &str {
         "stub"
     }
@@ -21,7 +21,7 @@ impl EmbeddingProvider for StubProvider {
         self.dims
     }
 
-    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+    async fn embed(&self, texts: &[String]) -> EmbedResult<Vec<Vec<f32>>> {
         Ok(texts
             .iter()
             .map(|t| vec![t.len() as f32; self.dims])
@@ -31,15 +31,15 @@ impl EmbeddingProvider for StubProvider {
 
 #[tokio::test]
 async fn embeddings_adapter_round_trips_and_reports_dimensions() {
-    let provider: Arc<dyn EmbeddingProvider> = Arc::new(StubProvider { dims: 4 });
-    let adapter = ProviderEmbeddingModel::new(provider);
+    let provider: Arc<dyn EmbeddingModel> = Arc::new(StubProvider { dims: 4 });
+    let adapter = ProviderEmbeddingModel::new(provider, DispatchCtx::ambient());
 
     // dimensions() is forwarded from the underlying provider.
-    assert_eq!(TaEmbeddingModel::name(&adapter), "stub");
-    assert_eq!(TaEmbeddingModel::model_id(&adapter), "stub-model");
-    assert_eq!(TaEmbeddingModel::dimensions(&adapter), 4);
+    assert_eq!(EmbeddingModel::name(&adapter), "stub");
+    assert_eq!(EmbeddingModel::model_id(&adapter), "stub-model");
+    assert_eq!(EmbeddingModel::dimensions(&adapter), 4);
 
-    // embed() bridges `&[String]` -> `&[&str]` and returns one vector per
+    // embed() returns one vector per
     // input, in order, each of the reported dimensionality.
     let inputs = vec!["ab".to_string(), "abcd".to_string()];
     let vectors = adapter.embed(&inputs).await.expect("embed should succeed");
@@ -52,17 +52,17 @@ async fn embeddings_adapter_round_trips_and_reports_dimensions() {
 
 #[tokio::test]
 async fn embeddings_adapter_preserves_signature() {
-    let provider: Arc<dyn EmbeddingProvider> = Arc::new(StubProvider { dims: 8 });
+    let provider: Arc<dyn EmbeddingModel> = Arc::new(StubProvider { dims: 8 });
     let expected = provider.signature();
-    let adapter = ProviderEmbeddingModel::new(provider);
+    let adapter = ProviderEmbeddingModel::new(provider, DispatchCtx::ambient());
     assert_eq!(adapter.signature(), expected);
     assert_eq!(adapter.signature(), "provider=stub;model=stub-model;dims=8");
 }
 
 #[tokio::test]
 async fn embeddings_adapter_empty_batch_is_empty() {
-    let provider: Arc<dyn EmbeddingProvider> = Arc::new(StubProvider { dims: 3 });
-    let adapter = ProviderEmbeddingModel::new(provider);
+    let provider: Arc<dyn EmbeddingModel> = Arc::new(StubProvider { dims: 3 });
+    let adapter = ProviderEmbeddingModel::new(provider, DispatchCtx::ambient());
     let vectors = adapter.embed(&[]).await.expect("empty embed ok");
     assert!(vectors.is_empty());
 }

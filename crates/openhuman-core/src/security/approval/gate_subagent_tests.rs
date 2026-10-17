@@ -76,12 +76,17 @@ async fn an_async_subagent_park_reaches_the_parent_thread_detached_with_a_short_
 
     let before = chrono::Utc::now();
     let g = gate.clone();
-    // Origin propagated, APPROVAL_CHAT_CONTEXT not — the state
+    // Origin propagated, the chat approval context not — the state
     // `spawn_async_subagent` leaves its detached child in.
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             async_subagent_origin("thread-parent"),
-            g.intercept(tool, "generate an image", serde_json::json!({})),
+            g.intercept(
+                &ApprovalTurnContext::default(),
+                tool,
+                "generate an image",
+                serde_json::json!({}),
+            ),
         )
         .await
     });
@@ -137,8 +142,12 @@ async fn an_inline_chat_park_is_not_detached_and_keeps_the_full_window() {
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             web_origin(),
-            APPROVAL_CHAT_CONTEXT
-                .scope(chat_ctx(), g.intercept(tool, "run", serde_json::json!({}))),
+            g.intercept(
+                &ApprovalTurnContext::chat(chat_ctx()),
+                tool,
+                "run",
+                serde_json::json!({}),
+            ),
         )
         .await
     });
@@ -176,14 +185,16 @@ async fn an_inline_subagent_park_uses_the_short_window_without_being_detached() 
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(
-                chat_ctx(),
-                tinyagents_harness::context::with_run_depth(
-                    tinyagents_harness::context::RunDepth {
-                        depth: 1,
-                        max_depth: crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH,
-                    },
-                    g.intercept("skill_registry_install", "install", serde_json::json!({})),
+            tinyagents_harness::context::with_run_depth(
+                tinyagents_harness::context::RunDepth {
+                    depth: 1,
+                    max_depth: crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH,
+                },
+                g.intercept(
+                    &ApprovalTurnContext::chat(chat_ctx()),
+                    "skill_registry_install",
+                    "install",
+                    serde_json::json!({}),
                 ),
             ),
         )
@@ -212,6 +223,7 @@ async fn an_expired_park_tells_the_model_nobody_answered() {
         turn_origin::with_origin(
             async_subagent_origin("thread-expiry"),
             g.intercept(
+                &ApprovalTurnContext::default(),
                 "media_generate_video",
                 "generate a clip",
                 serde_json::json!({}),
@@ -228,8 +240,8 @@ async fn an_expired_park_tells_the_model_nobody_answered() {
     assert!(reason.contains("ask again"), "{reason}");
     // The status classifier still reads it as an expired approval.
     assert_eq!(
-        crate::tools::status::classify(&reason, false).class,
-        crate::tools::status::ToolFailureClass::ApprovalExpired,
+        tinytools::status::classify(&reason, false).class,
+        tinytools::status::ToolFailureClass::ApprovalExpired,
         "{reason}"
     );
 }
@@ -253,7 +265,12 @@ async fn every_detached_park_on_a_thread_stays_recoverable() {
         handles.push(tokio::spawn(async move {
             turn_origin::with_origin(
                 async_subagent_origin("thread-multi"),
-                g.intercept(tool, "generate media", serde_json::json!({})),
+                g.intercept(
+                    &ApprovalTurnContext::default(),
+                    tool,
+                    "generate media",
+                    serde_json::json!({}),
+                ),
             )
             .await
         }));

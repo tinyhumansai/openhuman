@@ -1,9 +1,10 @@
 use super::super::runtime::spawn_supervised_listener;
-use super::super::{traits, Channel};
+use super::super::Channel;
 use super::common::AlwaysFailChannel;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tinychannels_bus as traits;
 
 #[tokio::test]
 async fn supervised_listener_marks_error_and_restarts_on_failures() {

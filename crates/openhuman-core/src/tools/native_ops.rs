@@ -5,9 +5,10 @@ use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::security::{CommandClass, SecurityPolicy};
+use crate::security::SecurityPolicy;
 use crate::tools;
 use crate::tools::native_ops_types::{ExecuteToolOutcome, RuntimeToolSummary};
+use tinybox_bus::CommandClass;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolScope};
 use tracing::{debug, trace};
 
@@ -223,7 +224,3 @@ pub async fn execute_tool(
         result,
     })
 }
-
-#[cfg(test)]
-#[path = "ops_tests.rs"]
-mod tests;

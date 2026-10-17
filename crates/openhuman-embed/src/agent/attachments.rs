@@ -1,9 +1,12 @@
 //! Permanent tool sources attached to an already configured agent.
 use super::Agent;
-use openhuman_core::agent::tool_policy::{ToolPolicy, ToolPolicyDecision, ToolPolicyRequest};
+use openhuman_core::agent::tinyagents::host::OpenHumanRunContext;
 use openhuman_core::agent::{HostTools, TurnContext};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
+use tinyagents_harness::context::RunContext;
+use tinyagents_harness::middleware::{PolicyDecision, ToolCallPolicy};
+use tinyinference_llm::tool::ToolCall;
 
 /// An invalid or conflicting permanent tool registration.
 #[derive(Debug, thiserror::Error)]
@@ -150,28 +153,35 @@ impl super::AgentInner {
         }))
     }
 }
-type SourcePolicy = (HashSet<String>, Option<Arc<dyn ToolPolicy>>);
+type SourcePolicy = (
+    HashSet<String>,
+    Option<Arc<dyn ToolCallPolicy<OpenHumanRunContext>>>,
+);
 struct AttachmentPolicy {
-    original: Option<Arc<dyn ToolPolicy>>,
+    original: Option<Arc<dyn ToolCallPolicy<OpenHumanRunContext>>>,
     policies: Vec<SourcePolicy>,
 }
 #[async_trait::async_trait]
-impl ToolPolicy for AttachmentPolicy {
+impl ToolCallPolicy<OpenHumanRunContext> for AttachmentPolicy {
     fn name(&self) -> &str {
         "permanent_attachments"
     }
-    async fn check(&self, request: &ToolPolicyRequest) -> ToolPolicyDecision {
+    async fn check(
+        &self,
+        ctx: &RunContext<OpenHumanRunContext>,
+        call: &ToolCall,
+    ) -> PolicyDecision {
         for (names, policy) in &self.policies {
-            if names.contains(&request.tool_name) {
+            if names.contains(&call.name) {
                 return match policy {
-                    Some(policy) => policy.check(request).await,
-                    None => ToolPolicyDecision::Allow,
+                    Some(policy) => policy.check(ctx, call).await,
+                    None => PolicyDecision::Allow,
                 };
             }
         }
         match &self.original {
-            Some(policy) => policy.check(request).await,
-            None => ToolPolicyDecision::Allow,
+            Some(policy) => policy.check(ctx, call).await,
+            None => PolicyDecision::Allow,
         }
     }
 }

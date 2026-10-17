@@ -55,7 +55,12 @@ async fn collect_only_target_routes_without_side_effects() {
     let config = Config::default();
     let src = github_source(SourceTarget::TodoOnly);
 
-    route_enriched(&config, &src, &enriched("123"))
-        .await
-        .expect("collect-only routing is a no-op");
+    route_enriched(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        &src,
+        &enriched("123"),
+    )
+    .await
+    .expect("collect-only routing is a no-op");
 }

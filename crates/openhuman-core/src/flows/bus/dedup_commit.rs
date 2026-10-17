@@ -201,8 +201,12 @@ impl DedupCommitSubscriber {
     /// having this method read that snapshot instead of `store::get_flow` —
     /// a schema + call-site change bigger than this PR's scope; reported as a
     /// follow-up rather than attempted here.
-    fn dedup_node_ids(&self, flow_id: &str) -> Vec<String> {
-        match store::get_flow(&super::owner::config_for_scope(&self.config), flow_id) {
+    pub(super) fn dedup_node_ids(
+        &self,
+        ctx: &crate::core::runtime::DispatchCtx,
+        flow_id: &str,
+    ) -> Vec<String> {
+        match store::get_flow(&super::owner::config_for_scope(ctx, &self.config), flow_id) {
             Ok(Some(flow)) => flow
                 .graph
                 .nodes
@@ -221,10 +225,16 @@ impl DedupCommitSubscriber {
         }
     }
 
-    async fn handle_finished(&self, flow_id: &str, run_id: &str, status: &str) {
+    async fn handle_finished(
+        &self,
+        ctx: crate::core::runtime::DispatchCtx,
+        flow_id: &str,
+        run_id: &str,
+        status: &str,
+    ) {
         // As the flow's owner: its own configuration (`super::owner`).
-        let config = super::owner::config_for_scope(&self.config);
-        let node_ids = self.dedup_node_ids(flow_id);
+        let config = super::owner::config_for_scope(&ctx, &self.config);
+        let node_ids = self.dedup_node_ids(&ctx, flow_id);
         if node_ids.is_empty() {
             tracing::trace!(target: "flows", %flow_id, %run_id, %status, "[dedup-commit] no dedup nodes in this flow — nothing to settle");
             return;
@@ -328,11 +338,12 @@ impl EventHandler<DomainEvent> for DedupCommitSubscriber {
         } = event
         {
             // Settle the run as the agent its flow belongs to (`super::owner`).
-            super::owner::as_owner(
-                &self.config,
-                flow_id,
-                self.handle_finished(flow_id, run_id, status),
-            )
+            // `FlowRunFinished` carries no tenant: the host's own, and in SaaS
+            // none (the run is then not settled here).
+            let host = crate::core::runtime::DispatchCtx::host_default();
+            super::owner::as_owner(&host, &self.config, flow_id, |ctx| {
+                self.handle_finished(ctx, flow_id, run_id, status)
+            })
             .await;
         }
     }

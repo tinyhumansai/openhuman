@@ -2,28 +2,11 @@ use crate::config::PrivacyMode;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::OnceCell;
-
-/// Stable, machine-recognizable marker prefixing a **permanent** policy
-/// rejection: the identical `(tool, args)` call can never succeed in the
-/// current tier (read-only blocking a write, a forbidden/credential path, a
-/// disallowed high-risk or hidden-execution command, an off-allowlist command).
-/// The agent harness's repeated-failure middleware
-/// ([`crate::agent::tinyagents::middleware::RepeatedToolFailureMiddleware`])
-/// detects this and halts on the **first verbatim repeat** rather than
-/// reiterating a provably-futile call. Kept short and bracketed so it survives the
-/// `Error: …` wrapping the tool layer adds and is easy to grep in logs.
-pub const POLICY_BLOCKED_MARKER: &str = "[policy-blocked]";
-
-/// Stable marker prefixing a **this-turn denial** — the user answered "no" to
-/// an approval prompt, or the prompt timed out / its channel dropped. Unlike a
-/// block this isn't permanent across turns, but re-issuing the *same* call this
-/// turn just re-prompts the user, so the harness records it in the circuit
-/// breaker and stops the agent from re-asking the identical call.
-pub const POLICY_DENIED_MARKER: &str = "[policy-denied]";
 
 /// How much autonomy the agent has
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -69,17 +52,6 @@ pub enum CommandRiskLevel {
     Low,
     Medium,
     High,
-}
-
-/// Coarse permission bucket the harness approval gate keys on. TinyBox
-/// supplies parser facts; OpenHuman owns this authorization category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CommandClass {
-    Read,
-    Write,
-    Network,
-    Install,
-    Destructive,
 }
 
 /// What the harness should do with an acting tool call of a given
@@ -288,6 +260,15 @@ pub struct SecurityPolicy {
     pub block_high_risk_commands: bool,
     /// Directories outside the workspace the agent may access (read or read-write).
     pub trusted_roots: Vec<TrustedRoot>,
+    /// Exact, finalized media artifact files admitted for read-only inspection.
+    /// Shared with the media tools so file_read and image_info follow the same
+    /// per-artifact grant without trusting the whole Files directory.
+    #[doc(hidden)]
+    pub media_artifact_paths: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+    /// Configured Files roots used to resolve Ready artifact records after a
+    /// session is rebuilt.
+    #[doc(hidden)]
+    pub media_files_roots: Arc<std::sync::Mutex<Option<crate::agent::artifacts::FileRoots>>>,
     /// Whether the agent may install OS packages via the `install_tool` tool.
     pub allow_tool_install: bool,
     /// Tool names the user has pre-approved ("Always allow"). The `ApprovalGate`
@@ -438,6 +419,8 @@ impl Default for SecurityPolicy {
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
             trusted_roots: Vec::new(),
+            media_artifact_paths: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            media_files_roots: Arc::new(std::sync::Mutex::new(None)),
             allow_tool_install: false,
             auto_approve: Vec::new(),
             auto_approve_all: false,

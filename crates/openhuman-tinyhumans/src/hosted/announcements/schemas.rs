@@ -1,6 +1,6 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use openhuman_embed::__host::config::rpc as config_rpc;
 use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
 use openhuman_embed::__host::core::Outcome;
 use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -43,9 +43,12 @@ pub fn announcements_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_announcements_get_latest(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_announcements_get_latest(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::announcements::get_latest_announcement(&config).await?)
     })
 }

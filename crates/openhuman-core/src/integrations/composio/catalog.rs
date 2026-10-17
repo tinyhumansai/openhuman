@@ -1,75 +1,100 @@
-//! Live Composio tool contracts: the catalog, the probe, and their caches.
+//! Live Composio tool contracts, read from the `tinyconnectors` module.
 //!
-//! What a Composio action really accepts and really returns, sourced from
-//! Composio itself rather than from a static curated list — the ground truth the
-//! workflow builder authors against, and the enforcement gates validate against.
+//! The module owns the fetch, the 30-minute cache, the confirmed-Read output
+//! probe and the probe overlay; this file is the host's call surface over its
+//! `GetToolContract` / `ListToolContracts` / `ProbeToolOutput` members. The
+//! contract and probe types are the `tinyconnectors_bus` ones.
 //!
-//! Two sources, in priority order:
-//!
-//! 1. **The published schema.** [`fetch_live_toolkit_catalog`] reads Composio's
-//!    own v3 `/tools` listing and derives a [`ToolContract`] per action.
-//! 2. **A real response.** Many actions publish no `output_parameters` at all,
-//!    so [`probe_tool_output_sample`] makes one bounded, READ-only, real call
-//!    and derives the same hints from the actual value.
-//!    [`apply_probe_override`] lets a probe win over a schema, because an
-//!    observed response outranks a documented one.
-//!
-//! # Why this lives in `composio`, not in the workflow adapter seam
-//!
-//! It used to live in the seam, which put the dependency backwards: an
-//! always-compiled domain reaching into a feature-gated adapter. That made the
-//! adapter impossible to gate off, since `composio` would have followed it out
-//! of the build. Everything here is Composio's own vocabulary — action slugs,
-//! toolkits, the execute-response envelope, connection scope — so it belongs to
-//! the domain that owns that vocabulary. The seam now imports from here.
-//!
-//! The vendor-neutral half of the work (walking a JSON Schema or a JSON value
-//! for its primary array and its field names) is in
-//! `tinyagents_harness::tool::schema_walk`.
+//! A failed fetch is `None` here, as it always was: callers degrade to
+//! "catalog unknown" rather than blocking on a catalog hiccup.
 
-mod contract;
-mod lookups;
-mod probe;
+use crate::config::Config;
+use serde_json::Value;
+use tinyconnectors_bus::names::methods;
+use tinyconnectors_bus::{
+    ComposioListToolContractsRequest, ComposioListToolContractsResponse,
+    ComposioProbeToolOutputRequest,
+};
+
+pub use tinyconnectors_bus::ComposioProbedOutputSample as ProbedOutputSample;
+pub use tinyconnectors_bus::ComposioToolContract as ToolContract;
 
 #[cfg(test)]
-#[path = "catalog_in_flight_tests_tests.rs"]
-mod in_flight_tests;
+#[path = "catalog_seed.rs"]
+mod seed;
+#[cfg(test)]
+pub(crate) use seed::{seed_live_catalog_cache, seed_live_catalog_cache_expired, seed_probe_cache};
 
 #[cfg(test)]
 #[path = "catalog_tests.rs"]
 mod tests;
 
-pub(crate) use contract::fetch_live_toolkit_catalog;
-#[cfg(test)]
-pub(crate) use contract::seed_live_catalog_cache;
-#[cfg(all(test, feature = "flows"))]
-pub(crate) use contract::seed_live_catalog_cache_expired;
-pub use contract::ToolContract;
-#[cfg(any(test, feature = "flows"))]
-pub(crate) use lookups::composio_required_args;
-#[cfg(test)]
-pub(crate) use probe::ProbedOutputSample;
-#[cfg(any(test, feature = "flows"))]
-pub(crate) use probe::{apply_probe_override, probe_tool_output_sample};
-#[cfg(test)]
-pub(crate) use probe::{seed_probe_cache, seed_probe_cache_expired};
+/// Every real action Composio publishes for `toolkit`, with any cached probe
+/// already overlaid by the module. `None` on any failure.
+pub(crate) async fn fetch_live_toolkit_catalog(
+    config: &Config,
+    toolkit: &str,
+) -> Option<Vec<ToolContract>> {
+    #[cfg(test)]
+    if let Some(seeded) = seed::seeded_catalog(toolkit) {
+        return Some(seeded);
+    }
+    let toolkit = toolkit.trim().to_ascii_lowercase();
+    match super::module_client::call::<_, ComposioListToolContractsResponse>(
+        config,
+        methods::LIST_TOOL_CONTRACTS,
+        ComposioListToolContractsRequest {
+            toolkit: toolkit.clone(),
+        },
+    )
+    .await
+    {
+        Ok(resp) => Some(resp.contracts),
+        Err(error) => {
+            tracing::debug!(target: "flows", %toolkit, %error,
+                "[composio][catalog] ListToolContracts failed — catalog unknown");
+            None
+        }
+    }
+}
 
-// Brought into this module's own namespace (private `use`, not `pub use`) so
-// `catalog_tests.rs` / `catalog_in_flight_tests_tests.rs` — declared as
-// direct child modules of `catalog` above — can still reach the
-// implementation details they exercise via a plain `use super::*;`, exactly
-// as when this was one un-split file. See each item's `pub(super)` in its
-// owning submodule.
-#[cfg(test)]
-use crate::config::Config;
-#[cfg(test)]
-use contract::{compute_composio_array_path, live_catalog_fetch_lock};
-#[cfg(test)]
-use lookups::composio_response_fields;
-#[cfg(test)]
-use probe::{
-    cache_probe_result, probed_output_sample, resolve_composio_action_scope,
-    COMPOSIO_ENVELOPE_META_KEYS_AT_ROOT,
-};
-#[cfg(test)]
-use serde_json::Value;
+/// One bounded, confirmed-Read real call whose response shape the module
+/// derives and caches. Refusals come back as the module's message.
+pub(crate) async fn probe_tool_output_sample(
+    config: &Config,
+    slug: &str,
+    args: Value,
+) -> Result<ProbedOutputSample, String> {
+    super::module_client::call::<_, ProbedOutputSample>(
+        config,
+        methods::PROBE_TOOL_OUTPUT,
+        ComposioProbeToolOutputRequest {
+            slug: slug.trim().to_string(),
+            args,
+        },
+    )
+    .await
+}
+
+/// A Composio action's **required** top-level parameter names, or `None` when
+/// the schema is unavailable (so callers skip the preflight).
+pub(crate) async fn composio_required_args(config: &Config, slug: &str) -> Option<Vec<String>> {
+    let toolkit = super::contract::toolkit_from_slug(slug)?;
+    let contracts = fetch_live_toolkit_catalog(config, &toolkit).await?;
+    contracts
+        .iter()
+        .find(|c| c.slug.eq_ignore_ascii_case(slug))
+        .map(|c| c.required_args.clone())
+}
+
+/// A Composio action's response top-level field names. `None` when no output
+/// schema is known; `Some(vec![])` when one is known and names no properties.
+pub(crate) async fn composio_response_fields(config: &Config, slug: &str) -> Option<Vec<String>> {
+    let toolkit = super::contract::toolkit_from_slug(slug)?;
+    let contracts = fetch_live_toolkit_catalog(config, &toolkit).await?;
+    let contract = contracts
+        .iter()
+        .find(|c| c.slug.eq_ignore_ascii_case(slug))?;
+    contract.output_schema.as_ref()?;
+    Some(contract.output_fields.clone())
+}

@@ -21,9 +21,10 @@ use super::error_utils::{
     backend_mode_without_session, direct_mode_without_key, report_composio_op_error, OpResult,
     COMPOSIO_NO_SESSION,
 };
-use crate::integrations::composio::contract::normalize_connection_identifier;
+use crate::integrations::composio::contract::normalize_connection_identifiers;
 
 pub async fn composio_list_connections(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
 ) -> OpResult<Outcome<ComposioConnectionsResponse>> {
     tracing::debug!("[composio] rpc list_connections");
@@ -97,11 +98,11 @@ pub async fn composio_list_connections(
         // connection-created subscriber's readiness window. Re-warm here so
         // the next chat turn does not perform the three discovery requests.
         let config = config.clone();
-        tokio::spawn(async move {
+        ctx.spawn(async move {
             let _ = fetch_connected_integrations_status(&config).await;
         });
     }
-    let resp = enrich_connections_with_identity(config, resp).await;
+    let resp = enrich_connections_with_identity(ctx, config, resp).await;
     Ok(Outcome::new(
         resp,
         vec![format!(
@@ -111,6 +112,7 @@ pub async fn composio_list_connections(
 }
 
 pub async fn composio_authorize(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     toolkit: &str,
     extra_params: Option<serde_json::Value>,
@@ -139,6 +141,7 @@ pub async fn composio_authorize(
             toolkit: toolkit.to_string(),
             connection_id: resp.connection_id.clone(),
             connect_url: resp.connect_url.clone(),
+            tenant: ctx.event_tenant(),
         },
     );
 
@@ -156,6 +159,7 @@ pub struct ComposioDeleteResult {
 }
 
 pub async fn composio_delete_connection(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     connection_id: &str,
 ) -> OpResult<Outcome<ComposioDeleteResult>> {
@@ -180,7 +184,7 @@ pub async fn composio_delete_connection(
         format!("[composio] delete_connection failed: {error}")
     })?;
     if let Some(toolkit) = toolkit.as_deref() {
-        let deleted = delete_connected_identity_facets(config, toolkit, connection_id)
+        let deleted = delete_connected_identity_facets(ctx, config, toolkit, connection_id)
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(
@@ -288,10 +292,11 @@ pub(super) async fn resolve_toolkit_for_connection(
 ///
 /// This is best-effort — no live API calls are made (one SQLite read per poll).
 pub(crate) async fn enrich_connections_with_identity(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     mut resp: ComposioConnectionsResponse,
 ) -> ComposioConnectionsResponse {
-    let identities = load_connected_identities(config)
+    let identities = load_connected_identities(ctx, config)
         .await
         .unwrap_or_else(|error| {
             tracing::debug!(
@@ -308,17 +313,30 @@ pub(crate) async fn enrich_connections_with_identity(
         return resp;
     }
 
+    // One module call normalises every identity key and every connection key.
+    let mut raw: Vec<String> = identities
+        .iter()
+        .flat_map(|id| [id.source.clone(), id.identifier.clone()])
+        .collect();
+    for conn in &resp.connections {
+        raw.push(conn.toolkit.clone());
+        raw.push(conn.id.clone());
+    }
+    let normalized = match normalize_connection_identifiers(config, &raw).await {
+        Ok(normalized) if normalized.len() == raw.len() => normalized,
+        other => {
+            tracing::debug!(
+                error = ?other.err(),
+                "[composio] enrich_connections_with_identity: key normalisation unavailable"
+            );
+            return resp;
+        }
+    };
+    let (identity_keys, connection_keys) = normalized.split_at(identities.len() * 2);
     let lookup: HashMap<(String, String), _> = identities
         .iter()
-        .map(|id| {
-            (
-                (
-                    normalize_connection_identifier(&id.source),
-                    normalize_connection_identifier(&id.identifier),
-                ),
-                id,
-            )
-        })
+        .zip(identity_keys.chunks(2))
+        .map(|(id, keys)| ((keys[0].clone(), keys[1].clone()), id))
         .collect();
 
     tracing::debug!(
@@ -327,13 +345,11 @@ pub(crate) async fn enrich_connections_with_identity(
         "[composio] enrich_connections_with_identity: enriching connection labels"
     );
 
-    for conn in &mut resp.connections {
+    for (conn, keys) in resp.connections.iter_mut().zip(connection_keys.chunks(2)) {
         if conn.account_email.is_some() || conn.workspace.is_some() || conn.username.is_some() {
             continue;
         }
-        let toolkit_key = normalize_connection_identifier(&conn.toolkit);
-        let conn_id_key = normalize_connection_identifier(&conn.id);
-        if let Some(identity) = lookup.get(&(toolkit_key, conn_id_key)) {
+        if let Some(identity) = lookup.get(&(keys[0].clone(), keys[1].clone())) {
             conn.account_email = identity.email.clone();
             conn.workspace = identity.display_name.clone();
             conn.username = identity.handle.clone();

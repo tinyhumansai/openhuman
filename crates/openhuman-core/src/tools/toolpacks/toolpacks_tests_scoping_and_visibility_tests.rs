@@ -117,7 +117,7 @@ fn scoping_the_index_only_ever_shrinks_it() {
 /// call it" predicate built on `is_denied()` therefore eats the whole pack.
 #[test]
 fn a_withheld_packed_tool_is_hidden_but_not_denied() {
-    use crate::tools::agent_policy::{ToolPolicyAction, ToolPolicyEngine};
+    use tinytools::{ToolPolicyAction, ToolPolicyEngine};
 
     let tools = registry_with_all(&["goal_set", "build_workflow"]);
     // The real shape: the harness seeds `visible` with everything, then
@@ -160,7 +160,7 @@ fn a_withheld_packed_tool_is_hidden_but_not_denied() {
 /// becomes a laundering route into a tool the channel would refuse.
 #[test]
 fn a_hidden_tool_over_the_permission_ceiling_still_blocks_execution() {
-    use crate::tools::agent_policy::{ToolPolicyAction, ToolPolicyDecision};
+    use tinytools::{ToolPolicyAction, ToolPolicyDecision};
 
     let over = ToolPolicyDecision {
         tool_name: "dangerous_packed_tool".to_string(),
@@ -433,7 +433,7 @@ fn a_packed_hand_off_leaves_its_owners_pack_open() {
 #[test]
 fn a_named_scope_session_closes_the_pack_its_visible_list_never_mentions() {
     use crate::agent::orchestration::tools::{ArchetypeDelegationTool, DelegationTarget};
-    use crate::tools::agent_policy::ToolPolicyEngine;
+    use tinytools::ToolPolicyEngine;
 
     let delegate: Box<dyn tinytools::Tool> = Box::new(ArchetypeDelegationTool {
         tool_name: "hand_off_to_skill_setup".to_string(),

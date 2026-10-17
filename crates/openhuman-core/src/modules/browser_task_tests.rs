@@ -35,6 +35,34 @@ fn start_request_confines_the_task_to_the_browser_under_host_policy() {
 }
 
 #[test]
+fn a_task_carries_the_chrome_path_and_the_persistent_profile_from_settings() {
+    let mut config = Config::default();
+    config.browser.chrome_path =
+        Some("/Users/asha/Desktop/Google Chrome.app/Contents/MacOS/Google Chrome".into());
+    config.browser.profile_mode = "persistent".into();
+    config.browser.profile_path = Some("/Users/asha/.openhuman/chrome".into());
+    let request = start_request(&config, &task());
+    assert_eq!(
+        request.constraints.browser_executable.as_deref(),
+        Some("/Users/asha/Desktop/Google Chrome.app/Contents/MacOS/Google Chrome")
+    );
+    assert_eq!(
+        request.constraints.browser_profile.as_deref(),
+        Some("/Users/asha/.openhuman/chrome")
+    );
+    // A fresh profile is the module's own temporary one.
+    config.browser.profile_mode = "fresh".into();
+    assert!(start_request(&config, &task())
+        .constraints
+        .browser_profile
+        .is_none());
+    assert!(start_request(&Config::default(), &task())
+        .constraints
+        .browser_executable
+        .is_none());
+}
+
+#[test]
 fn a_traced_host_asks_the_module_to_record_every_decision() {
     let mut config = Config::default();
     config.computer.trace = true;
@@ -50,47 +78,30 @@ async fn start_refuses_a_task_without_origins() {
 }
 
 #[test]
-fn only_the_module_refusing_a_flow_reads_as_a_refused_flow() {
-    let refused: AgentResponse<u32> = AgentResponse {
-        ok: false,
-        data: None,
-        error: Some(AgentError::new(
-            "INVALID_FLOW",
-            "step 2 is not a step",
-            "fix the flow",
-            true,
-        )),
+fn the_module_is_told_the_site_only_while_learning_is_on() {
+    let workspace = tempfile::tempdir().unwrap();
+    let mut config = Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        ..Config::default()
     };
-    assert!(refused_flow(
-        &unwrap_response("StartTask", refused).unwrap_err()
-    ));
-    let other: AgentResponse<u32> = AgentResponse {
-        ok: false,
-        data: None,
-        error: Some(AgentError::new(
-            "PLANNER_UNAVAILABLE",
-            "no planner",
-            "configure one",
-            false,
-        )),
-    };
-    assert!(!refused_flow(
-        &unwrap_response("StartTask", other).unwrap_err()
-    ));
-    // Only the code counts, not a message that quotes it.
-    let quoted: AgentResponse<u32> = AgentResponse {
-        ok: false,
-        data: None,
-        error: Some(AgentError::new(
-            "PLANNER_UNAVAILABLE",
-            "[INVALID_FLOW] was the last answer",
-            "configure one",
-            false,
-        )),
-    };
-    assert!(!refused_flow(
-        &unwrap_response("StartTask", quoted).unwrap_err()
-    ));
+    config.browser.learn_from_tasks = true;
+    let mut on_a_site = task();
+    on_a_site.site = Some("shop.test".to_owned());
+
+    assert_eq!(
+        start_request(&config, &on_a_site).site.as_deref(),
+        Some("shop.test")
+    );
+    // A switch in Browser settings outranks the config a tool was built with.
+    super::super::site_memory_host::note_switch(workspace.path(), false);
+    assert_eq!(start_request(&config, &on_a_site).site, None);
+    super::super::site_memory_host::note_switch(workspace.path(), true);
+    assert_eq!(
+        start_request(&config, &on_a_site).site.as_deref(),
+        Some("shop.test")
+    );
+    // A task that names no site hands the module none.
+    assert_eq!(start_request(&config, &task()).site, None);
 }
 
 #[test]
@@ -121,6 +132,41 @@ fn unwrap_response_returns_data_or_the_structured_error() {
     assert!(unwrap_response("AwaitTask", empty)
         .unwrap_err()
         .contains("no result"));
+}
+
+#[test]
+fn a_chrome_path_the_module_refuses_says_where_the_user_fixes_it() {
+    // TinyComputer refuses a task whose Chrome path names no program in its
+    // own words; the agent is told where the user sets that path.
+    let refused: AgentResponse<u32> = AgentResponse {
+        ok: false,
+        data: None,
+        error: Some(AgentError::new(
+            "INVALID_REQUEST",
+            "browser_executable must be the absolute path of a browser binary on this machine",
+            "",
+            false,
+        )),
+    };
+    let error = unwrap_response("StartTask", refused).unwrap_err();
+    assert!(
+        error.starts_with(
+            "browser task StartTask failed [INVALID_REQUEST]: browser_executable must be"
+        ),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(crate::modules::browser::CHROME_PATH_HINT),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_task_without_a_persistent_profile_claims_nothing() {
+    let config = Config::default();
+    let mut request = start_request(&config, &task());
+    assert_eq!(claim_profile(&config, &mut request, 50).await, None);
+    assert!(request.constraints.browser_profile.is_none());
 }
 
 #[test]

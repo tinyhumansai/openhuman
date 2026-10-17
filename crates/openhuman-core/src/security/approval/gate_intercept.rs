@@ -15,6 +15,7 @@ impl ApprovalGate {
     #[inline(never)]
     fn intercept_audited_inner<'a>(
         &'a self,
+        turn: &'a ApprovalTurnContext,
         tool_name: &'a str,
         action_summary: &'a str,
         args_redacted: serde_json::Value,
@@ -24,6 +25,7 @@ impl ApprovalGate {
         forced: bool,
     ) -> futures::future::BoxFuture<'a, (GateOutcome, Option<String>)> {
         Box::pin(self.intercept_audited_inner_body(
+            turn,
             tool_name,
             action_summary,
             args_redacted,
@@ -37,6 +39,7 @@ impl ApprovalGate {
     #[allow(clippy::too_many_arguments)]
     async fn intercept_audited_inner_body(
         &self,
+        turn: &ApprovalTurnContext,
         tool_name: &str,
         action_summary: &str,
         args_redacted: serde_json::Value,
@@ -50,7 +53,12 @@ impl ApprovalGate {
         // `AgentTurnOrigin` around `run_turn`. Unlabelled callers map to
         // `Unknown`, which is denied — the gate refuses to execute an
         // external_effect tool from an unlabelled call site.
-        let origin = turn_origin::current().unwrap_or(AgentTurnOrigin::Unknown);
+        // The gate has no context of its own yet (the approval-gate carrier is
+        // a separate #7801 step), so it reads the task's turn scope once and
+        // asks that for the origin, the agent's approval posture and its host
+        // overrides.
+        let turn_ctx = crate::core::runtime::DispatchCtx::ambient_turn();
+        let origin = turn_ctx.turn_origin().unwrap_or(AgentTurnOrigin::Unknown);
         // Approval of job creation grants the scheduler permission to run the
         // saved prompt and deliver its answer, not permission for arbitrary
         // future external effects. Enforce this before global auto-approval,
@@ -76,7 +84,9 @@ impl ApprovalGate {
         }
         // SaaS has no per-user approval surface: never park, allow only what
         // the deployment's sandboxed tool groups open.
-        if let Some(outcome) = saas_outcome_with(crate::core::runtime::is_saas(), tool_name) {
+        if let Some(outcome) =
+            saas_outcome_with(&turn_ctx, crate::core::runtime::is_saas(), tool_name)
+        {
             return (outcome, None);
         }
         if forced
@@ -98,7 +108,7 @@ impl ApprovalGate {
         tracing::debug!(
             tool = tool_name,
             ?origin,
-            auto_approve_all = self.is_auto_approve_all_enabled(),
+            auto_approve_all = self.is_auto_approve_all_enabled(&turn_ctx),
             bypass_auto = matches!(
                 &origin,
                 AgentTurnOrigin::TrustedAutomation {
@@ -108,7 +118,7 @@ impl ApprovalGate {
                     ..
                 }
             ),
-            chat_context = APPROVAL_CHAT_CONTEXT.try_with(|c| c.clone()).is_ok(),
+            chat_context = turn.chat.is_some(),
             "[approval::gate] evaluating approval request"
         );
 
@@ -193,8 +203,8 @@ impl ApprovalGate {
         // `auto_approve_all_allows_a_remote_triage_dispatch_without_an_audit_row`
         // below pins that outcome, so a change to this exclusion list has to
         // confront the decision rather than discover it.
-        let auto_all =
-            self.is_auto_approve_all_enabled() && !matches!(&origin, AgentTurnOrigin::Unknown);
+        let auto_all = self.is_auto_approve_all_enabled(&turn_ctx)
+            && !matches!(&origin, AgentTurnOrigin::Unknown);
 
         if auto_all && !forced {
             // `origin_class` is the sanitized variant label (no thread/client
@@ -215,9 +225,7 @@ impl ApprovalGate {
             return (GateOutcome::Allow, None);
         }
 
-        if !forced
-            && !matches!(&origin, AgentTurnOrigin::Unknown)
-            && crate::core::runtime::CoreContext::current_approvals_disabled()
+        if !forced && !matches!(&origin, AgentTurnOrigin::Unknown) && turn_ctx.approvals_disabled()
         {
             tracing::info!(
                 tool = tool_name,
@@ -235,7 +243,10 @@ impl ApprovalGate {
         // live policy) takes effect on the very next tool call; fall back to the
         // gate's boot-time config when no live policy is installed (e.g. a CLI
         // invocation that never started a session runtime, or a unit test).
-        if !forced && !bypass_auto_approve_shortcut && self.tool_is_auto_approved(tool_name) {
+        if !forced
+            && !bypass_auto_approve_shortcut
+            && self.tool_is_auto_approved(&turn_ctx, tool_name)
+        {
             tracing::debug!(
                 tool = tool_name,
                 "[approval::gate] auto_approve allowlist hit, skipping prompt"
@@ -243,28 +254,26 @@ impl ApprovalGate {
             return (GateOutcome::Allow, None);
         }
 
-        // Chat context (thread/client id) for routing the yes/no reply — set by
-        // the web channel around the agent run; absent for non-chat callers.
+        // Chat context (thread/client id) for routing the yes/no reply — handed
+        // to the turn by the web channel; absent for non-chat callers.
         //
-        // Fallback (#5499): when the task-local is absent but the turn is
+        // Fallback (#5499): when the turn has no chat context but is
         // `WebChat`, route via the thread/client the origin itself carries. The
-        // web channel scopes `APPROVAL_CHAT_CONTEXT` and builds the `WebChat`
+        // web channel builds the chat context and the `WebChat`
         // origin from the *same* thread_id/client_id (`web_chat::start_chat`),
         // so the two are identical whenever both are present. They diverge only
-        // when a turn is carried across a `tokio::spawn` boundary that
-        // propagates the origin but not the approval context — most importantly
+        // when a turn is detached from the chat turn that started it and keeps
+        // the origin but not the approval context — most importantly
         // an async-delegated sub-agent (`spawn_async_subagent`, reached when the
         // orchestrator routes "remind me…" to `scheduler_agent`): the origin
-        // travels but this task-local does not. Without the fallback the gate
+        // travels but the chat context does not (`detached_child`). Without the fallback the gate
         // parks with `thread_id: None`, the web-channel surface drops the
         // `ApprovalRequested` event ("thread/client absent — NOT surfacing"),
         // and the park silently TTL-denies — so a `cron_add` scheduled from a
         // chat turn never completes.
         // Forced approvals route from the validated WebChat origin itself. A
-        // stray task-local must not redirect the decision to another thread.
-        let chat_ctx = (!forced)
-            .then(|| APPROVAL_CHAT_CONTEXT.try_with(|c| c.clone()).ok())
-            .flatten();
+        // stray chat context must not redirect the decision to another thread.
+        let chat_ctx = (!forced).then(|| turn.chat.clone()).flatten();
         let origin_chat_route = match &origin {
             AgentTurnOrigin::WebChat {
                 thread_id,
@@ -287,7 +296,7 @@ impl ApprovalGate {
         if detached {
             tracing::debug!(
                 tool = tool_name,
-                "[approval::gate] APPROVAL_CHAT_CONTEXT absent on a WebChat turn — routing the \
+                "[approval::gate] no chat context on a WebChat turn — routing the \
                  approval via the origin's thread/client (async-delegated sub-agent path, #5499); \
                  marking the card detached so it survives the parent turn's end"
             );
@@ -295,7 +304,9 @@ impl ApprovalGate {
         // Any park raised inside a sub-agent run — detached or inline — gets
         // the shorter `SUBAGENT_APPROVAL_TTL` window.
         let subagent_park = !forced
-            && (detached || tinyagents_harness::context::current_run_depth().is_some_and(|facts| facts.depth > 0));
+            && (detached
+                || tinyagents_harness::context::current_run_depth()
+                    .is_some_and(|facts| facts.depth > 0));
         let chat_thread_id = chat_ctx
             .as_ref()
             .map(|c| c.thread_id.clone())
@@ -305,10 +316,10 @@ impl ApprovalGate {
             .map(|c| c.client_id.clone())
             .or_else(|| origin_chat_route.as_ref().map(|(_, c)| c.clone()));
 
-        // Copilot-streaming context — set by `flows::ops::flows_build` around
-        // the streaming `run_single` call. Presence alone clamps the park
-        // window to `COPILOT_APPROVAL_TTL`; see that task-local's doc.
-        let copilot_stream = !forced && APPROVAL_COPILOT_STREAM_CONTEXT.try_with(|_| ()).is_ok();
+        // Copilot-streaming flag — set by `flows::ops::flows_build` on the
+        // streaming turn. It clamps the park window to `COPILOT_APPROVAL_TTL`;
+        // see `ApprovalTurnContext::copilot_stream`.
+        let copilot_stream = !forced && turn.copilot_stream;
 
         // Branch by origin. Web chat parks for an in-app approval; external
         // channel persists an audit row and TTL-denies (no routable approval
@@ -462,24 +473,25 @@ impl ApprovalGate {
 
         // Correlation context (flow-approval-surface, PR2): a Workflow-origin
         // park carries the flow id on the origin itself, but not the run id —
-        // that comes from the `APPROVAL_FLOW_RUN_CONTEXT` task-local
-        // `flows::ops::flows_run`/`flows_resume` scope alongside `with_origin`.
-        // `try_with` returns `Err` for every non-flow caller (chat, cron,
+        // that comes from the turn's `flow_run`, which
+        // `flows::ops::flows_run`/`flows_resume` set alongside the origin.
+        // It is `None` for every non-flow caller (chat, cron,
         // background jobs, CLI, and even a Workflow origin reached without the
-        // flows module's scope, which "should never happen" but must not
+        // flows module's context, which "should never happen" but must not
         // panic), so `source_context` stays `None` there — unchanged chat
         // behavior.
         let source_context = match &origin {
             AgentTurnOrigin::TrustedAutomation {
                 source: TrustedAutomationSource::Workflow { .. },
                 job_id: flow_id,
-            } => APPROVAL_FLOW_RUN_CONTEXT
-                .try_with(|ctx| ApprovalSourceContext::Flow {
+            } => turn
+                .flow_run
+                .as_ref()
+                .map(|ctx| ApprovalSourceContext::Flow {
                     flow_id: flow_id.clone(),
                     run_id: ctx.run_id.clone(),
                     node_id: None,
-                })
-                .ok(),
+                }),
             _ => None,
         };
 
@@ -501,7 +513,8 @@ impl ApprovalGate {
         // to time out and return `Deny` incorrectly. (CodeRabbit
         // review on PR #2149.)
         let (tx, rx) = oneshot::channel::<ApprovalDecision>();
-        let scope = crate::core::runtime::CoreContext::current_host_overrides()
+        let scope = turn_ctx
+            .host_overrides()
             .and_then(|overrides| overrides.approval_scope());
         let register = |workspace| -> anyhow::Result<()> {
             {
@@ -531,6 +544,7 @@ impl ApprovalGate {
                     approval_scope: scope.clone(),
                     thread_key: thread_key.clone(),
                     detached,
+                    docs: store::capture_docs(&self.config).ok(),
                 },
             );
             store::insert_pending(&self.config, &pending, &self.session_id)?;
@@ -709,12 +723,16 @@ impl ApprovalGate {
 /// The gate's outcome in SaaS, `None` outside it. SaaS has no per-user approval
 /// surface, so the gate never parks there; the verdict comes from the
 /// deployment's allowlisted tool groups.
-pub(crate) fn saas_outcome_with(saas: bool, tool_name: &str) -> Option<GateOutcome> {
+pub(crate) fn saas_outcome_with(
+    ctx: &crate::core::runtime::DispatchCtx,
+    saas: bool,
+    tool_name: &str,
+) -> Option<GateOutcome> {
     if !saas {
         return None;
     }
     Some(saas_outcome(crate::profiles::tools::gate_verdict(
-        tool_name,
+        ctx, tool_name,
     )))
 }
 

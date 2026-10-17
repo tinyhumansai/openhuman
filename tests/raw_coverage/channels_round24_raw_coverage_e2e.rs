@@ -2,11 +2,13 @@
 //!
 //! Parser/state seams only: no real network traffic.
 
-use openhuman_core::channels::bus::test_support as bus_support;
-use openhuman_core::channels::providers::email_channel::test_support as email_support;
 use openhuman_core::channels::test_support as runtime_support;
-use openhuman_core::channels::traits::ChannelMessage;
 use serde_json::json;
+use tinychannels::delivery::progressive::{
+    extract_message_id, latest_thinking_snippet, StreamingState,
+};
+use tinychannels::providers::email_channel::test_support as email_support;
+use tinychannels::ChannelMessage;
 
 fn channel_message(channel: &str, reply_target: &str, content: &str) -> ChannelMessage {
     ChannelMessage {
@@ -24,34 +26,45 @@ fn channel_message(channel: &str, reply_target: &str, content: &str) -> ChannelM
 #[test]
 fn bus_state_helpers_cover_message_ids_drafts_snippets_and_thread_keys() {
     assert_eq!(
-        bus_support::extract_message_id_for_test(&json!({"id": "abc"})).as_deref(),
+        extract_message_id(&json!({"id": "abc"})).as_deref(),
         Some("abc")
     );
     assert_eq!(
-        bus_support::extract_message_id_for_test(&json!({"messageId": 42})).as_deref(),
+        extract_message_id(&json!({"messageId": 42})).as_deref(),
         Some("42")
     );
     assert_eq!(
-        bus_support::extract_message_id_for_test(&json!({"data": {"messageId": 99_u64}}))
-            .as_deref(),
+        extract_message_id(&json!({"data": {"messageId": 99_u64}})).as_deref(),
         Some("99")
     );
-    assert!(bus_support::extract_message_id_for_test(&json!({"ok": true})).is_none());
+    assert!(extract_message_id(&json!({"ok": true})).is_none());
 
-    assert_eq!(bus_support::compose_draft_for_test(""), "_working…_");
+    assert_eq!(StreamingState::default().compose_draft(), "_working…_");
     assert_eq!(
-        bus_support::compose_draft_for_test("answer with trailing space   "),
+        StreamingState {
+            content: "answer with trailing space   ".into(),
+            ..Default::default()
+        }
+        .compose_draft(),
         "answer with trailing space"
     );
 
-    assert!(bus_support::latest_thinking_snippet_for_test("   ").is_none());
+    assert!(latest_thinking_snippet(&StreamingState {
+        thinking_accumulator: "   ".into(),
+        ..Default::default()
+    })
+    .is_none());
     let long_thinking = format!("prefix {}", "alpha ".repeat(80));
-    let snippet = bus_support::latest_thinking_snippet_for_test(&long_thinking).expect("snippet");
+    let snippet = latest_thinking_snippet(&StreamingState {
+        thinking_accumulator: long_thinking,
+        ..Default::default()
+    })
+    .expect("snippet");
     assert!(snippet.len() <= 200);
     assert!(snippet.starts_with("alpha"));
 
     assert_eq!(
-        bus_support::derive_inbound_thread_id_for_test(
+        tinychannels::channel::derive_inbound_thread_id(
             "slack:T1",
             Some("  U1 "),
             Some(" C1 "),
@@ -60,7 +73,7 @@ fn bus_state_helpers_cover_message_ids_drafts_snippets_and_thread_keys() {
         "channel:slack:T1/U1/C1#thread:1700.1"
     );
     assert_eq!(
-        bus_support::derive_inbound_thread_id_for_test(
+        tinychannels::channel::derive_inbound_thread_id(
             "telegram:123",
             Some("U1"),
             Some("123"),
@@ -87,15 +100,15 @@ fn dispatch_helpers_cover_channel_context_and_ack_categories() {
     let no_target = channel_message("slack", "", "hello");
     assert!(runtime_support::build_channel_context_block_for_test(&no_target).is_empty());
 
-    let gratitude = runtime_support::select_acknowledgment_reaction_for_test("thank you");
+    let gratitude = tinychannels::runtime::select_acknowledgment_reaction("thank you");
     assert!(["❤️", "🙏"].contains(&gratitude));
-    let finance = runtime_support::select_acknowledgment_reaction_for_test("btc market?");
+    let finance = tinychannels::runtime::select_acknowledgment_reaction("btc market?");
     assert!(["💯", "⚡"].contains(&finance));
-    let code = runtime_support::select_acknowledgment_reaction_for_test("debug this rust api");
+    let code = tinychannels::runtime::select_acknowledgment_reaction("debug this rust api");
     assert!(["👨‍💻", "🤓"].contains(&code));
-    let greeting = runtime_support::select_acknowledgment_reaction_for_test("hello there");
+    let greeting = tinychannels::runtime::select_acknowledgment_reaction("hello there");
     assert!(["🤗", "😁"].contains(&greeting));
-    let question = runtime_support::select_acknowledgment_reaction_for_test("what happened?");
+    let question = tinychannels::runtime::select_acknowledgment_reaction("what happened?");
     assert!(["🤔", "✍️"].contains(&question));
 }
 

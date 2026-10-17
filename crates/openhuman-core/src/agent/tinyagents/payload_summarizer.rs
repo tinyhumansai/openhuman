@@ -9,8 +9,8 @@
 //! tool call so it inherits the turn's model, cancellation, thread and
 //! lineage.
 //!
-//! [`PayloadSummarizer`] is that seam. `ToolOutputMiddleware` asks it to
-//! [`prepare`](PayloadSummarizer::prepare) a call bound to the current turn,
+//! [`DynPayloadSummarizer`] is that seam. `ToolOutputMiddleware` asks it to
+//! [`prepare`](tinyagents_harness::summarization::payload_summarizer::PayloadSummarizer::prepare) a call bound to the current turn,
 //! registers it with [`crate::inference::tokenjuice::generate`], and sends the
 //! ticket's token with the result. TinyJuice calls back through
 //! `MlHost.Generate` only if it decides to summarize.
@@ -23,29 +23,32 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use tinyagents_harness::context::{RunConfig, RunContext};
-use tinyagents_harness::runtime::{AgentHarness, InvalidArgsPolicy, RunPolicy, UnknownToolPolicy};
-use tinyinference_llm::message::Message;
+use tinyagents_harness::context::RunContext;
+use tinyagents_harness::summarization::payload_summarizer::{
+    run_unary_summary, summary_child_config, PayloadSummarizer as HarnessPayloadSummarizer,
+};
 use tracing::debug;
 
-use crate::agent::harness::definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::agent::subagent_host;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use {
     crate::inference::tokenjuice::generate::PreparedGenerate, tinyjuice_bus::wire::GenerateRequest,
 };
 
-/// Supplies the model call behind TinyJuice's summary stage.
+/// The host's payload-summary seam: the harness contract
+/// ([`HarnessPayloadSummarizer`]) bound to OpenHuman's turn context, the
+/// prepared call TinyJuice drives and `anyhow` errors.
 ///
 /// Public because it is an embedder seam: the default implementation runs the
 /// `summarizer` agent definition's model, and a host that routes models its own
 /// way supplies its own. The prompt is not part of this — TinyJuice writes it
 /// and sends it in the [`GenerateRequest`].
-pub trait PayloadSummarizer: Send + Sync {
-    /// Bind one model call to `parent_ctx`'s turn. Called before the result is
-    /// handed to TinyJuice; the call runs only if TinyJuice asks for it.
-    fn prepare(&self, parent_ctx: &RunContext<OpenHumanRunContext>) -> Result<PreparedGenerate>;
-}
+pub type DynPayloadSummarizer = dyn HarnessPayloadSummarizer<
+    OpenHumanRunContext,
+    Prepared = PreparedGenerate,
+    Error = anyhow::Error,
+>;
 
 /// Runs the `summarizer` agent definition's model as a unary child of the turn.
 pub struct SubagentPayloadSummarizer {
@@ -70,11 +73,8 @@ pub(crate) fn unary_child_context(
     max_iterations: usize,
     max_output_tokens: u32,
 ) -> tinyagents_harness::Result<RunContext<OpenHumanRunContext>> {
-    let child_config = RunConfig::new(format!("{agent_id}-summary"))
-        .with_max_model_calls(max_iterations)
-        .with_max_tool_calls(max_iterations.saturating_mul(8).max(8))
-        .with_max_depth(parent_ctx.config.max_depth())
-        .with_max_turn_output_tokens(max_output_tokens);
+    let child_config =
+        summary_child_config(parent_ctx, agent_id, max_iterations, max_output_tokens);
     let child_data = parent_ctx
         .data
         .child()
@@ -87,7 +87,10 @@ pub(crate) fn unary_child_context(
     Ok(child)
 }
 
-impl PayloadSummarizer for SubagentPayloadSummarizer {
+impl HarnessPayloadSummarizer<OpenHumanRunContext> for SubagentPayloadSummarizer {
+    type Prepared = PreparedGenerate;
+    type Error = anyhow::Error;
+
     fn prepare(&self, parent_ctx: &RunContext<OpenHumanRunContext>) -> Result<PreparedGenerate> {
         let parent =
             parent_ctx.data.parent.clone().ok_or_else(|| {
@@ -110,9 +113,11 @@ impl PayloadSummarizer for SubagentPayloadSummarizer {
             "[payload_summarizer] prepared a summary call under the parent turn"
         );
 
+        let dispatch = parent_ctx.data.dispatch_ctx();
         Ok(Box::new(move |request: GenerateRequest| {
+            let dispatch = dispatch.clone();
             Box::pin(async move {
-                let config_loaded = crate::config::ops::load_current_or_init().await;
+                let config_loaded = crate::config::ops::load_current_or_init(&dispatch).await;
                 let (source, model) = subagent_host::resolve_subagent_source(
                     &definition.model,
                     &definition.id,
@@ -127,16 +132,7 @@ impl PayloadSummarizer for SubagentPayloadSummarizer {
                 let system_prompt =
                     subagent_host::append_subagent_role_contract(request.system, &definition.id);
 
-                let mut policy = RunPolicy::default();
-                policy.limits.max_model_calls = definition.max_iterations;
-                policy.limits.max_tool_calls = definition.max_iterations.saturating_mul(8).max(8);
-                policy.retry.max_attempts = 1;
-                policy.unknown_tool = UnknownToolPolicy::ReturnToolError;
-                policy.invalid_args = InvalidArgsPolicy::ReturnToolError;
-
-                let mut harness: AgentHarness<(), OpenHumanRunContext> = AgentHarness::new();
-                harness.with_policy(policy);
-                let provider_model = super::model::MaxTokensModel::new(
+                let provider_model = tinyinference_llm::model::MaxTokensModel::new(
                     source.build_summarizer(
                         &model,
                         definition.temperature,
@@ -150,27 +146,17 @@ impl PayloadSummarizer for SubagentPayloadSummarizer {
                     Some(budget) => budget.wrap(provider_model),
                     None => provider_model,
                 };
-                harness
-                    .register_model(&model, provider_model)
-                    .set_default_model(&model);
-
-                // Unary, never streaming. A chat turn's parent is streaming, and
-                // a streaming child would put its deltas on the shared event
-                // sink as parent `TextDelta`s — the web bridge then published
-                // the internal summary to the user as an interim message.
-                // `invoke_in_context` pins the child to the unary path; the
-                // summary's only consumer is `run.text()` below.
-                let run = harness
-                    .invoke_in_context(
-                        &(),
-                        child_context,
-                        vec![
-                            Message::system(system_prompt),
-                            Message::user(request.prompt),
-                        ],
-                    )
-                    .await?;
-                Ok(run.text().unwrap_or_default())
+                // Unary, never streaming: a streaming child would publish the
+                // internal summary to the user as parent `TextDelta`s.
+                Ok(run_unary_summary(
+                    child_context,
+                    &model,
+                    provider_model,
+                    definition.max_iterations,
+                    system_prompt,
+                    request.prompt,
+                )
+                .await?)
             })
         }))
     }

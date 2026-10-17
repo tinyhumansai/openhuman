@@ -56,8 +56,14 @@ pub struct ClearTurnStateResponse {
     pub cleared: bool,
 }
 
-impl From<&crate::tools::status::ClassifiedFailure> for PersistedToolFailure {
-    fn from(f: &crate::tools::status::ClassifiedFailure) -> Self {
+/// Project a classified tool failure onto its persisted wire shape.
+///
+/// A free function rather than a `From` impl: both types are foreign to this
+/// crate (`tinytools` and `tinyagents_session`).
+pub(crate) fn persisted_tool_failure(
+    f: &tinytools::status::ClassifiedFailure,
+) -> PersistedToolFailure {
+    {
         // Serialize the enums to their wire variant name so the persisted
         // `class`/`category` strings match exactly what the live socket emits
         // (`ClassifiedFailure` serializes each as its bare variant name).
@@ -67,7 +73,7 @@ impl From<&crate::tools::status::ClassifiedFailure> for PersistedToolFailure {
                 .and_then(|j| j.as_str().map(str::to_string))
                 .unwrap_or_default()
         }
-        Self {
+        PersistedToolFailure {
             class: variant_name(&f.class),
             category: variant_name(&f.category),
             recoverable: f.recoverable,

@@ -29,7 +29,7 @@ async fn structured_rpc_error_envelope_passes_through_generic_dispatch() {
         method: "openhuman.threads_generate_title".to_string(),
         params: json!({ "thread_id": "thread-ghost" }),
     };
-    let response = rpc_handler(State(default_state()), Json(stale_thread_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(stale_thread_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -110,7 +110,7 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
             }
         }),
     };
-    let response = rpc_handler(State(default_state()), Json(stale_thread_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(stale_thread_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -127,7 +127,7 @@ async fn thread_not_found_rpc_error_does_not_report_to_sentry() {
         method: "core.not_a_real_method".to_string(),
         params: json!({}),
     };
-    let response = rpc_handler(State(default_state()), Json(unrelated_error_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(unrelated_error_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -220,7 +220,7 @@ async fn unknown_method_severity_split_by_probe_allow_list() {
         method: "rpc.discover".to_string(),
         params: json!({}),
     };
-    let response = rpc_handler(State(default_state()), Json(probe_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(probe_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -244,7 +244,7 @@ async fn unknown_method_severity_split_by_probe_allow_list() {
         method: "totally.made.up.method".to_string(),
         params: json!({}),
     };
-    let response = rpc_handler(State(default_state()), Json(unknown_request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(unknown_request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
@@ -333,7 +333,7 @@ async fn invalid_memory_ingest_is_not_reported_to_sentry() {
         method: "openhuman.memory_brain_ingest".to_string(),
         params: json!({ "path": "/openhuman-test/missing-memory-ingest-file" }),
     };
-    let response = rpc_handler(State(default_state()), Json(request)).await;
+    let response = rpc_handler(State(default_state()), None, Json(request)).await;
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");

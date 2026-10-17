@@ -57,7 +57,9 @@ async fn composio_list_connections_is_quietly_unavailable_without_session() {
     // answer and the reconcile / flows callers keep their fail-open handling —
     // but nothing is reported to Sentry, and the JSON-RPC boundary demotes the
     // wording as expected user state (`is_session_expired_message`).
-    let err = composio_list_connections(&config).await.unwrap_err();
+    let err = composio_list_connections(&crate::core::runtime::DispatchCtx::ambient(), &config)
+        .await
+        .unwrap_err();
     assert!(
         err.contains("no backend session token"),
         "the error should say what is missing: {err}"
@@ -76,9 +78,14 @@ async fn composio_authorize_errors_without_session() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_authorize(&config, "gmail", None)
-        .await
-        .unwrap_err();
+    let err = composio_authorize(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        "gmail",
+        None,
+    )
+    .await
+    .unwrap_err();
     // Backend mode (default) without a session — the mode-aware factory
     // surfaces "no backend session token" once `composio_authorize`
     // routes through `resolve_composio_route`. Accept either the
@@ -97,9 +104,13 @@ async fn composio_delete_connection_errors_without_session() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_delete_connection(&config, "c-1")
-        .await
-        .unwrap_err();
+    let err = composio_delete_connection(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "c-1",
+    )
+    .await
+    .unwrap_err();
     assert!(
         err.to_lowercase().contains("composio")
             && (err.contains("unavailable") || err.contains("route")),
@@ -112,7 +123,14 @@ async fn composio_list_tools_errors_without_session() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_list_tools(&config, None, None).await.unwrap_err();
+    let err = composio_list_tools(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
     // Same contract as `composio_list_toolkits_errors_without_session`.
     assert!(
         err.to_lowercase().contains("composio"),
@@ -150,7 +168,13 @@ async fn composio_get_user_profile_errors_without_session() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_get_user_profile(&config, "c-1").await.unwrap_err();
+    let err = composio_get_user_profile(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "c-1",
+    )
+    .await
+    .unwrap_err();
     // Fails while resolving which toolkit `c-1` belongs to, because that needs
     // the connection list and the connection list needs a credential. Still a
     // failure that names the domain, which is the contract here.
@@ -167,9 +191,13 @@ async fn composio_list_trigger_history_errors_when_store_not_init() {
     // reading history reports that rather than answering with an empty list —
     // "no triggers have fired" and "nothing is recording them" are different
     // things to tell someone debugging a trigger.
-    let err = composio_list_trigger_history(&config, Some(10))
-        .await
-        .unwrap_err();
+    let err = composio_list_trigger_history(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        Some(10),
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("list_trigger_history failed"), "{err}");
 }
 
@@ -235,7 +263,9 @@ async fn composio_list_connections_via_mock_counts_active() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_list_connections(&config).await.unwrap();
+    let outcome = composio_list_connections(&crate::core::runtime::DispatchCtx::ambient(), &config)
+        .await
+        .unwrap();
     assert_eq!(outcome.value.connections.len(), 3);
     // 2 active, 3 total
     assert!(outcome.logs.iter().any(|l| l.contains("3 connection")));
@@ -262,7 +292,10 @@ async fn composio_list_connections_drops_the_module_route_once_signed_out() {
     let signed_in_tmp = tempfile::tempdir().unwrap();
     let signed_in = config_with_backend(&signed_in_tmp, base);
     // Signed in: the module is loaded and routed to the mock backend.
-    let outcome = composio_list_connections(&signed_in).await.unwrap();
+    let outcome =
+        composio_list_connections(&crate::core::runtime::DispatchCtx::ambient(), &signed_in)
+            .await
+            .unwrap();
     assert_eq!(outcome.value.connections.len(), 1);
     assert!(
         !last_route_is_none(),
@@ -276,7 +309,9 @@ async fn composio_list_connections_drops_the_module_route_once_signed_out() {
     // answering.
     let signed_out_tmp = tempfile::tempdir().unwrap();
     let signed_out = test_config(&signed_out_tmp);
-    let err = composio_list_connections(&signed_out).await.unwrap_err();
+    let err = composio_list_connections(&crate::core::runtime::DispatchCtx::ambient(), &signed_out)
+        .await
+        .unwrap_err();
     assert!(err.contains("no backend session token"), "{err}");
     assert!(
         last_route_is_none(),
@@ -348,9 +383,14 @@ async fn composio_authorize_clears_pending_meta_connection_before_handoff() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_authorize(&config, "instagram", None)
-        .await
-        .unwrap();
+    let outcome = composio_authorize(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        "instagram",
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.value.connection_id, "c-new");
     assert_eq!(deletes.load(Ordering::SeqCst), 1);
 }
@@ -370,7 +410,14 @@ async fn composio_authorize_via_mock_publishes_event_and_returns_url() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_authorize(&config, "gmail", None).await.unwrap();
+    let outcome = composio_authorize(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        &config,
+        "gmail",
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.value.connect_url, "https://x");
     assert_eq!(outcome.value.connection_id, "c1");
 }
@@ -387,6 +434,9 @@ async fn composio_delete_connection_via_mock() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_delete_connection(&config, "c1").await.unwrap();
+    let outcome =
+        composio_delete_connection(&crate::core::runtime::DispatchCtx::ambient(), &config, "c1")
+            .await
+            .unwrap();
     assert!(outcome.value.deleted);
 }

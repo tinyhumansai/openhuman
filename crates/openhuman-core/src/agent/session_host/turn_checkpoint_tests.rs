@@ -37,7 +37,7 @@ fn the_deterministic_checkpoint_reproduces_each_result_body() {
 #[test]
 fn checkpoint_records_keep_the_captured_tool_failure_status_and_body() {
     let records = results_from_tool_outcomes(&[
-        crate::agent::tinyagents::ToolCallOutcome {
+        tinyagents_harness::turn_outcome::ToolCallOutcome {
             call_id: "call-ok".into(),
             name: "read_file".into(),
             arguments: serde_json::Value::Null,
@@ -45,7 +45,7 @@ fn checkpoint_records_keep_the_captured_tool_failure_status_and_body() {
             content: "configuration found".into(),
             duration_ms: 0,
         },
-        crate::agent::tinyagents::ToolCallOutcome {
+        tinyagents_harness::turn_outcome::ToolCallOutcome {
             call_id: "call-failed".into(),
             name: "apply_patch".into(),
             arguments: serde_json::Value::Null,

@@ -117,7 +117,7 @@ macOS ve Linux betiğinin ne yapacağını önceden görmek için komutun sonuna
 
 <h3>Geliştiriciler için tasarlandı</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust hızlı başlangıç</a> · <a href="../gitbooks/developing/embed/README.md">Gömme rehberi</a> · <a href="../crates/openhuman-embed/examples">Örnekler</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust hızlı başlangıç</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">Gömme rehberi</a> · <a href="../crates/openhuman-embed/examples">Örnekler</a></p>
 
 <p>Bir Rust kütüphanesi olarak kullanın: bir ajanı herhangi bir işlev gibi çağırın ya da tüm bir filoyu tek bir küçük sunucudan çalıştırın.</p>
 
@@ -224,9 +224,9 @@ OpenHuman en pahalıya mal olan kısımları yeniden düşünür: yapay zekanın
 
 <p align="center">
  <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
-  <source media="(prefers-color-scheme: light)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
-  <img alt="SWE-bench Verified run swe-x86-1: OpenHuman against six other harnesses on ten panels" src="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified run swe-x86-1: OpenHuman against six other harnesses on ten panels" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
  </picture>
 </p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-Sırada: [Rust hızlı başlangıç](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [gömme rehberi](../gitbooks/developing/embed/README.md) ve [geliştirici dokümanları](https://tinyhumans.gitbook.io/openhuman/developing).
+Sırada: [Rust hızlı başlangıç](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [gömme rehberi](../docs/gitbooks/en/developing/embed/README.md) ve [geliştirici dokümanları](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

@@ -2,30 +2,39 @@
 //! `get_user_profile`, `refresh_all_identities`, `sync`, `get_user_scopes`,
 //! `set_user_scopes`.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
-use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 use crate::integrations::composio::{contract, ops};
 
 use super::util::{read_required, read_required_non_empty, to_json};
 
-pub(super) fn handle_get_user_profile(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_get_user_profile(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let connection_id = read_required_non_empty(&params, "connection_id")?;
-        to_json(ops::composio_get_user_profile(&config, &connection_id).await?)
+        to_json(ops::composio_get_user_profile(&ctx, &config, &connection_id).await?)
     })
 }
 
-pub(super) fn handle_refresh_all_identities(_params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_refresh_all_identities(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        to_json(ops::composio_refresh_all_identities(&config).await?)
+        let config = ctx.load_config().await?;
+        to_json(ops::composio_refresh_all_identities(&ctx, &config).await?)
     })
 }
 
-pub(super) fn handle_get_user_scopes(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_get_user_scopes(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let toolkit = match read_required_non_empty(&params, "toolkit") {
             Ok(v) => v,
@@ -53,8 +62,8 @@ pub(super) fn handle_get_user_scopes(params: Map<String, Value>) -> ControllerFu
         // never had a failing path, and turning "settings file momentarily
         // unreadable" into an RPC error would make the scopes panel fail where
         // it used to render the defaults.
-        let pref = match config_rpc::load_config_with_timeout().await {
-            Ok(config) => ops::load_user_scope_pref(&config, &toolkit).await,
+        let pref = match ctx.load_config().await {
+            Ok(config) => ops::load_user_scope_pref(&ctx, &config, &toolkit).await,
             Err(error) => {
                 tracing::warn!(
                     method = "composio.get_user_scopes",
@@ -77,7 +86,10 @@ pub(super) fn handle_get_user_scopes(params: Map<String, Value>) -> ControllerFu
     })
 }
 
-pub(super) fn handle_set_user_scopes(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_set_user_scopes(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let toolkit = match read_required_non_empty(&params, "toolkit") {
             Ok(v) => v,
@@ -107,8 +119,8 @@ pub(super) fn handle_set_user_scopes(params: Map<String, Value>) -> ControllerFu
         // client not initialised" rather than reporting a save it had not
         // done, and `ops::user_scopes::save` refuses on the same three
         // grounds (no driver, no `Graph` family, backend write failure).
-        let config = config_rpc::load_config_with_timeout().await?;
-        if let Err(e) = ops::save_user_scope_pref(&config, &toolkit, pref).await {
+        let config = ctx.load_config().await?;
+        if let Err(e) = ops::save_user_scope_pref(&ctx, &config, &toolkit, pref).await {
             tracing::error!(
                 method = "composio.set_user_scopes",
                 toolkit = %toolkit,

@@ -61,3 +61,16 @@ pub async fn set_test_run_chat_task_block(block: Option<TestRunChatTaskBlock>) {
     let mut slot = TEST_RUN_CHAT_TASK_BLOCK.lock().await;
     *slot = block;
 }
+
+/// Test hook: when set, `run_chat_task` parks after the agent run has
+/// finished (its `TurnCompleted` already emitted) instead of saving and
+/// returning the reply, like a turn wedged in its persistence plumbing. The
+/// web-turn idle guard is what ends such a turn.
+#[cfg(any(test, debug_assertions))]
+pub(crate) static TEST_PARK_AFTER_RUN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(any(test, debug_assertions))]
+pub fn set_test_park_after_run(park: bool) {
+    TEST_PARK_AFTER_RUN.store(park, std::sync::atomic::Ordering::SeqCst);
+}

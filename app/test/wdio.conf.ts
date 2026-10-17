@@ -31,6 +31,10 @@ const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
 const testSpecsPath = path.join(projectRoot, 'test', 'e2e', 'specs', '**', '*.spec.ts');
 
 function linuxAppPath(): string {
+  // e2e-run-session creates a private launcher that restores the test-only
+  // environment for the app process started by WebKitWebDriver.
+  const e2eLauncher = process.env.OPENHUMAN_E2E_APP_BINARY;
+  if (e2eLauncher && fs.existsSync(e2eLauncher)) return e2eLauncher;
   const candidate = path.join(
     projectRoot,
     '..',
@@ -93,7 +97,14 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   maxInstances: 1,
   capabilities: [
     {
+      // tauri-driver selects its native Wry/WebKit adapter by this browser name.
+      browserName: 'wry',
       'tauri:options': { application: linuxAppPath() },
+      // WebKitGTK shipped by Ubuntu 22.04 does not support WebDriver BiDi.
+      // WDIO 9 negotiates it by default; tauri-driver forwards that capability
+      // to WebKitWebDriver, which never completes session creation. Keep this
+      // native driver on the classic WebDriver protocol.
+      'wdio:enforceWebDriverClassic': true,
       // WDIO's per-capability ceiling is required by the Tauri driver.
       // Without it, the runner can schedule one WebKit session per spec
       // despite the global maxInstances: 1, causing simultaneous app

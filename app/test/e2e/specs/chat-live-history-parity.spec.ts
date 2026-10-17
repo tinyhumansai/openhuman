@@ -359,4 +359,24 @@ describe('Chat live/history parity', () => {
     expect(reopened).toEqual(settled);
     console.log(`${LOG_PREFIX} P3: ${reopened.length} blocks identical live and reopened`);
   });
+
+  it('P4 — New thread and reopening a conversation put the caret in the composer', async () => {
+    const composerHasFocus = () =>
+      browser.execute(
+        () => document.activeElement?.getAttribute('data-testid') === 'chat-message-input'
+      );
+
+    expect(await clickByTitle('New thread', 8_000)).toBe(true);
+    await browser.waitUntil(
+      async () => (await getSelectedThreadId()) !== threadId && (await composerHasFocus()),
+      { timeout: 10_000, timeoutMsg: 'New thread did not focus the composer' }
+    );
+
+    await clickTestIdOrText(`thread-row-${threadId}`, PROMPT, 10_000);
+    await browser.waitUntil(
+      async () => (await getSelectedThreadId()) === threadId && (await composerHasFocus()),
+      { timeout: 10_000, timeoutMsg: 'reopening the conversation did not focus the composer' }
+    );
+    console.log(`${LOG_PREFIX} P4: composer focused after New thread and reopen`);
+  });
 });

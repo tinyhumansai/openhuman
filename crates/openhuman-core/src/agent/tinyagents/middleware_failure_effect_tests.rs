@@ -7,12 +7,13 @@
 //!   naming the host OS and shell;
 //! - `use_skill` failures are counted per inner skill + tool.
 
-use super::super::call_effect::{
-    call_effect, dispatch_target, CallEffect, ToolEffectFacts, ToolFactsLookup,
-};
 use super::super::failure_policy::recovery_policy_with_effect;
 use super::super::repeated_failure::{failure_scope, recovery_policy};
 use super::*;
+use crate::agent::tinyagents::middleware::repeated_failure::RepeatedToolFailureMiddleware;
+use tinyagents_harness::middleware::{
+    call_effect, dispatch_target, CallEffect, ToolEffectFacts, ToolFactsLookup,
+};
 
 /// The harness's own wording for a tool that outlived its budget
 /// (`tinyagents` `agent_loop/tools.rs`).
@@ -111,7 +112,7 @@ fn a_timeout_before_the_tool_ran_is_transient() {
         ),
         Some((
             "invalid_arguments",
-            super::super::failure_policy::ARGUMENT_SCHEMA_RECOVERY
+            tinyagents_harness::no_progress::ARGUMENT_SCHEMA_RECOVERY
         ))
     );
 }
@@ -370,7 +371,7 @@ fn a_web_search_tool_timeout_is_transient_not_an_uncertain_action() {
                 ))) as Box<dyn tinytools::Tool>
             })
             .collect();
-    let lookup = super::super::call_effect::tool_sets_lookup(vec![std::sync::Arc::new(tools)]);
+    let lookup = tinyagents_harness::middleware::tool_sets_lookup(vec![std::sync::Arc::new(tools)]);
     for name in ["web_answer_tool", "web_search_tool", "web_contents_tool"] {
         let args = serde_json::json!({"query": "what changed in the release"});
         let effect = call_effect(Some(&lookup), name, &args);

@@ -103,7 +103,8 @@ async fn tool_call_completed_forwards_real_output_on_tool_result() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    let store = TurnStateStore::new(tmp.path().join("turn_states"));
+    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
+        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     let mut bus = super::super::event_bus::subscribe_web_channel_events();
     spawn_progress_bridge(
@@ -114,6 +115,7 @@ async fn tool_call_completed_forwards_real_output_on_tool_result() {
         store,
         ChatRequestMetadata::default(),
         config,
+        crate::core::runtime::DispatchCtx::ambient(),
     );
 
     tx.send(crate::agent::progress::AgentProgress::ToolCallCompleted {
@@ -213,7 +215,8 @@ fn spawn_test_bridge(
 ) -> tokio::sync::mpsc::Sender<AgentProgress> {
     let (tx, rx) = tokio::sync::mpsc::channel::<AgentProgress>(16);
     let dir = tempfile::tempdir().expect("tempdir");
-    let store = TurnStateStore::new(dir.path().to_path_buf());
+    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
+        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
     // Keep the tempdir alive for the bridge task's lifetime by leaking it —
     // a test-only allocation; the OS reclaims it on process exit.
     std::mem::forget(dir);
@@ -225,6 +228,7 @@ fn spawn_test_bridge(
         store,
         ChatRequestMetadata::default(),
         Config::default(),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     tx
 }
@@ -408,7 +412,8 @@ fn drain_test_config(tmp: &tempfile::TempDir) -> Config {
 #[tokio::test]
 async fn wait_drained_returns_after_queued_events_are_forwarded() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = TurnStateStore::new(tmp.path().join("turn_states"));
+    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
+        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     let mut bus = super::super::event_bus::subscribe_web_channel_events();
     let handle = spawn_progress_bridge(
@@ -419,6 +424,7 @@ async fn wait_drained_returns_after_queued_events_are_forwarded() {
         store,
         ChatRequestMetadata::default(),
         drain_test_config(&tmp),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
 
     tx.send(AgentProgress::ToolCallCompleted {
@@ -465,7 +471,8 @@ async fn wait_drained_returns_after_queued_events_are_forwarded() {
 #[tokio::test]
 async fn wait_drained_is_bounded_when_the_turn_never_completes() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = TurnStateStore::new(tmp.path().join("turn_states"));
+    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
+        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
     let (tx, rx) = tokio::sync::mpsc::channel::<AgentProgress>(16);
     let handle = spawn_progress_bridge(
         rx,
@@ -475,6 +482,7 @@ async fn wait_drained_is_bounded_when_the_turn_never_completes() {
         store,
         ChatRequestMetadata::default(),
         drain_test_config(&tmp),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     assert!(!handle.wait_drained(Duration::from_millis(50)).await);
     // Closing the channel ends the bridge, which counts as drained.
@@ -488,7 +496,8 @@ async fn wait_drained_is_bounded_when_the_turn_never_completes() {
 #[tokio::test]
 async fn short_narration_is_flushed_on_the_rounds_first_tool_call() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = TurnStateStore::new(tmp.path().join("turn_states"));
+    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
+        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     let mut bus = super::super::event_bus::subscribe_web_channel_events();
     let _handle = spawn_progress_bridge(
@@ -499,6 +508,7 @@ async fn short_narration_is_flushed_on_the_rounds_first_tool_call() {
         store,
         ChatRequestMetadata::default(),
         drain_test_config(&tmp),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     tx.send(AgentProgress::TextDelta {
         delta: "Let me check.".into(),
@@ -558,119 +568,6 @@ fn cap_wire_args_truncates_oversized_payload_to_a_marker_string() {
 /// on `subagent_spawned`) so the frontend can key the delegation row to the
 /// spawning tool call (#C1).
 #[tokio::test]
-async fn subagent_spawned_forwards_parent_call_id() {
-    let mut events = super::super::event_bus::subscribe_web_channel_events();
-    let thread_id = "thread-c1-spawned";
-    let tx = spawn_test_bridge(thread_id, "req-c1-spawned");
-
-    tx.send(AgentProgress::SubagentSpawned {
-        agent_id: "researcher".into(),
-        task_id: "sub-c1".into(),
-        mode: "typed".into(),
-        dedicated_thread: false,
-        prompt_chars: 4,
-        prompt: "help".into(),
-        worker_thread_id: None,
-        display_name: None,
-        parent_call_id: Some("call-parent-1".into()),
-    })
-    .await
-    .unwrap();
-
-    let ev = recv_for_thread(&mut events, thread_id).await;
-    assert_eq!(ev.event, "subagent_spawned");
-    let subagent = ev.subagent.expect("subagent detail present");
-    assert_eq!(subagent.parent_call_id.as_deref(), Some("call-parent-1"));
-}
-
-/// Terminal sub-agent events (`_completed`/`_failed`/`_awaiting_user`) must
-/// keep carrying the same `parent_call_id` the spawn recorded, even though
-/// those `AgentProgress` variants don't repeat it — the bridge remembers it
-/// per `task_id` (#C1).
-#[tokio::test]
-async fn subagent_completed_carries_parent_call_id_and_capped_output() {
-    let mut events = super::super::event_bus::subscribe_web_channel_events();
-    let thread_id = "thread-c1-completed";
-    let tx = spawn_test_bridge(thread_id, "req-c1-completed");
-
-    tx.send(AgentProgress::SubagentSpawned {
-        agent_id: "researcher".into(),
-        task_id: "sub-c1-done".into(),
-        mode: "typed".into(),
-        dedicated_thread: false,
-        prompt_chars: 4,
-        prompt: "help".into(),
-        worker_thread_id: None,
-        display_name: None,
-        parent_call_id: Some("call-parent-2".into()),
-    })
-    .await
-    .unwrap();
-    let spawned = recv_for_thread(&mut events, thread_id).await;
-    assert_eq!(spawned.event, "subagent_spawned");
-
-    tx.send(AgentProgress::SubagentCompleted {
-        agent_id: "researcher".into(),
-        task_id: "sub-c1-done".into(),
-        elapsed_ms: 10,
-        iterations: 1,
-        output_chars: 5,
-        usage: None,
-        output: "final answer".into(),
-        worktree_path: None,
-        changed_files: Vec::new(),
-        dirty_status: None,
-        stop: None,
-    })
-    .await
-    .unwrap();
-
-    let completed = recv_for_thread(&mut events, thread_id).await;
-    assert_eq!(completed.event, "subagent_completed");
-    let subagent = completed.subagent.expect("subagent detail present");
-    assert_eq!(subagent.parent_call_id.as_deref(), Some("call-parent-2"));
-    assert_eq!(subagent.output.as_deref(), Some("final answer"));
-}
-
-#[tokio::test]
-async fn subagent_failed_carries_parent_call_id() {
-    let mut events = super::super::event_bus::subscribe_web_channel_events();
-    let thread_id = "thread-c1-failed";
-    let tx = spawn_test_bridge(thread_id, "req-c1-failed");
-
-    tx.send(AgentProgress::SubagentSpawned {
-        agent_id: "researcher".into(),
-        task_id: "sub-c1-failed".into(),
-        mode: "typed".into(),
-        dedicated_thread: false,
-        prompt_chars: 4,
-        prompt: "help".into(),
-        worker_thread_id: None,
-        display_name: None,
-        parent_call_id: Some("call-parent-3".into()),
-    })
-    .await
-    .unwrap();
-    let spawned = recv_for_thread(&mut events, thread_id).await;
-    assert_eq!(spawned.event, "subagent_spawned");
-
-    tx.send(AgentProgress::SubagentFailed {
-        agent_id: "researcher".into(),
-        task_id: "sub-c1-failed".into(),
-        error: "boom".into(),
-    })
-    .await
-    .unwrap();
-
-    let failed = recv_for_thread(&mut events, thread_id).await;
-    assert_eq!(failed.event, "subagent_failed");
-    let subagent = failed.subagent.expect("subagent detail present");
-    assert_eq!(subagent.parent_call_id.as_deref(), Some("call-parent-3"));
-}
-
-/// A held turn (TinyMemes treatment arm) must not stream the answer text, but
-/// narration before a tool call still surfaces as an interim bubble.
-#[tokio::test]
 async fn hold_text_stream_suppresses_text_delta_but_keeps_interim() {
     use crate::agent::progress::AgentProgress;
     let tmp = tempfile::TempDir::new().unwrap();
@@ -680,7 +577,8 @@ async fn hold_text_stream_suppresses_text_delta_but_keeps_interim() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    let store = TurnStateStore::new(tmp.path().join("turn_states"));
+    let store = std::sync::Arc::new(tinyagents_session::port::InMemoryTurnStates::default())
+        as std::sync::Arc<dyn tinyagents_session::port::TurnStates>;
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     let mut bus = super::super::event_bus::subscribe_web_channel_events();
     spawn_progress_bridge(
@@ -694,6 +592,7 @@ async fn hold_text_stream_suppresses_text_delta_but_keeps_interim() {
             ..Default::default()
         },
         config,
+        crate::core::runtime::DispatchCtx::ambient(),
     );
 
     tx.send(AgentProgress::TextDelta {
@@ -740,3 +639,8 @@ async fn hold_text_stream_suppresses_text_delta_but_keeps_interim() {
         Some("Let me check the release notes for you first.")
     );
 }
+#[path = "progress_bridge_tool_progress_tests.rs"]
+mod tool_progress_tests;
+
+#[path = "progress_bridge_subagent_tests.rs"]
+mod subagent_tests;

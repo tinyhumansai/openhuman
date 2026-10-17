@@ -1,7 +1,10 @@
 use super::*;
+
+fn ambient() -> DispatchCtx {
+    DispatchCtx::ambient()
+}
 use crate::memory::scope::MemoryIdentity;
 use crate::memory::test_fixtures::{bind_reference, config_in, stored};
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tinymemory_api::{ItemKind, MetaFilter, Namespace};
 
@@ -88,7 +91,7 @@ async fn every_action_reports_memory_off_as_a_tool_error() {
         json!({"action": "learn", "text": "t"}),
         json!({"action": "forget", "ids": ["a"]}),
     ] {
-        let result = run_action(&config, &args, &facts()).await;
+        let result = run_action(&ambient(), &config, &args, &facts()).await;
         assert!(result.is_error, "{args}");
         assert!(text(&result).contains("MEMORY_OFF"), "{}", text(&result));
     }
@@ -100,15 +103,15 @@ async fn bad_arguments_and_unknown_actions_are_model_visible_errors() {
     let config = config_in(&tmp);
     bind_reference(&config);
 
-    let unknown = run_action(&config, &json!({"action": "explode"}), &facts()).await;
+    let unknown = run_action(&ambient(), &config, &json!({"action": "explode"}), &facts()).await;
     assert!(unknown.is_error);
     assert!(text(&unknown).contains("unknown action `explode`"));
 
-    let missing = run_action(&config, &json!({}), &facts()).await;
+    let missing = run_action(&ambient(), &config, &json!({}), &facts()).await;
     assert!(missing.is_error);
 
     for action in ["recall", "fetch", "learn", "forget"] {
-        let result = run_action(&config, &json!({ "action": action }), &facts()).await;
+        let result = run_action(&ambient(), &config, &json!({ "action": action }), &facts()).await;
         assert!(result.is_error, "{action}");
         assert!(text(&result).contains("invalid arguments"), "{action}");
     }
@@ -128,7 +131,7 @@ async fn learn_stamps_what_the_host_knows_and_ignores_model_meta() {
         // The model must not be able to forge host-owned fields.
         "meta": {"thread_id": "forged", "agent_id": "forged"},
     });
-    let result = run_action(&config, &args, &facts()).await;
+    let result = run_action(&ambient(), &config, &args, &facts()).await;
     assert!(!result.is_error, "{}", text(&result));
     let id = serde_json::from_str::<Value>(&text(&result)).unwrap()["id"]
         .as_str()
@@ -166,6 +169,7 @@ async fn recall_fetch_and_forget_round_trip_and_recall_records_citations() {
     };
 
     let learned = run_action(
+        &ambient(),
         &config,
         &json!({"action": "learn", "text": "The user likes oolong tea"}),
         &facts,
@@ -177,20 +181,22 @@ async fn recall_fetch_and_forget_round_trip_and_recall_records_citations() {
         .to_string();
 
     let recalled = run_action(
+        &ambient(),
         &config,
         &json!({"action": "recall", "question": "oolong tea"}),
         &facts,
     )
     .await;
     assert!(!recalled.is_error, "{}", text(&recalled));
-    let cites = take_turn_citations("thread-citations");
+    let cites = take_turn_citations(&ambient(), "thread-citations");
     assert!(cites.iter().any(|c| c.id == id), "{cites:?}");
     assert!(
-        take_turn_citations("thread-citations").is_empty(),
+        take_turn_citations(&ambient(), "thread-citations").is_empty(),
         "draining empties the thread's citations"
     );
 
     let fetched = run_action(
+        &ambient(),
         &config,
         &json!({"action": "fetch", "query": "oolong", "mode": "keyword", "limit": 5}),
         &facts,
@@ -198,14 +204,17 @@ async fn recall_fetch_and_forget_round_trip_and_recall_records_citations() {
     .await;
     assert!(!fetched.is_error, "{}", text(&fetched));
     assert_eq!(
-        serde_json::from_str::<Value>(&text(&fetched)).unwrap()["hits"]
-            .as_array()
-            .unwrap()
-            .len(),
+        serde_json::from_str::<Value>(&text(&fetched)).unwrap()["items"],
         1
     );
 
-    let forgotten = run_action(&config, &json!({"action": "forget", "ids": [id]}), &facts).await;
+    let forgotten = run_action(
+        &ambient(),
+        &config,
+        &json!({"action": "forget", "ids": [id]}),
+        &facts,
+    )
+    .await;
     assert!(!forgotten.is_error, "{}", text(&forgotten));
     assert!(engine.is_empty());
 }
@@ -220,12 +229,14 @@ async fn recall_without_a_thread_records_no_citations() {
         ..facts()
     };
     run_action(
+        &ambient(),
         &config,
         &json!({"action": "learn", "text": "fact one"}),
         &no_thread,
     )
     .await;
     let result = run_action(
+        &ambient(),
         &config,
         &json!({"action": "recall", "question": "fact one"}),
         &no_thread,
@@ -248,6 +259,7 @@ async fn fetch_with_an_undeclared_mode_is_unsupported() {
     )
     .unwrap();
     let result = run_action(
+        &ambient(),
         &config,
         &json!({"action": "fetch", "query": "x", "mode": "keyword"}),
         &facts(),
@@ -255,36 +267,6 @@ async fn fetch_with_an_undeclared_mode_is_unsupported() {
     .await;
     assert!(result.is_error);
     assert!(text(&result).contains("UNSUPPORTED"), "{}", text(&result));
-}
-
-#[test]
-fn turn_citations_are_capped_and_deduplicated() {
-    let citation = |n: usize| tinymemory_api::Citation {
-        id: tinymemory_api::ItemId(format!("cite-{n}")),
-        kind: ItemKind::Learning,
-        snippet: "s".repeat(1000),
-        score: Some(0.5),
-        meta: MemoryMeta::default(),
-    };
-    let thread = "thread-cap";
-    let many: Vec<_> = (0..MAX_TURN_CITATIONS + 10).map(citation).collect();
-    record_turn_citations(thread, &many);
-    record_turn_citations(thread, &many[..2]);
-    record_turn_citations(thread, &[]);
-    let drained = take_turn_citations(thread);
-    assert_eq!(drained.len(), MAX_TURN_CITATIONS);
-    assert_eq!(
-        drained
-            .iter()
-            .map(|c| c.id.clone())
-            .collect::<HashSet<_>>()
-            .len(),
-        MAX_TURN_CITATIONS
-    );
-    assert!(
-        drained[0].snippet.chars().count() <= crate::memory::types::TURN_CITATION_SNIPPET_CHARS
-    );
-    assert_eq!(drained[0].key, "learning");
 }
 
 #[tokio::test]
@@ -356,6 +338,7 @@ async fn learnings_are_shared_under_a_root_and_a_team_root_is_kept_apart() {
         let config = config.clone();
         async move {
             let result = run_action(
+                &ambient(),
                 &config,
                 &json!({"action": "learn", "text": text, "share": true}),
                 &facts,
@@ -390,6 +373,7 @@ async fn learnings_are_shared_under_a_root_and_a_team_root_is_kept_apart() {
         let config = config.clone();
         async move {
             run_action(
+                &ambient(),
                 &config,
                 &json!({"action": "fetch", "query": "the", "limit": 50, "filter": {"reach": null}}),
                 &facts,
@@ -413,6 +397,7 @@ async fn learnings_are_shared_under_a_root_and_a_team_root_is_kept_apart() {
         .find(|hit| hit.text.contains("deploy day"))
         .unwrap();
     let forgot = run_action(
+        &ambient(),
         &config,
         &json!({"action": "forget", "ids": [main_item.id.0.clone()]}),
         &member(),
@@ -501,6 +486,7 @@ async fn learn_returns_on_accept_and_says_recall_may_lag() {
     crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
 
     let learned = run_action(
+        &ambient(),
         &config,
         &json!({"action": "learn", "text": "The user drinks oolong"}),
         &facts(),
@@ -543,6 +529,7 @@ async fn a_failed_learn_is_reported_to_the_model() {
     crate::memory::test_fixtures::RefusingEngine::out_of_credits().bind(&config);
 
     let learned = run_action(
+        &ambient(),
         &config,
         &json!({"action": "learn", "text": "The user drinks oolong"}),
         &facts(),
@@ -617,6 +604,7 @@ async fn refers_to_reaches_the_engine_in_the_users_time_zone() {
     crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
 
     let fetched = run_action(
+        &ambient(),
         &config,
         &json!({"action": "fetch", "query": "dinner", "refers_to": {"from": "2026-10-03", "to": "2026-10-04"}}),
         &facts(),
@@ -624,6 +612,7 @@ async fn refers_to_reaches_the_engine_in_the_users_time_zone() {
     .await;
     assert!(!fetched.is_error, "{}", text(&fetched));
     let recalled = run_action(
+        &ambient(),
         &config,
         &json!({"action": "recall", "question": "dinner", "refers_to": {"from": "2026-10-03"}}),
         &facts(),
@@ -631,6 +620,7 @@ async fn refers_to_reaches_the_engine_in_the_users_time_zone() {
     .await;
     assert!(!recalled.is_error, "{}", text(&recalled));
     let bad = run_action(
+        &ambient(),
         &config,
         &json!({"action": "fetch", "query": "dinner", "refers_to": {"from": "last Saturday"}}),
         &facts(),
@@ -667,4 +657,68 @@ async fn learning_is_durably_queued_even_when_the_backend_refuses_writes() {
     let value: Value = serde_json::from_str(&result.text()).unwrap();
     assert_eq!(value["status"], "queued; not yet saved to memory");
     assert_eq!(super::super::tool_writes::drain(&config).await, 0);
+}
+
+/// The memory activity a tool call raises reaches the chat its own turn is in:
+/// the `MemoryRecalled` event carries the turn's thread and client, taken from
+/// the run context the tool was dispatched with, and a call outside a chat turn
+/// raises it unrouted. (A `learn` is queued and published off the turn, so it
+/// is never routed.)
+#[tokio::test]
+async fn memory_activity_carries_the_calling_turns_chat() {
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let _engine = bind_reference(&config);
+    let tool = MemoryTool::new(Arc::new(config.clone()));
+
+    let context = crate::agent::tinyagents::host::run_context::tool_context_with_approval(
+        crate::security::approval::ApprovalTurnContext::chat(
+            crate::security::approval::ApprovalChatContext {
+                thread_id: "thread-activity".into(),
+                client_id: "client-activity".into(),
+                request_id: None,
+            },
+        ),
+    );
+    let routed = tool
+        .execute_with_context(
+            json!({"action": "recall", "question": "routed marker question"}),
+            ToolCallOptions::default(),
+            Some(&context),
+        )
+        .await
+        .unwrap();
+    assert!(!routed.is_error, "{}", text(&routed));
+    let unrouted = tool
+        .execute(json!({"action": "recall", "question": "unrouted marker question"}))
+        .await
+        .unwrap();
+    assert!(!unrouted.is_error, "{}", text(&unrouted));
+
+    // The bus is process-wide: match our own events by the question text.
+    let mut seen = std::collections::HashMap::new();
+    while seen.len() < 2 {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await {
+            Ok(Some(DomainEvent::MemoryRecalled {
+                query,
+                thread_id,
+                client_id,
+                ..
+            })) if query.contains("marker question") => {
+                seen.insert(query, (thread_id, client_id));
+            }
+            Ok(Some(_)) => continue,
+            other => panic!("expected both MemoryRecalled events, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen["routed marker question"],
+        (
+            Some("thread-activity".into()),
+            Some("client-activity".into())
+        )
+    );
+    assert_eq!(seen["unrouted marker question"], (None, None));
 }

@@ -1,8 +1,9 @@
 # Loadable module boundary inventory
 
-Status: migration incomplete. Completed adapters and the remaining linked
-implementation packages are recorded below; the exception list is still nonempty.
-The machine-readable dependency policy is
+Status: the Channels, MCP, Wallet and TinyBox host cutovers are merged, and the
+final scoped local acceptance passed. The module-boundary gate reports zero
+violations, zero exceptions and no pending contracts; TinyRuntime remains
+explicitly excluded for separate removal work. The machine-readable dependency policy is
 [`scripts/ci/module-boundaries.json`](../scripts/ci/module-boundaries.json).
 
 Every owner below is the canonical upstream under
@@ -13,18 +14,19 @@ copying its implementation into a host, or accepting weaker isolation.
 
 | Owner | Linked implementation packages | Contract | Host consumers | Required module work |
 | --- | --- | --- | --- | --- |
-| tinyjuice | none (module loaded through TinyBus) | tinyjuice-bus | core tools, compression, CCR REPL | Complete: PR #59 provides module-owned compression, CCR queries, HTML extraction, schemas and declarations; the host retains turn-bound model callbacks and artifact authorization |
-| tinyconnectors | none | tinyconnectors-bus | core integrations, credentials and triggers | Module-backed argument preparation, action execution and trigger archives; host credential reconciliation and frozen tool restoration remain in OpenHuman |
-| tinymcp | tinymcp | tinymcp-bus | core MCP registry, supervisor, CLI stdio/HTTP server | Supervisor notifications, server protocol operations and callbacks for approved host tools/resources/prompts |
-| tinychannels | tinychannels, tinychannels-runtime (remaining runtime callers) | tinychannels-bus | core channels, TinyHumans host, CLI REPL | Contract is pure; v0.1.18 supplies complete Discord response vocabulary provider connection preparation and health observations. Discord discovery/permission checks, credential tests and connection validation/defaults and `doctor channels` health checks use confidential module calls. Remaining runtime callers need bus cutover with inbound/status callbacks and shutdown draining |
-| tinyhosts | none | tinyhosts-bus | core hosting tools | Released Execute/Providers contract consumed through the module; workspace authorization, credentials and approval policy remain in OpenHuman |
-| tinywallet | tinywallet-crypto, tinywallet-web3, tinywallet-x402 through remaining host imports | tinywallet-bus | core wallet/web3/x402 | Contract is pure at v0.13.0; native transfer preparation/execution use confidential module calls with host custody, exact approval binding and explicit close. Initialization, remaining validation, Web3 quotes/swaps, x402 payments, budgets and ledger still need host cutover |
-| tinybox | tinybox-core, tinybox-jail, tinybox-docker | tinybox-bus | core sandbox and security, desktop gateways | Pre-core gateways use the released v0.1.18 bus client. Core sandbox execution and shell analysis still require cutover |
+| tinyjuice | none (module loaded through TinyBus) | tinyjuice-bus | core tools, compression, CCR REPL | Complete: PR #59 provides module-owned compression, CCR queries, HTML extraction, schemas and declarations; handle/marker parsing (`tinyjuice_bus::handle`) and `juice_*` tool-name constants (`tinyjuice_bus::tools`) live in the bus since contract 2.2; the host retains turn-bound model callbacks and artifact authorization |
+| tinyconnectors | none | tinyconnectors-bus | core integrations, credentials and triggers | Module-backed argument preparation, action execution, trigger archives and the curated toolkit catalogs (`ListCuratedCatalog`, `GetVocabulary`, held as a process snapshot) and per-toolkit scope preferences (`GetUserScopes`, `SetUserScopes`; a legacy workspace file is migrated into the module once), live tool-contract fetch/cache (`GetToolContract`, `ListToolContracts`), the confirmed-Read output probe (`ProbeToolOutput`) and the backend/direct connected-integrations walk (`ListConnectedIntegrations`), with the synchronous slug helpers, the task-source configuration types (`ProviderSlug`, `FilterSpec`, `SourceTarget`, `FetchReason`) and the host-owned offered-toolkit allow/deny policy (`[composio] offered_toolkits_allow` / `offered_toolkits_deny`, parsed by `ComposioConfig`) passed to the module in its load blob by `module_config` and enforced by the module's listings (contract 1.21; a module loaded from the search path gets no host blob, so it offers every toolkit); tool visibility asks `ListVisibleTools` and listings are scope-filtered by the module; the host keeps the overview cache, mode switch, prompt mapping and `contract_gate`; host credential reconciliation and frozen tool restoration remain in OpenHuman |
+| tinymcp | none in normal/build host dependencies | tinymcp-bus | core MCP registry, supervisor, CLI stdio/HTTP server | Merged host adapters use the released v0.16.1 module (contract 1.23; configured-client receipt machine and client cache are `tinymcp_bus::client_lifecycle`, host keeps only the bus-calling driver; identifier validation, the registry-detail JSON shape and the not-connected explanation are `tinymcp_bus` helpers, so the host's `registry/helpers.rs` is gone; bus members the host never calls are kept for other hosts and documented in `tinymcp_bus::names`) for registry, supervisor, client and server protocol operations, with approved host callbacks kept in OpenHuman. The 62-member artifact and local focused, lifecycle, registry, native and build gates pass; frozen recorded tool declarations are restored independently of the current catalog |
+| tinychannels | tinychannels, tinychannels-runtime, tinychannels-module (test-only) | tinychannels-bus | core channels, TinyHumans host, CLI REPL | Contract 16 (operation 1.17) is pure; scoped providers, inbound/identity/outbound preparation, remote commands, runtime limits, typing and progressive delivery execute through confidential module calls. Host-owned policy, credentials, persistence and callbacks remain in OpenHuman. Both host implementation exceptions are removed; the 254-test focused suite and released-artifact runtime fixture pass |
+| tinyhosts | none | tinyhosts-bus | core hosting tools | Released Execute/Providers contract consumed through the module (v0.4.0: tool-to-operation mapping, argument shaping, outcome matching and summaries live in `tinyhosts-bus::tools`); workspace authorization, credentials and approval policy remain in OpenHuman |
+| tinymemes | none | tinymemes-bus | core `tinymemes` reply remix | Released Remix contract (v1.1) consumed through the module, which owns the reading, rating, rewrite, slang and meme indexes, the remixed-id ring (behind its `IndexStore` port), the `TINYMEMES_*` env overrides, the LLM-as-Jev fallback and the background slang and meme research. The host serves the Complete, Evaluate, Search, LoadIndex, SaveIndex, Deliver and End callbacks (OpenHuman inference, managed Jev, web search, documents on the storage port), each carrying the remix's correlation id so remixes for different workspaces run concurrently, and keeps the A/B arm, flag and delivered-history policy. `tinymemes-bus` is synchronous and I/O-free (no tinybus or tinystoragedrivers-bus); the typed clients are in `tinymemes-client`, which the host does not link |
+| tinywallet | none in normal/build host dependencies | tinywallet-bus | core wallet/web3/x402 | Complete: v0.20.0 contract 1.14 adds mnemonic word-count validation to module-owned mnemonic derivation, native transactions, Web3 quotes/execution, ERC-20 encoding, and x402 payment parsing/budgets/ledger. OpenHuman retains encrypted-key custody, authenticated transport, explicit approval, and lifecycle orchestration |
+| tinybox | tinybox-core (test-only) | tinybox-bus | core sandbox and security, desktop gateways | Host cutover uses TinyBox v0.1.28 (contract 1.18); the host calls members only through `tinybox_bus::names` constants and uses `tinybox_bus::CommandClass` directly (no host copy or re-export). It covers for sandbox/resource lifecycle, collected and supervised execution, jailed and native shell execution (unsandboxed, cron and the `shell` tool run through `StartNativeShellExec`; core has no shell selection or spawn of its own), standalone Docker policy validation (`ValidateDockerPolicy`), Docker control, local grants (`ResolveLocalGrants`; the host re-applies `is_always_forbidden` to the reply), file transfer and port forwarding. Host authorization and the security floor remain in OpenHuman |
 | tinycomputer | none | tinycomputer-bus | core voice, paste/focus and permission checks | Permission, focus, paste and Globe listener operations use the module; native thread and target rules remain covered |
 | tinyvoice | None | tinyvoice-bus | core voice capture/hotkeys | Module-owned devices, recording and continuous capture, bounded audio reads/batches, explicit lease cleanup; computer module permission decisions |
 | tinyruntime | tinyruntime-pyserver | tinyruntime-bus | core Python worker, optional TinyJuice ML | Excluded from this migration: TinyRuntime is being removed separately |
-| tinydocs / tinymemory | none | tinydocs-bus | core memory converter and file sources | Bus DocumentConverter replaces OfficeConverter, including XLSX and existing PDF/DOCX/PPTX format coverage; ingestion metadata remains host-owned |
-| tinysearch | none observed | tinysearch-bus | core module search proxy | Preserve existing bus adapter; enforce contract and host dependency graphs |
+| tinydocs / tinymemory | none | tinydocs-bus | core memory converter and file sources | Bus DocumentConverter replaces OfficeConverter, including XLSX and existing PDF/DOCX/PPTX format coverage; ingestion metadata remains host-owned; `[components].documents = false` refuses `ensure_loaded("tinydocs")` and the `documents` tool group, makes the converter answer `COMPONENT_DISABLED:documents`, and degrades attachment ingest to a note |
+| tinysearch | none observed | tinysearch-bus (v0.5.0, contract 2.2) | core module search proxy; error classification (`errors::Category`), role helpers and route/presentation config types live in tinysearch-bus; render text/markdown and provider labels live in `tinysearch_bus::{render,labels}`, core keeps the UI-metadata projection (`search/render.rs`) | Preserve existing bus adapter; enforce contract and host dependency graphs |
 
 ## Gate behavior
 
@@ -61,7 +63,8 @@ violation was observed; it does not mean this plan is complete.
 
 ## Remaining acceptance work
 
-The shared `openhuman_rpc::embed::modules::ModuleClient` takes explicit runtime
+`openhuman_rpc::embed::modules::client(config)` builds a
+`tinybus::module::ModuleClient` from explicit runtime
 configuration and uses the same process-wide loader before or after core
 startup. It has no linked fallback. Resolution reports and client errors use a
 closed reason vocabulary and registry metadata. Cached resolution failures and
@@ -92,7 +95,7 @@ remain unchanged until compatible upstream releases are available.
 | TinyComputer native permissions, confidential focus/paste and reliable Globe leases/read/shutdown | [tinycomputer#87](https://github.com/tinyhumansai/tinycomputer/pull/87) | 1,372 all-feature and 1,367 default tests; 90-member compiled artifact verification; independent ownership and event-loss review accepted; macOS cross-check and 233-file coverage gate pass; physical macOS helper not exercised on Linux |
 | TinyConnectors argument preparation, task filtering, structured provider errors and leased archives | [tinyconnectors#46](https://github.com/tinyhumansai/tinyconnectors/pull/46) | 423 tests; dynamic artifact calls; user archive lifecycle fixtures; pure contract audit; per-file coverage at least 90% |
 | TinyChannels contract vocabulary separated from provider, relay, pairing and runtime behavior | [tinychannels#56](https://github.com/tinyhumansai/tinychannels/pull/56) | 1,174 default and 1,180 all-feature tests; independent contract audit and relocation review accepted; bus files at least 98.65% coverage; legacy provider/worker coverage gaps disclosed |
-| TinyBox pure contract, shell facts, reserved sandbox/process handles and acknowledged cleanup/shutdown | [tinybox#30](https://github.com/tinyhumansai/tinybox/pull/30) | 710 default and all-feature tests; 57 source files at least 90% coverage; compiled native-process artifact verification; independent lifecycle review accepted; supervised execution currently limited to Unix passthrough |
+| TinyBox pure contract, shell facts, reserved sandbox/process handles and acknowledged cleanup/shutdown | [tinybox#30](https://github.com/tinyhumansai/tinybox/pull/30) | 710 default and all-feature tests; 57 source files at least 90% coverage; compiled native-process artifact verification; independent lifecycle review accepted; at PR #30, supervised execution was limited to Unix passthrough |
 | TinyWallet pure contracts, address validation and stateless EVM construction with exact approval facts | [tinywallet#56](https://github.com/tinyhumansai/tinywallet/pull/56) | 745 all-feature and 601 default tests; four-chain signing and native/ERC-20/contract construction through the compiled artifact; pure contract audit; all 95 source files at least 90% coverage; independent construction review accepted |
 | TinyWallet module-owned Web3 and x402 operations with scoped service handles | [tinywallet#62](https://github.com/tinyhumansai/tinywallet/pull/62) | Independent verification at ec22874: 60 module tests, every source file at least 90% coverage, and Rust 1.88 native runners execute two signing tests plus one lifecycle test. Hosted coverage passes; signed-payment budget accounting remains under review repair before merge and compatible release |
 | TinyVoice device enumeration, recording/continuous capture, reserved hotkey leases, replayable batches and acknowledged shutdown | [tinyvoice#23](https://github.com/tinyhumansai/tinyvoice/pull/23) | Contract 1.4; 32-member compiled artifact; 88 module tests; independent hotkey, Windows owner and Xvfb cleanup fixtures; pure contract audit, own-module formatting and Windows GNU test cross-check; formatted module source coverage 1,592/1,743 (91.34%), with the existing physical-device exclusion; no physical Windows/MSVC or macOS input validation |
@@ -112,10 +115,12 @@ OpenHuman adapters remain outstanding.
 Published v0.1.13 contains the earlier implementation-bearing contract, so that
 release does not unblock this contract cut.
 
-TinyBox currently refuses supervised execution on unsupported backends and platforms.
-Docker supervision is implemented in PR 30 and still undergoing lifecycle review.
-Namespace/SSH and native Windows supervision, streaming, file transfer, forwarding
-and gateway operations remain required before migrating its host callers.
+TinyBox v0.1.24 supplies the host's sandbox operations through the released
+module, including Docker and namespace/SSH backend selection, supervised process
+output, jailed and native shell execution, local grant resolution, file transfer
+and port forwarding. Availability still depends on the backend and platform
+facts returned by the module; OpenHuman retains command authorization and its
+security floor.
 
 TinyRuntime is now excluded from the active migration because it is being removed
 separately. The previously published owning PR remains recorded above; the frozen
@@ -251,7 +256,7 @@ Connectors, Hosts, Juice, and document adapters onto OpenHuman main
 The existing TinyRuntime removal is preserved; runtime worker migration and
 further bus error-reporting work remain outside this integration.
 
-The host compiles TinyConnectors v0.14.0, TinyHosts v0.3.0, TinyJuice v0.7.1,
+The host compiles TinyConnectors v0.14.0, TinyHosts v0.4.0, TinyJuice v0.7.1,
 and TinyDocs v0.2.0 contracts and executes their affected operations through
 released modules. The module boundary audit reports zero violations and zero
 stale exceptions, with 27 temporary exceptions and one pending contract.
@@ -328,7 +333,221 @@ leases on cancellation, sign-out and shutdown. Failed cleanup stays registered
 for retry. Microphone authorization remains a TinyComputer call; the host does
 not link TinyVoice or CPAL. The existing hotkey adapter remains module-backed.
 
+TinyVoice v0.3.0 (contract 1.10) owns wake-word sequencing (`SequenceUtterance`),
+the pre-transcription recording gates (`GateRecording`) and the hotkey recording
+state machine (`SessionOpen` / `SessionAdvance` / `SessionStatus` /
+`SessionClose`). The always-on adapter and `voice/server` call them by contract
+constant; the host keeps only native recording setup, transcription, text
+delivery and the Globe composition, and reports each fact to the session and
+performs the one action it answers with (openhuman#7587).
+
 This cut removes the `tinyvoice` and `cpal` host exceptions, leaving nine
 implementation exceptions for Channels, MCP, Box and Wallet. The resolved
 voice-only normal/build graph falls from 323 packages to 318; this is a
 dependency count, with no inferred binary size or build-time reduction.
+
+## Scoped channel runtime prerequisites
+
+Upstream [tinychannels#68](https://github.com/tinyhumansai/tinychannels/pull/68)
+moves listener reconnect supervision into the module.
+[tinychannels#69](https://github.com/tinyhumansai/tinychannels/pull/69) adds
+inert runtime reservations and private provider/callback objects. Runtime
+activation and cleanup remain owned by the module when a caller cancels.
+Each private object retains its original callback destination through shutdown;
+stopping one runtime cannot close another identity's provider with the same name.
+
+Released v0.1.20 supplies contract revision 10 and operation version 1.11.
+All eleven archives and the checksum manifest were verified against downloaded
+bytes, GitHub asset digests and asset sizes. The released Linux artifact passed
+a runtime-isolation and cleanup fixture using OpenHuman's current TinyBus kernel.
+The owner workspace passed 1,306 tests and two actual compiled-artifact fixtures.
+
+These are upstream prerequisites. The host provider, relay and delivery adapters
+still need migration; both Channels implementation exceptions remain until
+those callers and their dependency graphs are cut over.
+
+
+## Channel message preparation and hosted ingress
+
+The host now pins verified TinyChannels v0.1.26 (contract 16, operation 1.17).
+All eleven published archives and their checksum manifest were checked against
+actual downloaded bytes, GitHub digests, and sizes. Published Linux module
+fixtures pass with both the owning loader and OpenHuman's shipped TinyBus kernel.
+They exercise confidential inbound/identity preparation and isolated runtime
+shutdown.
+
+Rich outbound normalization and idempotency preparation execute through
+`PrepareOutboundIntent`; hosted inbound conversations obtain their existing
+persisted identifiers through `PrepareChannelIdentity`. Disabled or unavailable
+modules fail the affected operation. Channel session cancellation and product
+configuration remain host-owned. Unreachable host-side segmented delivery was
+removed without changing the active direct-delivery path.
+
+Focused host validation passes 225 channel tests, eight controller adapter tests,
+and fourteen module registry tests. Boundary enforcement reports zero violations
+and zero stale exceptions, with nine temporary implementation exceptions still
+present across Channels, MCP, Box, and Wallet. Both Channels implementation
+exceptions remain pending provider, relay, remote-command, and progressive
+runtime cutover.
+
+Hosted progressive replies now run through a private runtime's `ExecuteProgressive`
+handle. OpenHuman supplies ordered turn facts and captured managed transport;
+the module owns delivery choreography and idempotency. A released-artifact host
+fixture passes callback isolation, acknowledged stop, and final-send replay,
+alongside four lease validation and cancellation tests. Native providers, relay,
+remote-command host adapters and context helpers are still being migrated;
+both Channels implementation exceptions remain.
+
+Follow-up ([#7559](https://github.com/tinyhumansai/openhuman/issues/7559)): the
+host per-sender history cache now stores the bus `ChatMessage` and calls
+`tinychannels_bus::context::{clear_sender_history, compact_sender_history}`
+directly; `TranscriptMessage` is built only at the harness boundary in the
+message processor. `channels/context.rs` keeps just the host-only
+`ChannelRuntimeContext` and the module-call helpers.
+`spawn_scoped_typing_task` (`channels/runtime/dispatch/helpers.rs`) stays as a
+minimal host adapter: it needs `tokio::spawn`/cancellation, which the
+synchronous bus contract cannot hold, and it only drives the module's
+`begin_typing_refresh`/`end_typing_refresh`/`stop_typing` members. The
+`[components] channels = false` toggle is pinned in `tests/components_e2e.rs`.
+
+
+## Full Channels host cutover validation
+
+The native-provider, relay, remote-command, typing, approval presentation and
+progressive-delivery adapters now use the minimal bus contract. Provider
+implementations and compatibility wrappers are available only to unit tests.
+The root contract fixture links the owning module in dev-dependencies and
+communicates with it over TinyBus; shipped hosts never link that fixture.
+
+The dependency checker reports zero violations, zero stale exceptions, four
+remaining temporary exceptions (MCP and Wallet), and no pending contracts.
+`scripts/assert-shed.sh channels tinychannels tinychannels-runtime
+tinychannels-module` passes. The dependency simulator reports 308 resolved
+packages / 284 package names for `--no-default-features --features channels`,
+compared with 346 packages / 318 names in the primary base checkout. These
+are dependency counts, not measured build-time or binary-size improvements.
+
+The focused host tests and build are queued for final validation. Earlier
+225-test channel results above describe the earlier adapter revision and do
+not establish acceptance of this full cutover.
+
+
+## TinyWallet wallet, Web3, and x402 host cutover
+
+TinyWallet v0.20.0 (contract 1.14) is pinned at released source
+`f596ed90dc5de8d6cc7d0a5c375b6e555d0283c2`. Wallet setup, mnemonic validation
+and derivation, transaction construction and signing, Web3 quote execution,
+ERC-20 calldata encoding, and x402 payment parsing, budgets and ledger now run
+through the compiled module. OpenHuman keeps encrypted-key custody, authenticated
+HTTP/RPC transport, explicit quote/payment approval and user-scoped lifecycle
+management. The host has no normal/build dependency on
+`tinywallet-crypto`, `tinywallet-web3` or `tinywallet-x402`; the wallet module
+implementation remains only a test fixture dependency.
+
+The v0.20.0 release provides 17 platform archives. Independent local verification
+matched every downloaded archive against its GitHub digest and the embedded
+`modules.toml` hash; the released Ubuntu artifact also passed the TinyBus
+operation and signing E2E. The module-boundary audit reports zero violations
+and no remaining Wallet implementation exceptions. TinyRuntime remains excluded
+from this migration.
+
+## Current delivery status
+
+Channels host PR [#7502](https://github.com/tinyhumansai/openhuman/pull/7502) and MCP host PR [#7503](https://github.com/tinyhumansai/openhuman/pull/7503) are merged. Wallet PR [#7489](https://github.com/tinyhumansai/openhuman/pull/7489), TinyBox PR [#7469](https://github.com/tinyhumansai/openhuman/pull/7469), and the MCP lifecycle follow-up [#7515](https://github.com/tinyhumansai/openhuman/pull/7515) are also merged.
+
+Final scoped acceptance passed on Linux: the MCP focused suite passed 165 tests, including all 22 lifecycle tests; registry tests passed 14/14; Channels passed 254 focused tests and a released-artifact runtime fixture; TinyBox passed its released-artifact fixture; MCP's released-artifact registry E2E passed 6/6; thread-store tests passed 22/22; and the embed lifecycle test passed. Default and product CLI builds, minimal and loader-disabled checks, the dependency-boundary audit, crate-chain check and feature-forwarding check also passed. These results do not claim runtime testing on every supported platform.
+
+TinyRuntime is excluded as requested. Broader bus error reporting and Sentry coverage are deferred to separate work; the existing reporting path remains in place.
+
+## TinyMCP compatible release pin
+
+The registry pins TinyMCP v0.14.3, built from source
+`10b03d1ab00ecbd08bd41d5e83a5c350cbd7e357`. All 17 platform archives match the
+published checksum manifest, GitHub asset digests and sizes. The downloaded
+Ubuntu artifact loads through OpenHuman's TinyBus revision and exposes the
+expected 62-member interface (module descriptor contract 1.21). Registry
+metadata includes the Arch ARM archive and the renamed Arch archive basenames.
+
+The final Linux host focused tests and product builds passed; release
+verification was also checked separately against all 17 published archives.
+Actual-source HTTP/session regressions passed 11 tests covering host
+credential-header removal, terminal callback draining, lost-reply retry and
+rejected DELETE preservation.
+
+## TinyFlows generic flow ops (library, v0.8.15)
+
+`flows/ops` no longer carries graph logic that is generic over a
+`WorkflowGraph`. Trigger labels and warnings (`tinyflows::triggers`), graph
+validation and migration (`tinyflows::authoring`), the split-out schema check
+(`tinyflows::wiring`), validation error mapping, the approval manifest walk and
+trust split, and run lifecycle rules (`tinyflows_catalog::{validation,
+approval_manifest, run_management}`) are called from the library directly. The
+trail-off fallback is `tinyflows_copilot::fallback`; the host keeps only the
+adapter that correlates harness history into its `ToolResult`. The host keeps
+approval classification (`SecurityPolicy`), Composio schema lookup, and the
+store, checkpoint, bus and cron effects. TinyFlows is a plain library gitlink,
+so there is no registry record or `module-boundaries.json` entry.
+
+### TinyFlows builder tool belt and observability mappers (#7554, #7557, v0.8.16)
+
+The workflow-builder tools (`revise`, `edit`, `validate`, `dry_run`, `create`,
+`duplicate`, `save`, `resume_flow_run`, `cancel_flow_run`, the flow and run
+reads, `list_agent_definitions`, `list_node_kinds`, `get_node_kind_contract`
+and `suggest_workflows`) are `tinytools::Tool`s in `tinyflows_copilot::tools`
+over the ports `DraftStore`, `FlowStore`, `BuilderGates`, `AgentDirectory`,
+`NodeKindSource` and `SuggestionStore`. `flows/builder_host.rs` is the one
+implementation of those ports (`FlowsHost`, plus `OverlayNodeKinds` for the
+host node-kind notes) and `flows/registration.rs` constructs the tools over it.
+Tool names, descriptions, parameter schemas, permissions and the
+`external_effect` flag are pinned byte-for-byte by
+`flows/registration_tests/flow_tools.snap.json`, recorded before the move.
+`edit_op_shape`, the node-kind line renderers
+(`tinyflows::catalog::render_node_kinds_{line,required}`) and
+`agent_prompt::resolve_completion_model` are upstream; the dedup exactly-once
+settle contract was already `tinyflows::nodes::control_flow::dedup_settle`, so
+only the per-flow lock and the run-finished subscriber remain in
+`flows/bus/dedup_commit.rs`. `observability.rs` and `langfuse_export.rs` call
+`tinyflows::observe::{step_status_str, to_exporter_observations}`.
+
+Stays host: `search_tool_catalog`, `get_tool_contract`,
+`get_tool_output_sample`, `list_connectable_toolkits` and
+`list_flow_connections` (bound to the live Composio catalog, its probe cache and
+the connected accounts). `tinyflows-copilot` is `publish = false` because it
+names `tinytools` by git rev; OpenHuman's `[patch]` redirects it to the
+tinyagents copy, so there is one `Tool` trait.
+
+### TinyFlows builder gate stack (#7551)
+
+`flows/ops/builder_gates.rs` no longer orders the author-time gates. `tinyflows::gates::builder_failures` runs compatibility, saved-workflow, portable authoring and binding gates, then the host stages, then the mock-run argument preflight. The host implements `BuilderGateHost`: `ToolPolicy` (workspace-relative upload paths), `AgentReferences`, `Connections` and `ToolContracts`, plus the saved-workflow lookup. `validate_binding_resolvability` and `validate_required_arg_resolvability` are deleted. Provider connectivity remains an advisory proposal field, not a stage.
+
+### TinyFlows schedule runtime (#7560)
+
+The cron scheduler runtime is `tinyflows_schedule::runtime::Scheduler` (v0.8.15): the poll pass, bounded concurrency, process-wide `RunClaim`s, retry with backoff, rescheduling, single-flight skips and the `cron_job_policies` fold into `CronJob::policy`. `parse_human_delay`, `default_delivery`, `check_origin_requirements` and the delivery-validation rules are `tinyflows_schedule::validation`; the host adds only the channel `allowed_users` lookup.
+
+Deleted from `crates/openhuman-core/src/cron/`: `scheduler/{dispatch,slot,retry}.rs`, the persistence half of `scheduler/run_record.rs`, `policy.rs` and its tests, the core `parse_human_delay`, `validate_delivery`, `check_origin_requirements` and `default_delivery`, and the `DomainEvent::FlowScheduleTick` round trip (`EVENTS_VERSION` 1.11.0). The tests of the moved behaviour (claims, concurrency, single-flight, retry budget, one-shot completion) live in `tinyflows-schedule`.
+
+The host keeps the ports in `scheduler/{host,executor,run_delivery}.rs`: `JobStore` over `CronDocuments` (with operator limits), `JobExecutor` (shell and agent attempts, failure classification, the retries-exhausted report), `RunDelivery` (delivery, completion and health events) and `TriggerSink` (the flow's schedule trigger through `FlowTriggerSubscriber::dispatch_schedule_tick`, and `system:<name>` jobs). `platform::llm_gate` (moved out), system jobs, seeding and the `cron.*` RPC stay. TinyFlows is a plain library gitlink, so there is no registry record or `module-boundaries.json` entry.
+
+Behaviour notes: a job's policy is read from the job document (an unreadable job refuses Run Now with a credential-free message, `ops::load_job_for_run`); `CronJobCompleted` and the scheduler health signal are published from delivery, before the runtime writes the completion; `CronJobTriggered` is no longer published for `flow` rows.
+
+### `[components].flows` toggle (#7564)
+
+`[components] flows = false` (or `OPENHUMAN_COMPONENT_FLOWS=0`) is host-only:
+the flows code stays compiled in. On the next core start it narrows
+`DomainSet::flows` (no flow trigger or run-digest subscribers, no boot
+reconcile), turns the `workflows` tool group off, and answers every `flows.*`
+RPC with `COMPONENT_DISABLED:flows`. `about_app` reports the `flows` and
+`workflow_runs` capability domains as disabled. TinyFlows is a plain library
+gitlink with no registry record, so `modules.list` has no row for it.
+
+Relation to `cron.enabled`: independent switches. With `flows = false` the
+cron scheduler keeps running agent, shell and system jobs, but `flow` schedule
+rows are answered as skipped (`COMPONENT_DISABLED:flows`, not retried) and no
+flow run starts. `cron.enabled = false` stops the whole scheduler, flow
+schedule rows included, regardless of `flows`.
+
+### TinyFlows schedule bus cutover (#7397)
+
+Supersedes the section above for who runs the scheduler. The `tinyflows` module (registry record `records_flows.rs`, contract `tinyflows_bus::schedule` v3) owns the scheduler runtime, claims, retry timing, completion, the cron job and run store (`CronDocuments`) and the schedule maths (`NextRun`, `ValidateSchedule`, `RunsCloserThan`, `NormalizeExpression`, `ParseHumanDelay`, `ValidateDelivery`, `DefaultDelivery`, `CheckOriginRequirements`, `CheckPatch`, `TruncateCronOutput`). Core links only `tinyflows-bus` (serde and chrono): `cargo tree -p openhuman -e normal -i tinyflows-schedule` is empty, and `tinyflows-drivers` is optional behind `flows` for the catalog alone.
+
+The host keeps four adapters in `crates/openhuman-core/src/cron/`: `client.rs` (typed calls and `ScheduleStore` requests), `documents_port.rs` (the scope's document store served to the module), `bus_host.rs` (the `ScheduleHost` callbacks `Execute`, `Failed`, `Deliver`, `ScheduleTrigger`, bound per scope) and `handlers.rs` (the job-kind registry that replaced the hard-coded shell/agent/flow split and absorbed the system-job handlers). Deleted: `claims.rs`, `scheduler/host.rs`, `scheduler/run_record.rs` and the `tinyflows_schedule` re-export facade. Temporary exception: `tinyflows-bus` carries `chrono` (record timestamps), recorded in `scripts/ci/module-boundaries.json`.

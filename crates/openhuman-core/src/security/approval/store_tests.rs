@@ -1,27 +1,16 @@
 use super::*;
 use crate::security::approval::types::{ApprovalDecision, PendingApproval};
-use chrono::Duration;
+use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use tempfile::TempDir;
 
 fn test_config() -> (Config, TempDir) {
     let dir = TempDir::new().unwrap();
-    let mut config = Config {
+    let config = Config {
         workspace_dir: dir.path().to_path_buf(),
         ..Config::default()
     };
-    // These tests exercise the legacy SQLite tables themselves.
-    config.storage.url = Some("classic".into());
     (config, dir)
-}
-
-#[test]
-fn schema_migration_surfaces_non_duplicate_alter_errors() {
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch("CREATE VIEW pending_approvals AS SELECT 1 AS id")
-        .unwrap();
-    let error = migrate_columns(&conn).expect_err("a view cannot be migrated as a table");
-    assert!(error.to_string().contains("add column executed_at"));
 }
 
 /// Build a sample `PendingApproval`. The `_session_id` parameter
@@ -55,50 +44,41 @@ fn sample_with_expiry(
     }
 }
 
+/// The stored document of `request_id`, as the store wrote it.
+fn raw_doc(config: &Config, request_id: &str) -> Option<serde_json::Value> {
+    let opened = crate::storage::local::open("approval::store-test", &config.workspace_dir)
+        .expect("open the storage backend");
+    let docs = std::sync::Arc::clone(opened.scoped().expect("scope").documents());
+    let id = request_id.to_string();
+    crate::storage::block_on(async move { docs.get("approvals", &id).await })
+        .expect("read the approval document")
+        .map(|stored| stored.doc)
+}
+
+fn text_field(doc: &serde_json::Value, field: &str) -> Option<String> {
+    doc.get(field).and_then(|v| v.as_str()).map(str::to_string)
+}
+
 fn fetch_decision_state(
     config: &Config,
     request_id: &str,
 ) -> Option<(Option<String>, Option<String>)> {
-    with_connection(config, |conn| {
-        let mut stmt = conn
-            .prepare("SELECT decided_at, decision FROM pending_approvals WHERE request_id = ?1")
-            .context("prepare raw decision lookup")?;
-        let mut rows = stmt
-            .query(params![request_id])
-            .context("query raw decision lookup")?;
-        if let Some(row) = rows.next().context("decision row next")? {
-            let decided_at: Option<String> = row.get(0)?;
-            let decision: Option<String> = row.get(1)?;
-            Ok(Some((decided_at, decision)))
-        } else {
-            Ok(None)
-        }
-    })
-    .unwrap()
+    raw_doc(config, request_id)
+        .map(|doc| (text_field(&doc, "decided_at"), text_field(&doc, "decision")))
 }
 
-// ── record_execution / column-migration tests (#2135) ──────────
+// ── record_execution tests (#2135) ──────────
 
 fn read_execution_row(
     config: &Config,
     request_id: &str,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    with_connection(config, |conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT executed_at, execution_outcome, execution_error
-                 FROM pending_approvals WHERE request_id = ?1",
-            )
-            .unwrap();
-        let mut rows = stmt.query(params![request_id]).unwrap();
-        let row = rows.next().unwrap().expect("row exists");
-        Ok((
-            row.get::<_, Option<String>>(0).unwrap(),
-            row.get::<_, Option<String>>(1).unwrap(),
-            row.get::<_, Option<String>>(2).unwrap(),
-        ))
-    })
-    .unwrap()
+    let doc = raw_doc(config, request_id).expect("row exists");
+    (
+        text_field(&doc, "executed_at"),
+        text_field(&doc, "execution_outcome"),
+        text_field(&doc, "execution_error"),
+    )
 }
 
 // ── source_context / flow_tool_trust (flow-approval-surface, PR2) ──────

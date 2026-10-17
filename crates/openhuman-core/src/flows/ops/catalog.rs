@@ -81,7 +81,7 @@ pub async fn flows_get_tool_contract(
         .find(|c| crate::integrations::composio::contract::action_slug_matches(&c.slug, trimmed))
     {
         Some(contract) => {
-            let contract = crate::flows::tinyflows::caps::apply_probe_override(contract.clone());
+            let contract = contract.clone();
             let value = serde_json::to_value(&contract).map_err(|e| e.to_string())?;
             Ok(Outcome::single_log(
                 json!({ "contract": value }),

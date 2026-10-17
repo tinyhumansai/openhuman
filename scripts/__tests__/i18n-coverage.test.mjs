@@ -1,16 +1,27 @@
 import assert from "node:assert/strict";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 test("core chat failure keys are used even though the UI translates them dynamically", () => {
-  const result = spawnSync(
-    "pnpm",
-    ["exec", "tsx", "scripts/i18n-coverage.ts", "--json"],
-    { encoding: "utf8" },
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const report = JSON.parse(result.stdout);
+  const directory = mkdtempSync(join(tmpdir(), "i18n-coverage-"));
+  const reportPath = join(directory, "report.json");
+  const reportFd = openSync(reportPath, "w");
+  let report;
+  try {
+    const result = spawnSync(
+      process.execPath,
+      ["node_modules/tsx/dist/cli.mjs", "scripts/i18n-coverage.ts", "--json"],
+      { encoding: "utf8", maxBuffer: 1024 * 1024, stdio: ["ignore", reportFd, "pipe"] },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    report = JSON.parse(readFileSync(reportPath, "utf8"));
+  } finally {
+    closeSync(reportFd);
+    rmSync(directory, { recursive: true, force: true });
+  }
   const table = readFileSync(
     "crates/openhuman-core/src/inference/failure_copy/table.rs",
     "utf8",

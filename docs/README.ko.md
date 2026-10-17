@@ -117,7 +117,7 @@ macOS와 Linux 스크립트가 무엇을 하는지 미리 보려면 명령 끝�
 
 <h3>개발자를 위해 만들었습니다</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 퀵스타트</a> · <a href="../gitbooks/developing/embed/README.md">임베딩 가이드</a> · <a href="../crates/openhuman-embed/examples">예제</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 퀵스타트</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">임베딩 가이드</a> · <a href="../crates/openhuman-embed/examples">예제</a></p>
 
 <p>Rust 라이브러리로 사용하세요. 다른 함수처럼 에이전트를 호출하거나, 작은 서버 하나에서 수많은 에이전트를 실행할 수 있습니다.</p>
 
@@ -224,9 +224,9 @@ OpenHuman은 비용이 가장 많이 드는 부분을 다시 생각했습니다.
 
 <p align="center">
  <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
-  <source media="(prefers-color-scheme: light)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
-  <img alt="SWE-bench Verified 실행 swe-x86-1: OpenHuman과 다른 하네스 6개를 패널 10개로 비교" src="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified 실행 swe-x86-1: OpenHuman과 다른 하네스 6개를 패널 10개로 비교" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
  </picture>
 </p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-다음으로는 [Rust 퀵스타트](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [임베딩 가이드](../gitbooks/developing/embed/README.md), [개발자 문서](https://tinyhumans.gitbook.io/openhuman/developing)를 보세요.
+다음으로는 [Rust 퀵스타트](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [임베딩 가이드](../docs/gitbooks/en/developing/embed/README.md), [개발자 문서](https://tinyhumans.gitbook.io/openhuman/developing)를 보세요.
 
 ---
 

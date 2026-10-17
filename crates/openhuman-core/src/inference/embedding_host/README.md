@@ -3,7 +3,7 @@
 Turns text into vectors for semantic memory search, and lets the provider
 that does it be swapped by config rather than by code change. This is the
 embeddings half of OpenHuman's pluggable-engine story (see
-[gitbooks/developing/engines.md](../../../../../gitbooks/developing/engines.md)):
+[docs/gitbooks/en/developing/engines.md](../../../../../docs/gitbooks/en/developing/engines.md)):
 the same pattern used for chat model providers in [`../provider`](../provider/README.md),
 applied to embeddings.
 
@@ -27,23 +27,17 @@ Declared in [`mod.rs`](./mod.rs) and resolved by [`factory.rs`](./factory.rs):
 | File | Role |
 | --- | --- |
 | `mod.rs` | Module docs and re-exports. Declares the provider list above. |
-| [`provider_trait.rs`](./provider_trait.rs) | Re-exports `EmbeddingProvider` and `format_embedding_signature` from `tinymemory_api::host`, and defines `TinyInferenceEmbeddingProvider`, the adapter from a TinyInference `EmbeddingModel` to the memory host's trait. |
 | `factory.rs` | OpenHuman's binding onto TinyInference's embedding factory: `create_embedding_provider_with_credentials`, `create_embedding_provider_with_config`, and `default_embedding_provider_with_config` (falls back to a `Noop` model if the configured provider fails to build). |
 | [`cloud_adapter.rs`](./cloud_adapter.rs) | `OpenHumanCloudEmbeddingModel`: the managed-provider transport, with OpenHuman's own bearer-token and egress-guard wiring around the crate-owned `CloudEmbeddingModel`. |
 | [`rpc.rs`](./rpc.rs) + `rpc/` (`api_keys.rs`, `embed.rs`, `settings.rs`) | The `embeddings` RPC handlers: get/update settings, set/clear API key, embed text, test a connection. |
 | [`schemas.rs`](./schemas.rs) | Controller schemas and thin handlers for the `embeddings` RPC namespace, registered as `all_embeddings_controller_schemas` / `all_embeddings_registered_controllers`. |
 
-## Why the trait lives here, not in the engine
+## The model contract lives in TinyInference
 
-`EmbeddingProvider` is defined in `tinymemory_api::host` and only re-exported
-by `provider_trait.rs`, because the extracted memory subsystem takes an
-`Arc<dyn EmbeddingProvider>` from this host and both sides need to name the
-same type. `TinyInferenceEmbeddingProvider` is the adapter that wraps a
-TinyInference `EmbeddingModel` (what `factory.rs` and `cloud_adapter.rs`
-build) to satisfy that trait. The signature format itself is not
-re-derived here: `format_embedding_signature` stays the contract's, so a
-vector written before this module existed and one written after land in the
-same embedding space.
+Callers hold `tinyinference_embeddings::EmbeddingModel` directly (batches are
+`&[String]`). The trait, `format_embedding_signature` and `NoopEmbeddingModel`
+are owned by `tinyinference-embeddings`; this host only binds credentials,
+rate limits and the managed cloud transport onto it.
 
 ## How it fits
 
@@ -63,4 +57,4 @@ the wider `inference` domain.
 
 ## Further reading
 
-- [Local AI](../../../../../gitbooks/features/model-routing/local-ai.md)
+- [Local AI](../../../../../docs/gitbooks/en/features/model-routing/local-ai.md)

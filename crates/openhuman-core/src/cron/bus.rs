@@ -6,12 +6,12 @@
 //! picks up those events and dispatches to the appropriate channel, keeping
 //! channel construction out of the scheduler.
 
-use crate::channels::traits::{Channel, SendMessage};
 use crate::core::events::DomainEvent;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tinybus::EventHandler;
+use tinychannels_bus::{Channel, SendMessage};
 
 /// Subscribes to `CronDeliveryRequested` events and dispatches
 /// the output to the named channel.

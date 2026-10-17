@@ -156,5 +156,5 @@ user message via `current_datetime_line`).
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Personalization and self-learning](../../../../../gitbooks/features/personalization.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Personalization and self-learning](../../../../../docs/gitbooks/en/features/personalization.md)

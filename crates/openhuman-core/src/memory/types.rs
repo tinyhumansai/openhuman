@@ -115,7 +115,8 @@ pub struct RefersTo {
 /// `memory_recall` result.
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallView {
-    /// The synthesised answer.
+    /// The synthesised answer; in evidence mode
+    /// ([`super::ops::recall_with`]), the recalled evidence as text.
     pub answer: String,
     /// The items it rests on.
     pub citations: Vec<Citation>,
@@ -380,38 +381,9 @@ pub struct ImportStartParams {
     pub consent: bool,
 }
 
-/// Where an import stands.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ImportPhase {
-    /// Never started.
-    #[default]
-    Idle,
-    /// Running.
-    Running,
-    /// Finished.
-    Done,
-    /// Stopped on an error; starting again resumes.
-    Error,
-}
-
-/// `memory_import_*` state.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportState {
-    /// Phase.
-    pub phase: ImportPhase,
-    /// Items stored so far.
-    pub imported: u64,
-    /// Items found by the scan.
-    pub total: u64,
-    /// Why it stopped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Items the engine refused (malformed, too large), kept so they can be
-    /// retried (`memory_import_retry_failed`).
-    #[serde(default)]
-    pub failed: u64,
-}
+/// Where an import stands, and its progress (`memory_import_*` state): the
+/// module's own types, so the persisted file and the wire share one shape.
+pub use tinymemory_integrations::import::{ImportPhase, ImportState};
 
 /// `memory_import_start` / `_status` result.
 #[derive(Debug, Clone, Serialize)]

@@ -13,6 +13,7 @@ use tinyinference_llm::{
 };
 
 pub(crate) fn wrap(
+    ctx: &crate::core::runtime::DispatchCtx,
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
     model: &str,
@@ -64,6 +65,7 @@ pub(crate) fn wrap(
     Arc::new(AttachmentModel {
         inner,
         config,
+        core: ctx.downgrade(),
         profile,
         fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
     })
@@ -72,6 +74,7 @@ pub(crate) fn wrap(
 /// Injected models supply their own selected-model facts through ModelProfile.
 /// Transport support is still required for every native media block.
 pub(crate) fn wrap_injected(
+    ctx: &crate::core::runtime::DispatchCtx,
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
 ) -> Arc<dyn ChatModel<()>> {
@@ -79,6 +82,7 @@ pub(crate) fn wrap_injected(
     Arc::new(AttachmentModel {
         inner,
         config,
+        core: ctx.downgrade(),
         profile,
         fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
     })
@@ -87,6 +91,9 @@ pub(crate) fn wrap_injected(
 struct AttachmentModel {
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
+    /// The context the wrapped turn runs under. Weak: a model held by a turn
+    /// must not keep a tenant's context alive.
+    core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
     profile: ModelProfile,
     fallback_cache: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
@@ -111,6 +118,11 @@ fn recoverable_historical_media_error(error: &tinyinference_llm::Error) -> bool 
 }
 
 impl AttachmentModel {
+    /// The dispatch context of the turn this model serves.
+    pub(super) fn dispatch_ctx(&self) -> crate::core::runtime::DispatchCtx {
+        crate::core::runtime::DispatchCtx::from_weak(self.core.as_ref())
+    }
+
     fn native(&self, modality: InputModality, mime: &str) -> bool {
         let known = match modality {
             InputModality::Image => self.profile.modalities.image_in,
@@ -400,7 +412,7 @@ fn is_local_reference(source: &str) -> bool {
 }
 
 #[path = "provider_open.rs"]
-mod open;
+pub(crate) mod open;
 #[cfg(any(test, windows))]
 use open::normalize_windows_path_for_comparison;
 use open::secure_open;
@@ -441,6 +453,10 @@ mod source;
 #[cfg(test)]
 #[path = "provider_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "provider_context_tests.rs"]
+mod context_tests;
 
 #[cfg(test)]
 #[path = "provider_history_tests.rs"]

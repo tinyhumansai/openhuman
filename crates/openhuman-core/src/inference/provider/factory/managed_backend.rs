@@ -11,8 +11,9 @@ use super::*;
 pub(super) fn resolve_managed_backend(
     role: &str,
     config: &Config,
+    egress: &EgressLedger,
 ) -> anyhow::Result<(OpenHumanBackendModel, String)> {
-    resolve_managed_backend_with_model_override(role, config, None)
+    resolve_managed_backend_with_model_override(role, config, None, egress)
 }
 
 /// Construct a managed turn model with the explicit OpenHuman thread attached.
@@ -23,6 +24,7 @@ pub(crate) fn make_openhuman_backend_model_for_thread(
     model: &str,
     native_tool_calling: bool,
     thread_id: Option<&str>,
+    egress: &EgressLedger,
 ) -> anyhow::Result<(
     std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>>,
     String,
@@ -30,7 +32,7 @@ pub(crate) fn make_openhuman_backend_model_for_thread(
     // `model` may be a role alias (`hint:reasoning`) the registry keys the
     // route by; the backend only ever sees the concrete id it resolves to.
     let (backend, resolved_model) =
-        resolve_managed_backend_with_model_override(role, config, Some(model))?;
+        resolve_managed_backend_with_model_override(role, config, Some(model), egress)?;
     Ok((
         std::sync::Arc::new(
             backend
@@ -45,6 +47,7 @@ pub(super) fn resolve_managed_backend_with_model_override(
     role: &str,
     config: &Config,
     model_override: Option<&str>,
+    egress: &EgressLedger,
 ) -> anyhow::Result<(OpenHumanBackendModel, String)> {
     // Managed construction shares the same privacy gate as local and BYOK
     // factories, before constructing a client or announcing any egress.
@@ -112,7 +115,8 @@ pub(super) fn resolve_managed_backend_with_model_override(
     // (`create_turn_chat_model[_from_string]_with_native_tools`) resolve here.
     // Emitting once here guarantees the default managed chat turn discloses
     // egress exactly once (see `emit_inference_egress`).
-    crate::security::egress::emit_external_transfer(
+    crate::security::egress::emit_external_transfer_in(
+        egress,
         crate::security::egress::EgressDescriptor::inference("openhuman", &model, true),
     );
     Ok((
@@ -133,7 +137,7 @@ pub(crate) fn make_openhuman_backend_model(
     std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>>,
     String,
 )> {
-    let (model_client, model) = resolve_managed_backend(role, config)?;
+    let (model_client, model) = resolve_managed_backend(role, config, &EgressLedger::none())?;
     let chat: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         std::sync::Arc::new(model_client);
     Ok((chat, model))

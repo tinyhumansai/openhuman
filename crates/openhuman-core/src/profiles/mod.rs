@@ -39,6 +39,7 @@ pub mod registry;
 pub mod schemas;
 pub mod surface;
 pub mod tools;
+pub mod turn_gate;
 pub mod types;
 
 pub use host::{current, Profile, ProfileHost};

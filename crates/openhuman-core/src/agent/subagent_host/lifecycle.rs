@@ -29,6 +29,8 @@ use tinyinference_llm::{
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
+use checkpoint::absolute_checkpoint_dir;
+
 use super::{
     SubagentRunError, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus, SubagentUsage,
 };
@@ -36,15 +38,9 @@ use super::{
 fn root_context_from_options(
     options: &SubagentRunOptions,
 ) -> crate::agent::tinyagents::host::OpenHumanRunContext {
-    let mut context = options.run_context.clone();
-    // The public convenience entrypoint is also used inside a parent turn by
-    // legacy callers and test fixtures. Preserve that parent lineage when the
-    // explicit carrier has not already supplied one; an explicit value always
-    // wins so a caller cannot be silently re-bound to an ambient turn.
-    if context.parent.is_none() {
-        context.parent = crate::agent::harness::current_parent();
-    }
-    context
+    // The parent lineage is exactly what the caller put on the explicit
+    // carrier (`run_context.parent`); nothing is re-bound from an ambient turn.
+    options.run_context.clone()
 }
 
 /// Runs one host subagent through a neutral driver using a real direct child.
@@ -54,7 +50,7 @@ fn root_context_from_options(
 /// therefore preserves root, parent, thread, and cancellation lineage.
 pub async fn run_subagent_with_parent(
     parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
-    definition: crate::agent::harness::definition::AgentDefinition,
+    definition: crate::agent::harness::host_definition::AgentDefinition,
     input: impl Into<String>,
     options: SubagentRunOptions,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
@@ -66,7 +62,7 @@ pub async fn run_subagent_with_parent(
 /// context. It creates the one explicit root context, then drives the same
 /// neutral lifecycle as nested callers.
 pub async fn run_subagent(
-    definition: &crate::agent::harness::definition::AgentDefinition,
+    definition: &crate::agent::harness::host_definition::AgentDefinition,
     input: &str,
     options: SubagentRunOptions,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
@@ -82,7 +78,7 @@ pub async fn run_subagent(
 pub async fn continue_subagent_with_parent(
     parent: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
     original_key: SubagentTaskKey,
-    definition: crate::agent::harness::definition::AgentDefinition,
+    definition: crate::agent::harness::host_definition::AgentDefinition,
     input: impl Into<String>,
     options: SubagentRunOptions,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
@@ -95,7 +91,7 @@ pub async fn continue_subagent_with_parent(
 /// OpenHuman carrier. The original durable key is mandatory.
 pub async fn continue_subagent(
     original_key: SubagentTaskKey,
-    definition: &crate::agent::harness::definition::AgentDefinition,
+    definition: &crate::agent::harness::host_definition::AgentDefinition,
     input: &str,
     options: SubagentRunOptions,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
@@ -122,7 +118,7 @@ pub(crate) fn load_subagent_checkpoint(
 /// for one caller-owned lifecycle; process-wide persistence remains the source
 /// of truth for cross-process continuation and duplicate terminal effects.
 pub struct OpenHumanSubagentHost {
-    definition: crate::agent::harness::definition::AgentDefinition,
+    definition: crate::agent::harness::host_definition::AgentDefinition,
     options: SubagentRunOptions,
 }
 
@@ -212,25 +208,13 @@ fn host_observer_outcome(mut outcome: SubagentRunOutcome) -> SubagentRunOutcome 
     outcome
 }
 
-pub(super) fn host_in_flight() -> Arc<AsyncMutex<HashMap<HostLifecycleKey, Arc<HostInFlight>>>> {
-    crate::core::runtime::current_slot()
-}
-
-fn absolute_checkpoint_dir(path: PathBuf) -> PathBuf {
-    std::fs::canonicalize(&path).unwrap_or_else(|_| {
-        if path.is_absolute() {
-            path
-        } else {
-            std::env::current_dir()
-                .map(|cwd| cwd.join(&path))
-                .unwrap_or(path)
-        }
-    })
+pub(super) fn host_in_flight(ctx: &crate::core::runtime::DispatchCtx) -> Arc<HostInFlightMap> {
+    crate::core::runtime::slot_for(ctx)
 }
 
 impl OpenHumanSubagentHost {
     pub fn new(
-        definition: crate::agent::harness::definition::AgentDefinition,
+        definition: crate::agent::harness::host_definition::AgentDefinition,
         options: SubagentRunOptions,
     ) -> Self {
         Self {
@@ -300,8 +284,9 @@ impl OpenHumanSubagentHost {
             checkpoint_dir: checkpoint_dir.clone(),
             task_key: task_key.clone(),
         };
+        let dispatch_ctx = parent.data.dispatch_ctx();
         let (entry, is_leader) = {
-            let mut entries = host_in_flight().lock_owned().await;
+            let mut entries = host_in_flight(&dispatch_ctx).lock_owned().await;
             match entries.get(&lifecycle_key) {
                 Some(entry) => (entry.clone(), false),
                 None => {
@@ -339,7 +324,7 @@ impl OpenHumanSubagentHost {
         ))
         .await;
         entry.complete(result.as_ref().ok().cloned()).await;
-        let mut entries = host_in_flight().lock_owned().await;
+        let mut entries = host_in_flight(&dispatch_ctx).lock_owned().await;
         if entries
             .get(&lifecycle_key)
             .is_some_and(|current| Arc::ptr_eq(current, &entry))
@@ -428,12 +413,12 @@ impl OpenHumanSubagentHost {
 
 #[derive(Clone)]
 struct HostRequest {
-    definition: crate::agent::harness::definition::AgentDefinition,
+    definition: crate::agent::harness::host_definition::AgentDefinition,
     options: SubagentRunOptions,
 }
 
 struct PreparedHostPlan {
-    definition: crate::agent::harness::definition::AgentDefinition,
+    definition: crate::agent::harness::host_definition::AgentDefinition,
     options: SubagentRunOptions,
 }
 
@@ -1141,7 +1126,7 @@ impl tinyagents_orchestration::subagent::SubagentPersistence for OpenHumanPersis
 
 #[path = "lifecycle_outcome.rs"]
 mod outcome;
-use outcome::host_outcome_to_neutral;
+use outcome::{host_outcome_to_neutral, HostInFlightMap};
 
 fn outcome_to_host(
     result: SubagentRunResult,
@@ -1239,9 +1224,12 @@ fn map_lifecycle_error(error: SubagentError) -> SubagentRunError {
 /// A child run's cost as it comes back across the orchestration boundary.
 /// That `Usage` can only say whether a charge is present, so a present one is
 /// read as charged and an absent one as unknown (it was sent as absent).
-fn cost_source_of(charged: Option<&ChargedAmount>) -> crate::agent::cost::CostSource {
+fn cost_source_of(charged: Option<&ChargedAmount>) -> tinyagents_harness::cost::CostSource {
     match charged {
-        Some(_) => crate::agent::cost::CostSource::Charged,
-        None => crate::agent::cost::CostSource::Unknown,
+        Some(_) => tinyagents_harness::cost::CostSource::Charged,
+        None => tinyagents_harness::cost::CostSource::Unknown,
     }
 }
+
+#[path = "lifecycle_checkpoint.rs"]
+mod checkpoint;

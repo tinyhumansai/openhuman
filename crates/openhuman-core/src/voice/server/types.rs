@@ -17,6 +17,18 @@ pub enum ServerState {
     Transcribing,
 }
 
+impl From<crate::modules::voice::SessionPhase> for ServerState {
+    fn from(phase: crate::modules::voice::SessionPhase) -> Self {
+        use crate::modules::voice::SessionPhase;
+        match phase {
+            SessionPhase::Stopped => Self::Stopped,
+            SessionPhase::Idle => Self::Idle,
+            SessionPhase::Recording => Self::Recording,
+            SessionPhase::Transcribing => Self::Transcribing,
+        }
+    }
+}
+
 /// Status snapshot of the voice server.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VoiceServerStatus {

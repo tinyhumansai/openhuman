@@ -5,13 +5,11 @@
 use crate::agent::bus::AgentTurnResponse;
 use crate::agent::progress::AgentProgress;
 use crate::channels::context::{
-    compact_sender_history, conversation_history_key, is_context_window_overflow_error,
-    ChannelRuntimeContext,
+    compact_sender_history, is_context_window_overflow_error, ChannelRuntimeContext,
 };
 use crate::channels::routes::{
     get_or_create_turn_model_source, get_route_selection, handle_runtime_command_if_needed,
 };
-use crate::channels::traits;
 use crate::channels::{ChannelSendExt, SendMessage};
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
@@ -19,12 +17,14 @@ use crate::util::truncate_with_ellipsis;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tinyagents_session::transcript::TranscriptMessage;
+use tinychannels_bus as traits;
+use tinychannels_bus::context::ChatMessage;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
 use super::super::helpers::{
-    build_channel_context_block, log_worker_join_result, select_acknowledgment_reaction,
-    spawn_scoped_typing_task, REPLY_LOG_TRUNCATE_CHARS,
+    build_channel_context_block, log_worker_join_result, spawn_typing_task,
+    REPLY_LOG_TRUNCATE_CHARS,
 };
 use super::super::host_agent::{self, run_host_agent_turn, seed_rows, HostChannelTurn, HostRoute};
 use super::approval::{channel_has_approval_surface, try_route_approval_reply};
@@ -42,10 +42,52 @@ pub(crate) async fn process_channel_runtime_message(
     ctx: Arc<ChannelRuntimeContext>,
     runtime_msg: RuntimeChannelMessage,
 ) {
+    use tinychannels_bus::module_inbound::{ChannelInboundSource, PrepareChannelInboundRequest};
     let RuntimeChannelMessage {
-        message: msg,
+        message,
         inbound_envelope,
+        authenticated_relay,
+        prepared_inbound,
     } = runtime_msg;
+    let prepared = match prepared_inbound {
+        Some(prepared) => prepared,
+        None => {
+            let source = if message.channel.is_empty() {
+                let Some(envelope) = inbound_envelope else {
+                    return;
+                };
+                ChannelInboundSource::Envelope {
+                    envelope,
+                    timestamp: 0,
+                }
+            } else {
+                ChannelInboundSource::Legacy {
+                    message,
+                    envelope: inbound_envelope,
+                }
+            };
+            match crate::modules::channel_controller::prepare_inbound(
+                &crate::channels::context::module_client(&ctx).await,
+                PrepareChannelInboundRequest {
+                    source,
+                    namespace: "main".into(),
+                    session_policy: Default::default(),
+                },
+            )
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    tracing::warn!("[dispatch] channel preparation failed: {error}");
+                    return;
+                }
+            }
+        }
+    };
+    let msg = prepared.message;
+    let history_key = prepared.history_key;
+    let mut envelope = prepared.envelope;
+    envelope.access.delivered_via_upstream_relay = authenticated_relay;
 
     println!(
         "  💬 [{}] from {}: {}",
@@ -61,15 +103,14 @@ pub(crate) async fn process_channel_runtime_message(
         reply_target: msg.reply_target.clone(),
         content: msg.content.clone(),
         thread_ts: msg.thread_ts.clone(),
-        inbound_envelope: Some(
-            inbound_envelope
-                .unwrap_or_else(|| tinychannels::inbound_envelope_from_legacy_message(&msg)),
-        ),
+        inbound_envelope: Some(envelope),
         workspace_dir: ctx.workspace_dir.as_ref().clone(),
     });
 
     let target_channel = ctx.channels_by_name.get(&msg.channel).cloned();
-    if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
+    if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref(), &history_key)
+        .await
+    {
         return;
     }
 
@@ -79,7 +120,9 @@ pub(crate) async fn process_channel_runtime_message(
     // a fresh agent turn would cancel the parked tool call. Any other text
     // falls through to the normal dispatch (the user is redirecting). Mirrors
     // the same intercept in `web_chat/`.
-    if channel_has_approval_surface(&msg.channel) && try_route_approval_reply(&msg).await {
+    if channel_has_approval_surface(&msg.channel)
+        && try_route_approval_reply(&msg, &history_key).await
+    {
         return;
     }
 
@@ -118,28 +161,50 @@ pub(crate) async fn process_channel_runtime_message(
     let mut _acknowledgment_task = None;
     if let Some(channel) = target_channel.as_ref() {
         if channel.supports_reactions() && msg.thread_ts.is_some() {
-            let ack_emoji = select_acknowledgment_reaction(&msg.content);
-            tracing::debug!(
-                channel = msg.channel,
-                emoji = ack_emoji,
-                "[dispatch] Sending acknowledgment reaction"
-            );
-            let react_content = format!("[REACTION:{ack_emoji}]");
-            let channel_for_react = Arc::clone(channel);
-            let react_msg =
-                SendMessage::new(react_content, &msg.reply_target).in_thread(msg.thread_ts.clone());
-            _acknowledgment_task = Some(AbortOnDropHandle::new(tokio::spawn(async move {
-                if let Err(e) = channel_for_react
-                    .send_with_outbound_intent(&react_msg)
-                    .await
-                {
-                    tracing::debug!("[dispatch] Acknowledgment reaction failed: {e}");
+            let ack_result = crate::channels::context::module_client(&ctx)
+                .await
+                .call_confidential::<tinychannels_bus::module_control::ChannelControlResult>(
+                    "tinychannels",
+                    tinychannels_bus::methods::PREPARE_CHANNEL_CONTROL,
+                    (
+                        tinychannels_bus::module_control::ChannelControlRequest::Acknowledgment {
+                            content: msg.content.clone(),
+                        },
+                    ),
+                )
+                .await;
+            let ack_emoji = match ack_result {
+                Ok(tinychannels_bus::module_control::ChannelControlResult::Acknowledgment(
+                    emoji,
+                )) => Some(emoji),
+                Ok(_) => {
+                    crate::modules::report::malformed_reply("tinychannels");
+                    None
                 }
-            })));
+                Err(_) => None,
+            };
+            if let Some(ack_emoji) = ack_emoji {
+                tracing::debug!(
+                    channel = msg.channel,
+                    emoji = ack_emoji,
+                    "[dispatch] Sending acknowledgment reaction"
+                );
+                let react_content = format!("[REACTION:{ack_emoji}]");
+                let channel_for_react = Arc::clone(channel);
+                let react_msg = SendMessage::new(react_content, &msg.reply_target)
+                    .in_thread(msg.thread_ts.clone());
+                _acknowledgment_task = Some(AbortOnDropHandle::new(tokio::spawn(async move {
+                    if let Err(e) = channel_for_react
+                        .send_with_outbound_intent(&react_msg)
+                        .await
+                    {
+                        tracing::debug!("[dispatch] Acknowledgment reaction failed: {e}");
+                    }
+                })));
+            }
         }
     }
 
-    let history_key = conversation_history_key(&msg);
     let route = get_route_selection(ctx.as_ref(), &history_key);
     let active_turn_model_source = if ctx.config.is_none() {
         match get_or_create_turn_model_source(ctx.as_ref(), &route.provider).await {
@@ -156,9 +221,9 @@ pub(crate) async fn process_channel_runtime_message(
                 );
                 let safe_err = tinyinference_core::sanitize::sanitize_api_error(&err.to_string());
                 let message = format!(
-                "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
-                route.provider
-            );
+                    "⚠️ Failed to initialize provider `{}`. Please run `/models` to choose another provider.\nDetails: {safe_err}",
+                    route.provider
+                );
                 if let Some(channel) = target_channel.as_ref() {
                     let _ = channel
                         .send_with_outbound_intent(
@@ -188,12 +253,22 @@ pub(crate) async fn process_channel_runtime_message(
     let started_at = Instant::now();
 
     // Build history from per-sender conversation cache
-    let mut prior_turns = ctx
+    let mut prior_turns: Vec<TranscriptMessage> = ctx
         .conversation_histories
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&history_key)
-        .cloned()
+        .map(|turns| {
+            // The cache holds the bus's plain `ChatMessage`; convert at the
+            // harness boundary.
+            turns
+                .iter()
+                .map(|turn| match turn.role.as_str() {
+                    "assistant" => TranscriptMessage::assistant(&turn.content),
+                    _ => TranscriptMessage::user(&turn.content),
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     // Re-rendered by `ChannelSystemPrompt` only when the active profile or an
@@ -306,10 +381,14 @@ pub(crate) async fn process_channel_runtime_message(
     };
 
     let typing_cancellation = target_channel.as_ref().map(|_| CancellationToken::new());
+    let _typing_cancel_on_drop = typing_cancellation
+        .as_ref()
+        .map(|token| token.clone().drop_guard());
     // Typing was already started early (before memory/provider setup). Here we only
     // spawn the background refresh task that keeps the indicator alive during long turns.
     let typing_task = match (target_channel.as_ref(), typing_cancellation.as_ref()) {
-        (Some(channel), Some(token)) => Some(AbortOnDropHandle::new(spawn_scoped_typing_task(
+        (Some(channel), Some(token)) => Some(AbortOnDropHandle::new(spawn_typing_task(
+            &ctx.dispatch_ctx(),
             Arc::clone(channel),
             msg.reply_target.clone(),
             token.clone(),
@@ -336,6 +415,24 @@ pub(crate) async fn process_channel_runtime_message(
         history_key: Some(history_key.clone()),
     };
 
+    // Sub-issue 2 of #3098: give the agent turn an `ApprovalTurnContext` for
+    // every channel with the `chat_approvals` capability (served by
+    // `ChannelApprovalSurfaceSubscriber`). Without a chat context the gate's
+    // "no chat context -> allow straight through" branch silently bypasses
+    // every `Prompt`-class tool call, voiding the `supervised` autonomy tier
+    // on the channel.
+    let approval = if channel_has_approval_surface(&msg.channel) {
+        crate::security::approval::ApprovalTurnContext::chat(
+            crate::security::approval::ApprovalChatContext {
+                thread_id: history_key.clone(),
+                client_id: msg.channel.clone(),
+                request_id: Some(msg.id.clone()),
+            },
+        )
+    } else {
+        crate::security::approval::ApprovalTurnContext::default()
+    };
+
     // A channel bound to a host agent (`agent.channel_agents`) runs as that
     // agent; every other channel goes over the bus to the orchestrator.
     let agent_call: std::pin::Pin<
@@ -344,12 +441,14 @@ pub(crate) async fn process_channel_runtime_message(
         Some(host) => Box::pin(run_host_agent_turn(
             *host,
             HostChannelTurn {
+                relay_thread: ctx.relay_thread.clone(),
                 channel: msg.channel.clone(),
                 history_key: history_key.clone(),
                 prior_turns: seed_rows(&history),
                 message: enriched_message.clone(),
                 origin: turn_origin,
                 progress: progress_tx,
+                approval,
             },
         )),
         None => Box::pin(dispatch_bus_turn(
@@ -360,29 +459,11 @@ pub(crate) async fn process_channel_runtime_message(
             active_turn_model_source,
             progress_tx,
             turn_origin,
+            approval,
         )),
     };
-    // Sub-issue 2 of #3098: scope the agent turn in an `ApprovalChatContext`
-    // for every channel with the `chat_approvals` capability (served by
-    // `ChannelApprovalSurfaceSubscriber`). Without this scope the gate's
-    // "no chat context → allow straight through" branch
-    // (`approval/gate.rs:219-231`) silently bypasses every `Prompt`-class
-    // tool call, voiding the `supervised` autonomy tier on the channel.
-    let llm_result = tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), async {
-        if channel_has_approval_surface(&msg.channel) {
-            let approval_ctx = crate::security::approval::ApprovalChatContext {
-                thread_id: history_key.clone(),
-                client_id: msg.channel.clone(),
-                request_id: Some(msg.id.clone()),
-            };
-            crate::security::approval::APPROVAL_CHAT_CONTEXT
-                .scope(approval_ctx, agent_call)
-                .await
-        } else {
-            agent_call.await
-        }
-    })
-    .await;
+    let llm_result =
+        tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), agent_call).await;
 
     // Wait for draft updater to finish
     if let Some(handle) = draft_updater {
@@ -414,8 +495,8 @@ pub(crate) async fn process_channel_runtime_message(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
                 let turns = histories.entry(history_key).or_default();
-                turns.push(TranscriptMessage::user(&enriched_message));
-                turns.push(TranscriptMessage::assistant(&response_text));
+                turns.push(ChatMessage::user(&enriched_message));
+                turns.push(ChatMessage::assistant(&response_text));
                 // Trim to MAX_CHANNEL_HISTORY (keep recent turns)
                 while turns.len() > crate::channels::context::MAX_CHANNEL_HISTORY {
                     turns.remove(0);
@@ -458,8 +539,11 @@ pub(crate) async fn process_channel_runtime_message(
             (true, response_text, resolved_provider, resolved_model)
         }
         Ok(Err(e)) => {
-            if is_context_window_overflow_error(&e) {
-                let compacted = compact_sender_history(ctx.as_ref(), &history_key);
+            if is_context_window_overflow_error(&ctx, &e)
+                .await
+                .unwrap_or(false)
+            {
+                let compacted = compact_sender_history(&ctx.conversation_histories, &history_key);
                 let error_text = if compacted {
                     "⚠️ Context window exceeded for this conversation. I compacted recent history and kept the latest context. Please resend your last message."
                 } else {
@@ -522,7 +606,7 @@ pub(crate) async fn process_channel_runtime_message(
             // Sentry funnel (OPENHUMAN-TAURI-98) and emit `log::info!`
             // instead — `Err` propagation through the surrounding match
             // arm is unchanged.
-            if crate::agent::error::is_max_iterations_error(&e.to_string()) {
+            if tinyagents_harness::agent_error::is_max_iterations_error(&e.to_string()) {
                 log::info!(
                     target: "channels",
                     "[channels.dispatch] suppressed Sentry emission for max-iteration cap \

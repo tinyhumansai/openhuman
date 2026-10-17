@@ -1,6 +1,5 @@
 //! Typed input / output / error contracts for the `generate_presentation` tool.
 
-use crate::tools::implementations::document::format::spec::ImageFormat;
 use serde::{Deserialize, Serialize};
 
 use crate::modules::documents::DocumentCallError;
@@ -27,12 +26,14 @@ pub enum SlideImageSource {
     File { path: String },
 }
 
-/// One image attached to a slide. `caption`, when present, is rendered
+/// One image the agent asks for on a slide (the tool's input shape; the bus
+/// `SlideImage` it resolves to carries bytes, format and dimensions).
+/// `caption`, when present, is rendered
 /// as a trailing text bullet beneath the image in v1 (a true
 /// image-anchored caption shape is deferred with the grid layout).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SlideImage {
+pub struct SlideImageRequest {
     /// Image data source. See [`SlideImageSource`].
     pub source: SlideImageSource,
     /// Optional caption rendered as a bullet under the image.
@@ -43,7 +44,7 @@ pub struct SlideImage {
 /// Slide spec — one entry per content slide in the generated deck.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SlideSpec {
+pub struct SlideRequest {
     /// Slide title. Empty / omitted is allowed for visually
     /// minimalist decks but at least one of `title` / `body` /
     /// `bullets` must be populated.
@@ -64,20 +65,7 @@ pub struct SlideSpec {
     /// async `execute()` boundary; a bad image is skipped with a
     /// warning rather than failing the whole deck.
     #[serde(default)]
-    pub images: Vec<SlideImage>,
-}
-
-/// An image resolved + validated at the async boundary, ready for the
-/// (synchronous, pure) engine to embed. Carries the decoded bytes, the
-/// `ppt-rs` format token (`"PNG"` / `"JPEG"`), and the native pixel
-/// dimensions used for aspect-preserving placement.
-#[derive(Debug, Clone)]
-pub(super) struct ResolvedSlideImage {
-    pub bytes: Vec<u8>,
-    pub format: ImageFormat,
-    pub width_px: u32,
-    pub height_px: u32,
-    pub caption: Option<String>,
+    pub images: Vec<SlideImageRequest>,
 }
 
 /// Top-level input for the `generate_presentation` tool.
@@ -87,6 +75,11 @@ pub struct GeneratePresentationInput {
     /// Deck title. Surfaces on the title slide and as the artifact's
     /// human-readable name.
     pub title: String,
+    /// Optional artifact id to update. Pass an artifact id from a prior
+    /// `generate_presentation` call to save this deck as a new version
+    /// of that artifact instead of creating a brand new one.
+    #[serde(default)]
+    pub artifact_id: Option<String>,
     /// Optional author byline, surfaced on the title slide.
     #[serde(default)]
     pub author: Option<String>,
@@ -97,7 +90,7 @@ pub struct GeneratePresentationInput {
     pub theme: Option<String>,
     /// Slide specs, in display order. Must contain at least one entry.
     #[serde(default)]
-    pub slides: Vec<SlideSpec>,
+    pub slides: Vec<SlideRequest>,
 }
 
 /// Tool output returned via [`tinytools::ToolResult`]

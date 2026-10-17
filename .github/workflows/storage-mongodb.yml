@@ -33,6 +33,7 @@ on:
       - ".cargo/config.toml"
       - "rust-toolchain.toml"
       - "crates/openhuman-core/src/storage/**"
+      - "crates/openhuman-core/src/modules/**"
       - "crates/openhuman-core/src/cron/**"
       - "crates/openhuman-core/src/flows/**"
       - "crates/openhuman-core/src/security/approval/**"
@@ -56,6 +57,10 @@ on:
       - "crates/openhuman-rpc/src/session_store/**"
       - "tests/storage_*.rs"
       - "tests/cli_storage_url_e2e.rs"
+      - "tests/storage_desktop_upgrade_e2e.rs"
+      - "tests/tinymcp_storage_smoke_e2e.rs"
+      - "scripts/e2e-core.sh"
+      - "scripts/test-rust-e2e.sh"
       - "tests/support/storage_drivers.rs"
       - ".gitmodules"
       - "vendor/**"
@@ -103,19 +108,17 @@ jobs:
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
 
-      - name: Verify the replica-set script was checked out
-        run: |
-          script=vendor/tinyagents/vendor/tinystoragedrivers/.github/scripts/start-mongo-replset.sh
-          if [ ! -f "$script" ]; then
-            echo "::error::$script is missing: scripts/ci/checkout-submodules.sh did not populate vendor/tinyagents/vendor/tinystoragedrivers"
-            exit 1
-          fi
-
       - name: Start a MongoDB replica set
-        # tinystoragedrivers' own script: GitHub service containers cannot pass
-        # `--replSet` to mongod, and a replica set is what lets the driver
-        # report and exercise transactions.
-        run: bash vendor/tinyagents/vendor/tinystoragedrivers/.github/scripts/start-mongo-replset.sh 27017
+        # tinystoragedrivers' own script, fetched at the commit the v0.11.0 tag
+        # points to (the same tag every Cargo manifest names): GitHub service
+        # containers cannot pass `--replSet` to mongod, and a replica set is
+        # what lets the driver report and exercise transactions.
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o start-mongo-replset.sh \
+            https://raw.githubusercontent.com/tinyhumansai/tinystoragedrivers/9eeef54aea403ac07461a612189bdf4982782823/.github/scripts/start-mongo-replset.sh
+          bash start-mongo-replset.sh 27017
+          rm -f start-mongo-replset.sh
 
       - name: Restore Rust build cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -158,7 +161,11 @@ jobs:
                 --test storage_scope_e2e \
                 --test storage_agent_scopes_e2e \
                 --test storage_delegation_e2e \
+                --test storage_desktop_upgrade_e2e \
                 --test cli_storage_url_e2e
+              # Headless core e2e with OPENHUMAN_STORAGE_URL on the replica set
+              # (#7755); the mock backend needs node, which the CI image has.
+              bash scripts/e2e-core.sh mongodb
               cargo test --no-fail-fast -p openhuman-rpc --features session-store,storage-mongodb --lib -- session_store::
             '
 

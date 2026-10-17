@@ -39,6 +39,40 @@ fn all_tools_includes_browser_when_enabled() {
 }
 
 #[test]
+fn computer_component_off_unregisters_desktop_and_browser_tools() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let browser = BrowserConfig {
+        enabled: true,
+        allowed_domains: vec!["example.com".into()],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+    let mut root = Config::default();
+    root.components.computer = false;
+
+    let tools = all_tools(
+        Arc::new(root),
+        &security,
+        AuditLogger::disabled(),
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+    assert!(!names.contains(&"browser_open"), "{names:?}");
+    assert!(!names.contains(&"browser"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("desktop_")),
+        "{names:?}"
+    );
+}
+
+#[test]
 fn default_tools_all_have_descriptions() {
     let security = Arc::new(SecurityPolicy::default());
     let tools = default_tools(security);
@@ -139,7 +173,6 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
-    cfg.composio.enabled = true;
     store_test_session_token(&cfg);
 
     let tools = all_tools(

@@ -5,8 +5,9 @@
 //! actually see?).
 
 use super::types::SubagentRunError;
-use crate::agent::harness::definition::{PromptSource, ToolScope};
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::agent::prompts::PromptContext;
+use tinyagents_definition::{PromptSource, ToolScope};
 use tinytools::Tool;
 
 // ── Prompt dialect selection ────────────────────────────────────────────
@@ -18,10 +19,10 @@ use tinytools::Tool;
 /// dialect selection here prevents OpenHuman prompt text from drifting from
 /// the parser that consumes the response.
 pub(crate) fn subagent_prompt_protocol(
-    parent_format: crate::agent::prompts::ToolCallFormat,
+    parent_format: tinytools_agent::dialect::ToolCallFormat,
     tools: &[tinytools::ToolSpec],
-) -> (crate::agent::prompts::ToolCallFormat, String) {
-    use crate::agent::prompts::ToolCallFormat;
+) -> (tinytools_agent::dialect::ToolCallFormat, String) {
+    use tinytools_agent::dialect::ToolCallFormat;
     use tinytools_agent::dialect::{
         CodeDialect, CodeStyle, NativeDialect, PFormatDialect, ToolDialect,
     };
@@ -75,7 +76,9 @@ pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
     // which let wildcard-scoped children inherit the orchestrator's spawn
     // surface. Resolve the override names via the registry so the strip
     // stays in lockstep with `collect_orchestrator_tools`'s naming.
-    if let Some(registry) = crate::agent::harness::definition::AgentDefinitionRegistry::current() {
+    if let Some(registry) =
+        crate::agent::harness::host_definition::AgentDefinitionRegistry::current()
+    {
         return registry
             .list()
             .iter()
@@ -208,16 +211,25 @@ pub(super) fn prompt_tools_for<'a>(
 }
 
 pub(super) fn load_prompt_source(
-    source: &PromptSource,
+    definition: &AgentDefinition,
     ctx: &PromptContext<'_>,
 ) -> Result<String, SubagentRunError> {
     let workspace_dir = ctx.workspace_dir;
-    match source {
+    match &definition.system_prompt {
         PromptSource::Inline(body) | PromptSource::Verbatim(body) => Ok(body.clone()),
-        PromptSource::Dynamic(build) => build(ctx).map_err(|e| SubagentRunError::PromptLoad {
-            path: format!("<dynamic:{}>", ctx.agent_id),
-            source: std::io::Error::other(e.to_string()),
-        }),
+        PromptSource::Dynamic(()) => {
+            let dynamic_path = || format!("<dynamic:{}>", ctx.agent_id);
+            let build = definition.extensions.prompt_builder.ok_or_else(|| {
+                SubagentRunError::PromptLoad {
+                    path: dynamic_path(),
+                    source: std::io::Error::other("dynamic prompt has no registered builder"),
+                }
+            })?;
+            build(ctx).map_err(|e| SubagentRunError::PromptLoad {
+                path: dynamic_path(),
+                source: std::io::Error::other(e.to_string()),
+            })
+        }
         PromptSource::File { path } => {
             // Try the workspace's `agent/prompts/` first (so users can
             // override built-in prompts), then fall back to the crate's

@@ -1,5 +1,6 @@
 //! Serialized, user-scoped access to the module-owned native wallet service.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
@@ -9,7 +10,7 @@ use std::sync::OnceLock;
 use tinywallet_bus::names::methods;
 use tinywallet_bus::wire::{
     EvmNetwork, NativeWalletCloseRequest, NativeWalletConfigRequest, NativeWalletConfigResponse,
-    NativeWalletServiceHandle, RpcEndpointKey, SolanaCluster, WalletAccountsResponse,
+    NativeWalletServiceHandle, RpcEndpointKey, WalletAccountsResponse,
 };
 use zeroize::Zeroize;
 
@@ -38,6 +39,7 @@ fn native_wallet_service() -> &'static tokio::sync::Mutex<Option<NativeWalletSer
 /// the complete bus operation so a user or endpoint change cannot replace the
 /// module's quote store while an earlier request is still using it.
 pub(crate) async fn with_native_wallet<R, F, Fut>(
+    ctx: &DispatchCtx,
     config: &Config,
     operation: F,
 ) -> Result<R, WalletCallError>
@@ -48,7 +50,7 @@ where
 {
     let mut active = native_wallet_service().lock().await;
     register_native_wallet_shutdown_hook();
-    let accounts = super::wallet_host::wallet_accounts_snapshot()
+    let accounts = super::wallet_host::wallet_accounts_snapshot(ctx)
         .await
         .map_err(WalletCallError::Failed)?;
     let configuration = native_wallet_config_request();
@@ -90,7 +92,10 @@ async fn ensure_native_wallet(
             configuration.clone(),
         )
         .await?;
-        if let Err(error) = super::wallet_host::bind_endpoint_references(&response) {
+        if let Err(error) = super::wallet_host::bind_endpoint_references(
+            &response.service.handle,
+            &response.endpoint_references,
+        ) {
             let _ = wallet::call::<_, ()>(
                 config,
                 methods::NATIVE_WALLET_CLOSE,
@@ -117,13 +122,14 @@ async fn ensure_native_wallet(
 /// Prepare a native transfer through the module and retain its exact quote so
 /// the host can bind approval and signer selection to the same immutable facts.
 pub(crate) async fn prepare_native_transfer(
+    ctx: &DispatchCtx,
     config: &Config,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
     params: tinywallet_bus::wire::PrepareTransferParams,
 ) -> Result<tinywallet_bus::wire::PreparedTransaction, WalletCallError> {
     let mut active = native_wallet_service().lock().await;
     register_native_wallet_shutdown_hook();
-    let accounts = super::wallet_host::wallet_accounts_snapshot()
+    let accounts = super::wallet_host::wallet_accounts_snapshot(ctx)
         .await
         .map_err(WalletCallError::Failed)?;
     ensure_native_wallet(
@@ -161,6 +167,7 @@ pub(crate) async fn prepare_native_transfer(
 /// matching account secret and delivers it over the attested confidential bus
 /// call; the module owns quote validation, approval facts, signing and broadcast.
 pub(crate) async fn execute_native_transfer(
+    ctx: &DispatchCtx,
     config: &Config,
     owner: Option<tinywallet_bus::wire::QuoteOwner>,
     params: tinywallet_bus::wire::ExecutePreparedParams,
@@ -173,7 +180,7 @@ pub(crate) async fn execute_native_transfer(
 
     let mut active = native_wallet_service().lock().await;
     register_native_wallet_shutdown_hook();
-    let accounts = super::wallet_host::wallet_accounts_snapshot()
+    let accounts = super::wallet_host::wallet_accounts_snapshot(ctx)
         .await
         .map_err(WalletCallError::Failed)?;
     ensure_native_wallet(
@@ -195,7 +202,7 @@ pub(crate) async fn execute_native_transfer(
         .ok_or_else(|| {
             WalletCallError::InvalidInput("prepared wallet quote is unavailable".into())
         })?;
-    let secret = signing_secret(config, quote.chain).await?;
+    let secret = signing_secret(ctx, config, quote.chain).await?;
     let mut request = tinywallet_bus::wire::NativeWalletExecuteRequest {
         service: service.response.service.clone(),
         owner,
@@ -207,6 +214,7 @@ pub(crate) async fn execute_native_transfer(
         super::wallet_host::ApprovalKind::Native,
         &params.quote_id,
         Some(quote),
+        None,
         wallet::call_confidential(config, methods::NATIVE_WALLET_EXECUTE_PREPARED, &request),
     )
     .await;
@@ -218,20 +226,17 @@ pub(crate) async fn execute_native_transfer(
 }
 
 async fn signing_secret(
+    ctx: &DispatchCtx,
     config: &Config,
     chain: tinywallet_bus::wire::WalletChain,
 ) -> Result<tinywallet_bus::wire::SecretMaterial, WalletCallError> {
     let local_chain = match chain {
-        tinywallet_bus::wire::WalletChain::Evm => tinywallet_web3::crypto::wallet::WalletChain::Evm,
-        tinywallet_bus::wire::WalletChain::Btc => tinywallet_web3::crypto::wallet::WalletChain::Btc,
-        tinywallet_bus::wire::WalletChain::Solana => {
-            tinywallet_web3::crypto::wallet::WalletChain::Solana
-        }
-        tinywallet_bus::wire::WalletChain::Tron => {
-            tinywallet_web3::crypto::wallet::WalletChain::Tron
-        }
+        tinywallet_bus::wire::WalletChain::Evm => crate::web3::wallet::WalletChain::Evm,
+        tinywallet_bus::wire::WalletChain::Btc => crate::web3::wallet::WalletChain::Btc,
+        tinywallet_bus::wire::WalletChain::Solana => crate::web3::wallet::WalletChain::Solana,
+        tinywallet_bus::wire::WalletChain::Tron => crate::web3::wallet::WalletChain::Tron,
     };
-    let stored = crate::web3::wallet::secret_material(local_chain)
+    let stored = crate::web3::wallet::secret_material(ctx, local_chain)
         .await
         .map_err(WalletCallError::Failed)?;
     let mnemonic =
@@ -276,7 +281,7 @@ async fn close_native_wallet(
         },
     )
     .await?;
-    super::wallet_host::clear_endpoint_references();
+    super::wallet_host::clear_endpoint_references(&service.response.service.handle);
     Ok(())
 }
 
@@ -308,14 +313,19 @@ where
     F: FnOnce(NativeWalletCloseRequest) -> Fut,
     Fut: Future<Output = Result<(), WalletCallError>>,
 {
-    if let Some(service) = active.as_ref() {
+    let handle = if let Some(service) = active.as_ref() {
         close(NativeWalletCloseRequest {
             service: service.response.service.clone(),
         })
         .await?;
-    }
+        Some(service.response.service.handle.clone())
+    } else {
+        None
+    };
     *active = None;
-    super::wallet_host::clear_endpoint_references();
+    if let Some(handle) = handle {
+        super::wallet_host::clear_endpoint_references(&handle);
+    }
     Ok(())
 }
 
@@ -339,45 +349,28 @@ fn finish_shutdown_hook_registration(registered: &AtomicBool) {
     registered.store(false, Ordering::Release);
 }
 
-fn native_wallet_config_request() -> NativeWalletConfigRequest {
+pub(super) fn native_wallet_config_request() -> NativeWalletConfigRequest {
     let mut overridden_endpoints = Vec::new();
     for network in EvmNetwork::ALL {
-        let name = crate::web3::wallet::endpoints::evm_rpc_env_var(network);
-        if nonempty_env(name) {
-            overridden_endpoints.push(RpcEndpointKey::Evm { network });
-        }
-    }
-    for (chain, key) in [
-        (
-            tinywallet_web3::crypto::wallet::WalletChain::Btc,
-            RpcEndpointKey::Btc,
-        ),
-        (
-            tinywallet_web3::crypto::wallet::WalletChain::Solana,
-            RpcEndpointKey::Solana,
-        ),
-        (
-            tinywallet_web3::crypto::wallet::WalletChain::Tron,
-            RpcEndpointKey::Tron,
-        ),
-    ] {
-        let name = crate::web3::wallet::endpoints::env_var_for_chain(chain);
-        if nonempty_env(name) {
+        let key = RpcEndpointKey::Evm { network };
+        if crate::web3::wallet::endpoints::override_for_endpoint(key).is_some() {
             overridden_endpoints.push(key);
         }
     }
-    let solana_cluster = match crate::web3::wallet::solana_cluster() {
-        tinywallet_bus::wire::SolanaCluster::Mainnet => SolanaCluster::Mainnet,
-        tinywallet_bus::wire::SolanaCluster::Devnet => SolanaCluster::Devnet,
-    };
+    for key in [
+        RpcEndpointKey::Btc,
+        RpcEndpointKey::Solana,
+        RpcEndpointKey::Tron,
+    ] {
+        if crate::web3::wallet::endpoints::override_for_endpoint(key).is_some() {
+            overridden_endpoints.push(key);
+        }
+    }
+    let solana_cluster = crate::web3::wallet::solana_cluster();
     NativeWalletConfigRequest {
         solana_cluster,
         overridden_endpoints,
     }
-}
-
-fn nonempty_env(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
 }
 
 #[cfg(test)]

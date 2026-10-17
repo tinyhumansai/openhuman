@@ -6,7 +6,7 @@ Proactive ingestion of work items from external tools. A **task source** is a us
 
 - Persist per-source configs (provider + filter + schedule + routing target + optional pinned connection / static executor).
 - Periodically poll enabled sources ([`periodic.rs`](./periodic.rs)) on a global 10-minute tick honoring per-source `interval_secs` (floored to 60s).
-- Translate a typed `FilterSpec` into the provider-agnostic `TaskFetchFilter` ([`filter.rs`](./filter.rs)); the fetch itself is stubbed (`pipeline::fetch_tasks_unavailable`) until a task-fetch surface exists again.
+- Translate a typed `FilterSpec` into the provider-agnostic `TaskFetchFilter` (`FilterSpec::to_fetch_filter`, owned by `tinyconnectors_bus::vocabulary`; `ProviderSlug`, `SourceTarget` and `FetchReason` live there too); the fetch itself is stubbed (`pipeline::fetch_tasks_unavailable`) until a task-fetch surface exists again.
 - Dedup ingested items with an edit-aware SHA-256 content hash; re-ingest only when the upstream task changed ([`store.rs`](./store.rs) + [`pipeline.rs`](./pipeline.rs)).
 - Deterministically enrich raw tasks into agent-ready ones, urgency heuristic, summary, linked assignee, templated agent prompt ([`enrich.rs`](./enrich.rs)).
 - Route enriched tasks: for proactive sources, dispatch a triage turn through the same path Composio webhooks use; collect-only sources stop at the ledger ([`route.rs`](./route.rs)).
@@ -18,12 +18,11 @@ Proactive ingestion of work items from external tools. A **task source** is a us
 | File | Role |
 | --- | --- |
 | `crates/openhuman-core/src/integrations/task_sources/mod.rs` | Export-only: module docstring, `mod`/`pub mod` decls, `pub use` re-exports, and the `all_task_sources_*` controller registry pair. |
-| [`crates/openhuman-core/src/integrations/task_sources/types.rs`](./types.rs) | Serde domain types: `ProviderSlug`, `FilterSpec` (provider-tagged enum), `SourceTarget`, `FetchReason`, `TaskSource`, `TaskSourcePatch`, `EnrichedTask`, `FetchOutcome`. |
+| [`crates/openhuman-core/src/integrations/task_sources/types.rs`](./types.rs) | Re-exports the connector vocabulary types (`ProviderSlug`, `FilterSpec`, `SourceTarget`, `FetchReason`, owned by `tinyconnectors_bus::vocabulary`) and defines the host-owned task-source types (`TaskSource`, `TaskSourcePatch`, `EnrichedTask`, `FetchOutcome`) plus `provider_can_fetch`. |
 | `crates/openhuman-core/src/integrations/task_sources/store.rs` | SQLite persistence (`<workspace>/task_sources/sources.db`): `task_sources` + `ingested_tasks` tables, dedup `content_hash`, migrate-on-open. |
 | `crates/openhuman-core/src/integrations/task_sources/ops.rs` | RPC-facing business logic returning `Outcome<T>`: `list`/`get`/`add`/`update`/`remove`/`fetch`/`sync`/`list_tasks`/`preview_filter`/`list_databases`/`status`. |
 | `crates/openhuman-core/src/integrations/task_sources/schemas.rs` | `task_sources` controller schemas + `all_controller_schemas` / `all_registered_controllers` + thin `handle_*` param parsers delegating to `ops.rs`. |
 | `crates/openhuman-core/src/integrations/task_sources/pipeline.rs` | `run_source_once`: the infallible fetch → dedup → enrich → route pass shared by poll, manual RPC, and connection hook; publishes domain events. Holds the `fetch_tasks_unavailable` stub and its rationale doc comment. |
-| `crates/openhuman-core/src/integrations/task_sources/filter.rs` | `to_fetch_filter`: flattens a `FilterSpec` variant into the shared `TaskFetchFilter`. |
 | `crates/openhuman-core/src/integrations/task_sources/enrich.rs` | Deterministic, dependency-free `enrich_task`: urgency heuristic, summary, linked assignee, agent prompt. No LLM call. |
 | `crates/openhuman-core/src/integrations/task_sources/route.rs` | `route_enriched`: dispatches a scheduler-gated triage turn for proactive sources; collect-only sources are a no-op past the ledger. |
 | `crates/openhuman-core/src/integrations/task_sources/periodic.rs` | `start_periodic_poll`: global tick scheduler; per-source due-timing in a process-global map; `run_one_tick` is `pub(crate)` for tests. |
@@ -37,7 +36,7 @@ Proactive ingestion of work items from external tools. A **task source** is a us
 
 Re-exported from `mod.rs`:
 
-- Types: `TaskSource`, `TaskSourcePatch`, `FilterSpec`, `ProviderSlug`, `SourceTarget`, `FetchReason`, `EnrichedTask`, `FetchOutcome`; plus `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` re-exported from `crate::integrations::composio::contract` (`pub use crate::integrations::composio::contract::{NormalizedTask, TaskContainer, TaskFetchFilter, TaskKind};` in `mod.rs`).
+- Types: `TaskSource`, `TaskSourcePatch`, `EnrichedTask`, `FetchOutcome`; `FilterSpec`, `ProviderSlug`, `SourceTarget` and `FetchReason` are re-exported from `tinyconnectors_bus::vocabulary` through `types.rs`; plus `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` re-exported from `crate::integrations::composio::contract` (`pub use crate::integrations::composio::contract::{NormalizedTask, TaskContainer, TaskFetchFilter, TaskKind};` in `mod.rs`).
 - Functions: `start_periodic_poll`, `run_source_once`.
 - Constant: `TASK_SOURCES_THREAD_ID` (`"task-sources"`).
 - RPC registry: `all_task_sources_controller_schemas`, `all_task_sources_registered_controllers`, `task_sources_schemas`.
@@ -144,7 +143,7 @@ SQL cascade). With no backend configured (the desktop default)
 - `crate::config` (+ `config::rpc`), `Config`, `load_config_with_timeout`; reads the `[task_sources]` block for defaults and the master switch.
 - `crate::integrations::composio::contract`: `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` (contract types re-exported from `tinymemory_api::composio::tasks`). The old `get_provider` / `ProviderContext` / `ComposioProvider::fetch_tasks` registry no longer exists; `mod.rs`'s intra-doc link to `fetch_tasks` is stale.
 - `crate::agent::triage`: `run_triage`, `apply_decision`, `TriageOutcome`, `TriggerEnvelope`; dispatches the proactive agent turn for `AgentTodoProactive` sources.
-- `crate::cron::scheduler_gate`: `wait_for_capacity` capacity semaphore; gates proactive triage turns behind background-AI throttling.
+- `crate::platform::llm_gate`: `wait_for_capacity` capacity semaphore; gates proactive triage turns behind background-AI throttling.
 
 ## Used by
 
@@ -170,5 +169,5 @@ SQL cascade). With no backend configured (the desktop default)
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Triggers](../../../../../gitbooks/features/integrations/triggers.md)
-- [Goals and todos](../../../../../gitbooks/features/goals-and-todos.md)
+- [Triggers](../../../../../docs/gitbooks/en/features/integrations/triggers.md)
+- [Goals and todos](../../../../../docs/gitbooks/en/features/goals-and-todos.md)

@@ -1,4 +1,10 @@
 use super::*;
+
+/// The context these tests dispatch under: the calling task's own.
+fn cx() -> crate::core::runtime::DispatchCtx {
+    crate::core::runtime::DispatchCtx::ambient()
+}
+
 use crate::agent::orchestration::fleet_tools::FleetToolSet;
 use crate::agent::orchestration::running_subagents::resolve::resume_ref_for_task;
 use crate::agent::orchestration::running_subagents::resolve::task_id_for_session;
@@ -20,11 +26,17 @@ use tinyagents_tasks::OrchestrationTaskStatus;
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
+#[path = "running_subagents_cancel_tests.rs"]
+mod cancel_tests;
+
 #[path = "running_subagents_steering_tests.rs"]
 mod steering_tests;
 
 #[path = "running_subagents_wire_tests.rs"]
 mod wire_tests;
+
+#[path = "running_subagents_tenant_tests.rs"]
+mod tenant_tests;
 
 /// Serializes every test that touches the global [`REGISTRY`]. We reuse the
 /// crate-wide `TEST_ENV_LOCK` (rather than a module-local mutex) because the
@@ -86,6 +98,7 @@ fn register_test_with_thread(
 ) -> watch::Sender<DetachedSubagentStatus> {
     let (tx, rx) = status_channel();
     register(
+        &cx(),
         task_id.into(),
         "researcher".into(),
         parent_session.into(),
@@ -96,7 +109,8 @@ fn register_test_with_thread(
         rq,
         dummy_abort(),
         rx,
-    );
+    )
+    .expect("fixture registration admitted");
     tx
 }
 
@@ -142,7 +156,7 @@ async fn task_store_records_spawn_complete_and_cancel() {
 
     // A second sub-agent that gets cancelled is recorded Cancelled.
     let _tx2 = register_test("task-ledger-2", "ledger-parent", run_queue());
-    assert!(cancel_by_task("task-ledger-2").is_some());
+    assert!(cancel_by_task(&cx(), "task-ledger-2").is_some());
     let cancelled = task_records(None)
         .into_iter()
         .find(|r| r.spec.task_id.as_str() == "task-ledger-2")
@@ -158,6 +172,7 @@ async fn task_id_for_session_enforces_parent_ownership() {
     let rq = run_queue();
     let (tx, rx) = status_channel();
     register(
+        &cx(),
         "task-session".into(),
         "researcher".into(),
         "session-owner".into(),
@@ -168,14 +183,15 @@ async fn task_id_for_session_enforces_parent_ownership() {
         rq,
         dummy_abort(),
         rx,
-    );
+    )
+    .expect("fixture registration admitted");
 
     assert_eq!(
-        task_id_for_session("subsess-1", "session-owner").unwrap(),
+        task_id_for_session(&cx(), "subsess-1", "session-owner").unwrap(),
         "task-session"
     );
     assert!(matches!(
-        task_id_for_session("subsess-1", "session-other"),
+        task_id_for_session(&cx(), "subsess-1", "session-other"),
         Err(WaitError::NotOwned)
     ));
     let _ = tx.send(DetachedSubagentStatus::Completed {
@@ -190,6 +206,7 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
     let _guard = test_guard_async().await;
     let (tx_a, rx_a) = status_channel();
     register(
+        &cx(),
         "task-fleet-a".into(),
         "researcher".into(),
         "fleet-parent".into(),
@@ -200,9 +217,11 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
         run_queue(),
         dummy_abort(),
         rx_a,
-    );
+    )
+    .expect("fixture registration admitted");
     let (tx_b, rx_b) = status_channel();
     register(
+        &cx(),
         "task-fleet-b".into(),
         "code_executor".into(),
         "fleet-parent".into(),
@@ -213,10 +232,12 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
         run_queue(),
         dummy_abort(),
         rx_b,
-    );
+    )
+    .expect("fixture registration admitted");
     // A worker owned by a different parent must not leak into the snapshot.
     let (tx_other, rx_other) = status_channel();
     register(
+        &cx(),
         "task-fleet-other".into(),
         "researcher".into(),
         "other-parent".into(),
@@ -227,7 +248,8 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
         run_queue(),
         dummy_abort(),
         rx_other,
-    );
+    )
+    .expect("fixture registration admitted");
 
     // `b` pauses awaiting the user; `a` stays running.
     tx_b.send(DetachedSubagentStatus::AwaitingUser {
@@ -235,7 +257,7 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
     })
     .unwrap();
 
-    let snap = snapshot_for_parent("fleet-parent");
+    let snap = snapshot_for_parent(&cx(), "fleet-parent");
     assert_eq!(snap.len(), 2, "only this parent's workers: {snap:?}");
     // Ordered by agent_id then task_id → code_executor before researcher.
     assert_eq!(snap[0].agent_id, "code_executor");
@@ -243,9 +265,13 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
     assert_eq!(snap[1].agent_id, "researcher");
     assert_eq!(snap[1].status, "running");
 
-    let block =
-        active_subagents_context_block("fleet-parent", &test_workspace(), &FleetToolSet::all())
-            .expect("block present");
+    let block = active_subagents_context_block(
+        &cx(),
+        "fleet-parent",
+        &test_workspace(),
+        &FleetToolSet::all(),
+    )
+    .expect("block present");
     assert!(block.contains("[active_subagents]"));
     assert!(block.contains("use wait_subagent to collect"));
     assert!(block.contains("You have 2 sub-agent worker(s)"));
@@ -254,20 +280,24 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
     assert!(block.ends_with("[/active_subagents]\n\n"));
 
     // A parent with no registered workers gets no block (no perturbation).
-    assert!(
-        active_subagents_context_block("nobody-here", &test_workspace(), &FleetToolSet::all())
-            .is_none()
-    );
+    assert!(active_subagents_context_block(
+        &cx(),
+        "nobody-here",
+        &test_workspace(),
+        &FleetToolSet::all()
+    )
+    .is_none());
 
     // The shipped orchestrator has no wait/steer/close tools (#5701): the
     // guidance must not name them and must say results arrive on their own.
     {
-        use crate::agent::harness::definition::AgentDefinitionRegistry;
+        use crate::agent::harness::host_definition::AgentDefinitionRegistry;
         let registry = AgentDefinitionRegistry::builtins_only();
         let def = registry.get("orchestrator").expect("built-in orchestrator");
         let fleet = FleetToolSet::from_scope(&def.tools, &def.disallowed_tools);
-        let block = active_subagents_context_block("fleet-parent", &test_workspace(), &fleet)
-            .expect("block present");
+        let block =
+            active_subagents_context_block(&cx(), "fleet-parent", &test_workspace(), &fleet)
+                .expect("block present");
         for name in [
             "wait_subagent",
             "steer_subagent",
@@ -326,14 +356,19 @@ async fn snapshot_and_block_scope_to_parent_and_reflect_live_status() {
         )
         .expect("mark idle");
 
-        let block =
-            active_subagents_context_block("cold-parent", durable_ws.path(), &FleetToolSet::all())
-                .expect("durable-only roster present");
+        let block = active_subagents_context_block(
+            &cx(),
+            "cold-parent",
+            durable_ws.path(),
+            &FleetToolSet::all(),
+        )
+        .expect("durable-only roster present");
         assert!(block.contains(&format!("session={}", session.subagent_session_id)));
         assert!(block.contains("status=idle"));
         assert!(block.contains("about: Daily X trending email workflow"));
         // Other parents' durable sessions must not leak in.
         assert!(active_subagents_context_block(
+            &cx(),
             "unrelated-parent",
             durable_ws.path(),
             &FleetToolSet::all()
@@ -359,6 +394,7 @@ async fn resume_ref_for_task_includes_resume_fields_and_enforces_ownership() {
     let _guard = test_guard_async().await;
     let (tx, rx) = status_channel();
     register(
+        &cx(),
         "task-resume".into(),
         "researcher".into(),
         "session-owner".into(),
@@ -369,9 +405,11 @@ async fn resume_ref_for_task_includes_resume_fields_and_enforces_ownership() {
         run_queue(),
         dummy_abort(),
         rx,
-    );
+    )
+    .expect("fixture registration admitted");
 
-    let reference = resume_ref_for_task("task-resume", "session-owner").expect("resume reference");
+    let reference =
+        resume_ref_for_task(&cx(), "task-resume", "session-owner").expect("resume reference");
     assert_eq!(reference.task_id, "task-resume");
     assert_eq!(reference.agent_id, "researcher");
     assert_eq!(
@@ -379,7 +417,7 @@ async fn resume_ref_for_task_includes_resume_fields_and_enforces_ownership() {
         Some("subsess-resume")
     );
     assert!(matches!(
-        resume_ref_for_task("task-resume", "session-other"),
+        resume_ref_for_task(&cx(), "task-resume", "session-other"),
         Err(WaitError::NotOwned)
     ));
 
@@ -395,6 +433,7 @@ async fn task_id_for_session_prefers_live_task_over_terminal_task() {
     let _guard = test_guard_async().await;
     let (old_tx, old_rx) = status_channel();
     register(
+        &cx(),
         "task-old".into(),
         "researcher".into(),
         "session-owner".into(),
@@ -405,13 +444,15 @@ async fn task_id_for_session_prefers_live_task_over_terminal_task() {
         run_queue(),
         dummy_abort(),
         old_rx,
-    );
+    )
+    .expect("fixture registration admitted");
     let _ = old_tx.send(DetachedSubagentStatus::Completed {
         output: "old".into(),
         iterations: 1,
     });
     let (_new_tx, new_rx) = status_channel();
     register(
+        &cx(),
         "task-new".into(),
         "researcher".into(),
         "session-owner".into(),
@@ -422,10 +463,11 @@ async fn task_id_for_session_prefers_live_task_over_terminal_task() {
         run_queue(),
         dummy_abort(),
         new_rx,
-    );
+    )
+    .expect("fixture registration admitted");
 
     assert_eq!(
-        task_id_for_session("subsess-live", "session-owner").unwrap(),
+        task_id_for_session(&cx(), "subsess-live", "session-owner").unwrap(),
         "task-new"
     );
     prune("task-old");
@@ -447,7 +489,7 @@ async fn wait_returns_completion_once_published() {
         drop(tx);
     });
 
-    let outcome = wait("task-wait", "session-A", Duration::from_secs(5))
+    let outcome = wait(&cx(), "task-wait", "session-A", Duration::from_secs(5))
         .await
         .expect("wait should resolve");
     match outcome {
@@ -460,7 +502,7 @@ async fn wait_returns_completion_once_published() {
 
     // pruned after a terminal wait
     assert!(matches!(
-        wait("task-wait", "session-A", Duration::from_millis(10)).await,
+        wait(&cx(), "task-wait", "session-A", Duration::from_millis(10)).await,
         Err(WaitError::Unknown)
     ));
 }
@@ -471,7 +513,7 @@ async fn wait_times_out_and_leaves_entry_intact() {
     let rq = run_queue();
     let _tx = register_test("task-slow", "session-A", rq);
 
-    let outcome = wait("task-slow", "session-A", Duration::from_millis(20))
+    let outcome = wait(&cx(), "task-slow", "session-A", Duration::from_millis(20))
         .await
         .expect("wait should resolve");
     assert!(matches!(
@@ -481,6 +523,7 @@ async fn wait_times_out_and_leaves_entry_intact() {
 
     // still steerable after a timed-out wait
     assert!(steer(
+        &cx(),
         "task-slow",
         "session-A",
         "still here".into(),
@@ -502,31 +545,51 @@ async fn cancel_for_thread_aborts_only_matching_entries() {
     // Headless (no parent thread) — must survive.
     let _d = register_test_with_thread("task-headless", "session-A", None, rq);
 
-    let cancelled = cancel_for_thread("thread-X");
+    let cancelled = cancel_for_thread(&cx(), "thread-X");
     assert_eq!(cancelled, 2, "both thread-X entries should be cancelled");
 
     // The two cancelled entries are gone (steer can't find them).
     assert_eq!(
-        steer("task-tA-1", "session-A", "x".into(), QueueLane::Steer).await,
+        steer(
+            &cx(),
+            "task-tA-1",
+            "session-A",
+            "x".into(),
+            QueueLane::Steer
+        )
+        .await,
         Err(SteerError::Unknown)
     );
     assert_eq!(
-        steer("task-tA-2", "session-A", "x".into(), QueueLane::Steer).await,
+        steer(
+            &cx(),
+            "task-tA-2",
+            "session-A",
+            "x".into(),
+            QueueLane::Steer
+        )
+        .await,
         Err(SteerError::Unknown)
     );
 
     // Non-matching entries stay live and steerable.
-    assert!(steer("task-tB", "session-A", "x".into(), QueueLane::Steer)
-        .await
-        .is_ok());
     assert!(
-        steer("task-headless", "session-A", "x".into(), QueueLane::Steer)
+        steer(&cx(), "task-tB", "session-A", "x".into(), QueueLane::Steer)
             .await
             .is_ok()
     );
+    assert!(steer(
+        &cx(),
+        "task-headless",
+        "session-A",
+        "x".into(),
+        QueueLane::Steer
+    )
+    .await
+    .is_ok());
 
     // Idempotent: a second pass cancels nothing.
-    assert_eq!(cancel_for_thread("thread-X"), 0);
+    assert_eq!(cancel_for_thread(&cx(), "thread-X"), 0);
 
     prune("task-tB");
     prune("task-headless");
@@ -540,7 +603,7 @@ async fn cancel_by_task_returns_metadata_and_removes_entry() {
     let task_id = TaskId::new("task-cbt");
     shared_steering_registry().register(task_id.clone(), SteeringHandle::allow_all());
 
-    let meta = cancel_by_task("task-cbt").expect("known task should cancel");
+    let meta = cancel_by_task(&cx(), "task-cbt").expect("known task should cancel");
     assert_eq!(
         meta.already_finished, None,
         "a running task is a real cancel"
@@ -555,133 +618,10 @@ async fn cancel_by_task_returns_metadata_and_removes_entry() {
 
     // Entry is gone — steer can no longer find it, and a second cancel is a no-op.
     assert_eq!(
-        steer("task-cbt", "session-Z", "x".into(), QueueLane::Steer).await,
+        steer(&cx(), "task-cbt", "session-Z", "x".into(), QueueLane::Steer).await,
         Err(SteerError::Unknown)
     );
-    assert!(cancel_by_task("task-cbt").is_none());
+    assert!(cancel_by_task(&cx(), "task-cbt").is_none());
     // Unknown ids are simply None.
-    assert!(cancel_by_task("never-existed").is_none());
-}
-
-/// A finished run stays registered until the terminal sweep, so a late
-/// "Cancel" still finds it. It must come back flagged, so the RPC does not
-/// rewrite a completed session as "cancelled by user" — while a run paused on
-/// the user is still a real cancel.
-#[tokio::test]
-async fn cancel_by_task_flags_a_run_that_already_finished() {
-    let _guard = test_guard_async().await;
-    let cases = [
-        (
-            "task-cbt-done",
-            DetachedSubagentStatus::Completed {
-                output: "ok".into(),
-                iterations: 6,
-            },
-            Some(FinishedOutcome::Completed),
-        ),
-        (
-            "task-cbt-failed",
-            DetachedSubagentStatus::Failed {
-                error: "boom".into(),
-            },
-            Some(FinishedOutcome::Failed),
-        ),
-        (
-            "task-cbt-paused",
-            DetachedSubagentStatus::AwaitingUser {
-                question: "which?".into(),
-            },
-            None,
-        ),
-    ];
-    for (task_id, status, finished) in cases {
-        let tx = register_test(task_id, "session-F", run_queue());
-        tx.send(status).expect("status channel open");
-        let meta = cancel_by_task(task_id).expect("registered task is found");
-        assert_eq!(meta.already_finished, finished, "{task_id}");
-    }
-}
-
-#[tokio::test]
-async fn cancel_all_clears_everything() {
-    let _guard = test_guard_async().await;
-    let rq = run_queue();
-    let _a = register_test_with_thread("task-all-1", "session-A", Some("thread-1"), rq.clone());
-    // Headless (no parent thread) — aborted, but contributes no thread id.
-    let _b = register_test_with_thread("task-all-2", "session-B", None, rq);
-
-    let cancelled_threads = cancel_all();
-    assert!(
-        cancelled_threads.contains(&"thread-1".to_string()),
-        "cancel_all should report the parent thread of the cancelled sub-agent"
-    );
-    assert!(
-        !cancelled_threads.iter().any(|t| t.is_empty()),
-        "headless sub-agents must not contribute an id"
-    );
-
-    assert_eq!(
-        steer("task-all-1", "session-A", "x".into(), QueueLane::Steer).await,
-        Err(SteerError::Unknown)
-    );
-    assert_eq!(
-        steer("task-all-2", "session-B", "x".into(), QueueLane::Steer).await,
-        Err(SteerError::Unknown)
-    );
-    // Registry is empty now.
-    assert!(cancel_all().is_empty());
-}
-
-#[tokio::test]
-async fn stop_for_thread_aborts_the_threads_running_children() {
-    let _guard = test_guard_async().await;
-    let rq = run_queue();
-    // A real detached child that would otherwise run forever — the shape the
-    // Stop button used to leave behind.
-    let child = tokio::spawn(std::future::pending::<()>());
-    let (_tx, rx) = status_channel();
-    register(
-        "task-stop-1".into(),
-        "researcher".into(),
-        "session-stop".into(),
-        None,
-        None,
-        test_workspace(),
-        Some("thread-stop".into()),
-        rq.clone(),
-        child.abort_handle(),
-        rx,
-    );
-    // Another thread's child must survive the stop.
-    let _other =
-        register_test_with_thread("task-stop-other", "session-stop", Some("thread-keep"), rq);
-
-    let stopped = stop_for_thread("thread-stop");
-    assert_eq!(stopped, vec!["task-stop-1".to_string()]);
-
-    let joined = tokio::time::timeout(Duration::from_secs(2), child)
-        .await
-        .expect("aborted child finishes promptly");
-    assert!(
-        joined.expect_err("child was aborted").is_cancelled(),
-        "stop must abort the detached child task"
-    );
-    assert_eq!(
-        steer("task-stop-1", "session-stop", "x".into(), QueueLane::Steer).await,
-        Err(SteerError::Unknown)
-    );
-    assert!(
-        steer(
-            "task-stop-other",
-            "session-stop",
-            "x".into(),
-            QueueLane::Steer
-        )
-        .await
-        .is_ok(),
-        "a different thread's sub-agent is untouched"
-    );
-    assert!(stop_for_thread("thread-stop").is_empty(), "idempotent");
-
-    prune("task-stop-other");
+    assert!(cancel_by_task(&cx(), "never-existed").is_none());
 }

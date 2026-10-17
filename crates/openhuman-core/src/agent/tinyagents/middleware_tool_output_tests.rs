@@ -1,8 +1,9 @@
 use crate::agent::tinyagents::middleware::tool_output::ToolOutputMiddleware;
 // Imported here rather than in the middleware module since #6014: the
-// production install site moved to `assemble_turn_harness` (which names it
+// production install site moved to `install_turn_middleware` (which names it
 // fully-qualified), so the module itself no longer references the type.
 use super::*;
+use crate::agent::tinyagents::middleware::turn_context::TurnContextMiddleware;
 use tinyagents_harness::middleware::MicrocompactMiddleware;
 use tinytools::{ToolRuntime, ToolTimeout};
 
@@ -77,7 +78,14 @@ async fn a_summary_model_that_cannot_prepare_leaves_the_payload_intact() {
     // payload is untouched, and disclosed as unsummarized like any other
     // failed summary, so the model does not re-run the tool for one.
     struct Unpreparable;
-    impl PayloadSummarizer for Unpreparable {
+    impl
+        tinyagents_harness::summarization::payload_summarizer::PayloadSummarizer<
+            crate::agent::tinyagents::host::OpenHumanRunContext,
+        > for Unpreparable
+    {
+        type Prepared = crate::inference::tokenjuice::generate::PreparedGenerate;
+        type Error = anyhow::Error;
+
         fn prepare(
             &self,
             _parent_ctx: &RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
@@ -129,7 +137,7 @@ async fn raw_security_policy_block_is_enriched_with_workaround_and_relay() {
         result_text(&result)
     );
     assert!(result_text(&result).contains("Relay this to the user"));
-    assert!(result_text(&result).contains(crate::security::POLICY_BLOCKED_MARKER));
+    assert!(result_text(&result).contains(tinytools::status::POLICY_BLOCKED_MARKER));
     assert!(result_text(&result).contains("read-only mode"));
 }
 
@@ -497,6 +505,13 @@ async fn tool_output_honors_a_tools_own_cap() {
         "a capped tool now takes the shared spill path, which says how much \
          is missing and how to get it: {text}"
     );
+}
+
+/// The shared tool-result byte backstop is a user-visible truncation limit;
+/// moving the ladder into the harness must not change it.
+#[test]
+fn shared_tool_result_byte_budget_stays_16_kib() {
+    assert_eq!(DEFAULT_TOOL_RESULT_BUDGET_BYTES, 16 * 1024);
 }
 
 #[path = "middleware_tool_output_compaction_tests.rs"]

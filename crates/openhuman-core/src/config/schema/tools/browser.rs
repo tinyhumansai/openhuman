@@ -96,7 +96,7 @@ pub struct BrowserConfig {
     pub unattended_actions: Vec<String>,
     /// Keep, per site, the plan a finished browser task ran and the elements
     /// it found, and hand them to the next task there
-    /// (`modules::browser_sites`). Kept in the workspace only, never in the
+    /// (`modules::site_memory_host`). Kept in the workspace only, never in the
     /// agent's memory.
     #[serde(default = "default_true")]
     pub learn_from_tasks: bool,

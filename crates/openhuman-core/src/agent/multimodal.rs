@@ -4,6 +4,7 @@
 //! the acting workspace and provider bytes are prepared only on request copies.
 //! The older stash remains readable so existing conversations can resume.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -23,7 +24,7 @@ use tinyagents_harness::multimodal::{
     markers,
     payload::sha256_prefix,
     resolve::{resolve_file, resolve_image, TextExtractor},
-    AttachmentStash,
+    BlobAttachmentStash,
 };
 
 use tinyagents_harness::multimodal::{FilePayload, MultimodalError};
@@ -99,10 +100,14 @@ fn remote_client() -> Client {
 ///
 /// Claims `application/pdf` and nothing else. The native module runs in the
 /// core process; a wait deadline does not cancel its blocking parser work.
-pub struct DocumentsTextExtractor;
+pub struct DocumentsTextExtractor<'a> {
+    /// The context the extraction reads its config under.
+    #[cfg_attr(not(feature = "documents"), allow(dead_code))]
+    pub ctx: &'a DispatchCtx,
+}
 
 #[async_trait]
-impl TextExtractor for DocumentsTextExtractor {
+impl TextExtractor for DocumentsTextExtractor<'_> {
     fn handles(&self, mime: &str) -> bool {
         mime == "application/pdf"
     }
@@ -125,7 +130,7 @@ impl TextExtractor for DocumentsTextExtractor {
         use crate::modules::documents;
 
         match tokio::time::timeout(PDF_EXTRACTION_TIMEOUT, async {
-            let config = crate::config::ops::load_current_or_init()
+            let config = crate::config::ops::load_current_or_init(self.ctx)
                 .await
                 .map_err(|error| format!("config unavailable for pdf extraction: {error}"))?;
             documents::extract_text(&config, bytes)
@@ -196,6 +201,7 @@ fn latest_user_message(messages: &[TranscriptMessage]) -> Option<&TranscriptMess
 /// Counts are checked against the raw markers before any read happens: a cap
 /// enforced after the fetch is not a cap.
 pub async fn prepare_messages_for_provider(
+    ctx: &DispatchCtx,
     messages: &[TranscriptMessage],
     image_config: &MultimodalConfig,
     file_config: &MultimodalFileConfig,
@@ -294,7 +300,7 @@ pub async fn prepare_messages_for_provider(
                     max_file_bytes,
                     max_extracted_text_chars,
                     &client,
-                    &DocumentsTextExtractor,
+                    &DocumentsTextExtractor { ctx },
                 )
                 .await?,
             );
@@ -346,7 +352,11 @@ fn data_uri_uses_base64(reference: &str) -> bool {
 /// scanned for prompt injection — so the multi-MB base64 data URI never
 /// survives past the front door. Idempotent: a message with no `[FILE:` marker
 /// (already-rewritten `[FILE-EXTRACTED]` text included) is returned unchanged.
-pub async fn inline_file_attachments(message: &str, file_config: &MultimodalFileConfig) -> String {
+pub async fn inline_file_attachments(
+    ctx: &DispatchCtx,
+    message: &str,
+    file_config: &MultimodalFileConfig,
+) -> String {
     if !message.contains(markers::FILE_MARKER_PREFIX) {
         return message.to_string();
     }
@@ -380,7 +390,7 @@ pub async fn inline_file_attachments(message: &str, file_config: &MultimodalFile
             max_file_bytes,
             max_extracted_text_chars,
             &client,
-            &DocumentsTextExtractor,
+            &DocumentsTextExtractor { ctx },
         )
         .await
         {
@@ -438,12 +448,16 @@ pub async fn stash_image_attachments(message: &str, image_config: &MultimodalCon
         match resolve_image(reference, &images, max_image_bytes, &client).await {
             Ok(data_uri) => {
                 let id = sha256_prefix(data_uri.as_bytes());
-                match stash().write(&id, &data_uri).await {
-                    Ok(path) => tracing::debug!(
+                let written = match stash() {
+                    Some(stash) => stash.write(&id, &data_uri).await,
+                    None => Err(anyhow::anyhow!("no attachment stash for this tenant")),
+                };
+                match written {
+                    Ok(stashed) => tracing::debug!(
                         target: "multimodal",
                         id = %id,
-                        path = %path.display(),
-                        "[multimodal::images][stash] persisted attachment to disk"
+                        len = stashed.len,
+                        "[multimodal::images][stash] persisted attachment to the blob store"
                     ),
                     Err(err) => tracing::warn!(
                         target: "multimodal",
@@ -508,14 +522,17 @@ fn row_has_image_placeholders(row: &TranscriptMessage) -> bool {
         })
 }
 
-/// Rehydrate `[Image: … #att:<id>]` placeholders back into local
-/// `[IMAGE:<path>]` markers pointing at the on-disk attachment, returning a
-/// provider-only copy. Resolution re-reads the file at dispatch. Placeholders
-/// whose id is absent (file evicted/swept, or written by a different workspace)
-/// keep their text. The attachment host migrates managed sidecars into acting
+/// Rehydrate `[Image: … #att:<id>]` placeholders back into `[IMAGE:…]` markers,
+/// returning a provider-only copy. An attachment stashed in the blob store
+/// comes back as an inline `data:` URI; a legacy sidecar file in the
+/// attachments directory as its path (re-read at dispatch). Placeholders whose
+/// id is in neither (evicted, or written by a different workspace) keep their
+/// text. The attachment host migrates managed sidecars into acting
 /// workspace originals before provider resolution, including text fallbacks.
-pub fn rehydrate_image_placeholders(messages: &[TranscriptMessage]) -> Vec<TranscriptMessage> {
-    let index = build_attachment_index();
+pub async fn rehydrate_image_placeholders(
+    messages: &[TranscriptMessage],
+) -> Vec<TranscriptMessage> {
+    let index = build_attachment_index(messages).await;
     messages
         .iter()
         .map(|m| {
@@ -542,27 +559,30 @@ pub fn rehydrate_image_placeholders(messages: &[TranscriptMessage]) -> Vec<Trans
         .collect()
 }
 
-// ── The on-disk attachment stash ─────────────────────────────────────────
+// ── The attachment stash ─────────────────────────────────────────────────
 
-/// Preserve legacy conversation attachments without size-based eviction.
-const ATTACHMENTS_MAX_BYTES: u64 = u64::MAX;
-/// Legacy stash references remain durable alongside new workspace uploads.
-const ATTACHMENTS_TTL: Duration = Duration::MAX;
-
-/// Process-global on-disk attachments directory. Installed once at core startup
-/// via [`init_attachments_dir`].
+/// Process-global legacy attachments directory (`<workspace>/attachments`),
+/// installed once at core startup via [`init_attachments_dir`]. Sidecar files
+/// written before the blob stash stay readable from here.
 static ATTACHMENTS_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Install the on-disk attachments directory (`<workspace>/attachments`). Call
-/// once at core startup. Idempotent — first writer wins.
+/// The workspace whose storage backend holds the blob stash; the parent of the
+/// directory given to [`init_attachments_dir`].
+static ATTACHMENTS_WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Install the legacy attachments directory (`<workspace>/attachments`) and,
+/// from its parent, the workspace the blob stash lives in. Call once at core
+/// startup. Idempotent — first writer wins.
 pub fn init_attachments_dir(dir: PathBuf) {
+    if let Some(workspace) = dir.parent() {
+        let _ = ATTACHMENTS_WORKSPACE.set(workspace.to_path_buf());
+    }
     let _ = ATTACHMENTS_DIR.set(dir);
 }
 
-/// Resolve the attachments dir, falling back to a **per-user private** dir when
-/// unset (CLI / direct invocation / tests that never called
-/// [`init_attachments_dir`]). The persistence-pollution fix and rehydration
-/// both hold either way.
+/// Resolve the legacy attachments dir, falling back to a **per-user private**
+/// dir when unset (CLI / direct invocation / tests that never called
+/// [`init_attachments_dir`]).
 pub(crate) fn attachments_dir() -> PathBuf {
     ATTACHMENTS_DIR
         .get()
@@ -570,17 +590,38 @@ pub(crate) fn attachments_dir() -> PathBuf {
         .unwrap_or_else(fallback_attachments_dir)
 }
 
-/// The stash over the resolved attachments directory. The mechanism (atomic
-/// dedup'd writes, cap eviction, TTL sweep, index, managed-path check) is
-/// `tinyagents_harness::multimodal::AttachmentStash`; the directory, cap and TTL
-/// are this host's policy.
-fn stash() -> AttachmentStash {
-    AttachmentStash::new(attachments_dir(), ATTACHMENTS_MAX_BYTES, ATTACHMENTS_TTL)
+/// The calling tenant's blob-backed stash: the workspace's storage backend once
+/// [`init_attachments_dir`] ran, else a process-local in-memory one (a CLI or
+/// test with no workspace: placeholders resolve for the life of the process).
+/// The mechanism (dedup'd writes, cap eviction, TTL sweep, id index) is
+/// `tinyagents_harness::multimodal::BlobAttachmentStash`; the cap and TTL are
+/// this host's policy (none: references stay resolvable).
+fn stash() -> Option<BlobAttachmentStash> {
+    match ATTACHMENTS_WORKSPACE.get() {
+        Some(workspace) => crate::agent::session_store::attachment_stash_for(workspace),
+        None => Some(memory_stash().clone()),
+    }
+}
+
+fn memory_stash() -> &'static BlobAttachmentStash {
+    static MEMORY: OnceLock<BlobAttachmentStash> = OnceLock::new();
+    MEMORY.get_or_init(|| {
+        use tinystoragedrivers::StorageBackend as _;
+        let scoped = tinystoragedrivers::MemoryStorage::new()
+            .for_scope(&tinystoragedrivers::Scope::local())
+            .expect("the memory backend binds the local scope");
+        BlobAttachmentStash::new(
+            std::sync::Arc::clone(scoped.blobs()),
+            std::sync::Arc::clone(scoped.documents()),
+            u64::MAX,
+            Duration::MAX,
+        )
+    })
 }
 
 /// Per-user fallback attachments dir used only when [`init_attachments_dir`]
 /// was never called. Uses the OS user cache dir (e.g. `~/Library/Caches/…`,
-/// `~/.cache/…`) so persisted image bytes aren't dropped into a world-readable
+/// `~/.cache/…`) so legacy sidecars aren't looked for in a world-readable
 /// shared `temp_dir()` on multi-user hosts. Only falls back to `temp_dir()`
 /// when no user cache dir can be resolved at all.
 fn fallback_attachments_dir() -> PathBuf {
@@ -589,9 +630,89 @@ fn fallback_attachments_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("openhuman-attachments"))
 }
 
-/// Build an `id -> path` index from a single read of the attachments dir.
-fn build_attachment_index() -> HashMap<String, PathBuf> {
-    stash().build_index()
+/// `id -> marker target` for the placeholders in `messages`: the blob stash's
+/// bytes as a `data:` URI, else (for an id the stash lacks) a legacy sidecar
+/// file in the attachments directory, as its path. The marker target is carried
+/// as a `PathBuf` only because that is the harness's index type; it is rendered
+/// verbatim inside `[IMAGE:…]`.
+async fn build_attachment_index(messages: &[TranscriptMessage]) -> HashMap<String, PathBuf> {
+    let mut wanted = Vec::new();
+    for row in messages {
+        wanted.extend(placeholder_ids(&row.content));
+        for part in row.parts.iter().flatten() {
+            if let TranscriptPart::Text { text } = part {
+                wanted.extend(placeholder_ids(text));
+            }
+        }
+    }
+    wanted.sort();
+    wanted.dedup();
+    let mut index = HashMap::new();
+    if wanted.is_empty() {
+        return index;
+    }
+    if let Some(stash) = stash() {
+        for id in &wanted {
+            match stash.read_data_uri(id).await {
+                Ok(Some(data_uri)) => {
+                    index.insert(id.clone(), PathBuf::from(data_uri));
+                }
+                Ok(None) => {}
+                Err(err) => tracing::warn!(
+                    target: "multimodal",
+                    id = %id,
+                    reason = %err,
+                    "[multimodal::images][stash] could not read attachment; trying legacy sidecars"
+                ),
+            }
+        }
+    }
+    if index.len() < wanted.len() {
+        for (id, path) in legacy_attachment_index() {
+            if wanted.contains(&id) {
+                index.entry(id).or_insert(path);
+            }
+        }
+    }
+    index
+}
+
+/// The `#att:<id>` ids of the sidecar placeholders in `text`.
+fn placeholder_ids(text: &str) -> Vec<String> {
+    markers::extract_image_placeholders_in_text(text)
+        .iter()
+        .filter_map(|placeholder| {
+            let after = placeholder.split(markers::IMAGE_STASH_REF).nth(1)?;
+            let id = after.trim_end_matches(']').trim();
+            (!id.is_empty()).then(|| id.to_string())
+        })
+        .collect()
+}
+
+/// `id -> path` of the legacy sidecar files directly under the attachments
+/// directory (written before the blob stash). Symlinks and nested entries are
+/// ignored.
+fn legacy_attachment_index() -> HashMap<String, PathBuf> {
+    legacy_attachment_index_in(&attachments_dir())
+}
+
+fn legacy_attachment_index_in(dir: &std::path::Path) -> HashMap<String, PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return HashMap::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| {
+            let path = entry.path();
+            let stem = path.file_stem()?.to_str()?.to_string();
+            let valid = !stem.is_empty()
+                && stem
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'));
+            valid.then_some((stem, path))
+        })
+        .collect()
 }
 
 /// Compatibility no-op: durable conversation attachments are not swept.

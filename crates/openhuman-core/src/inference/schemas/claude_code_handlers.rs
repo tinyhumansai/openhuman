@@ -1,11 +1,11 @@
 //! Handlers for the Claude Code provider: version and auth probes, and its
 //! full-access setting.
 
+use crate::core::runtime::DispatchCtx;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use super::{deserialize_params, to_json};
-use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
 use crate::core::Outcome;
 
@@ -16,7 +16,10 @@ pub(super) struct InferenceClaudeCodeSetFullAccessParams {
     enabled: bool,
 }
 
-pub(super) fn handle_inference_claude_code_status(_params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_inference_claude_code_status(
+    _ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let status = tokio::task::spawn_blocking(
             tinyagents_harness::providers::claude_code::version_check::probe,
@@ -28,6 +31,7 @@ pub(super) fn handle_inference_claude_code_status(_params: Map<String, Value>) -
 }
 
 pub(super) fn handle_inference_claude_code_auth_status(
+    _ctx: DispatchCtx,
     _params: Map<String, Value>,
 ) -> ControllerFuture {
     Box::pin(async move {
@@ -41,11 +45,12 @@ pub(super) fn handle_inference_claude_code_auth_status(
 }
 
 pub(super) fn handle_inference_claude_code_settings(
+    ctx: DispatchCtx,
     _params: Map<String, Value>,
 ) -> ControllerFuture {
     use tinyagents_harness::providers::claude_code::settings;
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let workspace = config.config_path.parent().unwrap_or(&config.workspace_dir);
         let settings = settings::load(workspace);
         log::debug!(
@@ -57,12 +62,13 @@ pub(super) fn handle_inference_claude_code_settings(
 }
 
 pub(super) fn handle_inference_claude_code_set_full_access(
+    ctx: DispatchCtx,
     params: Map<String, Value>,
 ) -> ControllerFuture {
     use tinyagents_harness::providers::claude_code::settings;
     Box::pin(async move {
         let p = deserialize_params::<InferenceClaudeCodeSetFullAccessParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let workspace = config.config_path.parent().unwrap_or(&config.workspace_dir);
         let settings = settings::ClaudeCodeSettings {
             full_access: p.enabled,

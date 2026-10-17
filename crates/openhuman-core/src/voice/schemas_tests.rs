@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
 #[test]
@@ -145,7 +146,7 @@ async fn overlay_notify_recording_started_publishes_pressed_event() {
     let mut rx = subscribe_dictation_events();
     let params = Map::from_iter([("state".to_string(), json!("recording_started"))]);
 
-    let result = handle_overlay_stt_notify(params)
+    let result = handle_overlay_stt_notify(DispatchCtx::process_default(), params)
         .await
         .expect("overlay notify should succeed");
     assert_eq!(result["ok"], true);
@@ -180,7 +181,7 @@ async fn overlay_notify_transcription_done_publishes_text_and_release() {
         ("text".to_string(), json!("hello from overlay")),
     ]);
 
-    let result = handle_overlay_stt_notify(params)
+    let result = handle_overlay_stt_notify(DispatchCtx::process_default(), params)
         .await
         .expect("overlay notify should succeed");
     assert_eq!(result["ok"], true);
@@ -204,7 +205,7 @@ async fn overlay_notify_transcription_done_publishes_text_and_release() {
 async fn overlay_notify_transcription_done_requires_text() {
     let params = Map::from_iter([("state".to_string(), json!("transcription_done"))]);
 
-    let err = handle_overlay_stt_notify(params)
+    let err = handle_overlay_stt_notify(DispatchCtx::process_default(), params)
         .await
         .expect_err("missing text should fail");
     assert!(err.contains("text` is required"));
@@ -216,10 +217,10 @@ async fn server_status_and_stop_return_stopped_when_uninitialized() {
     // the same binary may have already initialised it — in that case we
     // accept whatever its current state is and only verify the handlers
     // respond without error.
-    let status = handle_voice_server_status(Map::new())
+    let status = handle_voice_server_status(DispatchCtx::process_default(), Map::new())
         .await
         .expect("status handler");
-    let stopped = handle_voice_server_stop(Map::new())
+    let stopped = handle_voice_server_stop(DispatchCtx::process_default(), Map::new())
         .await
         .expect("stop handler");
 
@@ -239,7 +240,9 @@ async fn overlay_notify_cancelled_publishes_released() {
     use crate::voice::dictation_listener::subscribe_dictation_events;
     let mut rx = subscribe_dictation_events();
     let params = Map::from_iter([("state".to_string(), json!("cancelled"))]);
-    let result = handle_overlay_stt_notify(params).await.expect("ok");
+    let result = handle_overlay_stt_notify(DispatchCtx::process_default(), params)
+        .await
+        .expect("ok");
     assert_eq!(result["ok"], true);
     let mut saw_release = false;
     while let Ok(evt) = rx.try_recv() {
@@ -254,7 +257,9 @@ async fn overlay_notify_cancelled_publishes_released() {
 #[tokio::test]
 async fn overlay_notify_unknown_state_errors() {
     let params = Map::from_iter([("state".to_string(), json!("mystery"))]);
-    let err = handle_overlay_stt_notify(params).await.unwrap_err();
+    let err = handle_overlay_stt_notify(DispatchCtx::process_default(), params)
+        .await
+        .unwrap_err();
     // The deserialize layer rejects the unknown variant with a detailed
     // enum message — just assert an error surfaced.
     assert!(!err.is_empty());
@@ -262,7 +267,9 @@ async fn overlay_notify_unknown_state_errors() {
 
 #[tokio::test]
 async fn overlay_notify_missing_state_errors() {
-    let err = handle_overlay_stt_notify(Map::new()).await.unwrap_err();
+    let err = handle_overlay_stt_notify(DispatchCtx::process_default(), Map::new())
+        .await
+        .unwrap_err();
     assert!(!err.is_empty());
 }
 
@@ -270,7 +277,7 @@ async fn overlay_notify_missing_state_errors() {
 async fn server_start_handler_errors_when_local_ai_disabled() {
     // Without a valid config the start handler must surface an error
     // rather than silently succeed.
-    let _ = handle_voice_server_start(Map::new()).await;
+    let _ = handle_voice_server_start(DispatchCtx::process_default(), Map::new()).await;
 }
 
 #[test]

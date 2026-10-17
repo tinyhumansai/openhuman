@@ -54,6 +54,7 @@ fn registry() -> &'static HostedDirRegistry {
 }
 
 pub async fn start_hosted_dir_server(
+    ctx: &crate::core_host::core::runtime::DispatchCtx,
     params: StartHostedDirParams,
 ) -> Result<HostedDirServerInfo, String> {
     register_shutdown_hook_once();
@@ -68,7 +69,7 @@ pub async fn start_hosted_dir_server(
             password: None,
         }
     } else {
-        let default_username = resolve_default_auth_username().await;
+        let default_username = resolve_default_auth_username(ctx).await;
         let username = params
             .username
             .as_deref()

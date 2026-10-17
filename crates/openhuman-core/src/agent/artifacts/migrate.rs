@@ -3,7 +3,7 @@
 //! Artifacts created before the files folder existed keep their bytes under
 //! the hidden `<workspace>/artifacts/<id>/`. At boot each account's legacy
 //! `Ready` records are moved to the files folder so the user can find them.
-//! Metadata (`meta.json`, `args.json`) never moves.
+//! Records (and a legacy `meta.json` / `args.json`) never move.
 //!
 //! Each file goes through four steps, ordered so that at every point the
 //! record still resolves to a complete file and nothing is lost:
@@ -13,7 +13,7 @@
 //!    different volumes);
 //! 2. claim a human-readable name (`create_new`, suffixed on collision) and
 //!    rename the partial onto it;
-//! 3. rewrite `meta.json` atomically to point at the new file;
+//! 3. rewrite the record atomically to point at the new file;
 //! 4. only then delete the legacy bytes.
 //!
 //! A crash before step 3 leaves the record on its legacy path, and the next
@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 
 use super::files;
-use super::store::{artifacts_root, save_artifact_meta};
+use super::store::{artifacts_root, list_artifacts, save_artifact_meta};
 use super::types::{ArtifactMeta, ArtifactStatus};
 
 /// What one migration pass did, for the boot log and tests.
@@ -69,19 +69,22 @@ pub(crate) async fn migrate_with(
     let Ok(root) = artifacts_root(workspace_dir).await else {
         return report;
     };
-    let Ok(mut entries) = tokio::fs::read_dir(&root).await else {
-        return report;
+    // The records live in the storage backend (a legacy `meta.json` is
+    // imported on this first read); only the bytes are still files.
+    let all = match list_artifacts(workspace_dir, 0, usize::MAX, None).await {
+        Ok((all, _)) => all,
+        Err(e) => {
+            log::warn!("[artifacts][migrate] cannot list records: {e}");
+            return report;
+        }
     };
     let mut records = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let meta_path = entry.path().join("meta.json");
-        let Ok(raw) = tokio::fs::read_to_string(&meta_path).await else {
+    for meta in all {
+        if meta.id.is_empty() || meta.id == "." || meta.id == ".." || meta.id.contains(['/', '\\'])
+        {
             continue;
-        };
-        let Ok(meta) = serde_json::from_str::<ArtifactMeta>(&raw) else {
-            continue;
-        };
-        records.push((entry.path(), meta));
+        }
+        records.push((root.join(&meta.id), meta));
     }
     if records.is_empty() {
         return report;

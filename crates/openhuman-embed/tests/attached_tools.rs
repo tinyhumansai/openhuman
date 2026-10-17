@@ -1,8 +1,9 @@
 mod common;
 use common::{chat_completion, chat_requests, offline_config, runtime, stub_backend};
+use openhuman_embed::session_store::SessionRef;
 use openhuman_embed::{
-    AgentDefinitionSpec, AgentSpec, HostTools, HostTurnTools, Provider, Runtime, Tool,
-    ToolScopeSpec, Workspace,
+    AgentDefinitionSpec, AgentSpec, HostTools, HostTurnTools, InMemorySessionStores, Provider,
+    Runtime, SessionStoreProvider, Tool, ToolScopeSpec, Workspace,
 };
 use std::sync::Arc;
 use wiremock::matchers::{method, path};
@@ -54,9 +55,11 @@ fn attached_tools_survive_clones_and_session_resume() {
                 .respond_with(ResponseTemplate::new(200).set_body_json(chat_completion("reply")))
                 .mount(&provider)
                 .await;
+            let sessions = Arc::new(InMemorySessionStores::new());
             let runtime = Runtime::builder()
                 .config(offline_config())
                 .workspace(Workspace::Ephemeral)
+                .session_store(sessions.clone())
                 .backend_url(backend.uri())
                 .build()
                 .await
@@ -124,21 +127,15 @@ fn attached_tools_survive_clones_and_session_resume() {
                 .send()
                 .await
                 .unwrap();
-            let generation_zero = std::fs::read_dir(agent.transcripts_dir())
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .find(|path| {
-                    let has_generation_suffix = path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .and_then(|stem| stem.rsplit_once(".g"))
-                        .is_some_and(|(_, generation)| generation.parse::<u32>().is_ok());
-                    path.extension()
-                        .is_some_and(|extension| extension == "jsonl")
-                        && !has_generation_suffix
-                })
-                .expect("the first committed prefix has generation zero transcript");
-            let frozen_generation_zero = std::fs::read(&generation_zero).unwrap();
+            let transcripts = sessions.for_agent("attached").transcripts;
+            let continuing = SessionRef::scoped("continuing", "attached");
+            let generation_zero = continuing.first_generation();
+            let frozen_generation_zero = transcripts
+                .read_session_transcript(&generation_zero)
+                .expect("the first committed prefix has generation zero transcript")
+                .read_session()
+                .expect("generation zero transcript is readable")
+                .expect("generation zero transcript was committed");
             agent
                 .attach_tools(
                     "second",
@@ -163,35 +160,50 @@ fn attached_tools_survive_clones_and_session_resume() {
                 .await
                 .unwrap();
             assert_eq!(agent.config().action_dir, original_config.action_dir);
-            let paths = std::fs::read_dir(agent.transcripts_dir())
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .collect::<Vec<_>>();
-            assert!(
-                paths.contains(&generation_zero),
-                "the continuing session transcript must remain durable"
-            );
+            let sealed = transcripts
+                .read_session_transcript(&generation_zero)
+                .expect("generation zero remains available")
+                .read_session()
+                .expect("generation zero remains readable")
+                .expect("generation zero remains committed");
+            assert_eq!(sealed.messages, frozen_generation_zero.messages);
+            assert_eq!(sealed.tools, frozen_generation_zero.tools);
             assert_eq!(
-                std::fs::read(&generation_zero).unwrap(),
-                frozen_generation_zero,
-                "the continuing session must leave its transcript byte-for-byte intact"
+                serde_json::to_value(&sealed.meta).unwrap(),
+                serde_json::to_value(&frozen_generation_zero.meta).unwrap(),
+                "the continuing session must leave its sealed transcript unchanged"
             );
-            let successor = paths
+            let successor = SessionRef::scoped("after-attach", "attached").first_generation();
+            let durable = transcripts
+                .read_session_transcript(&successor)
+                .expect("a new session after tool attachment is committed")
+                .read_session()
+                .expect("new session transcript is readable")
+                .expect("new session transcript exists");
+            let durable_text = durable
+                .messages
                 .iter()
-                .find(|path| {
-                    std::fs::read_to_string(path).is_ok_and(|text| text.contains("hivemind_list"))
-                })
-                .unwrap();
-            let durable = std::fs::read_to_string(successor).unwrap();
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
             assert!(
-                durable
-                    .lines()
-                    .any(|line| line.contains("openhuman-permanent-tools")
-                        && line.contains("hivemind_message")
-                        && line.contains("hivemind_list")),
+                durable_text.contains("openhuman-permanent-tools")
+                    && durable
+                        .tools
+                        .as_ref()
+                        .is_some_and(|tools| tools.to_string().contains("hivemind_message")
+                            && tools.to_string().contains("hivemind_list")),
                 "successor generation must persist the updated permanent-tool catalogue"
             );
-            let sealed = String::from_utf8(frozen_generation_zero).unwrap();
+            let sealed = serde_json::to_value(&frozen_generation_zero.meta)
+                .unwrap()
+                .to_string()
+                + &frozen_generation_zero
+                    .messages
+                    .iter()
+                    .map(|message| message.content.as_str())
+                    .collect::<String>();
+            let sealed = sealed + &frozen_generation_zero.tools.unwrap_or_default().to_string();
             assert!(
                 sealed.contains("FROZEN_HOST_PROMPT"),
                 "sealed prefix: {sealed}"
@@ -205,8 +217,8 @@ fn attached_tools_survive_clones_and_session_resume() {
                 "the original generation cannot contain the later attachment: {sealed}"
             );
             assert!(
-                durable.contains("FROZEN_HOST_PROMPT"),
-                "successor prefix: {durable}"
+                durable_text.contains("FROZEN_HOST_PROMPT"),
+                "successor prefix: {durable_text}"
             );
             let requests = chat_requests(&provider).await;
             assert_eq!(requests.len(), 4);

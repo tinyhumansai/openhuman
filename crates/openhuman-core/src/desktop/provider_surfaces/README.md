@@ -75,5 +75,5 @@ In-memory only. State lives in a process-global `RESPOND_QUEUE` (`static OnceLoc
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Tauri shell](../../../../../gitbooks/developing/architecture/tauri-shell.md)
-- [Connections](../../../../../gitbooks/features/connections.md)
+- [Tauri shell](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
+- [Connections](../../../../../docs/gitbooks/en/features/connections.md)

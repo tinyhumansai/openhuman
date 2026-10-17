@@ -551,6 +551,7 @@ describe('classifyAuthStoreFailure', () => {
   // fail-closed error all collapsed into `other`.
   it.each([
     ['CORE: auth.set_credential failed: boom', 'core'],
+    ['CORE: error sending request: tcp connect error: Connection refused', 'network'],
     ['BACKEND: could not resolve the backend URL', 'backend'],
     ['INVALID: a local session needs a user payload', 'invalid'],
     [

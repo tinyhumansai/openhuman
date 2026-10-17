@@ -1,7 +1,6 @@
 use super::*;
-use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
-use crate::agent::prompts::ToolCallFormat;
+use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::config::AgentConfig;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -13,6 +12,7 @@ use std::sync::{
 use tinyagents_tasks::OrchestrationTaskStatus;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinytools::Tool;
+use tinytools_agent::dialect::ToolCallFormat;
 use tokio::time::Duration;
 
 fn parent_context(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
@@ -47,6 +47,7 @@ fn parent_context(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 
@@ -210,14 +211,17 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
     let parent = parent_context(Arc::new(provider.clone()));
     let session = AgentOrchestrationSession::new("orchestrator-session");
 
-    let first = with_parent_context(parent.clone(), async {
+    let first = (async {
         session
-            .spawn_agent(SpawnAgentRequest {
-                agent_id: "task_manager_agent".to_string(),
-                prompt: "Implement RPC wiring for AGENT_ORCH_E2E".to_string(),
-                model: Some("test-model".to_string()),
-                ..Default::default()
-            })
+            .spawn_agent(
+                parent.clone(),
+                SpawnAgentRequest {
+                    agent_id: "task_manager_agent".to_string(),
+                    prompt: "Implement RPC wiring for AGENT_ORCH_E2E".to_string(),
+                    model: Some("test-model".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
     })
     .await
@@ -247,16 +251,20 @@ async fn e2e_orchestrator_answers_coding_agent_question_and_resumes_child() {
     // `command_center::control`). The orchestrator now records its answer by
     // spawning the linked continuation child directly — the same thing
     // `follow_up` did internally.
-    let follow_up = with_parent_context(parent, async {
+    let follow_up = (async {
         session
-            .spawn_agent(SpawnAgentRequest {
-                agent_id: "task_manager_agent".to_string(),
-                prompt: "Continue after the orchestrator answered: ORCH_ANSWER_USE_RPC".to_string(),
-                context: Some("Parent answered: use controller registry".to_string()),
-                model: Some("test-model".to_string()),
-                parent_agent_id: Some(first.orchestration_id.clone()),
-                ..Default::default()
-            })
+            .spawn_agent(
+                parent.clone(),
+                SpawnAgentRequest {
+                    agent_id: "task_manager_agent".to_string(),
+                    prompt: "Continue after the orchestrator answered: ORCH_ANSWER_USE_RPC"
+                        .to_string(),
+                    context: Some("Parent answered: use controller registry".to_string()),
+                    model: Some("test-model".to_string()),
+                    parent_agent_id: Some(first.orchestration_id.clone()),
+                    ..Default::default()
+                },
+            )
             .await
     })
     .await
@@ -300,30 +308,39 @@ async fn e2e_orchestrator_waits_for_multiple_parallel_coding_subagents() {
     let parent = parent_context(Arc::new(provider.clone()));
     let session = AgentOrchestrationSession::new("parallel-orchestrator-session");
 
-    let spawned = with_parent_context(parent, async {
+    let spawned = (async {
         let alpha = session
-            .spawn_agent(SpawnAgentRequest {
-                agent_id: "task_manager_agent".to_string(),
-                prompt: "Work independently on PARALLEL_ALPHA".to_string(),
-                model: Some("test-model".to_string()),
-                ..Default::default()
-            })
+            .spawn_agent(
+                parent.clone(),
+                SpawnAgentRequest {
+                    agent_id: "task_manager_agent".to_string(),
+                    prompt: "Work independently on PARALLEL_ALPHA".to_string(),
+                    model: Some("test-model".to_string()),
+                    ..Default::default()
+                },
+            )
             .await?;
         let beta = session
-            .spawn_agent(SpawnAgentRequest {
-                agent_id: "task_manager_agent".to_string(),
-                prompt: "Work independently on PARALLEL_BETA".to_string(),
-                model: Some("test-model".to_string()),
-                ..Default::default()
-            })
+            .spawn_agent(
+                parent.clone(),
+                SpawnAgentRequest {
+                    agent_id: "task_manager_agent".to_string(),
+                    prompt: "Work independently on PARALLEL_BETA".to_string(),
+                    model: Some("test-model".to_string()),
+                    ..Default::default()
+                },
+            )
             .await?;
         let gamma = session
-            .spawn_agent(SpawnAgentRequest {
-                agent_id: "task_manager_agent".to_string(),
-                prompt: "Work independently on PARALLEL_GAMMA".to_string(),
-                model: Some("test-model".to_string()),
-                ..Default::default()
-            })
+            .spawn_agent(
+                parent.clone(),
+                SpawnAgentRequest {
+                    agent_id: "task_manager_agent".to_string(),
+                    prompt: "Work independently on PARALLEL_GAMMA".to_string(),
+                    model: Some("test-model".to_string()),
+                    ..Default::default()
+                },
+            )
             .await?;
         Ok::<_, OrchestrationError>(vec![
             alpha.orchestration_id,
@@ -424,14 +441,17 @@ async fn e2e_abort_all_cancels_an_in_flight_child_for_a_concurrent_waiter() {
     let parent = parent_context(Arc::new(BlockingModel));
     let session = AgentOrchestrationSession::new("abort-session");
 
-    let spawned = with_parent_context(parent, async {
+    let spawned = (async {
         session
-            .spawn_agent(SpawnAgentRequest {
-                agent_id: "task_manager_agent".to_string(),
-                prompt: "Park until the orchestrator interrupts".to_string(),
-                model: Some("test-model".to_string()),
-                ..Default::default()
-            })
+            .spawn_agent(
+                parent.clone(),
+                SpawnAgentRequest {
+                    agent_id: "task_manager_agent".to_string(),
+                    prompt: "Park until the orchestrator interrupts".to_string(),
+                    model: Some("test-model".to_string()),
+                    ..Default::default()
+                },
+            )
             .await
     })
     .await

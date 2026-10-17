@@ -106,7 +106,7 @@ across processes; the local file lock still serializes one host.
 
 - `crate::config`: `Config`, config load (`load_config_with_timeout`), user-dir activation (`default_root_openhuman_dir`, `user_openhuman_dir`, `read/write/clear_active_user`, `pre_login_user_dir`), onboarding state.
 - `crate::security::secret_storage`: `SecretStore` (encrypt/decrypt) and OS keychain `get`/`set`/`delete`/`is_available`.
-- `crate::cron::scheduler_gate`: signed-out override flipped on install/removal/expiry.
+- `crate::platform::llm_gate`: signed-out override flipped on install/removal/expiry.
 - `crate::memory::conversations`: purge pre-login threads, bind conversation persistence after activation.
 - `crate::memory`: bind memory client to the active workspace after activation.
 - `crate::inference::host_runtime`, `crate::voice::{server,dictation_listener,always_on}`: credential-gated services started/stopped.
@@ -128,8 +128,8 @@ Many domains consume `AuthService` / session helpers / Composio-direct key, incl
 ## Further reading
 
 - [Parent module (`security`)](../README.md)
-- [OS keyring and secret storage](../../../../../gitbooks/features/os-keyring-and-secret-storage.md)
-- [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
+- [OS keyring and secret storage](../../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
 
 `channel_credential_provider` owns the persisted `channel:<id>:<mode>` namespace.
 Managed login and channel setup use it through the host facade so existing

@@ -32,6 +32,40 @@ impl ChatModel<()> for FailsOnThirdCallProvider {
     }
 }
 
+/// Reads the transcript a sub-agent run wrote under `stem` back through the
+/// store it wrote to.
+fn read_stem(
+    locator: &dyn tinyagents_session::transcript::TranscriptLocator,
+    stem: &str,
+) -> tinyagents_session::transcript::SessionTranscript {
+    let seed = tinyagents_session::transcript::TranscriptMeta {
+        agent_name: String::new(),
+        agent_id: None,
+        agent_type: None,
+        dispatcher: String::new(),
+        provider: None,
+        model: None,
+        created: String::new(),
+        updated: String::new(),
+        turn_count: 0,
+        prefix_message_count: None,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+        thread_id: None,
+        task_id: None,
+        session_id: None,
+        parent_session_id: None,
+    };
+    locator
+        .open_stem(stem, seed)
+        .expect("open the child stem")
+        .read_session()
+        .expect("read the child transcript")
+        .expect("the child transcript was written")
+}
+
 /// #6281: a failed sub-agent run persists only the round a provider accepted as
 /// structured history; the round only the rejected request carried goes into the
 /// failure marker as text, so a resumed sub-agent cannot replay it.
@@ -46,6 +80,10 @@ async fn failed_subagent_run_keeps_its_unanswered_round_out_of_history() {
     let mut history = vec![TranscriptMessage::user("please echo twice")];
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let stem = "root-session__failed_run";
+    let locator =
+        crate::agent::session_store::transcripts_or_files("orchestrator", workspace.path());
+    let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    run_context.transcripts = Some(locator.clone());
 
     let result = run_subagent_via_graph(
         crate::agent::tinyagents::TurnModelSource::from_model(provider),
@@ -63,7 +101,7 @@ async fn failed_subagent_run_keeps_its_unanswered_round_out_of_history() {
         "task-failed",
         false,
         None,
-        crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+        run_context,
         None,
         workspace.path().to_path_buf(),
         None,
@@ -77,10 +115,7 @@ async fn failed_subagent_run_keeps_its_unanswered_round_out_of_history() {
     .await;
     assert!(result.is_err(), "the rejected third call fails the run");
 
-    use tinyagents_session::transcript;
-    let path =
-        transcript::resolve_keyed_transcript_path(workspace.path(), stem).expect("transcript path");
-    let persisted = transcript::read_transcript(&path).expect("failed run transcript");
+    let persisted = read_stem(locator.as_ref(), stem);
     let tool_rows: Vec<&str> = persisted
         .messages
         .iter()
@@ -106,16 +141,15 @@ async fn failed_subagent_run_keeps_its_unanswered_round_out_of_history() {
 
     // Two model calls were answered before the rejection; the recorded
     // iteration must say so rather than count persisted messages.
-    let raw = std::fs::read_to_string(&path).expect("raw transcript");
-    let marker_line = raw
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .rfind(|line| line.get("role").and_then(|role| role.as_str()) == Some("assistant"))
-        .expect("failure marker line");
+    let iteration = persisted
+        .messages
+        .last()
+        .and_then(|marker| marker.turn_usage.as_ref())
+        .map(|usage| usage.iteration);
     assert_eq!(
-        marker_line.get("iteration").and_then(|n| n.as_u64()),
+        iteration,
         Some(2),
-        "the failed run reports the model calls a provider answered: {marker_line}"
+        "the failed run reports the model calls a provider answered"
     );
 }
 
@@ -124,7 +158,7 @@ async fn failed_subagent_run_keeps_its_unanswered_round_out_of_history() {
 /// data for a vision run).
 #[test]
 fn failed_run_history_keeps_the_original_seed_not_the_provider_bound_one() {
-    use crate::agent::tinyagents::TranscriptSnapshot;
+    use crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshot;
     use tinyinference_llm::message::Message;
 
     let original = vec![TranscriptMessage::user("describe [IMAGE:attachment-1]")];

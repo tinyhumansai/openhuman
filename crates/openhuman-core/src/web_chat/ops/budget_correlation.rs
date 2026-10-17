@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 
+use crate::core::runtime::DispatchCtx;
+
 use super::state::key_for;
 
 /// A recorded budget-exhausted signal: when it happened, and which provider
@@ -40,8 +42,8 @@ struct BudgetSignal {
 /// Kept in a sibling map rather than on `SessionEntry` so the signal survives
 /// the de-poison session drop (an empty turn is not poisoned, but cold-boot
 /// reseeds would otherwise be the wrong lifetime to hang this on).
-fn thread_budget_signals() -> Arc<ThreadBudgetSignals> {
-    crate::core::runtime::current_slot::<ThreadBudgetSignals>()
+fn thread_budget_signals(ctx: &DispatchCtx) -> Arc<ThreadBudgetSignals> {
+    crate::core::runtime::slot_for::<ThreadBudgetSignals>(ctx)
 }
 
 type ThreadBudgetSignals = Mutex<HashMap<String, BudgetSignal>>;
@@ -68,11 +70,15 @@ fn prune_stale_budget_signals(signals: &mut HashMap<String, BudgetSignal>) {
 
 /// Record that this thread just hit an inference budget-exhausted error on the
 /// given provider binding.
-pub(crate) async fn record_budget_signal(thread_id: &str, provider_binding: &str) {
-    let mut signals = thread_budget_signals().lock_owned().await;
+pub(crate) async fn record_budget_signal(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    provider_binding: &str,
+) {
+    let mut signals = thread_budget_signals(ctx).lock_owned().await;
     prune_stale_budget_signals(&mut signals);
     signals.insert(
-        key_for(thread_id),
+        key_for(ctx, thread_id),
         BudgetSignal {
             provider_binding: provider_binding.to_string(),
             at: Instant::now(),
@@ -82,18 +88,22 @@ pub(crate) async fn record_budget_signal(thread_id: &str, provider_binding: &str
 
 /// Clear any recorded budget signal for this thread — called on a successful
 /// turn, where the balance is evidently usable again.
-pub(crate) async fn clear_budget_signal(thread_id: &str) {
-    let mut signals = thread_budget_signals().lock_owned().await;
-    signals.remove(&key_for(thread_id));
+pub(crate) async fn clear_budget_signal(ctx: &DispatchCtx, thread_id: &str) {
+    let mut signals = thread_budget_signals(ctx).lock_owned().await;
+    signals.remove(&key_for(ctx, thread_id));
 }
 
 /// Whether this thread has a budget signal recorded within `BUDGET_SIGNAL_TTL`
 /// **on the same provider binding** as the current turn. A binding mismatch or
 /// an expired entry evicts it and reads as not-fresh, so a re-routed turn never
 /// inherits the prior provider's exhaustion.
-pub(crate) async fn has_fresh_budget_signal(thread_id: &str, provider_binding: &str) -> bool {
-    let mut signals = thread_budget_signals().lock_owned().await;
-    let key = key_for(thread_id);
+pub(crate) async fn has_fresh_budget_signal(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    provider_binding: &str,
+) -> bool {
+    let mut signals = thread_budget_signals(ctx).lock_owned().await;
+    let key = key_for(ctx, thread_id);
     match signals.get(&key) {
         Some(sig)
             if sig.provider_binding == provider_binding
@@ -112,11 +122,16 @@ pub(crate) async fn has_fresh_budget_signal(thread_id: &str, provider_binding: &
 /// Test-only seeder: record a budget signal on `provider_binding` aged `age`
 /// into the past so expiry can be exercised without sleeping.
 #[cfg(test)]
-async fn record_budget_signal_aged(thread_id: &str, provider_binding: &str, age: Duration) {
-    let mut signals = thread_budget_signals().lock_owned().await;
+async fn record_budget_signal_aged(
+    ctx: &DispatchCtx,
+    thread_id: &str,
+    provider_binding: &str,
+    age: Duration,
+) {
+    let mut signals = thread_budget_signals(ctx).lock_owned().await;
     let when = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
     signals.insert(
-        key_for(thread_id),
+        key_for(ctx, thread_id),
         BudgetSignal {
             provider_binding: provider_binding.to_string(),
             at: when,

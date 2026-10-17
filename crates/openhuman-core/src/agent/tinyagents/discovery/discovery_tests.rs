@@ -141,3 +141,31 @@ fn discovery_policy_renders_no_manifest() {
     apply_tool_search_config(&ToolSearchConfig::default());
     assert_eq!(discovery_policy().manifest_token_budget, 0);
 }
+
+#[test]
+fn a_turn_without_a_chat_gives_the_ranker_an_empty_context() {
+    assert_eq!(rank_context_for(None), tinytools::RankContext::empty());
+}
+
+#[test]
+fn a_chat_turn_names_its_thread_client_and_request_to_the_ranker() {
+    let chat = crate::security::approval::ApprovalChatContext {
+        thread_id: "thread-7".to_owned(),
+        client_id: "client-3".to_owned(),
+        request_id: Some("req-1".to_owned()),
+    };
+    let context = rank_context_for(Some(&chat));
+    let routed = context.chat.expect("chat is carried");
+    assert_eq!(routed.thread_id, "thread-7");
+    assert_eq!(routed.client_id, "client-3");
+    assert_eq!(routed.request_id.as_deref(), Some("req-1"));
+
+    let without_request = crate::security::approval::ApprovalChatContext {
+        request_id: None,
+        ..chat
+    };
+    let routed = rank_context_for(Some(&without_request))
+        .chat
+        .expect("chat is carried");
+    assert_eq!(routed.request_id, None);
+}

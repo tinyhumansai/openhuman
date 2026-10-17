@@ -53,7 +53,7 @@ fn shutdown_token_stops_axum_listener_within_timeout() {
 }
 
 async fn shutdown_token_stops_listener() {
-    openhuman_core::cron::scheduler_gate::set_signed_out(false);
+    openhuman_core::platform::llm_gate::set_signed_out(false);
 
     let workspace = tempfile::tempdir().expect("workspace tempdir");
     // Pin the scheduler-gate policy so the bootstrap's `init_global` snapshot
@@ -83,8 +83,28 @@ async fn shutdown_token_stops_listener() {
         rpc_token: None,
     };
     let builder = desktop_builder(&options);
-    let (ready_tx, _ready_rx) = tokio::sync::oneshot::channel();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(serve_desktop(builder, server_token, ready_tx));
+
+    // Full desktop bootstrap can exceed 30s on a cold CI runner while the
+    // module search path and background services initialize. Match the host's
+    // 60s core-ready budget; this test is about shutdown after readiness.
+    let ready = match tokio::time::timeout(Duration::from_secs(60), ready_rx).await {
+        Ok(Ok(ready)) => ready,
+        Ok(Err(_)) => {
+            let result = server.await.expect("embedded server task should not panic");
+            panic!("embedded server ended before signaling readiness: {result:?}");
+        }
+        Err(_) => {
+            server.abort();
+            let _ = server.await;
+            panic!("embedded server did not signal readiness within timeout");
+        }
+    };
+    assert_eq!(
+        ready.port, port,
+        "embedded server selected an unexpected port"
+    );
 
     wait_until_port(port, true).await;
     shutdown_token.cancel();

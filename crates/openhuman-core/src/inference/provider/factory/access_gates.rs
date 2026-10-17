@@ -92,7 +92,7 @@ pub(super) fn enforce_local_only_inference(role: &str, provider: &str) -> anyhow
 /// this is called). Local runtimes are marked non-external, so
 /// [`emit_external_transfer`](crate::security::egress::emit_external_transfer)
 /// discloses them without firing the external-transfer event.
-pub(super) fn emit_inference_egress(role: &str, provider: &str) {
+pub(super) fn emit_inference_egress(role: &str, provider: &str, egress: &EgressLedger) {
     let p = provider.trim();
     if p.is_empty() || p == "cloud" {
         // Defensive: a sentinel would re-resolve on recursion; don't emit here.
@@ -116,7 +116,8 @@ pub(super) fn emit_inference_egress(role: &str, provider: &str) {
     } else {
         model
     };
-    crate::security::egress::emit_external_transfer(
+    crate::security::egress::emit_external_transfer_in(
+        egress,
         crate::security::egress::EgressDescriptor::inference(slug, service, !is_local),
     );
 }
@@ -197,7 +198,7 @@ pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<(
         return Ok(());
     }
     // Fast path: the scheduler gate already knows the session is dead.
-    if crate::cron::scheduler_gate::is_signed_out() {
+    if crate::platform::llm_gate::is_signed_out() {
         anyhow::bail!(
             "SESSION_EXPIRED: backend session not active — sign in to use custom providers"
         );

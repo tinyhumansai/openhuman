@@ -1,9 +1,9 @@
 //! Controller schemas and handler registrations for the embeddings domain.
 
+use crate::core::runtime::DispatchCtx;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::config::ops as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -170,18 +170,19 @@ struct TestConnectionParams {
 
 // ── Handlers ───────────────────────────────────────────────
 
-fn handle_get_settings(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_get_settings(ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(super::rpc::get_settings(&config).await?)
     })
 }
 
-fn handle_update_settings(params: Map<String, Value>) -> ControllerFuture {
+fn handle_update_settings(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<UpdateSettingsParams>(params)?;
         to_json(
             super::rpc::update_settings(
+                &ctx,
                 p.provider,
                 p.model,
                 p.dimensions,
@@ -193,34 +194,34 @@ fn handle_update_settings(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_set_api_key(params: Map<String, Value>) -> ControllerFuture {
+fn handle_set_api_key(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<SetApiKeyParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(super::rpc::set_api_key(&config, &p.provider, &p.api_key).await?)
     })
 }
 
-fn handle_clear_api_key(params: Map<String, Value>) -> ControllerFuture {
+fn handle_clear_api_key(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<ClearApiKeyParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(super::rpc::clear_api_key(&config, &p.provider).await?)
     })
 }
 
-fn handle_embed(params: Map<String, Value>) -> ControllerFuture {
+fn handle_embed(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<EmbedParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(super::rpc::embed(&config, &p.inputs).await?)
     })
 }
 
-fn handle_test_connection(params: Map<String, Value>) -> ControllerFuture {
+fn handle_test_connection(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<TestConnectionParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(
             super::rpc::test_connection(
                 &config,

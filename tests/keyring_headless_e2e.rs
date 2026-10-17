@@ -40,7 +40,11 @@ fn headless_core_reuses_its_workspace_key_after_restart() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    let key_path = dir.path().join("keyring/master.key");
+    // macOS exposes the temporary directory through `/var` aliases. The
+    // secrets driver refuses symlinked namespace components, so pass its
+    // canonical workspace path to both child processes.
+    let workspace = std::fs::canonicalize(dir.path()).expect("canonicalize keyring workspace");
+    let key_path = workspace.join("keyring/master.key");
     let mut saved_key = None;
     for stage in ["write", "read"] {
         let result = Command::new(std::env::current_exe().unwrap())
@@ -49,7 +53,7 @@ fn headless_core_reuses_its_workspace_key_after_restart() {
                 "headless_core_reuses_its_workspace_key_after_restart",
             ])
             .env(STAGE, stage)
-            .env("OPENHUMAN_WORKSPACE", dir.path())
+            .env("OPENHUMAN_WORKSPACE", &workspace)
             .env("OPENHUMAN_APP_ENV", "development")
             .env("OPENHUMAN_KEYRING_BACKEND", "encrypted_file")
             .env_remove("OPENHUMAN_KEYRING_MASTER_KEY")
@@ -69,8 +73,8 @@ fn headless_core_reuses_its_workspace_key_after_restart() {
         }
         saved_key = Some(key);
     }
-    assert!(dir.path().join("secrets.enc").exists());
-    assert!(!dir.path().join("dev-keychain.json").exists());
+    assert!(workspace.join("secrets.enc").exists());
+    assert!(!workspace.join("dev-keychain.json").exists());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

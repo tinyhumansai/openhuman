@@ -53,9 +53,11 @@ async fn a_remote_triage_escalation_parks_with_an_audit_row_rather_than_an_unkno
 
     // `Box::pin` + a short timeout drives the future into the park without
     // waiting out the TTL; nothing decides it, so it must still be pending.
+    let turn = ApprovalTurnContext::default();
     let mut fut = Box::pin(turn_origin::with_origin(
         remote_trigger_origin(&envelope),
         gate.intercept(
+            &turn,
             "triage.escalate",
             "escalate to orchestrator",
             serde_json::json!({}),
@@ -90,6 +92,7 @@ async fn a_local_triage_escalation_is_allowed_without_a_prompt() {
     let outcome = turn_origin::with_origin(
         local_trigger_origin(),
         gate.intercept(
+            &ApprovalTurnContext::default(),
             "triage.escalate",
             "escalate to orchestrator",
             serde_json::json!({}),
@@ -115,7 +118,12 @@ async fn intercept_with_unknown_origin_denies() {
     // tools from unlabelled call sites.
     let (gate, _dir) = test_gate();
     let outcome = gate
-        .intercept("shell", "run ls", serde_json::json!({}))
+        .intercept(
+            &ApprovalTurnContext::default(),
+            "shell",
+            "run ls",
+            serde_json::json!({}),
+        )
         .await;
     match outcome {
         GateOutcome::Deny { reason } => assert!(reason.contains("origin label")),
@@ -134,7 +142,12 @@ async fn intercept_with_trusted_cron_origin_denies_external_effect() {
     };
     let outcome = turn_origin::with_origin(
         origin,
-        gate.intercept("shell", "run ls", serde_json::json!({})),
+        gate.intercept(
+            &ApprovalTurnContext::default(),
+            "shell",
+            "run ls",
+            serde_json::json!({}),
+        ),
     )
     .await;
     assert!(matches!(outcome, GateOutcome::Deny { .. }));
@@ -157,7 +170,12 @@ async fn intercept_with_workflow_origin_trust_root_allows_without_prompt() {
     };
     let outcome = turn_origin::with_origin(
         origin,
-        gate.intercept("composio", "post to slack", serde_json::json!({})),
+        gate.intercept(
+            &ApprovalTurnContext::default(),
+            "composio",
+            "post to slack",
+            serde_json::json!({}),
+        ),
     )
     .await;
     assert!(matches!(outcome, GateOutcome::Allow));
@@ -187,7 +205,12 @@ async fn intercept_with_workflow_require_approval_persists_and_ttl_denies() {
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             origin,
-            g.intercept("composio", "post to slack", serde_json::json!({})),
+            g.intercept(
+                &ApprovalTurnContext::default(),
+                "composio",
+                "post to slack",
+                serde_json::json!({}),
+            ),
         )
         .await
     });
@@ -239,13 +262,11 @@ async fn a_parked_approval_is_recoverable_from_its_thread_for_replay() {
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             origin,
-            APPROVAL_CHAT_CONTEXT.scope(
-                ctx,
-                g.intercept(
-                    "create_workflow",
-                    "create a workflow",
-                    serde_json::json!({ "name": "nightly" }),
-                ),
+            g.intercept(
+                &ApprovalTurnContext::chat(ctx),
+                "create_workflow",
+                "create a workflow",
+                serde_json::json!({ "name": "nightly" }),
             ),
         )
         .await
@@ -300,14 +321,12 @@ async fn intercept_audited_for_call_threads_tool_call_id_onto_the_pending_row_an
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(
-                chat_ctx(),
-                g.intercept_audited_for_call(
-                    "composio",
-                    "send slack",
-                    serde_json::json!({}),
-                    Some("call-abc"),
-                ),
+            g.intercept_audited_for_call(
+                &ApprovalTurnContext::chat(chat_ctx()),
+                "composio",
+                "send slack",
+                serde_json::json!({}),
+                Some("call-abc"),
             ),
         )
         .await
@@ -343,14 +362,12 @@ async fn timeout_publishes_approval_decided_with_expired_resolution() {
     let handle = tokio::spawn(async move {
         turn_origin::with_origin(
             web_origin(),
-            APPROVAL_CHAT_CONTEXT.scope(
-                chat_ctx(),
-                g.intercept_audited_for_call(
-                    "composio",
-                    "timed out",
-                    serde_json::json!({}),
-                    Some("call-expire"),
-                ),
+            g.intercept_audited_for_call(
+                &ApprovalTurnContext::chat(chat_ctx()),
+                "composio",
+                "timed out",
+                serde_json::json!({}),
+                Some("call-expire"),
             ),
         )
         .await

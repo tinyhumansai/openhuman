@@ -4,8 +4,8 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::agent::artifacts::store::{
-    create_artifact, delete_artifact, fail_artifact, finalize_artifact, list_artifacts,
-    read_artifact_bytes, save_artifact_meta, REGENERATE_TARGET_ID,
+    create_artifact, create_artifact_regenerating, delete_artifact, fail_artifact,
+    finalize_artifact, list_artifacts, read_artifact_bytes, save_artifact_meta,
 };
 use crate::agent::artifacts::types::ArtifactKind;
 
@@ -15,11 +15,18 @@ async fn create_ready(
     title: &str,
     bytes: &[u8],
 ) -> ArtifactMeta {
-    let (meta, path) = create_artifact(workspace, files_dir, ArtifactKind::Document, title, "txt")
-        .await
-        .expect("create_artifact");
+    let (meta, path) = create_artifact(
+        workspace,
+        files_dir,
+        ArtifactKind::Document,
+        title,
+        "txt",
+        None,
+    )
+    .await
+    .expect("create_artifact");
     tokio::fs::write(&path, bytes).await.unwrap();
-    finalize_artifact(workspace, &meta.id, bytes.len() as u64)
+    finalize_artifact(workspace, &meta.id, bytes.len() as u64, None)
         .await
         .expect("finalize_artifact")
 }
@@ -62,6 +69,7 @@ async fn new_artifact_is_written_to_the_files_folder_not_the_workspace() {
         ArtifactKind::Presentation,
         "Q3 Deck",
         "pptx",
+        None,
     )
     .await
     .unwrap();
@@ -74,11 +82,8 @@ async fn new_artifact_is_written_to_the_files_folder_not_the_workspace() {
         meta.file_root.as_deref(),
         Some(files_dir.to_string_lossy().as_ref())
     );
-    // Metadata stays hidden in the workspace; no bytes land beside it.
-    assert_eq!(
-        names_in(&workspace.join("artifacts").join(&meta.id)),
-        vec!["meta.json"]
-    );
+    // The record is a document, not a file: no bytes land in the workspace.
+    assert!(!workspace.join("artifacts").join(&meta.id).exists());
 }
 
 #[tokio::test]
@@ -91,6 +96,7 @@ async fn files_folder_is_created_on_first_use() {
         ArtifactKind::Document,
         "Notes",
         "docx",
+        None,
     )
     .await
     .unwrap();
@@ -158,19 +164,18 @@ async fn regenerate_overwrites_the_file_it_owns() {
     let files_dir = tmp.path().join("Files");
     let original = create_ready(tmp.path(), &files_dir, "Deck", b"v1").await;
 
-    let (again, path) = REGENERATE_TARGET_ID
-        .scope(original.id.clone(), async {
-            create_artifact(
-                tmp.path(),
-                &files_dir,
-                ArtifactKind::Document,
-                "Deck",
-                "txt",
-            )
-            .await
-        })
-        .await
-        .unwrap();
+    let (again, path) = create_artifact_regenerating(
+        tmp.path(),
+        &files_dir,
+        ArtifactKind::Document,
+        "Deck",
+        "txt",
+        None,
+        Some(original.id.as_str()),
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(again.id, original.id);
     assert_eq!(again.file, original.file);
@@ -188,12 +193,13 @@ async fn a_failed_generation_leaves_no_empty_file_behind() {
         ArtifactKind::Document,
         "Doomed",
         "docx",
+        None,
     )
     .await
     .unwrap();
     assert!(path.is_file());
 
-    fail_artifact(tmp.path(), &files_dir, &meta.id, "engine exploded")
+    fail_artifact(tmp.path(), &files_dir, &meta.id, "engine exploded", None)
         .await
         .unwrap();
 
@@ -294,6 +300,7 @@ async fn a_legacy_record_still_resolves_under_the_workspace() {
     let tmp = TempDir::new().unwrap();
     let meta = legacy_meta("legacy-1", "legacy-1/old.txt");
     save_artifact_meta(tmp.path(), &meta).await.unwrap();
+    std::fs::create_dir_all(tmp.path().join("artifacts/legacy-1")).unwrap();
     std::fs::write(tmp.path().join("artifacts/legacy-1/old.txt"), b"old").unwrap();
 
     assert_eq!(

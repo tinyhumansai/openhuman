@@ -60,7 +60,6 @@ fn openai_entry(id: &str, slug: &str) -> CloudProviderCreds {
         endpoint: "https://api.openai.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("gpt-4o".to_string()),
-        ..Default::default()
     }
 }
 
@@ -72,7 +71,6 @@ fn anthropic_entry(id: &str, slug: &str) -> CloudProviderCreds {
         endpoint: "https://api.anthropic.com/v1".to_string(),
         auth_style: AuthStyle::Anthropic,
         default_model: Some("claude-sonnet-4-6".to_string()),
-        ..Default::default()
     }
 }
 
@@ -84,7 +82,6 @@ fn nvidia_nim_entry(id: &str, default_model: Option<&str>) -> CloudProviderCreds
         endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: default_model.map(ToString::to_string),
-        ..Default::default()
     }
 }
 
@@ -143,7 +140,6 @@ fn deepseek_entry(id: &str) -> CloudProviderCreds {
         endpoint: "https://api.deepseek.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("deepseek-chat".to_string()),
-        ..Default::default()
     }
 }
 
@@ -189,5 +185,9 @@ mod crate_native_diagnostics_tests;
 mod crate_native_tests;
 #[path = "factory_egress_fallback_tests.rs"]
 mod egress_fallback_tests;
+#[path = "factory_explicit_ctx_tests.rs"]
+mod explicit_ctx_tests;
+#[path = "factory_managed_ledger_tests.rs"]
+mod managed_ledger_tests;
 #[path = "factory_route_resolution_tests.rs"]
 mod route_resolution_tests;

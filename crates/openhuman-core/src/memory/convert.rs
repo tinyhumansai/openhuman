@@ -47,6 +47,13 @@ impl DocumentConverter for TinyDocsConverter {
             DocumentFormat::Xlsx => tinydocs_bus::DocumentFormat::Xlsx,
             _ => unreachable!("supports limits formats to TinyDocs formats"),
         };
+        if !self.config.components.documents {
+            log::debug!("[memory.convert] refused: component 'documents' disabled");
+            return Err(Error::Converter {
+                converter: "tinydocs".to_string(),
+                message: crate::core::runtime::components::component_disabled("documents").message,
+            });
+        }
         let markdown =
             crate::modules::documents::convert_markdown(&self.config, wire_format, &document.bytes)
                 .await

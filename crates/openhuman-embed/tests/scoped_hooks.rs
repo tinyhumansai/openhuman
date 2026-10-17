@@ -161,12 +161,18 @@ async fn scenario() {
     scheduled
         .scope(async {
             assert_eq!(
-                openhuman_core::agent::hooks::turn_tool_hooks().len(),
+                openhuman_core::agent::hooks::embedder_tool_hooks_in(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient()
+                )
+                .len(),
                 2,
                 "scheduled turns lost the agent's tool hooks"
             );
             assert_eq!(
-                openhuman_core::agent::hooks::turn_post_turn_hooks().len(),
+                openhuman_core::agent::hooks::embedder_post_turn_hooks_in(
+                    &openhuman_core::core::runtime::DispatchCtx::ambient()
+                )
+                .len(),
                 2,
                 "scheduled turns lost the agent's post-turn hooks"
             );

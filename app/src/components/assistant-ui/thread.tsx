@@ -16,6 +16,7 @@ import { StoppedRun } from '@/components/assistant-ui/elements/stopped-run';
 import { ToolFallback } from '@/components/assistant-ui/elements/tool-fallback';
 import { File } from '@/components/assistant-ui/file';
 import { ThreadFollowupSuggestions } from '@/components/assistant-ui/follow-up-suggestions';
+import { useComposerFocusOnThreadOpen } from '@/components/assistant-ui/lib/useComposerFocusOnThreadOpen';
 import { cn } from '@/components/assistant-ui/lib/utils';
 import { MarkdownText } from '@/components/assistant-ui/markdown-text';
 import { ComposerQuotePreview, SelectionToolbar } from '@/components/assistant-ui/quote';
@@ -30,6 +31,9 @@ import {
   useAuiEditCapabilities,
   useAuiReloadCapability,
 } from '@/features/conversations/components/aui/auiThreadState';
+import { onComposerPrefill } from '@/features/conversations/tools/mcpUi/composerPrefill';
+import { McpWidgetStrip } from '@/features/conversations/tools/mcpUi/McpWidgetStrip';
+import { collectMessageWidgets } from '@/features/conversations/tools/mcpUi/messageWidgets';
 import { useT } from '@/lib/i18n/I18nContext';
 import { CHAT_ERROR_METADATA_KEY } from '@/store/threadSlice';
 import { fullTimestamp, relativeTime } from '@/utils/relativeTime';
@@ -143,6 +147,20 @@ export type ThreadComponents = {
    * `null` when there is nothing to show.
    */
   TranscriptFooter?: ComponentType | undefined;
+  /**
+   * Host-owned content rendered after the last message, inside the
+   * scrollable transcript — artifact cards from versioned tools that
+   * carry no tool-call id and would otherwise be invisible to the
+   * inline tool-call renderer. Always mounted (not gated on isRunning).
+   */
+  AfterMessages?: ComponentType | undefined;
+  /**
+   * Host-owned artifact cards rendered inside each assistant message's
+   * content area (matched by requestId). Unlike AfterMessages which
+   * renders once at the end of the transcript, MessageArtifacts renders
+   * per-message so cards appear attached to the message that created them.
+   */
+  MessageArtifacts?: ComponentType | undefined;
   /** Host-owned attachment previews rendered above the editor. */
   ComposerAttachments?: ComponentType | undefined;
   /** Host-owned attachment picker rendered in the action row. */
@@ -340,7 +358,12 @@ const ThreadComponentsContext = createContext<ThreadComponents>(EMPTY_COMPONENTS
 // in a separate context so that change does not invalidate the full transcript.
 type MessageComponents = Pick<
   ThreadComponents,
-  'AssistantMessage' | 'ToolFallback' | 'ActivityGroup' | 'SourceGroup' | 'MessageTasks'
+  | 'AssistantMessage'
+  | 'ToolFallback'
+  | 'ActivityGroup'
+  | 'SourceGroup'
+  | 'MessageTasks'
+  | 'MessageArtifacts'
 >;
 const MessageComponentsContext = createContext<MessageComponents>(EMPTY_COMPONENTS);
 
@@ -402,6 +425,7 @@ export const Thread: FC<ThreadProps> = ({
       ActivityGroup: components.ActivityGroup,
       SourceGroup: components.SourceGroup,
       MessageTasks: components.MessageTasks,
+      MessageArtifacts: components.MessageArtifacts,
     }),
     [
       components.AssistantMessage,
@@ -409,6 +433,7 @@ export const Thread: FC<ThreadProps> = ({
       components.ActivityGroup,
       components.SourceGroup,
       components.MessageTasks,
+      components.MessageArtifacts,
     ]
   );
 
@@ -500,6 +525,7 @@ const ThreadRoot: FC<{
             <ThreadPrimitive.Messages>{() => <ThreadMessage />}</ThreadPrimitive.Messages>
             <RunningStatusSlot />
             <TranscriptFooterSlot />
+            <AfterMessagesSlot />
             {ActiveTasks && <ActiveTasks />}
           </div>
 
@@ -572,6 +598,13 @@ const TranscriptFooterSlot: FC = () => {
       <TranscriptFooter />
     </AuiIf>
   );
+};
+
+/** Host content after the last message; always mounted (not gated). */
+const AfterMessagesSlot: FC = () => {
+  const { AfterMessages } = useContext(ThreadComponentsContext);
+  if (!AfterMessages) return null;
+  return <AfterMessages />;
 };
 
 const ThreadMessage: FC = () => {
@@ -670,6 +703,7 @@ const Composer: FC<{
       textbox?.removeAttribute('data-testid');
     };
   }, [messageInputLabel]);
+  useComposerFocusOnThreadOpen(inputWrapperRef);
 
   // Set for as long as an IME composition is open. The gate is a ref rather
   // than state because it is read from a microtask, not from a render.
@@ -679,6 +713,8 @@ const Composer: FC<{
   // composition before it runs. That stale write would rebuild the editor
   // mid-composition and cancel it -- #5763 again, one composition later.
   const isComposingTextRef = useRef(false);
+
+  useEffect(() => onComposerPrefill(text => aui.composer.setText(text)), [aui]);
   // ArrowUp recall only fires on an empty composer, so a caret move inside a
   // multi-line draft is never hijacked.
   const composerIsEmpty = useAuiState(state => state.composer.text.length === 0);
@@ -1090,21 +1126,10 @@ const isStoppedRun = (s: AssistantState): boolean =>
   s.message.status?.type === 'incomplete' && s.message.status.reason === 'cancelled';
 
 /**
- * The stopped turn's own text, split into words for the vendored
- * `StoppedRun` element, plus `cancel_reason`/`superseded_by`
- * (wire-contract.md `chat_cancelled`, carried through
- * `metadata.custom.extraMetadata` by `assistantUiMessages.ts`) so the reason
- * chip can distinguish a user-initiated Stop from a turn the core superseded.
+ * `cancel_reason` (wire-contract.md `chat_cancelled`, carried through
+ * `metadata.custom.extraMetadata` by `assistantUiMessages.ts`), so the reason
+ * chip can tell a user-initiated Stop from a turn the core superseded.
  */
-// Two primitive selectors rather than one object-returning selector:
-// `useAuiState`'s selector is compared by `Object.is`, so an inline `{...}`
-// literal differs from itself on every store tick and free-runs the
-// subscription — exactly the "Maximum update depth exceeded" loop this file
-// hit once already. `words` (an array) is derived from `text` with
-// `useMemo` in the component below instead of being computed here.
-const selectStoppedRunText = (s: AssistantState): string =>
-  s.message.parts.flatMap(part => (part.type === 'text' ? [part.text] : [])).join(' ');
-
 const selectStoppedRunCancelReason = (s: AssistantState): string | undefined => {
   const custom = s.message.metadata?.custom as
     | { extraMetadata?: { cancelReason?: string; supersededBy?: string } }
@@ -1124,9 +1149,7 @@ const selectStoppedRunCancelReason = (s: AssistantState): string | undefined => 
 const StoppedRunSlot: FC = () => {
   const aui = useAui();
   const { t } = useT();
-  const text = useAuiState(selectStoppedRunText);
   const cancelReason = useAuiState(selectStoppedRunCancelReason);
-  const words = useMemo(() => (text.length > 0 ? text.split(/\s+/).filter(Boolean) : []), [text]);
   const { disabled: reloadDisabled, reload } = useActionBarReload();
   const reasonLabel =
     cancelReason === 'superseded'
@@ -1135,7 +1158,6 @@ const StoppedRunSlot: FC = () => {
   return (
     <StoppedRun
       data-testid="stopped-marker"
-      words={words}
       reason={reasonLabel}
       onContinue={() => {
         if (!reloadDisabled) reload();
@@ -1153,8 +1175,11 @@ const AssistantMessage: FC = () => {
     ActivityGroup = DefaultActivityGroup,
     SourceGroup,
     MessageTasks,
+    MessageArtifacts,
   } = useContext(MessageComponentsContext);
   const stopped = useAuiState(isStoppedRun);
+  const parts = useAuiState(s => s.message.parts);
+  const widgets = useMemo(() => collectMessageWidgets(parts), [parts]);
 
   const ACTION_BAR_PT = 'pt-1.5';
   // `min-h` reserves the bar's height (`pt-1.5` + a `size-6` button = 7.5) so a
@@ -1208,15 +1233,23 @@ const AssistantMessage: FC = () => {
           })}>
           {({ part, children }) => {
             switch (part.type) {
-              case 'group-activity':
-                return <ActivityGroup group={part}>{children}</ActivityGroup>;
+              case 'group-activity': {
+                const groupWidgets = widgets.filter(widget =>
+                  part.indices.includes(widget.partIndex)
+                );
+                return (
+                  <>
+                    <ActivityGroup group={part}>{children}</ActivityGroup>
+                    <McpWidgetStrip widgets={groupWidgets} />
+                  </>
+                );
+              }
               case 'group-source':
                 return SourceGroup ? <SourceGroupSlot Component={SourceGroup} /> : null;
               case 'text':
-                // A stopped/cancelled turn's text renders once, inside
-                // `StoppedRunSlot` below (as `words`), not here — see that
-                // component's docstring.
-                return stopped ? null : <MarkdownText />;
+                // A stopped turn's partial is markdown like any reply (#7729);
+                // `StoppedRunSlot` below adds only the reason and actions.
+                return <MarkdownText />;
               case 'reasoning':
                 // A step inside the activity group, not a disclosure of its own.
                 return (
@@ -1258,6 +1291,11 @@ const AssistantMessage: FC = () => {
         {MessageTasks && (
           <div>
             <MessageTasks />
+          </div>
+        )}
+        {MessageArtifacts && (
+          <div className="mt-2">
+            <MessageArtifacts />
           </div>
         )}
       </div>

@@ -130,6 +130,8 @@ Add your key in the desktop app under the LLM settings. It is stored in the OS k
 
 Anything else that speaks the OpenAI-compatible API also works. Register it with your own slug and endpoint, and it routes the same way.
 
+For an HTTPS endpoint signed by a private or corporate CA, upload its PEM CA certificate in the custom provider editor. OpenHuman trusts that certificate for this provider's model listing and inference requests. You can also install the CA in the operating system's trust store; on macOS and Linux, `SSL_CERT_FILE` supplies a PEM bundle to the core process.
+
 On a headless core (`openhuman-core serve`), custom cloud providers are built only when a backend session or TinyHumans API key is present. If you run the core with no account, set the endpoint up as the `local-openai` runtime instead: set `LOCAL_OPENAI_URL`, put the key in `local_ai.api_key`, and pin workloads to `local-openai:<model>`. See [Headless without a TinyHumans account](../cloud-deploy.md#headless-without-a-tinyhumans-account).
 
 ### 2. Route workloads to it

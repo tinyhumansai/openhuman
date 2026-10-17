@@ -12,12 +12,13 @@ use tokio::sync::Mutex;
 
 use crate::config::Config;
 use crate::modules::accessibility::{AccessibilityClient, FocusTarget, PasteRequest};
-use crate::modules::voice::{is_hallucinated, HallucinationMode};
+use crate::modules::voice::{
+    gate_recording, is_hallucinated, GateVerdict, HallucinationMode, RecordingGates, SessionInput,
+};
 use crate::voice::audio_capture::RecordingHandle;
 
-use super::types::{
-    ServerState, VoiceServerConfig, MAX_INITIAL_PROMPT_CHARS, MAX_RECENT_TRANSCRIPTS,
-};
+use super::recorder::Recorder;
+use super::types::{VoiceServerConfig, MAX_INITIAL_PROMPT_CHARS, MAX_RECENT_TRANSCRIPTS};
 use super::LOG_PREFIX;
 
 /// Capture the frontmost app name at hotkey press so insertion can be validated later.
@@ -112,9 +113,8 @@ pub(super) async fn process_recording_bg(
     handle: RecordingHandle,
     config: &Config,
     server_config: &VoiceServerConfig,
-    state: Arc<Mutex<ServerState>>,
+    recorder: Recorder,
     transcription_count: Arc<std::sync::atomic::AtomicU64>,
-    session_generation: Arc<std::sync::atomic::AtomicU64>,
     generation: u64,
     last_error: Arc<Mutex<Option<String>>>,
     recent_transcripts: Arc<Mutex<Vec<String>>>,
@@ -122,14 +122,9 @@ pub(super) async fn process_recording_bg(
 ) {
     let pipeline_started = Instant::now();
     info!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=start generation={generation}");
-    update_state_if_current(
-        &state,
-        &session_generation,
-        generation,
-        ServerState::Transcribing,
-        "transcribing",
-    )
-    .await;
+    recorder
+        .advance(config, SessionInput::Transcribing { generation })
+        .await;
 
     let stop_started = Instant::now();
     match handle.stop(config).await {
@@ -143,40 +138,29 @@ pub(super) async fn process_recording_bg(
                 stop_elapsed.as_millis()
             );
 
-            // Gate 1: minimum duration.
-            if result.duration_secs < server_config.min_duration_secs {
-                warn!(
-                    "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_duration DROPPED ({:.1}s < {:.1}s min)",
-                    result.duration_secs,
-                    server_config.min_duration_secs
-                );
-                update_state_if_current(
-                    &state,
-                    &session_generation,
-                    generation,
-                    ServerState::Idle,
-                    "idle_after_short_recording",
-                )
-                .await;
-                return;
-            }
-
-            // Gate 2: silence detection.
-            if result.peak_rms < server_config.silence_threshold {
-                warn!(
-                    "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_silence DROPPED (peak_rms={:.6} < threshold={:.6})",
-                    result.peak_rms,
-                    server_config.silence_threshold
-                );
-                update_state_if_current(
-                    &state,
-                    &session_generation,
-                    generation,
-                    ServerState::Idle,
-                    "idle_after_silence",
-                )
-                .await;
-                return;
+            // Gates 1 and 2 (minimum duration, silence) run in the module.
+            //
+            // Falls OPEN when the module cannot be reached, for the same
+            // reason as the hallucination gate below.
+            let gates = RecordingGates {
+                min_duration_secs: server_config.min_duration_secs,
+                silence_threshold: server_config.silence_threshold,
+            };
+            match gate_recording(config, result.duration_secs, result.peak_rms, gates).await {
+                Ok(GateVerdict::Pass) => {}
+                Ok(verdict) => {
+                    warn!(
+                        "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_recording DROPPED verdict={verdict:?} duration={:.1}s peak_rms={:.6}",
+                        result.duration_secs, result.peak_rms
+                    );
+                    recorder
+                        .advance(config, SessionInput::Finished { generation })
+                        .await;
+                    return;
+                }
+                Err(error) => warn!(
+                    "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_recording UNAVAILABLE ({error}); passing recording through"
+                ),
             }
 
             // Build initial_prompt from dictionary + recent transcripts.
@@ -238,14 +222,9 @@ pub(super) async fn process_recording_bg(
                             "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_hallucination DROPPED text='{}'",
                             truncate_for_log(text, 60)
                         );
-                        update_state_if_current(
-                            &state,
-                            &session_generation,
-                            generation,
-                            ServerState::Idle,
-                            "idle_after_hallucination",
-                        )
-                        .await;
+                        recorder
+                            .advance(config, SessionInput::Finished { generation })
+                            .await;
                         return;
                     }
 
@@ -321,39 +300,9 @@ pub(super) async fn process_recording_bg(
         "{LOG_PREFIX} [pipeline={pipeline_id}] stage=done total_pipeline_ms={}",
         pipeline_started.elapsed().as_millis()
     );
-    update_state_if_current(
-        &state,
-        &session_generation,
-        generation,
-        ServerState::Idle,
-        "idle_after_processing",
-    )
-    .await;
-}
-
-pub(super) async fn update_state_if_current(
-    state: &Arc<Mutex<ServerState>>,
-    session_generation: &Arc<std::sync::atomic::AtomicU64>,
-    generation: u64,
-    next_state: ServerState,
-    reason: &str,
-) {
-    let latest_generation = session_generation.load(Ordering::Relaxed);
-    if latest_generation != generation {
-        debug!(
-            "{LOG_PREFIX} skipped stale state update reason={} generation={} latest_generation={} next_state={next_state:?}",
-            reason,
-            generation,
-            latest_generation
-        );
-        return;
-    }
-
-    debug!(
-        "{LOG_PREFIX} state update reason={} generation={} next_state={next_state:?}",
-        reason, generation
-    );
-    *state.lock().await = next_state;
+    recorder
+        .advance(config, SessionInput::Finished { generation })
+        .await;
 }
 
 pub(super) fn truncate_for_log(s: &str, max: usize) -> String {

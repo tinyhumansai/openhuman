@@ -1,15 +1,17 @@
-use crate::agent::harness::definition::{
-    AgentDefinition, AgentDefinitionRegistry, AgentTier, DefinitionSource, ModelSpec, SandboxMode,
-    SubagentEntry, ToolScope,
+use crate::agent::harness::host_definition::{AgentDefinition, AgentDefinitionRegistry};
+use crate::core::runtime::DispatchCtx;
+use tinyagents_definition::{
+    AgentTier, DefinitionSource, ModelSpec, SandboxMode, SubagentEntry, ToolScope,
 };
-use crate::config::rpc as config_rpc;
 
 use super::types::{AgentDefinitionDisplay, AgentDefinitionModel, AgentDefinitionSource};
 
-pub async fn list_definition_metadata() -> Result<Vec<AgentDefinitionDisplay>, String> {
+pub async fn list_definition_metadata(
+    ctx: &DispatchCtx,
+) -> Result<Vec<AgentDefinitionDisplay>, String> {
     tracing::debug!("[rpc][agent_library][entry] list_definitions");
     if AgentDefinitionRegistry::global().is_none() {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         AgentDefinitionRegistry::init_global(&config.workspace_dir)
             .map_err(|e| format!("failed to initialise AgentDefinitionRegistry: {e}"))?;
     }
@@ -52,7 +54,7 @@ pub fn metadata_from_definition(def: &AgentDefinition) -> AgentDefinitionDisplay
         direct_tool_names,
         uses_wildcard_tools,
         subagent_ids,
-        includes_memory_context: !def.omit_memory_context,
+        includes_memory_context: !def.extensions.omit_memory_context,
         can_run_as_user_facing_worker,
         write_capable: is_write_capable(def),
         source: match &def.source {

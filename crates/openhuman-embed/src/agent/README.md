@@ -5,7 +5,7 @@ An agent is one fully described, independently configured participant on a
 build step that turns it into a live `Agent`, and the handle the host keeps.
 `Runtime::agent` is the only caller of the build step; hosts call `Agent::run`
 and `Agent::turn`. See
-[`gitbooks/developing/embedding.md`](../../../../gitbooks/developing/embedding.md)
+[`docs/gitbooks/en/developing/embedding.md`](../../../../docs/gitbooks/en/developing/embedding.md)
 for how agents fit into the two-step library API.
 
 ## How it works
@@ -191,6 +191,6 @@ cargo test -p openhuman-embed --features inference,mcp,skills --test attached_to
 
 ## Further reading
 
-- [`gitbooks/developing/embedding.md`](../../../../gitbooks/developing/embedding.md): embedding the core in another product.
-- [`gitbooks/developing/architecture/agent-harness.md`](../../../../gitbooks/developing/architecture/agent-harness.md): the agent harness.
+- [`docs/gitbooks/en/developing/embedding.md`](../../../../docs/gitbooks/en/developing/embedding.md): embedding the core in another product.
+- [`docs/gitbooks/en/developing/architecture/agent-harness.md`](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md): the agent harness.
 - [`crates/openhuman-embed/README.md`](../../README.md): the openhuman-embed crate README.

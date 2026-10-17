@@ -21,13 +21,16 @@ async fn secret_material_is_disabled_error() {
 
 #[tokio::test]
 async fn prepare_transfer_is_disabled_error() {
-    let err = prepare_transfer(PrepareTransferParams {
-        chain: WalletChain::Solana,
-        to_address: "recipient".to_string(),
-        amount_raw: "1".to_string(),
-        asset_symbol: None,
-        evm_network: None,
-    })
+    let err = prepare_transfer(
+        PrepareTransferParams {
+            chain: WalletChain::Solana,
+            to_address: "recipient".to_string(),
+            amount_raw: "1".to_string(),
+            asset_symbol: None,
+            evm_network: None,
+        },
+        None,
+    )
     .await
     .expect_err("no transfer can be prepared when the wallet is compiled out");
     assert_eq!(err, DISABLED_MSG);
@@ -35,10 +38,13 @@ async fn prepare_transfer_is_disabled_error() {
 
 #[tokio::test]
 async fn execute_prepared_is_disabled_error() {
-    let err = execute_prepared(ExecutePreparedParams {
-        quote_id: "quote".to_string(),
-        confirmed: true,
-    })
+    let err = execute_prepared(
+        ExecutePreparedParams {
+            quote_id: "quote".to_string(),
+            confirmed: true,
+        },
+        None,
+    )
     .await
     .expect_err("no prepared transfer can execute when the wallet is compiled out");
     assert_eq!(err, DISABLED_MSG);

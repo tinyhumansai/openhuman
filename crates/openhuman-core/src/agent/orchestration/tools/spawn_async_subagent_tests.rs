@@ -1,14 +1,118 @@
 use super::*;
-use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
-use crate::agent::prompts::ToolCallFormat;
+use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::config::AgentConfig;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tinytools::{ToolCallOptions, ToolRunContext};
+use tinytools_agent::dialect::ToolCallFormat;
 
 struct ThreadContext(&'static str);
+
+#[tokio::test]
+async fn late_registration_refusal_aborts_the_worker_and_settles_its_durable_session() {
+    let test = format!(
+        "{}::late_registration_refusal_aborts_the_worker_and_settles_its_durable_session",
+        module_path!().split_once("::").unwrap().1
+    );
+    const CHILD: &str = "OPENHUMAN_LATE_REGISTRATION_TEST_CHILD";
+    if std::env::var(CHILD).as_deref() != Ok(test.as_str()) {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &test, "--nocapture", "--test-threads=1"])
+            .env(CHILD, &test)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "actual late-refusal control failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet, Mode};
+    crate::core::runtime::mode::lock_mode(Mode::Saas).unwrap();
+    assert!(crate::storage::installed().is_none());
+    let workspace = tempfile::tempdir().unwrap();
+    let config = crate::config::Config {
+        workspace_dir: workspace.path().to_path_buf(),
+        ..crate::config::Config::default()
+    };
+    let owner = CoreContext::for_test(DomainSet::saas(), None).derive_with(
+        ContextOverlay::new(
+            config,
+            DomainSet::saas(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .profile("late-registration-owner"),
+    );
+    let store = SubagentSessionStore::new(workspace.path().to_path_buf());
+    let session = CoreContext::sync_scope(owner.clone(), || {
+        subagent_sessions::upsert_running(
+            &store,
+            SubagentSessionUpsert {
+                selector: SubagentSessionSelector {
+                    parent_session: "late-parent".into(),
+                    parent_thread_id: Some("late-parent-thread".into()),
+                    agent_id: "task_manager_agent".into(),
+                    model: None,
+                    sandbox_mode: "None".into(),
+                    action_root: None,
+                    task_key: "late-registration".into(),
+                },
+                display_name: None,
+                task_title: "late refusal".into(),
+                worker_thread_id: None,
+                task_id: "late-refusal-task".into(),
+            },
+            None,
+        )
+        .unwrap()
+    });
+    assert_eq!(session.status, DurableSubagentStatus::Running);
+    // The original durable intent was admitted above. Now exercise the actual
+    // late registration guard after the task scope is absent, not an injected
+    // synthetic error or an accepted worker under another actor.
+    let join = tokio::spawn(std::future::pending::<()>());
+    let (_tx, rx) = running_subagents::status_channel();
+    let refused = running_subagents::register(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "late-refusal-task".into(),
+        "task_manager_agent".into(),
+        "late-parent".into(),
+        None,
+        Some(session.subagent_session_id.clone()),
+        workspace.path().to_path_buf(),
+        None,
+        Arc::new(RunQueue::new()),
+        join.abort_handle(),
+        rx,
+    );
+    assert!(matches!(
+        &refused,
+        Err(running_subagents::RegistrationError::Scope)
+    ));
+    assert!(join.await.unwrap_err().is_cancelled());
+    CoreContext::sync_scope(owner, || {
+        let error = finish_spawn_registration(
+            refused,
+            &store,
+            &session.subagent_session_id,
+            "late-refusal-task",
+        )
+        .unwrap_err();
+        assert!(error.contains("scope"));
+        let persisted = store.load().unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].status, DurableSubagentStatus::Failed);
+        assert_eq!(persisted[0].latest_error.as_deref(), Some(error.as_str()));
+        assert!(
+            running_subagents::task_records(Some("late-parent")).is_empty(),
+            "refused registration must not create a Running task ledger row"
+        );
+    });
+}
 
 impl ToolRunContext for ThreadContext {
     fn thread_id(&self) -> Option<&str> {
@@ -72,7 +176,7 @@ fn accepted_message_hides_task_id_from_prose() {
 #[test]
 fn wait_only_fleet_omits_steering_guidance_and_instruction() {
     let fleet = FleetToolSet::from_scope(
-        &crate::agent::harness::definition::ToolScope::Named(vec!["wait_subagent".to_string()]),
+        &tinyagents_definition::ToolScope::Named(vec!["wait_subagent".to_string()]),
         &[],
     );
     assert!(fleet.can_wait());
@@ -293,6 +397,7 @@ fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
     use crate::threads::store::CreateConversationThread;
     let temp = tempfile::tempdir().expect("tempdir");
     conversations::ensure_thread(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path().to_path_buf(),
         CreateConversationThread {
             id: "thread-parent".into(),
@@ -310,6 +415,7 @@ fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
         r#"{"type":"workflow_proposal","persisted":false,"name":"Daily X Trending Email","graph":{"nodes":[],"edges":[]}}"#,
     )];
     let summary = attach_workflow_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path(),
         Some("thread-parent"),
         "sub-task-1",
@@ -326,8 +432,12 @@ fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
 
     // Proposal is durably persisted in the parent thread with rehydratable
     // metadata (this is what survives reload / a dropped socket event).
-    let messages =
-        conversations::get_messages(temp.path().to_path_buf(), "thread-parent").expect("messages");
+    let messages = conversations::get_messages(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+        "thread-parent",
+    )
+    .expect("messages");
     let proposal_msg = messages
         .iter()
         .find(|m| m.id == "workflow-proposal:sub-task-1")
@@ -346,6 +456,7 @@ fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
 fn attach_workflow_proposal_without_proposal_returns_summary_unchanged() {
     let temp = tempfile::tempdir().expect("tempdir");
     let summary = attach_workflow_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
         temp.path(),
         Some("thread-x"),
         "sub-task-2",
@@ -380,9 +491,9 @@ async fn missing_prompt_returns_error() {
 /// `agent` node, CLI, cron) must get a clear, actionable error instead of
 /// silently accepting the spawn and later dropping its result in
 /// `background_delivery`'s "headless batch" path. Sets up a real parent
-/// turn context (so the call gets past the `current_parent()` /
-/// allowlist / registry checks) but deliberately does NOT wrap the call
-/// without an explicit parent thread, so the child has no thread — the exact
+/// turn context (so the call gets past the parent-context /
+/// allowlist / registry checks) but deliberately gives the call
+/// no explicit parent thread, so the child has no thread — the exact
 /// condition that used to sail through to `tokio::spawn` and lose the
 /// result.
 #[tokio::test]
@@ -390,16 +501,18 @@ async fn errors_clearly_when_no_parent_thread_for_delivery() {
     let _ = AgentDefinitionRegistry::init_global_builtins();
     let workspace = tempfile::TempDir::new().expect("workspace");
 
-    let result = with_parent_context(parent_context(workspace.path()), async {
-        SpawnAsyncSubagentTool::new()
-            .execute(json!({
+    let result = SpawnAsyncSubagentTool::new()
+        .execute_under_parent(
+            json!({
                 "agent_id": "task_manager_agent",
                 "prompt": "investigate x",
-            }))
-            .await
-    })
-    .await
-    .unwrap();
+            }),
+            ToolCallOptions::default(),
+            None,
+            parent_context(workspace.path()),
+        )
+        .await
+        .unwrap();
 
     assert!(result.is_error);
     let out = result.output();
@@ -434,20 +547,18 @@ async fn guard_does_not_fire_when_parent_thread_is_bound() {
     let workspace = tempfile::TempDir::new().expect("workspace");
 
     let thread = ThreadContext("t-parent");
-    let result = with_parent_context(parent_context(workspace.path()), async {
-        SpawnAsyncSubagentTool::new()
-            .execute_with_context(
-                json!({
-                    "agent_id": "task_manager_agent",
-                    "prompt": "investigate x",
-                }),
-                ToolCallOptions::default(),
-                Some(&thread),
-            )
-            .await
-    })
-    .await
-    .unwrap();
+    let result = SpawnAsyncSubagentTool::new()
+        .execute_under_parent(
+            json!({
+                "agent_id": "task_manager_agent",
+                "prompt": "investigate x",
+            }),
+            ToolCallOptions::default(),
+            Some(&thread),
+            parent_context(workspace.path()),
+        )
+        .await
+        .unwrap();
 
     assert!(
         !result.output().contains("no parent chat thread"),
@@ -483,6 +594,7 @@ fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
         session_parent_prefix: None,
         on_progress: None,
         run_queue: None,
+        host_env: Default::default(),
     }
 }
 

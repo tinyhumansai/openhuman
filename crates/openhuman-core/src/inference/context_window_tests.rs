@@ -9,16 +9,6 @@ use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::schema::ModelRegistryEntry;
 use crate::security::credentials::AuthService;
 
-#[test]
-fn remembered_windows_are_scoped_to_provider_routes() {
-    let model = "route-cache-isolation-model";
-    remember_window("route-a", model, 32_000);
-    remember_window("route-b", model, 96_000);
-
-    assert_eq!(remembered_window("route-a", model), Some(32_000));
-    assert_eq!(remembered_window("route-b", model), Some(96_000));
-}
-
 const OPENROUTER: &str = "https://openrouter.ai/api/v1";
 const V41_FLASH: &str = "deepseek/deepseek-v4.1-flash";
 
@@ -249,7 +239,8 @@ async fn unknown_model_without_provider_data_is_unknown() {
         resolved,
         ResolvedWindow {
             window: None,
-            source: WindowSource::Unknown
+            source: WindowSource::Unknown,
+            max_output_tokens: None,
         }
     );
 }
@@ -342,6 +333,8 @@ async fn failed_ollama_probe_is_remembered_and_not_retried() {
     let tmp = TempDir::new().unwrap();
     let mut config = openrouter_config(&tmp);
     config.local_ai.base_url = Some("http://127.0.0.1:11434".to_string());
+    // The resolver remembers provider-sourced windows process-wide, so this
+    // test uses a model id no other test resolves successfully.
     let fetcher = FakeFetcher::default();
     let cache = ModelLimitsCache::default();
     for _ in 0..3 {
@@ -349,8 +342,8 @@ async fn failed_ollama_probe_is_remembered_and_not_retried() {
             &fetcher,
             &cache,
             "chat",
-            "ollama:qwen3:14b",
-            "qwen3:14b",
+            "ollama:qwen3:failed-probe",
+            "qwen3:failed-probe",
             &config,
         )
         .await;

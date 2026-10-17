@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use tinyagents_session::transcript::{write_transcript, TranscriptMeta};
+use tinyagents_session::transcript::TranscriptMeta;
 
 use super::{
     checkin_session_agent, checkin_session_agent_if_vacant, checkout_session_agent,
@@ -16,6 +16,7 @@ use super::{
 };
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
 use crate::web_chat::ops::{key_for, thread_sessions};
 use crate::web_chat::types::SessionCacheFingerprint;
 use tinyagents_session::transcript::TranscriptMessage;
@@ -73,7 +74,7 @@ fn write_thread_transcript(workspace_dir: &Path, stem: &str, thread_id: &str, ro
         thread_id: Some(thread_id.to_string()),
         task_id: None,
     };
-    write_transcript(&path, &messages, &meta, None).unwrap();
+    crate::util::classic_transcript_fixture::write_classic(&path, &messages, &meta);
 }
 
 fn prose(history: &[TranscriptEntry]) -> Vec<String> {
@@ -87,7 +88,12 @@ fn prose(history: &[TranscriptEntry]) -> Vec<String> {
 }
 
 pub(super) fn host_seeded_with(config: &Config, marker: &str) -> OpenHumanSessionHost {
-    let mut host = OpenHumanSessionHost::from_config_for_agent(config, "orchestrator").unwrap();
+    let mut host = OpenHumanSessionHost::from_config_for_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config,
+        "orchestrator",
+    )
+    .unwrap();
     host.seed_resume_from_messages(
         vec![
             ("user".to_string(), marker.to_string()),
@@ -100,10 +106,10 @@ pub(super) fn host_seeded_with(config: &Config, marker: &str) -> OpenHumanSessio
 }
 
 async fn evict(thread_id: &str) {
-    thread_sessions()
+    thread_sessions(&DispatchCtx::ambient())
         .lock_owned()
         .await
-        .remove(&key_for(thread_id));
+        .remove(&key_for(&DispatchCtx::ambient(), thread_id));
 }
 
 #[tokio::test]
@@ -126,6 +132,7 @@ async fn checkout_cold_boots_from_the_thread_transcript_and_checkin_keeps_it_war
         mut agent,
         fingerprint,
     } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         super::super::SYSTEM_CLIENT_ID,
         &thread_id,
@@ -151,14 +158,17 @@ async fn checkout_cold_boots_from_the_thread_transcript_and_checkin_keeps_it_war
         "cold checkout must resume the thread's transcript, got {history:?}"
     );
 
-    checkin_session_agent(&thread_id, agent, fingerprint).await;
-    assert!(thread_sessions()
-        .lock()
-        .await
-        .contains_key(&key_for(&thread_id)));
+    checkin_session_agent(&DispatchCtx::ambient(), &thread_id, agent, fingerprint).await;
+    assert!(
+        thread_sessions(&crate::core::runtime::DispatchCtx::ambient())
+            .lock()
+            .await
+            .contains_key(&key_for(&DispatchCtx::ambient(), &thread_id))
+    );
 
     // The next checkout — a user turn — reuses the warm agent with that history.
     let CheckedOutSession { agent, .. } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -176,10 +186,12 @@ async fn checkout_cold_boots_from_the_thread_transcript_and_checkin_keeps_it_war
         "warm checkout must carry the same history"
     );
     // Checked out means removed: nobody else can drive this agent meanwhile.
-    assert!(!thread_sessions()
-        .lock()
-        .await
-        .contains_key(&key_for(&thread_id)));
+    assert!(
+        !thread_sessions(&crate::core::runtime::DispatchCtx::ambient())
+            .lock()
+            .await
+            .contains_key(&key_for(&DispatchCtx::ambient(), &thread_id))
+    );
     evict(&thread_id).await;
 }
 
@@ -194,14 +206,27 @@ async fn checkin_if_vacant_yields_to_a_turn_that_re_cached_meanwhile() {
     // A user turn finished while the system turn was running and cached its
     // agent unconditionally.
     let user_turn_agent = host_seeded_with(&config, "user-turn-history");
-    checkin_session_agent(&thread_id, user_turn_agent, fingerprint(&config)).await;
+    checkin_session_agent(
+        &DispatchCtx::ambient(),
+        &thread_id,
+        user_turn_agent,
+        fingerprint(&config),
+    )
+    .await;
 
     // The system turn must not clobber it.
     let system_turn_agent = host_seeded_with(&config, "system-turn-history");
     assert!(
-        !checkin_session_agent_if_vacant(&thread_id, system_turn_agent, fingerprint(&config)).await
+        !checkin_session_agent_if_vacant(
+            &DispatchCtx::ambient(),
+            &thread_id,
+            system_turn_agent,
+            fingerprint(&config)
+        )
+        .await
     );
     let CheckedOutSession { agent, .. } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -217,9 +242,16 @@ async fn checkin_if_vacant_yields_to_a_turn_that_re_cached_meanwhile() {
     // Into a vacant slot it goes in.
     let system_turn_agent = host_seeded_with(&config, "system-turn-history");
     assert!(
-        checkin_session_agent_if_vacant(&thread_id, system_turn_agent, fingerprint(&config)).await
+        checkin_session_agent_if_vacant(
+            &DispatchCtx::ambient(),
+            &thread_id,
+            system_turn_agent,
+            fingerprint(&config)
+        )
+        .await
     );
     let CheckedOutSession { agent, .. } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -242,6 +274,7 @@ async fn a_fork_never_takes_or_returns_the_cached_agent() {
     let fingerprint =
         super::build_session_fingerprint(&config, None, None, "orchestrator".into(), "chat");
     checkin_session_agent(
+        &DispatchCtx::ambient(),
         &thread_id,
         host_seeded_with(&config, "primary-history"),
         fingerprint,
@@ -249,6 +282,7 @@ async fn a_fork_never_takes_or_returns_the_cached_agent() {
     .await;
 
     let CheckedOutSession { agent, .. } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -262,10 +296,12 @@ async fn a_fork_never_takes_or_returns_the_cached_agent() {
     // Built fresh: no transcript on disk for this thread, so an empty history.
     assert!(prose(&agent.history()).is_empty());
     // The primary's cached agent was left in place.
-    assert!(thread_sessions()
-        .lock()
-        .await
-        .contains_key(&key_for(&thread_id)));
+    assert!(
+        thread_sessions(&crate::core::runtime::DispatchCtx::ambient())
+            .lock()
+            .await
+            .contains_key(&key_for(&DispatchCtx::ambient(), &thread_id))
+    );
     evict(&thread_id).await;
 }
 
@@ -279,6 +315,7 @@ async fn a_system_turn_adopts_the_cached_agent_and_its_fingerprint() {
     let pinned =
         super::build_session_fingerprint(&config, None, Some(0.2), "orchestrator".into(), "chat");
     checkin_session_agent(
+        &DispatchCtx::ambient(),
         &thread_id,
         host_seeded_with(&config, "pinned-history"),
         pinned.clone(),
@@ -286,6 +323,7 @@ async fn a_system_turn_adopts_the_cached_agent_and_its_fingerprint() {
     .await;
 
     let CheckedOutSession { agent, fingerprint } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         super::super::SYSTEM_CLIENT_ID,
         &thread_id,
@@ -300,8 +338,9 @@ async fn a_system_turn_adopts_the_cached_agent_and_its_fingerprint() {
     assert_eq!(fingerprint, pinned, "handed back under the user's settings");
 
     // An exact user checkout with the same settings then still hits warm.
-    checkin_session_agent_if_vacant(&thread_id, agent, fingerprint).await;
+    checkin_session_agent_if_vacant(&DispatchCtx::ambient(), &thread_id, agent, fingerprint).await;
     let CheckedOutSession { agent, .. } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -326,6 +365,7 @@ async fn a_thread_binds_one_stable_session_across_cold_boots() {
     let thread_id = unique_thread("stable");
 
     let first = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -338,6 +378,7 @@ async fn a_thread_binds_one_stable_session_across_cold_boots() {
     .unwrap();
     // Nothing is checked back in, so the next checkout is a genuine cold boot.
     let second = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config,
         "client-1",
         &thread_id,
@@ -511,7 +552,8 @@ fn fingerprint_diff_reports_every_differing_field() {
 #[test]
 fn chat_agent_id_selects_the_web_chat_agent_and_defaults_to_the_orchestrator() {
     use super::pick_target_agent_id;
-    crate::agent::harness::AgentDefinitionRegistry::init_global_builtins().unwrap();
+    crate::agent::harness::host_definition::AgentDefinitionRegistry::init_global_builtins()
+        .unwrap();
 
     let mut config = crate::config::Config::default();
     assert_eq!(
@@ -564,6 +606,7 @@ async fn a_system_turn_never_adopts_an_agent_from_another_workspace() {
     let built_for_a =
         super::build_session_fingerprint(&config_a, None, None, "orchestrator".into(), "chat");
     checkin_session_agent(
+        &DispatchCtx::ambient(),
         &thread_id,
         host_seeded_with(&config_a, "user-a-history"),
         built_for_a,
@@ -571,6 +614,7 @@ async fn a_system_turn_never_adopts_an_agent_from_another_workspace() {
     .await;
 
     let CheckedOutSession { agent, fingerprint } = checkout_session_agent(
+        &DispatchCtx::ambient(),
         &config_b,
         super::super::SYSTEM_CLIENT_ID,
         &thread_id,
@@ -613,6 +657,7 @@ async fn each_checkout_arms_the_reply_language_from_its_own_locale() {
         let thread_id = thread_id.clone();
         async move {
             checkout_session_agent(
+                &DispatchCtx::ambient(),
                 &config,
                 "client-1",
                 &thread_id,
@@ -632,15 +677,15 @@ async fn each_checkout_arms_the_reply_language_from_its_own_locale() {
         .reply_language_directive()
         .expect("es arms a directive");
     assert!(directive.contains("Spanish"), "{directive}");
-    checkin_session_agent(&thread_id, agent, fingerprint).await;
+    checkin_session_agent(&DispatchCtx::ambient(), &thread_id, agent, fingerprint).await;
 
     // Reused cached agent, the user switched the UI to English: the Spanish
     // directives already in the history are superseded explicitly.
     assert!(
-        thread_sessions()
+        thread_sessions(&crate::core::runtime::DispatchCtx::ambient())
             .lock()
             .await
-            .contains_key(&key_for(&thread_id)),
+            .contains_key(&key_for(&DispatchCtx::ambient(), &thread_id)),
         "fixture: the next checkout must reuse the cached agent"
     );
     let CheckedOutSession { agent, fingerprint } = checkout(Some("en")).await;
@@ -648,13 +693,15 @@ async fn each_checkout_arms_the_reply_language_from_its_own_locale() {
         .reply_language_directive()
         .expect("switching to English supersedes the Spanish directive");
     assert!(directive.contains("Respond in English"), "{directive}");
-    checkin_session_agent(&thread_id, agent, fingerprint).await;
+    checkin_session_agent(&DispatchCtx::ambient(), &thread_id, agent, fingerprint).await;
 
     // Reused again, now Hindi: re-armed with the new language.
-    assert!(thread_sessions()
-        .lock()
-        .await
-        .contains_key(&key_for(&thread_id)));
+    assert!(
+        thread_sessions(&crate::core::runtime::DispatchCtx::ambient())
+            .lock()
+            .await
+            .contains_key(&key_for(&DispatchCtx::ambient(), &thread_id))
+    );
     let CheckedOutSession { agent, .. } = checkout(Some("hi")).await;
     let directive = agent
         .reply_language_directive()
@@ -673,6 +720,7 @@ async fn an_english_only_session_and_a_locale_less_turn_carry_no_directive() {
     let thread_id = unique_thread("english");
     for locale in [Some("en"), None] {
         let CheckedOutSession { agent, fingerprint } = checkout_session_agent(
+            &DispatchCtx::ambient(),
             &config,
             "client-1",
             &thread_id,
@@ -684,7 +732,7 @@ async fn an_english_only_session_and_a_locale_less_turn_carry_no_directive() {
         .await
         .unwrap();
         assert_eq!(agent.reply_language_directive(), None, "{locale:?}");
-        checkin_session_agent(&thread_id, agent, fingerprint).await;
+        checkin_session_agent(&DispatchCtx::ambient(), &thread_id, agent, fingerprint).await;
     }
     evict(&thread_id).await;
 }

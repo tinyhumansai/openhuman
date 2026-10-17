@@ -1,4 +1,5 @@
 use super::*;
+use tinyagents_definition::{ModelSpec, SubagentEntry};
 
 /// Extract the materialized allowlist, failing if projection widens to wildcard.
 trait NamedToolScope {
@@ -162,7 +163,7 @@ async fn authorized_delegates_agree_with_boot_time_validation() {
 
     let registry = builtins();
     for def in &builtin_defs {
-        let declared = declared_subagent_ids(def);
+        let declared = def.allowed_subagent_ids();
         let authorized = registry
             .delegates_for(&def.id)
             .await
@@ -231,12 +232,12 @@ fn projected_model_preserves_inherit_exact_and_hint_routing() {
 
 #[test]
 fn skills_wildcard_entries_are_not_agent_ids() {
-    use crate::agent::harness::definition::SkillsWildcard;
+    use tinyagents_definition::SkillsWildcard;
     let mut def = synthetic("lead", AgentTier::Chat, &["a_worker"]);
     def.subagents.push(SubagentEntry::Skills(SkillsWildcard {
         skills: "*".to_string(),
     }));
-    assert_eq!(declared_subagent_ids(&def), vec!["a_worker".to_string()]);
+    assert_eq!(def.allowed_subagent_ids(), vec!["a_worker".to_string()]);
 }
 
 #[test]

@@ -79,5 +79,5 @@ The editable surface is restricted to the `BOOTSTRAP_FILES` allowlist (`SOUL.md`
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Settings](../../../../../gitbooks/features/settings.md)
-- [Deep architecture reference](../../../../../gitbooks/developing/architecture.md)
+- [Settings](../../../../../docs/gitbooks/en/features/settings.md)
+- [Deep architecture reference](../../../../../docs/gitbooks/en/developing/architecture.md)

@@ -111,6 +111,7 @@ async fn model_completed_projects_generation_with_content_and_provider() {
         Arc::default(),
         Arc::default(),
         Vec::new(),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     let sink = EventSink::new();
     sink.subscribe(bridge.clone());
@@ -186,6 +187,7 @@ async fn subagent_model_completed_carries_task_attribution() {
         Arc::default(),
         Arc::default(),
         Vec::new(),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     let sink = EventSink::new();
     sink.subscribe(bridge.clone());
@@ -347,7 +349,7 @@ async fn unknown_tool_call_projects_exactly_one_failed_timeline_row() {
     let failure = failure.expect("the failed row carries a classified failure");
     assert_eq!(
         failure.class,
-        crate::tools::status::ToolFailureClass::NotFound,
+        tinytools::status::ToolFailureClass::NotFound,
         "an unavailable tool must be classified NotFound, not Unknown"
     );
     assert!(!failure.recoverable);
@@ -398,6 +400,7 @@ async fn unknown_tool_call_in_a_child_run_projects_one_subagent_row() {
         Arc::default(),
         Arc::default(),
         Vec::new(),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     let sink = EventSink::new();
     sink.subscribe(bridge.clone());
@@ -417,10 +420,7 @@ async fn unknown_tool_call_in_a_child_run_projects_one_subagent_row() {
         }
     }
     assert_eq!((started, completed), (1, 1));
-    assert_eq!(
-        class,
-        Some(crate::tools::status::ToolFailureClass::NotFound)
-    );
+    assert_eq!(class, Some(tinytools::status::ToolFailureClass::NotFound));
 }
 
 /// W2-budget-dedupe: two `UsageRecorded` events for the *same* model call
@@ -509,6 +509,7 @@ async fn tool_call_events_use_the_tool_s_own_display_label_and_detail() {
         Arc::default(),
         Arc::default(),
         fake_tool_sets(),
+        crate::core::runtime::DispatchCtx::ambient(),
     );
     let sink = EventSink::new();
     sink.subscribe(bridge.clone());
@@ -570,5 +571,42 @@ async fn tool_call_events_use_the_tool_s_own_display_label_and_detail() {
         completed_detail,
         Some("steven@example.com".to_string()),
         "the completed detail is recomputed from the real call arguments"
+    );
+}
+
+/// A running tool's progress report reaches the web channel as
+/// `ToolCallProgress` for the same call; an update with no message does not.
+#[tokio::test]
+async fn bridge_forwards_tool_progress_with_a_message() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let bridge = OpenhumanEventBridge::new(Some(tx), "mock-model", 10);
+    let sink = EventSink::new();
+    sink.subscribe(bridge.clone());
+
+    sink.emit(AgentEvent::ToolProgressDetail {
+        call_id: "c1".into(),
+        message: "running 4m 12s · 38.2 KB output".to_string(),
+        fraction: None,
+        partial: None,
+    });
+    sink.emit(AgentEvent::ToolProgressDetail {
+        call_id: "c1".into(),
+        message: String::new(),
+        fraction: Some(0.5),
+        partial: None,
+    });
+
+    let mut progress = Vec::new();
+    while let Ok(p) = rx.try_recv() {
+        if let AgentProgress::ToolCallProgress { call_id, message } = p {
+            progress.push((call_id, message));
+        }
+    }
+    assert_eq!(
+        progress,
+        vec![(
+            "c1".to_string(),
+            "running 4m 12s · 38.2 KB output".to_string()
+        )]
     );
 }

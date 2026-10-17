@@ -93,6 +93,20 @@ pub struct SandboxBackendHandle {
     pub status: SandboxStatus,
     /// Container ID for Docker backends; jail label for local.
     pub backend_id: Option<String>,
+    /// How strongly a ready local jail confines commands; `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<SandboxIsolation>,
+}
+
+/// The confinement a local native jail actually provides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxIsolation {
+    /// Kernel (or stronger) process isolation: fit for untrusted code.
+    Isolated,
+    /// Writes confined to the selected folder (macOS Seatbelt); no process
+    /// isolation.
+    FolderConfined,
 }
 
 /// Health/lifecycle status of a sandbox backend.

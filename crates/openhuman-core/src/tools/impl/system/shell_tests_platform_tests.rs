@@ -1,11 +1,13 @@
-//! Platform-aware shell description and the child environment builder
-//! (`shell_platform.rs`), exercised through the `shell` tool.
+//! Platform-aware shell description (`shell_description.rs`) and the Python
+//! encoding defaults, exercised through the `shell` tool.
 //!
-//! Both take the platform / parent environment as a parameter so the Windows
-//! behaviour is pinned on every CI host, not only on a Windows runner.
+//! The description takes the platform as a parameter so the Windows wording is
+//! pinned on every CI host, not only on a Windows runner.
 
 use super::*;
-use crate::agent::platform_shell::ShellFlavor;
+use crate::agent::host_runtime::{host_shell_flavor, ShellFlavor};
+#[cfg(feature = "modules")]
+use crate::tools::system::shell_support::PYTHON_UTF8_DEFAULTS;
 use std::collections::HashMap;
 use std::ffi::OsString;
 
@@ -51,18 +53,12 @@ fn the_tool_describes_the_shell_this_host_actually_spawns() {
         test_runtime(),
         test_audit(),
     );
-    assert_eq!(
-        tool.description(),
-        shell_description(ShellFlavor::current())
-    );
+    assert_eq!(tool.description(), shell_description(host_shell_flavor()));
     let command_desc = tool.parameters_schema()["properties"]["command"]["description"]
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(
-        command_desc,
-        command_param_description(ShellFlavor::current())
-    );
+    assert_eq!(command_desc, command_param_description(host_shell_flavor()));
     assert!(command_param_description(ShellFlavor::Cmd).contains("cmd.exe"));
 }
 
@@ -81,21 +77,8 @@ fn as_map(env: Vec<(&'static str, OsString)>) -> HashMap<&'static str, String> {
 }
 
 #[test]
-fn python_children_default_to_utf8_io() {
-    // Production: `UnicodeEncodeError: 'charmap'` from Python under cmd.exe,
-    // whose console code page is not UTF-8.
-    let env = as_map(shell_child_env(parent(&[("PATH", "/bin")])));
-    assert_eq!(env.get("PYTHONUTF8").map(String::as_str), Some("1"));
-    assert_eq!(
-        env.get("PYTHONIOENCODING").map(String::as_str),
-        Some("utf-8")
-    );
-    assert_eq!(env.get("PATH").map(String::as_str), Some("/bin"));
-}
-
-#[test]
 fn a_users_own_python_encoding_settings_win() {
-    let env = as_map(shell_child_env(parent(&[
+    let env = as_map(python_utf8_env(parent(&[
         ("PYTHONUTF8", "0"),
         ("PYTHONIOENCODING", "latin-1"),
     ])));
@@ -106,26 +89,54 @@ fn a_users_own_python_encoding_settings_win() {
     );
 }
 
-#[test]
-fn the_child_env_forwards_only_the_allow_list_plus_python_defaults() {
-    let env = as_map(shell_child_env(parent(&[
-        ("PATH", "/bin"),
-        ("USERPROFILE", "C:\\Users\\me"),
-        ("OPENAI_API_KEY", "sk-secret"),
-        ("AWS_SECRET_ACCESS_KEY", "secret"),
-    ])));
-    assert_eq!(
-        env.get("USERPROFILE").map(String::as_str),
-        Some("C:\\Users\\me")
-    );
+/// A Docker container gets the sandbox allowlist from the turn's environment
+/// plus the Python defaults, and never the rest of it.
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn the_container_environment_forwards_only_the_allowlist_plus_python_defaults() {
+    let scoped = tinytools_std::timeout::CommandEnvironment::new([
+        ("PATH".to_owned(), "/bin".to_owned()),
+        ("OPENAI_API_KEY".to_owned(), "sk-secret".to_owned()),
+        ("AWS_SECRET_ACCESS_KEY".to_owned(), "secret".to_owned()),
+    ]);
+    let env = scoped
+        .scope(async { container_environment(None) })
+        .await
+        .unwrap();
+    assert_eq!(env.get("PATH").map(String::as_str), Some("/bin"));
+    assert_eq!(env.get("PYTHONUTF8").map(String::as_str), Some("1"));
     assert!(!env.contains_key("OPENAI_API_KEY"));
     assert!(!env.contains_key("AWS_SECRET_ACCESS_KEY"));
     for key in env.keys() {
         assert!(
-            SAFE_ENV_VARS.contains(key) || PYTHON_UTF8_DEFAULTS.iter().any(|(k, _)| k == key),
+            crate::sandbox::ops::SANDBOX_ENV_PASSTHROUGH.contains(&key.as_str())
+                || PYTHON_UTF8_DEFAULTS.iter().any(|(k, _)| k == key),
             "unexpected {key}"
         );
     }
+}
+
+/// Explicit turn variables reach the module-backed shell without inheriting
+/// unrelated host variables.
+#[cfg(feature = "modules")]
+#[test]
+fn the_container_environment_forwards_explicit_turn_variables() {
+    let explicit = std::collections::BTreeMap::from([
+        ("TURN_OWNER".to_owned(), "isolated".to_owned()),
+        ("WORKER_LABEL".to_owned(), "test".to_owned()),
+    ]);
+    let env = container_environment(Some(&explicit)).unwrap();
+    assert_eq!(env.get("TURN_OWNER").map(String::as_str), Some("isolated"));
+    assert_eq!(env.get("WORKER_LABEL").map(String::as_str), Some("test"));
+    assert!(!env.contains_key("PATH"));
+    assert_eq!(env.get("PYTHONUTF8").map(String::as_str), Some("1"));
+
+    let mut sandbox = HashMap::<OsString, OsString>::new();
+    super::super::super::shell_support::extend_explicit_environment(&mut sandbox, Some(&explicit));
+    assert_eq!(
+        sandbox.get(OsString::from("TURN_OWNER").as_os_str()),
+        Some(&OsString::from("isolated"))
+    );
 }
 
 #[test]
@@ -178,13 +189,6 @@ impl RuntimeAdapter for CmdRuntime {
     }
     fn shell_flavor(&self) -> ShellFlavor {
         ShellFlavor::Cmd
-    }
-    fn build_shell_command(
-        &self,
-        _command: &str,
-        _workspace_dir: &std::path::Path,
-    ) -> anyhow::Result<tokio::process::Command> {
-        anyhow::bail!("not spawned in this test")
     }
 }
 

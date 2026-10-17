@@ -25,10 +25,8 @@
 use super::types::{
     AgentSnapshot, SpawnAgentRequest, SpawnAgentResponse, WaitAgentOptions, WaitAgentResponse,
 };
-use crate::agent::harness::definition::{AgentDefinition, AgentDefinitionRegistry};
-use crate::agent::harness::fork_context::{
-    current_parent, with_parent_context, ParentExecutionContext,
-};
+use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::harness::host_definition::{AgentDefinition, AgentDefinitionRegistry};
 use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
     run_subagent, SubagentRunError, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
@@ -146,7 +144,10 @@ impl AgentOrchestrationSession {
         &self.session_id
     }
 
-    /// Spawn a child agent from the active parent agent turn.
+    /// Spawn a child agent under `parent`, the explicit execution context of the
+    /// agent turn (or controller-built root, see
+    /// [`with_root_parent`](crate::agent::orchestration::parent_context::with_root_parent))
+    /// that is starting it.
     ///
     /// `request` must provide a non-empty `agent_id` and `prompt`; optional
     /// context, model, parent id, and metadata are carried into the
@@ -154,8 +155,7 @@ impl AgentOrchestrationSession {
     /// accepted child id and initial status while a background task executes the
     /// child through [`run_subagent`].
     ///
-    /// Returns [`OrchestrationError::NoParentContext`] when called outside an
-    /// agent turn, [`OrchestrationError::InvalidSpawnRequest`] for an empty
+    /// Returns [`OrchestrationError::InvalidSpawnRequest`] for an empty
     /// agent id or prompt, [`OrchestrationError::RegistryUnavailable`] when the
     /// agent definition registry is not initialized, or
     /// [`OrchestrationError::DefinitionNotFound`] for an unknown agent id. Side
@@ -164,9 +164,9 @@ impl AgentOrchestrationSession {
     /// emitting parent progress when available.
     pub async fn spawn_agent(
         &self,
+        parent: ParentExecutionContext,
         request: SpawnAgentRequest,
     ) -> Result<SpawnAgentResponse, OrchestrationError> {
-        let parent = current_parent().ok_or(OrchestrationError::NoParentContext)?;
         let definition = resolve_definition(&request)?;
         self.spawn_agent_with_definition(parent, definition, request)
             .await
@@ -365,7 +365,8 @@ impl AgentOrchestrationSession {
         // only its route/usage observations are isolated by `child()` in the
         // subagent runner.
         let cancellation = CancellationToken::new();
-        let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+        let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new()
+            .with_host_env(&parent.host_env);
         run_context.parent = Some(parent.clone());
         run_context.progress = parent.on_progress.clone().or(run_context.progress);
         run_context.workspace = parent_workspace_descriptor
@@ -412,24 +413,20 @@ impl AgentOrchestrationSession {
         // carried across the same boundary the parent execution context
         // already is. Without the origin the spawned agent's external-effect
         // tools reach the approval gate unlabelled and are refused.
-        let handle = tokio::spawn(crate::agent::turn_origin::propagate(
-            crate::agent::turn_workspace::propagate(async move {
-                mark_running(&task_status_tx);
-                let result = with_parent_context(parent, async move {
-                    run_subagent(&definition, &prompt, options).await
-                })
+        let handle = tokio::spawn(crate::agent::turn_origin::propagate(async move {
+            mark_running(&task_status_tx);
+            // The parent rides `options.run_context.parent`, built above.
+            let result = run_subagent(&definition, &prompt, options).await;
+            session
+                .finish_agent(
+                    &task_id,
+                    &task_agent_id,
+                    &task_status_tx,
+                    progress_sink,
+                    result,
+                )
                 .await;
-                session
-                    .finish_agent(
-                        &task_id,
-                        &task_agent_id,
-                        &task_status_tx,
-                        progress_sink,
-                        result,
-                    )
-                    .await;
-            }),
-        ));
+        }));
 
         self.registry
             .register(

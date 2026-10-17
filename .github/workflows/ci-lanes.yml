@@ -78,11 +78,45 @@ jobs:
           filters: .github/ci-paths-filter.yml
           base: ${{ inputs.base-ref }}
 
+      - name: Install jq for release-script tests
+        if: steps.filter.outputs.scripts == 'true'
+        env:
+          JQ_URL: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+          JQ_SHA256: 5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5
+        run: |
+          if command -v jq >/dev/null; then
+            exit 0
+          fi
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "::error::no jq on this runner and no pinned build for $(uname -m)"
+            exit 1
+          fi
+          bin="$RUNNER_TEMP/jq-bin"
+          mkdir -p "$bin"
+          curl -fsSL --retry 3 -o "$bin/jq" "$JQ_URL"
+          echo "$JQ_SHA256  $bin/jq" | sha256sum -c -
+          chmod +x "$bin/jq"
+          "$bin/jq" --version
+          echo "$bin" >> "$GITHUB_PATH"
+
       # One step per lane: `Start lanes` launches every lane in the background
       # (they still run in parallel); each `Lane:` step streams its own lane's
       # log live and passes or fails on that lane alone; `Lane summary` waits
       # for the whole run and carries the overall result. `!cancelled()` keeps
       # a red lane from hiding the lanes after it.
+      # The embed-consumer bootstrap uses stdlib tomllib (Python >= 3.11).
+      # Both runner profiles must use the same interpreter before spawning lanes.
+      # It is handed to the lanes explicitly (OPENHUMAN_CI_PYTHON) rather than
+      # exported: an exported toolcache PATH/LD_LIBRARY_PATH leaks into the
+      # Rust tests, whose agent shell keeps PATH but not LD_LIBRARY_PATH, so a
+      # PATH-resolved python3 then cannot load libpython.
+      - name: Setup Python for lanes
+        id: python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          update-environment: false
+
       - name: Start lanes
         id: lanes
         env:
@@ -96,6 +130,7 @@ jobs:
           CI_AREA_TOOLCHAIN_IMAGE: ${{ steps.filter.outputs['toolchain-image'] }}
           CI_AREA_INSTALL_PS1: ${{ steps.filter.outputs.install_ps1 }}
           CI_AREA_STORAGE: ${{ steps.filter.outputs.storage }}
+          OPENHUMAN_CI_PYTHON: ${{ steps.python.outputs.python-path }}
         run: node scripts/ci/self-hosted/lanes.mjs --profile ex63 --detach
 
       - name: "Lane: static checks"
@@ -264,6 +299,12 @@ jobs:
         if: matrix.container != ''
         run: git config --global --add safe.directory '*'
 
+      - name: Install jq for release-script tests
+        if: matrix.container != '' && needs.plan.outputs.scripts == 'true'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends jq python3-tomli
+
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
 
@@ -300,8 +341,23 @@ jobs:
       # log live and passes or fails on that lane alone; `Lane summary` waits
       # for the whole run and carries the overall result. `!cancelled()` keeps
       # a red lane from hiding the lanes after it.
+      # The embed-consumer bootstrap uses stdlib tomllib (Python >= 3.11).
+      # Both runner profiles must use the same interpreter before spawning lanes.
+      # It is handed to the lanes explicitly (OPENHUMAN_CI_PYTHON) rather than
+      # exported: an exported toolcache PATH/LD_LIBRARY_PATH leaks into the
+      # Rust tests, whose agent shell keeps PATH but not LD_LIBRARY_PATH, so a
+      # PATH-resolved python3 then cannot load libpython.
+      - name: Setup Python for lanes
+        id: python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          update-environment: false
+
       - name: Start lanes
         id: lanes
+        env:
+          OPENHUMAN_CI_PYTHON: ${{ steps.python.outputs.python-path }}
         run: >-
           node scripts/ci/self-hosted/lanes.mjs --profile hosted --detach
           --lanes '${{ matrix.lanes }}' --max-parallel ${{ matrix['max-parallel'] }}

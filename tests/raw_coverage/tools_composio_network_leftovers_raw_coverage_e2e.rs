@@ -19,7 +19,7 @@ use openhuman_core::integrations::composio::ops::{composio_authorize, composio_l
 use openhuman_core::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
-use openhuman_core::tools::{
+use openhuman_core::integrations::composio::tools::{
     ComposioListConnectionsTool, ComposioListToolkitsTool, ComposioListToolsTool,
 };
 use tinytools::{Tool, ToolCallOptions};
@@ -230,6 +230,7 @@ async fn round20_composio_ops_cover_authorize_scopes() {
     store_session_token(&harness.config);
 
     let legacy_extra = composio_authorize(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
         &harness.config,
         "gmail",
         Some(json!({ "oauth_scopes": [123] })),
@@ -240,6 +241,7 @@ async fn round20_composio_ops_cover_authorize_scopes() {
     assert_eq!(legacy_extra.connection_id, "conn-authorize");
 
     let authorized = composio_authorize(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
         &harness.config,
         " gmail ",
         Some(json!({ "waba_id": "waba-round20" })),
@@ -250,6 +252,7 @@ async fn round20_composio_ops_cover_authorize_scopes() {
     assert_eq!(authorized.connection_id, "conn-authorize");
 
     let listed = composio_list_tools(
+        &openhuman_core::core::runtime::DispatchCtx::host_default(),
         &harness.config,
         Some(vec!["gmail".into(), "github".into()]),
         Some(vec!["readOnlyHint".into()]),
@@ -257,7 +260,15 @@ async fn round20_composio_ops_cover_authorize_scopes() {
     .await
     .expect("ops list tools")
     .value;
-    assert_eq!(listed.tools.len(), 2);
+    // The connector module lists only curated actions (b80c12358a): its
+    // GitHub catalog has no GITHUB_STAR_REPOSITORY, so the mock's second
+    // tool is gated out.
+    let names: Vec<&str> = listed
+        .tools
+        .iter()
+        .map(|tool| tool.function.name.as_str())
+        .collect();
+    assert_eq!(names, ["GMAIL_FETCH_EMAILS"]);
 
     let requests = state.requests.lock().expect("requests").clone();
     let authorize_body = requests

@@ -6,8 +6,11 @@ use super::*;
 
 #[test]
 fn crate_native_turn_source_retains_only_role_and_config() {
-    let source =
-        TurnModelSource::new_crate_native("chat", Arc::new(crate::config::Config::default()));
+    let source = TurnModelSource::new_crate_native(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        "chat",
+        Arc::new(crate::config::Config::default()),
+    );
 
     assert!(source.direct_model.is_none());
     assert!(source.crate_native.is_some());
@@ -169,52 +172,23 @@ fn run_policy_retries_one_nontruncated_empty_completion() {
 }
 
 #[test]
-fn parse_model_call_wall_clock_defaults_to_fifteen_minutes() {
-    // Absent and unparseable values both fall back to the 900s default.
-    assert_eq!(parse_model_call_wall_clock_ms(None), Some(900_000));
-    assert_eq!(
-        parse_model_call_wall_clock_ms(Some("garbage")),
-        Some(900_000)
-    );
-    assert_eq!(parse_model_call_wall_clock_ms(Some("")), Some(900_000));
-}
-
-#[test]
-fn parse_model_call_wall_clock_honors_explicit_value_and_zero_opt_out() {
-    assert_eq!(parse_model_call_wall_clock_ms(Some("300")), Some(300_000));
-    assert_eq!(parse_model_call_wall_clock_ms(Some(" 300 ")), Some(300_000));
-    // `0` disables the per-call ceiling entirely (remainder-only, pre-#5766).
-    assert_eq!(parse_model_call_wall_clock_ms(Some("0")), None);
-}
-
-#[test]
 fn run_policy_wires_both_wall_clock_ceilings_from_their_resolvers() {
-    // Compare the policy against the same-process resolvers rather than
-    // hard-coded defaults, so a dev/CI environment exporting either
-    // `OPENHUMAN_MODEL_CALL_TIMEOUT_SECS` or `OPENHUMAN_AGENT_TURN_TIMEOUT_SECS`
-    // (including `0` = disabled, or a per-call value above the turn value)
-    // cannot fail the test while the wiring is correct. No env mutation —
-    // whatever the environment says, the policy must carry exactly what the
-    // resolvers produce.
+    // Compare against the harness resolvers fed the same environment, so a
+    // dev/CI environment exporting either override cannot fail the test while
+    // the wiring is correct.
     let policy = run_policy_for(10, false);
-    assert_eq!(policy.limits.max_model_call_ms, model_call_wall_clock_ms());
-    assert_eq!(policy.limits.max_wall_clock_ms, agent_turn_wall_clock_ms());
-}
-
-#[test]
-fn default_per_call_ceiling_sits_under_the_default_turn_ceiling() {
-    // Env-free: assert the *defaults* through the pure parsers, not through
-    // the env-reading policy path. A per-call ceiling at or above the turn
-    // deadline is dead code, because `min(ceiling, remainder)` would always
-    // pick the remainder.
-    let per_call =
-        parse_model_call_wall_clock_ms(None).expect("the per-call ceiling is armed by default");
-    let turn = parse_agent_turn_wall_clock_ms(None).expect("the turn ceiling is armed by default");
-    assert_eq!(per_call, DEFAULT_MODEL_CALL_TIMEOUT_SECS * 1_000);
-    assert_eq!(turn, DEFAULT_AGENT_TURN_TIMEOUT_SECS * 1_000);
-    assert!(
-        per_call < turn,
-        "per-call ceiling ({per_call} ms) must be under the turn ceiling ({turn} ms)"
+    assert_eq!(
+        policy.limits.max_model_call_ms,
+        tinyagents_harness::turn_policy::model_call_wall_clock_ms(
+            std::env::var("OPENHUMAN_MODEL_CALL_TIMEOUT_SECS")
+                .ok()
+                .as_deref(),
+            false
+        )
+    );
+    assert_eq!(
+        policy.limits.max_wall_clock_ms,
+        crate::agent::tinyagents::turn_policy::agent_turn_wall_clock_ms_for(false)
     );
 }
 

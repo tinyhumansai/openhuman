@@ -141,18 +141,9 @@ pub fn build_system_prompt_with_identity(
 
     // ── 1. Tooling ──────────────────────────────────────────────
     if !tools.is_empty() {
-        prompt.push_str("## Tools\n\n");
-        prompt.push_str("You have access to the following tools:\n\n");
-        for (name, desc) in tools {
-            let _ = writeln!(prompt, "- **{name}**: {desc}");
-        }
-        prompt.push_str("\n## Tool Use Protocol\n\n");
-        prompt.push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
-        prompt.push_str("```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n");
-        prompt.push_str("You may use multiple tool calls in a single response. ");
-        prompt.push_str("After tool execution, results appear in <tool_result> tags. ");
-        prompt
-            .push_str("Continue reasoning with the results until you can give a final answer.\n\n");
+        prompt.push_str(&tinyagents_harness::catalog::render_description_catalogue(
+            tools,
+        ));
     }
 
     // ── 1b. Action instruction (avoid meta-summary) ───────────────

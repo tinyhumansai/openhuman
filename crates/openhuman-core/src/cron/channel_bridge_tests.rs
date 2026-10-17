@@ -34,10 +34,7 @@ async fn bridge_reads_appends_trims_and_sends() {
     let histories: ChannelHistories = Arc::new(Mutex::new(HashMap::new()));
     histories.lock().unwrap().insert(
         "k".into(),
-        vec![
-            TranscriptMessage::user("remind me"),
-            TranscriptMessage::assistant("ok"),
-        ],
+        vec![ChatMessage::user("remind me"), ChatMessage::assistant("ok")],
     );
     let sends = Arc::new(AtomicUsize::new(0));
     let last_target = Arc::new(Mutex::new(String::new()));

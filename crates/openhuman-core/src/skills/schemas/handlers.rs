@@ -5,6 +5,7 @@
 //! `ops.rs` and skill execution lives in `skill_runtime`; this layer is
 //! intentionally thin.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::Path;
 
 use serde_json::{Map, Value};
@@ -30,7 +31,10 @@ use super::wire_types::{
     WorkflowsRunParams, WorkflowsUninstallResult,
 };
 
-pub(super) fn handle_skills_list(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_list(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let params = deserialize_params::<WorkflowsListParams>(params)?;
         let include_skills = params.include_skills;
@@ -73,7 +77,10 @@ pub(super) fn handle_skills_list(params: Map<String, Value>) -> ControllerFuture
 /// predates `[[inputs]]`); on the user picking one we fetch the full
 /// `WorkflowDefinition` (which carries inputs) and project the small,
 /// FE-shaped subset they need.
-pub(super) fn handle_skills_describe(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_describe(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsDescribeParams>(params)?;
         let workspace = resolve_workspace_dir().await;
@@ -111,7 +118,10 @@ pub(super) fn handle_skills_describe(params: Map<String, Value>) -> ControllerFu
 /// FE Skills Runner panel uses this to render the streaming log inline
 /// when the user clicks a Recent Runs row, and tails it every 2s while
 /// `complete` is false.
-pub(super) fn handle_skills_read_run_log(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_read_run_log(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsReadRunLogParams>(params)?;
         let workspace = resolve_workspace_dir().await;
@@ -133,7 +143,10 @@ pub(super) fn handle_skills_read_run_log(params: Map<String, Value>) -> Controll
 /// (most-recent first), optionally filtered to one skill, capped by `limit`.
 /// Powers the Skills Runner panel's "Recent runs" section + future live-log
 /// tail. Delegates the actual scan + parse to `run_log::scan_runs`.
-pub(super) fn handle_skills_recent_runs(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_recent_runs(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsRecentRunsParams>(params)?;
         let limit = payload.limit.unwrap_or(20).min(100) as usize;
@@ -149,14 +162,15 @@ pub(super) fn handle_skills_recent_runs(params: Map<String, Value>) -> Controlle
     })
 }
 
-pub(super) fn handle_skills_run(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_run(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsRunParams>(params)?;
-        let origin = crate::agent::turn_origin::current()
+        let origin = ctx
+            .turn_origin_or_scoped()
             .unwrap_or(crate::agent::turn_origin::AgentTurnOrigin::Cli);
         let started = match crate::agent::turn_origin::with_origin(
-            origin,
-            spawn_workflow_run_background(payload.workflow_id, payload.inputs),
+            origin.clone(),
+            spawn_workflow_run_background(&ctx, payload.workflow_id, payload.inputs, Some(origin)),
         )
         .await
         {
@@ -179,7 +193,10 @@ pub(super) fn handle_skills_run(params: Map<String, Value>) -> ControllerFuture 
 /// Fires the run's cancellation token; the run stops at its next await and
 /// writes a `CANCELLED` footer. Returns `cancelled: false` when the run id is
 /// unknown (already finished or never existed).
-pub(super) fn handle_skills_cancel(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_cancel(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsCancelParams>(params)?;
         let cancelled = run_log::cancel_run(&payload.run_id);
@@ -191,7 +208,10 @@ pub(super) fn handle_skills_cancel(params: Map<String, Value>) -> ControllerFutu
     })
 }
 
-pub(super) fn handle_skills_read_resource(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_read_resource(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsReadResourceParams>(params)?;
         tracing::debug!(
@@ -225,7 +245,10 @@ pub(super) fn handle_skills_read_resource(params: Map<String, Value>) -> Control
     })
 }
 
-pub(super) fn handle_skills_create(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_create(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsCreateParams>(params)?;
         tracing::debug!(
@@ -259,7 +282,10 @@ pub(super) fn handle_skills_create(params: Map<String, Value>) -> ControllerFutu
 /// `openhuman.skills_update` — edit an existing workflow. Same payload as
 /// create, but overwrites the workflow at the resolved slug (frontmatter +
 /// workflow.toml rewritten; the hand-authored body is preserved).
-pub(super) fn handle_skills_update(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_update(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WorkflowsCreateParams>(params)?;
         tracing::debug!(
@@ -285,7 +311,10 @@ pub(super) fn handle_skills_update(params: Map<String, Value>) -> ControllerFutu
     })
 }
 
-pub(super) fn handle_skills_install_from_url(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_install_from_url(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let wire = deserialize_params::<WorkflowsInstallFromUrlParamsWire>(params)?;
         tracing::debug!(
@@ -318,7 +347,10 @@ pub(super) fn handle_skills_install_from_url(params: Map<String, Value>) -> Cont
     })
 }
 
-pub(super) fn handle_skills_uninstall(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_skills_uninstall(
+    _ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<UninstallWorkflowParams>(params)?;
         tracing::debug!(name = %payload.name, "[skills][rpc] uninstall");

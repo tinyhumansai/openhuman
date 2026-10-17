@@ -1,6 +1,8 @@
 //! TinyMCP server-protocol adapter over the published bus contract.
 
 use std::{
+    future::Future,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -11,19 +13,28 @@ use std::{
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use tinymcp_bus::{
-    names, ServerHostReply, ServerHttpResponseMetadata, ServerHttpSessionConfig,
+    names, ServerHostCall, ServerHostReply, ServerHttpResponseMetadata, ServerHttpSessionConfig,
     ServerHttpSessionRequest, ServerInput, ServerOperationRef, ServerOperationSnapshot,
     ServerOperationState, ServerSessionConfig,
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{
-    config::Config,
-    modules::{client::ModuleCallError, client::ModuleClient},
-};
+use crate::config::Config;
+use tinybus::module::{ModuleCallError, ModuleClient};
 
 use super::handler;
+
+/// The host callback for a session: dispatches under the process default
+/// context (the MCP server is a single-tenant host), held weakly so a
+/// long-lived session never pins it.
+fn host_dispatch() -> impl Fn(ServerHostCall) -> HostCallbackFuture + Send + Sync + 'static {
+    let weak = crate::core::runtime::DispatchCtx::process_default().downgrade();
+    move |call| {
+        let ctx = crate::core::runtime::DispatchCtx::from_weak(weak.as_ref());
+        Box::pin(handler::dispatch(ctx, call))
+    }
+}
 
 const MODULE: &str = "tinymcp";
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -70,6 +81,9 @@ pub(super) trait ServerPort: Send + Sync {
         request: ServerHttpSessionRequest,
     ) -> Result<ServerHttpResponseMetadata, ModuleCallError>;
 }
+
+type HostCallbackFuture = Pin<Box<dyn Future<Output = ServerHostReply> + Send + 'static>>;
+type HostCallbackDispatcher = Arc<dyn Fn(ServerHostCall) -> HostCallbackFuture + Send + Sync>;
 
 struct TinyMcpPort {
     client: ModuleClient,
@@ -149,8 +163,11 @@ impl ServerPort for TinyMcpPort {
 
 pub(super) struct ServerSession {
     port: Arc<dyn ServerPort>,
+    callback_dispatch: HostCallbackDispatcher,
     id: String,
     next_operation: AtomicU64,
+    operation: tokio::sync::Mutex<()>,
+    terminal: CancellationToken,
     pending_input: tokio::sync::Mutex<Option<PendingInput>>,
     pending_callback: tokio::sync::Mutex<Option<PendingCallback>>,
 }
@@ -176,7 +193,7 @@ impl ServerSession {
     pub(super) fn port_for_config(config: &Config) -> Arc<dyn ServerPort> {
         Self::register_shutdown_hook(config.clone());
         Arc::new(TinyMcpPort {
-            client: ModuleClient::new(config.clone()),
+            client: crate::modules::client(config.clone()),
         })
     }
 
@@ -187,7 +204,7 @@ impl ServerSession {
         crate::core::shutdown::register(move || {
             let config = config.clone();
             async move {
-                let client = ModuleClient::new(config);
+                let client = crate::modules::client(config);
                 if let Err(error) = client
                     .call::<usize>(MODULE, names::methods::SERVER_SHUTDOWN, ())
                     .await
@@ -204,6 +221,19 @@ impl ServerSession {
     }
 
     async fn open_with_port(port: Arc<dyn ServerPort>) -> Result<Self, ServerError> {
+        Self::open_with_port_and_dispatch(port, host_dispatch()).await
+    }
+
+    pub(super) async fn open_with_port_and_dispatch<F, Fut>(
+        port: Arc<dyn ServerPort>,
+        dispatch: F,
+    ) -> Result<Self, ServerError>
+    where
+        F: Fn(ServerHostCall) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ServerHostReply> + Send + 'static,
+    {
+        let callback_dispatch: HostCallbackDispatcher =
+            Arc::new(move |call| Box::pin(dispatch(call)));
         let (info, source_type_prefix, resources) = handler::declarations();
         let sequence = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed).max(1);
         let id = port
@@ -217,8 +247,11 @@ impl ServerSession {
             .map_err(ServerError::Module)?;
         Ok(Self {
             port,
+            callback_dispatch,
             id,
             next_operation: AtomicU64::new(1),
+            operation: tokio::sync::Mutex::new(()),
+            terminal: CancellationToken::new(),
             pending_input: tokio::sync::Mutex::new(None),
             pending_callback: tokio::sync::Mutex::new(None),
         })
@@ -248,8 +281,11 @@ impl ServerSession {
             .map_err(ServerError::Module)?;
         Ok(Self {
             port,
+            callback_dispatch: Arc::new(host_dispatch()),
             id,
             next_operation: AtomicU64::new(1),
+            operation: tokio::sync::Mutex::new(()),
+            terminal: CancellationToken::new(),
             pending_input: tokio::sync::Mutex::new(None),
             pending_callback: tokio::sync::Mutex::new(None),
         })
@@ -265,6 +301,10 @@ impl ServerSession {
         line: String,
         cancellation: &CancellationToken,
     ) -> Result<ServerOperationSnapshot, ServerError> {
+        let _operation = self.operation.lock().await;
+        if self.terminal.is_cancelled() {
+            return Err(ServerError::Cancelled);
+        }
         let pending = {
             let mut current = self.pending_input.lock().await;
             match current.as_ref() {
@@ -286,19 +326,32 @@ impl ServerSession {
                 }
             }
         };
-        self.port
-            .submit(&self.id, pending.headers.clone(), pending.input.clone())
-            .await
-            .map_err(ServerError::Module)?;
+        tokio::select! {
+            _ = cancellation.cancelled() => {
+                self.cancel_input(&pending).await?;
+                self.stop_callback().await?;
+                return Err(ServerError::Cancelled);
+            }
+            _ = self.terminal.cancelled() => {
+                self.cancel_input(&pending).await?;
+                self.stop_callback().await?;
+                return Err(ServerError::Cancelled);
+            }
+            result = self.port.submit(&self.id, pending.headers.clone(), pending.input.clone()) => {
+                result.map_err(ServerError::Module)?;
+            }
+        }
 
         loop {
             let snapshot = tokio::select! {
                 _ = cancellation.cancelled() => {
-                    self.port.cancel(ServerOperationRef {
-                        session_id: self.id.clone(),
-                        operation_id: pending.input.operation_id.clone(),
-                    }).await.map_err(ServerError::Module)?;
-                    *self.pending_input.lock().await = None;
+                    self.cancel_input(&pending).await?;
+                    self.stop_callback().await?;
+                    return Err(ServerError::Cancelled);
+                }
+                _ = self.terminal.cancelled() => {
+                    self.cancel_input(&pending).await?;
+                    self.stop_callback().await?;
                     return Err(ServerError::Cancelled);
                 }
                 result = self.port.poll(&self.id) => result.map_err(ServerError::Module)?,
@@ -312,14 +365,8 @@ impl ServerSession {
                     {
                         Ok(reply) => reply,
                         Err(ServerError::Cancelled) => {
-                            self.port
-                                .cancel(ServerOperationRef {
-                                    session_id: self.id.clone(),
-                                    operation_id: pending.input.operation_id.clone(),
-                                })
-                                .await
-                                .map_err(ServerError::Module)?;
-                            *self.pending_input.lock().await = None;
+                            self.cancel_input(&pending).await?;
+                            self.stop_callback().await?;
                             return Err(ServerError::Cancelled);
                         }
                         Err(error) => return Err(error),
@@ -364,13 +411,17 @@ impl ServerSession {
         {
             *pending = Some(PendingCallback::Running {
                 id: callback_id.clone(),
-                task: tokio::spawn(handler::dispatch(call)),
+                // The host callback runs under the process default, like
+                // `host_dispatch`: the MCP server is a single-tenant host.
+                task: crate::core::runtime::DispatchCtx::process_default()
+                    .spawn((self.callback_dispatch)(call)),
             });
         }
         let result = match pending.as_mut() {
             Some(PendingCallback::Running { task, .. }) => {
                 tokio::select! {
                     _ = cancellation.cancelled() => return Err(ServerError::Cancelled),
+                    _ = self.terminal.cancelled() => return Err(ServerError::Cancelled),
                     result = task => result,
                 }
             }
@@ -388,7 +439,48 @@ impl ServerSession {
     }
 
     pub(super) async fn close(&self) -> Result<(), ServerError> {
-        self.port.close(&self.id).await.map_err(ServerError::Module)
+        let local_cleanup = self.terminate_callbacks().await;
+        let module_cleanup = self.port.close(&self.id).await.map_err(ServerError::Module);
+        local_cleanup.and(module_cleanup)
+    }
+
+    /// Stop host callbacks and pending operations without closing the module's
+    /// HTTP session, which the module already closed through DELETE.
+    pub(super) async fn terminate_callbacks(&self) -> Result<(), ServerError> {
+        self.terminal.cancel();
+        let _operation = self.operation.lock().await;
+        let callback_cleanup = self.stop_callback().await;
+        *self.pending_input.lock().await = None;
+        callback_cleanup
+    }
+
+    async fn cancel_input(&self, pending: &PendingInput) -> Result<(), ServerError> {
+        self.port
+            .cancel(ServerOperationRef {
+                session_id: self.id.clone(),
+                operation_id: pending.input.operation_id.clone(),
+            })
+            .await
+            .map_err(ServerError::Module)?;
+        *self.pending_input.lock().await = None;
+        Ok(())
+    }
+
+    async fn stop_callback(&self) -> Result<(), ServerError> {
+        let task = {
+            let mut pending = self.pending_callback.lock().await;
+            match pending.take() {
+                Some(PendingCallback::Running { task, .. }) => Some(task),
+                Some(PendingCallback::Complete { .. }) | None => None,
+            }
+        };
+        if let Some(task) = task {
+            task.abort();
+            if task.await.is_err_and(|error| !error.is_cancelled()) {
+                return Err(ServerError::Failed("host callback stopped".to_owned()));
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn http_session(

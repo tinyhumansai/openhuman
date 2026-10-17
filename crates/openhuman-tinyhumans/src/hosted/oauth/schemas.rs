@@ -1,8 +1,8 @@
+use openhuman_embed::__host::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use openhuman_embed::__host::config::rpc as config_rpc;
 use openhuman_embed::__host::core::all::{ControllerFuture, RegisteredController};
 use openhuman_embed::__host::core::Outcome;
 use openhuman_embed::__host::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -139,9 +139,9 @@ pub fn oauth_schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_auth_oauth_connect(params: Map<String, Value>) -> ControllerFuture {
+fn handle_auth_oauth_connect(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthOauthConnectParams>(params)?;
         to_json(
             crate::hosted::oauth::oauth_connect(
@@ -156,16 +156,22 @@ fn handle_auth_oauth_connect(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_auth_oauth_list_integrations(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_auth_oauth_list_integrations(
+    ctx: DispatchCtx,
+    _params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         to_json(crate::hosted::oauth::oauth_list_integrations(&config).await?)
     })
 }
 
-fn handle_auth_oauth_fetch_integration_tokens(params: Map<String, Value>) -> ControllerFuture {
+fn handle_auth_oauth_fetch_integration_tokens(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthOauthIntegrationTokensParams>(params)?;
         to_json(
             crate::hosted::oauth::oauth_fetch_integration_tokens(
@@ -178,9 +184,12 @@ fn handle_auth_oauth_fetch_integration_tokens(params: Map<String, Value>) -> Con
     })
 }
 
-fn handle_auth_oauth_revoke_integration(params: Map<String, Value>) -> ControllerFuture {
+fn handle_auth_oauth_revoke_integration(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthOauthRevokeParams>(params)?;
         to_json(
             crate::hosted::oauth::oauth_revoke_integration(&config, payload.integration_id.trim())
@@ -189,9 +198,12 @@ fn handle_auth_oauth_revoke_integration(params: Map<String, Value>) -> Controlle
     })
 }
 
-fn handle_auth_oauth_fetch_client_key(params: Map<String, Value>) -> ControllerFuture {
+fn handle_auth_oauth_fetch_client_key(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
     Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
+        let config = ctx.load_config().await?;
         let payload = deserialize_params::<AuthOauthClientKeyParams>(params)?;
         to_json(
             crate::hosted::oauth::oauth_fetch_client_key(&config, payload.integration_id.trim())

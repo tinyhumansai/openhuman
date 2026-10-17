@@ -132,7 +132,11 @@ impl Drop for InFlightGuard {
 /// background and delivers its answer into the user's in-app chat. Never panics —
 /// every failure path emits `voice:harness:error` (or a clean `done`) so the
 /// backend relay ends the turn cleanly.
-pub async fn handle_voice_harness_turn(correlation_id: String, messages: Vec<Value>) {
+pub async fn handle_voice_harness_turn(
+    ctx: crate::core::runtime::DispatchCtx,
+    correlation_id: String,
+    messages: Vec<Value>,
+) {
     let prompt = extract_prompt(&messages);
     if prompt.trim().is_empty() {
         emit_error(&correlation_id, "no user message in the relayed turn").await;
@@ -232,7 +236,8 @@ pub async fn handle_voice_harness_turn(correlation_id: String, messages: Vec<Val
                 return;
             }
         };
-        let outcome = run_voice_turn(&turn_cid, &turn_messages, &turn_prompt, progress_tx).await;
+        let outcome =
+            run_voice_turn(&ctx, &turn_cid, &turn_messages, &turn_prompt, progress_tx).await;
         // Hand the result to the foreground. If it already deferred (dropped the
         // receiver at the ack deadline), the send fails and we deliver the reply
         // into the user's chat instead.

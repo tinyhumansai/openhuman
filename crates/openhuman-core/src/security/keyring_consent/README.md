@@ -105,5 +105,5 @@ matches on `secret_storage::backend_name()`'s identifiers (`"os"`,
 ## Further reading
 
 - [Parent module (`security`)](../README.md)
-- [OS keyring and secret storage](../../../../../gitbooks/features/os-keyring-and-secret-storage.md)
-- [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
+- [OS keyring and secret storage](../../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)

@@ -18,7 +18,6 @@ use std::sync::Arc;
 use tinyagents_harness::run_queue::RunQueue;
 
 use crate::agent::turn_origin::{with_origin, AgentTurnOrigin};
-use crate::config::rpc as config_rpc;
 
 use super::super::run_task::turn_error_discards_session;
 use super::super::session::{
@@ -43,18 +42,21 @@ pub const SESSION_CHECKOUT_FAILURE: &str = "session checkout failed: ";
 /// newer user message and does not interrupt one. Callers gate on idleness
 /// themselves (background delivery defers while a user turn is in flight).
 pub async fn run_system_turn_on_thread(
+    ctx: &crate::core::runtime::DispatchCtx,
     thread_id: &str,
     run_id: &str,
     prompt: &str,
     origin: AgentTurnOrigin,
 ) -> Result<String, String> {
-    let config = config_rpc::load_config_with_timeout()
+    let config = ctx
+        .load_config()
         .await
         .map_err(|error| format!("{SESSION_CHECKOUT_FAILURE}{error}"))?;
     let CheckedOutSession {
         mut agent,
         fingerprint,
     } = checkout_session_agent(
+        ctx,
         &config,
         SYSTEM_CLIENT_ID,
         thread_id,
@@ -102,7 +104,7 @@ pub async fn run_system_turn_on_thread(
             run_id
         );
     } else {
-        checkin_session_agent_if_vacant(thread_id, agent, fingerprint).await;
+        checkin_session_agent_if_vacant(ctx, thread_id, agent, fingerprint).await;
     }
 
     result

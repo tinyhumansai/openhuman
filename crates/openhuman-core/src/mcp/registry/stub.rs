@@ -116,14 +116,18 @@ pub mod connections {
     /// Always-on callers already handle this shape with zero `#[cfg]` — the
     /// orchestrator prompt skips its "## Connected MCP Servers" block on an
     /// empty slice, and the turn loop seeds an empty announced-server set.
-    pub async fn connected_overview() -> Vec<ConnectedServerOverview> {
+    pub async fn connected_overview(
+        _ctx: &crate::core::runtime::DispatchCtx,
+    ) -> Vec<ConnectedServerOverview> {
         Vec::new()
     }
 
     /// Empty: no connected servers means no advertised tools. `tool_registry`
     /// folds this into its entry map, which simply gains no `mcp-client::*`
     /// entries.
-    pub async fn all_connected_tools() -> Vec<(String, String, McpTool)> {
+    pub async fn all_connected_tools(
+        _ctx: &crate::core::runtime::DispatchCtx,
+    ) -> Vec<(String, String, McpTool)> {
         Vec::new()
     }
 

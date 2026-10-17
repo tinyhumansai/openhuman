@@ -30,6 +30,7 @@ web3 = ["openhuman-embed/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
 storage-sqlite = ["openhuman-embed/storage-sqlite"]
 storage-mongodb = ["openhuman-embed/storage-mongodb"]
+storage-s3 = ["openhuman-embed/storage-s3"]
 storage-file = ["openhuman-embed/storage-file"]
 media = ["openhuman-embed/media"]
 flows = ["openhuman-embed/flows"]

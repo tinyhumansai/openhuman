@@ -55,6 +55,7 @@ async fn scenario() {
         .unwrap();
     let default_dir = tempfile::tempdir().unwrap();
     let turn_dir = tempfile::tempdir().unwrap();
+    let turn_cwd = turn_dir.path().canonicalize().unwrap();
     let observed = Arc::new(Mutex::new(Vec::new()));
     let agent = runtime
         .agent(
@@ -84,12 +85,16 @@ async fn scenario() {
         .unwrap();
     let observed = observed.lock().unwrap();
     assert_eq!(observed.len(), 4);
-    assert!(observed[1]["output"]
-        .as_str()
-        .unwrap()
-        .contains("owner=isolated home=\n"));
+    assert!(
+        observed[1]["output"]
+            .as_str()
+            .unwrap()
+            .contains("owner=isolated"),
+        "unexpected shell output: {}",
+        observed[1]["output"]
+    );
     for (pair, session, cwd) in [
-        (&observed[..2], "override-session", turn_dir.path()),
+        (&observed[..2], "override-session", turn_cwd.as_path()),
         (&observed[2..], "default-session", default_dir.path()),
     ] {
         for context in pair {

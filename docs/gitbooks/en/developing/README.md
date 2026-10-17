@@ -23,7 +23,7 @@ Everything above that floor is modular. Cargo feature gates decide what compiles
 | ----------- | ------------- |
 | `app/`      | The pnpm workspace `openhuman-app`: the Vite and React frontend ([`app/src/`](https://github.com/tinyhumansai/openhuman/tree/main/app/src)) and the Tauri desktop host ([`crates/openhuman-app/`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-app)). |
 | `crates/`   | Rust crates ([overview](https://github.com/tinyhumansai/openhuman/blob/main/crates/README.md)). Six are workspace members. `openhuman-core` (package `openhuman`) is the core library, with domains under `src/<domain>/` and the controller contract and in-process dispatch under `src/core/`. It has no binary and no JSON-RPC server. `openhuman-rpc` is JSON-RPC 2.0 over the core: envelopes, HTTP client and server. `openhuman-embed` is the typed library facade. `openhuman-tinyhumans` is the only crate that may depend on `tinyhumans-sdk`, and holds the backend transport, hosted RPC proxies and host-side session owner. Every host installs it first. `openhuman-cli` is the `openhuman-core` binary plus every root `tests/` and `examples/` target. `openhuman-tui` is the terminal frontend. The Tauri host, `openhuman-app`, is excluded from the root workspace and builds from its own manifest. |
-| `gitbooks/` | This site, the public docs ([source](https://github.com/tinyhumansai/openhuman/tree/main/gitbooks)). |
+| `docs/gitbooks/en/` | This site, the public docs ([source](https://github.com/tinyhumansai/openhuman/tree/main/docs/gitbooks)). |
 | `docs/`     | Internal maintainer docs: test-coverage matrix, release smoke checklist, library benchmarking and minimal-recipe notes, translated READMEs and `community/` ([`docs/`](https://github.com/tinyhumansai/openhuman/tree/main/docs)). |
 
 [`AGENTS.md`](https://github.com/tinyhumansai/openhuman/blob/main/AGENTS.md) at the repo root is the source of truth for AI agents working on the codebase. [`CLAUDE.md`](https://github.com/tinyhumansai/openhuman/blob/main/CLAUDE.md) points to it. The same rules apply to humans.
@@ -48,6 +48,7 @@ If this is your first time in the repo:
 - [Pluggable engines](engines.md): how config chooses the LLM, embeddings, memory and web search layers, and what is available for each.
 - [Jev](jev.md): the fast probability model behind tool selection and routine browser decisions.
 - [Embedding OpenHuman](embedding.md) (see also [`crates/openhuman-embed`](https://github.com/tinyhumansai/openhuman/tree/main/crates/openhuman-embed)): using `openhuman-embed` to run the core, and any number of agents on it, inside another Rust product. The [Rust quickstart](quickstart.md) walks through it.
+- [SaaS profiles](saas-profiles.md): running the core as a multi-user service behind a gateway, one profile per user, on one node or a cluster with leased profiles.
 - [One TinyHumans API key](tinyhumans-api-key.md): what a single key unlocks, including managed inference, embeddings, web search, media, integrations, voice and Jev.
 
 ---

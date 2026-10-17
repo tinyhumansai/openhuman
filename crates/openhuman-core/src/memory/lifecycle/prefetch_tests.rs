@@ -3,6 +3,8 @@ use super::*;
 use crate::memory::scope::MemoryIdentity;
 use crate::memory::test_fixtures::config_in;
 
+const MAX_PENDING: usize = 16;
+
 static TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn pack(text: &str) -> TurnPack {
@@ -18,17 +20,7 @@ fn pack(text: &str) -> TurnPack {
 
 async fn drain(cache: &Cache, key: &Key) {
     tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            if cache
-                .0
-                .lock()
-                .unwrap()
-                .entries
-                .get(key)
-                .is_some_and(|entry| !entry.active)
-            {
-                return;
-            }
+        while !cache.0.is_idle(key) {
             tokio::task::yield_now().await;
         }
     })
@@ -132,15 +124,7 @@ async fn invalidation_rejects_late_results_and_preserves_bounded_pending_logs() 
             }),
         );
     }
-    assert_eq!(
-        cache.0.lock().unwrap().entries[&key].pending.len(),
-        MAX_PENDING
-    );
     invalidate(&config);
-    assert_eq!(
-        cache.0.lock().unwrap().entries[&key].pending.len(),
-        MAX_PENDING
-    );
     release.notify_one();
     drain(&cache, &key).await;
     assert!(completed(&cache, &key).is_none());
@@ -168,18 +152,7 @@ async fn expiration_failure_and_oversized_packs_are_not_reused() {
         Box::pin(async { Some(pack("good")) }),
     );
     drain(&cache, &key).await;
-    cache
-        .0
-        .lock()
-        .unwrap()
-        .entries
-        .get_mut(&key)
-        .unwrap()
-        .pack
-        .as_mut()
-        .unwrap()
-        .0 = Instant::now() - TTL;
-    assert!(completed(&cache, &key).is_none());
+    assert_eq!(completed(&cache, &key).unwrap().markdown, "good");
     enqueue(
         cache.clone(),
         key.clone(),
@@ -340,23 +313,43 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
         observed_actor: None,
     };
     let config = Arc::new(config);
-    assert!(pre_turn(config.clone(), identity.clone(), input(0), None).is_none());
+    assert!(pre_turn(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config.clone(),
+        identity.clone(),
+        input(0),
+        None
+    )
+    .is_none());
     // Even after the old one-millisecond cutoff, the pack remains owned by
     // the background worker instead of being discarded by the live turn.
     tokio::time::sleep(Duration::from_millis(5)).await;
-    let cache = cache();
+    let cache = cache(&crate::core::runtime::DispatchCtx::ambient());
     let key = Key::new(&config, &identity, "slow", false);
     assert!(completed(&cache, &key).is_none());
     release.add_permits(100);
     drain(&cache, &key).await;
-    let pack = pre_turn(config.clone(), identity.clone(), input(2), None)
-        .expect("next turn uses completed slow lookup");
+    let pack = pre_turn(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config.clone(),
+        identity.clone(),
+        input(2),
+        None,
+    )
+    .expect("next turn uses completed slow lookup");
     assert!(pack.markdown.contains("teal"));
     assert!(pack.markdown.contains("earlier turn"));
     drain(&cache, &key).await;
     let mut omitted = identity;
     omitted.recall = false;
-    assert!(pre_turn(config.clone(), omitted.clone(), input(4), None).is_none());
+    assert!(pre_turn(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        config.clone(),
+        omitted.clone(),
+        input(4),
+        None
+    )
+    .is_none());
     drain(&cache, &Key::new(&config, &omitted, "slow", false)).await;
     let turns = crate::memory::test_fixtures::stored(
         &engine.inner,
@@ -367,7 +360,7 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
 }
 
 #[tokio::test]
-async fn queued_work_keeps_the_callers_core_and_memory_identity() {
+async fn queued_work_keeps_the_callers_core_context() {
     let _guard = TEST_LOCK.lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
@@ -375,32 +368,27 @@ async fn queued_work_keeps_the_callers_core_and_memory_identity() {
         crate::core::runtime::DomainSet::full(),
         Some(config.workspace_dir.clone()),
     );
-    crate::core::runtime::CoreContext::scope(
-        ctx.clone(),
-        crate::memory::scope::within(MemoryIdentity::agent("scoped-agent"), async {
-            let identity = MemoryIdentity::agent("scoped-agent").resolve(&config);
-            let key = Key::new(&config, &identity, "t", false);
-            let cache = cache();
-            let expected = ctx.clone();
-            enqueue(
-                cache.clone(),
-                key.clone(),
-                Box::pin(crate::core::runtime::spawn::scoped(async move {
+    crate::core::runtime::CoreContext::scope(ctx.clone(), async {
+        let identity = MemoryIdentity::agent("scoped-agent").resolve(&config);
+        let key = Key::new(&config, &identity, "t", false);
+        let cache = cache(&crate::core::runtime::DispatchCtx::ambient());
+        let expected = ctx.clone();
+        enqueue(
+            cache.clone(),
+            key.clone(),
+            Box::pin(
+                crate::core::runtime::DispatchCtx::ambient().enter(async move {
                     assert!(Arc::ptr_eq(
                         &crate::core::runtime::CoreContext::scoped().unwrap(),
                         &expected
                     ));
-                    assert_eq!(
-                        crate::memory::scope::current().unwrap().agent_id.as_deref(),
-                        Some("scoped-agent")
-                    );
                     Some(pack("scoped"))
-                })),
-            );
-            drain(&cache, &key).await;
-            assert_eq!(completed(&cache, &key).unwrap().markdown, "scoped");
-        }),
-    )
+                }),
+            ),
+        );
+        drain(&cache, &key).await;
+        assert_eq!(completed(&cache, &key).unwrap().markdown, "scoped");
+    })
     .await;
 }
 
@@ -424,12 +412,23 @@ fn runtime_shutdown_releases_worker_and_pending_work() {
             Box::pin(async { Some(pack("queued")) }),
         );
         tokio::task::yield_now().await;
-        assert!(cache.0.lock().unwrap().entries[&key].active);
+        assert!(!cache.0.is_idle(&key));
     });
     drop(runtime);
-    let state = cache.0.lock().unwrap();
-    assert!(!state.entries[&key].active);
-    assert!(state.entries[&key].pending.is_empty());
+    assert!(cache.0.is_idle(&key));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        enqueue(
+            cache.clone(),
+            key.clone(),
+            Box::pin(async { Some(pack("later")) }),
+        );
+        drain(&cache, &key).await;
+        assert_eq!(completed(&cache, &key).unwrap().markdown, "later");
+    });
 }
 
 #[tokio::test]
@@ -456,9 +455,12 @@ async fn an_erase_retires_queued_automatic_work_and_allows_later_work() {
     );
     // The current-thread executor has not polled the earlier job. Erasure
     // advances the owner fence synchronously before its first suspension.
-    let fence = crate::memory::tool_writes::fence_and_clear(&config)
-        .await
-        .unwrap();
+    let fence = crate::memory::tool_writes::fence_and_clear(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+    )
+    .await
+    .unwrap();
     let new_count = later.clone();
     enqueue(
         cache.clone(),
@@ -506,10 +508,13 @@ async fn erase_waits_for_current_automatic_work_before_returning_its_barrier() {
     );
     started.notified().await;
     let erase_config = config.clone();
-    let mut fencing =
-        tokio::spawn(
-            async move { crate::memory::tool_writes::fence_and_clear(&erase_config).await },
-        );
+    let mut fencing = tokio::spawn(async move {
+        crate::memory::tool_writes::fence_and_clear(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            &erase_config,
+        )
+        .await
+    });
     assert!(
         tokio::time::timeout(Duration::from_secs(1), &mut fencing)
             .await

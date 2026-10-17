@@ -211,6 +211,7 @@ async fn handles_connection_created_event_without_panic() {
         toolkit: "gmail".into(),
         connection_id: "conn-1".into(),
         connect_url: "https://composio.example/connect/abc".into(),
+        tenant: None,
     })
     .await;
 
@@ -254,6 +255,7 @@ async fn trigger_subscriber_ignores_other_composio_event_variants() {
         toolkit: "gmail".into(),
         connection_id: "c-1".into(),
         connect_url: "url".into(),
+        tenant: None,
     })
     .await;
 }
@@ -300,6 +302,7 @@ async fn connection_subscriber_skips_when_not_signed_in() {
         toolkit: "__no_such_provider_toolkit__".into(),
         connection_id: "c-1".into(),
         connect_url: "url".into(),
+        tenant: None,
     })
     .await;
 
@@ -320,11 +323,13 @@ async fn config_changed_subscriber_invalidates_cache() {
     sub.handle(&DomainEvent::ComposioConfigChanged {
         mode: "direct".into(),
         api_key_set: true,
+        tenant: None,
     })
     .await;
     sub.handle(&DomainEvent::ComposioConfigChanged {
         mode: "backend".into(),
         api_key_set: false,
+        tenant: None,
     })
     .await;
 }
@@ -336,6 +341,7 @@ async fn config_changed_subscriber_ignores_unrelated_variants() {
         toolkit: "gmail".into(),
         connection_id: "c-1".into(),
         connect_url: "url".into(),
+        tenant: None,
     })
     .await;
     // No panic = pass.

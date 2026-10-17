@@ -81,7 +81,7 @@ or immediately execute a stored command or agent prompt on the host.
 - `crates/openhuman-core/src/tools/impl/meta/collapse.rs` (module path
   `tinytools::collapse`): the generic
   action-collapsing helper `collapsed.rs` builds on.
-- [Cron and scheduling](../../../../../gitbooks/features/native-tools/cron.md)
+- [Cron and scheduling](../../../../../docs/gitbooks/en/features/native-tools/cron.md)
 
 ## Tests
 

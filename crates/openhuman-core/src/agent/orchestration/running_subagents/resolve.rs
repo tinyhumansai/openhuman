@@ -11,24 +11,31 @@ use tinyagents_orchestration::subagent::{
     WaitError,
 };
 
-use super::registry::registry;
+use super::registry::{admit_workspace, owner_key, registry};
 use super::task_ledger::{list_task_records, task_record_for_task_in_workspace};
 
 /// Resolve a durable `subagent_session_id` to the currently-running transient
 /// `task_id`, enforcing parent-session ownership.
 pub(crate) fn task_id_for_session(
+    ctx: &crate::core::runtime::DispatchCtx,
     subagent_session_id: &str,
     parent_session: &str,
 ) -> Result<String, WaitError> {
-    live_task_id(registry(), subagent_session_id, parent_session)
+    live_task_id(
+        registry(),
+        subagent_session_id,
+        &owner_key(ctx, parent_session)?,
+    )
 }
 
 pub(crate) fn task_id_for_session_in_workspace(
+    ctx: &crate::core::runtime::DispatchCtx,
     subagent_session_id: &str,
     parent_session: &str,
     workspace_dir: &Path,
 ) -> Result<String, WaitError> {
-    match task_id_for_session(subagent_session_id, parent_session) {
+    admit_workspace(ctx, workspace_dir)?;
+    match task_id_for_session(ctx, subagent_session_id, parent_session) {
         Ok(task_id) => return Ok(task_id),
         Err(WaitError::NotOwned) => return Err(WaitError::NotOwned),
         Err(WaitError::RegistryPoisoned) => return Err(WaitError::RegistryPoisoned),
@@ -50,18 +57,21 @@ pub(crate) fn task_id_for_session_in_workspace(
 }
 
 pub(crate) fn resume_ref_for_task(
+    ctx: &crate::core::runtime::DispatchCtx,
     task_id: &str,
     parent_session: &str,
 ) -> Result<SubagentResumeRef, WaitError> {
-    live_resume_ref(registry(), task_id, parent_session)
+    live_resume_ref(registry(), task_id, &owner_key(ctx, parent_session)?)
 }
 
 pub(crate) fn resume_ref_for_task_in_workspace(
+    ctx: &crate::core::runtime::DispatchCtx,
     task_id: &str,
     parent_session: &str,
     workspace_dir: &Path,
 ) -> Result<SubagentResumeRef, WaitError> {
-    match resume_ref_for_task(task_id, parent_session) {
+    admit_workspace(ctx, workspace_dir)?;
+    match resume_ref_for_task(ctx, task_id, parent_session) {
         Ok(reference) => return Ok(reference),
         Err(WaitError::NotOwned) => return Err(WaitError::NotOwned),
         Err(WaitError::RegistryPoisoned) => return Err(WaitError::RegistryPoisoned),

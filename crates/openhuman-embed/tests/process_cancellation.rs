@@ -2,8 +2,17 @@
 
 #![cfg(target_os = "linux")]
 
-use openhuman_core::tools::timeout::{output_or_kill, output_unbounded, ProcessCleanup};
 use std::time::Duration;
+use tinytools_std::timeout::{output_or_kill, output_unbounded, ProcessCleanup};
+
+/// A shell child that leads its own process group and dies with its handle, as
+/// the module-owned shell children do.
+fn shell_child(command: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c").arg(command).kill_on_drop(true);
+    tinytools_std::timeout::own_process_group(cmd.as_std_mut());
+    cmd
+}
 
 /// Cancelling a tool must also stop descendants of its shell.
 #[cfg(target_os = "linux")]
@@ -17,7 +26,7 @@ async fn dropping_command_output_kills_the_shells_children() {
 async fn dropped_command(bounded: bool) {
     let scratch = tempfile::tempdir().unwrap();
     let pidfile = scratch.path().join("child.pid");
-    let mut cmd = openhuman_core::agent::platform_shell::build_tokio_command(&format!(
+    let mut cmd = shell_child(&format!(
         "sleep 30 & echo $$ $! > {}; wait",
         pidfile.display()
     ));
@@ -87,9 +96,7 @@ async fn dropped_command(bounded: bool) {
 #[tokio::test]
 async fn captured_commands_preserve_output_and_exit_status() {
     for bounded in [true, false] {
-        let mut cmd = openhuman_core::agent::platform_shell::build_tokio_command(
-            "printf stdout; printf stderr >&2; exit 7",
-        );
+        let mut cmd = shell_child("printf stdout; printf stderr >&2; exit 7");
         let output = if bounded {
             output_or_kill(&mut cmd, Duration::from_secs(5))
                 .await
@@ -112,7 +119,7 @@ async fn captured_commands_preserve_output_and_exit_status() {
 #[tokio::test]
 async fn deadline_kills_and_reaps_a_command() {
     let cleanup = ProcessCleanup::default();
-    let mut command = openhuman_core::agent::platform_shell::build_tokio_command("sleep 30");
+    let mut command = shell_child("sleep 30");
     assert!(cleanup
         .scope(output_or_kill(&mut command, Duration::from_millis(30)))
         .await
@@ -126,7 +133,7 @@ async fn deadline_kills_and_reaps_a_command() {
 async fn exited_group_leader_is_not_reaped_until_its_descendants_close_the_pipes() {
     let scratch = tempfile::tempdir().unwrap();
     let pidfile = scratch.path().join("exited.pid");
-    let mut cmd = openhuman_core::agent::platform_shell::build_tokio_command(&format!(
+    let mut cmd = shell_child(&format!(
         "sleep 30 & echo $$ $! > {}; exit 0",
         pidfile.display()
     ));

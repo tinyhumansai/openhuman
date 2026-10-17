@@ -273,6 +273,6 @@ fn every_member_this_client_calls_is_one_the_contract_declares() {
 
 #[test]
 fn pinned_release_exposes_intake_without_loading() {
-    assert_eq!(registry::find(MODULE_ID).unwrap().version, "0.2.0");
+    assert_eq!(registry::find(MODULE_ID).unwrap().version, "0.2.4");
     assert!(intake_available().is_ok());
 }

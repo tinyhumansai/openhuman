@@ -594,10 +594,6 @@ impl Completer {
             request.messages.len(),
             request.timeout_ms
         );
-        let call = openhuman_core::inference::host_runtime::ops::complete_once(
-            &endpoint,
-            request.into_wire(),
-        );
         let budget = self
             .budget
             .as_ref()
@@ -605,15 +601,12 @@ impl Completer {
                 ledger: budget.ledger.child(crate::budget::SpendLimits::default()),
                 call: budget.call,
             });
-        let call = async {
-            match &budget {
-                Some(budget) => {
-                    openhuman_core::agent::tinyagents::budget::with_budget(budget.clone(), call)
-                        .await
-                }
-                None => call.await,
-            }
-        };
+        // The spend ledger is an explicit argument of the call, not an ambient scope.
+        let call = openhuman_core::inference::host_runtime::ops::complete_once(
+            &endpoint,
+            request.into_wire(),
+            budget.as_ref(),
+        );
         let started = std::time::Instant::now();
         let response = call.await.map_err(|message| {
             if let Some(source) = budget.as_ref().and_then(|budget| budget.ledger.refusal()) {

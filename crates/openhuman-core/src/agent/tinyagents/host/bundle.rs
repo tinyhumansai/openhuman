@@ -12,12 +12,12 @@ use tinyagents_harness::host::{
     SecurityGate, ToolOutcomeClassifier,
 };
 
-use crate::agent::harness::definition::AgentDefinitionRegistry;
+use crate::agent::harness::host_definition::AgentDefinitionRegistry;
 use crate::agent::hooks::PostTurnHook;
 use crate::config::Config;
 use crate::security::policy::SecurityPolicy;
-use crate::tools::agent_policy::ToolPolicySession;
 use tinytools::Tool;
+use tinytools::ToolPolicySession;
 
 use super::{
     OpenHumanBudgetGate, OpenHumanContextComposer, OpenHumanDefinitionRegistry,
@@ -38,7 +38,7 @@ pub struct OpenHumanHostBundleInputs {
     pub tool_policy: Option<Arc<ToolPolicySession>>,
     pub post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     /// See [`OpenHumanHostBase::session_definition`].
-    pub session_definition: Option<Arc<crate::agent::harness::definition::AgentDefinition>>,
+    pub session_definition: Option<Arc<crate::agent::harness::host_definition::AgentDefinition>>,
 }
 
 /// Process/session-owned dependencies shared by hosted invocations.
@@ -58,7 +58,7 @@ pub struct OpenHumanHostBase {
     /// the registry it outranks, because it is fixed for the session's lifetime:
     /// one `Runtime` hosts several independently defined agents, but each gets
     /// its own session and therefore its own base.
-    pub session_definition: Option<Arc<crate::agent::harness::definition::AgentDefinition>>,
+    pub session_definition: Option<Arc<crate::agent::harness::host_definition::AgentDefinition>>,
 }
 
 /// Explicit inputs which vary for every hosted agent invocation.
@@ -125,9 +125,12 @@ impl OpenHumanHostBundleFactory {
     /// owned by `OpenhumanEventBridge` (see below).
     pub fn build(
         inputs: OpenHumanHostBundleInputs,
-        _turn: &OpenHumanRunContext,
+        turn: &OpenHumanRunContext,
     ) -> OpenHumanHostBundle {
-        let context = Arc::new(OpenHumanContextComposer::new(Arc::clone(&inputs.config)));
+        let context = Arc::new(
+            OpenHumanContextComposer::new(Arc::clone(&inputs.config))
+                .with_dispatch(turn.dispatch_ctx()),
+        );
         let registered_tools = Arc::new(
             inputs
                 .tool_sets
@@ -163,15 +166,25 @@ impl OpenHumanHostBundleFactory {
             definitions_adapter = definitions_adapter.with_session_definition(definition);
         }
         let definitions = Arc::new(definitions_adapter);
-        let mut security = OpenHumanSecurityGate::new(inputs.security_policy, inputs.tool_sets);
+        // An untrusted-input turn is read from its own explicit run context:
+        // a screen may run on another task, so no ambient scope is consulted.
+        let mut security = OpenHumanSecurityGate::new(inputs.security_policy, inputs.tool_sets)
+            .with_input_screening(!turn.untrusted_input_turn)
+            .with_approval(turn.approval.clone())
+            .with_dispatch(turn.dispatch_ctx());
         if let Some(policy) = inputs.tool_policy {
             security = security.with_tool_policy(policy);
         }
         let security = Arc::new(security);
-        let models = Arc::new(OpenHumanModelResolver::new(Arc::clone(&inputs.config)));
-        let budget = Arc::new(OpenHumanBudgetGate::new(Arc::clone(&inputs.config)));
+        let models = Arc::new(
+            OpenHumanModelResolver::new(Arc::clone(&inputs.config))
+                .with_dispatch(turn.dispatch_ctx()),
+        );
+        let budget = Arc::new(
+            OpenHumanBudgetGate::new(Arc::clone(&inputs.config)).with_dispatch(turn.dispatch_ctx()),
+        );
         // The turn's live `AgentProgress` channel is fed by exactly one
-        // producer: `OpenhumanEventBridge`, which `turn_runner` subscribes to
+        // producer: `OpenhumanEventBridge`, which `turn_exec` subscribes to
         // the run's `EventSink` on every turn and which carries what the UI
         // needs (iteration attribution, thinking, tool-argument fragments,
         // sub-agent scoping, cost). The harness also mirrors the loop onto the
@@ -182,7 +195,9 @@ impl OpenHumanHostBundleFactory {
         // stays registered as the host capability with an unconsumed channel;
         // nothing OpenHuman renders depends on it.
         let progress = Arc::new(OpenHumanProgressSink::new(tokio::sync::mpsc::channel(1).0));
-        let learning = Arc::new(OpenHumanLearningSink::new(inputs.post_turn_hooks));
+        let learning = Arc::new(
+            OpenHumanLearningSink::new(inputs.post_turn_hooks).with_dispatch(turn.dispatch_ctx()),
+        );
         let tool_outcomes = Arc::new(OpenHumanToolOutcomeClassifier::new());
 
         let capabilities = HostCapabilities::new(

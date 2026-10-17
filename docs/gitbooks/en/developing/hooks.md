@@ -102,7 +102,7 @@ Every field is optional. Each event honors the subset it defines:
 | `preToolUse` | before any tool | `permission`, `updated_input`, `agent_message` |
 | `postToolUse` | after a tool succeeded | `additional_context` |
 | `postToolUseFailure` | after a tool failed | - |
-| `beforeShellExecution` | before `shell` / `node_exec` / ... | `permission`, `agent_message` |
+| `beforeShellExecution` | before `shell` | `permission`, `agent_message` |
 | `afterShellExecution` | after one completed | - |
 | `beforeReadFile` | before `file_read` / `read_diff` | `permission` |
 | `afterFileEdit` | after `file_write` / `edit` / `apply_patch` | - |

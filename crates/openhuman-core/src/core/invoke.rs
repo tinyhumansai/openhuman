@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::session_expiry::{is_session_expired_error, is_unconfirmed_unauthorized_error};
 use crate::core::all;
+use crate::core::runtime::{CoreContext, DispatchCtx};
 use crate::core::types::AppState;
 
 /// Invokes a JSON-RPC method by name.
@@ -22,11 +23,18 @@ use crate::core::types::AppState;
 ///
 /// # Arguments
 ///
+/// * `ctx` - The context the call runs under, built by the transport that
+///   accepted it. Handlers receive it as their first argument.
 /// * `state` - The application state.
 /// * `method` - The name of the method to invoke.
 /// * `params` - The JSON parameters for the method.
-pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
-    let mut result = invoke_method_inner(state, method, params).await;
+pub async fn invoke_method(
+    ctx: DispatchCtx,
+    state: AppState,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let mut result = invoke_scoped(ctx.clone(), state, method, params).await;
 
     // Session auto-cleanup: if the OpenHuman auth session is explicitly
     // expired, publish a `SessionExpired` event. The credentials subscriber
@@ -43,7 +51,7 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
             // local credential cannot use. This extra config read happens only
             // on a classified session-expiry error, never on the normal path.
             let local =
-                crate::security::credentials::session_support::current_session_is_local().await;
+                crate::security::credentials::session_support::current_session_is_local(&ctx).await;
             if should_publish_session_expired(msg, local) {
                 log::warn!(
                     "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
@@ -78,6 +86,26 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
     result
 }
 
+/// [`invoke_method_inner`] with `ctx` also scoped onto the task, so the schema
+/// lookup, parameter validation and fallback dispatch that precede the handler
+/// read the context the caller named. Transitional (#7801): goes away with the
+/// ambient context once those readers take the context explicitly.
+async fn invoke_scoped(
+    ctx: DispatchCtx,
+    state: AppState,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let core = ctx.core().cloned();
+    let call: std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Value, String>> + Send + '_>,
+    > = Box::pin(invoke_method_inner(ctx, state, method, params));
+    match core {
+        Some(core) => CoreContext::scope(core, call).await,
+        None => call.await,
+    }
+}
+
 fn should_publish_session_expired(msg: &str, credential_is_local: bool) -> bool {
     is_session_expired_error(msg) && !credential_is_local
 }
@@ -98,6 +126,7 @@ fn translate_local_session_error(msg: &str, credential_is_local: bool) -> Option
 /// before execution. If no schema matches, it falls back to the dynamic
 /// [`crate::core::dispatch::dispatch`] system.
 async fn invoke_method_inner(
+    ctx: DispatchCtx,
     state: AppState,
     method: &str,
     params: Value,
@@ -107,7 +136,8 @@ async fn invoke_method_inner(
         let params_obj = crate::core::params::params_to_object(params.clone())?;
         // Validate inputs against the schema before calling the handler.
         all::validate_params(&schema, &params_obj)?;
-        if let Some(result) = all::try_invoke_registered_rpc(method, params_obj).await {
+        if let Some(result) = all::try_invoke_registered_rpc(ctx.clone(), method, params_obj).await
+        {
             return result;
         }
         log::debug!(
@@ -117,7 +147,7 @@ async fn invoke_method_inner(
     }
 
     // Phase 2: Fall back to dynamic dispatch (internal core methods or legacy paths).
-    crate::core::dispatch::dispatch(state, method, params).await
+    crate::core::dispatch::dispatch(ctx, state, method, params).await
 }
 
 /// Returns the default application state.

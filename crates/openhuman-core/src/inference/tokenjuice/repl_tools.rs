@@ -1,24 +1,23 @@
 //! Thin query adapters for the module-owned CCR store and REPL algorithms.
 //! OpenHuman authorizes tool-result artifacts; only their content crosses the bus.
 
+use crate::core::runtime::DispatchCtx;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tinyjuice_bus::handle;
 use tinyjuice_bus::repl::{ReplLimits, ReplOp};
 use tinyjuice_bus::wire::{QueryError, QueryRequest, QueryResponse, QueryTarget};
-use tinytools::{PermissionLevel, Tool, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolRunContext};
 
 /// The query tools TinyJuice declares. The footer suggests a subset of these.
-pub const REPL_TOOL_NAMES: &[&str] = &["juice_find", "juice_extract", "juice_summarize"];
+use tinyjuice_bus::tools::REPL_TOOLS;
 
 pub fn is_repl_tool(name: &str) -> bool {
-    REPL_TOOL_NAMES.contains(&name)
+    REPL_TOOLS.contains(&name)
 }
-
-/// Longest handle accepted. Real handles are 32 hex characters.
-const MAX_HANDLE_LEN: usize = 64;
 
 /// Largest persisted tool-result artifact read through the handle slot: the
 /// same limit `file_read` applies, which is also the most the artifact store
@@ -31,7 +30,13 @@ const RELATIVE_ARTIFACT_PREFIX: &str = "artifacts/tool-results/";
 /// Contract requests are executed inside the compiled module.
 #[async_trait]
 pub(crate) trait QuerySource: Send + Sync {
-    async fn query(&self, request: QueryRequest) -> Result<QueryResponse, String>;
+    /// `ctx` is the context the calling tool runs under; a source bound to a
+    /// config of its own ignores it.
+    async fn query(
+        &self,
+        ctx: &DispatchCtx,
+        request: QueryRequest,
+    ) -> Result<QueryResponse, String>;
 }
 
 struct ModuleSource {
@@ -40,10 +45,14 @@ struct ModuleSource {
 
 #[async_trait]
 impl QuerySource for ModuleSource {
-    async fn query(&self, request: QueryRequest) -> Result<QueryResponse, String> {
+    async fn query(
+        &self,
+        ctx: &DispatchCtx,
+        request: QueryRequest,
+    ) -> Result<QueryResponse, String> {
         match &self.config {
             Some(config) => super::query_for_config(config, request).await,
-            None => super::query(request).await,
+            None => super::query(ctx, request).await,
         }
     }
 }
@@ -78,10 +87,7 @@ pub fn repl_tools_for(config: &crate::config::Config) -> Vec<Box<dyn Tool>> {
     if !super::repl_handle_active(config) {
         return Vec::new();
     }
-    log::debug!(
-        "[tokenjuice][repl] registering {}",
-        REPL_TOOL_NAMES.join(", ")
-    );
+    log::debug!("[tokenjuice][repl] registering {}", REPL_TOOLS.join(", "));
     repl_tools_with_artifacts(
         Arc::new(ModuleSource {
             config: Some(Arc::new(config.clone())),
@@ -154,40 +160,6 @@ pub(crate) fn repl_tools_with_artifacts(
             }) as Box<dyn Tool>
         })
         .collect()
-}
-
-/// Accept a bare handle, or the `⟦tj:<handle>⟧` marker form.
-fn normalize_handle(raw: &str) -> Option<&str> {
-    let handle = raw
-        .trim()
-        .trim_start_matches("⟦tj:")
-        .trim_end_matches('⟧')
-        .trim();
-    let valid = !handle.is_empty()
-        && handle.len() <= MAX_HANDLE_LEN
-        && handle.chars().all(|c| c.is_ascii_alphanumeric());
-    valid.then_some(handle)
-}
-
-/// What the model passed in the `handle` slot.
-enum HandleArg {
-    /// A CCR handle (bare or marker form), normalized.
-    Handle(String),
-    /// Something path-shaped: possibly a persisted tool-result artifact.
-    Path(String),
-    /// Neither: a tool call id, prose, an over-long token.
-    Invalid,
-}
-
-fn classify_handle_arg(raw: &str) -> HandleArg {
-    let trimmed = raw.trim();
-    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.ends_with(".txt") {
-        return HandleArg::Path(trimmed.to_string());
-    }
-    match normalize_handle(trimmed) {
-        Some(handle) => HandleArg::Handle(handle.to_string()),
-        None => HandleArg::Invalid,
-    }
 }
 
 fn not_a_handle_message() -> &'static str {
@@ -277,7 +249,12 @@ fn miss_message() -> &'static str {
 }
 
 impl ModuleReplTool {
-    async fn run_query(&self, target: QueryTarget, mut args: Value) -> anyhow::Result<ToolResult> {
+    async fn run_query(
+        &self,
+        ctx: &DispatchCtx,
+        target: QueryTarget,
+        mut args: Value,
+    ) -> anyhow::Result<ToolResult> {
         if let Some(object) = args.as_object_mut() {
             object.insert("op".into(), Value::String(self.op.clone()));
         }
@@ -291,13 +268,16 @@ impl ModuleReplTool {
         };
         let response = self
             .source
-            .query(QueryRequest {
-                target,
-                op,
-                limits: self.limits,
-                context_token: None,
-                scope: None,
-            })
+            .query(
+                ctx,
+                QueryRequest {
+                    target,
+                    op,
+                    limits: self.limits,
+                    context_token: None,
+                    scope: None,
+                },
+            )
             .await;
         Ok(match response {
             Ok(Ok(output)) => ToolResult::json(serde_json::to_value(output)?),
@@ -317,7 +297,12 @@ impl ModuleReplTool {
     }
 
     /// The handle slot held a path: query the persisted artifact it names.
-    async fn execute_on_artifact(&self, path: String, args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute_on_artifact(
+        &self,
+        ctx: &DispatchCtx,
+        path: String,
+        args: Value,
+    ) -> anyhow::Result<ToolResult> {
         let Some(dir) = self.artifacts_dir.clone() else {
             log::debug!(
                 "[tokenjuice][repl] {} artifact path with no workspace",
@@ -325,11 +310,10 @@ impl ModuleReplTool {
             );
             return Ok(ToolResult::error(not_a_handle_message()));
         };
-        let read = crate::core::runtime::spawn_blocking_scoped(move || {
-            read_tool_result_artifact(&dir, &path, MAX_ARTIFACT_BYTES)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("juice: artifact read task failed: {e}"))?;
+        let read = ctx
+            .spawn_blocking(move || read_tool_result_artifact(&dir, &path, MAX_ARTIFACT_BYTES))
+            .await
+            .map_err(|e| anyhow::anyhow!("juice: artifact read task failed: {e}"))?;
         match read {
             Ok(content) => {
                 log::debug!(
@@ -337,7 +321,8 @@ impl ModuleReplTool {
                     self.name,
                     content.len()
                 );
-                self.run_query(QueryTarget::Content { content }, args).await
+                self.run_query(ctx, QueryTarget::Content { content }, args)
+                    .await
             }
             Err(message) => {
                 log::debug!("[tokenjuice][repl] {} artifact refused", self.name);
@@ -362,18 +347,31 @@ impl Tool for ModuleReplTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, ToolCallOptions::default(), None)
+            .await
+    }
+
+    async fn execute_with_context(
+        &self,
+        args: Value,
+        _options: ToolCallOptions,
+        tool_context: Option<&dyn ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context);
         let Some(raw) = args.get("handle").and_then(Value::as_str) else {
             return Ok(ToolResult::error("missing required argument: handle"));
         };
-        let handle = match classify_handle_arg(raw) {
-            HandleArg::Handle(handle) => handle,
-            HandleArg::Path(path) => return self.execute_on_artifact(path, args).await,
-            HandleArg::Invalid => {
+        let handle = match handle::classify(raw) {
+            handle::HandleArg::Handle(handle) => handle,
+            handle::HandleArg::Path(path) => {
+                return self.execute_on_artifact(&ctx, path, args).await
+            }
+            handle::HandleArg::Invalid => {
                 log::debug!("[tokenjuice][repl] {} rejected a non-handle", self.name);
                 return Ok(ToolResult::error(not_a_handle_message()));
             }
         };
-        self.run_query(QueryTarget::Handle { token: handle }, args)
+        self.run_query(&ctx, QueryTarget::Handle { token: handle }, args)
             .await
     }
 

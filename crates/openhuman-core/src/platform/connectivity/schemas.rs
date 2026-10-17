@@ -6,6 +6,7 @@
 //! the host process tree and can't be answered from inside the sidecar
 //! itself.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
@@ -54,7 +55,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_diag(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_diag(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { super::rpc::diag().await?.into_cli_compatible_json() })
 }
 

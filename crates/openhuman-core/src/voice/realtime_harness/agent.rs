@@ -70,12 +70,13 @@ const VOICE_MODEL: &str = "hint:chat";
 /// channel closes. Runs entirely on the background task, so the ack deadline in
 /// the caller covers both the build and the model round-trips.
 pub(super) async fn run_voice_turn(
+    ctx: &crate::core::runtime::DispatchCtx,
     correlation_id: &str,
     messages: &[Value],
     prompt: &str,
     progress_tx: tokio::sync::mpsc::Sender<AgentProgress>,
 ) -> Result<String, String> {
-    let mut agent = build_voice_agent(correlation_id, messages, prompt).await?;
+    let mut agent = build_voice_agent(ctx, correlation_id, messages, prompt).await?;
 
     // Attach the streaming sink before the turn: its presence switches the harness
     // onto the true per-token streaming path, and each `AgentProgress::TextDelta`
@@ -93,12 +94,13 @@ pub(super) async fn run_voice_turn(
 /// Construct the per-turn voice orchestrator: load config, pin the fast voice
 /// model, isolate the transcript namespace, and seed the relayed history.
 async fn build_voice_agent(
+    ctx: &crate::core::runtime::DispatchCtx,
     correlation_id: &str,
     messages: &[Value],
     prompt: &str,
 ) -> Result<OpenHumanSessionHost, String> {
-    let config = crate::config::ops::load_config_with_timeout().await?;
-    let mut agent = OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
+    let config = ctx.load_config().await?;
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, &config, "orchestrator")
         .map_err(|e| format!("orchestrator build failed: {e}"))?;
     agent.set_event_context(format!("voice_{correlation_id}"), "voice_agent");
     // Isolate the voice transcript namespace from the chat orchestrator so a
@@ -131,13 +133,12 @@ async fn run_single_with_timeout(
     correlation_id: &str,
     prompt: &str,
 ) -> Result<String, String> {
-    // Scope the turn with the SAME chat context the web-chat path installs
-    // (`APPROVAL_CHAT_CONTEXT` plus an explicit agent thread), so approval-surfaced tools
+    // Hand the turn the SAME chat context the web-chat path does (an approval
+    // context plus an explicit agent thread), so approval-surfaced tools
     // behave identically on voice. Without it `composio_connect` fails closed
     // for lack of a routable surface, which the model paraphrases to the user as
     // a confabulated "reconnect your Gmail" mid email-summary (#5399). See
-    // VOICE_CHAT_THREAD_ID for the full rationale. Nesting mirrors web chat:
-    // origin (outer) → approval context → thread id → the agent run.
+    // VOICE_CHAT_THREAD_ID for the full rationale.
     let approval_ctx = crate::security::approval::ApprovalChatContext {
         thread_id: VOICE_CHAT_THREAD_ID.to_string(),
         client_id: VOICE_CHAT_CLIENT_ID.to_string(),
@@ -145,7 +146,11 @@ async fn run_single_with_timeout(
         request_id: None,
     };
     agent.set_thread_id(Some(VOICE_CHAT_THREAD_ID));
-    let scoped_run = agent.run_single(prompt);
+    let scoped_run = agent.run_single_with_approval(
+        prompt,
+        None,
+        crate::security::approval::ApprovalTurnContext::chat(approval_ctx),
+    );
     let fut = with_origin(
         AgentTurnOrigin::ExternalChannel {
             sender_name: None,
@@ -155,7 +160,7 @@ async fn run_single_with_timeout(
             message_id: format!("voice-{correlation_id}"),
             history_key: None,
         },
-        crate::security::approval::APPROVAL_CHAT_CONTEXT.scope(approval_ctx, scoped_run),
+        scoped_run,
     );
 
     match tokio::time::timeout(Duration::from_secs(TURN_TIMEOUT_SECS), fut).await {

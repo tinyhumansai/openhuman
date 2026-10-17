@@ -1,5 +1,5 @@
 use super::*;
-use tinysearch_bus::{Citation, SearchResult};
+use tinysearch_bus::{Citation, Role, SearchResult};
 
 fn response(role: Option<Role>) -> ExecuteToolResponse {
     ExecuteToolResponse {
@@ -106,6 +106,20 @@ fn results_are_capped_and_subject_reads_urls() {
         "https://a, https://b"
     );
     assert_eq!(subject(&serde_json::json!({"query": " q "})), "q");
-    assert_eq!(provider_label("searxng"), "SearXNG");
-    assert_eq!(provider_label("custom"), "custom");
+}
+
+#[test]
+fn model_text_is_the_bus_rendering_byte_for_byte() {
+    let mut r = response(Some(Role::Answer));
+    r.answer = Some("An answer".into());
+    r.fallback_from = vec!["exa".into()];
+    let result = render(&r, "q", 5, true);
+    assert_eq!(
+        result.output(),
+        tinysearch_bus::render::render_text(&r, "q", 5)
+    );
+    assert_eq!(
+        result.markdown_formatted.as_deref(),
+        Some(tinysearch_bus::render::render_markdown(&r, "q", 5).as_str())
+    );
 }

@@ -1,4 +1,5 @@
 use super::*;
+use tinytools_agent::dialect::ToolCallFormat;
 
 #[test]
 fn agents_md_section_truncates_oversized_layer_at_cap() {

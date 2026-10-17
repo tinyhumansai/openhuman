@@ -358,8 +358,7 @@ fn unknown_tool_call_projects_exactly_one_failed_tool_span() {
     assert_eq!(
         tool.attributes["error.message"],
         serde_json::json!(
-            crate::tools::status::describe(crate::tools::status::ToolFailureClass::NotFound)
-                .cause_plain
+            tinytools::status::describe(tinytools::status::ToolFailureClass::NotFound).cause_plain
         ),
         "the one span carries the NotFound cause"
     );

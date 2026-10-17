@@ -517,6 +517,9 @@ impl SpanCollector {
                 }
             }
             AgentProgress::SubagentAwaitingUser { .. } => {}
+            // A running tool's status line can quote its output (a shell
+            // call's last line), so it is content and never exported.
+            AgentProgress::ToolCallProgress { .. } => {}
         }
     }
 }
@@ -540,7 +543,7 @@ impl SpanCollector {
     ///   (it can quote user data / paths).
     fn insert_failure_attrs(
         &self,
-        failure: Option<&crate::tools::status::ClassifiedFailure>,
+        failure: Option<&tinytools::status::ClassifiedFailure>,
         extra: &mut BTreeMap<String, serde_json::Value>,
     ) {
         let Some(failure) = failure else {
@@ -555,7 +558,7 @@ impl SpanCollector {
         // A program that ran and exited non-zero is an expected outcome, not a
         // harness failure: export it at WARNING so error rates count only the
         // latter.
-        if failure.class == crate::tools::status::ToolFailureClass::CommandFailed {
+        if failure.class == tinytools::status::ToolFailureClass::CommandFailed {
             extra.insert(
                 super::finish::LEVEL_ATTR.to_string(),
                 serde_json::Value::String("WARNING".to_string()),

@@ -33,8 +33,10 @@ content).
   `/telemetry/langfuse/otel/v1/traces` proxy; the backend supplies project
   keys and authoritative user attribution. Export is on by default through
   `observability.share_usage_data`; local NDJSON export remains optional.
-- [`langfuse.rs`](./langfuse.rs) + `langfuse/` retain the legacy batch projection for
-  compatibility tests and the flow-run exporter. Agent turns use `otlp.rs`.
+- [`langfuse.rs`](./langfuse.rs) + `langfuse/` hold the proxy URL and environment
+  resolution `otlp.rs` and the flow exporter share, plus the legacy batch
+  projection kept for compatibility tests. No trace is sent on the legacy
+  batch path; Langfuse v4 ingests traces only over OTLP.
 - [`journal_projection.rs`](./journal_projection.rs): `spans_from_observations` rebuilds spans from the
   durable `AgentObservation` journal instead of the live stream, by folding
   journalled events through the same `SpanCollector`, so a UI/supervisor can
@@ -55,11 +57,13 @@ Tests live in this directory as `*_tests.rs` files, e.g.
   `spans_from_observations` over the run journal, then calls
   `export_run_trace_from_journal` (journal available) or `export_run_trace`.
 
-[`flows/tinyflows/langfuse_export.rs`](../../flows/tinyflows/langfuse_export.rs) is the separate flow-run exporter and
-currently still uses the legacy batch proxy.
+[`flows/tinyflows/langfuse_export.rs`](../../flows/tinyflows/langfuse_export.rs) is the separate flow-run exporter. It
+builds the graph trace with `tinyagents_graph::GraphLangfuseExporter` and sends
+it to the same OTLP proxy route as Langfuse v4 spans
+(`build_otlp_requests`), so no trace goes to the legacy batch path.
 
 ## Related docs
 
-- [gitbooks/developing/agent-observability.md](../../../../../gitbooks/developing/agent-observability.md)
+- [docs/gitbooks/en/developing/agent-observability.md](../../../../../docs/gitbooks/en/developing/agent-observability.md)
 - [Parent module README](../README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)

@@ -43,8 +43,7 @@ pub async fn embed(
     )
     .map_err(|e| e.to_string())?;
 
-    let refs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
-    let vectors = embedder.embed(&refs).await.map_err(|e| e.to_string())?;
+    let vectors = embedder.embed(inputs).await.map_err(|e| e.to_string())?;
 
     let actual_dims = vectors.first().map(|v| v.len()).unwrap_or(0);
 
@@ -115,7 +114,7 @@ pub async fn test_connection(
         )
         .map_err(|e| e.to_string())?;
         embedder
-            .embed(&["connection test"])
+            .embed(&["connection test".to_string()])
             .await
             .map_err(|e| e.to_string())
     };

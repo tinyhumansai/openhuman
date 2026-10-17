@@ -32,7 +32,7 @@ Interactive approval workflow for supervised mode (issue #1339). `ApprovalGate` 
 
 Re-exported from [`mod.rs`](./mod.rs):
 
-- Gate: `ApprovalGate`, `ApprovalChatContext`, `FlowRunContext`, the `APPROVAL_CHAT_CONTEXT` / `APPROVAL_COPILOT_STREAM_CONTEXT` / `APPROVAL_FLOW_RUN_CONTEXT` task-locals, `parse_approval_reply`.
+- Gate: `ApprovalGate`, `ApprovalChatContext`, `FlowRunContext`, `ApprovalTurnContext` (the explicit per-turn chat / copilot / flow-run context every gate check takes), `parse_approval_reply`.
 - Redaction: `redact_args`, `summarize_action`.
 - Types: `PendingApproval`, `ApprovalAuditEntry`, `ApprovalDecision`, `ApprovalSourceContext`, `ExecutionOutcome`, `GateOutcome`.
 - Controller registry: `all_approval_controller_schemas`, `all_approval_registered_controllers`.
@@ -101,7 +101,7 @@ stored as JSON strings. With no backend configured (the desktop default)
 - `crates/openhuman-core/src/core/runtime/bootstrap.rs`: installs the global gate (`ApprovalGate::init_global`) at startup; `core/all.rs` registers the approval RPC controllers.
 - `crates/openhuman-core/src/core/all.rs`: registers the controller schemas.
 - `crates/openhuman-core/src/agent/tinyagents/middleware.rs` (`ApprovalSecurityMiddleware`, a `wrap_tool` middleware on every turn path): routes external-effect tool calls through the gate before `execute()` and records the terminal audit row.
-- `crates/openhuman-core/src/web_chat/`: sets `APPROVAL_CHAT_CONTEXT`, hosts `ApprovalSurfaceSubscriber`, and routes typed yes/no replies to `approval_decide`.
+- `crates/openhuman-core/src/web_chat/`: hands each turn its chat `ApprovalTurnContext`, hosts `ApprovalSurfaceSubscriber`, and routes typed yes/no replies to `approval_decide`.
 - `crates/openhuman-core/src/channels/proactive.rs`, `crates/openhuman-core/src/agent/triage/escalation.rs`, `crates/openhuman-core/src/tools/impl/system/install_tool.rs`, `crates/openhuman-core/src/web3/wallet/execution.rs`: interact with the gate / approval types.
 
 ## Notes / gotchas
@@ -127,5 +127,5 @@ stored as JSON strings. With no backend configured (the desktop default)
 ## Further reading
 
 - [Parent module (`security`)](../README.md)
-- [Approval gate](../../../../../gitbooks/features/approval-gate.md)
-- [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
+- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
+- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)

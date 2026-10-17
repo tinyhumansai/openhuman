@@ -7,15 +7,17 @@
 use serde_json::{Map, Value};
 use tinymcp_bus::{ServerHostCall, ServerHostReply, ToolCallError};
 
+use crate::core::runtime::DispatchCtx;
+
 use super::{resources, subagent_depth, tools};
 
 const INSTRUCTIONS: &str = "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use web_search or web_answer for live web lookups (and searxng_search when self-hosted search is enabled), and use memory.recall (answer with citations), memory.fetch or memory.list to read memory, and memory.learn or memory.forget to change it.";
 
 /// Apply the host-owned part of a validated TinyMCP server callback.
-pub(super) async fn dispatch(call: ServerHostCall) -> ServerHostReply {
+pub(super) async fn dispatch(ctx: DispatchCtx, call: ServerHostCall) -> ServerHostReply {
     match call {
         ServerHostCall::ListTools { .. } => {
-            let specs = tools::list_tool_specs()
+            let specs = tools::list_tool_specs(&ctx)
                 .await
                 .iter()
                 .map(tools::server_tool_spec)
@@ -42,7 +44,7 @@ pub(super) async fn dispatch(call: ServerHostCall) -> ServerHostReply {
             );
             let result = subagent_depth::scope(
                 depth,
-                tools::call_tool(&name, Value::Object(arguments), &source_type),
+                tools::call_tool(&ctx, &name, Value::Object(arguments), &source_type),
             )
             .await;
             result.map_or_else(reply_error, |value| ServerHostReply::Success { value })

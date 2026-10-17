@@ -130,16 +130,13 @@ impl openhuman_embed::observe::TurnObserver for Records {
 async fn dispatch_on_worker(
     turn: openhuman_embed::Turn,
 ) -> Result<openhuman_embed::TurnOutcome, openhuman_embed::CoreError> {
-    use openhuman_core::agent::tinyagents::response_shape::{
-        with_response_shape, ResponseShape, ResponseShapeScope,
-    };
-    let shape = ResponseShapeScope::new(ResponseShape {
-        observer: openhuman_core::agent::tinyagents::turn_observer::current_scope(),
-        ..ResponseShape::default()
-    });
-    tokio::spawn(with_response_shape(shape, turn.send()))
-        .await
-        .expect("worker task")
+    use tinyagents_harness::observability::turn_observer::{current_scope, with_observer};
+    let run = turn.send();
+    match current_scope() {
+        Some(observer) => tokio::spawn(with_observer(observer, run)).await,
+        None => tokio::spawn(run).await,
+    }
+    .expect("worker task")
 }
 #[test]
 fn model_and_tool_observations_capture_payloads_only_with_consent() {

@@ -19,13 +19,14 @@ impl Drop for CapturePump {
 }
 /// Start a module stream and forward ordered batches to the bounded processor queue.
 pub(super) async fn spawn_capture_thread(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     tx: tokio::sync::mpsc::Sender<RawChunk>,
 ) -> Result<(CaptureFormat, CapturePump), String> {
     let lease = CaptureLease::reserve(config, Kind::Stream).await?;
     let stream = lease.start_stream().await?;
     let mut stopped = STOP.subscribe();
-    let task = crate::core::runtime::spawn_scoped(async move {
+    let task = ctx.spawn(async move {
         loop {
             if tx.is_closed() {
                 break;

@@ -173,7 +173,7 @@ decision. See [approval/README.md](approval/README.md).
 | [`encryption/`](encryption/README.md) | AES-256-GCM at-rest encryption for memory storage and the encrypt/decrypt RPCs. |
 | [`keyring/`](keyring/README.md) | OS keychain backend with an encrypted-file fallback, and the `SecretStore` config-field codec. |
 | [`keyring_consent/`](keyring_consent/README.md) | Consent gate for falling back from the OS keychain to local encrypted storage. |
-| [TinyMemory API safety](../../../../vendor/tinymemory/crates/tinymemory-api/src/safety/mod.rs) | Owns the local PII and identification-risk detector. OpenHuman supplies privacy policy and enables the `local-safety` feature for its callers. |
+| [`tinymemory_api::safety`](https://github.com/tinyhumansai/tinymemory/blob/d1b06334faf7f8abb62bd1bd4ec4c4d4862f53a4/crates/tinymemory-api/src/safety/README.md) (upstream contract) | Fully local PII and identification-risk detection. `scan` and `redact_identifiers` require the API's opt-in `local-safety` feature; detection results and policy decisions remain separate. |
 | [`prompt_injection/`](prompt_injection/README.md) | Deterministic prompt-injection screening (`Allow`, `Review`, `Block`). |
 | [`live_policy.rs`](./live_policy.rs) | Process-global, hot-swappable current `SecurityPolicy` and privacy mode. |
 | [`scrub.rs`](./scrub.rs) | Secret and PII scrubbing with the host's policy (`Policy::corroborated`) over TinyMemory's scrubbers. |
@@ -215,11 +215,10 @@ decision. See [approval/README.md](approval/README.md).
 - `SecretStore` (re-exported from [`keyring/`](./keyring/)): encrypted-on-disk secrets whose
   master key lives in keychain-backed storage.
 - The [`egress`](./egress) re-exports at the crate root: `enforce_egress`,
-  `emit_external_transfer`, `local_only_blocks`, `local_only_tool_block` and
-  `EgressDescriptor`.
-- `tinymemory_api::safety` owns `scan_pii` and its result types; the security
-  domain no longer re-exports them. Host redaction applies product policy over
-  that detector in [`agent/session_host/stop_summary.rs`](../agent/session_host/stop_summary.rs).
+  `emit_external_transfer`, `local_only_blocks`, `local_only_tool_block`,
+  `EgressDescriptor`. OpenHuman's agent stop-summary code directly consumes
+  `tinymemory_api::safety::redact_identifiers`; this security module does not
+  re-export the safety API.
 
 ## RPC surface
 
@@ -282,7 +281,7 @@ Each file has a sibling `<module>_tests.rs`; the policy suites live in
 
 ## Further reading
 
-- [Security architecture](../../../../gitbooks/developing/architecture/security.md)
-- [Privacy and security](../../../../gitbooks/features/privacy-and-security.md)
-- [Approval gate](../../../../gitbooks/features/approval-gate.md)
-- [OS keyring and secret storage](../../../../gitbooks/features/os-keyring-and-secret-storage.md)
+- [Security architecture](../../../../docs/gitbooks/en/developing/architecture/security.md)
+- [Privacy and security](../../../../docs/gitbooks/en/features/privacy-and-security.md)
+- [Approval gate](../../../../docs/gitbooks/en/features/approval-gate.md)
+- [OS keyring and secret storage](../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)

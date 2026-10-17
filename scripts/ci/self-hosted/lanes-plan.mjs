@@ -82,6 +82,7 @@ const STORAGE_E2E_TARGETS = [
   "storage_agent_scopes_e2e",
   "storage_delegation_e2e",
   "storage_default_import_e2e",
+  "storage_desktop_upgrade_e2e",
   "cli_storage_url_e2e",
 ];
 const STORAGE_LIB_FILTERS = [
@@ -159,7 +160,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
   };
   const modulesDir = ex63
     ? `${scratch}/test-modules`
-    : "/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}";
+    : "/tmp/openhuman-test-modules-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}";
   const modulesEnvFile = "ci-out/test-modules.env";
   const withModules = (cmd) =>
     `set -a && . ${modulesEnvFile} && set +a && ${cmd}`;
@@ -184,11 +185,22 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
     {
       name: "static",
       checks: [
-        { name: "rust-fmt", when: rust, run: "cargo fmt --all -- --check" },
+        {
+          name: "rust-fmt",
+          when: rust,
+          run: "cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check",
+        },
         {
           name: "rust-layout",
           when: core,
           run: "node scripts/ci/check-openhuman-rust-layout.mjs",
+        },
+        {
+          // tinystoragedrivers owns every storage backend; reads cargo
+          // metadata for the root workspace and the app crate.
+          name: "storage-owner",
+          when: rust,
+          run: "node scripts/ci/check-storage-owner.mjs",
         },
         {
           name: "agent-runtime-boundary",
@@ -231,6 +243,17 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "crate-chain",
           when: true,
           run: "node scripts/ci/check-crate-chain.mjs",
+        },
+        {
+          name: "process-statics",
+          when: true,
+          run: "bash scripts/ci-cancel-aware.sh node scripts/ci/check-process-statics.mjs",
+        },
+        {
+          // CI runs the pinned release only; linked/source are local-dev modes.
+          name: "module-source",
+          when: true,
+          run: "node scripts/ci/check-ci-module-source.mjs",
         },
         {
           name: "module-boundaries",
@@ -294,11 +317,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           when: areas.frontend,
           needs: ["pnpm-install"],
           // ex63: ci-lite's `format:check` is prettier plus rust:format:check;
-          // the static lane's rust-fmt already checks the root workspace, so
+          // the static lane's rust-fmt already checks OpenHuman workspace packages, so
           // only the (non-member) Tauri crate's rustfmt check stays here.
           run: ex63
             ? `pnpm --filter openhuman-app format:check:prettier --cache --cache-strategy content --cache-location ${nodeCache}/prettier-cache` +
-              " && cargo fmt --manifest-path crates/openhuman-app/Cargo.toml --all --check"
+              " && cargo fmt --manifest-path crates/openhuman-app/Cargo.toml --package openhuman-app -- --check"
             : "pnpm --filter openhuman-app format:check",
         },
         {
@@ -372,13 +395,6 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
         {
           name: "test-modules",
           when: core,
-          env: ex63
-            ? {
-                TINYCONNECTORS_TARGET_DIR: `${scratch}/target/tinyconnectors`,
-                ...rustEnv,
-                ...sccache,
-              }
-            : {},
           run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
         },
         {
@@ -476,13 +492,18 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           // module host while keeping web3 disabled, so its wallet callback
           // gate is exercised rather than silently selecting zero tests.
           // MCP resources do not touch test_support; introspection stays
-          // scoped to avoid tests that require the complete product.
+          // scoped to avoid tests that require the complete product. The
+          // wallet grant's ungated tests sit beside a web3-gated one, so they
+          // run here with web3 off (check-gated-test-allowlist.sh).
           name: "gate-contract-tests-features",
           when: gateSmoke,
           run:
             "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features" +
             " --features modules,mcp,e2e-test-support --lib --" +
-            " modules::host:: modules::registry:: mcp::server::resources:: test_support::introspect::",
+            " modules::runtime:: modules::registry:: modules::storage_grant_tinywallet::" +
+            " modules::storage_grant_tinyconnectors::" +
+            " cron::bus_host::tests:: cron::documents_port::tests::" +
+            " mcp::server::resources:: test_support::introspect:: --test-threads=1",
         },
         {
           name: "kernel-floor",
@@ -551,7 +572,18 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           when: areas.storage,
           run:
             `cargo test -p openhuman --features ${STORAGE_DRIVERS} --lib --` +
-            STORAGE_LIB_FILTERS.map((f) => ` ${f}`).join(""),
+            STORAGE_LIB_FILTERS.map((f) => ` ${f}`).join("") +
+            " --skip cron::bus_host::tests:: --skip cron::documents_port::tests::",
+        },
+        {
+          // TinyFlows owns a process-global module host during these tests.
+          // Keep them out of the broad storage test process, where unrelated
+          // cron tests can replace handlers while a callback is executing.
+          name: "cron-module-tests",
+          when: areas.storage,
+          run:
+            `cargo test -p openhuman --features ${STORAGE_DRIVERS} --lib --` +
+            " cron::bus_host::tests:: cron::documents_port::tests:: --test-threads=1",
         },
         {
           name: "storage-session-store-tests",

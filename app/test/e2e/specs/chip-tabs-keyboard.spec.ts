@@ -39,10 +39,11 @@ describe('ChipTabs keyboard traversal', () => {
 
     // Start from the preceding control and enter with a real Tab event. This
     // exercises entry focus in Radix's roving group before arrow-key checks.
-    await browser.execute(() => {
-      (document.querySelector('[data-testid="search-enabled-toggle"]') as HTMLElement).focus();
-    });
-    await expect(await waitForTestId('search-enabled-toggle')).toBeFocused();
+    // Search settings load asynchronously from the core. Wait for the switch
+    // before focusing it so this setup does not race the panel's loading state.
+    const enabledToggle = await waitForTestId('search-enabled-toggle', 15_000);
+    await browser.execute((element: HTMLElement) => element.focus(), enabledToggle);
+    await expect(enabledToggle).toBeFocused();
     await browser.keys('Tab');
     await expectSelectedAndFocused('routing');
 

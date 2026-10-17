@@ -1,18 +1,30 @@
 //! Durable, bounded FIFO for the agent tool's optional memory writes.
-//! Only scrubbed items and trusted scope are persisted; credentials are resolved
-//! at drain time. Enqueue never waits on the remote engine.
+//!
+//! The queue itself (bounds, coalescing, fencing, ordered drain) is
+//! `tinymemory_tools::pending`; this module is the host adapter. It keeps the
+//! per-owner partitioning of the files under `<workspace>/memory/`, the
+//! validation and scrubbing of a write before it is queued, the file-backed
+//! `ListStore` (owner-only, fsynced), the executor that runs a write against
+//! the bound engine under a timeout, and the erasure barrier that waits for a
+//! write already in flight. Only scrubbed items and trusted scope are
+//! persisted; credentials are resolved at drain time. Enqueue never waits on
+//! the remote engine.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tinymemory_api::{Namespace, Reach, StoreItem, WriteOptions};
+use tinymemory_api::{Namespace, StoreItem, WriteOptions};
+use tinymemory_tools::list_store::{ListStore, StoreError};
+use tinymemory_tools::pending::{
+    Ack, Binding, Entry, Epoch, FenceToken, Limits, PendingError, PendingWrites, WriteExecutor,
+    WriteGate, WriteOperation,
+};
 
 use super::error::{MemoryError, MemoryResult};
 use super::tools::CallFacts;
@@ -22,47 +34,82 @@ use crate::config::Config;
 const MAX_PENDING: usize = 256;
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(120);
-static FENCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static PROCESS_EPOCH: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 const QUEUED: &str = "queued; not yet saved to memory";
 static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
 #[derive(Default)]
 struct DrainState {
     barrier: Arc<tokio::sync::Mutex<()>>,
 }
 
-#[derive(Default)]
+/// One owner's erasure state: the module's gate (generation, fences) and the
+/// barrier an erasure takes exclusively to wait for the write in flight.
+/// Kept for the life of the process (a few bytes per owner) because a fence
+/// token borrows its gate.
 struct OwnerState {
-    admission: Mutex<()>,
+    gate: WriteGate,
     barrier: Arc<tokio::sync::RwLock<()>>,
-    generation: AtomicU64,
-    fences: AtomicU64,
 }
 
-static OWNERS: LazyLock<Mutex<HashMap<PathBuf, Weak<OwnerState>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type Owners = HashMap<PathBuf, &'static OwnerState>;
+static OWNERS: LazyLock<Mutex<Owners>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-type DrainLocks = HashMap<PathBuf, Weak<DrainState>>;
+type DrainLocks = HashMap<PathBuf, std::sync::Weak<DrainState>>;
 static DRAINS: LazyLock<Mutex<DrainLocks>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[derive(Clone, Serialize, Deserialize)]
-struct Entry {
+type Queue = PendingWrites<FileStore>;
+static QUEUES: LazyLock<Mutex<HashMap<PathBuf, Arc<Queue>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// An entry as older builds wrote it: the owner and layout as two fields.
+#[derive(Deserialize)]
+struct LegacyEntry {
     ticket: String,
     root: Option<String>,
     layout_v3: bool,
     scope_root: Namespace,
     #[serde(default)]
     epoch: Option<(String, u64)>,
-    operation: Operation,
-    // Stable, content-free last outcome; never an engine message.
+    operation: WriteOperation,
     status: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-enum Operation {
-    Learn { item: StoreItem },
-    Forget { ids: Vec<String>, reach: Reach },
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Stored {
+    Current(Entry),
+    Legacy(LegacyEntry),
+}
+
+impl From<Stored> for Entry {
+    fn from(stored: Stored) -> Self {
+        match stored {
+            Stored::Current(entry) => entry,
+            Stored::Legacy(old) => Entry {
+                ticket: old.ticket,
+                binding: binding_of(old.root, old.layout_v3),
+                scope_root: old.scope_root,
+                epoch: old.epoch.map(|(process, generation)| Epoch {
+                    process,
+                    generation,
+                }),
+                operation: old.operation,
+                status: old.status,
+            },
+        }
+    }
+}
+
+fn binding_of(root: Option<String>, layout_v3: bool) -> Binding {
+    Binding(serde_json::to_string(&(root, layout_v3)).expect("binding fields serialize"))
+}
+
+fn binding(config: &Config) -> Binding {
+    binding_of(
+        super::scope::user_root(config),
+        super::scope::layout_is_v3(config),
+    )
 }
 
 #[cfg(test)]
@@ -107,54 +154,6 @@ fn unavailable() -> MemoryError {
     )
 }
 
-fn read_at(path: &Path) -> MemoryResult<Vec<Entry>> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_) => return Err(unavailable()),
-    };
-    let mut bytes = Vec::new();
-    file.take((MAX_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|_| unavailable())?;
-    if bytes.len() > MAX_BYTES {
-        return Err(unavailable());
-    }
-    let entries: Vec<Entry> = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-    if entries.len() > MAX_PENDING {
-        return Err(unavailable());
-    }
-    Ok(entries)
-}
-
-fn write_at(file: &Path, entries: &[Entry]) -> MemoryResult<()> {
-    let bytes = serde_json::to_vec(entries).map_err(|_| unavailable())?;
-    if bytes.len() > MAX_BYTES {
-        return Err(unavailable());
-    }
-    let temp = file.with_extension("json.tmp");
-    let result = (|| -> std::io::Result<()> {
-        super::files::create_private_dir_all(file.parent().expect("memory directory"))?;
-        let mut output = super::files::create_private(&temp)?;
-        output.write_all(&bytes)?;
-        output.sync_all()?;
-        std::fs::rename(&temp, file)?;
-        #[cfg(unix)]
-        std::fs::File::open(file.parent().expect("memory directory"))?.sync_all()?;
-        Ok(())
-    })();
-    result.map_err(|_| unavailable())
-}
-
-#[cfg(test)]
-fn read(workspace: &Path) -> MemoryResult<Vec<Entry>> {
-    read_at(&path(workspace))
-}
-#[cfg(test)]
-fn write(workspace: &Path, entries: &[Entry]) -> MemoryResult<()> {
-    write_at(&path(workspace), entries)
-}
-
 /// Accepts a validated, scrubbed write locally. The acknowledgement means only
 /// that it is durable in the local outbox, not accepted by the remote engine.
 pub(super) fn enqueue(
@@ -162,7 +161,7 @@ pub(super) fn enqueue(
     args: &serde_json::Value,
     facts: &CallFacts,
 ) -> MemoryResult<serde_json::Value> {
-    if config.memory.engine == super::engine::DISABLED_ENGINE {
+    if super::engine::switched_off(config) {
         return Err(MemoryError::Off("memory is disabled".into()));
     }
     let confinement = super::user_scope::confinement(config)?;
@@ -186,7 +185,7 @@ pub(super) fn enqueue(
                     "learning namespace is outside the trusted reach",
                 ));
             }
-            Operation::Learn {
+            WriteOperation::Learn {
                 item: super::guard::scrub(item),
             }
         }
@@ -204,18 +203,10 @@ pub(super) fn enqueue(
             if ids.is_empty() {
                 return Err(MemoryError::invalid("forget needs at least one id"));
             }
-            Operation::Forget { ids, reach }
+            WriteOperation::Forget { ids, reach }
         }
         _ => return Err(MemoryError::invalid("expected a memory write")),
     };
-    let acknowledgement = match &operation {
-        Operation::Learn { item } => serde_json::json!({"id":item.fingerprint(), "status":QUEUED}),
-        Operation::Forget { ids, .. } => {
-            serde_json::json!({"queued":ids.len(), "status":"queued; not yet removed from memory"})
-        }
-    };
-    let root = super::scope::user_root(config);
-    let layout_v3 = super::scope::layout_is_v3(config);
     let _guard = LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -224,56 +215,106 @@ pub(super) fn enqueue(
             "memory write queue full; nothing was queued".into(),
         ));
     }
-    let mut entries = read_at(&file)?;
     let owner = owner_state(config);
-    let (fencing, epoch) = {
-        let _admission = owner
-            .admission
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (
-            owner.fences.load(Ordering::SeqCst) > 0,
-            Some((
-                PROCESS_EPOCH.clone(),
-                owner.generation.load(Ordering::SeqCst),
-            )),
-        )
+    let ack = queue(&file)
+        .enqueue(operation, scope_root, binding(config), &owner.gate)
+        .map_err(map_pending)?;
+    Ok(match ack {
+        Ack::Learned { id } => serde_json::json!({"id":id, "status":QUEUED}),
+        Ack::Forgotten { queued } => {
+            serde_json::json!({"queued":queued, "status":"queued; not yet removed from memory"})
+        }
+    })
+}
+
+/// A [`ListStore`] over one queue file: owner-only, written through a
+/// temporary file and a rename, with the file and its directory fsynced.
+struct FileStore {
+    file: PathBuf,
+}
+
+impl ListStore<Entry> for FileStore {
+    fn load(&self) -> Result<Vec<Entry>, StoreError> {
+        read_file(&self.file).map_err(|_| StoreError("queue file unreadable".into()))
+    }
+
+    fn save(&self, entries: &[Entry]) -> Result<(), StoreError> {
+        write_file(&self.file, entries).map_err(|_| StoreError("queue file unwritable".into()))
+    }
+}
+
+fn read_file(path: &Path) -> std::io::Result<Vec<Entry>> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
     };
-    // Adjacent retries are coalesced; never coalesce across a forget/relearn.
-    if !fencing
-        && entries.last().is_some_and(|last| {
-            last.root == root
-                && last.layout_v3 == layout_v3
-                && match (&last.operation, &operation) {
-                    (Operation::Learn { item: a }, Operation::Learn { item: b }) => {
-                        a.fingerprint() == b.fingerprint()
-                    }
-                    (
-                        Operation::Forget { ids: a, reach: ar },
-                        Operation::Forget { ids: b, reach: br },
-                    ) => a == b && ar == br,
-                    _ => false,
-                }
+    let mut bytes = Vec::new();
+    file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(std::io::Error::other("queue file too large"));
+    }
+    let stored: Vec<Stored> = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+    Ok(stored.into_iter().map(Entry::from).collect())
+}
+
+fn write_file(file: &Path, entries: &[Entry]) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec(entries).map_err(std::io::Error::other)?;
+    let temp = file.with_extension("json.tmp");
+    super::files::create_private_dir_all(file.parent().expect("memory directory"))?;
+    let mut output = super::files::create_private(&temp)?;
+    output.write_all(&bytes)?;
+    output.sync_all()?;
+    std::fs::rename(&temp, file)?;
+    #[cfg(unix)]
+    std::fs::File::open(file.parent().expect("memory directory"))?.sync_all()?;
+    Ok(())
+}
+
+fn queue(file: &Path) -> Arc<Queue> {
+    let mut queues = QUEUES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    queues
+        .entry(file.to_path_buf())
+        .or_insert_with(|| {
+            Arc::new(PendingWrites::new(
+                FileStore {
+                    file: file.to_path_buf(),
+                },
+                Limits {
+                    max_entries: MAX_PENDING,
+                    max_bytes: MAX_BYTES,
+                },
+            ))
         })
-    {
-        return Ok(acknowledgement);
+        .clone()
+}
+
+fn map_pending(error: PendingError) -> MemoryError {
+    MemoryError::Unavailable(error.to_string())
+}
+
+fn read_at(path: &Path) -> MemoryResult<Vec<Entry>> {
+    queue(path).entries().map_err(map_pending)
+}
+
+#[cfg(test)]
+fn write_at(file: &Path, entries: &[Entry]) -> MemoryResult<()> {
+    FileStore {
+        file: file.to_path_buf(),
     }
-    if entries.len() >= MAX_PENDING {
-        return Err(MemoryError::Unavailable(
-            "memory write queue full; nothing was queued".into(),
-        ));
-    }
-    entries.push(Entry {
-        ticket: uuid::Uuid::new_v4().to_string(),
-        root,
-        layout_v3,
-        scope_root,
-        epoch,
-        operation,
-        status: None,
-    });
-    write_at(&file, &entries)?;
-    Ok(acknowledgement)
+    .save(entries)
+    .map_err(|_| unavailable())
+}
+
+#[cfg(test)]
+fn read(workspace: &Path) -> MemoryResult<Vec<Entry>> {
+    read_at(&path(workspace))
+}
+#[cfg(test)]
+fn write(workspace: &Path, entries: &[Entry]) -> MemoryResult<()> {
+    write_at(&path(workspace), entries)
 }
 
 fn drain_state(workspace: &Path) -> Arc<DrainState> {
@@ -281,7 +322,7 @@ fn drain_state(workspace: &Path) -> Arc<DrainState> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     locks.retain(|_, value| value.strong_count() > 0);
-    if let Some(lock) = locks.get(workspace).and_then(Weak::upgrade) {
+    if let Some(lock) = locks.get(workspace).and_then(std::sync::Weak::upgrade) {
         return lock;
     }
     let lock = Arc::new(DrainState::default());
@@ -289,7 +330,7 @@ fn drain_state(workspace: &Path) -> Arc<DrainState> {
     lock
 }
 
-fn owner_state(config: &Config) -> Arc<OwnerState> {
+fn owner_state(config: &Config) -> &'static OwnerState {
     let key = config
         .workspace_dir
         .join("memory")
@@ -297,13 +338,12 @@ fn owner_state(config: &Config) -> Arc<OwnerState> {
     let mut owners = OWNERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    owners.retain(|_, value| value.strong_count() > 0);
-    if let Some(state) = owners.get(&key).and_then(Weak::upgrade) {
-        return state;
-    }
-    let state = Arc::new(OwnerState::default());
-    owners.insert(key, Arc::downgrade(&state));
-    state
+    owners.entry(key).or_insert_with(|| {
+        Box::leak(Box::new(OwnerState {
+            gate: WriteGate::new(PROCESS_EPOCH.clone()),
+            barrier: Arc::default(),
+        }))
+    })
 }
 
 fn partitions(config: &Config) -> MemoryResult<Vec<PathBuf>> {
@@ -334,17 +374,17 @@ fn partitions(config: &Config) -> MemoryResult<Vec<PathBuf>> {
 /// wait in the prefetch queue. Erasure retires older work and waits for active
 /// mutations while subsequent work waits behind the exclusive barrier.
 pub(crate) struct AutomaticMutation {
-    state: Arc<OwnerState>,
+    state: &'static OwnerState,
     generation: u64,
 }
 
 impl AutomaticMutation {
     pub(crate) async fn run<T>(self, work: impl std::future::Future<Output = T>) -> Option<T> {
-        if self.state.generation.load(Ordering::SeqCst) != self.generation {
+        if self.state.gate.generation() != self.generation {
             return None;
         }
         let _barrier = self.state.barrier.read().await;
-        if self.state.generation.load(Ordering::SeqCst) != self.generation {
+        if self.state.gate.generation() != self.generation {
             return None;
         }
         Some(work.await)
@@ -354,37 +394,28 @@ impl AutomaticMutation {
 /// Captures authority without waiting on the engine or an active erasure.
 pub(crate) fn automatic_mutation(config: &Config) -> AutomaticMutation {
     let state = owner_state(config);
-    let generation = {
-        let _admission = state
-            .admission
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.generation.load(Ordering::SeqCst)
-    };
-    AutomaticMutation { state, generation }
+    AutomaticMutation {
+        state,
+        generation: state.gate.generation(),
+    }
 }
 
 /// Holds the owner's mutation barrier through explicit engine erasure.
 /// Subsequent queued writes resume only after the outer erasure finishes.
 pub(crate) struct WriteFence {
     guard: Option<tokio::sync::OwnedRwLockWriteGuard<()>>,
-    state: Arc<OwnerState>,
+    token: Option<FenceToken<'static>>,
+    state: &'static OwnerState,
     config: Arc<Config>,
+    ctx: crate::core::runtime::DispatchCtx,
 }
 
 impl Drop for WriteFence {
     fn drop(&mut self) {
-        let last = {
-            let _admission = self
-                .state
-                .admission
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            self.state.fences.fetch_sub(1, Ordering::SeqCst) == 1
-        };
+        drop(self.token.take());
         drop(self.guard.take());
-        if last && tokio::runtime::Handle::try_current().is_ok() {
-            schedule_all(self.config.clone());
+        if !self.state.gate.is_fenced() && tokio::runtime::Handle::try_current().is_ok() {
+            schedule_all(&self.ctx, self.config.clone());
         }
     }
 }
@@ -392,175 +423,128 @@ impl Drop for WriteFence {
 /// Stops each owner partition after its current mutation, durably clears
 /// earlier pending writes, and fences subsequent writes through explicit erase.
 /// Other owners sharing a workspace keep independent queues and barriers.
-pub(crate) async fn fence_and_clear(config: &Config) -> MemoryResult<WriteFence> {
+pub(crate) async fn fence_and_clear(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+) -> MemoryResult<WriteFence> {
     let state = owner_state(config);
-    let fencing_generation = {
-        let _admission = state
-            .admission
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.fences.fetch_add(1, Ordering::SeqCst);
-        let next = FENCE_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
-        state.generation.store(next, Ordering::SeqCst);
-        next
-    };
+    let token = state.gate.begin_fence();
+    let fencing_generation = token.generation();
     let mut fence = WriteFence {
         guard: None,
-        state: state.clone(),
+        token: Some(token),
+        state,
         config: Arc::new(config.clone()),
+        ctx: ctx.clone(),
     };
-    let snapshot_config = config.clone();
-    let prior = crate::core::runtime::spawn_blocking_scoped(move || {
-        let _guard = LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        partitions(&snapshot_config)?
-            .into_iter()
-            .map(|file| {
-                let tickets = read_at(&file)?
-                    .into_iter()
-                    .filter(|entry| {
-                        entry.epoch.as_ref().is_none_or(|(process, generation)| {
-                            process != &*PROCESS_EPOCH || *generation < fencing_generation
-                        })
-                    })
-                    .map(|entry| entry.ticket)
-                    .collect::<HashSet<_>>();
-                Ok::<_, MemoryError>((file, tickets))
-            })
-            .collect::<MemoryResult<Vec<_>>>()
-    })
-    .await
-    .map_err(|_| unavailable())??;
     fence.guard = Some(state.barrier.clone().write_owned().await);
-    crate::core::runtime::spawn_blocking_scoped(move || {
+    let snapshot_config = config.clone();
+    ctx.spawn_blocking(move || {
         let _guard = LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (file, tickets) in prior {
-            let mut entries = read_at(&file)?;
-            entries.retain(|entry| !tickets.contains(&entry.ticket));
-            write_at(&file, &entries)?;
+        for file in partitions(&snapshot_config)? {
+            queue(&file)
+                .clear_stale(state.gate.process(), fencing_generation)
+                .map_err(map_pending)?;
         }
         Ok::<_, MemoryError>(())
     })
     .await
     .map_err(|_| unavailable())??;
+    tracing::debug!("[memory:tool_writes] erase fence in force; prior pending writes cleared");
     Ok(fence)
 }
 
 /// Starts a scoped background drain, retaining config only in memory.
-pub(super) fn schedule(config: Arc<Config>) {
-    let file = queue_path(&config, super::scope::resolve_current(&config).root());
-    schedule_partition(config, file);
+///
+/// `root` is the layout root the write was queued under (`CallFacts::reach`).
+pub(super) fn schedule(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: Arc<Config>,
+    root: &Namespace,
+) {
+    let file = queue_path(&config, root);
+    schedule_partition(ctx, config, file);
 }
 
 /// Retries all durable partitions belonging to this owner on auth/cron ticks.
-pub(super) fn schedule_all(config: Arc<Config>) {
-    if config.memory.engine == super::engine::DISABLED_ENGINE {
+pub(super) fn schedule_all(ctx: &crate::core::runtime::DispatchCtx, config: Arc<Config>) {
+    if super::engine::switched_off(&config) {
         return;
     }
-    crate::core::runtime::spawn_scoped(async move {
+    let scan_ctx = ctx.clone();
+    ctx.spawn(async move {
         let scan_config = config.clone();
-        let files =
-            match crate::core::runtime::spawn_blocking_scoped(move || partitions(&scan_config))
-                .await
-            {
-                Ok(Ok(files)) => files,
-                _ => {
-                    tracing::debug!(
-                        code = "QUEUE_UNAVAILABLE",
-                        "[memory:tool_writes] retry discovery deferred"
-                    );
-                    return;
-                }
-            };
+        let files = match scan_ctx
+            .spawn_blocking(move || partitions(&scan_config))
+            .await
+        {
+            Ok(Ok(files)) => files,
+            _ => {
+                tracing::debug!(
+                    code = "QUEUE_UNAVAILABLE",
+                    "[memory:tool_writes] retry discovery deferred"
+                );
+                return;
+            }
+        };
         for file in files {
-            schedule_partition(config.clone(), file);
+            schedule_partition(&scan_ctx, config.clone(), file);
         }
     });
 }
 
-fn schedule_partition(config: Arc<Config>, file: PathBuf) {
+fn schedule_partition(ctx: &crate::core::runtime::DispatchCtx, config: Arc<Config>, file: PathBuf) {
     let owner = owner_state(&config);
-    let (generation, owner_guard) = {
-        let _admission = owner
-            .admission
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if owner.fences.load(Ordering::SeqCst) > 0 {
-            return;
-        }
-        let generation = owner.generation.load(Ordering::SeqCst);
-        let Ok(guard) = owner.barrier.clone().try_read_owned() else {
-            return;
-        };
-        (generation, guard)
+    if owner.gate.is_fenced() {
+        return;
+    }
+    let generation = owner.gate.generation();
+    let Ok(owner_guard) = owner.barrier.clone().try_read_owned() else {
+        return;
     };
     let state = drain_state(&file);
     let Ok(guard) = state.barrier.clone().try_lock_owned() else {
         return;
     };
-    crate::core::runtime::spawn_scoped(async move {
+    ctx.spawn(async move {
         let _guard = guard;
         let _owner_guard = owner_guard;
         let _state = state;
-        drain_locked(&config, &file, &owner, generation).await;
+        drain_locked(&config, &file, owner, generation).await;
     });
 }
 
 /// Retries oldest first, retaining a failed write and all later writes.
 /// Producers hold no queue lock during remote I/O. Also used by auth/cron
-/// after restart; the persisted owner root must still match the active user.
+/// after restart; the persisted owner binding must still match the active user.
 #[cfg(test)]
 pub(crate) async fn drain(config: &Config) -> usize {
-    let file = queue_path(config, super::scope::resolve_current(config).root());
+    let file = queue_path(
+        config,
+        super::scope::MemoryIdentity::root().resolve(config).root(),
+    );
     let owner = owner_state(config);
     let _owner = owner.barrier.read().await;
     let state = drain_state(&file);
     let _draining = state.barrier.lock().await;
-    let generation = owner.generation.load(Ordering::SeqCst);
-    drain_locked(config, &file, &owner, generation).await
+    let generation = owner.gate.generation();
+    drain_locked(config, &file, owner, generation).await
 }
 
-async fn drain_locked(config: &Config, file: &Path, state: &OwnerState, generation: u64) -> usize {
-    if config.memory.engine == super::engine::DISABLED_ENGINE {
-        return 0;
-    }
-    let mut settled = 0;
-    // Bounded even if a producer continually adds new work.
-    for _ in 0..MAX_PENDING {
-        if state.generation.load(Ordering::SeqCst) != generation {
-            break;
-        }
-        let snapshot_file = file.to_path_buf();
-        let entry = crate::core::runtime::spawn_blocking_scoped(move || {
-            let _guard = LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match read_at(&snapshot_file) {
-                Ok(entries) => entries.into_iter().next(),
-                Err(_) => None,
-            }
-        })
-        .await
-        .ok()
-        .flatten();
-        let Some(entry) = entry else {
-            break;
-        };
-        if state.generation.load(Ordering::SeqCst) != generation {
-            break;
-        }
-        if entry.root != super::scope::user_root(config)
-            || entry.layout_v3 != super::scope::layout_is_v3(config)
-            || queue_path(config, &entry.scope_root) != file
-        {
-            break;
-        }
-        let operation = async {
-            match &entry.operation {
-                Operation::Learn { item } => {
+/// Runs one queued write against the bound engine, bounded by [`WRITE_TIMEOUT`].
+struct Executor<'a> {
+    config: &'a Config,
+}
+
+#[async_trait]
+impl WriteExecutor for Executor<'_> {
+    async fn run(&self, operation: &WriteOperation) -> Result<(), String> {
+        let config = self.config;
+        let work = async {
+            match operation {
+                WriteOperation::Learn { item } => {
                     let bound = super::engine::resolve(config).engine()?;
                     let receipt =
                         super::ops::store_on_with(&bound, item.clone(), WriteOptions::accepted())
@@ -573,10 +557,13 @@ async fn drain_locked(config: &Config, file: &Path, state: &OwnerState, generati
                         key: receipt.id.0,
                         category: category.to_string(),
                         namespace: "learnings".to_string(),
+                        // A queued write runs off the turn: no chat to show it in.
+                        thread_id: None,
+                        client_id: None,
                     });
                     Ok(())
                 }
-                Operation::Forget { ids, reach } => super::ops::forget(
+                WriteOperation::Forget { ids, reach } => super::ops::forget(
                     config,
                     ForgetParams {
                         ids: ids.clone(),
@@ -587,45 +574,28 @@ async fn drain_locked(config: &Config, file: &Path, state: &OwnerState, generati
                 .map(|_| ()),
             }
         };
-        let result = tokio::time::timeout(WRITE_TIMEOUT, operation).await;
-        let status = match result {
-            Ok(Ok(())) => None,
-            Ok(Err(error)) => Some(error.code().to_string()),
-            Err(_) => Some("TIMEOUT".to_string()),
-        };
-        let settlement_file = file.to_path_buf();
-        let ticket = entry.ticket.clone();
-        let last_status = status.clone();
-        let saved = crate::core::runtime::spawn_blocking_scoped(move || {
-            let _guard = LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let Ok(mut entries) = read_at(&settlement_file) else {
-                return false;
-            };
-            if entries.first().is_none_or(|first| first.ticket != ticket) {
-                return false;
-            }
-            if let Some(code) = last_status {
-                entries[0].status = Some(code);
-            } else {
-                entries.remove(0);
-            }
-            write_at(&settlement_file, &entries).is_ok()
-        })
-        .await
-        .unwrap_or(false);
-        if let Some(code) = status {
-            tracing::debug!(code, ticket = %entry.ticket, "[memory:tool_writes] pending write retained");
-            break;
+        match tokio::time::timeout(WRITE_TIMEOUT, work).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(error.code().to_string()),
+            Err(_) => Err("TIMEOUT".to_string()),
         }
-        if !saved {
-            break;
-        }
-        settled += 1;
-        super::lifecycle::prefetch::invalidate(config);
     }
-    settled
+}
+
+async fn drain_locked(config: &Config, file: &Path, state: &OwnerState, generation: u64) -> usize {
+    if super::engine::switched_off(config) {
+        return 0;
+    }
+    let active = binding(config);
+    queue(file)
+        .drain(
+            &Executor { config },
+            &state.gate,
+            generation,
+            |entry| entry.binding == active && queue_path(config, &entry.scope_root) == file,
+            |_| super::lifecycle::prefetch::invalidate(config),
+        )
+        .await
 }
 
 #[cfg(test)]

@@ -143,7 +143,7 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 
 <h3>مصمم للمطورين</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">البدء السريع مع Rust</a> · <a href="../gitbooks/developing/embed/README.md">دليل التضمين</a> · <a href="../crates/openhuman-embed/examples">أمثلة</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">البدء السريع مع Rust</a> · <a href="../docs/gitbooks/en/developing/embed/README.md">دليل التضمين</a> · <a href="../crates/openhuman-embed/examples">أمثلة</a></p>
 
 <p>استخدمه كمكتبة Rust: استدعِ وكيلاً كأي دالة أخرى، أو شغّل أسطولاً كاملاً من خادم صغير واحد.</p>
 
@@ -266,9 +266,9 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 
 <p align="center">
  <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
-  <source media="(prefers-color-scheme: light)" srcset="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
-  <img alt="SWE-bench Verified run swe-x86-1: OpenHuman against six other harnesses on ten panels" src="../gitbooks/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
+  <img alt="SWE-bench Verified run swe-x86-1: OpenHuman against six other harnesses on ten panels" src="../docs/gitbooks/en/.gitbook/assets/benchmarks/swe-x86-1.png" />
  </picture>
 </p>
 
@@ -342,7 +342,7 @@ println!("{}", reply.reply);
 
 <div dir="rtl" lang="ar">
 
-بعد ذلك: [البدء السريع مع Rust](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، و[دليل التضمين](../gitbooks/developing/embed/README.md)، و[مستندات المطورين](https://tinyhumans.gitbook.io/openhuman/developing).
+بعد ذلك: [البدء السريع مع Rust](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، و[دليل التضمين](../docs/gitbooks/en/developing/embed/README.md)، و[مستندات المطورين](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

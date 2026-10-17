@@ -34,7 +34,13 @@ async fn local_native_resolution_changes_only_ephemeral_request() {
     config.action_dir = temp.path().into();
     config.workspace_dir = temp.path().join("internal");
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config), "gpt-4o", "openai");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "gpt-4o",
+        "openai",
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Image(ImageRef {
@@ -67,7 +73,13 @@ async fn blocked_attachment_fails_before_model_call() {
     let mut config = Config::default();
     config.multimodal_files.max_files = 0;
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config), "gpt-4o", "openai");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "gpt-4o",
+        "openai",
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Image(ImageRef {
@@ -82,6 +94,7 @@ async fn blocked_attachment_fails_before_model_call() {
 #[test]
 fn unknown_model_does_not_inherit_transport_vision() {
     let model = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
         Arc::new(Probe::default()),
         Arc::new(Config::default()),
         "unknown-model",
@@ -99,7 +112,13 @@ async fn persisted_image_without_mime_uses_magic_over_extension() {
     let mut config = Config::default();
     config.action_dir = temp.path().into();
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config), "gpt-4o", "openai");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "gpt-4o",
+        "openai",
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Image(ImageRef {
@@ -120,6 +139,7 @@ async fn persisted_image_without_mime_uses_magic_over_extension() {
 async fn too_many_typed_images_reject_before_read_or_inference() {
     let probe = Arc::new(Probe::default());
     let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
         probe.clone(),
         Arc::new(Config::default()),
         "gpt-4o",
@@ -147,6 +167,7 @@ async fn external_channel_cannot_rehydrate_a_local_image() {
     use crate::agent::turn_origin::AgentTurnOrigin;
     let probe = Arc::new(Probe::default());
     let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
         probe.clone(),
         Arc::new(Config::default()),
         "gpt-4o",
@@ -185,7 +206,13 @@ async fn unknown_video_retains_path_as_metadata_without_specialist() {
     let mut config = Config::default();
     config.action_dir = temp.path().into();
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config), "unknown", "custom");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "unknown",
+        "custom",
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Video(MediaRef::Path {
@@ -220,6 +247,7 @@ async fn derivative_cache_survives_model_recreation_and_invalidates_changed_cont
         config: config.clone(),
         profile: ModelProfile::default(),
         fallback_cache: Mutex::new(Default::default()),
+        core: None,
     };
     let first = make();
     let scope = super::super::AttachmentAccessScope::default();
@@ -268,6 +296,7 @@ async fn cache_is_not_written_beside_unmanaged_local_files() {
         config: Arc::new(config),
         profile: ModelProfile::default(),
         fallback_cache: Mutex::new(Default::default()),
+        core: None,
     };
     model
         .save_fallback(
@@ -315,6 +344,7 @@ fn endpoint_discovery_denial_overrides_offline_vision_facts() {
         }),
     );
     let model = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
         Arc::new(Probe::default()),
         Arc::new(config),
         "gpt-4o",
@@ -328,7 +358,13 @@ async fn legacy_inline_source_is_bounded_and_malformed_base64_rejects_before_pri
     let probe = Arc::new(Probe::default());
     let mut config = Config::default();
     config.multimodal.max_image_size_mb = 1;
-    let wrapper = wrap(probe.clone(), Arc::new(config), "gpt-4o", "openai");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "gpt-4o",
+        "openai",
+    );
     for source in [
         "data:image/png;base64,%%%".to_owned(),
         format!("data:image/png;base64,{}", "A".repeat(2 * 1024 * 1024)),
@@ -350,6 +386,7 @@ async fn legacy_inline_source_is_bounded_and_malformed_base64_rejects_before_pri
 async fn disabled_remote_replay_is_rejected_before_inference() {
     let probe = Arc::new(Probe::default());
     let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
         probe.clone(),
         Arc::new(Config::default()),
         "unknown",
@@ -384,7 +421,13 @@ async fn inline_native_replay_materializes_original_and_keeps_durable_message_un
     let mut config = Config::default();
     config.action_dir = temp.path().into();
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config), "gpt-4o", "openai");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config),
+        "gpt-4o",
+        "openai",
+    );
     let bytes = b"\x89PNG\r\n\x1a\noriginal";
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
@@ -432,7 +475,13 @@ async fn derivative_cache_cannot_overwrite_original_named_like_cache() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].name, ".openhuman-intake.txt");
     let probe = Arc::new(Probe::default());
-    let wrapper = wrap(probe.clone(), Arc::new(config.clone()), "unknown", "custom");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        probe.clone(),
+        Arc::new(config.clone()),
+        "unknown",
+        "custom",
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Document(MediaRef::Path {
@@ -504,7 +553,13 @@ async fn unknown_model_legacy_inline_replay_uses_specialist_once_across_model_re
     )]);
     for _ in 0..2 {
         let main = Arc::new(Probe::default());
-        let wrapper = wrap(main.clone(), config.clone(), "unknown-model", "custom");
+        let wrapper = wrap(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            main.clone(),
+            config.clone(),
+            "unknown-model",
+            "custom",
+        );
         assert!(wrapper.invoke(&(), request.clone()).await.is_err());
         let captured = main.requests.lock().unwrap().clone();
         assert_eq!(captured.len(), 1);
@@ -527,7 +582,13 @@ async fn legacy_audio_base64_unsupported_transport_becomes_workspace_reference()
     let mut config = Config::default();
     config.action_dir = temp.path().into();
     let main = Arc::new(Probe::default());
-    let wrapper = wrap(main.clone(), Arc::new(config), "unknown", "custom");
+    let wrapper = wrap(
+        &crate::core::runtime::DispatchCtx::host_default(),
+        main.clone(),
+        Arc::new(config),
+        "unknown",
+        "custom",
+    );
     let request = ModelRequest::new(vec![Message::User(
         tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Audio(MediaRef::Base64 {
@@ -653,4 +714,30 @@ fn bare_injected_builder_does_not_load_operator_config() {
         .build()
         .unwrap();
     assert!(agent.runtime_config().is_none());
+}
+
+#[cfg(feature = "documents")]
+#[tokio::test]
+async fn pdf_attachment_degrades_to_a_note_when_documents_component_is_off() {
+    let mut config = Config::default();
+    config.components.documents = false;
+    let model = AttachmentModel {
+        inner: Arc::new(Probe::default()),
+        config: Arc::new(config),
+        profile: ModelProfile::default(),
+        fallback_cache: Mutex::new(Default::default()),
+        core: None,
+    };
+    let (text, cacheable) = model
+        .fallback(
+            InputModality::Document,
+            "uploads/t/id/brief.pdf",
+            "application/pdf",
+            b"%PDF-1.4",
+        )
+        .await
+        .unwrap();
+    assert!(text.contains("Document extraction is disabled"), "{text}");
+    assert!(text.contains("brief.pdf"));
+    assert!(!cacheable);
 }

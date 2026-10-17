@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::SearchRoute;
+use crate::config::ProviderRoute;
 
 const KEY: &str = "pinned-brave-secret";
 
@@ -23,7 +23,7 @@ fn pinning_turns_search_on_and_routes_the_provider_direct() {
     assert!(search.is_host_pinned());
     assert_eq!(search.enabled, Some(true));
     assert_eq!(search.providers["brave"], SearchProviderSettings::direct());
-    assert_eq!(search.route("brave"), SearchRoute::Direct);
+    assert_eq!(search.route("brave"), ProviderRoute::Direct);
     assert_eq!(search.direct_key("brave"), Some(KEY));
     assert_eq!(
         search.host_credential("brave").and_then(|c| c.base_url()),
@@ -95,4 +95,36 @@ fn a_pinned_key_is_never_serialized_or_printed() {
     // A reload from what was written carries no pin.
     let reloaded: SearchConfig = toml::from_str(&toml).unwrap();
     assert!(!reloaded.is_host_pinned());
+}
+
+#[test]
+fn existing_config_toml_search_section_deserializes_and_round_trips_unchanged() {
+    let existing = r#"
+presentation = "one_provider"
+presentation_provider = "exa"
+
+[providers.exa]
+enabled = true
+route = "managed"
+
+[providers.brave]
+enabled = true
+route = "direct"
+"#;
+    let search: SearchConfig = toml::from_str(existing).unwrap();
+    assert_eq!(
+        search.presentation,
+        crate::config::PresentationMode::OneProvider
+    );
+    assert_eq!(search.route("exa"), ProviderRoute::Backend);
+    assert_eq!(search.route("brave"), ProviderRoute::Direct);
+
+    // The config spelling stays `managed` on write, never the wire `backend`.
+    let written = toml::to_string(&search).unwrap();
+    assert!(written.contains("route = \"managed\""), "{written}");
+    assert!(!written.contains("backend"), "{written}");
+    assert!(
+        written.contains("presentation = \"one_provider\""),
+        "{written}"
+    );
 }

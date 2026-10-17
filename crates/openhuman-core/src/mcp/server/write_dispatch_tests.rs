@@ -76,6 +76,7 @@ async fn audit_write_rejection_records_failure_row() {
             &config,
             &crate::mcp::audit::McpWriteListQuery::default(),
         )
+        .await
         .expect("list writes");
         if rows.len() == 1 {
             break;
@@ -164,6 +165,7 @@ async fn test_dispatch_write_tool_rpc_error_records_audit_and_returns_tool_error
     let params = serde_json::Map::new();
 
     let result = dispatch_write_tool(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "memory.learn",
         "openhuman.memory_learn",
         &params,
@@ -186,6 +188,7 @@ async fn test_dispatch_write_tool_rpc_error_records_audit_and_returns_tool_error
             &config,
             &crate::mcp::audit::McpWriteListQuery::default(),
         )
+        .await
         .expect("list writes");
         if rows.len() == 1 {
             break;
@@ -224,6 +227,7 @@ async fn test_audit_write_success_path() {
             &config,
             &crate::mcp::audit::McpWriteListQuery::default(),
         )
+        .await
         .expect("list writes");
         if rows.len() == 1 {
             break;
@@ -247,6 +251,7 @@ async fn test_dispatch_write_tool_unregistered_rpc_is_a_tool_error() {
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
 
     let val = dispatch_write_tool(
+        &crate::core::runtime::DispatchCtx::ambient(),
         "memory.forget",
         "openhuman.memory_no_such_method",
         &Map::new(),

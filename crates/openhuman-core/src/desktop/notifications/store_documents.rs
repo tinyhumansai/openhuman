@@ -1,8 +1,8 @@
 //! Notifications on the `tinystoragedrivers` document port.
 //!
-//! Used instead of `notifications/notifications.db` when the host configured
-//! a storage backend ([`crate::storage`]); the functions in `store.rs` pick it
-//! per call. Records live under the current call's storage scope (the acting
+//! Kept in the storage backend ([`crate::storage`]); the functions in
+//! `store.rs` open it per call, and the old `notifications/notifications.db`
+//! is read once by the importer ([`import_source`]). Records live under the current call's storage scope (the acting
 //! agent, `local` on a single-user host).
 //!
 //! # Layout
@@ -41,11 +41,10 @@ use super::types::{
 };
 use crate::config::Config;
 use crate::storage::documents::{compare_and_swap, text, Repo, CAS_ATTEMPTS};
-use crate::storage::local::{self, ImportPlan};
 use crate::storage::{DocumentStore, DocumentStoreExt, StorageError};
 
 pub(super) const NOTIFICATIONS: &str = "integration_notifications";
-const DEDUP: &str = "notification_dedup";
+pub(super) const DEDUP: &str = "notification_dedup";
 pub(super) const SETTINGS: &str = "notification_settings";
 pub(super) const CORE: &str = "core_notifications";
 
@@ -56,6 +55,39 @@ const DOMAIN: &str = "notifications::store";
 
 /// How long identical content counts as a duplicate.
 const DEDUP_WINDOW_SECS: i64 = 60;
+
+/// The legacy `notifications.db`, as the storage importer reads it.
+///
+/// Core notifications are keyed by workspace. The legacy table and the old
+/// per-file default both used the fixed [`LOCAL_WORKSPACE`] key; a backend
+/// that may serve several workspaces gets them re-filed under the real
+/// workspace's key, exactly as [`current`] does for new records
+/// ([`workspace_key_for`]).
+pub(crate) fn import_source() -> crate::storage::import::Source {
+    crate::storage::import::Source {
+        domain: "notifications",
+        db: "notifications/notifications.db",
+        collections,
+        read_legacy: |scratch, real| {
+            super::store_import::read_for(scratch, &workspace_key_for(real))
+        },
+        rekey: |mut record, config| {
+            if record.collection != CORE {
+                return record;
+            }
+            let prefix = core_id(LOCAL_WORKSPACE, "");
+            let Some(event_id) = record.id.strip_prefix(&prefix) else {
+                return record;
+            };
+            let workspace = workspace_key_for(config);
+            record.id = core_id(&workspace, event_id);
+            if let Some(doc) = record.doc.as_object_mut() {
+                doc.insert("workspace".into(), serde_json::json!(workspace));
+            }
+            record
+        },
+    }
+}
 
 fn collections() -> Vec<CollectionSpec> {
     vec![
@@ -75,29 +107,25 @@ fn workspace_key(path: &std::path::Path) -> String {
     format!("path:{}", hex::encode(path.as_os_str().as_encoded_bytes()))
 }
 
-/// The document store for this call: the host's configured backend or, by
-/// default, the document tables in `notifications.db` (the legacy tables
-/// imported on first open). `None` keeps the legacy tables.
-pub(super) fn current(config: &Config) -> Result<Option<Docs>> {
-    // An installed backend may be shared by several workspaces, so it keeps
-    // core notifications apart by workspace path. The default file lives in
-    // the workspace and moves with it, so it uses a fixed key: a renamed or
-    // restored workspace still finds its notifications.
-    let workspace = if crate::storage::installed().is_some() {
-        workspace_key(&config.workspace_dir)
-    } else {
-        LOCAL_WORKSPACE.to_string()
-    };
-    let plan = ImportPlan {
-        domain: DOMAIN,
-        tables: super::store::import::TABLES,
-        read: &|| super::store::import::read(config),
-    };
-    let db_path = super::store::db_path(config);
-    Ok(
-        local::repo(config, &db_path, DOMAIN, collections, &plan)?
-            .map(|repo| Docs(repo, workspace)),
-    )
+/// The `workspace` key core notifications are filed under for `config`.
+///
+/// A backend that is the workspace's own default (`sqlite:<workspace>/storage`,
+/// or the one opened lazily when none is installed) lives in the workspace and
+/// moves with it, so it uses a fixed key: a renamed or restored workspace
+/// still finds its notifications. Any other backend may serve several
+/// workspaces, so it keeps them apart by workspace path.
+pub(super) fn workspace_key_for(config: &Config) -> String {
+    let own_default = crate::storage::config::default_url(&config.workspace_dir);
+    match crate::storage::installed_url() {
+        Some(url) if url != own_default => workspace_key(&config.workspace_dir),
+        _ => LOCAL_WORKSPACE.to_string(),
+    }
+}
+
+/// The document store for this call: the storage backend, in the acting scope.
+pub(super) fn current(config: &Config) -> Result<Docs> {
+    let repo = Repo::current_for(&config.workspace_dir, DOMAIN, collections)?;
+    Ok(Docs(repo, workspace_key_for(config)))
 }
 
 fn status_of(raw: Option<&str>) -> NotificationStatus {
@@ -166,7 +194,12 @@ fn to_notification(stored: &Versioned<Value>) -> IntegrationNotification {
 
 /// The dedup document id for one piece of content. Each part is length
 /// prefixed, so no two distinct tuples hash the same input.
-fn dedup_id(provider: &str, account_id: Option<&str>, title: &str, body: &str) -> String {
+pub(super) fn dedup_id(
+    provider: &str,
+    account_id: Option<&str>,
+    title: &str,
+    body: &str,
+) -> String {
     let mut hasher = Sha256::new();
     for part in [Some(provider), account_id, Some(title), Some(body)] {
         match part {

@@ -6,7 +6,7 @@
 //! calling thread's `RunMode` (`agent::tinyagents::run_mode::set_mode`) back
 //! to `Build`, so the very next tool exposure/execution check on that thread
 //! sees every tool again — the actual gating lives in
-//! `PlanModeMiddleware` (wired per-turn in `harness_assembly.rs`), not here;
+//! `PlanModeMiddleware` (wired per-turn in `turn_middleware.rs`), not here;
 //! this tool only flips the live handle the middleware reads.
 //!
 //! Threadless callers (no `ToolRunContext::thread_id`, e.g. a test double or
@@ -116,6 +116,7 @@ impl PlanExitTool {
                     "[tool][plan_exit] flipping thread run mode to build"
                 );
                 crate::agent::tinyagents::run_mode::set_mode(
+                    &crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context),
                     thread_id,
                     tinyagents_harness::middleware::RunMode::Build,
                 );

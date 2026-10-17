@@ -7,7 +7,7 @@ icon: diagram-project
 
 # Memory
 
-`crates/openhuman-core/src/memory/` is the host layer over TinyMemory. It runs the agent memory lifecycle around every turn. A memory pack is recalled before the model runs, the turn is logged on both sides, memory is recalled into compaction checkpoints, and belief builds run in the background.
+`crates/openhuman-core/src/memory/` is the host layer over TinyMemory. It runs the agent memory lifecycle around every turn. The prelude takes completed cached context immediately and queues user logging and refresh; committed replies are logged in the background. Compaction uses completed context and queues its own refresh without delaying the authoritative summarizer. Belief builds also run in the background.
 
 The behavior is specified in [`docs/specs/memory-v2.md`](https://github.com/tinyhumansai/openhuman/blob/main/docs/specs/memory-v2.md). The user-facing feature is [Memory](../../features/memory.md).
 
@@ -26,7 +26,8 @@ The behavior is specified in [`docs/specs/memory-v2.md`](https://github.com/tiny
 | `engine` | Binds `[memory] engine`: `tinyhumans` over the host's backend credential (resolved per request) with the transport's attribution headers, or `cortexdb` with the key stored as `memory-cortexdb`. Off when neither is usable. |
 | `guard` | `ScrubbingEngine`: every write is scrubbed under the host policy, whichever path makes it. |
 | `scope` | `MemoryIdentity` scoped around every turn, resolved to a layout root and a memory agent id (host binding, definition pin, team, default). |
-| `lifecycle::hooks` | `pre_turn`, `post_turn`, `compaction`: bounded, never fail a turn. |
+| `lifecycle::prefetch` | Scoped, bounded in-memory cache and background workers for automatic turn and compaction recall. |
+| `lifecycle::hooks` | Lifecycle primitives; explicit/manual `pre_turn` and `compaction` retain configured deadlines. |
 | `lifecycle::jobs` | The persisted background queue and the `memory_background` cron job. |
 | `lifecycle::views` | Policy, pack preview, agents list, job views for the RPCs. |
 | `brain` | Brain source mapping for synced items and the `memory_brain_*` ops. |
@@ -34,7 +35,7 @@ The behavior is specified in [`docs/specs/memory-v2.md`](https://github.com/tiny
 | `channels` | Which channel each logged thread arrived on, for forgetting a channel. |
 | `backfill` | Consent-gated storing of past chats in the lifecycle's shape. |
 | `import` | Consent-gated, resumable v1 import. |
-| `tools` | The single `memory` agent tool (`recall`, `fetch`, `learn`, `forget`), confined to the identity's layout. |
+| `tools`, `tool_budget`, `tool_writes` | The scoped agent tool: bounded explicit reads and durable local admission of `learn`/`forget`, followed by background delivery. |
 | `ops`, `explore` | Engine selection, recall, fetch, learn, forget, listing, the explorer. |
 | `bus` | The cron subscriber (`memory_sources_sync`, `memory_background`). |
 | `schemas` | The `openhuman.memory_*` controllers. |
@@ -44,10 +45,16 @@ The behavior is specified in [`docs/specs/memory-v2.md`](https://github.com/tiny
 
 | Hook | File |
 | --- | --- |
-| Pre-turn (log + recall), first turn after a compaction also `start_session` | `agent/session_host/runtime_session/memory_ingest.rs`, from `before_turn` in `runtime_session.rs` |
+| Pre-turn (take cached pack, queue logging and refresh) | `agent/session_host/runtime_session/memory_ingest.rs`, from `before_turn` in `runtime_session.rs` |
 | Pack injection, ephemeral, every model request of the turn | `agent/tinyagents/middleware/memory_pack.rs` |
 | Post-turn (log the reply, queue builds), after the durable commit | `memory_ingest.rs`, from `finalize_after_durable_commit` |
-| Compaction recall into the checkpoint | `agent/tinyagents/memory_summarizer.rs`, wrapped around the summarizer in `harness_context_ladder.rs` |
+| Compaction enrichment from completed cache, with background refresh | `agent/tinyagents/memory_summarizer.rs`, wrapped around the summarizer in `context_wiring.rs` (ladder order and sizing live in `tinyagents-harness` `ContextLadder`) |
+
+Automatic packs are keyed by CoreContext, workspace, config fingerprint, resolved memory identity and thread. They expire after 60 seconds. The cache holds at most 64 entries per context and 64 KiB per pack; eight workers globally process bounded queues of at most 16 pending operations per entry, with a 120-second deadline per operation. Saturation skips best-effort automatic work rather than waiting. Packs identify themselves as results of an earlier lookup, not authoritative answers to the current question.
+
+Successful content changes clear cached packs and advance a revision, preserving queued conversation logs while rejecting older in-flight results. Engine or credential invalidation clears the caches and pending refreshes. Scoped background tasks retain the CoreContext; the memory identity is an explicit value on the run context, not task-local state.
+
+The agent tool allows 15 seconds per call, 30 seconds of aggregate reserved time and eight attempts per retained run record. The tracker keeps 128 records; idle eviction under churn can reset the budget for that run, while outstanding reservations cannot be evicted. `learn`/`forget` acknowledge durable local admission, not remote completion. Their scrubbed outbox entries contain trusted scope rather than credentials, and retry under the matching owner on background/auth ticks. Direct RPC, UI and import/deletion workflows keep their explicit behavior.
 
 The turn's `MemoryTurn` (config, identity, thread, pack) rides
 `OpenHumanRunContext::memory_turn`; a child run has its own.

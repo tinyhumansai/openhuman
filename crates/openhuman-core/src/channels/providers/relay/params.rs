@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::channels::traits::ChannelMessage;
-use tinychannels::channel::derive_inbound_thread_id;
+#[cfg(test)]
+use crate::channels::bus::derive_inbound_thread_id;
+use tinychannels_bus::ChannelMessage;
 
 /// Longest channel name: `telegram`, `imessage`, `discord`, ...
 pub const MAX_CHANNEL_LEN: usize = 32;
@@ -106,8 +107,9 @@ impl RelayInboundParams {
 
     /// The conversation's thread: `channel:<channel>/<sender>/<chat>`, the
     /// same derivation as the backend-relayed inbound path
-    /// (`tinychannels::channel::derive_inbound_thread_id`). A user cannot mint such
+    /// (`channels::bus::derive_inbound_thread_id`). A user cannot mint such
     /// an id through `threads_upsert`, which reserves `channel:`.
+    #[cfg(test)]
     pub fn thread_id(&self) -> String {
         derive_inbound_thread_id(
             &self.channel,

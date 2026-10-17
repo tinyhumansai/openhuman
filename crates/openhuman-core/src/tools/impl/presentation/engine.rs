@@ -25,11 +25,11 @@
 use std::time::Duration;
 
 use crate::tools::implementations::document::format::spec::{
-    WirePresentationSpec, WireSlideImage, WireSlideSpec,
+    SlideImage, SlideSpec, WirePresentationSpec, WireSlideImage, WireSlideSpec,
 };
 use tokio::time::timeout;
 
-use super::types::{GeneratePresentationInput, PresentationError, ResolvedSlideImage};
+use super::types::{GeneratePresentationInput, PresentationError};
 use crate::modules::documents;
 
 /// Run the synthesis. Returns the serialised `.pptx` bytes ready to be written
@@ -39,7 +39,7 @@ use crate::modules::documents;
 /// it surfaces as [`PresentationError::GenerationTimeout`].
 pub(super) async fn generate(
     input: &GeneratePresentationInput,
-    images: &[Vec<ResolvedSlideImage>],
+    images: &[Vec<SlideImage>],
     deadline: Duration,
     config: Option<&crate::config::Config>,
 ) -> Result<Vec<u8>, PresentationError> {
@@ -134,15 +134,24 @@ pub(super) async fn generate(
 /// keeps them consistent.
 fn build_request(
     input: &GeneratePresentationInput,
-    images: &[Vec<ResolvedSlideImage>],
+    images: &[Vec<SlideImage>],
 ) -> (WirePresentationSpec, Vec<u8>) {
     let mut payload = Vec::new();
     let mut slides = Vec::with_capacity(input.slides.len());
 
     for (index, slide) in input.slides.iter().enumerate() {
         let resolved = images.get(index).map(Vec::as_slice).unwrap_or(&[]);
-        let mut wire_images = Vec::with_capacity(resolved.len());
-        for image in resolved {
+        // The contract builds the slide from already-resolved images; only the
+        // wire projection (lengths instead of bytes) is made here.
+        let spec = SlideSpec::new(
+            slide.title.clone(),
+            slide.body.clone(),
+            slide.bullets.clone(),
+            slide.speaker_notes.clone(),
+            resolved.to_vec(),
+        );
+        let mut wire_images = Vec::with_capacity(spec.images.len());
+        for image in &spec.images {
             payload.extend_from_slice(&image.bytes);
             wire_images.push(WireSlideImage {
                 byte_len: image.bytes.len() as u64,
@@ -150,10 +159,10 @@ fn build_request(
             });
         }
         slides.push(WireSlideSpec {
-            title: slide.title.clone(),
-            body: slide.body.clone(),
-            bullets: slide.bullets.clone(),
-            speaker_notes: slide.speaker_notes.clone(),
+            title: spec.title,
+            body: spec.body,
+            bullets: spec.bullets,
+            speaker_notes: spec.speaker_notes,
             images: wire_images,
         });
     }

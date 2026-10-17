@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::test_env::EnvVarGuard;
+use crate::core::runtime::DispatchCtx;
 use serde_json::json;
 
 fn test_state() -> AppState {
@@ -10,26 +11,41 @@ fn test_state() -> AppState {
 
 #[tokio::test]
 async fn dispatch_core_ping_returns_ok_true() {
-    let out = dispatch(test_state(), "core.ping", json!({}))
-        .await
-        .expect("core.ping should succeed");
+    let out = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "core.ping",
+        json!({}),
+    )
+    .await
+    .expect("core.ping should succeed");
     assert_eq!(out, json!({ "ok": true }));
 }
 
 #[tokio::test]
 async fn dispatch_core_version_returns_state_version() {
-    let out = dispatch(test_state(), "core.version", json!({}))
-        .await
-        .expect("core.version should succeed");
+    let out = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "core.version",
+        json!({}),
+    )
+    .await
+    .expect("core.version should succeed");
     assert_eq!(out, json!({ "version": "9.9.9-test" }));
 }
 
 #[tokio::test]
 async fn dispatch_core_ignores_params() {
     // Params must be tolerated even when the method takes none.
-    let out = dispatch(test_state(), "core.ping", json!({ "extra": 1 }))
-        .await
-        .expect("core.ping should ignore extra params");
+    let out = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "core.ping",
+        json!({ "extra": 1 }),
+    )
+    .await
+    .expect("core.ping should ignore extra params");
     assert_eq!(out, json!({ "ok": true }));
 }
 
@@ -39,24 +55,34 @@ async fn dispatch_rewrites_legacy_alias_before_lookup() {
     // alias table. Going through the dispatcher must rewrite it and
     // route successfully to Tier 1 instead of falling through to the
     // unknown-method error path.
-    let out = dispatch(test_state(), "openhuman.ping", json!({}))
-        .await
-        .expect("legacy alias openhuman.ping must resolve to core.ping");
+    let out = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "openhuman.ping",
+        json!({}),
+    )
+    .await
+    .expect("legacy alias openhuman.ping must resolve to core.ping");
     assert_eq!(out, json!({ "ok": true }));
 }
 
 #[tokio::test]
 async fn dispatch_unknown_method_returns_error() {
-    let err = dispatch(test_state(), "does.not.exist", json!({}))
-        .await
-        .expect_err("unknown methods must error");
+    let err = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "does.not.exist",
+        json!({}),
+    )
+    .await
+    .expect_err("unknown methods must error");
     assert!(err.contains("unknown method"));
     assert!(err.contains("does.not.exist"));
 }
 
 #[tokio::test]
 async fn dispatch_empty_method_returns_unknown_method_error() {
-    let err = dispatch(test_state(), "", json!({}))
+    let err = dispatch(DispatchCtx::process_default(), test_state(), "", json!({}))
         .await
         .expect_err("empty method must error");
     assert!(err.contains("unknown method"));
@@ -68,9 +94,14 @@ async fn dispatch_delegates_to_tier2_for_domain_method() {
     // it must succeed and return a policy object.
     let workspace = tempfile::tempdir().expect("temporary workspace");
     let _workspace_env = EnvVarGuard::workspace_async(workspace.path()).await;
-    let out = dispatch(test_state(), "openhuman.security_policy_info", json!({}))
-        .await
-        .expect("security_policy_info should route via tier 2");
+    let out = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "openhuman.security_policy_info",
+        json!({}),
+    )
+    .await
+    .expect("security_policy_info should route via tier 2");
     // With logs present, payload is wrapped as { result, logs }.
     assert!(out.get("result").is_some() || out.get("autonomy").is_some());
 }
@@ -106,9 +137,14 @@ fn try_core_dispatch_version_reflects_appstate() {
 
 #[tokio::test]
 async fn dispatch_legacy_ping_rewrites_and_succeeds() {
-    let out = dispatch(test_state(), "openhuman.ping", json!({}))
-        .await
-        .expect("openhuman.ping should be rewritten to core.ping and succeed");
+    let out = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "openhuman.ping",
+        json!({}),
+    )
+    .await
+    .expect("openhuman.ping should be rewritten to core.ping and succeed");
     assert_eq!(out, json!({ "ok": true }));
 }
 
@@ -142,9 +178,14 @@ fn is_known_probe_method_matches_allow_list_exactly() {
 #[cfg(feature = "channels")]
 async fn dispatch_dotted_channel_list_aliases_route_to_registry() {
     for method in ["channels.list", "openhuman.channels.list"] {
-        let out = dispatch(test_state(), method, json!({}))
-            .await
-            .unwrap_or_else(|err| panic!("{method} should route via channels_list: {err}"));
+        let out = dispatch(
+            DispatchCtx::process_default(),
+            test_state(),
+            method,
+            json!({}),
+        )
+        .await
+        .unwrap_or_else(|err| panic!("{method} should route via channels_list: {err}"));
         assert!(
             out.is_array() || out.get("result").is_some(),
             "expected {method} to return the channels_list payload, got {out}"
@@ -167,9 +208,14 @@ async fn dispatch_probe_method_still_returns_unknown_method_error() {
     // Allow-listed probe names must not be silently "handled" — the caller
     // still gets a method-not-found error. Only the Sentry severity (in the
     // transport layer) changes; the dispatch contract is unchanged.
-    let err = dispatch(test_state(), "rpc.discover", json!({}))
-        .await
-        .expect_err("probe methods are still unknown to the dispatcher");
+    let err = dispatch(
+        DispatchCtx::process_default(),
+        test_state(),
+        "rpc.discover",
+        json!({}),
+    )
+    .await
+    .expect_err("probe methods are still unknown to the dispatcher");
     assert_eq!(unknown_method_name(&err), Some("rpc.discover"));
     assert!(is_known_probe_method(
         unknown_method_name(&err).expect("unknown-method error")

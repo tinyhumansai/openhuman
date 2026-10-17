@@ -7,8 +7,8 @@
 # Release archives come from the module registry (test-module-assets.mjs),
 # are cached by sha256 under $CI_CACHE_DIR/blobs when that is set, and are
 # verified against the registry digest on every use, cached or not.
-# libtinyconnectors has no published artifact, so it is built from the pinned
-# submodule and cached by (submodule SHA, rustc version).
+# All nine modules, tinyconnectors included, come from releases; nothing is
+# compiled from source here (#7618).
 #
 # tinybus refuses a module when any ancestor directory is owned by someone
 # other than root or the current user, so <dest-dir> must sit under a tree the
@@ -21,7 +21,7 @@ log() { echo "[ci][test-modules] $*"; }
 
 dest="${1:?usage: install-test-modules.sh <dest-dir> <env-file>}"
 env_file="${2:?usage: install-test-modules.sh <dest-dir> <env-file>}"
-host_key="${OH_TEST_MODULE_HOST_KEY:-ubuntu-22.04-x86_64}"
+host_key="${OH_MODULE_HOST_KEY:-ubuntu-22.04-x86_64}"
 blobs="${CI_CACHE_DIR:+${CI_CACHE_DIR}/blobs}"
 blobs="${blobs:-${dest}/.blobs}"
 mkdir -p "${blobs}" "${dest}"
@@ -58,34 +58,23 @@ while IFS=$'\t' read -r id url archive sha; do
   tar --no-same-owner -xzf "${cached}" -C "${dest}/${id}"
 done <<< "${assets}"
 
-# The checkout action initializes root submodules, but the module build also
-# needs tinyconnectors' nested tinybus dependency.
-git submodule update --init --recursive vendor/tinyconnectors
-
-conn_rev="$(git -C vendor/tinyconnectors rev-parse HEAD)"
-rustc_rev="$(rustc -V | sha256sum | cut -c1-12)"
-conn_cached="${blobs}/tinyconnectors-${conn_rev}-${rustc_rev}.so"
-if [ -f "${conn_cached}" ]; then
-  log "tinyconnectors: cache hit ${conn_rev:0:12}"
-else
-  conn_target="${TINYCONNECTORS_TARGET_DIR:-vendor/tinyconnectors/target}"
-  log "tinyconnectors: building ${conn_rev:0:12} into ${conn_target}"
-  bash scripts/ci-cancel-aware.sh cargo build --release \
-    --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml \
-    --target-dir "${conn_target}"
-  cp "${conn_target}/release/libtinyconnectors.so" "${conn_cached}.part"
-  mv "${conn_cached}.part" "${conn_cached}"
+# Every staged directory goes on the search path the loader already honours
+# (release mode); each holds the released library.
+module_dirs=""
+for id in tinybox tinydocs tinywallet tinychannels tinymcp tinyjuice tinysearch tinyhosts tinyconnectors tinyflows; do
+  module_dirs="${module_dirs:+${module_dirs}:}${dest}/${id}"
+done
+# mcp_registry_multi_server loads TinyMCP by file, not by search path, as
+# scripts/test-rust-with-mock.sh supplies it locally.
+tinymcp_artifact="$(find "${dest}/tinymcp" -maxdepth 2 -type f \
+  \( -name libtinymcp_module.so -o -name libtinymcp_module.dylib -o -name tinymcp_module.dll \) | head -n 1)"
+if [ -z "${tinymcp_artifact}" ]; then
+  echo "::error::the tinymcp release holds no module library" >&2
+  exit 1
 fi
-touch "${conn_cached}"
-mkdir -p "${dest}/tinyconnectors"
-cp "${conn_cached}" "${dest}/tinyconnectors/libtinyconnectors.so"
-node scripts/ci/stage-connector-test-module.mjs \
-  "${dest}/tinyconnectors/libtinyconnectors.so" "${dest}/tinyconnectors" > /dev/null
-
 {
-  echo "TINYJUICE_TEST_MODULE=${dest}/tinyjuice/libtinyjuice_module.so"
-  echo "TINYSEARCH_TEST_MODULE=${dest}/tinysearch/libtinysearch.so"
-  echo "OPENHUMAN_MODULE_PATH=${dest}/tinydocs:${dest}/tinywallet:${dest}/tinychannels:${dest}/tinymcp${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
-  echo "TINYCONNECTORS_TEST_MODULE=${dest}/tinyconnectors/libtinyconnectors.so"
+  echo "OPENHUMAN_MODULE_PATH=${module_dirs}${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
+  echo "OPENHUMAN_TINYMCP_TEST_MODULE=${tinymcp_artifact}"
+  echo "OPENHUMAN_TEST_MODULES_STAGED=1"
 } > "${env_file}"
 log "wrote ${env_file}"

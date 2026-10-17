@@ -5,7 +5,7 @@ fn start_openai_oauth_returns_authorize_url() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
 
-    let start = start_openai_oauth(&config).unwrap();
+    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
     assert!(start.auth_url.contains("auth.openai.com"));
     assert!(start.auth_url.contains("code_challenge="));
     assert_eq!(start.redirect_uri, "http://127.0.0.1:1455/auth/callback");
@@ -98,33 +98,84 @@ fn complete_openai_oauth_rejects_missing_pending_session() {
 fn complete_openai_oauth_rejects_expired_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    std::fs::write(
-        tmp.path().join("openai-oauth-pending.json"),
-        serde_json::json!({
-            "state": "state",
-            "verifier": "verifier",
-            "redirect_uri": "http://127.0.0.1:1455/auth/callback",
-            "created_at": 1_u64,
-        })
-        .to_string(),
-    )
-    .unwrap();
+    let pending = pending::store(&config).unwrap();
+    runtime().block_on(async {
+        pending
+            .set(
+                "openai-oauth-pending",
+                serde_json::json!({
+                    "state": "state",
+                    "verifier": "verifier",
+                    "redirect_uri": "http://127.0.0.1:1455/auth/callback",
+                    "created_at": 1_u64,
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let err = complete_openai_oauth(
+            &config,
+            "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("no pending OAuth session"));
+        assert!(pending.get("openai-oauth-pending").await.unwrap().is_none());
+    });
+}
 
+#[test]
+fn start_openai_oauth_keeps_the_pending_session_in_the_secret_store_not_a_file() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+
+    assert!(!tmp.path().join("openai-oauth-pending.json").exists());
+    let pending = pending::store(&config).unwrap();
+    let stored = runtime()
+        .block_on(pending.get("openai-oauth-pending"))
+        .unwrap()
+        .expect("the session is stored");
+    let doc: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+    assert_eq!(doc["state"], start.state);
+}
+
+#[test]
+fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_flow() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let legacy = tmp.path().join("openai-oauth-pending.json");
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let bytes = serde_json::json!({
+        "state": "legacy-state",
+        "verifier": "legacy-verifier",
+        "redirect_uri": "http://127.0.0.1:1455/auth/callback",
+        "created_at": created_at,
+    })
+    .to_string();
+    std::fs::write(&legacy, &bytes).unwrap();
+
+    // A wrong state is rejected as a mismatch, which only happens when the
+    // legacy session was found.
     let err = runtime()
         .block_on(complete_openai_oauth(
             &config,
-            "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
+            "http://127.0.0.1:1455/auth/callback?code=fake&state=wrong",
         ))
         .unwrap_err();
-    assert!(err.contains("no pending OAuth session"));
-    assert!(!tmp.path().join("openai-oauth-pending.json").exists());
+    assert!(err.contains("state mismatch"), "{err}");
+    assert_eq!(std::fs::read_to_string(&legacy).unwrap(), bytes);
 }
 
 #[test]
 fn complete_openai_oauth_rejects_state_mismatch() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = start_openai_oauth(&config).unwrap();
+    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
     let callback = format!(
         "http://127.0.0.1:1455/auth/callback?code=fake&state=not-{}",
         start.state

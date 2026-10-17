@@ -98,6 +98,15 @@ pub(crate) fn bucket(thread_id: &str) -> u8 {
     (hash % 100) as u8
 }
 
+/// The arm for a thread under `config`: the `[components] memes` switch is the
+/// master, and the flag's arm is honoured only while the component is on.
+pub(crate) fn arm_for(config: &crate::config::Config, mode: Mode, thread_id: &str) -> Arm {
+    if !config.components.memes {
+        return Arm::Disabled;
+    }
+    assign(mode, thread_id)
+}
+
 pub(crate) fn assign(mode: Mode, thread_id: &str) -> Arm {
     match mode {
         Mode::Off => Arm::Disabled,

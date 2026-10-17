@@ -285,15 +285,15 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .expect("visible turn runs");
 
             let stop_reason = std::sync::Arc::new(std::sync::Mutex::new(None));
-            let budgeted_turn = openhuman_core::agent::stop_hooks::with_stop_hooks(
-                vec![std::sync::Arc::new(RecordingBudgetStopHook {
+            let budgeted_turn = budget_agent
+                .turn("report a metered response")
+                .stop_hook(std::sync::Arc::new(RecordingBudgetStopHook {
                     inner: openhuman_core::agent::stop_hooks::BudgetStopHook::new(1.0),
                     reason: std::sync::Arc::clone(&stop_reason),
-                })],
-                budget_agent.run("report a metered response"),
-            )
-            .await
-            .expect("budgeted runtime-owned agent turn returns");
+                }))
+                .send()
+                .await
+                .expect("budgeted runtime-owned agent turn returns");
             assert_eq!(common::chat_requests(&budget_provider).await.len(), 1);
             assert_eq!(
                 stop_reason.lock().expect("stop reason lock").as_deref(),
@@ -404,18 +404,21 @@ fn one_runtime_hosts_independently_configured_agents() {
             let b_body: serde_json::Value = serde_json::from_slice(&b_reqs[0].body).unwrap();
             assert_eq!(a_body["model"], "alpha-model");
             assert_eq!(b_body["model"], "beta-model");
-            // Transcripts are keyed by agent and live in the agent's own
-            // directory, and a thread resumes its own history.
-            let listing = |dir: &std::path::Path| -> Vec<String> {
-                std::fs::read_dir(dir)
-                    .expect("transcript dir")
-                    .flatten()
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .collect()
+            // Transcripts are keyed by agent and live in the agent's own store
+            // under the workspace, and a thread resumes its own history.
+            let listing = |agent_id: &str, session_id: &str| -> Vec<String> {
+                tinyagents_session::port::WorkspaceStores::open(&workspace_dir, agent_id)
+                    .expect("the agent's workspace store")
+                    .transcripts()
+                    .thread_transcripts(session_id, None)
+                    .map(|found| found.roots.into_iter().map(|root| root.stem).collect())
+                    .unwrap_or_default()
             };
             assert!(
                 !workspace_dir.join("session_raw").exists()
-                    || listing(&workspace_dir.join("session_raw")).is_empty(),
+                    || std::fs::read_dir(workspace_dir.join("session_raw"))
+                        .map(|mut entries| entries.next().is_none())
+                        .unwrap_or(true),
                 "no agent writes to the shared transcript directory"
             );
             // Asserted against names the writer itself produced, not a shape
@@ -427,7 +430,7 @@ fn one_runtime_hosts_independently_configured_agents() {
             // to mint `{unix_ts}_{agent}` stems — so it can no longer match.
             for (agent, session_id) in [(&alpha, &a1.session_id), (&beta, &b0.session_id)] {
                 let agent_id = agent.id();
-                let transcripts = listing(agent.transcripts_dir());
+                let transcripts = listing(agent_id, session_id);
                 let transcript = transcripts
                     .iter()
                     .find(|f| f.starts_with(&format!("{session_id}-")))
@@ -443,10 +446,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 // a substring would also be satisfied by an agent id that
                 // happened to appear in the session key, and would not fail if
                 // the agent scope were dropped from the stem altogether.
-                let stem = transcript
-                    .strip_suffix(".jsonl")
-                    .expect("a transcript file name ends in .jsonl");
-                let component = stem
+                let component = transcript
                     .rsplit('.')
                     .next()
                     .expect("rsplit always yields at least one component");

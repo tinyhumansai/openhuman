@@ -53,7 +53,8 @@ fn every_direct_or_controller_action_that_can_submit_needs_confirmation() {
         delay_ms: None
     }));
     assert!(needs_host_confirmation(&Action::Press {
-        key: "Enter".into()
+        key: "Enter".into(),
+        target: None
     }));
     assert!(!needs_host_confirmation(&Action::Hover {
         target: Target::reference("e1")
@@ -84,49 +85,54 @@ fn approval_describes_selector_and_locator_targets() {
     });
     assert!(locator.contains("Role locator") && locator.contains("Email"));
     assert!(!locator.contains("private@example.com"));
+
+    let press_action = Action::Press {
+        key: "Enter".into(),
+        target: Some(Target::reference("e7")),
+    };
+    let (reference, press) = approval_target(&press_action);
+    assert_eq!(reference, Some("e7"));
+    assert_eq!(press, " @e7");
+    let (_, untargeted) = approval_target(&Action::Press {
+        key: "Enter".into(),
+        target: None,
+    });
+    assert!(untargeted.is_empty());
 }
 
 #[test]
-fn direct_actions_use_typed_targets_and_reject_unbounded_inputs() {
+fn direct_actions_decode_through_the_bus_tool_args() {
     assert!(
-        matches!(parse_action(&json!({"action":"click","selector":"@e1"})).unwrap(), Action::Click { target: Target::Ref { value }, .. } if value == "e1")
+        matches!(direct_action(&json!({"action":"click","selector":"@e1"})).unwrap(), Action::Click { target: Target::Ref { value }, .. } if value == "e1")
     );
-    assert!(parse_action(&json!({"action":"click"})).is_err());
-    assert!(parse_action(&json!({"action":"scroll","direction":"diagonal"})).is_err());
-    assert!(parse_action(&json!({"action":"arbitrary_script"})).is_err());
-}
-
-#[test]
-fn browser_action_parser_covers_supported_direct_and_find_actions() {
-    for args in [
-        json!({"action":"fill","selector":"#email","value":"x"}),
-        json!({"action":"type","text":"hello"}),
-        json!({"action":"get_text","selector":"#title"}),
-        json!({"action":"is_visible","selector":"#title"}),
-        json!({"action":"hover","selector":"#title"}),
-        json!({"action":"press","key":"Enter"}),
-        json!({"action":"scroll","direction":"left","pixels":32}),
-        json!({"action":"wait","text":"Ready","ms":5,"timeout_ms":25}),
-    ] {
-        assert!(parse_action(&args).is_ok(), "{args}");
-    }
-
-    for find_action in ["click", "fill", "text", "hover"] {
-        let mut args = json!({
-            "action":"find", "by":"role", "value":"button", "find_action":find_action
-        });
-        if find_action == "fill" {
-            args["fill_value"] = json!("hello");
-        }
-        assert!(parse_action(&args).is_ok(), "{find_action}");
-    }
-
-    assert!(parse_action(&json!({"action":"scroll","direction":"up","pixels":u64::MAX})).is_ok());
-    assert!(parse_action(
+    assert!(direct_action(&json!({"action":"click"})).is_err());
+    assert!(direct_action(&json!({"action":"scroll","direction":"diagonal"})).is_err());
+    assert!(direct_action(&json!({"action":"arbitrary_script"})).is_err());
+    assert!(direct_action(
         &json!({"action":"find","by":"text","value":"Save","find_action":"text"})
     )
     .is_ok());
-    assert!(parse_action(&json!({"action":"wait","selector":"#ready"})).is_ok());
+}
+
+#[test]
+fn model_visible_browser_schema_is_the_bus_schema() {
+    let tool = BrowserTool::new(
+        std::sync::Arc::new(crate::security::SecurityPolicy::default()),
+        std::sync::Arc::new(BrowserClient::new(std::sync::Arc::new(
+            crate::config::Config::default(),
+        ))),
+        3,
+    );
+    let schema = tinytools::Tool::parameters_schema(&tool);
+    assert_eq!(schema, tinycomputer_bus::browser::tool::parameters_schema());
+    assert_eq!(schema["required"], json!(["action"]));
+    assert_eq!(
+        schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .len(),
+        22
+    );
 }
 
 #[test]
@@ -435,6 +441,20 @@ fn a_task_that_found_no_chrome_tells_the_agent_to_ask_for_its_path() {
     assert_eq!(
         host_hint(&failed("the last three actions changed nothing")),
         None
+    );
+    // TinyComputer 0.11's own words: the step's note names a missing Chrome,
+    // or a Chrome path that names no Chrome it can start.
+    assert_eq!(
+        host_hint(&failed(
+            "https://www.amazon.in could not be opened: BROWSER_UNAVAILABLE (browser unavailable: no Chrome or Chromium was found on this machine; give the path of the browser to use)"
+        )),
+        Some(crate::modules::browser::CHROME_NOT_FOUND_HINT)
+    );
+    assert_eq!(
+        host_hint(&failed(
+            "https://www.amazon.in could not be opened: BROWSER_UNAVAILABLE (browser unavailable: the browser binary given could not be started (Chrome exited before providing DevTools URL); check that its path names Chrome or Chromium)"
+        )),
+        Some(crate::modules::browser::CHROME_PATH_HINT)
     );
 }
 

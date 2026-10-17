@@ -81,6 +81,14 @@ fi
 export OPENHUMAN_KEYRING_BACKEND
 echo "[runner] Using OPENHUMAN_KEYRING_BACKEND: $OPENHUMAN_KEYRING_BACKEND"
 
+# The Linux/macOS CI host may not provide a usable Secret Service. Supply a
+# per-run encryption key so the core's encrypted storage backend can persist
+# the E2E session without depending on the host keyring. Never print the key.
+if [ -z "${OPENHUMAN_KEYRING_MASTER_KEY:-}" ] && [ -z "${OPENHUMAN_KEYRING_MASTER_KEY_FILE:-}" ]; then
+  OPENHUMAN_KEYRING_MASTER_KEY="$(openssl rand -hex 32)"
+  export OPENHUMAN_KEYRING_MASTER_KEY
+fi
+
 # Place the CEF cache directory OUTSIDE the workspace. By default the Tauri
 # shell roots it under `$OPENHUMAN_WORKSPACE/users/<id>/cef`, but our
 # `mega-flow` spec calls `openhuman.config_reset_local_data` between
@@ -150,6 +158,52 @@ cleanup() {
       for pid in $CHILD_PIDS; do
         kill -KILL "$pid" 2>/dev/null || true
       done
+    fi
+  fi
+  if [ "$status" -ne 0 ]; then
+    # The embedded core writes startup diagnostics beside its data directory.
+    # Preserve both the test workspace and default-home logs before removing
+    # the temporary profile; the latter also shows whether the child inherited
+    # OPENHUMAN_WORKSPACE as expected.
+    local core_log_dir core_log log_index=0
+    for core_log_dir in "${OPENHUMAN_WORKSPACE:-}/logs" "${HOME:-}/.openhuman/logs"; do
+      [ -d "$core_log_dir" ] || continue
+      for core_log in "$core_log_dir"/openhuman-*.log; do
+        [ -f "$core_log" ] || continue
+        mkdir -p "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}"
+        cp "$core_log" "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}/${LOG_SUFFIX}-core-${log_index}.log" 2>/dev/null || true
+        log_index=$((log_index + 1))
+      done
+    done
+    if [ -f "${OPENHUMAN_WORKSPACE:-}/e2e-app-env-check.log" ]; then
+      mkdir -p "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}"
+      cp "${OPENHUMAN_WORKSPACE}/e2e-app-env-check.log" \
+        "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}/${LOG_SUFFIX}-app-env-check.log" \
+        2>/dev/null || true
+    fi
+    if [ -f "${OPENHUMAN_WORKSPACE:-}/e2e-app-process.log" ]; then
+      mkdir -p "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}"
+      cp "${OPENHUMAN_WORKSPACE}/e2e-app-process.log" \
+        "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}/${LOG_SUFFIX}-app-process.log" \
+        2>/dev/null || true
+    fi
+    if [ -f "${OPENHUMAN_WORKSPACE:-}/webkit-driver-env-check.log" ]; then
+      mkdir -p "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}"
+      cp "${OPENHUMAN_WORKSPACE}/webkit-driver-env-check.log" \
+        "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}/${LOG_SUFFIX}-webkit-driver-env-check.log" \
+        2>/dev/null || true
+    fi
+    if [ -f "${TAURI_DRIVER_LOG:-}" ]; then
+      mkdir -p "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}"
+      cp "$TAURI_DRIVER_LOG" \
+        "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}/${LOG_SUFFIX}-tauri-driver.log" \
+        2>/dev/null || true
+    fi
+    if [ -f "${WEBKIT_DRIVER_LOG:-}" ]; then
+      mkdir -p "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}"
+      cp "$WEBKIT_DRIVER_LOG" \
+        "${E2E_ARTIFACTS_DIR:-$APP_DIR/test/e2e/artifacts}/${LOG_SUFFIX}-webkit-driver.log" \
+        2>/dev/null || true
     fi
   fi
   if [ -n "$CREATED_TEMP_WORKSPACE" ]; then
@@ -310,13 +364,62 @@ APP_BIN="$(resolve_app_binary)"
 # Linux builds use Tauri's Wry/WebKit runtime, not CEF. Drive that native
 # webview through tauri-driver instead of waiting for a Chromium CDP endpoint.
 if [ "$OS" = "Linux" ] && [ "${E2E_USE_TAURI_DRIVER:-0}" = "1" ]; then
+  if [ -z "${APP_BIN:-}" ] || [ ! -x "$APP_BIN" ]; then
+    echo "ERROR: built OpenHuman binary not found. Run 'pnpm test:e2e:build' first." >&2
+    exit 1
+  fi
+
+  # WebKitWebDriver may launch the Tauri binary with a reduced environment.
+  # Re-enter the runner's E2E-only settings through a private wrapper so the
+  # in-process core sees the mock backend, isolated workspace and master key.
+  E2E_APP_WRAPPER="$OPENHUMAN_WORKSPACE/openhuman-e2e-launcher"
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+    for env_name in \
+      BACKEND_URL VITE_BACKEND_URL OPENHUMAN_WORKSPACE OPENHUMAN_E2E_MODE \
+      OPENHUMAN_KEYRING_BACKEND OPENHUMAN_KEYRING_MASTER_KEY \
+      OPENHUMAN_KEYRING_MASTER_KEY_FILE OPENHUMAN_MODULE_PATH \
+      OPENHUMAN_TINYMCP_TEST_MODULE OPENHUMAN_CEF_CACHE_PATH \
+      OPENHUMAN_SERVICE_MOCK OPENHUMAN_SERVICE_MOCK_STATE_FILE \
+      OPENHUMAN_TELEGRAM_BOT_API_BASE OPENHUMAN_COMPOSIO_DIRECT_BASE_V2 \
+      OPENHUMAN_COMPOSIO_DIRECT_BASE_V3 XDG_DATA_HOME; do
+      if declare -p "$env_name" >/dev/null 2>&1; then
+        printf 'export %s=%q\n' "$env_name" "${!env_name}"
+      fi
+    done
+    printf 'printf "launcher_started=1 key_present=%%s workspace_present=%%s backend_url_present=%%s\\n" "${OPENHUMAN_KEYRING_MASTER_KEY:+yes}" "${OPENHUMAN_WORKSPACE:+yes}" "${BACKEND_URL:+yes}" > %q\n' "$OPENHUMAN_WORKSPACE/e2e-app-env-check.log"
+    printf 'exec %q "$@" >> %q 2>&1\n' \
+      "$APP_BIN" "$OPENHUMAN_WORKSPACE/e2e-app-process.log"
+  } > "$E2E_APP_WRAPPER"
+  chmod 700 "$E2E_APP_WRAPPER"
+  export OPENHUMAN_E2E_APP_BINARY="$E2E_APP_WRAPPER"
+  echo "[runner] Created private E2E app launcher with the mock runtime environment"
+
   TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
+  WEBKIT_DRIVER_PORT="${TAURI_NATIVE_DRIVER_PORT:-4445}"
   TAURI_DRIVER_LOG="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tauri-driver-${LOG_SUFFIX}.log"
+  WEBKIT_DRIVER_LOG="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/webkit-driver-${LOG_SUFFIX}.log"
+  WEBKIT_DRIVER_WRAPPER="$OPENHUMAN_WORKSPACE/openhuman-e2e-webkit-driver"
+  WEBKIT_DRIVER_BIN="${WEBKIT_WEBDRIVER:-/usr/bin/WebKitWebDriver}"
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+    printf 'printf "webkit_driver_started=1 display_present=%%s arg_count=%%s\\n" "${DISPLAY:+yes}" "$#" > %q\n' \
+      "$OPENHUMAN_WORKSPACE/webkit-driver-env-check.log"
+    printf 'printf "native_driver_args=%%s\\n" "$*" >> %q\n' \
+      "$OPENHUMAN_WORKSPACE/webkit-driver-env-check.log"
+    printf 'exec %q "$@" >> %q 2>&1\n' "$WEBKIT_DRIVER_BIN" "$WEBKIT_DRIVER_LOG"
+  } > "$WEBKIT_DRIVER_WRAPPER"
+  chmod 700 "$WEBKIT_DRIVER_WRAPPER"
   echo "[runner] Starting tauri-driver on port $TAURI_DRIVER_PORT"
   # Keep the native GUI process under Xvfb in a headless Linux environment.
   # WDIO itself must not be wrapped: its local runner uses an IPC descriptor
   # that xvfb-run does not retain (see autoXvfb: false in wdio.conf.ts).
-  DRIVER_COMMAND=(tauri-driver --port "$TAURI_DRIVER_PORT" --native-driver "${WEBKIT_WEBDRIVER:-/usr/bin/WebKitWebDriver}")
+  DRIVER_COMMAND=(
+    tauri-driver
+    --port "$TAURI_DRIVER_PORT"
+    --native-port "$WEBKIT_DRIVER_PORT"
+    --native-driver "$WEBKIT_DRIVER_WRAPPER"
+  )
   if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
     DRIVER_COMMAND=(xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" -- "${DRIVER_COMMAND[@]}")
   fi
@@ -324,8 +427,14 @@ if [ "$OS" = "Linux" ] && [ "${E2E_USE_TAURI_DRIVER:-0}" = "1" ]; then
     > "$TAURI_DRIVER_LOG" 2>&1 &
   APP_PID=$!
   export TAURI_DRIVER_PORT
+  DRIVER_READY=0
+  # tauri-driver can accept /status before its native WebKit server is
+  # reachable. Wait for both endpoints so WDIO cannot submit /session into a
+  # proxy whose downstream driver is still unavailable.
   for i in $(seq 1 30); do
-    if curl -sf "http://127.0.0.1:$TAURI_DRIVER_PORT/status" >/dev/null 2>&1; then
+    if curl -sf "http://127.0.0.1:$TAURI_DRIVER_PORT/status" >/dev/null 2>&1 \
+      && curl -sf "http://127.0.0.1:$WEBKIT_DRIVER_PORT/status" >/dev/null 2>&1; then
+      DRIVER_READY=1
       break
     fi
     if ! kill -0 "$APP_PID" 2>/dev/null; then
@@ -334,6 +443,12 @@ if [ "$OS" = "Linux" ] && [ "${E2E_USE_TAURI_DRIVER:-0}" = "1" ]; then
     fi
     sleep 1
   done
+  if [ "$DRIVER_READY" -ne 1 ]; then
+    echo "ERROR: tauri-driver and WebKitWebDriver did not both become ready." >&2
+    cat "$TAURI_DRIVER_LOG" >&2 || true
+    cat "$WEBKIT_DRIVER_LOG" >&2 || true
+    exit 1
+  fi
   if [ "${#SPEC_ARGS[@]}" -gt 0 ]; then
     WDIO_SPEC_ARGS=()
     for s in "${SPEC_ARGS[@]}"; do WDIO_SPEC_ARGS+=(--spec "$s"); done

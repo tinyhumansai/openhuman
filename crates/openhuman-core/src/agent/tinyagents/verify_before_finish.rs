@@ -19,7 +19,7 @@ use tinyagents_harness::middleware::{
 };
 use tinyagents_harness::runtime::AgentHarness;
 
-use crate::agent::session_host::turn_checkpoint::wrap_harness_instruction;
+use tinyagents_harness::middleware::wrap_harness_instruction;
 
 /// The only agent whose root turns are checked.
 const ORCHESTRATOR_AGENT_ID: &str = "orchestrator";
@@ -84,7 +84,7 @@ pub(super) fn applies(is_subagent: bool, agent_definition_id: Option<&str>) -> b
 
 /// Whether the turn's activity makes it a multi-step task worth checking.
 pub(super) fn should_check(activity: &FinishActivity) -> bool {
-    activity.tool_rounds >= MIN_TOOL_ROUNDS || activity.called(TODO_TOOL)
+    FinishActivity::rounds_or_called(MIN_TOOL_ROUNDS, TODO_TOOL)(activity)
 }
 
 /// The check, framed as harness text rather than a user message.

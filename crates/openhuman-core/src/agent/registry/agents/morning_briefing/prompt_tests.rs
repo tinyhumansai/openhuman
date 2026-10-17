@@ -1,6 +1,7 @@
 use super::*;
-use crate::agent::prompts::{ToolCallFormat, UserIdentity};
+use crate::agent::prompts::UserIdentity;
 use std::collections::HashSet;
+use tinytools_agent::dialect::ToolCallFormat;
 
 fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
     // SAFETY note: the empty visible-set is leaked once via a

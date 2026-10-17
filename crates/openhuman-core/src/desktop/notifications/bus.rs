@@ -478,6 +478,7 @@ fn translate(event: &DomainEvent) -> Option<CoreNotificationEvent> {
 ///
 /// When no scope reported the job and a scope's lookup failed.
 async fn event_owner(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &crate::config::Config,
     event: &DomainEvent,
 ) -> Result<Option<String>, crate::storage::agents::LookupFailed> {
@@ -492,7 +493,7 @@ async fn event_owner(
     if crate::storage::installed().is_none() {
         return Ok(None);
     }
-    let owner = crate::storage::agents::find_owner("notification owner", || async {
+    let owner = crate::storage::agents::find_owner(ctx, "notification owner", |_| async {
         match crate::cron::get_job(config, job_id) {
             Ok(_) => Ok(true),
             // tinyflows reports a missing job as `Cron job '<id>' not found`
@@ -530,12 +531,14 @@ impl EventHandler<DomainEvent> for NotificationBridgeSubscriber {
                 // A workspace-bound event is stored in ITS OWN workspace, not
                 // whichever one this bridge was registered with (#5931).
                 let config = self.store_target(config, event);
+                // The bridge serves the host's own notifications.
+                let dispatch = crate::core::runtime::DispatchCtx::host_default();
                 // Stored with the record that raised it: a cron job's
                 // completion goes to the agent the job belongs to
                 // (`crate::storage`), `local` otherwise.
-                let stored = match event_owner(&config, event).await {
+                let stored = match event_owner(&dispatch, &config, event).await {
                     Ok(owner) => {
-                        crate::storage::agents::within_agent(owner.as_deref(), async {
+                        crate::storage::agents::within_agent(&dispatch, owner.as_deref(), async {
                             super::store::insert_core_notification(&config, &notification)
                         })
                         .await

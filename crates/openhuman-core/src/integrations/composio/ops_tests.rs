@@ -247,3 +247,5 @@ mod fetch_integrations_and_triggers_tests;
 mod no_session_and_cache_tests;
 #[path = "ops_profile_tools_execute_mock_tests.rs"]
 mod profile_tools_execute_mock_tests;
+#[path = "ops_route_parity_tests.rs"]
+mod route_parity_tests;

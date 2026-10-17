@@ -8,8 +8,8 @@
 //! through [`run_subagent`] (the same dispatch path `spawn_subagent` uses), and
 //! the run is made durable/resumable by checkpointing the typed
 //! [`DelegationState`] through the crate
-//! [`SqliteCheckpointer`](tinyagents_graph::SqliteCheckpointer) at a dedicated
-//! `graph_checkpoints.db` under the workspace.
+//! [`DriverCheckpointer`](tinyagents_graph::checkpoint::DriverCheckpointer) over
+//! the storage backend.
 //!
 //! Layering: the delegation *graph* lives in the `tinyagents` adapter seam; this
 //! production glue lives in `agent_orchestration`, which already depends on both
@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use crate::agent::harness::definition::AgentDefinition;
+use crate::agent::harness::host_definition::AgentDefinition;
 use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
     run_subagent_with_parent, SubagentRunOptions, SubagentRunStatus,
@@ -29,7 +29,6 @@ use tinyagents_graph::checkpoint::Checkpointer;
 use tinyagents_graph::delegation::{
     DelegationConfig, DelegationStage, DelegationStageOutput, DelegationState,
 };
-use tinyagents_graph::SqliteCheckpointer;
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinytools::WorkspaceDescriptor;
 
@@ -72,18 +71,8 @@ pub(crate) async fn run_subagent_delegation_with_parent_context(
     // owned host carrier before it enters `run_subagent`, rather than making a
     // fresh context after the graph has spawned work.
     let graph_cancellation = live_parent.cancellation.clone();
-    // Durable graph checkpoints ride the crate's `SqliteCheckpointer` (issue
-    // #4249, 04.3) at a dedicated `graph_checkpoints.db` under the workspace —
-    // a separate SQLite file from OpenHuman's session-db pool, so the crate's
-    // owned connection never contends on the run-ledger locks. Nothing outside
-    // the retired `SqlRunLedgerCheckpointer` read the old `graph_checkpoints`
-    // run-ledger table, so no row migration is needed: pre-swap in-flight
-    // durable graphs simply expire (orphaned tasks are reconciled at boot per
-    // 07.2). Checkpoint metadata (thread/checkpoint/parent/run ids) stays
-    // inspectable through the crate `Checkpointer` API.
-    //
-    // With a storage backend configured (`crate::storage`) the checkpoints
-    // live there instead, in the acting agent's scope.
+    // Durable graph checkpoints live in the storage backend, in the acting
+    // agent's scope (`DriverCheckpointer`).
     let checkpointer = open_delegation_checkpointer(&config)?;
 
     tracing::info!(
@@ -296,28 +285,19 @@ fn delegation_subagent_options(
 }
 
 /// Open the delegation graph's durable checkpointer: the acting agent's scope
-/// on the storage backend when one is installed, else `graph_checkpoints.db`
-/// under the workspace.
+/// on the storage backend ([`crate::storage::local::open`]).
 pub fn open_delegation_checkpointer(
     config: &Config,
 ) -> Result<Arc<dyn Checkpointer<DelegationState>>, String> {
-    match crate::storage::current_scoped()
-        .map_err(|e| format!("resolve the storage scope for graph checkpoints: {e}"))?
-    {
-        Some(scoped) => Ok(Arc::new(
-            tinyagents_graph::checkpoint::DriverCheckpointer::<DelegationState>::with_prefix(
-                Arc::clone(scoped.documents()),
-                "delegation_graph",
-            ),
-        )),
-        None => {
-            let checkpoint_db = config.workspace_dir.join("graph_checkpoints.db");
-            Ok(Arc::new(
-                SqliteCheckpointer::<DelegationState>::open(&checkpoint_db)
-                    .map_err(|e| format!("open durable graph checkpoint store: {e}"))?,
-            ))
-        }
-    }
+    let scoped = crate::storage::local::open("delegation", &config.workspace_dir)
+        .and_then(|opened| opened.scoped())
+        .map_err(|e| format!("open the storage for graph checkpoints: {e:#}"))?;
+    Ok(Arc::new(
+        tinyagents_graph::checkpoint::DriverCheckpointer::<DelegationState>::with_prefix(
+            Arc::clone(scoped.documents()),
+            "delegation_graph",
+        ),
+    ))
 }
 
 #[cfg(test)]

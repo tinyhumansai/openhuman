@@ -89,19 +89,17 @@ fn a_host_binding_beats_everything() {
     }
 }
 
-#[tokio::test]
-async fn within_agent_scopes_a_child_in_the_same_team() {
-    assert_eq!(current(), None);
-    let seen = within(MemoryIdentity::team_member("acme", "lead"), async {
-        within_agent("lead", async {
-            within_agent("scout", async { current().unwrap() }).await
-        })
-        .await
-    })
-    .await;
-    assert_eq!(seen, MemoryIdentity::team_member("acme", "scout"));
-    let alone = within_agent("solo", async { current().unwrap() }).await;
-    assert_eq!(alone, MemoryIdentity::agent("solo"));
+#[test]
+fn a_child_stays_in_the_parents_team() {
+    let lead = MemoryIdentity::team_member("acme", "lead");
+    assert_eq!(
+        lead.child("lead").child("scout"),
+        MemoryIdentity::team_member("acme", "scout")
+    );
+    assert_eq!(
+        MemoryIdentity::root().child("solo"),
+        MemoryIdentity::agent("solo")
+    );
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::tinyagents::middleware::repeated_failure::RepeatedToolFailureMiddleware;
 
 #[tokio::test]
 async fn varied_queries_against_one_forbidden_endpoint_stop_on_first_failure() {

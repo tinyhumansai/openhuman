@@ -9,7 +9,7 @@ use tinyagents_harness::ids::TaskId;
 
 use tinyagents_orchestration::subagent::FinishedOutcome;
 
-use super::registry::registry;
+use super::registry::{control_admits, registry};
 use super::resolve::task_id_for_session_in_workspace;
 use super::task_ledger::record_cancelled;
 
@@ -34,11 +34,18 @@ pub(crate) struct CancelledSubagent {
 /// caller can deliver a "cancelled" notice into the parent chat. Returns `None`
 /// if no such sub-agent is registered (already finished, or unknown id).
 ///
-/// Unlike the parent-session-owned steering and close paths, this is keyed by
-/// `task_id` alone with no ownership check — it backs the user-facing "Cancel"
-/// affordance, and the desktop user owns every sub-agent in their own core.
-pub(crate) fn cancel_by_task(task_id: &str) -> Option<CancelledSubagent> {
-    let cancelled = registry().cancel_trusted(&TaskId::new(task_id)).ok()?;
+/// User controls check the captured profile in SaaS. The desktop user retains
+/// authority over every sub-agent in their own core.
+pub(crate) fn cancel_by_task(
+    ctx: &crate::core::runtime::DispatchCtx,
+    task_id: &str,
+) -> Option<CancelledSubagent> {
+    let id = TaskId::new(task_id);
+    let snapshot = registry().snapshot_trusted(&id).ok()?;
+    if !control_admits(ctx, &snapshot.metadata) {
+        return None;
+    }
+    let cancelled = registry().cancel(&id, &snapshot.owner_id).ok()?;
     // `AwaitingUser` is paused, not finished: cancelling it is a real cancel.
     let already_finished = cancelled.status.finished_outcome();
     let metadata = cancelled.metadata;
@@ -56,7 +63,7 @@ pub(crate) fn cancel_by_task(task_id: &str) -> Option<CancelledSubagent> {
     );
     Some(CancelledSubagent {
         agent_id: metadata.agent_id,
-        parent_session: cancelled.owner_id,
+        parent_session: metadata.parent_session,
         subagent_session_id: metadata.subagent_session_id,
         workspace_dir: metadata.workspace_dir,
         parent_thread_id: metadata.parent_thread_id,
@@ -65,25 +72,26 @@ pub(crate) fn cancel_by_task(task_id: &str) -> Option<CancelledSubagent> {
 }
 
 pub(crate) fn cancel_by_session_in_workspace(
+    ctx: &crate::core::runtime::DispatchCtx,
     subagent_session_id: &str,
     parent_session: &str,
     workspace_dir: &Path,
 ) -> Option<CancelledSubagent> {
     let task_id =
-        task_id_for_session_in_workspace(subagent_session_id, parent_session, workspace_dir)
+        task_id_for_session_in_workspace(ctx, subagent_session_id, parent_session, workspace_dir)
             .ok()?;
-    cancel_by_task(&task_id)
+    cancel_by_task(ctx, &task_id)
 }
 
 /// Abort and drop every running sub-agent whose parent chat thread is
 /// `thread_id`. Called when that thread is deleted so detached children don't
 /// keep running (and later try to deliver) against a thread that no longer
 /// exists. Returns the number of sub-agents cancelled.
-pub(crate) fn cancel_for_thread(thread_id: &str) -> usize {
-    let own = caller_workspace();
+pub(crate) fn cancel_for_thread(ctx: &crate::core::runtime::DispatchCtx, thread_id: &str) -> usize {
+    let own = caller_workspace(ctx);
     let cancelled = registry()
         .cancel_where(|metadata| {
-            metadata.parent_thread_id.as_deref() == Some(thread_id) && own.admits(metadata)
+            metadata.parent_thread_id.as_deref() == Some(thread_id) && own.admits(ctx, metadata)
         })
         .expect("detached task registry lock poisoned");
     for entry in &cancelled {
@@ -110,11 +118,14 @@ pub(crate) fn cancel_for_thread(thread_id: &str) -> usize {
 /// recorded: delivering one would start a fresh system turn on the thread,
 /// which is exactly what Stop is meant to prevent. Returns the cancelled task
 /// ids.
-pub(crate) fn stop_for_thread(thread_id: &str) -> Vec<String> {
-    let own = caller_workspace();
+pub(crate) fn stop_for_thread(
+    ctx: &crate::core::runtime::DispatchCtx,
+    thread_id: &str,
+) -> Vec<String> {
+    let own = caller_workspace(ctx);
     let cancelled = registry()
         .cancel_where(|metadata| {
-            metadata.parent_thread_id.as_deref() == Some(thread_id) && own.admits(metadata)
+            metadata.parent_thread_id.as_deref() == Some(thread_id) && own.admits(ctx, metadata)
         })
         .expect("detached task registry lock poisoned");
     let mut task_ids = Vec::with_capacity(cancelled.len());
@@ -159,10 +170,10 @@ pub(crate) fn stop_for_thread(thread_id: &str) -> Vec<String> {
 /// [`super::super::background_completions`] and drop any straggler completion
 /// that wins the cooperative-abort race. Headless sub-agents (no parent thread)
 /// are still aborted but contribute no id.
-pub(crate) fn cancel_all() -> Vec<String> {
-    let own = caller_workspace();
+pub(crate) fn cancel_all(ctx: &crate::core::runtime::DispatchCtx) -> Vec<String> {
+    let own = caller_workspace(ctx);
     let cancelled = registry()
-        .cancel_where(|metadata| own.admits(metadata))
+        .cancel_where(|metadata| own.admits(ctx, metadata))
         .expect("detached task registry lock poisoned");
     let count = cancelled.len();
     let mut thread_ids: Vec<String> = Vec::new();
@@ -197,20 +208,21 @@ pub(crate) enum CallerWorkspace {
 }
 
 impl CallerWorkspace {
-    pub(crate) fn admits(&self, metadata: &super::registry::RunningSubagentMetadata) -> bool {
+    pub(crate) fn admits(
+        &self,
+        ctx: &crate::core::runtime::DispatchCtx,
+        metadata: &super::registry::RunningSubagentMetadata,
+    ) -> bool {
         match self {
             Self::All => true,
-            Self::Only(dir) => metadata.workspace_dir == *dir,
+            Self::Only(dir) => metadata.workspace_dir == *dir && control_admits(ctx, metadata),
             Self::Nothing => false,
         }
     }
 }
 
-pub(crate) fn caller_workspace() -> CallerWorkspace {
-    caller_workspace_in(
-        crate::core::runtime::is_saas(),
-        crate::core::runtime::tenant::context_in(true).as_deref(),
-    )
+pub(crate) fn caller_workspace(ctx: &crate::core::runtime::DispatchCtx) -> CallerWorkspace {
+    caller_workspace_in(crate::core::runtime::is_saas(), ctx.resolved().as_deref())
 }
 
 /// [`caller_workspace`] as a function of the mode and the task's own scope.

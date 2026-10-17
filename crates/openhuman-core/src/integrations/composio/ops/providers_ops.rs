@@ -11,7 +11,7 @@ use crate::core::Outcome;
 use super::super::contract::ProviderUserProfile;
 use super::super::module_client::{self as connectors};
 use super::super::types::{
-    reencode, ComposioRefreshIdentitiesResponse, ComposioUserProfile, ComposioUserProfileRequest,
+    ComposioRefreshIdentitiesResponse, ComposioUserProfile, ComposioUserProfileRequest,
 };
 use super::connections::resolve_toolkit_for_connection;
 use super::error_utils::{report_composio_op_error, OpResult};
@@ -28,14 +28,19 @@ pub struct RefreshIdentitiesReport {
 }
 
 /// Persist one profile's identity fields and report how many it wrote.
-async fn persist_identity(config: &Config, profile: &ComposioUserProfile) -> OpResult<usize> {
-    let native: ProviderUserProfile = reencode(profile)?;
-    super::super::identity_store::persist_provider_profile(config, &native).await
+async fn persist_identity(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    profile: &ComposioUserProfile,
+) -> OpResult<usize> {
+    let native = ProviderUserProfile::from(profile.clone());
+    super::super::identity_store::persist_provider_profile(ctx, config, &native).await
 }
 
 /// `openhuman.composio_get_user_profile` — fetch a normalized user profile for
 /// a connected account.
 pub async fn composio_get_user_profile(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     connection_id: &str,
 ) -> OpResult<Outcome<ProviderUserProfile>> {
@@ -56,7 +61,7 @@ pub async fn composio_get_user_profile(
         format!("[composio] get_user_profile({toolkit}) failed: {error}")
     })?;
 
-    let facets = persist_identity(config, &profile).await?;
+    let facets = persist_identity(ctx, config, &profile).await?;
     tracing::debug!(
         toolkit = %toolkit,
         facets_written = facets,
@@ -64,7 +69,7 @@ pub async fn composio_get_user_profile(
     );
 
     Ok(Outcome::new(
-        reencode(&profile)?,
+        ProviderUserProfile::from(profile),
         vec![format!(
             "composio: fetched {toolkit} profile for connection {connection_id}"
         )],
@@ -78,6 +83,7 @@ pub async fn composio_get_user_profile(
 /// failures alongside the profiles it could, because a refresh exists precisely
 /// to find the broken ones.
 pub async fn composio_refresh_all_identities(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
 ) -> OpResult<Outcome<RefreshIdentitiesReport>> {
     tracing::info!("[composio] rpc refresh_all_identities");
@@ -110,7 +116,7 @@ pub async fn composio_refresh_all_identities(
             continue;
         }
 
-        let rows = persist_identity(config, profile).await?;
+        let rows = persist_identity(ctx, config, profile).await?;
         report.refreshed += 1;
         report.rows_written += rows;
         tracing::debug!(

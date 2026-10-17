@@ -27,6 +27,9 @@ fn product_hosts_persist_secrets_in_the_workspace_registered_after_preflight() {
         assert!(!dir.join("dev-keychain.json").exists());
         return;
     }
+    #[cfg(target_os = "macos")]
+    let dir = tempfile::tempdir_in("/private/tmp").unwrap();
+    #[cfg(not(target_os = "macos"))]
     let dir = tempfile::tempdir().unwrap();
     for stage in ["write", "read"] {
         let result = std::process::Command::new(std::env::current_exe().unwrap())

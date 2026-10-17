@@ -44,14 +44,16 @@ function makeTool(name: string, description = '') {
 }
 
 const STARS_TOOLS = [
-  makeTool('GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER', 'List starred repos'),
-  makeTool('GITHUB_LIST_STARGAZERS', 'List stargazers'),
-  makeTool('GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER', 'Star a repo'),
+  // Use actions in TinyConnectors' curated GitHub catalog. Backend listings
+  // apply the user's scope policy, which intentionally hides uncurated slugs.
+  makeTool('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER', 'List repositories'),
+  makeTool('GITHUB_GET_A_REPOSITORY', 'Get a repository'),
+  makeTool('GITHUB_LIST_REPOSITORY_COLLABORATORS', 'List repository collaborators'),
 ];
 
 const REPOS_TOOLS = [
-  makeTool('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER', 'List repos'),
-  makeTool('GITHUB_CREATE_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER', 'Create a repo'),
+  makeTool('GITHUB_SEARCH_REPOSITORIES', 'Search repositories'),
+  makeTool('GITHUB_LIST_REPOSITORY_ISSUES', 'List repository issues'),
 ];
 
 // ── Seed helper ───────────────────────────────────────────────────────────────
@@ -109,10 +111,10 @@ describe('Composio GitHub tools — tags query param flow', () => {
     expect(tools.length).toBe(STARS_TOOLS.length);
 
     const names = tools.map(t => t.function.name);
-    expect(names).toContain('GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER');
-    expect(names).toContain('GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER');
+    expect(names).toContain('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER');
+    expect(names).toContain('GITHUB_GET_A_REPOSITORY');
     // repos-only tool must not appear
-    expect(names).not.toContain('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER');
+    expect(names).not.toContain('GITHUB_SEARCH_REPOSITORIES');
 
     // Verify the mock received the correct query params.
     const log = getRequestLog() as Array<{ method: string; url: string }>;
@@ -152,8 +154,8 @@ describe('Composio GitHub tools — tags query param flow', () => {
     expect(tools.length).toBe(expectedCount);
 
     // Both tag sets should be present.
-    expect(names).toContain('GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER');
-    expect(names).toContain('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER');
+    expect(names).toContain('GITHUB_GET_A_REPOSITORY');
+    expect(names).toContain('GITHUB_SEARCH_REPOSITORIES');
 
     // Verify the mock URL carries both tags (comma-separated).
     const log = getRequestLog() as Array<{ method: string; url: string }>;
@@ -209,7 +211,7 @@ describe('Composio GitHub tools — tags query param flow', () => {
     expect(toolsHit).toBeDefined();
     expect(toolsHit!.url).not.toContain('tags=');
     // Stars tools must not appear in the gmail response.
-    expect(names).not.toContain('GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER');
+    expect(names).not.toContain('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER');
 
     console.log(`${LOG_PREFIX} GT.3: PASSED — mock URL: ${toolsHit!.url}`);
   });
@@ -229,7 +231,7 @@ describe('Composio GitHub tools — tags query param flow', () => {
       { name: 'tokio', full_name: 'tokio-rs/tokio', stargazers_count: 24000 },
     ];
     setMockBehavior(
-      'composioExecuteResponse_GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER',
+      'composioExecuteResponse_GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER',
       JSON.stringify({ repositories: STARRED_REPOS })
     );
 
@@ -241,10 +243,9 @@ describe('Composio GitHub tools — tags query param flow', () => {
     const listedPayload = listed.result as any;
     const tools = listedPayload?.result?.tools ?? listedPayload?.tools ?? [];
     const selectedAction = tools.find(
-      (tool: any) =>
-        tool.function?.name === 'GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER'
+      (tool: any) => tool.function?.name === 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER'
     )?.function?.name;
-    expect(selectedAction).toBe('GITHUB_LIST_REPOSITORIES_STARRED_BY_THE_AUTHENTICATED_USER');
+    expect(selectedAction).toBe('GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER');
 
     const executed = await callOpenhumanRpc('openhuman.composio_execute', {
       tool: selectedAction,

@@ -27,7 +27,7 @@ instead of registering them as disabled.
 - `AskClarificationTool` returns the question text as its own tool output; it
   does not pause anything by itself. The pause happens because callers list
   `ask_user_clarification` in the harness seam's `early_exit_tools`
-  (`tinyagents::run_turn_via_tinyagents_shared`), and a successful call there
+  (`tinyagents::TurnSpec::run`), and a successful call there
   steers the loop to `Pause` instead of feeding the result back to the model.
   Any caller that exposes this tool without that listing gets a tool that
   answers its own question, since the model reads a normal success and keeps
@@ -60,5 +60,5 @@ instead of registering them as disabled.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Agent harness architecture](../../../../../gitbooks/developing/architecture/agent-harness.md)
-- [Native tools](../../../../../gitbooks/features/native-tools/README.md)
+- [Agent harness architecture](../../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
+- [Native tools](../../../../../docs/gitbooks/en/features/native-tools/README.md)

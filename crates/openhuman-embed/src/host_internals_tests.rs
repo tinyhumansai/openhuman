@@ -5,7 +5,7 @@ use super::*;
 #[cfg(not(all(feature = "voice", feature = "http-server")))]
 #[tokio::test]
 async fn the_voice_socket_stand_ins_drop_their_arguments() {
-    voice::live::ws::handle_live_voice_ws((), ()).await;
+    voice::live::ws::handle_live_voice_ws((), (), ()).await;
     voice::streaming::handle_dictation_ws((), ()).await;
 }
 

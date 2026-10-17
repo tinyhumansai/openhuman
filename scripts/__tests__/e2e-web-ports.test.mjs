@@ -61,14 +61,30 @@ function makeTree() {
 
   // The mock backend "starts" and exits at once, so the health probe waits for
   // the stub to record the launch rather than racing the child process.
-  writeExecutable(path.join(bin, "node"), `#!/usr/bin/env bash\n${record("node")}\n`);
+  writeExecutable(
+    path.join(bin, "node"),
+    `#!/usr/bin/env bash
+${record("node")}
+if [[ "$*" == *"randomBytes"* ]]; then
+  printf '%064d' 0
+fi
+`,
+  );
   writeExecutable(
     path.join(bin, "curl"),
     `#!/usr/bin/env bash
 ${record("curl")}
-if [[ "$1" == *"/__admin/health" ]]; then
+url="$2"
+if [[ "$url" == *"/__admin/health" ]]; then
   for _ in {1..100}; do
     grep -q 'mock-api-server.mjs' "${log}" && exit 0
+    sleep 0.01
+  done
+  exit 1
+fi
+if [[ "$url" == *"/health" ]]; then
+  for _ in {1..100}; do
+    [[ -f "$OPENHUMAN_WORKSPACE/core.started" ]] && exit 0
     sleep 0.01
   done
   exit 1
@@ -108,11 +124,13 @@ fi
  * neighbouring one and keeps running, so the session reads the address it
  * logs rather than trusting an HTTP probe.
  */
-function stubCore(tree, boundPort) {
+function stubCore(tree, boundPort, startupDelayMs = 0) {
   const bin = path.join(tree.root, "target", "debug", "openhuman-core");
   writeExecutable(
     bin,
     `#!/usr/bin/env bash
+sleep ${startupDelayMs / 1000}
+touch "$OPENHUMAN_WORKSPACE/core.started"
 ${boundPort == null ? "" : `echo "[core] OpenHuman core is ready \u2014 listening on http://127.0.0.1:${boundPort} (version test)"`}
 sleep 30
 `,
@@ -166,6 +184,7 @@ function run(tree, script, env = {}) {
         CARGO_BIN: path.join(tree.bin, "cargo"),
         RUST_HOST_TRIPLE: "test-triple",
         OPENHUMAN_WORKSPACE: path.join(tree.root, "workspace"),
+        OPENHUMAN_KEYRING_MASTER_KEY: "11".repeat(32),
         E2E_WEB_CORE_TARGET_DIR: path.join(tree.root, "target"),
         // Deliberately unset so each test states the ports it is exercising;
         // a developer's shell must not choose them.
@@ -506,7 +525,7 @@ test("a core that fell back to another port fails the session", async () => {
   try {
     const base = await freeBase();
     markBundle(tree, { mockPort: base, corePort: base + 1 });
-    stubCore(tree, base + 7);
+    stubCore(tree, base + 7, 3_000);
 
     const res = run(tree, "e2e-web-session.sh", { E2E_PORT_BASE: String(base) });
 

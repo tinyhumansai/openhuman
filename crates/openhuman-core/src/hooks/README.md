@@ -174,7 +174,7 @@ hook costs a model call per event, so they belong on rare, high-stakes moments.
 | Path | What it does |
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Module declarations; re-exports `init`, `PromptVerdict` and the controller aggregators. |
-| `host.rs` | The process-global `HookEngine` (`engine()`), the `HookEnvironment` built from `PRODUCT_NAME`, the home dir, `agent::platform_shell::build_tokio_command` and the prompt evaluator, and `reload`. |
+| `host.rs` | The process-global `HookEngine` (`engine()`), the `HookEnvironment` built from `PRODUCT_NAME`, the home dir, the shell factory from [`shell.rs`](./shell.rs) (TinyBox's `SelectShell`, resolved once in `reload`) and the prompt evaluator, and `reload`. |
 | [`bridge.rs`](./bridge.rs) | `ConfiguredHookBridge`: the `ToolHook` and `PostTurnHook` impls, derived-event mapping and payload shaping, and the translation from `HookOutput` to `ToolHookDecision`. |
 | `ops.rs` | `init` and the direct entry points for non-tool lifecycle moments. |
 | [`prompt_eval.rs`](./prompt_eval.rs) | Model evaluation for `prompt`-kind hooks. |
@@ -218,7 +218,7 @@ even for observing events, since a detached dispatch would report nothing.
   to `agent/hooks.rs` and [`agent/tinyagents/middleware/embedder_hooks.rs`](../agent/tinyagents/middleware/embedder_hooks.rs).
 - Approval and the autonomy policy belong to `security/`. A hook's `allow`
   only lets a call continue to them.
-- Product-facing docs for hook authors live in [`gitbooks/developing/hooks.md`](../../../../gitbooks/developing/hooks.md).
+- Product-facing docs for hook authors live in [`docs/gitbooks/en/developing/hooks.md`](../../../../docs/gitbooks/en/developing/hooks.md).
 
 ## Gotchas
 
@@ -253,8 +253,8 @@ the engine in `tinyagents-runtime`. Run the host tests with
 
 ## Related docs
 
-- [gitbooks/developing/hooks.md](../../../../gitbooks/developing/hooks.md): the `hooks.json` guide for hook authors.
-- [gitbooks/developing/architecture/security.md](../../../../gitbooks/developing/architecture/security.md): the approval gate and autonomy policy that still apply after a hook allows.
+- [docs/gitbooks/en/developing/hooks.md](../../../../docs/gitbooks/en/developing/hooks.md): the `hooks.json` guide for hook authors.
+- [docs/gitbooks/en/developing/architecture/security.md](../../../../docs/gitbooks/en/developing/architecture/security.md): the approval gate and autonomy policy that still apply after a hook allows.
 - [Parent module README](../../README.md)
-- [Agent harness architecture](../../../../gitbooks/developing/architecture/agent-harness.md)
+- [Agent harness architecture](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md)
 - [tinyagents](../../../../vendor/tinyagents/README.md)

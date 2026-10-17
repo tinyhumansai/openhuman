@@ -8,9 +8,9 @@
 //! into the TinySearch module configuration. Provider execution is not here.
 
 use serde::Serialize;
-use tinysearch_bus::{default_role_providers, provider_roles, Role};
+use tinysearch_bus::{default_role_providers, provider_roles, role_key, ProviderRoute, Role};
 
-use crate::config::{Config, SearchRoute, MANAGED_SEARCH_PROVIDERS, SEARCH_PROVIDERS};
+use crate::config::{Config, MANAGED_SEARCH_PROVIDERS, SEARCH_PROVIDERS};
 
 /// One provider's resolved state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -20,7 +20,8 @@ pub struct ResolvedProvider {
     /// Selected by the user.
     pub enabled: bool,
     /// Chosen route (always `direct` for providers that cannot be managed).
-    pub route: SearchRoute,
+    #[serde(serialize_with = "tinysearch_bus::managed_route::serialize")]
+    pub route: ProviderRoute,
     /// Whether the provider can be reached through the managed backend.
     pub managed_capable: bool,
     /// Whether a backend credential exists (session JWT or API key).
@@ -52,7 +53,7 @@ impl ResolvedProvider {
             ProviderStatus::Disabled
         } else if self.usable {
             ProviderStatus::Ready
-        } else if self.route == SearchRoute::Managed {
+        } else if self.route == ProviderRoute::Backend {
             ProviderStatus::SignInRequired
         } else {
             ProviderStatus::NeedsKey
@@ -93,7 +94,7 @@ pub fn resolve(config: &Config) -> Vec<ResolvedProvider> {
 /// [`resolve`] with the credential check supplied, for tests and for callers
 /// that already resolved the credential.
 pub fn resolve_with(config: &Config, managed_available: bool) -> Vec<ResolvedProvider> {
-    let search_enabled = config.search.is_enabled();
+    let search_enabled = crate::search::is_active(config);
     SEARCH_PROVIDERS
         .iter()
         .map(|&id| {
@@ -103,8 +104,8 @@ pub fn resolve_with(config: &Config, managed_available: bool) -> Vec<ResolvedPro
             let managed_capable = MANAGED_SEARCH_PROVIDERS.contains(&id);
             let key_configured = direct_configured(config, id);
             let reachable = match route {
-                SearchRoute::Managed => managed_capable && managed_available,
-                SearchRoute::Direct => key_configured,
+                ProviderRoute::Backend => managed_capable && managed_available,
+                ProviderRoute::Direct => key_configured,
             };
             ResolvedProvider {
                 id,
@@ -156,23 +157,6 @@ pub fn effective_role_providers(
                 .any(|p| p.id == provider.as_str() && p.usable)
         })
         .collect()
-}
-
-/// All roles, in display order.
-pub const ROLES: [Role; 3] = [Role::Search, Role::Answer, Role::Contents];
-
-/// The `[search.roles]` key for a role — its serde name.
-pub fn role_key(role: Role) -> &'static str {
-    match role {
-        Role::Search => crate::config::SEARCH_ROLE_SEARCH,
-        Role::Answer => crate::config::SEARCH_ROLE_ANSWER,
-        Role::Contents => crate::config::SEARCH_ROLE_CONTENTS,
-    }
-}
-
-/// Parse a `[search.roles]` key.
-pub fn parse_role(key: &str) -> Option<Role> {
-    ROLES.into_iter().find(|role| role_key(*role) == key.trim())
 }
 
 #[cfg(test)]

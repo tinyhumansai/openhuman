@@ -5,18 +5,18 @@
 //! Keys are write-only here. Reads report `key_configured` booleans and the
 //! resolved state from `crate::search::providers`, never a secret.
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::config::{
-    Config, SearchPresentation, SearchRoute, MANAGED_SEARCH_PROVIDERS, SEARCH_PROVIDERS,
+    Config, PresentationMode, ProviderRoute, MANAGED_SEARCH_PROVIDERS, SEARCH_PROVIDERS,
 };
 use crate::core::Outcome;
-use crate::search::providers::{self, parse_role, role_key, ROLES};
-
-use super::loader::load_config_with_timeout;
+use crate::search::providers;
+use tinysearch_bus::{parse_role, role_key, ROLES};
 
 /// Partial update of one provider.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -69,7 +69,7 @@ const LISTED_PROVIDERS: &[&str] = &[
 ];
 
 fn label(provider: &str) -> String {
-    crate::search::render::provider_label(provider)
+    tinysearch_bus::labels::provider_label(provider).into_owned()
 }
 
 fn docs_url(provider: &str) -> Option<&'static str> {
@@ -92,9 +92,9 @@ fn supported_routes(provider: &str) -> Vec<&'static str> {
     let managed = MANAGED_SEARCH_PROVIDERS.contains(&provider);
     let mut routes = Vec::new();
     if managed {
-        routes.push(SearchRoute::Managed.as_str());
+        routes.push(ProviderRoute::Backend.config_name());
     }
-    routes.push(SearchRoute::Direct.as_str());
+    routes.push(ProviderRoute::Direct.config_name());
     routes
 }
 
@@ -112,12 +112,12 @@ fn apply_provider_patch(
         return Err(format!("unknown search provider: {provider}"));
     }
     if let Some(route) = patch.route.as_deref() {
-        let route = SearchRoute::parse(route)
+        let route = ProviderRoute::parse(route)
             .ok_or_else(|| format!("route must be managed or direct (got {route:?})"))?;
-        if !supported_routes(provider).contains(&route.as_str()) {
+        if !supported_routes(provider).contains(&route.config_name()) {
             return Err(format!(
                 "{provider} does not support the {} route",
-                route.as_str()
+                route.config_name()
             ));
         }
         let default_enabled = patch.enabled.unwrap_or(true);
@@ -133,9 +133,9 @@ fn apply_provider_patch(
     }
     if let Some(enabled) = patch.enabled {
         let default_route = if supported_routes(provider)[0] == "managed" {
-            SearchRoute::Managed
+            ProviderRoute::Backend
         } else {
-            SearchRoute::Direct
+            ProviderRoute::Direct
         };
         config
             .search
@@ -256,7 +256,7 @@ pub fn apply_search_patch(config: &mut Config, update: SearchSettingsPatch) -> R
         apply_roles(config, roles)?;
     }
     if let Some(mode) = update.presentation.as_deref() {
-        config.search.presentation = SearchPresentation::parse(mode).ok_or_else(|| {
+        config.search.presentation = PresentationMode::parse(mode).ok_or_else(|| {
             "presentation must be roles, all_tools, router or one_provider".to_string()
         })?;
     }
@@ -287,15 +287,16 @@ pub fn apply_search_patch(config: &mut Config, update: SearchSettingsPatch) -> R
 
 /// Validate, save, refresh the module, and return the new settings.
 pub async fn apply_search_settings(
+    ctx: &DispatchCtx,
     config: &mut Config,
     update: SearchSettingsPatch,
 ) -> Result<Outcome<Value>, String> {
     apply_search_patch(config, update)?;
     config.save().await.map_err(|e| e.to_string())?;
     #[cfg(feature = "modules")]
-    crate::modules::search::refresh_loaded(config).await?;
+    crate::modules::search::refresh_loaded(ctx, config).await?;
     tracing::debug!(
-        enabled = config.search.is_enabled(),
+        enabled = crate::search::is_active(config),
         providers = ?config.search.enabled_provider_names(),
         "[config][search] settings saved"
     );
@@ -309,10 +310,11 @@ pub async fn apply_search_settings(
 }
 
 pub async fn load_and_apply_search_settings(
+    ctx: &DispatchCtx,
     update: SearchSettingsPatch,
 ) -> Result<Outcome<Value>, String> {
-    let mut config = load_config_with_timeout().await?;
-    apply_search_settings(&mut config, update).await
+    let mut config = ctx.load_config().await?;
+    apply_search_settings(ctx, &mut config, update).await
 }
 
 /// The settings view: every listed provider's resolved state, the role
@@ -323,7 +325,7 @@ pub fn search_settings_json(config: &Config) -> Value {
 
 pub(crate) fn search_settings_json_with(config: &Config, managed_available: bool) -> Value {
     let resolved = providers::resolve_with(config, managed_available);
-    let search_enabled = config.search.is_enabled();
+    let search_enabled = crate::search::is_active(config);
     let gemini_key = config.search.gemini.has_key();
     let providers_json: Vec<Value> = LISTED_PROVIDERS
         .iter()
@@ -333,7 +335,7 @@ pub(crate) fn search_settings_json_with(config: &Config, managed_available: bool
                 "id": p.id,
                 "label": label(p.id),
                 "enabled": p.enabled,
-                "route": p.route.as_str(),
+                "route": p.route.config_name(),
                 "routes": supported_routes(p.id),
                 "managed_available": p.managed_available,
                 "key_configured": p.key_configured,
@@ -372,6 +374,9 @@ pub(crate) fn search_settings_json_with(config: &Config, managed_available: bool
         .collect();
     json!({
         "enabled": search_enabled,
+        "component_disabled": !config.components.search,
+        "component_disabled_reason": (!config.components.search)
+            .then_some("COMPONENT_DISABLED:search (set [components] search = true to enable)"),
         "presentation": config.search.presentation.as_str(),
         "presentation_provider": config.search.presentation_provider,
         "max_results": config.search.max_results,
@@ -386,8 +391,8 @@ pub(crate) fn search_settings_json_with(config: &Config, managed_available: bool
 }
 
 /// Read the current search settings. Keys are reported only as booleans.
-pub async fn get_search_settings() -> Result<Outcome<Value>, String> {
-    let config = load_config_with_timeout().await?;
+pub async fn get_search_settings(ctx: &DispatchCtx) -> Result<Outcome<Value>, String> {
+    let config = ctx.load_config().await?;
     Ok(Outcome::new(
         search_settings_json(&config),
         vec!["search settings read".to_string()],

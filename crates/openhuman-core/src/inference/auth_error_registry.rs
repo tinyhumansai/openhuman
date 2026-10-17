@@ -10,7 +10,7 @@
 //!     `openhuman.inference_provider_auth_errors` RPC ([`snapshot`]).
 //!
 //! Entries are recorded at the demote site
-//! ([`provider::ops::http_error::log_byo_provider_auth_failure`](super::provider::ops::http_error::log_byo_provider_auth_failure)) and cleared
+//! ([`provider::ops::log_byo_provider_auth_failure`](super::provider::ops::log_byo_provider_auth_failure)) and cleared
 //! when the user updates or removes that provider's key
 //! (`credentials::ops`). The [`record`] latch is what makes the notification
 //! fire **once per failure episode** rather than once per retry: the
@@ -19,30 +19,18 @@
 //! and an unguarded publish would re-flood the notification center the same
 //! way the raw error flooded Sentry.
 
-use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// A recorded BYO provider auth failure. Serialized verbatim onto the
-/// `inference_provider_auth_errors` RPC snapshot the AI settings panel reads.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ProviderAuthError {
-    /// Provider slug as used by the chat factory / classifier, e.g.
-    /// `"openrouter"`.
-    pub provider: String,
-    /// The rejecting HTTP status — always `401` or `403` (the classifier
-    /// gate), kept for fidelity in the surfaced copy.
-    pub status: u16,
-    /// Pre-formatted, user-facing, actionable message — safe to show in a
-    /// notification or settings notice as-is. See [`auth_error_message`].
-    pub message: String,
-    /// Wall-clock milliseconds since the unix epoch when last recorded.
-    pub timestamp_ms: u64,
-}
+use tinyinference_providers::auth_registry::ProviderAuthError;
+use tinyinference_providers::auth_registry::ProviderAuthErrorRegistry;
 
-fn registry() -> &'static RwLock<HashMap<String, ProviderAuthError>> {
-    static REG: OnceLock<RwLock<HashMap<String, ProviderAuthError>>> = OnceLock::new();
-    REG.get_or_init(|| RwLock::new(HashMap::new()))
+/// The process-lived registry. Episode tracking lives in
+/// `tinyinference-providers`; this module supplies the process singleton, the
+/// user-facing copy and the clock.
+fn registry() -> &'static ProviderAuthErrorRegistry {
+    static REG: OnceLock<ProviderAuthErrorRegistry> = OnceLock::new();
+    REG.get_or_init(ProviderAuthErrorRegistry::new)
 }
 
 fn now_ms() -> u64 {
@@ -70,46 +58,32 @@ pub fn auth_error_message(provider: &str, status: u16) -> String {
 /// a 401 that repeats per-retry doesn't re-notify. An existing entry is
 /// refreshed (status / timestamp) and returns `false`.
 pub fn record(provider: &str, status: u16) -> bool {
-    let entry = ProviderAuthError {
+    registry().record(ProviderAuthError {
         provider: provider.to_string(),
         status,
         message: auth_error_message(provider, status),
         timestamp_ms: now_ms(),
-    };
-    let mut map = registry().write().unwrap_or_else(|e| e.into_inner());
-    let is_new = !map.contains_key(provider);
-    map.insert(provider.to_string(), entry);
-    is_new
+    })
 }
 
 /// Clear any recorded auth error for `provider` (the user updated / removed
 /// the key, or a call newly succeeded). Returns `true` if an entry was
 /// removed. Re-arms the [`record`] latch so a fresh failure re-notifies.
 pub fn clear(provider: &str) -> bool {
-    registry()
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(provider)
-        .is_some()
+    registry().clear(provider)
 }
 
 /// Snapshot all currently-recorded provider auth errors, sorted by provider
 /// slug for a stable RPC payload.
 pub fn snapshot() -> Vec<ProviderAuthError> {
-    let map = registry().read().unwrap_or_else(|e| e.into_inner());
-    let mut out: Vec<ProviderAuthError> = map.values().cloned().collect();
-    out.sort_by(|a, b| a.provider.cmp(&b.provider));
-    out
+    registry().snapshot()
 }
 
 /// Test-only: wipe the registry so a test can't be flaked by an entry an
 /// earlier test left behind (the map is process-global).
 #[cfg(any(test, debug_assertions))]
 pub fn reset_for_tests() {
-    registry()
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    registry().clear_all();
 }
 
 #[cfg(test)]

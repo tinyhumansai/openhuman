@@ -4,7 +4,8 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::agent::artifacts::store::{
-    get_artifact, list_artifacts, read_artifact_bytes, save_artifact_args, save_artifact_meta,
+    get_artifact, list_artifacts, read_artifact_args, read_artifact_bytes, save_artifact_args,
+    save_artifact_meta,
 };
 use crate::agent::artifacts::types::ArtifactKind;
 
@@ -28,7 +29,9 @@ async fn legacy(workspace: &Path, id: &str, name: &str, bytes: &[u8], status: Ar
     save_artifact_args(workspace, id, &serde_json::json!({ "title": name }))
         .await
         .unwrap();
-    std::fs::write(workspace.join("artifacts").join(id).join(name), bytes).unwrap();
+    let dir = workspace.join("artifacts").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(name), bytes).unwrap();
 }
 
 fn legacy_path(workspace: &Path, id: &str, name: &str) -> PathBuf {
@@ -107,7 +110,7 @@ async fn moves_a_legacy_file_into_the_files_folder() {
         "legacy bytes removed"
     );
     assert!(
-        ws.join("artifacts/a1/args.json").is_file(),
+        read_artifact_args(&ws, "a1").await.is_ok(),
         "metadata never moves"
     );
 }
@@ -301,7 +304,7 @@ async fn a_crash_after_the_meta_write_is_finished_by_the_next_run() {
     assert!(!legacy_path(&ws, "a1", "deck.pptx").exists());
     assert_eq!(visible(&files_dir), vec!["deck.pptx"]);
     assert!(
-        ws.join("artifacts/a1/args.json").is_file(),
+        read_artifact_args(&ws, "a1").await.is_ok(),
         "sidecars are never cleaned"
     );
 }

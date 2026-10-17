@@ -1,6 +1,17 @@
 use super::*;
 use std::collections::HashMap;
 
+fn secrets_tempdir() -> tempfile::TempDir {
+    #[cfg(target_os = "macos")]
+    {
+        tempfile::tempdir_in("/private/tmp").expect("canonical macOS temp directory")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        tempfile::tempdir().expect("tempdir")
+    }
+}
+
 fn legacy_secret_map() -> HashMap<String, String> {
     HashMap::from([("user:token".to_string(), "secret-value".to_string())])
 }
@@ -15,7 +26,7 @@ fn write_secret(backend: &EncryptedFileBackend, key: &[u8; KEY_LEN], value: &str
 
 #[test]
 fn legacy_plaintext_is_removed_only_after_verified_encrypted_migration() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = secrets_tempdir();
     let legacy_path = dir.path().join(LEGACY_DEV_KEYCHAIN);
     let expected = legacy_secret_map();
     std::fs::write(&legacy_path, serde_json::to_vec(&expected).unwrap()).unwrap();
@@ -32,7 +43,7 @@ fn legacy_plaintext_is_removed_only_after_verified_encrypted_migration() {
 
 #[test]
 fn invalid_legacy_plaintext_is_preserved_for_recovery() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = secrets_tempdir();
     let legacy_path = dir.path().join(LEGACY_DEV_KEYCHAIN);
     std::fs::write(&legacy_path, b"invalid JSON").unwrap();
 
@@ -46,7 +57,7 @@ fn invalid_legacy_plaintext_is_preserved_for_recovery() {
 
 #[test]
 fn encrypted_store_removes_only_matching_legacy_plaintext() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = secrets_tempdir();
     let backend = EncryptedFileBackend::new(dir.path());
     let key = [0x42; KEY_LEN];
     let encrypted = legacy_secret_map();
@@ -66,7 +77,7 @@ fn encrypted_store_removes_only_matching_legacy_plaintext() {
 
 #[test]
 fn encrypted_store_remains_readable_when_verified_plaintext_cannot_be_deleted() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = secrets_tempdir();
     let backend = EncryptedFileBackend::new(dir.path());
     let key = [0x42; KEY_LEN];
     let legacy_path = dir.path().join(LEGACY_DEV_KEYCHAIN);
@@ -82,7 +93,7 @@ fn encrypted_store_remains_readable_when_verified_plaintext_cannot_be_deleted() 
 
 #[test]
 fn existing_encrypted_file_does_not_remove_plaintext_until_directory_sync_succeeds() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = secrets_tempdir();
     let backend = EncryptedFileBackend::new(dir.path());
     let key = [0x42; KEY_LEN];
     let expected = legacy_secret_map();
@@ -111,7 +122,7 @@ fn existing_encrypted_file_does_not_remove_plaintext_until_directory_sync_succee
 
 #[test]
 fn older_plaintext_copy_is_removed_only_when_it_matches() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = secrets_tempdir();
     let backend = EncryptedFileBackend::new(dir.path());
     let key = [0x42; KEY_LEN];
     let encrypted = legacy_secret_map();
@@ -415,8 +426,8 @@ fn try_load_master_key_reports_a_configured_source_error_as_configured() {
 
 #[test]
 fn a_secret_written_under_a_configured_key_reads_back_after_a_restart() {
-    let workspace = tempfile::TempDir::new().unwrap();
-    let key_dir = tempfile::TempDir::new().unwrap();
+    let workspace = secrets_tempdir();
+    let key_dir = secrets_tempdir();
     let key_path = key_dir.path().join("master.key");
     std::fs::write(&key_path, format!("{}\n", hex_key(0x88))).unwrap();
     #[cfg(unix)]

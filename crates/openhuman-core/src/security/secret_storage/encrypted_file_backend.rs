@@ -317,10 +317,15 @@ pub struct EncryptedFileBackend {
     workspace_dir: PathBuf,
 }
 
+/// The encrypted secrets file a backend rooted at `workspace_dir` keeps.
+pub(crate) fn secrets_file(workspace_dir: &Path) -> PathBuf {
+    workspace_dir.join(SECRETS_FILENAME)
+}
+
 impl EncryptedFileBackend {
     pub fn new(workspace_dir: &Path) -> Self {
         Self {
-            path: workspace_dir.join(SECRETS_FILENAME),
+            path: secrets_file(workspace_dir),
             workspace_dir: workspace_dir.to_path_buf(),
         }
     }

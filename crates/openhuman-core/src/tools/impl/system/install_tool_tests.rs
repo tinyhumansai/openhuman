@@ -1,5 +1,5 @@
 use super::*;
-use crate::security::approval::{ApprovalChatContext, APPROVAL_CHAT_CONTEXT};
+use crate::security::approval::ApprovalChatContext;
 use crate::security::AutonomyLevel;
 
 fn policy(allow_install: bool, autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
@@ -21,11 +21,25 @@ fn chat_ctx() -> ApprovalChatContext {
     }
 }
 
+/// The execution context the harness hands a tool dispatched inside a turn
+/// whose chat is `chat`.
+fn chat_tool_context(
+    chat: crate::security::approval::ApprovalChatContext,
+) -> tinyagents_harness::tool::ToolExecutionContext {
+    crate::agent::tinyagents::host::run_context::tool_context_with_approval(
+        crate::security::approval::ApprovalTurnContext::chat(chat),
+    )
+}
+
 #[tokio::test]
 async fn blocked_when_install_disabled() {
     let tool = InstallToolTool::new(policy(false, AutonomyLevel::Full));
-    let result = APPROVAL_CHAT_CONTEXT
-        .scope(chat_ctx(), tool.execute(json!({ "package": "jq" })))
+    let result = tool
+        .execute_with_context(
+            json!({ "package": "jq" }),
+            tinytools::ToolCallOptions::default(),
+            Some(&chat_tool_context(chat_ctx())),
+        )
         .await
         .unwrap();
     assert!(result.is_error);
@@ -35,8 +49,12 @@ async fn blocked_when_install_disabled() {
 #[tokio::test]
 async fn blocked_when_readonly() {
     let tool = InstallToolTool::new(policy(true, AutonomyLevel::ReadOnly));
-    let result = APPROVAL_CHAT_CONTEXT
-        .scope(chat_ctx(), tool.execute(json!({ "package": "jq" })))
+    let result = tool
+        .execute_with_context(
+            json!({ "package": "jq" }),
+            tinytools::ToolCallOptions::default(),
+            Some(&chat_tool_context(chat_ctx())),
+        )
         .await
         .unwrap();
     assert!(result.is_error);
@@ -46,10 +64,11 @@ async fn blocked_when_readonly() {
 #[tokio::test]
 async fn rejects_injection_in_package_name() {
     let tool = InstallToolTool::new(policy(true, AutonomyLevel::Full));
-    let result = APPROVAL_CHAT_CONTEXT
-        .scope(
-            chat_ctx(),
-            tool.execute(json!({ "package": "jq; rm -rf /" })),
+    let result = tool
+        .execute_with_context(
+            json!({ "package": "jq; rm -rf /" }),
+            tinytools::ToolCallOptions::default(),
+            Some(&chat_tool_context(chat_ctx())),
         )
         .await
         .unwrap();
@@ -63,7 +82,7 @@ async fn rejects_injection_in_package_name() {
 
 #[tokio::test]
 async fn refuses_in_autonomous_turn_without_chat_context() {
-    // No APPROVAL_CHAT_CONTEXT scope → background/autonomous turn → refused
+    // No chat approval context → background/autonomous turn → refused
     // by Gate 0 before any install logic runs.
     let tool = InstallToolTool::new(policy(true, AutonomyLevel::Full));
     let result = tool.execute(json!({ "package": "jq" })).await.unwrap();

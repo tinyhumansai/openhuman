@@ -48,11 +48,12 @@ impl IntegrationClient {
     /// client with no backend credential headers.
     pub async fn get_bytes(
         &self,
+        approval: &crate::security::approval::ApprovalTurnContext,
         path: &str,
     ) -> anyhow::Result<(bytes::Bytes, Option<String>, Option<String>)> {
         self.validate_credential_endpoint()?;
         enforce_backend_egress(path)?;
-        emit_backend_egress(path);
+        emit_backend_egress(approval, path);
         self.ensure_budget_available(path).await?;
         let route = path.split('?').next().unwrap_or(path);
         let segments = route.trim_matches('/').split('/').collect::<Vec<_>>();

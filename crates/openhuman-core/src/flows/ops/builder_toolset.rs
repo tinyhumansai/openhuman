@@ -88,8 +88,8 @@ pub(super) fn restrict_builder_toolset(agent: &mut crate::agent::OpenHumanSessio
 ///
 /// PR3 (flows-copilot-live-run-approval): when a chat thread is attached
 /// (`stream.is_some()`), `flows_build` now runs the builder under
-/// [`AgentTurnOrigin::WebChat`] with [`APPROVAL_CHAT_CONTEXT`] scoped
-/// alongside it — the exact same double-scope the main web-chat delegate uses
+/// [`AgentTurnOrigin::WebChat`] with the chat approval context handed to
+/// the same turn — the exact same pairing the main web-chat delegate uses
 /// (`web_chat::ops::run_turn_under_cancel_and_deadline`). Under that origin
 /// the [`crate::security::approval::ApprovalGate`] no longer auto-allows
 /// `external_effect` tools; it PARKS them for a real human decision, routed

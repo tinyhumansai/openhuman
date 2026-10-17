@@ -23,7 +23,7 @@ use openhuman_core::config::schema::cloud_providers::{
     AuthStyle as CloudAuthStyle, CloudProviderCreds,
 };
 use openhuman_core::config::Config;
-use openhuman_core::inference::host_runtime::LocalAiService;
+use tinyinference_local::service::LocalAiService;
 use openhuman_core::inference::provider::factory::{
     auth_key_for_slug, create_chat_model_from_string_with_model_id,
 };

@@ -29,7 +29,7 @@ use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use crate::agent::hooks::{ToolHook, ToolHookContext, ToolHookDecision};
 use crate::agent::tinyagents::host::{OpenHumanRunContext, OpenHumanSecurityGate};
-use crate::agent::tinyagents::middleware::EmbedderToolHooksMiddleware;
+use crate::agent::tinyagents::middleware::embedder_hooks::EmbedderToolHooksMiddleware;
 use crate::security::policy::{AutonomyLevel, SecurityPolicy};
 
 type Outcome = Result<ToolResult, String>;

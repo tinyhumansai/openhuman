@@ -3,40 +3,44 @@
 //! A hosted profile has no scheduler of its own. Each sweep visits every
 //! provisioned profile in the shared storage backend, reads its due agent jobs
 //! straight from the store (so a closed profile is seen without being opened),
-//! and for each occurrence:
+//! and for each profile with something due:
 //!
 //! 1. opens the profile, taking its lease, so only the hosting node runs it;
-//! 2. claims the `(job, scheduled time)` occurrence in the store
-//!    ([`crate::cron::claims`]), so two sweepers, or a node that took the
-//!    profile over, never both run it;
-//! 3. runs the claimed jobs under that profile's own context with the ordinary
-//!    dispatcher, so schedules, time zones, one-shot removal, retries and run
-//!    history behave as for any cron job.
+//! 2. runs one agent-only scheduler for it under its own context: the
+//!    `tinyflows` module claims each `(job, scheduled time)` occurrence in the
+//!    store (`claim_slot`, a compare-and-swap on the job's claim generation), so
+//!    two sweepers, or a node that took the profile over, never both run it, and
+//!    schedules, time zones, one-shot removal, retries and run history behave as
+//!    for any cron job.
 //!
 //! The reply goes where the job's delivery says; with a
 //! [`CronDelivery`](crate::cron::host_delivery::CronDelivery) installed that is
-//! the host. Shell and flow jobs are never run here.
+//! the host. Shell and flow jobs are never run here: the sweep's scheduler is
+//! agent-only, so a due shell or flow row of a profile is refused (and recorded
+//! as such) rather than executed.
 //!
 //! # Shutdown
 //!
-//! A sweep in flight is not awaited when the process exits. Its claims lapse
-//! after [`CLAIM_LEASE_MS`](crate::cron::claims::CLAIM_LEASE_MS), after which
-//! another node may run the interrupted occurrence again.
+//! A sweep in flight is not awaited when the process exits. Its occurrence
+//! claims are generation-fenced in the store; another node may run an
+//! interrupted occurrence again once the module's claim lapses.
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use tinyflows_drivers::schedule::CronDocuments;
+use tinyflows_bus::schedule::StoreOperation;
 
 use super::host::ProfileHost;
 use crate::core::runtime::CoreContext;
+use crate::cron::client::store_in;
+use crate::cron::documents_port::DocScope;
 use crate::cron::scheduler::JobDispatcher;
-use crate::cron::{claims, JobType};
+use crate::cron::{CronJob, JobType};
 
 /// What one sweep did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SweepReport {
-    /// Occurrences this node claimed and ran.
+    /// Occurrences this node claimed and started.
     pub ran: usize,
     /// Due occurrences left alone: another node holds the profile or the claim.
     pub skipped: usize,
@@ -45,10 +49,10 @@ pub struct SweepReport {
 /// Sweep every provisioned profile for due agent jobs as of `now`.
 pub async fn sweep(host: &ProfileHost, now: DateTime<Utc>) -> SweepReport {
     let mut report = SweepReport::default();
-    let Some(backend) = crate::storage::installed() else {
+    if crate::storage::installed().is_none() {
         log::debug!("[profiles][cron] no shared storage backend; nothing to sweep");
         return report;
-    };
+    }
     let profiles = match host.list().await {
         Ok(profiles) => profiles,
         Err(error) => {
@@ -61,26 +65,18 @@ pub async fn sweep(host: &ProfileHost, now: DateTime<Utc>) -> SweepReport {
         let Ok(config) = host.provisioned_config(&id).await else {
             continue;
         };
-        let scoped = match backend.for_scope(&crate::storage::scope_for_profile(id.as_str())) {
-            Ok(scoped) => scoped,
-            Err(error) => {
-                log::warn!("[profiles][cron] profile={id} storage scope refused: {error}");
-                continue;
-            }
-        };
-        let docs = Arc::clone(scoped.documents());
-        let store = CronDocuments::new(Arc::clone(&docs))
-            .with_limits(config.cron.max_run_history, config.scheduler.max_tasks);
-        let due: Vec<_> = match store.due_jobs(now).await {
-            Ok(jobs) => jobs
-                .into_iter()
-                .filter(|job| matches!(job.job_type, JobType::Agent))
-                .collect(),
-            Err(error) => {
-                log::warn!("[profiles][cron] profile={id} due jobs unreadable: {error}");
-                continue;
-            }
-        };
+        let scope = DocScope::for_scope(&config, crate::storage::scope_for_profile(id.as_str()));
+        let due: Vec<CronJob> =
+            match store_in::<Vec<CronJob>>(&config, &scope, StoreOperation::Due { now }).await {
+                Ok(jobs) => jobs
+                    .into_iter()
+                    .filter(|job| matches!(job.job_type, JobType::Agent))
+                    .collect(),
+                Err(error) => {
+                    log::warn!("[profiles][cron] profile={id} due jobs unreadable: {error}");
+                    continue;
+                }
+            };
         if due.is_empty() {
             continue;
         }
@@ -98,51 +94,43 @@ pub async fn sweep(host: &ProfileHost, now: DateTime<Utc>) -> SweepReport {
             report.skipped += due.len();
             continue;
         }
-        let mut claimed = Vec::new();
-        for job in due {
-            match claims::claim_occurrence(docs.as_ref(), &job, host.node(), now).await {
-                Ok(true) => claimed.push(job),
-                Ok(false) => report.skipped += 1,
-                Err(error) => {
-                    log::warn!(
-                        "[profiles][cron] profile={id} job={} claim: {error}",
-                        job.id
-                    );
-                    report.skipped += 1;
-                }
-            }
-        }
-        if let Err(error) = claims::prune(docs.as_ref(), now).await {
-            log::debug!("[profiles][cron] profile={id} pruning claims: {error}");
-        }
-        if claimed.is_empty() {
-            continue;
-        }
-        let count = claimed.len();
+        // The profile's turn gate, taken before the occurrences are claimed so
+        // a wait behind a live chat turn does not eat into the claim lease.
+        let turn = super::turn_gate::acquire_profile(id.as_str()).await;
+        let due_count = due.len();
         let profile_config = profile.config.clone();
-        let outcome = CoreContext::scope(Arc::clone(profile.context()), async move {
+        let profile_ctx = Arc::clone(profile.context());
+        let outcome = CoreContext::scope(Arc::clone(&profile_ctx), async move {
             let security = Arc::new(crate::security::SecurityPolicy::from_config(
                 &profile_config.autonomy,
                 &profile_config.workspace_dir,
                 &profile_config.action_dir,
             ));
-            let mut dispatcher = JobDispatcher::new(profile_config.scheduler.max_concurrent);
-            dispatcher
-                .dispatch(&profile_config, &security, claimed)
-                .await;
+            let dispatch = crate::core::runtime::DispatchCtx::new(Arc::clone(&profile_ctx));
+            let mut dispatcher =
+                JobDispatcher::new(&dispatch, &profile_config, &security).agent_only();
+            let started = match dispatcher.tick(&profile_config).await {
+                Ok(started) => started,
+                Err(error) => {
+                    log::warn!("[profiles][cron] dispatch failed: {error}");
+                    0
+                }
+            };
             // Stop at once if the profile is fenced while its jobs run.
-            tokio::select! {
+            let finished = tokio::select! {
                 biased;
                 () = fence.fenced() => false,
                 () = dispatcher.drain() => true,
-            }
+            };
+            (started, finished)
         })
         .await;
-        if outcome {
-            report.ran += count;
-        } else {
+        drop(turn);
+        let (started, finished) = outcome;
+        report.ran += started;
+        report.skipped += due_count.saturating_sub(started);
+        if !finished {
             log::warn!("[profiles][cron] profile={id} fenced mid-run; jobs stopped");
-            report.skipped += count;
         }
     }
     report

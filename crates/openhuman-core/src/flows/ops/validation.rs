@@ -1,55 +1,11 @@
 use super::*;
 
-/// Runs a raw graph JSON value through `tinyflows::migrate::migrate` (upgrade
-/// an older-schema definition to current), deserializes it, and rejects a
-/// structurally invalid graph via `tinyflows::validate::validate` — so a bad
-/// graph is caught at the door, before it's ever persisted.
-///
-/// `pub(crate)` (not private) so `flows::tools::ProposeWorkflowTool` (issue
-/// B4 — agent-first workflow authoring) can run a candidate graph through the
-/// exact same validate/migrate path `flows_create` uses below, without
-/// duplicating it. The tool only calls this — never `flows_create` itself —
-/// which is what keeps the "the agent can never create a flow" invariant
-/// intact: this function validates and returns, it has no persistence effect.
-pub(crate) fn validate_and_migrate_graph(graph_json: Value) -> Result<WorkflowGraph, String> {
-    let graph = migrate_and_deserialize_graph(graph_json)?;
-    tinyflows::validate::validate(&graph).map_err(|e| e.to_string())?;
-    tinyflows::compat::ensure_compatible(&graph)?;
-    Ok(graph)
-}
-
-/// Every engine-incompatible topology in `graph`, mapped onto this domain's
-/// validation-error shape.
-///
-/// The classification is [`tinyflows::compat`]'s, and belongs there: which
-/// fan-in shapes the engine's barrier relief can execute is a fact about the
-/// engine, not about OpenHuman. This host used to carry the whole walk.
-pub(crate) fn engine_compatibility_errors(
-    graph: &WorkflowGraph,
-) -> Vec<tinyflows_catalog::FlowValidationError> {
-    tinyflows::compat::errors(graph)
-        .into_iter()
-        .map(to_compat_validation_error)
-        .collect()
-}
-
 // The refusal code is `tinyflows::compat`'s, re-exported at `ops::` scope
 // because this module's tests assert on it by name — which is the point of a
 // stable code, and what keeps a rename upstream a compile error here rather
 // than a silently-passing `contains`.
 #[cfg(test)]
 pub(crate) use tinyflows::compat::UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN;
-
-fn to_compat_validation_error(
-    error: tinyflows::compat::CompatibilityError,
-) -> tinyflows_catalog::FlowValidationError {
-    tinyflows_catalog::FlowValidationError {
-        code: error.code.to_string(),
-        message: error.message,
-        node_id: error.node_id,
-        field: None,
-    }
-}
 
 /// Host-aware compatibility check, including saved descendants that graph-only
 /// validation cannot inspect. Authoring boundaries use it before persistence;
@@ -65,28 +21,6 @@ pub(super) fn ensure_config_aware_engine_compatible(
     {
         Some(error) => Err(error),
         None => Ok(()),
-    }
-}
-
-/// Runs a raw graph JSON value through migration + deserialization **without**
-/// the structural `validate` step, attributing a deserialization failure to the
-/// member that caused it (`nodes[1]: missing field ...`). The implementation is
-/// `tinyflows::migrate::deserialize_graph`; this alias keeps the host's
-/// call sites (and the authoring tools' error text) unchanged.
-pub(crate) use tinyflows::migrate::deserialize_graph as migrate_and_deserialize_graph;
-
-/// Maps a portable `tinyflows` [`ValidationError`](tinyflows::error::ValidationError)
-/// into the host's structured [`FlowValidationError`], carrying its stable
-/// `code`, anchoring `node_id`, and human `message`. One place so the mapping
-/// stays consistent across `flows_validate` and the builder gate stack.
-pub(crate) fn to_flow_validation_error(
-    err: &tinyflows::error::ValidationError,
-) -> tinyflows_catalog::FlowValidationError {
-    tinyflows_catalog::FlowValidationError {
-        code: err.code().to_string(),
-        message: err.to_string(),
-        node_id: err.node_id().map(str::to_string),
-        field: None,
     }
 }
 
@@ -119,7 +53,7 @@ pub(crate) fn config_aware_engine_compatibility_errors(
     config: &Config,
     graph: &WorkflowGraph,
 ) -> Vec<String> {
-    let direct = engine_compatibility_errors(graph);
+    let direct = tinyflows_catalog::validation::engine_compatibility_errors(graph);
     if !direct.is_empty() {
         return direct
             .into_iter()
@@ -145,7 +79,7 @@ pub fn flows_validate(graph_json: Value) -> Outcome<tinyflows_catalog::FlowValid
     // failure short-circuits with one error; a deserializable graph is then run
     // through `validate_all` so the author sees every structural problem in one
     // pass instead of one round-trip per error.
-    let graph = match migrate_and_deserialize_graph(graph_json) {
+    let graph = match tinyflows::migrate::deserialize_graph(graph_json) {
         Ok(graph) => graph,
         Err(error) => {
             tracing::debug!(target: "flows", %error, "[flows] flows_validate: graph could not be migrated/parsed");
@@ -168,7 +102,10 @@ pub fn flows_validate(graph_json: Value) -> Outcome<tinyflows_catalog::FlowValid
 
     let structural = tinyflows::validate::validate_all(&graph);
     if !structural.is_empty() {
-        let error_details: Vec<_> = structural.iter().map(to_flow_validation_error).collect();
+        let error_details: Vec<_> = structural
+            .iter()
+            .map(tinyflows_catalog::validation::to_flow_validation_error)
+            .collect();
         let errors: Vec<String> = error_details.iter().map(|e| e.message.clone()).collect();
         tracing::debug!(
             target: "flows",
@@ -186,7 +123,7 @@ pub fn flows_validate(graph_json: Value) -> Outcome<tinyflows_catalog::FlowValid
         );
     }
 
-    let error_details = engine_compatibility_errors(&graph);
+    let error_details = tinyflows_catalog::validation::engine_compatibility_errors(&graph);
     if !error_details.is_empty() {
         let errors = error_details
             .iter()

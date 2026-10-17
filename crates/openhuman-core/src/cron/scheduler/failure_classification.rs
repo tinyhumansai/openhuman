@@ -1,8 +1,8 @@
 //! Classification of agent-job failures into static, leak-safe user copy and
 //! the permanent-halt predicates that stop the retry loop early.
 
-use crate::agent::error::AgentError;
-use tinyflows_schedule::types::JobType;
+use tinyagents_harness::agent_error::AgentError;
+use tinyflows_bus::schedule::types::JobType;
 
 pub(super) const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.";
 // Actionable, static failure copy for the three permanent cron halt states

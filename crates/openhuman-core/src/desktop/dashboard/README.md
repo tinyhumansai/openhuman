@@ -60,5 +60,5 @@ None. The module reads from in-memory `Config`; it stores no state.
 ## Further reading
 
 - [Parent module README](../README.md)
-- [Frontend](../../../../../gitbooks/developing/architecture/frontend.md)
-- [Billing, cost and usage](../../../../../gitbooks/features/billing-and-usage.md)
+- [Frontend](../../../../../docs/gitbooks/en/developing/architecture/frontend.md)
+- [Billing, cost and usage](../../../../../docs/gitbooks/en/features/billing-and-usage.md)

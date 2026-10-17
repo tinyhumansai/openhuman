@@ -20,7 +20,12 @@
  */
 import { waitForApp, waitForAppReady } from './app-helpers';
 import { callOpenhumanRpc } from './core-rpc';
-import { waitForWebView, waitForWindowVisible } from './element-helpers';
+import {
+  clickText,
+  visibleTextExists,
+  waitForWebView,
+  waitForWindowVisible,
+} from './element-helpers';
 import { triggerAuthLoopbackBypass } from './loopback-auth-helpers';
 import { supportsExecuteScript } from './platform';
 import { dismissBootCheckGateIfVisible, waitForHomePage, walkOnboarding } from './shared-flows';
@@ -46,6 +51,27 @@ interface ResetAppOptions {
 
 function stepLog(message: string): void {
   console.log(`[resetApp][${new Date().toISOString()}] ${message}`);
+}
+
+/** Dismiss the Joyride tour if it starts after the home route becomes ready. */
+async function dismissLateWalkthrough(): Promise<void> {
+  const appeared = await browser
+    .waitUntil(async () => visibleTextExists('Skip tour'), {
+      timeout: 4_000,
+      interval: 250,
+      timeoutMsg: 'waiting for the walkthrough Skip tour action',
+    })
+    .then(() => true)
+    .catch(() => false);
+  if (!appeared) return;
+
+  await clickText('Skip tour', 2_000);
+  await browser.waitUntil(async () => !(await visibleTextExists('Skip tour')), {
+    timeout: 5_000,
+    interval: 250,
+    timeoutMsg: 'walkthrough Skip tour action remained visible after dismissal',
+  });
+  stepLog('Dismissed walkthrough after home route became ready');
 }
 
 /**
@@ -249,9 +275,11 @@ export async function resetApp(userId: string, options: ResetAppOptions = {}): P
       stepLog('Home page still not reached after retry — proceeding anyway');
     } else {
       stepLog(`Home page confirmed on retry: "${retryHome}"`);
+      await dismissLateWalkthrough();
     }
   } else {
     stepLog(`Home page confirmed: "${homeText}"`);
+    await dismissLateWalkthrough();
   }
 
   stepLog('Reset + onboarding complete');

@@ -30,6 +30,7 @@ fn files(dir: &Path, out: &mut Vec<std::path::PathBuf>, errors: &mut Vec<String>
             Ok(t) if t.is_dir() => files(&path, out, errors),
             Ok(t) if t.is_file() => out.push(path),
             Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => errors.push(format!("could not stat {}: {e}", path.display())),
         }
     }
@@ -66,6 +67,7 @@ pub fn scan_files(root: &Path, home: &Path) -> (Vec<String>, [usize; 3]) {
             }
             let meta = match std::fs::metadata(&path) {
                 Ok(meta) => meta,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => {
                     violations.push(format!("could not stat {}: {e}", path.display()));
                     continue;
@@ -81,6 +83,7 @@ pub fn scan_files(root: &Path, home: &Path) -> (Vec<String>, [usize; 3]) {
             }
             let bytes = match std::fs::read(&path) {
                 Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => {
                     violations.push(format!("could not read {}: {e}", path.display()));
                     continue;

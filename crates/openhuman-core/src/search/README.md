@@ -173,7 +173,7 @@ read and written through `config/ops/search.rs`.
 - Resumed threads keep their recorded search role tools even when no provider
   is usable now. That rehydration is in `agent/session_host/recorded_tools.rs`.
 - The user-facing description is in
-  [`gitbooks/features/native-tools/web-search.md`](../../../../gitbooks/features/native-tools/web-search.md).
+  [`docs/gitbooks/en/features/native-tools/web-search.md`](../../../../docs/gitbooks/en/features/native-tools/web-search.md).
 
 ## Gotchas
 
@@ -206,6 +206,6 @@ pnpm debug rust search::
 
 ## Further reading
 
-- [Web search](../../../../gitbooks/features/native-tools/web-search.md)
+- [Web search](../../../../docs/gitbooks/en/features/native-tools/web-search.md)
 - [tinysearch submodule](../../../../vendor/tinysearch/README.md)
-- [Native tools overview](../../../../gitbooks/features/native-tools/README.md)
+- [Native tools overview](../../../../docs/gitbooks/en/features/native-tools/README.md)

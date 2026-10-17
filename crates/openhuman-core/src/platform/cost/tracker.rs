@@ -8,8 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::{BTreeMap, HashMap};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,9 +26,7 @@ impl CostTracker {
     pub fn new(config: CostConfig, workspace_dir: &Path) -> Result<Self> {
         let storage_path = resolve_storage_path(workspace_dir)?;
 
-        let storage = CostStorage::new(&storage_path).with_context(|| {
-            format!("Failed to open cost storage at {}", storage_path.display())
-        })?;
+        let storage = CostStorage::new(workspace_dir, &storage_path);
 
         Ok(Self {
             config,
@@ -448,6 +445,10 @@ fn build_session_model_stats(session_costs: &[CostRecord]) -> HashMap<String, Mo
 
 /// Persistent storage for cost records.
 struct CostStorage {
+    /// Workspace whose default backend serves the ledger when the host
+    /// installed none.
+    workspace_dir: PathBuf,
+    /// The legacy JSONL ledger, imported into the document ledger once.
     path: PathBuf,
     daily_cost_usd: f64,
     monthly_cost_usd: f64,
@@ -457,95 +458,34 @@ struct CostStorage {
     daily_managed_cost_usd: f64,
     /// Managed-route subset of `monthly_cost_usd`. See above.
     monthly_managed_cost_usd: f64,
-    cached_day: NaiveDate,
-    cached_year: i32,
-    cached_month: u32,
 }
 
 impl CostStorage {
-    /// Create or open cost storage.
-    fn new(path: &Path) -> Result<Self> {
-        // With a storage backend the ledger lives in documents under the
-        // acting agent's scope, which is only known per call: no directory to
-        // make, and no aggregate to prime here.
-        let documents = crate::storage::installed().is_some();
-        if let Some(parent) = path.parent().filter(|_| !documents) {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        }
-
-        let now = Utc::now();
-        let mut storage = Self {
+    /// Open the cost ledger. The records live in documents under the acting
+    /// agent's scope, which is only known per call, so there is no directory
+    /// to make and no aggregate to prime here.
+    fn new(workspace_dir: &Path, path: &Path) -> Self {
+        Self {
+            workspace_dir: workspace_dir.to_path_buf(),
             path: path.to_path_buf(),
             daily_cost_usd: 0.0,
             monthly_cost_usd: 0.0,
             daily_managed_cost_usd: 0.0,
             monthly_managed_cost_usd: 0.0,
-            cached_day: now.date_naive(),
-            cached_year: now.year(),
-            cached_month: now.month(),
-        };
-
-        if !documents {
-            storage.rebuild_aggregates(
-                storage.cached_day,
-                storage.cached_year,
-                storage.cached_month,
-            )?;
         }
-
-        Ok(storage)
     }
 
     fn for_each_record<F>(&self, mut on_record: F) -> Result<()>
     where
         F: FnMut(CostRecord),
     {
-        if let Some(docs) = super::tracker_documents::current()? {
-            self.import_legacy_once(&docs)?;
-            for record in docs.all()? {
-                if !is_legacy_host_duplicate(&record) {
-                    on_record(record);
-                }
-            }
-            return Ok(());
-        }
-
-        if !self.path.exists() {
-            return Ok(());
-        }
-
-        let file = File::open(&self.path)
-            .with_context(|| format!("Failed to read cost storage from {}", self.path.display()))?;
-        let reader = BufReader::new(file);
-
-        for (line_number, line) in reader.lines().enumerate() {
-            let raw_line = line.with_context(|| {
-                format!(
-                    "Failed to read line {} from cost storage {}",
-                    line_number + 1,
-                    self.path.display()
-                )
-            })?;
-
-            let trimmed = raw_line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            match serde_json::from_str::<CostRecord>(trimmed) {
-                Ok(record) if is_legacy_host_duplicate(&record) => {}
-                Ok(record) => on_record(record),
-                Err(error) => {
-                    tracing::warn!(
-                        "Skipping malformed cost record at {}:{}: {error}",
-                        self.path.display(),
-                        line_number + 1
-                    );
-                }
+        let docs = super::tracker_documents::current(&self.workspace_dir)?;
+        self.import_legacy_once(&docs)?;
+        for record in docs.all()? {
+            if !is_legacy_host_duplicate(&record) {
+                on_record(record);
             }
         }
-
         Ok(())
     }
 
@@ -591,72 +531,17 @@ impl CostStorage {
         self.monthly_cost_usd = monthly_cost;
         self.daily_managed_cost_usd = daily_managed_cost;
         self.monthly_managed_cost_usd = monthly_managed_cost;
-        self.cached_day = day;
-        self.cached_year = year;
-        self.cached_month = month;
-
-        Ok(())
-    }
-
-    fn ensure_period_cache_current(&mut self) -> Result<()> {
-        let now = Utc::now();
-        let day = now.date_naive();
-        let year = now.year();
-        let month = now.month();
-
-        if day != self.cached_day || year != self.cached_year || month != self.cached_month {
-            self.rebuild_aggregates(day, year, month)?;
-        }
 
         Ok(())
     }
 
     /// Add a new record.
     fn add_record(&mut self, record: CostRecord) -> Result<()> {
-        // The period aggregates are one cache for the whole process, so they
-        // are not kept for a document ledger, whose scope changes per call;
-        // `get_aggregated_costs` recomputes them from the scope's records.
-        if let Some(docs) = super::tracker_documents::current()? {
-            // The legacy ledger goes in before the first document, so history
-            // is never split across the two.
-            self.import_legacy_once(&docs)?;
-            return docs.add(&record);
-        }
-
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        }
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .with_context(|| format!("Failed to open cost storage at {}", self.path.display()))?;
-
-        writeln!(file, "{}", serde_json::to_string(&record)?)
-            .with_context(|| format!("Failed to write cost record to {}", self.path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("Failed to sync cost storage at {}", self.path.display()))?;
-
-        self.ensure_period_cache_current()?;
-
-        let timestamp = record.usage.timestamp.naive_utc();
-        let counts = route_for_model(&record.usage.model).counts_toward_budget();
-        if timestamp.date() == self.cached_day {
-            self.daily_cost_usd += record.usage.cost_usd;
-            if counts {
-                self.daily_managed_cost_usd += record.usage.cost_usd;
-            }
-        }
-        if timestamp.year() == self.cached_year && timestamp.month() == self.cached_month {
-            self.monthly_cost_usd += record.usage.cost_usd;
-            if counts {
-                self.monthly_managed_cost_usd += record.usage.cost_usd;
-            }
-        }
-
-        Ok(())
+        let docs = super::tracker_documents::current(&self.workspace_dir)?;
+        // The legacy ledger goes in before the first document, so history
+        // is never split across the two.
+        self.import_legacy_once(&docs)?;
+        docs.add(&record)
     }
 
     /// Get aggregated costs for current day and month, across **all** routes.
@@ -664,12 +549,11 @@ impl CostStorage {
     /// [`Self::get_aggregated_managed_costs`] for anything that gates a
     /// request.
     fn get_aggregated_costs(&mut self) -> Result<(f64, f64)> {
-        if super::tracker_documents::current()?.is_some() {
-            let now = Utc::now();
-            self.rebuild_aggregates(now.date_naive(), now.year(), now.month())?;
-            return Ok((self.daily_cost_usd, self.monthly_cost_usd));
-        }
-        self.ensure_period_cache_current()?;
+        // The totals are recomputed from the acting scope's records on every
+        // call: the scope changes per call, so a process-wide cache would leak
+        // one agent's spend into another's.
+        let now = Utc::now();
+        self.rebuild_aggregates(now.date_naive(), now.year(), now.month())?;
         Ok((self.daily_cost_usd, self.monthly_cost_usd))
     }
 

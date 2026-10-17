@@ -168,9 +168,19 @@ impl Tool for WorkspaceInitTool {
         PermissionLevel::Write
     }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.execute_with_context(args, tinytools::ToolCallOptions::default(), None)
+            .await
+    }
+    async fn execute_with_context(
+        &self,
+        args: serde_json::Value,
+        _options: tinytools::ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][workspace] init invoked");
         let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
-        let value = ops::init_workspace(force)
+        let ctx = crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(context);
+        let value = ops::init_workspace(&ctx, force)
             .await
             .map_err(|e| anyhow::anyhow!("workspace_init: {e}"))?;
         Ok(ToolResult::success(serde_json::to_string(&value)?))

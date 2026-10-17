@@ -297,7 +297,7 @@ all consumers import the owner directly, not that behavior is dropped.
 | `tool_dialect.rs` | Delete | Import `tinytools-agent::dialect` directly; keep only concrete I/O conversions. |
 | `error.rs` | Keep/Shrink | Product-facing errors and RPC mapping only; loop/model/tool errors originate upstream. |
 | `hooks.rs`, `stop_hooks.rs` | Keep adapter | Product hook policy; generic callback/control machinery is harness-owned and values are explicit in context. |
-| `host_runtime.rs`, `platform_shell.rs` | Keep | Host execution/shell policy shared with sandbox. |
+| `host_runtime.rs` | Keep | Host runtime adapters; shell selection and execution are TinyBox's. |
 | `message_convert.rs` | Keep at boundary | Only legacy persistence/import/provider boundaries may convert; remove it from live harness assembly. |
 | `messages.rs` | Keep | Durable OpenHuman transcript wire contract. |
 | `multimodal.rs` | Split | Keep file access/security and host attachment resolution; import marker/MIME/data-URI mechanics from harness directly, with no re-exports. |

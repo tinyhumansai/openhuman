@@ -6,6 +6,7 @@
 //! process-wide channel persistence subscriber is told to leave these turns
 //! alone (`threads::store::claim_channel_turn`).
 
+use crate::core::runtime::DispatchCtx;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,7 +15,7 @@ type ThreadLocks = Mutex<HashMap<(PathBuf, String), Arc<tokio::sync::Mutex<()>>>
 
 use chrono::Utc;
 use serde_json::json;
-use tinyagents_session::transcript::TranscriptMessage;
+use tinychannels_bus::context::ChatMessage;
 
 use super::params::RelayInboundParams;
 use crate::threads::store::blocking as conversations;
@@ -55,12 +56,14 @@ fn thread_lock(workspace_dir: &Path, thread_id: &str) -> Arc<tokio::sync::Mutex<
 /// Create the thread if needed and append the inbound message, unless it is
 /// already there.
 pub async fn record_inbound(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
     params: &RelayInboundParams,
     thread_id: &str,
 ) -> Result<Recorded, String> {
     let now = Utc::now().to_rfc3339();
     conversations::ensure_thread(
+        ctx.clone(),
         workspace_dir.to_path_buf(),
         CreateConversationThread {
             id: thread_id.to_string(),
@@ -77,12 +80,17 @@ pub async fn record_inbound(
     let id = inbound_message_id(&params.message_id);
     let lock = thread_lock(workspace_dir, thread_id);
     let _guard = lock.lock().await;
-    let existing =
-        conversations::get_messages(workspace_dir.to_path_buf(), thread_id.to_string()).await?;
+    let existing = conversations::get_messages(
+        ctx.clone(),
+        workspace_dir.to_path_buf(),
+        thread_id.to_string(),
+    )
+    .await?;
     if existing.iter().any(|message| message.id == id) {
         return Ok(Recorded::Duplicate);
     }
     conversations::append_message(
+        ctx.clone(),
         workspace_dir.to_path_buf(),
         thread_id.to_string(),
         ConversationMessage {
@@ -108,6 +116,7 @@ pub async fn record_inbound(
 
 /// Append the turn's reply: every text the relay sink sent, in order.
 pub async fn record_reply(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
     params: &RelayInboundParams,
     thread_id: &str,
@@ -117,6 +126,7 @@ pub async fn record_reply(
         return Ok(());
     }
     conversations::append_message(
+        ctx.clone(),
         workspace_dir.to_path_buf(),
         thread_id.to_string(),
         ConversationMessage {
@@ -141,27 +151,32 @@ pub async fn record_reply(
 /// The thread's earlier turns as the channel pipeline's per-chat history:
 /// user and assistant rows before `message_id`, the most recent `limit`.
 pub async fn prior_turns(
+    ctx: &DispatchCtx,
     workspace_dir: &Path,
     thread_id: &str,
     message_id: &str,
     limit: usize,
-) -> Result<Vec<TranscriptMessage>, String> {
+) -> Result<Vec<ChatMessage>, String> {
     let current = inbound_message_id(message_id);
-    let messages =
-        conversations::get_messages(workspace_dir.to_path_buf(), thread_id.to_string()).await?;
+    let messages = conversations::get_messages(
+        ctx.clone(),
+        workspace_dir.to_path_buf(),
+        thread_id.to_string(),
+    )
+    .await?;
     let rows = to_history(&messages, &current);
     let skip = rows.len().saturating_sub(limit);
     Ok(rows.into_iter().skip(skip).collect())
 }
 
 /// `messages` up to (not including) the one with id `current`, as history.
-fn to_history(messages: &[ConversationMessage], current: &str) -> Vec<TranscriptMessage> {
+fn to_history(messages: &[ConversationMessage], current: &str) -> Vec<ChatMessage> {
     messages
         .iter()
         .take_while(|message| message.id != current)
         .filter_map(|message| match message.sender.as_str() {
-            "user" => Some(TranscriptMessage::user(&message.content)),
-            "assistant" => Some(TranscriptMessage::assistant(&message.content)),
+            "user" => Some(ChatMessage::user(&message.content)),
+            "assistant" => Some(ChatMessage::assistant(&message.content)),
             _ => None,
         })
         .collect()

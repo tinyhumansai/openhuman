@@ -41,7 +41,7 @@ fn the_web3_skill_keeps_the_crypto_safety_contract() {
 /// The orchestrator uses MCP registry tools directly, without spawning a worker.
 #[test]
 fn orchestrator_does_not_delegate_mcp_calls() {
-    use crate::agent::harness::definition::SubagentEntry;
+    use tinyagents_definition::SubagentEntry;
     let def = find("orchestrator");
     let listed = def.subagents.iter().any(|e| match e {
         SubagentEntry::AgentId(id) => id == "mcp_agent",
@@ -116,7 +116,7 @@ fn orchestrator_reaches_mcp_directly_and_skills_through_hand_offs() {
 
 #[test]
 fn orchestrator_subagents_include_control_specialists() {
-    use crate::agent::harness::definition::SubagentEntry;
+    use tinyagents_definition::SubagentEntry;
     let def = find("orchestrator");
     let subagents: std::collections::HashSet<&str> = def
         .subagents
@@ -136,7 +136,7 @@ fn orchestrator_subagents_include_control_specialists() {
 
 #[test]
 fn control_specialists_have_named_tools_and_are_worker_leaves() {
-    use crate::agent::harness::definition::SubagentEntry;
+    use tinyagents_definition::SubagentEntry;
 
     {
         let expected = "task_manager_agent";
@@ -273,7 +273,7 @@ fn allows_skill_wildcards_on_any_non_worker_tier() {
     let mut defs = load_builtins().unwrap();
     let planner = defs.iter_mut().find(|d| d.id == "planner").unwrap();
     planner.subagents.push(SubagentEntry::Skills(
-        crate::agent::harness::definition::SkillsWildcard { skills: "*".into() },
+        tinyagents_definition::SkillsWildcard { skills: "*".into() },
     ));
     validate_tier_hierarchy(&defs).expect("skill wildcards on reasoning tier must validate");
 }
@@ -302,7 +302,7 @@ fn orchestrator_defers_its_duplicate_route_tools() {
         ]
     );
     match &def.tools {
-        crate::agent::harness::definition::ToolScope::Named(named) => {
+        tinyagents_definition::ToolScope::Named(named) => {
             assert!(
                 named.iter().any(|name| name == "tool_search"),
                 "`deferred_tools` only applies to a belt that opted into discovery"
@@ -314,7 +314,7 @@ fn orchestrator_defers_its_duplicate_route_tools() {
                 );
             }
         }
-        crate::agent::harness::definition::ToolScope::Wildcard => {
+        tinyagents_definition::ToolScope::Wildcard => {
             panic!("the orchestrator keeps a named belt")
         }
     }

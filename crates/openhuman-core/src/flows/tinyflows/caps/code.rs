@@ -5,6 +5,7 @@
 
 #![allow(unused_imports)]
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,10 +14,11 @@ use tinyflows::caps::*;
 use tinyflows::error::{EngineError, Result};
 
 use super::*;
-use crate::agent::harness::definition::SandboxMode;
 use crate::config::Config;
 use crate::sandbox::{execute_in_sandbox, resolve_sandbox_policy};
-use crate::security::{CommandClass, SecurityPolicy};
+use crate::security::SecurityPolicy;
+use tinyagents_definition::SandboxMode;
+use tinybox_bus::CommandClass;
 
 /// [`CodeRunner`] adapter running sandboxed user code via
 /// `crates/openhuman-core/src/sandbox/ops.rs` (`resolve_sandbox_policy` +
@@ -43,7 +45,12 @@ use crate::security::{CommandClass, SecurityPolicy};
 /// no policy check and no approval gate at all.
 pub struct OpenHumanCode {
     pub config: Arc<Config>,
+    /// The context the run acts under, handed over by whoever started it.
+    pub ctx: DispatchCtx,
     pub security: Arc<SecurityPolicy>,
+    /// The run's approval context (flow run correlation), handed to the gate
+    /// with every acting dispatch.
+    pub approval: crate::security::approval::ApprovalTurnContext,
 }
 
 pub(crate) const CODE_RUN_TIMEOUT_SECS: u64 = 60;
@@ -66,14 +73,23 @@ impl CodeRunner for OpenHumanCode {
         let action = json!({ "language": format!("{language:?}"), "source": source });
         let summary = crate::security::approval::summarize_action("flows_code", &action);
         let redacted = crate::security::approval::redact_args(&action);
-        let (gate_outcome, audit_id) =
-            gate_call_for_tier(tier_decision, "flows_code", &summary, redacted).await;
+        let (gate_outcome, audit_id) = gate_call_for_tier(
+            &self.ctx,
+            &self.approval,
+            tier_decision,
+            "flows_code",
+            &summary,
+            redacted,
+        )
+        .await;
         if let crate::security::approval::GateOutcome::Deny { reason } = gate_outcome {
             return Err(EngineError::Capability(reason));
         }
 
+        let dispatch = self.ctx.clone();
         let outcome: Result<Value> = async {
         let policy = resolve_sandbox_policy(
+            &dispatch,
             SandboxMode::Sandboxed,
             &self.config.action_dir,
             &self.config.workspace_dir,
@@ -138,6 +154,7 @@ impl CodeRunner for OpenHumanCode {
             );
 
             execute_in_sandbox(
+                &dispatch,
                 &policy,
                 &command,
                 &self.config.action_dir,

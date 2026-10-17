@@ -129,6 +129,19 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
         super::ensure_ready(&config).await,
         Err(WalletCallError::Unavailable(_))
     ));
+    assert!(matches!(
+        super::generate_mnemonic(&config, 12).await,
+        Err(WalletCallError::Unavailable(_))
+    ));
+    assert!(matches!(
+        super::derive_mnemonic_seed(
+            &config,
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+                .to_string(),
+        )
+        .await,
+        Err(WalletCallError::Unavailable(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -164,13 +177,14 @@ mod attestation_guard {
     fn the_current_attested_linux_release_library_is_accepted() {
         assert!(digest_is_pinned(
             record(),
-            "7b6fdd843622a29b610633e0f5cabf6f48c8aa7566a466696916e99d1221eb08"
+            "9459eaaf5b147bdc7f0f33f8fd1828bb50fe359002ebc7fa7efeccacbb0e70bc"
         ));
     }
 
     #[test]
     fn libraries_from_retired_releases_are_refused() {
         for digest in [
+            "06ebfd294c3e815e4fca25df608e2b37f9bfb493b74687562f93b9bd34d52760",
             "d2e663e465c6c245cbf9b37c037ae655db7df0f93a0df9b7fa17a28027ebaa9d",
             "2bd70433707c44dbfe6b3cc3b4cc835299fe951fcb375b49c940d8d3fc1d4061",
         ] {
@@ -186,7 +200,7 @@ mod attestation_guard {
         };
         assert!(!digest_is_pinned(
             &unpinned_record,
-            "7b6fdd843622a29b610633e0f5cabf6f48c8aa7566a466696916e99d1221eb08"
+            "5d0a3ae5881f91966249858cd155e5b9c244bd419d06698d808f972a8d23afc9"
         ));
     }
 

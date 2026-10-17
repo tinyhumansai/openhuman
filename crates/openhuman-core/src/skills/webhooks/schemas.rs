@@ -1,3 +1,4 @@
+use crate::core::runtime::DispatchCtx;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -237,22 +238,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
     }
 }
 
-fn handle_list_registrations(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_list_registrations(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(crate::skills::webhooks::ops::list_registrations().await?) })
 }
 
-fn handle_list_logs(params: Map<String, Value>) -> ControllerFuture {
+fn handle_list_logs(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WebhookListLogsParams>(params)?;
         to_json(crate::skills::webhooks::ops::list_logs(payload.limit).await?)
     })
 }
 
-fn handle_clear_logs(_params: Map<String, Value>) -> ControllerFuture {
+fn handle_clear_logs(_ctx: DispatchCtx, _params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(crate::skills::webhooks::ops::clear_logs().await?) })
 }
 
-fn handle_register_echo(params: Map<String, Value>) -> ControllerFuture {
+fn handle_register_echo(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WebhookRegisterEchoParams>(params)?;
         to_json(
@@ -266,14 +267,14 @@ fn handle_register_echo(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_unregister_echo(params: Map<String, Value>) -> ControllerFuture {
+fn handle_unregister_echo(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WebhookUnregisterEchoParams>(params)?;
         to_json(crate::skills::webhooks::ops::unregister_echo(&payload.tunnel_uuid).await?)
     })
 }
 
-fn handle_register_agent(params: Map<String, Value>) -> ControllerFuture {
+fn handle_register_agent(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WebhookRegisterAgentParams>(params)?;
         to_json(
@@ -288,7 +289,7 @@ fn handle_register_agent(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_trigger_agent(params: Map<String, Value>) -> ControllerFuture {
+fn handle_trigger_agent(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<WebhookTriggerAgentParams>(params)?;
         let source = payload.source.as_deref().unwrap_or("external");
@@ -296,6 +297,7 @@ fn handle_trigger_agent(params: Map<String, Value>) -> ControllerFuture {
         let trigger_payload = payload.payload.unwrap_or_else(|| serde_json::json!({}));
         to_json(
             crate::skills::webhooks::ops::trigger_agent(
+                &ctx,
                 source,
                 &payload.caller_id,
                 reason,

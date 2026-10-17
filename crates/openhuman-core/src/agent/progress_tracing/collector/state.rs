@@ -109,7 +109,7 @@ pub enum TurnOutcome {
     /// The harness stopped the turn early (failure breaker, deadline
     /// wind-down, iteration cap) and it reached the completion path anyway.
     Stopped {
-        stop: crate::agent::turn_stop::TurnStop,
+        stop: tinyagents_harness::turn_stop::TurnStop,
     },
 }
 

@@ -16,6 +16,7 @@ members = [
     "crates/openhuman-cli",
     "crates/openhuman-core",
     "crates/openhuman-embed",
+    "crates/openhuman-modules-linked",
     "crates/openhuman-rpc",
     "crates/openhuman-tinyhumans",
     "crates/openhuman-tui",
@@ -29,7 +30,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.64.15"
+version = "0.64.18"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/tinyhumansai/openhuman"
@@ -53,13 +54,34 @@ tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-std = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 tinytools-agent = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 
+[patch."https://github.com/tinyhumansai/tinybus"]
+# tinystoragedrivers-bus (and tinywallet, which names tinybus by git rev) name
+# tinybus by git. Redirect them to the in-tree copy so the graph holds exactly
+# one `tinybus` (one `Interface`, one `Connection`) and one module SDK instead of
+# a second set compiled only for the storage wire types.
+tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
+
 [patch."https://github.com/tinyhumansai/tinystoragedrivers"]
-# tinyflows names the storage crates by git tag so it can build on its own.
-# Redirect them to the copy tinyagents vendors — the one the session store and
-# the core `storage` domain link — so there is exactly one `DocumentStore`
-# trait and one `libsqlite3-sys` (`links = "sqlite3"`) in the graph.
-tinystoragedrivers-core = { path = "vendor/tinyagents/vendor/tinystoragedrivers/crates/tinystoragedrivers-core" }
-tinystoragedrivers-sqlite = { path = "vendor/tinyagents/vendor/tinystoragedrivers/crates/tinystoragedrivers-sqlite" }
+# One editable checkout every module resolves onto: each vendor/tiny* manifest
+# names tinystoragedrivers by git tag, and this redirects them all to
+# vendor/tinystoragedrivers. This reverses #7754's removal of the patch on
+# purpose. The vendored commit must stay semver-compatible with the tag modules
+# declare; scripts/ci/check-storage-owner.mjs enforces that every tsd package
+# resolves to a path under vendor/tinystoragedrivers/. tinystoragedrivers-tinybus
+# is left out: nothing here depends on it, and an unused patch warns. Add it with
+# the first dependent.
+tinystoragedrivers = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers" }
+tinystoragedrivers-bus = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-bus" }
+tinystoragedrivers-busproxy = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-busproxy" }
+tinystoragedrivers-client = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-client" }
+tinystoragedrivers-core = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-core" }
+tinystoragedrivers-file = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-file" }
+tinystoragedrivers-mongodb = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-mongodb" }
+tinystoragedrivers-s3 = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-s3" }
+tinystoragedrivers-secrets = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-secrets" }
+tinystoragedrivers-sqlite = { path = "vendor/tinystoragedrivers/crates/tinystoragedrivers-sqlite" }
 
 [patch."https://github.com/tinyhumansai/tinyinference"]
 # tinymemes depends on the Jev client by git; resolve it to the vendored copy.
@@ -72,6 +94,14 @@ tinyinference-providers = { path = "vendor/tinyagents/vendor/tinyinference/crate
 tinyinference-voice = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }
 
 [patch.crates-io]
+# Module crates name TinyAgents by version (with a nested-path patch of their
+# own for standalone builds); resolve those names to the one copy the host uses.
+tinyagents-live = { path = "vendor/tinyagents/crates/tinyagents-live" }
+tinyagents-harness = { path = "vendor/tinyagents/crates/tinyagents-harness" }
+tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
+tinybus = { path = "vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "vendor/tinybus/crates/tinybus-module" }
 tinyinference-core = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-embeddings = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
 tinyinference-llm = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
@@ -80,6 +110,7 @@ tinyinference-providers = { path = "vendor/tinyagents/vendor/tinyinference/crate
 tinyinference-voice = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }
 tinyflows = { path = "vendor/tinyflows/crates/tinyflows" }
 tinychannels = { path = "vendor/tinychannels" }
+tiny-artifacts = { path = "vendor/tiny-artifacts/crates/tiny-artifacts" }
 
 # Emit enough release DWARF for server-side Sentry symbolication while keeping
 # shipped binaries small. The CI profile deliberately disables LTO/debug info.

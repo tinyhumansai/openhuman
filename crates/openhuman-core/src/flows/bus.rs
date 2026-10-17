@@ -3,7 +3,7 @@
 //!
 //! [`FlowTriggerSubscriber`] is the trigger → run bridge: it listens for the
 //! normalized events a saved flow's trigger node can bind to
-//! (`DomainEvent::FlowScheduleTick`, `ComposioTriggerReceived`,
+//! (`FlowTriggerSubscriber::dispatch_schedule_tick`, `ComposioTriggerReceived`,
 //! `WebhookIncomingRequest`), matches them against enabled flows, and spawns
 //! `flows::ops::flows_run` for each match. Matching helpers
 //! ([`extract_trigger_kind`], [`extract_trigger_config`]) are also reused by

@@ -11,12 +11,13 @@
 use std::collections::BTreeMap;
 
 use tinysearch_bus::{
-    BackendAuthMode, BackendConfig, PresentationConfig, PresentationMode, ProviderConfig,
-    ProviderRoute, SearchConfig as ModuleSearchConfig,
+    BackendAuthMode, BackendConfig, PresentationConfig, ProviderConfig, ProviderRoute,
+    SearchConfig as ModuleSearchConfig,
 };
 
-use crate::config::{Config, SearchPresentation, SearchRoute};
-use crate::search::providers::{self, ResolvedProvider, ROLES};
+use crate::config::Config;
+use crate::search::providers::{self, ResolvedProvider};
+use tinysearch_bus::ROLES;
 
 mod proxy;
 
@@ -80,14 +81,14 @@ fn direct_settings(config: &Config, provider: &str) -> ProviderConfig {
 
 fn provider_config(config: &Config, provider: &ResolvedProvider) -> ProviderConfig {
     let mut settings = match provider.route {
-        SearchRoute::Managed => ProviderConfig {
+        ProviderRoute::Backend => ProviderConfig {
             enabled: true,
             route: ProviderRoute::Backend,
             max_results: Some(config.search.max_results as u64),
             timeout_secs: Some(config.search.timeout_secs),
             ..Default::default()
         },
-        SearchRoute::Direct => direct_settings(config, provider.id),
+        ProviderRoute::Direct => direct_settings(config, provider.id),
     };
     settings.enabled = provider.usable;
     settings
@@ -134,7 +135,7 @@ pub fn module_config(config: &Config) -> ModuleSearchConfig {
         && !module_providers.contains_key("gemini_deep_research")
     {
         let mut deep = direct_settings(config, "gemini_deep_research");
-        deep.enabled = config.search.is_enabled() && deep.credential.is_some();
+        deep.enabled = crate::search::is_active(config) && deep.credential.is_some();
         module_providers.insert("gemini_deep_research".into(), deep);
     }
 
@@ -143,18 +144,13 @@ pub fn module_config(config: &Config) -> ModuleSearchConfig {
         .map(|role| (role, providers::role_order(config, role)))
         .collect();
     let presentation = PresentationConfig {
-        mode: match config.search.presentation {
-            SearchPresentation::Roles => PresentationMode::Roles,
-            SearchPresentation::AllTools => PresentationMode::AllTools,
-            SearchPresentation::Router => PresentationMode::Router,
-            SearchPresentation::OneProvider => PresentationMode::OneProvider,
-        },
+        mode: config.search.presentation,
         provider: config.search.presentation_provider.clone(),
         roles,
     };
 
     tracing::debug!(
-        enabled = config.search.is_enabled(),
+        enabled = crate::search::is_active(config),
         providers = ?module_providers
             .iter()
             .map(|(name, p)| format!("{name}:{:?}:{}", p.route, p.enabled))
@@ -164,7 +160,7 @@ pub fn module_config(config: &Config) -> ModuleSearchConfig {
     );
 
     ModuleSearchConfig {
-        enabled: config.search.is_enabled(),
+        enabled: crate::search::is_active(config),
         backend,
         providers: module_providers,
         presentation,

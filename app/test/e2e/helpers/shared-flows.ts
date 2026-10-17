@@ -6,7 +6,9 @@
  * All navigation uses browser.execute() with window.location.hash
  * because sidebar nav buttons are icon-only (aria-label, no text content).
  */
+import { getRequestLog } from '../mock-server';
 import { waitForAppReady, waitForAuthBootstrap as waitForAuthenticatedCore } from './app-helpers';
+import { callOpenhumanRpc } from './core-rpc';
 import { triggerAuthDeepLink } from './deep-link-helpers';
 import {
   clickButton,
@@ -17,6 +19,29 @@ import {
   waitForWindowVisible,
 } from './element-helpers';
 import { supportsExecuteScript } from './platform';
+
+function safeRpcErrorSummary(result: { error?: string } | null) {
+  if (typeof result?.error !== 'string') return null;
+  return result.error
+    .replace(/https?:\/\/[^\s)]+/gi, '<url>')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<email>')
+    .replace(/\beyJ[A-Z0-9._-]+/gi, '<token>')
+    .replace(/\b[A-Z0-9_-]{32,}\b/gi, '<redacted>')
+    .replace(/\/(?:[^\s,;]+\/)*[^\s,;]+/g, '<path>')
+    .slice(0, 160);
+}
+
+function safeRpcFailureKind(result: { ok?: boolean; error?: string } | null) {
+  if (!result || result.ok) return null;
+  const message = (result.error ?? '').toLowerCase();
+  if (/timed out|timeout|deadline/.test(message)) return 'timeout';
+  if (/connection refused|tcp connect|connection|connect|socket|network/.test(message))
+    return 'transport';
+  if (/\b401\b|unauthorized/.test(message)) return 'unauthorized';
+  if (/method not found|unknown method/.test(message)) return 'method_not_found';
+  if (/invalid.*params|bad request/.test(message)) return 'invalid_request';
+  return result.error ? 'rpc_error' : 'empty_error';
+}
 
 // ---------------------------------------------------------------------------
 // Accounts page helpers
@@ -834,7 +859,10 @@ export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
   // Waiting for that snapshot prevents a slow bootstrap from being mistaken
   // for an already-onboarded session when the onboarding button has not
   // mounted yet.
-  await waitForAuthenticatedCore(20_000);
+  // Desktop cold starts can spend most of the core's 60-second startup budget
+  // before the loopback session is installed; auth bootstrap must have the
+  // same budget instead of expiring at the old 20-second default.
+  await waitForAuthenticatedCore(60_000);
   await walkOnboarding(logPrefix);
   const marker = await waitForHomePage(15_000);
   if (marker) return;
@@ -935,7 +963,58 @@ export async function performFullLogin(
   await waitForWindowVisible(25_000);
   await waitForWebView(15_000);
   await waitForAppReady(15_000);
-  await waitForAuthenticatedCore(15_000);
+  // The embedded core's startup budget is 60 seconds, and OAuth readiness
+  // waits for that core before installing the session. Keep this E2E wait
+  // within the product's cold-start budget instead of failing while the
+  // BootCheckGate is still bringing the core up.
+  try {
+    await waitForAuthenticatedCore(60_000);
+  } catch (error) {
+    // Report only endpoint names, never request bodies or credentials. This
+    // distinguishes a core-readiness timeout from a backend auth request that
+    // reached the mock but failed to complete.
+    const authRequests = getRequestLog()
+      .filter(entry => typeof entry.url === 'string' && entry.url.startsWith('/auth/'))
+      .map(entry => `${entry.method} ${entry.url.split('?')[0]} -> ${entry.status ?? 'pending'}`);
+    const coreState = await browser
+      .execute(() => {
+        const win = window as unknown as { __OPENHUMAN_CORE_STATE__?: () => any };
+        const state = win.__OPENHUMAN_CORE_STATE__?.();
+        return {
+          isReady: state?.isReady ?? null,
+          isBootstrapping: state?.isBootstrapping ?? null,
+          hasSessionToken: Boolean(state?.snapshot?.sessionToken),
+          hasAuthUser: Boolean(state?.snapshot?.auth?.userId),
+          authStoreFailureKind:
+            (window as unknown as { __OPENHUMAN_E2E_AUTH_STORE_FAILURE__?: string })
+              .__OPENHUMAN_E2E_AUTH_STORE_FAILURE__ ?? null,
+        };
+      })
+      .catch(() => null);
+    const [sessionState, sessionToken] = await Promise.all([
+      callOpenhumanRpc('openhuman.auth_get_state').catch(() => null),
+      callOpenhumanRpc('openhuman.auth_get_session_token').catch(() => null),
+    ]);
+    const stateValue = sessionState?.result?.value ?? sessionState?.result;
+    const tokenValue = sessionToken?.result?.value ?? sessionToken?.result;
+    const sessionRpc = {
+      stateOk: sessionState?.ok ?? false,
+      authenticated: stateValue?.isAuthenticated ?? null,
+      credential: stateValue?.credential ?? null,
+      tokenOk: sessionToken?.ok ?? false,
+      hasStoredToken: Boolean(tokenValue?.token),
+      stateHttpStatus: sessionState?.httpStatus ?? null,
+      stateErrorKind: safeRpcFailureKind(sessionState),
+      stateErrorSummary: safeRpcErrorSummary(sessionState),
+      tokenHttpStatus: sessionToken?.httpStatus ?? null,
+      tokenErrorKind: safeRpcFailureKind(sessionToken),
+      tokenErrorSummary: safeRpcErrorSummary(sessionToken),
+    };
+    console.error(
+      `${logPrefix} auth bootstrap failed; mock auth endpoints=${JSON.stringify(authRequests)}; core state=${JSON.stringify(coreState)}; session RPC=${JSON.stringify(sessionRpc)}`
+    );
+    throw error;
+  }
 
   await walkOnboarding(logPrefix);
 

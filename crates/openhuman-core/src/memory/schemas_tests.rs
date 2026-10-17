@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::Config;
 use crate::core::runtime::context::CoreContext;
+use crate::core::runtime::DispatchCtx;
 use crate::core::runtime::DomainSet;
 use crate::memory::test_fixtures::{bind_reference, config_in};
 use serde_json::{json, Map, Value};
@@ -56,7 +57,10 @@ fn object(value: Value) -> Map<String, Value> {
 async fn call(config: &Config, function: &str, params: Value) -> Result<Value, String> {
     let handler = handler_for(function);
     let ctx = CoreContext::for_test_with_config(DomainSet::full(), config.clone());
-    CoreContext::scope(ctx, async move { handler(object(params)).await }).await
+    CoreContext::scope(ctx.clone(), async move {
+        handler(DispatchCtx::new(ctx.clone()), object(params)).await
+    })
+    .await
 }
 
 #[test]

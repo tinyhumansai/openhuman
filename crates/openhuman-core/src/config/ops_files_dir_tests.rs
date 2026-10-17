@@ -147,6 +147,9 @@ async fn boot_migrates_legacy_files_into_the_chosen_folder() {
         tool_call_id: None,
     };
     save_artifact_meta(&cfg.workspace_dir, &meta).await.unwrap();
+    // The record lives in the document store now, so the legacy content
+    // directory is created by hand, as an older install left it.
+    std::fs::create_dir_all(cfg.workspace_dir.join("artifacts/legacy")).unwrap();
     std::fs::write(
         cfg.workspace_dir.join("artifacts/legacy/plan.docx"),
         b"plan",
@@ -198,11 +201,12 @@ async fn files_made_before_a_folder_change_keep_resolving() {
         ArtifactKind::Document,
         "Plan",
         "docx",
+        None,
     )
     .await
     .unwrap();
     std::fs::write(&path, b"plan").unwrap();
-    finalize_artifact(&cfg.workspace_dir, &meta.id, 4)
+    finalize_artifact(&cfg.workspace_dir, &meta.id, 4, None)
         .await
         .unwrap();
     assert!(path.starts_with(&first));

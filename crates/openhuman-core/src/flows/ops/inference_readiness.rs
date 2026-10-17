@@ -38,7 +38,7 @@ use super::*;
 // Two layers, cheapest and most decisive first:
 //
 // - **Layer 1 (sync)** — the desktop session itself: signed out
-//   (`scheduler_gate::is_signed_out`), or no valid `app-session` JWT
+//   (`llm_gate::is_signed_out`), or no valid `app-session` JWT
 //   (`inference::provider::factory::verify_session_active`, the exact check
 //   every custom-provider construction already gates on).
 // - **Layer 2 (async, cached)** — one cheap real probe per DISTINCT resolved
@@ -102,7 +102,7 @@ pub(super) static INFERENCE_PROBE_CACHE: LazyLock<std::sync::Mutex<InferenceProb
 /// window. Clears the whole cache rather than just the current key: a
 /// sign-out is a session-wide event, not scoped to one role.
 fn invalidate_inference_probe_cache_if_signed_out() {
-    if crate::cron::scheduler_gate::is_signed_out() {
+    if crate::platform::llm_gate::is_signed_out() {
         INFERENCE_PROBE_CACHE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -111,6 +111,7 @@ fn invalidate_inference_probe_cache_if_signed_out() {
 }
 
 pub(super) async fn cached_probe_inference_readiness(
+    ctx: &crate::core::runtime::DispatchCtx,
     role: &str,
     config: &Config,
 ) -> Result<(), String> {
@@ -135,7 +136,7 @@ pub(super) async fn cached_probe_inference_readiness(
         }
     }
 
-    let result = crate::inference::provider::probe_inference_readiness(role, config).await;
+    let result = crate::inference::provider::probe_inference_readiness(ctx, role, config).await;
     INFERENCE_PROBE_CACHE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -172,7 +173,7 @@ pub(super) fn agent_node_role(config: &Config, node: &tinyflows::model::Node) ->
         .map(str::trim)
         .filter(|s| !s.is_empty() && !s.starts_with('='))
     {
-        use crate::agent::harness::definition::AgentDefinitionRegistry;
+        use crate::agent::harness::host_definition::AgentDefinitionRegistry;
         if let Err(error) = AgentDefinitionRegistry::init_global(&config.workspace_dir) {
             tracing::debug!(target: "flows", %error,
                 "[flows] readiness: agent definition registry unavailable; using registry fallback");
@@ -264,6 +265,7 @@ pub(super) struct InferenceReadinessEvaluation {
 /// from cache). `status`/`message` report `provider_not_configured`/`error`
 /// if ANY role's probe fails, naming every offending node and role.
 pub(super) async fn evaluate_inference_readiness(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     graph: &WorkflowGraph,
 ) -> Option<InferenceReadinessEvaluation> {
@@ -294,7 +296,7 @@ pub(super) async fn evaluate_inference_readiness(
 
     // Layer 1: signed-out is the cheapest, most decisive check. Session-wide
     // — checked once for the whole graph, not per node/role.
-    if needs_session && crate::cron::scheduler_gate::is_signed_out() {
+    if needs_session && crate::platform::llm_gate::is_signed_out() {
         tracing::debug!(
             target: "flows",
             node = %first_node.id,
@@ -365,7 +367,7 @@ pub(super) async fn evaluate_inference_readiness(
             role,
             "[flows] inference-readiness: probing managed-backend/role readiness"
         );
-        if let Err(msg) = cached_probe_inference_readiness(role, config).await {
+        if let Err(msg) = cached_probe_inference_readiness(ctx, role, config).await {
             tracing::warn!(
                 target: "flows",
                 nodes = ?node_ids,
@@ -467,10 +469,11 @@ pub(super) async fn evaluate_inference_readiness(
 /// author from proposing/saving the graph in the first place. See the module
 /// doc above for the two-layer evaluation design.
 pub(crate) async fn validate_inference_readiness(
+    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     graph: &WorkflowGraph,
 ) -> Vec<String> {
-    let Some(evaluation) = evaluate_inference_readiness(config, graph).await else {
+    let Some(evaluation) = evaluate_inference_readiness(ctx, config, graph).await else {
         return Vec::new();
     };
     if evaluation.status == "ready" {

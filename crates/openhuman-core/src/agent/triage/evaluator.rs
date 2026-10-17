@@ -23,7 +23,7 @@
 //! ## Why the turn path doesn't care about `tools_registry = []`
 //!
 //! The triage agent has `named = []` in its TOML (zero tools). The
-//! tinyagents-backed turn path (`run_turn_via_tinyagents_shared` in
+//! tinyagents-backed turn path (`TurnSpec::run` in
 //! `crates/openhuman-core/src/agent/tinyagents/mod.rs`) handles an empty registry by simply
 //! sending no tool schemas to the backend — the turn degrades to a plain
 //! chat completion.
@@ -48,13 +48,15 @@ use super::envelope::TriggerEnvelope;
 #[cfg(test)]
 use super::routing::ResolvedProvider;
 #[cfg(test)]
-use crate::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::agent::harness::host_definition::AgentDefinition;
 #[cfg(test)]
 pub(crate) use arm::{classify_error, ArmError};
 #[cfg(test)]
 pub(crate) use chain::run_triage_with_arms_for_test;
 #[cfg(test)]
 pub(crate) use prompt::{extract_inline_prompt, render_user_message, truncate_payload};
+#[cfg(test)]
+use tinyagents_definition::PromptSource;
 
 #[cfg(test)]
 #[path = "evaluator_tests.rs"]

@@ -16,13 +16,13 @@ import {
   seedComposioToolkits,
 } from '../helpers/composio-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   textExists,
   waitForText,
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { triggerAuthLoopbackBypass } from '../helpers/loopback-auth-helpers';
 import {
   completeOnboardingIfVisible,
   navigateToSkills,
@@ -66,7 +66,7 @@ describe('Jira Composio connector flow', () => {
     seedComposioConnection(TOOLKIT_SLUG, 'ACTIVE', 'c-jira-1');
     await waitForApp();
     clearRequestLog();
-    await triggerAuthDeepLinkBypass(AUTH_TOKEN);
+    await triggerAuthLoopbackBypass(AUTH_TOKEN);
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await completeOnboardingIfVisible(LOG);

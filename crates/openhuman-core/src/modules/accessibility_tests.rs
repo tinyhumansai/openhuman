@@ -110,7 +110,8 @@ async fn fixture(
         .unwrap();
     (
         AccessibilityClient {
-            client: ModuleClient::fixture(proxy),
+            client: crate::modules::ops::fixture_client(proxy),
+            computer_enabled: true,
         },
         fixture,
         service,
@@ -219,19 +220,20 @@ fn structured_focus_refusal_is_preserved_for_host_presentation() {
 
 #[cfg(all(feature = "modules", target_os = "linux"))]
 #[tokio::test]
-#[ignore = "requires the released v0.11.0 artifact in OPENHUMAN_TINYCOMPUTER_TEST_MODULE"]
+#[ignore = "requires a TinyComputer library: node scripts/modules/build.mjs tinycomputer, then OPENHUMAN_MODULE_SOURCE_DIR"]
 async fn released_module_serves_permissions_and_confidential_target_validation() {
-    let artifact = std::env::var_os("OPENHUMAN_TINYCOMPUTER_TEST_MODULE")
-        .expect("set OPENHUMAN_TINYCOMPUTER_TEST_MODULE to the released native library");
+    let artifact = crate::modules::local_artifact("tinycomputer").expect(
+        "build tinycomputer with scripts/modules/build.mjs and set OPENHUMAN_MODULE_SOURCE_DIR",
+    );
     let mut config = Config::default();
     config.modules.allow_download = false;
     config
         .modules
         .overrides
-        .push(crate::config::schema::ModuleOverride {
-            id: "tinycomputer".into(),
-            path: std::path::PathBuf::from(artifact).to_str().unwrap().into(),
-        });
+        .push(crate::config::schema::ModuleOverride::with_path(
+            "tinycomputer",
+            artifact.to_str().unwrap(),
+        ));
     let client = AccessibilityClient::new(&config);
     let permissions = client.permissions().await.expect("native permission query");
     assert_eq!(permissions.accessibility, PermissionState::Unsupported);
@@ -247,4 +249,18 @@ async fn released_module_serves_permissions_and_confidential_target_validation()
     );
     assert!(matches!(client.globe_start().await,
         Err(AccessibilityError::Operation(error)) if error.code == "PLATFORM_NOT_SUPPORTED"));
+}
+
+#[tokio::test]
+async fn component_off_refuses_before_reaching_the_module() {
+    let mut config = Config::default();
+    config.components.computer = false;
+    let client = AccessibilityClient::new(&config);
+    assert!(!client.computer_enabled());
+    match client.permissions().await {
+        Err(AccessibilityError::Operation(error)) => {
+            assert_eq!(error.message, "COMPONENT_DISABLED:computer");
+        }
+        other => panic!("expected COMPONENT_DISABLED, got {other:?}"),
+    }
 }

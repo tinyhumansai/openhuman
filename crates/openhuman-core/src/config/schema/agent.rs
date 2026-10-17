@@ -206,7 +206,7 @@ pub struct AgentConfig {
     /// "write", "execute", "dangerous".
     ///
     /// Runtime semantics (see
-    /// [`crate::tools::agent_policy::engine::ToolPolicyEngine`]):
+    /// [`tinytools::engine::ToolPolicyEngine`]):
     ///
     /// * **Empty map** — the policy engine preserves the legacy
     ///   unrestricted surface and returns `PermissionLevel::Dangerous`
@@ -265,47 +265,18 @@ pub struct AgentConfig {
     #[serde(default = "default_agent_timeout_secs")]
     pub agent_timeout_secs: u64,
 
-    /// Dual-write each completed session turn into the TinyAgents session
-    /// store (`{workspace}/tinyagents_store/{kv,journal}`) alongside the
-    /// legacy `session_raw/*.jsonl` transcript (issue #4249, sessions 04.1).
-    ///
-    /// Defaults **ON**: the store has to be populated by live turns so the
-    /// 04.2 read cutover inherits a complete corpus. The write is additive,
-    /// best-effort, and non-fatal — a store-write failure never affects the
-    /// chat turn or the authoritative legacy JSONL. The
-    /// `OPENHUMAN_SESSION_DUAL_WRITE` env var is a kill switch that overrides
-    /// this flag in either direction: a falsy value (`0`/`false`/`no`/`off`)
-    /// forces the dual-write OFF regardless of config; a truthy value forces
-    /// it ON. See
-    /// [`crate::agent::session_import::live::dual_write_enabled`].
+    /// **Retired, no effect.** Once mirrored each completed turn from the
+    /// `session_raw/*.jsonl` transcript into a second, file-shaped layout
+    /// (`{workspace}/tinyagents_store/{kv,journal}`). Sessions now live in the
+    /// storage backend and nothing is mirrored; the field is kept so existing
+    /// `config.toml` files still load.
     #[serde(default = "default_session_dual_write")]
     pub session_dual_write: bool,
 
-    /// Store-backed **shadow read** of a resumed session's messages: on the
-    /// legacy transcript read path (`session/turn/session_io.rs` →
-    /// `try_load_session_transcript`), also read the same session back from the
-    /// TinyAgents journal (`{workspace}/tinyagents_store/journal`), normalize
-    /// both sides through the importer's `tinyagents_session::transcript::import::convert` machinery,
-    /// compare, and log any divergence (`[session_shadow_read]`, issue #4249,
-    /// sessions 04.2 phase 2).
-    ///
-    /// Defaults **ON** as of the Phase 2 parity soak (`plan-agents.md` §5): the
-    /// reader flip cannot be justified without divergence data from real
-    /// workspaces, and a probe that ships off produces none. This is safe to
-    /// default on precisely because it is observation-only — see the paragraph
-    /// below — and it is the last step before readers move to the store.
-    ///
-    /// The legacy JSONL read stays authoritative: the shadow read only observes
-    /// and logs, on a background task, once per session resume rather than per
-    /// turn. A store-read failure is treated as "no shadow available" and never
-    /// breaks or slows the authoritative read. Sessions written before the
-    /// store existed have no stream and report `Unavailable`, not divergence,
-    /// so an upgrading user's old transcripts do not generate warnings. The
-    /// `OPENHUMAN_SESSION_SHADOW_READS` env var is a pure **kill switch**: a
-    /// falsy value (`0`/`false`/`no`/`off`/`disable`/`disabled`, case-
-    /// insensitive) forces the shadow read
-    /// OFF regardless of config; it can never force it ON. See
-    /// [`crate::agent::session_import::live::shadow_reads_enabled`].
+    /// **Retired, no effect.** Once compared a resumed session's transcript
+    /// with its mirror in the file-shaped store and logged any divergence
+    /// (`[session_shadow_read]`). The mirror is gone with the dual-write; the
+    /// field is kept so existing `config.toml` files still load.
     #[serde(default = "default_session_shadow_reads")]
     pub session_shadow_reads: bool,
 
@@ -416,7 +387,7 @@ fn default_tool_result_budget_bytes() -> usize {
 }
 
 fn default_agent_timeout_secs() -> u64 {
-    crate::tools::timeout::DEFAULT_TIMEOUT_SECS
+    tinytools_std::timeout::DEFAULT_TIMEOUT_SECS
 }
 
 fn default_agent_max_tool_iterations() -> usize {

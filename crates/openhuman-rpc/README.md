@@ -231,8 +231,8 @@ pnpm debug rust openhuman_rpc
 
 ## Further reading
 
-- [`gitbooks/developing/architecture.md`](../../gitbooks/developing/architecture.md): architecture overview.
-- [`gitbooks/developing/architecture/tauri-shell.md`](../../gitbooks/developing/architecture/tauri-shell.md): the Tauri shell.
-- [`gitbooks/developing/embedding.md`](../../gitbooks/developing/embedding.md): embedding the core in another product.
-- [`gitbooks/developing/testing-strategy.md`](../../gitbooks/developing/testing-strategy.md): testing strategy.
+- [`docs/gitbooks/en/developing/architecture.md`](../../docs/gitbooks/en/developing/architecture.md): architecture overview.
+- [`docs/gitbooks/en/developing/architecture/tauri-shell.md`](../../docs/gitbooks/en/developing/architecture/tauri-shell.md): the Tauri shell.
+- [`docs/gitbooks/en/developing/embedding.md`](../../docs/gitbooks/en/developing/embedding.md): embedding the core in another product.
+- [`docs/gitbooks/en/developing/testing-strategy.md`](../../docs/gitbooks/en/developing/testing-strategy.md): testing strategy.
 - [`crates/README.md`](../README.md): crates overview.

@@ -1,9 +1,10 @@
 use super::*;
+use crate::util::classic_transcript_fixture::{read_classic_rows, write_classic};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 use tinyagents_session::transcript::TranscriptMessage;
-use tinyagents_session::transcript::{read_transcript, write_transcript, TranscriptMeta};
+use tinyagents_session::transcript::TranscriptMeta;
 
 fn durable_messages(
     messages: impl IntoIterator<Item = TranscriptMessage>,
@@ -87,7 +88,7 @@ fn seed_tainted_transcript(workspace_dir: &Path) -> std::path::PathBuf {
         TranscriptMessage::system(tainted_prompt()),
         TranscriptMessage::user("hello"),
     ];
-    write_transcript(&path, &durable_messages(messages), &meta(), None).unwrap();
+    write_classic(&path, &durable_messages(messages), &meta());
     path
 }
 
@@ -116,11 +117,11 @@ async fn run_pending_runs_phase_out_when_version_zero() {
     run_pending(&mut config).await;
 
     assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
-    let session = read_transcript(&path).unwrap();
+    let rows = read_classic_rows(&path);
+    let first = rows[0]["content"].as_str().unwrap();
     assert!(
-        !session.messages[0].content.contains("### PROFILE.md"),
-        "PROFILE.md block must be stripped, got:\n{}",
-        session.messages[0].content
+        !first.contains("### PROFILE.md"),
+        "PROFILE.md block must be stripped, got:\n{first}"
     );
 
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();

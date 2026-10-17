@@ -15,6 +15,7 @@
 //! The committed turn is also published as
 //! `DomainEvent::ConversationTurnCommitted` for observers.
 
+use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -70,26 +71,39 @@ pub(super) fn in_prompt_window(
 }
 
 impl OpenHumanTurnPrelude {
+    /// The context this session's turns run under, from the host environment
+    /// bound at the start of the turn.
+    /// The connected-identities prompt section, read under the session's context.
+    pub(in crate::agent::session_host) fn connected_identities_md(&self) -> String {
+        crate::agent::prompts::render_connected_identities(&self.dispatch_ctx())
+    }
+
+    pub(in crate::agent::session_host) fn dispatch_ctx(&self) -> crate::core::runtime::DispatchCtx {
+        crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref())
+    }
     /// The config memory runs under: the session's own, else the
     /// workspace's on disk.
     async fn memory_config(&self) -> Option<Arc<crate::config::Config>> {
         if let Some(config) = &self.runtime_config {
             return Some(config.clone());
         }
-        crate::config::rpc::load_config_for_workspace_with_timeout(&self.workspace_dir)
-            .await
-            .map(Arc::new)
-            .map_err(|error| {
-                log::debug!("[session_host:memory] no config for memory: {error}");
-            })
-            .ok()
+        crate::config::rpc::load_config_for_workspace_with_timeout(
+            &self.dispatch_ctx(),
+            &self.workspace_dir,
+        )
+        .await
+        .map(Arc::new)
+        .map_err(|error| {
+            log::debug!("[session_host:memory] no config for memory: {error}");
+        })
+        .ok()
     }
 
     /// Takes completed memory and queues a user-authored turn's log and recall.
     /// Remembers the turn so the reply is logged under the same identity and
     /// index, and returns its memory for the run context without engine I/O.
-    /// `origin` is the turn's origin as the run context carries it (the
-    /// session host never reads the task-local one); a channel turn is
+    /// `origin` is the turn's, as the run context carries it (nothing is read
+    /// from the running task); a channel turn is
     /// logged as observed from its sender
     /// ([`crate::memory::lifecycle::sender::channel_actor`]).
     pub(super) async fn memory_pre_turn(
@@ -107,11 +121,17 @@ impl OpenHumanTurnPrelude {
             .clone()?;
         let thread_id = self.thread_id.clone()?;
         let config = self.memory_config().await?;
-        let mut identity = crate::memory::scope::resolve_current(&config);
+        // The identity the turn's run context carries: the host environment's
+        // (a team member's), narrowed to this agent.
+        let acting = self.host_env.memory_identity.clone().unwrap_or_default();
+        let mut identity = acting.child(&self.agent_definition_id).resolve(&config);
         if self.omit_memory_context {
             identity.recall = false;
         }
-        let profile_context = capture_profile_context(crate::profiles::host::host().as_deref());
+        let profile_context = capture_profile_context(
+            &self.dispatch_ctx(),
+            crate::profiles::host::host().as_deref(),
+        );
         if matches!(profile_context, ProfileMemoryContext::Denied) {
             return None;
         }
@@ -126,6 +146,7 @@ impl OpenHumanTurnPrelude {
             profile_context,
         });
         let pack = crate::memory::lifecycle::prefetch::pre_turn(
+            &self.dispatch_ctx(),
             config.clone(),
             identity.clone(),
             PreTurnInput {
@@ -146,6 +167,11 @@ impl OpenHumanTurnPrelude {
             identity,
             thread_id,
             pack,
+            in_prompt_from: Arc::new(crate::memory::lifecycle::window::InPromptFrom::new(
+                in_prompt_from,
+                user_index,
+            )),
+            core: self.host_env.core.clone(),
         }))
     }
 
@@ -212,14 +238,18 @@ impl OpenHumanTurnPrelude {
             )
             .await;
         };
-        crate::core::runtime::spawn_scoped(deferred_memory_work(profile_context, work));
+        self.dispatch_ctx()
+            .spawn(deferred_memory_work(profile_context, work));
     }
 }
 
 // Resolve the profile owner at preparation; a canonical commit may run after
 // the immutable turn-origin scope has ended.
-fn capture_profile_context(host: Option<&crate::profiles::ProfileHost>) -> ProfileMemoryContext {
-    let Some(context) = crate::core::runtime::CoreContext::scoped() else {
+fn capture_profile_context(
+    ctx: &DispatchCtx,
+    host: Option<&crate::profiles::ProfileHost>,
+) -> ProfileMemoryContext {
+    let Some(context) = ctx.core().cloned() else {
         return if crate::core::runtime::is_saas() {
             ProfileMemoryContext::Denied
         } else {

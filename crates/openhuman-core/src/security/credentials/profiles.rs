@@ -39,6 +39,10 @@ struct KeychainSecrets {
     pub id_token: Option<String>,
 }
 const PROFILES_FILENAME: &str = "auth-profiles.json";
+/// The auth-profiles file a store over `state_dir` keeps.
+pub(crate) fn profiles_file(state_dir: &Path) -> PathBuf {
+    state_dir.join(PROFILES_FILENAME)
+}
 const LOCK_FILENAME: &str = "auth-profiles.lock";
 const LOCK_WAIT_MS: u64 = 50;
 /// A lock file that has existed for longer than this is treated as leaked

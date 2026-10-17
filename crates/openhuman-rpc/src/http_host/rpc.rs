@@ -7,8 +7,11 @@ use crate::http_host::types::{
     HostedDirStopResult, StartHostedDirParams,
 };
 
-pub async fn start(params: StartHostedDirParams) -> Result<Outcome<HostedDirStartResult>, String> {
-    let server = ops::start_hosted_dir_server(params).await?;
+pub async fn start(
+    ctx: &crate::core_host::core::runtime::DispatchCtx,
+    params: StartHostedDirParams,
+) -> Result<Outcome<HostedDirStartResult>, String> {
+    let server = ops::start_hosted_dir_server(ctx, params).await?;
     Ok(Outcome::single_log(
         HostedDirStartResult { server },
         "started hosted directory HTTP server",

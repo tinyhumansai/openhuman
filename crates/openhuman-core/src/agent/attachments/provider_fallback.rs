@@ -75,7 +75,15 @@ impl AttachmentModel {
                     }
                     _ => None,
                 };
-                if let Some(format) = format {
+                if format.is_some() && !self.config.components.documents {
+                    log::debug!(
+                        "[attachments] document extraction skipped: component 'documents' disabled"
+                    );
+                    cacheable = false;
+                    text.push_str(
+                        "\nDocument extraction is disabled ([components] documents = false); original remains available.",
+                    );
+                } else if let Some(format) = format {
                     let (_, _, limit) = self.config.multimodal_files.effective_limits();
                     let mut spec = tinydocs_bus::ExtractDocumentSpec::new(format);
                     spec.max_text_bytes = limit.min(200_000) as u32;
@@ -220,7 +228,8 @@ impl AttachmentModel {
             ));
         }
         let (vision, model_id) =
-            crate::inference::provider::factory::create_chat_model_with_model_id(
+            crate::inference::provider::factory::create_chat_model_with_model_id_in(
+                &self.dispatch_ctx(),
                 "vision",
                 &self.config,
                 0.0,
@@ -230,7 +239,13 @@ impl AttachmentModel {
             .profile()
             .and_then(|p| p.provider.as_deref())
             .unwrap_or("unknown");
-        let prepared = wrap(vision.clone(), self.config.clone(), &model_id, provider);
+        let prepared = wrap(
+            &self.dispatch_ctx(),
+            vision.clone(),
+            self.config.clone(),
+            &model_id,
+            provider,
+        );
         let known = prepared.profile().is_some_and(|p| p.modalities.image_in)
             || provider == "injected" && vision.profile().is_some_and(|p| p.modalities.image_in);
         if !known || !vision.supports_input(InputModality::Image, mime, InputSource::Base64) {

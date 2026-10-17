@@ -8,12 +8,14 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use serde_json::json;
+use std::sync::Arc;
 use tinyagents_orchestration::workflow::{
     WorkflowDefinition, WorkflowDefinitionListResponse, WorkflowPhase,
 };
+
+use tinyagents_orchestration::workflow::SessionWorkflowStore;
 use tinyagents_session::run_ledger::{
-    get_workflow_run, list_workflow_runs, WorkflowRun, WorkflowRunListRequest,
-    WorkflowRunListResponse,
+    WorkflowRun, WorkflowRunListRequest, WorkflowRunListResponse, WorkflowRunUpsert,
 };
 
 use crate::config::Config;
@@ -57,11 +59,47 @@ pub fn list_runs(
     config: &Config,
     request: &WorkflowRunListRequest,
 ) -> Result<WorkflowRunListResponse> {
-    Ok(list_workflow_runs(&config.workspace_dir, request)?)
+    let request = request.clone();
+    Ok(crate::agent::session_store::with_ledger(
+        &config.workspace_dir,
+        |ledger| async move { ledger.list_workflow_runs(&request).await },
+    )?)
 }
 
 pub fn get_run(config: &Config, id: &str) -> Result<Option<WorkflowRun>> {
-    Ok(get_workflow_run(&config.workspace_dir, id)?)
+    get_workflow_run(config, id)
+}
+
+/// The workflow run `id` on the calling tenant's run ledger.
+pub(super) fn get_workflow_run(config: &Config, id: &str) -> Result<Option<WorkflowRun>> {
+    let id = id.to_string();
+    Ok(crate::agent::session_store::with_ledger(
+        &config.workspace_dir,
+        |ledger| async move { ledger.get_workflow_run(&id).await },
+    )?)
+}
+
+/// A host lifecycle transition (stop, resume) fenced on the revision the
+/// caller observed; `None` when another writer moved the row first.
+pub(super) fn compare_and_swap_workflow_run_lifecycle(
+    config: &Config,
+    upsert: WorkflowRunUpsert,
+    expected_revision: u64,
+) -> Result<Option<WorkflowRun>> {
+    Ok(crate::agent::session_store::with_ledger(
+        &config.workspace_dir,
+        |ledger| async move {
+            ledger
+                .compare_and_swap_workflow_run_lifecycle(upsert, expected_revision)
+                .await
+        },
+    )?)
+}
+
+/// The engine's workflow store over the calling tenant's run ledger.
+pub(super) fn workflow_store(config: &Config) -> Result<Arc<SessionWorkflowStore>> {
+    let ledger = crate::agent::session_store::require_ledger(&config.workspace_dir)?;
+    Ok(Arc::new(SessionWorkflowStore::new(ledger)?))
 }
 
 #[cfg(test)]

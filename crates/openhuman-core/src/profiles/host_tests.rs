@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::runtime::DispatchCtx;
 
 fn host(tmp: &tempfile::TempDir, max_open: usize, idle_secs: u64) -> ProfileHost {
     let mut saas = SaasConfig::new(tmp.path());
@@ -182,12 +183,12 @@ async fn a_clean_reopen_does_not_recover_but_a_takeover_does() {
             4,
             "2026-10-09T00:00:00Z",
         );
-        tinyagents_session::turn_state::TurnStateStore::new(workspace.clone())
+        crate::agent::session_store::default_turn_states_for(&workspace)
             .put(&state)
             .unwrap();
     };
     let lifecycle = |thread: &str| {
-        tinyagents_session::turn_state::TurnStateStore::new(workspace.clone())
+        crate::agent::session_store::default_turn_states_for(&workspace)
             .get(thread)
             .unwrap()
             .unwrap()
@@ -316,7 +317,7 @@ async fn an_open_profile_is_gated_by_its_own_policy_not_the_operators() {
     assert!(own.enabled, "the forced autonomy policy is on");
     assert!(own.workspace_only);
     let effective = CoreContext::scope(Arc::clone(state.context()), async {
-        crate::security::live_policy::effective()
+        crate::security::live_policy::effective_in(&crate::core::runtime::DispatchCtx::ambient())
     })
     .await
     .expect("a policy is in effect");
@@ -394,10 +395,10 @@ async fn the_operators_cron_limits_bind_every_profile_whatever_its_config_says()
     .unwrap();
     let forced = host.provisioned_config(&id).await.unwrap();
     let opened = host.open(&id).await.unwrap();
-    let loaded = CoreContext::scope(Arc::clone(opened.context()), async {
-        crate::config::ops::load_current_or_init().await.unwrap()
-    })
-    .await;
+    let loaded =
+        crate::config::ops::load_current_or_init(&DispatchCtx::new(Arc::clone(opened.context())))
+            .await
+            .unwrap();
     for config in [&forced, &opened.config, &loaded] {
         assert!(config.cron.agent_jobs_only);
         assert_eq!(config.cron.min_interval_secs, 900);

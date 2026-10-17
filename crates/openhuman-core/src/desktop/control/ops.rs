@@ -1,5 +1,6 @@
 //! Local desktop enablement and permission-aware status.
 
+use crate::core::runtime::DispatchCtx;
 use std::fs;
 use std::io::Write;
 use std::sync::{
@@ -25,11 +26,11 @@ const DESKTOP_AGENT_TOOLS: &[&str] = &[
 /// A registered desktop tool skips only approval parks when its explicit
 /// desktop setting is off. Permission caps, denies, enabled state, OS grants,
 /// and the action budget still run at their normal gates.
-pub(crate) async fn approvals_disabled_for(tool: &dyn tinytools::Tool) -> bool {
+pub(crate) async fn approvals_disabled_for(ctx: &DispatchCtx, tool: &dyn tinytools::Tool) -> bool {
     if tool.family() != Some("desktop") || !DESKTOP_AGENT_TOOLS.contains(&tool.name()) {
         return false;
     }
-    crate::config::rpc::load_config_with_timeout()
+    ctx.load_config()
         .await
         .is_ok_and(|config| approval_bypass_decision(&config, tool))
 }
@@ -120,8 +121,13 @@ fn state_path(config: &Config) -> std::path::PathBuf {
         .join("desktop-control.json")
 }
 
+/// Effective desktop control: the `[components] computer` ceiling AND this
+/// machine's local consent. The flag can only remove access, never grant it.
 /// Corrupt or unreadable local state fails closed, never enabling desktop access.
 pub fn enabled(config: &Config) -> bool {
+    if !config.components.computer {
+        return false;
+    }
     let _lock = STATE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

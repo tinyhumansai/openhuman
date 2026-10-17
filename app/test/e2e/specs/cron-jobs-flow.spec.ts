@@ -41,6 +41,7 @@ import { startMockServer, stopMockServer } from '../mock-server';
 
 const USER_ID = 'e2e-cron-jobs';
 const MORNING_BRIEFING = 'morning_briefing';
+const REMOVABLE_JOB = 'e2e_remove_me';
 
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();
@@ -211,17 +212,38 @@ describe('Cron jobs settings panel (real UI flow)', () => {
     await waitForCronToggleLabel(morningBriefingId, 'Pause');
   });
 
-  it('clicking Remove deletes the job from both the UI and the sidecar', async function () {
+  it('clicking Remove deletes a user job from both the UI and the sidecar', async function () {
     this.timeout(60_000);
-    await clickTestId(`cron-job-remove-${morningBriefingId}`, 8_000);
+    // The morning_briefing is seeded asynchronously when onboarding completes.
+    // Removing that built-in job can race the seed task and recreate it, so
+    // exercise deletion against a user-created job instead.
+    const created = await callOpenhumanRpc('openhuman.cron_add', {
+      name: REMOVABLE_JOB,
+      schedule: { kind: 'cron', expr: '0 8 * * *' },
+      job_type: 'agent',
+      prompt: 'E2E disposable cron job',
+    });
+    expect(created.ok).toBe(true);
+    const createdJob = (created.result as { result?: { id?: string } } | undefined)?.result;
+    const removableJobId = createdJob?.id ?? '';
+    expect(removableJobId).toBeTruthy();
 
-    // UI assertion first — the row should disappear and the empty state appear.
+    const disabled = await callOpenhumanRpc('openhuman.cron_update', {
+      job_id: removableJobId,
+      patch: { enabled: false },
+    });
+    expect(disabled.ok).toBe(true);
+
+    await clickCronRefresh();
+    await waitForTestId(`cron-job-row-${removableJobId}`, 20_000);
+    await clickTestId(`cron-job-remove-${removableJobId}`, 8_000);
+
+    // UI assertion first — the user-created row should disappear.
     // The removal RPC + optimistic re-render can take longer on the slower macOS
     // runner, so poll for up to 20s rather than 10s before declaring the row stuck.
     const gone = await browser.waitUntil(
-      async () =>
-        !(await browser.$(`[data-testid="cron-job-row-${morningBriefingId}"]`).isExisting()),
-      { timeout: 20_000, interval: 500, timeoutMsg: 'morning_briefing row never disappeared' }
+      async () => !(await browser.$(`[data-testid="cron-job-row-${removableJobId}"]`).isExisting()),
+      { timeout: 20_000, interval: 500, timeoutMsg: 'user-created cron row never disappeared' }
     );
     expect(gone).toBe(true);
 
@@ -230,6 +252,6 @@ describe('Cron jobs settings panel (real UI flow)', () => {
     expect(list.ok).toBe(true);
     const inner = (list.result as { result?: unknown } | undefined)?.result ?? list.result;
     const jobs = Array.isArray(inner) ? inner : [];
-    expect(jobs.find((j: { name?: string }) => j?.name === MORNING_BRIEFING)).toBeUndefined();
+    expect(jobs.find((j: { name?: string }) => j?.name === REMOVABLE_JOB)).toBeUndefined();
   });
 });

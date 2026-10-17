@@ -88,7 +88,12 @@ fn origin_delivery_or_current_target_without_an_origin_is_an_error() {
     let tmp = TempDir::new().unwrap();
     let cfg = config(&tmp);
     let mut i = input();
-    i.delivery = Some(default_delivery(Some(&web())));
+    i.delivery = Some(
+        crate::cron::client::blocking(&Config::default(), |config| async move {
+            crate::cron::client::default_delivery(&config, Some(&web())).await
+        })
+        .unwrap(),
+    );
     assert!(create_agent_job(&cfg, i, None)
         .unwrap_err()
         .contains("origin"));
@@ -122,9 +127,15 @@ fn announce_to_origin_reply_target_skips_allowed_users() {
         mention_only: false,
     });
     // Chat id 42 is not in allowed_users (a username), but it is the asker.
-    assert!(validate_delivery(&cfg, &announce("telegram", "42"), Some(&channel())).is_ok());
+    assert!(
+        validate_delivery_for_config(&cfg, &announce("telegram", "42"), Some(&channel())).is_ok()
+    );
     // Without the origin, or for another target, the allowlist still applies.
-    assert!(validate_delivery(&cfg, &announce("telegram", "42"), None).is_err());
-    assert!(validate_delivery(&cfg, &announce("telegram", "99"), Some(&channel())).is_err());
-    assert!(validate_delivery(&cfg, &announce("discord", "42"), Some(&channel())).is_err());
+    assert!(validate_delivery_for_config(&cfg, &announce("telegram", "42"), None).is_err());
+    assert!(
+        validate_delivery_for_config(&cfg, &announce("telegram", "99"), Some(&channel())).is_err()
+    );
+    assert!(
+        validate_delivery_for_config(&cfg, &announce("discord", "42"), Some(&channel())).is_err()
+    );
 }

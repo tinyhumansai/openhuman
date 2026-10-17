@@ -153,6 +153,6 @@ cargo test -p openhuman-tinyhumans backend::
 
 ## Further reading
 
-- [`gitbooks/developing/tinyhumans-api-key.md`](../../../../gitbooks/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
+- [`docs/gitbooks/en/developing/tinyhumans-api-key.md`](../../../../docs/gitbooks/en/developing/tinyhumans-api-key.md): running on a TinyHumans API key.
 - [`crates/openhuman-tinyhumans/README.md`](../../README.md): the openhuman-tinyhumans crate README.
 - [`vendor/tinyhumans-sdk/README.md`](../../../../vendor/tinyhumans-sdk/README.md): tinyhumans-sdk.

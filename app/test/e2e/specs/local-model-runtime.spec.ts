@@ -1,8 +1,17 @@
 // @ts-nocheck
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
-import { textExists, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
-import { walkOnboarding } from '../helpers/shared-flows';
+import {
+  textExists,
+  visibleTextExists,
+  waitForWebView,
+  waitForWindowVisible,
+} from '../helpers/element-helpers';
+import {
+  dismissWalkthroughIfVisible,
+  waitForHomePage,
+  walkOnboarding,
+} from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
 
 /**
@@ -70,6 +79,13 @@ describe('Local model runtime route', () => {
     await waitForWebView(15_000);
     await waitForAppReady(15_000);
     await walkOnboarding('[LocalModel]');
+    await waitForHomePage(20_000);
+    await dismissWalkthroughIfVisible(20_000);
+    await browser.waitUntil(async () => !(await visibleTextExists('Skip tour')), {
+      timeout: 3_000,
+      interval: 250,
+      timeoutMsg: 'walkthrough must be dismissed before route navigation',
+    });
 
     await browser.execute(() => {
       window.location.hash = '#/settings/local-model-debug';

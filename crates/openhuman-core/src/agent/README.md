@@ -31,7 +31,7 @@ is adapters that hand TinyAgents the things only OpenHuman knows.
      v                                   v
   +-----------------------------------------------------------------+
   | agent/tinyagents/   the adapter seam                            |
-  |   run_root_turn_via_hosted_agent / run_turn_via_tinyagents_shared|
+  |   TurnSpec::run_hosted / TurnSpec::run|
   |   TurnModelSource, middleware stack, host/ capability adapters, |
   |   OpenhumanEventBridge, journal                                 |
   +-----------------------------------------------------------------+
@@ -79,8 +79,8 @@ the bus path because they keep their own history.
    |     v
    |   run_chat_turn_graph                    session_host/turn/graph.rs
    |     v
-   |   run_root_turn_via_hosted_agent         tinyagents/turn_runner.rs
-   |     | assemble_turn_harness: models + tools + middleware
+   |   TurnSpec::run_hosted         tinyagents/turn_exec.rs
+   |     | TurnDriver::prepare: models + tools; install_turn_middleware
    |     v
    |   AgentHarness loop  <---------------------------------+
    |     model call -> tool calls -> middleware -> results --+
@@ -122,8 +122,8 @@ In order:
    history and the tool snapshot. The driver builds this turn's tiered
    `ChatModel` set from `TurnModelSource`, resolves the context window, and
    calls `run_chat_turn_graph`, which calls
-   `run_root_turn_via_hosted_agent`.
-6. `assemble_turn_harness` ([`tinyagents/harness_assembly.rs`](./tinyagents/harness_assembly.rs)) registers the
+   `TurnSpec::run_hosted`.
+6. `TurnDriver::prepare` plans the turn ([`tinyagents/turn_plan.rs`](./tinyagents/turn_plan.rs)) and `install_turn_middleware` ([`tinyagents/turn_middleware.rs`](./tinyagents/turn_middleware.rs)) registers the
    models, the tools (through `CanonicalSharedToolAdapter`) and the
    middleware stack: approval and security gating, tool policy, cost
    budget, tool-output capping and summarization, credential scrubbing,
@@ -144,15 +144,14 @@ In order:
 9. The runtime commits the turn. `OpenHumanTranscriptCodec`
    ([`session_host/codec.rs`](./session_host/codec.rs)) converts between durable `TranscriptMessage`
    rows and model `Message`s. After the durable commit, the host publishes
-   `ConversationTurnCommitted` for memory ingest, optionally dual-writes
-   the legacy session format (`session_import::live`), and accounts usage
+   `ConversationTurnCommitted` for memory ingest and accounts usage
    against any active goal.
 10. `run_single_with_origin` publishes `AgentTurnCompleted` (or
     `AgentError`) and returns the final text.
 
 The bus path is shorter. `bus.rs` scopes the origin, sandbox mode and file
 state agent id, then calls `harness::run_channel_turn_via_graph`
-([`harness/graph.rs`](./harness/graph.rs)), which calls `run_turn_via_tinyagents_shared`. There is
+([`harness/graph.rs`](./harness/graph.rs)), which calls `TurnSpec::run`. There is
 no TinyAgents `Session`: the caller owns the history vector, and
 `ask_user_clarification` is an early-exit tool whose question becomes the
 reply.
@@ -188,7 +187,7 @@ target `AgentDefinition` and call `subagent_host::run_subagent_with_parent`.
    | tool call: spawn_subagent { agent_id, prompt }
    v
  orchestration/tools/spawn_subagent.rs
-   | read ParentExecutionContext (task-local, harness/fork_context.rs)
+   | read ParentExecutionContext (run context `parent`, harness/fork_context.rs)
    v
  subagent_host::run_subagent_with_parent
    | resolve definition, model, narrowed tools, narrowed prompt,
@@ -196,7 +195,7 @@ target `AgentDefinition` and call `subagent_host::run_subagent_with_parent`.
    v
  tinyagents-orchestration::subagent lifecycle
    v
- run_turn_via_tinyagents_shared   (subagent_host/ops/graph/dispatch.rs)
+ TurnSpec::run   (subagent_host/ops/graph/dispatch.rs)
    | child events -> Subagent* AgentProgress variants on parent channel
    v
  one compact tool_result back to the parent
@@ -219,13 +218,13 @@ coding workers, and background completion delivery. See
 
 ### Agent definitions, registry and prompts
 
-An `AgentDefinition` ([`harness/definition/`](./harness/definition/)) is an archetype: id, tier,
+An `AgentDefinition` ([`harness/host_definition.rs`](./harness/host_definition.rs), vocabulary in `tinyagents-definition`) is an archetype: id, tier,
 prompt source, model spec, `ToolScope`, `SandboxMode`, iteration policy and
 allowed sub-agents. Built-ins live in `registry/agents/<id>/` as an
 `agent.toml` plus `prompt.md` (orchestrator, planner, critic, summarizer,
 trigger_triage, trigger_reactor, vision_agent and others). Custom
 definitions are TOML files under `<workspace>/agents/*.toml`, with
-`~/.openhuman/agents/*.toml` as a fallback ([`harness/definition_loader.rs`](./harness/definition_loader.rs)).
+`~/.openhuman/agents/*.toml` as a fallback (`tinyagents_definition::DefinitionSet::load_dirs`, driven from [`harness/host_definition.rs`](./harness/host_definition.rs)).
 `AgentDefinitionRegistry` holds the merged set; `agent.reload_definitions`
 rebuilds it.
 
@@ -272,22 +271,21 @@ Turn execution:
 | --- | --- |
 | `session_host/` | `OpenHumanSessionHost`: builder, runtime session, driver, hooks, transcript codec, resume and recorded tools ([README](session_host/README.md)) |
 | `tinyagents/` | Adapter seam onto the TinyAgents harness: turn runner, model source, middleware stack, `host/` capability adapters, event bridge, journal, replay RPC ([README](tinyagents/README.md)) |
-| `harness/` | Agent definitions and loader, parent/fork context task-locals, sandbox and spawn-depth context, oversized tool-result artifacts, the channel/CLI turn graph ([README](harness/README.md)) |
+| `harness/` | Agent definitions and loader, parent/fork context types, sandbox and spawn-depth context, oversized tool-result artifacts, the channel/CLI turn graph ([README](harness/README.md)) |
 | `bus.rs` | The `agent.run_turn` native request handler (`AgentTurnRequest` to `AgentTurnResponse`) |
 | `progress.rs` | `AgentProgress`, the event enum every turn streams to its observer |
-| [`progress_sink.rs`](./progress_sink.rs) | Task-local progress sink for in-process embedders driving an RPC that returns only text |
+| [`progress_sink.rs`](./progress_sink.rs) | The `ProgressSink` channel type an in-process embedder hands a turn (carried on `AgentChatEnv`) |
+| [`turn_env.rs`](./turn_env.rs) | `HostTurnEnv`: the explicit per-turn host values (budget, depth, cancellation, deadline, hooks, tool-belt authority) an entry point hands the session |
 | [`progress_tracing.rs`](./progress_tracing.rs), `progress_tracing/` | OpenTelemetry/Langfuse-style spans built from the progress stream ([README](progress_tracing/README.md)) |
 | `turn_origin.rs` | `AgentTurnOrigin` task-local, the trust and routing label the approval gate reads |
-| [`turn_workspace.rs`](./turn_workspace.rs) | Task-local per-turn filesystem root an embedder binds one turn to |
-| [`stop_hooks.rs`](./stop_hooks.rs) | `StopHook` mid-turn halts and the scoped `with_tool_call_limit` budget |
+| [`stop_hooks.rs`](./stop_hooks.rs) | `StopHook` mid-turn halts and the `tool_call_limit` budget |
 | [`tool_policy.rs`](./tool_policy.rs) | `ToolPolicy`, the pre-execution allow/deny hook installed through the builder |
 | [`hooks.rs`](./hooks.rs) | `PostTurnHook` background hooks, including ones registered by embedders |
 | [`queued_turn.rs`](./queued_turn.rs) | `QueuedTurn`, the payload for a message sent while a turn is running |
-| [`error.rs`](./error.rs) | `AgentError`, typed retryable and permanent loop errors |
 | [`cost.rs`](./cost.rs) | Per-turn token and cost accounting (`TurnCost`) |
 | [`message_convert.rs`](./message_convert.rs), [`messages.rs`](./messages.rs) | Conversions between `TranscriptMessage` rows and TinyAgents `Message`s; the `history_wire` adapter for host-owned files |
 | `attachments/`, [`multimodal.rs`](./multimodal.rs) | Durable user uploads and provider-side attachment resolution; legacy marker compatibility ([README](attachments/README.md)) |
-| [`host_runtime.rs`](./host_runtime.rs), [`platform_shell.rs`](./platform_shell.rs) | Native and Docker shell `RuntimeAdapter`s and the shared `cmd.exe` vs `sh` selection |
+| [`host_runtime.rs`](./host_runtime.rs) | Native and Docker shell `RuntimeAdapter`s; the shell flavor is the contract's `tinybox_bus::ShellFlavor` and execution is TinyBox's |
 | `session_store/` | Process-wide `SessionStoreProvider` slot for hosts with their own database |
 
 Delegation and coordination:
@@ -319,7 +317,7 @@ Persistence, setup and RPC:
 | --- | --- |
 | `artifacts/` | Agent-generated artifact storage and the `ai` RPC namespace ([README](artifacts/README.md)) |
 | `session_db/` | `run_ledger` RPC over `tinyagents_session::run_ledger` |
-| `session_import/` | One-time import of legacy session files and the optional live dual-write ([README](session_import/README.md)) |
+| `session_import/` | The `session_import.run` retry of the boot-time legacy-session import, and the agent's key-value store on each turn's `RunContext` ([README](session_import/README.md)) |
 | [`schemas.rs`](./schemas.rs) | The `agent` namespace controllers |
 
 ## Key types and entry points
@@ -335,17 +333,17 @@ Persistence, setup and RPC:
   `register_agent_handlers` installs it at startup.
 - `TurnModelSource` ([`tinyagents/turn_models.rs`](./tinyagents/turn_models.rs)): builds a turn's primary,
   tier-routed and summarizer `ChatModel`s from `(role, config)`.
-- `run_turn_via_tinyagents_shared` and `run_root_turn_via_hosted_agent`
-  ([`tinyagents/turn_runner.rs`](./tinyagents/turn_runner.rs)): the only places a harness is invoked.
+- `TurnSpec::run` and `TurnSpec::run_hosted`
+  ([`tinyagents/turn_exec.rs`](./tinyagents/turn_exec.rs)): the only places a harness is invoked.
 - `OpenHumanRunContext` (`tinyagents/host/run_context.rs`): the explicit
   per-turn carrier (origin, progress, thread, workspace, cancellation, stop
   hooks) passed into TinyAgents and down to recursive tools.
 - `AgentProgress` (`progress.rs`): turn, iteration, tool, text and thinking
   deltas, cost updates and the `Subagent*` family.
 - `AgentDefinition`, `AgentDefinitionRegistry`, `ToolScope`, `SandboxMode`
-  (`harness/definition/`): what an agent is.
-- `ParentExecutionContext` ([`harness/fork_context.rs`](./harness/fork_context.rs)): task-local parent
-  state a sub-agent reads; `orchestration::parent_context::build_root_parent`
+  (`harness/host_definition.rs` + `tinyagents-definition`): what an agent is.
+- `ParentExecutionContext` ([`harness/fork_context.rs`](./harness/fork_context.rs)): explicit parent
+  state a sub-agent reads from the run context (`parent`); `orchestration::parent_context::build_root_parent`
   builds one for runs with no parent turn.
 - `run_subagent`, `run_subagent_with_parent`, `SubagentRunOptions`
   ([`subagent_host/lifecycle.rs`](./subagent_host/lifecycle.rs), [`subagent_host/types.rs`](./subagent_host/types.rs)).
@@ -420,11 +418,11 @@ What lives elsewhere:
   `register_agent_handlers` runs from [`channels/runtime/startup/start_channels.rs`](../channels/runtime/startup/start_channels.rs)
   and [`core/runtime/subscribers.rs`](../core/runtime/subscribers.rs); tests that replace the handler restore
   it through the guard in `bus.rs`.
-- `stop_hooks::with_tool_call_limit(Some(n), turn)` narrows the TinyAgents
-  invocation budget for one awaited turn, including parallel calls. Zero
-  permits no tool calls. Nested scopes take the smaller limit, `None` keeps
-  the enclosing one, and the limit applies per run, not as an aggregate
-  across child runs.
+- `HostTurnEnv::tool_call_limit` (`Some(n)`) narrows the TinyAgents
+  invocation budget for one turn tree, including parallel calls. Zero
+  permits no tool calls, the host can only narrow the product default, and
+  the limit applies per run, not as an aggregate across child runs. It rides
+  the explicit `OpenHumanRunContext`, which children inherit.
 - `journal.rs` is best-effort. A journal write failure logs `[journal]` and
   does not fail the turn.
 
@@ -441,12 +439,12 @@ Integration coverage is in [`tests/agent_harness_e2e.rs`](../../../../tests/agen
 `tests/in_process/agent_*.rs`, aggregated into the `in_process_all` target.
 
 Related docs:
-[agent harness architecture](../../../../gitbooks/developing/architecture/agent-harness.md),
-[agent observability](../../../../gitbooks/developing/agent-observability.md).
+[agent harness architecture](../../../../docs/gitbooks/en/developing/architecture/agent-harness.md),
+[agent observability](../../../../docs/gitbooks/en/developing/agent-observability.md).
 
 ## Further reading
 
 - [Parent module README](../../README.md)
-- [Deep architecture reference](../../../../gitbooks/developing/architecture.md)
-- [The orchestrator](../../../../gitbooks/features/orchestration.md)
+- [Deep architecture reference](../../../../docs/gitbooks/en/developing/architecture.md)
+- [The orchestrator](../../../../docs/gitbooks/en/features/orchestration.md)
 - [tinyagents](../../../../vendor/tinyagents/README.md)

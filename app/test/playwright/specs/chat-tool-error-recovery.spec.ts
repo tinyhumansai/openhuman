@@ -130,6 +130,10 @@ test.describe('Chat Tool Error Recovery', () => {
     const threadId = await createNewThread(page);
     await sendMessage(page, 'Tell me something important.');
 
+    // A new thread starts with a null lifecycle too. Waiting only for null can
+    // therefore race ahead of the first turn and let the retry overlap it.
+    // The error card proves the failed turn actually ran before we retry.
+    await expect(page.getByText('Something went wrong')).toBeVisible({ timeout: 30_000 });
     await expect
       .poll(async () => {
         const lifecycle = await page.evaluate(currentThreadId => {

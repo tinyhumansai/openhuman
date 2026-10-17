@@ -50,6 +50,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs README.md ./
 COPY crates/openhuman-cli/Cargo.toml crates/openhuman-cli/Cargo.toml
 COPY crates/openhuman-core/Cargo.toml crates/openhuman-core/Cargo.toml
 COPY crates/openhuman-embed/Cargo.toml crates/openhuman-embed/Cargo.toml
+COPY crates/openhuman-modules-linked/Cargo.toml crates/openhuman-modules-linked/Cargo.toml
 COPY crates/openhuman-rpc/Cargo.toml crates/openhuman-rpc/Cargo.toml
 COPY crates/openhuman-tinyhumans/Cargo.toml crates/openhuman-tinyhumans/Cargo.toml
 COPY crates/openhuman-tui/Cargo.toml crates/openhuman-tui/Cargo.toml
@@ -58,12 +59,15 @@ COPY crates/openhuman-tui/Cargo.toml crates/openhuman-tui/Cargo.toml
 # before docker build — see the "Init tinyagents submodule" steps in
 # release-production.yml / release-staging.yml.
 COPY vendor/ vendor/
-# Create a dummy src to build deps
+# Create a dummy src to build deps. openhuman-modules-linked and openhuman-tui
+# keep theirs: the image never builds them, but cargo must load every member.
 RUN mkdir -p crates/openhuman-cli/src crates/openhuman-core/src crates/openhuman-embed/src \
-             crates/openhuman-rpc/src crates/openhuman-tinyhumans/src crates/openhuman-tui/src && \
+             crates/openhuman-modules-linked/src crates/openhuman-rpc/src \
+             crates/openhuman-tinyhumans/src crates/openhuman-tui/src && \
     echo 'fn main() {}' > crates/openhuman-cli/src/main.rs && \
     echo 'pub fn run_core_from_args(_: &[String]) -> anyhow::Result<()> { Ok(()) }' > crates/openhuman-core/src/lib.rs && \
     echo '' > crates/openhuman-embed/src/lib.rs && \
+    echo '' > crates/openhuman-modules-linked/src/lib.rs && \
     echo '' > crates/openhuman-rpc/src/lib.rs && \
     echo '' > crates/openhuman-tinyhumans/src/lib.rs && \
     echo 'fn main() {}' > crates/openhuman-tui/src/main.rs && \

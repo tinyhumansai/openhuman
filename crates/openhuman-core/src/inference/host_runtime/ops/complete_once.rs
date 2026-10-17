@@ -54,9 +54,13 @@ impl std::fmt::Debug for CompletionEndpoint {
 /// `request.model` is required and sent verbatim. Errors are rendered strings,
 /// the same contract as the other `ops` functions, so the facade maps them in
 /// one place.
+///
+/// `budget` is the caller's explicit spend ledger; every physical call the
+/// request makes is charged against it. `None` runs unmetered.
 pub async fn complete_once(
     endpoint: &CompletionEndpoint,
     request: ModelRequest,
+    budget: Option<&crate::agent::tinyagents::budget::ModelBudget>,
 ) -> Result<ModelResponse, String> {
     if !request.tools.is_empty() {
         return Err(
@@ -96,7 +100,7 @@ pub async fn complete_once(
     );
 
     let model: std::sync::Arc<dyn ChatModel<()>> = std::sync::Arc::new(model);
-    let model = match crate::agent::tinyagents::budget::current() {
+    let model = match budget {
         Some(budget) => budget.wrap(model),
         None => model,
     };

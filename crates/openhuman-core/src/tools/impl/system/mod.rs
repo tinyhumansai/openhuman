@@ -10,8 +10,9 @@ mod proxy_config;
 mod retrieve_tool_output;
 mod schedule;
 mod shell;
-mod shell_platform;
+mod shell_description;
 mod shell_saas;
+mod shell_support;
 mod update_apply;
 mod update_check;
 

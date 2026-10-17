@@ -147,7 +147,7 @@ impl SpanCollector {
     /// Langfuse statusMessage; it is safe ungated because it holds only the
     /// stop kind, a failure class and a tool name.
     pub(super) fn insert_stop_attrs(
-        stop: &crate::agent::turn_stop::TurnStop,
+        stop: &tinyagents_harness::turn_stop::TurnStop,
         extra: &mut BTreeMap<String, serde_json::Value>,
     ) {
         let message = stop.status_message();

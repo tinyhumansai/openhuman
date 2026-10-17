@@ -21,9 +21,12 @@ use crate::core::runtime::is_saas;
 /// (their store is the caller's workspace). Their cleanup of detached work is
 /// confined to the caller too: running sub-agents are cancelled only in the
 /// caller's workspace (`running_subagents::caller_workspace`), background
-/// completions are keyed per profile (`tenant::profile_key`) and web-channel
+/// completions are keyed per profile (`tenant::profile_key_in`) and web-channel
 /// sessions per tenant.
 pub const USER_METHODS: &[&str] = &[
+    // Detached-worker controls compare the original worker's captured profile.
+    "openhuman.subagent_cancel",
+    "openhuman.subagent_steer",
     // Conversation threads: all state lives under the agent's workspace.
     "openhuman.threads_list",
     "openhuman.threads_upsert",

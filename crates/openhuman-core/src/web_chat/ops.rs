@@ -5,6 +5,7 @@
 
 mod budget_correlation;
 mod channel_ops;
+mod followups;
 mod parallel_turn;
 mod start_chat;
 mod state;
@@ -30,6 +31,9 @@ pub use system_turn::{run_system_turn_on_thread, SESSION_CHECKOUT_FAILURE, SYSTE
 pub use state::drain_queued_turns_for_test;
 #[cfg(test)]
 pub(crate) use state::in_flight;
+pub(crate) use state::invalidate_thread_sessions_for_tenant;
+#[cfg(test)]
+pub(crate) use state::lock_thread_sessions_for_test;
 #[cfg(any(test, debug_assertions))]
 pub use state::parallel_in_flight_entries_for_test;
 #[cfg(test)]
@@ -47,9 +51,11 @@ pub use test_hooks::set_test_forced_run_chat_task_error;
 #[cfg(any(test, debug_assertions))]
 pub use test_hooks::RUN_CHAT_TASK_TEST_LOCK;
 #[cfg(any(test, debug_assertions))]
-pub use test_hooks::{set_test_run_chat_task_block, TestRunChatTaskBlock};
+pub use test_hooks::{set_test_park_after_run, set_test_run_chat_task_block, TestRunChatTaskBlock};
 #[cfg(any(test, debug_assertions))]
-pub(super) use test_hooks::{TEST_FORCED_RUN_CHAT_TASK_ERROR, TEST_RUN_CHAT_TASK_BLOCK};
+pub(super) use test_hooks::{
+    TEST_FORCED_RUN_CHAT_TASK_ERROR, TEST_PARK_AFTER_RUN, TEST_RUN_CHAT_TASK_BLOCK,
+};
 
 pub(crate) use turn_guards::sentry_suppression_reason;
 #[cfg(test)]

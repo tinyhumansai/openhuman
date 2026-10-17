@@ -27,12 +27,12 @@ use super::super::context::{
     conversation_history_key, ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
 use super::super::runtime::process_channel_message;
-use super::super::traits;
 use super::super::{Channel, SendMessage};
 use super::common::HistoryCaptureModel;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tinychannels_bus as traits;
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse};
 
 // ── Test helpers ────────────────────────────────────────────────────────────
@@ -105,6 +105,7 @@ fn make_discord_ctx(
     channels.insert(channel.name().to_string(), channel);
 
     Arc::new(ChannelRuntimeContext {
+        relay_thread: None,
         channels_by_name: Arc::new(channels),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("test-provider".to_string()),
@@ -125,6 +126,7 @@ fn make_discord_ctx(
         multimodal: crate::config::MultimodalConfig::default(),
         multimodal_files: crate::config::MultimodalFileConfig::default(),
         config: None,
+        core: None,
     })
 }
 

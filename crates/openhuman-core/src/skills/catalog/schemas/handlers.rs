@@ -1,5 +1,6 @@
 //! RPC handler functions for `openhuman.skill_registry_*` controllers.
 
+use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
@@ -50,15 +51,15 @@ async fn catalog(method: &'static str, params: Map<String, Value>) -> Result<Val
     to_json(Outcome::new(page, Vec::new()))
 }
 
-pub(super) fn handle_browse(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_browse(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(catalog("browse", params))
 }
 
-pub(super) fn handle_search(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_search(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(catalog("search", params))
 }
 
-pub(super) fn handle_sources(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_sources(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = params;
         let facets = ops::catalog_facets().await.map_err(registry_error)?;
@@ -73,7 +74,7 @@ pub(super) fn handle_sources(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn handle_categories(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_categories(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = params;
         let facets = ops::catalog_facets().await.map_err(registry_error)?;
@@ -88,7 +89,7 @@ pub(super) fn handle_categories(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
-pub(super) fn handle_detail(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_detail(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<EntryParams>(params)?;
         tracing::debug!(entry_id = %p.entry_id, "[skill_registry][rpc] detail");
@@ -99,7 +100,7 @@ pub(super) fn handle_detail(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn handle_install(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_install(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p = deserialize_params::<InstallParams>(params)?;
         tracing::info!(
@@ -126,7 +127,7 @@ pub(super) fn handle_install(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn handle_schemas(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_schemas(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let _ = params;
         to_json(Outcome::new(
@@ -138,7 +139,7 @@ pub(super) fn handle_schemas(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-pub(super) fn handle_uninstall(params: Map<String, Value>) -> ControllerFuture {
+pub(super) fn handle_uninstall(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<UninstallParams>(params)?;
         tracing::info!(

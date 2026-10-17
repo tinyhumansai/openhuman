@@ -1,4 +1,5 @@
 use super::*;
+use tokio::sync::broadcast;
 
 /// `fresh_approval_surface_subscription` returns `Some` when the global event bus has
 /// been initialised and `None` otherwise (bus not started).  It must never return `None`

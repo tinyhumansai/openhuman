@@ -5,11 +5,11 @@ use crate::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METH
 use crate::agent::progress::AgentProgress;
 use crate::agent::turn_origin::AgentTurnOrigin;
 use crate::channels::context::{ChannelRouteSelection, ChannelRuntimeContext};
-use crate::channels::traits;
 use crate::core::bus::BUS;
 use std::sync::Arc;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinybus::NativeRequestError;
+use tinychannels_bus as traits;
 
 use super::super::routing::resolve_target_agent;
 
@@ -22,6 +22,7 @@ pub(super) async fn dispatch_bus_turn(
     active_turn_model_source: Option<crate::agent::tinyagents::TurnModelSource>,
     progress_tx: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     turn_origin: AgentTurnOrigin,
+    approval: crate::security::approval::ApprovalTurnContext,
 ) -> anyhow::Result<AgentTurnResponse> {
     // Dispatch the agentic turn through the native event bus instead of
     // calling `run_tool_call_loop` directly. The agent domain registers
@@ -58,6 +59,7 @@ pub(super) async fn dispatch_bus_turn(
         // `config`) stay on an injected model source.
         turn_model_source: match &ctx.config {
             Some(cfg) => crate::agent::tinyagents::TurnModelSource::new_crate_native_from_string(
+                &ctx.dispatch_ctx(),
                 "chat",
                 route.provider.clone(),
                 cfg.clone(),
@@ -95,6 +97,7 @@ pub(super) async fn dispatch_bus_turn(
         extra_tools: scoping.extra_tools,
         on_progress: progress_tx,
         origin: turn_origin,
+        approval,
     };
     tracing::debug!(
         channel = %msg.channel,

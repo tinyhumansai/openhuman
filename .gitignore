@@ -103,9 +103,10 @@ workflow
 overlay/src-tauri/target/
 .claude/*.lock
 app/.claude/scheduled_tasks.lock
-# Subagent lifecycle checkpoints written by crate-local test runs that have no
+# Subagent lifecycle checkpoints written by test runs that have no
 # workspace_dir (the `.openhuman/subagent_checkpoints` fallback in lifecycle.rs).
 crates/*/.openhuman/
+/.openhuman/
 target-test-run
 # CocoIndex Code (ccc)
 /.cocoindex_code/
@@ -158,3 +159,9 @@ ci-out-ex63/
 
 # Proptest failures are promoted to named unit tests.
 proptest-regressions/
+
+# Stray SQLite files a test run can leave beside the crate when a storage
+# path is not pointed at a tempdir.
+crates/openhuman-core/storage/*.db
+crates/openhuman-core/storage/*.db-wal
+crates/openhuman-core/storage/*.db-shm

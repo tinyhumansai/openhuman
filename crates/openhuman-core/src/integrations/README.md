@@ -297,6 +297,6 @@ pnpm debug rust integrations
 ## Further reading
 
 - [Parent module README](../../README.md)
-- [Third-party integrations](../../../../gitbooks/features/integrations/README.md)
-- [Integration tools](../../../../gitbooks/features/native-tools/integrations.md)
-- [Connections](../../../../gitbooks/features/connections.md)
+- [Third-party integrations](../../../../docs/gitbooks/en/features/integrations/README.md)
+- [Integration tools](../../../../docs/gitbooks/en/features/native-tools/integrations.md)
+- [Connections](../../../../docs/gitbooks/en/features/connections.md)

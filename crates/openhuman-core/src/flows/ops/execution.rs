@@ -98,6 +98,7 @@ pub(super) async fn export_run_to_langfuse(
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(super) fn run_flow_body(
+    ctx: crate::core::runtime::DispatchCtx,
     config_arc: Arc<Config>,
     flow: Flow,
     flow_id: String,
@@ -110,6 +111,7 @@ pub(super) fn run_flow_body(
     _run_guard: run_registry::RunGuard,
 ) -> futures::future::BoxFuture<'static, Result<Outcome<Value>, String>> {
     Box::pin(run_flow_body_inner(
+        ctx,
         config_arc,
         flow,
         flow_id,
@@ -125,6 +127,7 @@ pub(super) fn run_flow_body(
 
 #[allow(clippy::too_many_arguments)]
 async fn run_flow_body_inner(
+    ctx: crate::core::runtime::DispatchCtx,
     config_arc: Arc<Config>,
     flow: Flow,
     flow_id: String,
@@ -170,7 +173,7 @@ async fn run_flow_body_inner(
     // Returns an empty `Vec` (no-op here) for a tool_call-only graph, and is
     // never consulted by `dry_run_workflow` (sandbox runs are exempt by
     // design — that tool doesn't route through `run_flow_body` at all).
-    let inference_errors = validate_inference_readiness(config, &flow.graph).await;
+    let inference_errors = validate_inference_readiness(&ctx, config, &flow.graph).await;
     if !inference_errors.is_empty() {
         let detail = inference_errors.join(" ");
         let msg = format!("This flow's AI step needs a working AI provider to run. {detail}");
@@ -228,8 +231,20 @@ async fn run_flow_body_inner(
     };
 
     // Scope the state store per-flow so two flows never collide on a state key.
-    let caps =
-        crate::flows::tinyflows::build_capabilities(config_arc.clone(), format!("flow:{flow_id}"));
+    let flow_run = FlowRunContext {
+        flow_id: flow_id.to_string(),
+        run_id: thread_id.clone(),
+    };
+    // The run acts under its own trusted `Workflow` origin: its capabilities
+    // read the origin from this context, not from the calling task's scope.
+    let origin = workflow_origin(flow_id, flow.require_approval);
+    let run_ctx = ctx.with_turn_origin(origin.clone());
+    let caps = crate::flows::tinyflows::build_capabilities(
+        &run_ctx,
+        config_arc.clone(),
+        format!("flow:{flow_id}"),
+        Some(flow_run),
+    );
     let checkpointer = match crate::flows::tinyflows::open_flow_checkpointer(config) {
         Ok(checkpointer) => checkpointer,
         Err(e) => {
@@ -277,7 +292,6 @@ async fn run_flow_body_inner(
         );
     };
 
-    let origin = workflow_origin(flow_id, flow.require_approval);
     // Per-run in-memory journal: tinyflows records every graph event as a
     // durable GraphObservation under the run's tinyagents run id, which the
     // post-run Langfuse export reads back. Process-local and dropped with the
@@ -293,27 +307,21 @@ async fn run_flow_body_inner(
             thread_id.clone(),
         ),
     );
-    // Scope the flow/run correlation (issue flow-approval-surface, PR2)
-    // alongside the `Workflow` origin so a tool call the engine dispatches
-    // can, if it parks in the `ApprovalGate`, stamp its `PendingApproval` with
-    // `source_context = Flow { flow_id, run_id }` — the origin alone only
-    // carries `flow_id`. See `approval::gate::APPROVAL_FLOW_RUN_CONTEXT`.
-    let run = APPROVAL_FLOW_RUN_CONTEXT.scope(
-        FlowRunContext {
-            flow_id: flow_id.to_string(),
-            run_id: thread_id.clone(),
-        },
-        with_origin(
-            origin,
-            tinyflows::engine::run_with_checkpointer_journaled_observed(
-                &compiled,
-                tinyflows::engine::RunInput::new(input).with_inputs(inputs),
-                &caps,
-                checkpointer,
-                &thread_id,
-                journal.clone(),
-                &observer,
-            ),
+    // The flow/run correlation (issue flow-approval-surface, PR2) rides the
+    // capabilities built above, next to the `Workflow` origin scoped here, so a
+    // tool call the engine dispatches can, if it parks in the `ApprovalGate`,
+    // stamp its `PendingApproval` with `source_context = Flow { flow_id,
+    // run_id }` -- the origin alone only carries `flow_id`.
+    let run = with_origin(
+        origin,
+        tinyflows::engine::run_with_checkpointer_journaled_observed(
+            &compiled,
+            tinyflows::engine::RunInput::new(input).with_inputs(inputs),
+            &caps,
+            checkpointer,
+            &thread_id,
+            journal.clone(),
+            &observer,
         ),
     );
     let timed = tokio::time::timeout(std::time::Duration::from_secs(FLOW_RUN_TIMEOUT_SECS), run);
