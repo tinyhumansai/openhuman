@@ -38,6 +38,11 @@ pub async fn transcribe_cloud(
     let http = client
         .raw_client()
         .map_err(crate::backend::flatten_authed_error)?;
+    super::egress::disclose_speech_transfer(
+        "openhuman_backend",
+        url.as_str(),
+        crate::security::egress::DataKind::FileContent,
+    )?;
     let result = tinyinference_voice::cloud::transcribe(
         &http,
         url,

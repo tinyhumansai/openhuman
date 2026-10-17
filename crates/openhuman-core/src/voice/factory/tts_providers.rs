@@ -123,6 +123,7 @@ impl TtsProvider for PiperTtsProvider {
 /// live in `tinyinference_voice::external_tts`.
 pub struct ExternalTtsProvider {
     slug: String,
+    endpoint: String,
     default_voice: String,
     api_style: TtsApiStyle,
     client: ExternalTtsClient,
@@ -136,11 +137,18 @@ impl ExternalTtsProvider {
         api_key: impl Into<String>,
         api_style: TtsApiStyle,
     ) -> Self {
+        let endpoint: String = endpoint.into();
         Self {
             slug: slug.into(),
+            endpoint: endpoint.clone(),
             default_voice: default_voice.into(),
             api_style,
-            client: ExternalTtsClient::new(reqwest::Client::new(), endpoint, api_key, api_style),
+            client: ExternalTtsClient::new(
+                super::super::egress::speech_http_client(),
+                endpoint,
+                api_key,
+                api_style,
+            ),
         }
     }
 }
@@ -169,6 +177,11 @@ impl TtsProvider for ExternalTtsProvider {
             text.len()
         );
 
+        super::super::egress::disclose_speech_transfer(
+            &self.slug,
+            &self.endpoint,
+            crate::security::egress::DataKind::Prompt,
+        )?;
         let (audio_bytes, audio_mime) = self.client.synthesize(text, resolved_voice).await?;
 
         use base64::Engine;

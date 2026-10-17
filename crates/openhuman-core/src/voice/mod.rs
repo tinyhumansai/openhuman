@@ -43,6 +43,8 @@ pub(crate) mod cli;
 #[cfg(feature = "voice")]
 pub mod dictation_listener;
 #[cfg(feature = "voice")]
+mod egress;
+#[cfg(feature = "voice")]
 pub mod factory;
 #[cfg(feature = "voice")]
 pub mod live;
