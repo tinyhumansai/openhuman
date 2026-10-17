@@ -1,5 +1,5 @@
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -65,6 +65,92 @@ describe('AgentRunningStatus', () => {
     );
     expect(screen.getByTestId('agent-running-status-thinking')).toHaveClass('[&>div>span]:size-1');
     expect(screen.queryByTestId('agent-running-status-tasks')).not.toBeInTheDocument();
+  });
+
+  it('preserves thinking start across unmount and remount on thread switch', () => {
+    const { unmount } = render(
+      <Provider store={buildStore()}>
+        <AssistantUiRuntimeProvider>
+          <AgentRunningStatus />
+        </AssistantUiRuntimeProvider>
+      </Provider>
+    );
+    unmount();
+
+    render(
+      <Provider store={buildStore()}>
+        <AssistantUiRuntimeProvider>
+          <AgentRunningStatus />
+        </AssistantUiRuntimeProvider>
+      </Provider>
+    );
+    expect(screen.getByTestId('agent-running-status-thinking')).toBeInTheDocument();
+  });
+
+  it('resets thinking timer when a new request starts', () => {
+    vi.useFakeTimers();
+    try {
+      const now = 1000000;
+      vi.setSystemTime(now);
+
+      const store1 = buildStore({ liveRequestIdByThread: { [THREAD_ID]: 'req-1' } });
+      const { rerender } = render(
+        <Provider store={store1}>
+          <AssistantUiRuntimeProvider>
+            <AgentRunningStatus />
+          </AssistantUiRuntimeProvider>
+        </Provider>
+      );
+      expect(screen.getByTestId('agent-running-status-thinking')).toHaveTextContent('Thinking...');
+
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(screen.getByTestId('agent-running-status-thinking')).toHaveTextContent(
+        /Thinking · 3\.0s/
+      );
+
+      const store2 = buildStore({ liveRequestIdByThread: { [THREAD_ID]: 'req-2' } });
+      rerender(
+        <Provider store={store2}>
+          <AssistantUiRuntimeProvider>
+            <AgentRunningStatus />
+          </AssistantUiRuntimeProvider>
+        </Provider>
+      );
+      expect(screen.getByTestId('agent-running-status-thinking')).toHaveTextContent('Thinking...');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renders elapsed thinking label when time advances past 1 second', () => {
+    vi.useFakeTimers();
+    try {
+      const now = 1000000;
+      vi.setSystemTime(now);
+
+      render(
+        <Provider store={buildStore()}>
+          <AssistantUiRuntimeProvider>
+            <AgentRunningStatus />
+          </AssistantUiRuntimeProvider>
+        </Provider>
+      );
+
+      const thinkingEl = screen.getByTestId('agent-running-status-thinking');
+      expect(thinkingEl).toHaveTextContent('Thinking...');
+
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+
+      expect(screen.getByTestId('agent-running-status-thinking')).toHaveTextContent(
+        /Thinking · 3\.0s/
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
