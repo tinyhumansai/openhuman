@@ -123,7 +123,9 @@ async fn delegate_graph_dispatch_uses_its_durable_graph_argument_path() {
         .expect("dedicated dispatcher returns a tool result");
     assert!(result.is_error);
     assert!(
-        result.output().contains("`agent_id` is required"),
+        result
+            .output()
+            .starts_with("delegate_graph: `agent_id` is required"),
         "delegate_graph must execute its concrete graph validation, not an archetype lookup: {}",
         result.output()
     );
@@ -484,4 +486,102 @@ fn prose_naming_a_protocol_field_is_not_a_stub() {
     assert!(!super::is_unexecuted_tool_call_stub(
         "I could not read the inbox: the connection is not authorised."
     ));
+}
+
+#[tokio::test]
+async fn delegate_graph_argument_errors_identify_the_registered_tool() {
+    for arguments in [
+        serde_json::json!({}),
+        serde_json::json!({"agent_id": " "}),
+        serde_json::json!({"agent_id": 42}),
+        serde_json::json!({"agent_id": "planner"}),
+        serde_json::json!({"agent_id": "planner", "task": " "}),
+        serde_json::json!({"agent_id": "planner", "task": false}),
+    ] {
+        let dispatch = DelegateGraphDispatch::new(Arc::new(DelegationRegistrationTool {
+            name: "delegate_graph",
+            parameters: serde_json::json!({}),
+        }));
+        let parent = crate::agent::tinyagents::host::OpenHumanRunContext::new()
+            .into_tinyagents(RunConfig::new("delegate-graph-error-parent"));
+        let result = dispatch
+            .execute(
+                &(),
+                tinyagents_harness::CallId::new("invalid-arguments"),
+                arguments.clone(),
+                tinytools::ToolCallOptions::default(),
+                &parent,
+            )
+            .await
+            .expect("invalid arguments produce a tool error");
+        assert!(result.is_error);
+        assert!(
+            result.output().starts_with("delegate_graph: "),
+            "wrong tool identity for {arguments}: {}",
+            result.output()
+        );
+        let argument = if arguments["agent_id"].as_str() == Some("planner") {
+            "task"
+        } else {
+            "agent_id"
+        };
+        assert!(result
+            .output()
+            .contains(&format!("`{argument}` is required")));
+    }
+}
+
+#[tokio::test]
+async fn delegate_graph_missing_live_context_identifies_the_registered_tool() {
+    let tool = super::super::delegate_graph::DelegateGraphTool::new();
+    let result = tool
+        .execute(serde_json::json!({"agent_id": "planner", "task": "review"}))
+        .await
+        .expect("missing live context produces a tool error");
+    assert!(result.is_error);
+    assert_eq!(
+        result.output(),
+        "delegate_graph: requires a live harness run context."
+    );
+}
+
+#[tokio::test]
+async fn delegate_graph_unknown_agent_error_identifies_the_registered_tool() {
+    use crate::agent::harness::host_definition::AgentDefinitionRegistry;
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+
+    let registry = Arc::new(AgentDefinitionRegistry::builtins_only());
+    let core = CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::kernel(),
+            crate::tools::toolpacks::ToolGroups::none(),
+        )
+        .definitions(registry),
+    );
+    let parent = crate::agent::tinyagents::host::OpenHumanRunContext::new()
+        .with_core(Some(core.clone()))
+        .into_tinyagents(RunConfig::new("delegate-graph-unknown-agent"));
+    let dispatch = DelegateGraphDispatch::new(Arc::new(DelegationRegistrationTool {
+        name: "delegate_graph",
+        parameters: serde_json::json!({}),
+    }));
+    let result = CoreContext::scope(core, async {
+        dispatch
+            .execute(
+                &(),
+                tinyagents_harness::CallId::new("unknown-agent"),
+                serde_json::json!({"agent_id": "missing-7931-agent", "task": "review"}),
+                tinytools::ToolCallOptions::default(),
+                &parent,
+            )
+            .await
+    })
+    .await
+    .expect("unknown agent produces a tool error");
+    assert!(result.is_error);
+    assert_eq!(
+        result.output(),
+        "delegate_graph: agent definition 'missing-7931-agent' not found in registry."
+    );
 }
