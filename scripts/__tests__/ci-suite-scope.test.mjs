@@ -32,6 +32,25 @@ test("CI lanes run the complete frontend suite", () => {
   assert.match(workflow, /test:coverage/);
 });
 
+test("CI lanes typecheck the e2e specs", () => {
+  // app/tsconfig.json does not include the Playwright/WDIO specs, so only
+  // typecheck:e2e covers them (#6566).
+  assert.match(commands, /pnpm --filter openhuman-app typecheck:e2e/);
+
+  for (const profile of ["hosted", "ex63"]) {
+    const off = buildPlan({
+      profile,
+      areas: Object.fromEntries(Object.keys(AREA_ENV).map((key) => [key, false])),
+      env: { CI_SCRATCH_DIR: "/scratch" },
+    });
+    const check = off.lanes
+      .flatMap((lane) => lane.checks)
+      .find((c) => c.name === "tsc-e2e");
+    assert.ok(check, `${profile}: frontend lane must declare tsc-e2e`);
+    assert.equal(check.when, false, `${profile}: tsc-e2e runs only for frontend changes`);
+  }
+});
+
 test("CI lanes run the complete Rust suite", () => {
   assert.match(commands, /bash scripts\/ci\/rust-coverage\.sh/);
   assert.doesNotMatch(commands, /rust-core-src|rust-core-full/);
