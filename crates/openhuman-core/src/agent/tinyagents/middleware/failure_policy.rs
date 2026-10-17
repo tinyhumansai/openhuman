@@ -184,6 +184,18 @@ pub(super) fn classified_recovery_policy(
     if let Some(decision) = json_error_recovery(error) {
         return Some((decision.class, decision.budget));
     }
+    // The scan guard rejects the scope of this command, not all use of shell.
+    // Give the model one opportunity to choose a permitted bounded inspection.
+    // Actual denial, expiry, and all other policy blocks still halt immediately.
+    if tool == "shell"
+        && error.contains(tinytools::status::POLICY_BLOCKED_MARKER)
+        && error.contains("Unbounded system scan of '")
+        && error.contains(
+            "Narrow the search to the project or a specific permitted SDK/toolchain directory.",
+        )
+    {
+        return Some(("scan_scope", 1));
+    }
     let class = tinytools::status::classify(error, false).class;
     Some(match class {
         Class::MissingPermission => ("permission", 0),
