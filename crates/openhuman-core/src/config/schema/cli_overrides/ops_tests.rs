@@ -9,6 +9,7 @@ fn provider() -> CloudProviderCreds {
         label: "OpenAI work".into(),
         endpoint: "https://api.openai.com/v1".into(),
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: Some("gpt-default".into()),
     }
 }

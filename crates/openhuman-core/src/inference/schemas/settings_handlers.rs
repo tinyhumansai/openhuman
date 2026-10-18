@@ -34,6 +34,10 @@ pub(super) struct InferenceCloudProviderUpdate {
     auth_style: Option<String>,
     #[serde(default)]
     ca_cert_pem: Option<String>,
+    /// Extra request headers for this provider (`{name: value}`). Omitted
+    /// (or empty) keeps the headers already stored for the entry.
+    #[serde(default)]
+    headers: Option<std::collections::BTreeMap<String, String>>,
     // keep until v0.66 (review after 2027-01-11): incoming RPC discriminator
     // remains accepted until shipped-client parameter coverage exists.
     #[serde(rename = "type", default)]
@@ -240,6 +244,7 @@ pub(super) fn handle_inference_update_model_settings(
                                 label,
                                 endpoint,
                                 auth_style,
+                                headers: entry.headers.unwrap_or_default(),
                                 default_model: entry.default_model,
                             };
                             Ok(provider)

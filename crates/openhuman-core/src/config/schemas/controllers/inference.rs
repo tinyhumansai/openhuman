@@ -150,6 +150,7 @@ pub(super) fn handle_update_model_settings(
                                 label,
                                 endpoint,
                                 auth_style,
+                                headers: e.headers.unwrap_or_default(),
                                 default_model: e.default_model,
                             };
                             Ok(entry)

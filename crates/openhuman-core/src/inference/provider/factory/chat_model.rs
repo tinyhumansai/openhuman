@@ -98,7 +98,8 @@ pub(super) fn create_chat_model_with_model_id_inner(
         // codex-oauth or `/v1/responses` fallback) → crate-native `ChatModel`
         // (issue #4727 Phase 3, conservative subset). `openai`/codex, custom
         // proxy slugs, and the managed entry return `None` and fall through.
-        if let Some(result) = try_create_cloud_slug_chat_model(role, config, &EgressLedger::none())
+        if let Some(result) =
+            try_create_cloud_slug_chat_model(ctx, role, config, &EgressLedger::none())
         {
             return result;
         }
@@ -276,6 +277,7 @@ pub(super) fn create_chat_model_from_string_with_model_id_inner(
             return result;
         }
         if let Some(result) = try_create_cloud_slug_chat_model_from_string(
+            &DispatchCtx::ambient(),
             role,
             &resolved,
             config,

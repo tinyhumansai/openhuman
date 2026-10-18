@@ -11,6 +11,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use tinyinference_providers::builtin::{
@@ -243,6 +244,29 @@ pub struct CloudProviderCreds {
     // inference settings RPC depend on this field; replacement needs route migration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+
+    /// Extra HTTP headers sent on every request to this provider (chat,
+    /// completions and model listing), on top of the auth headers
+    /// [`auth_style`](Self::auth_style) adds. The way to satisfy a provider
+    /// that requires a header the auth style does not cover, without waiting
+    /// for a release:
+    ///
+    /// ```toml
+    /// [[cloud_providers]]
+    /// slug = "my-gateway"
+    /// endpoint = "https://gateway.example/v1"
+    /// auth_style = "bearer"
+    ///
+    /// [cloud_providers.headers]
+    /// x-tenant = "team-a"
+    /// ```
+    ///
+    /// Names are matched case-insensitively against the headers OpenHuman adds
+    /// itself (`User-Agent`, `x-opencode-session`), and a configured value
+    /// replaces the built-in one. Values are sent verbatim and may be secrets,
+    /// so they never reach `info`-level logs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
 }
 
 impl Default for CloudProviderCreds {
@@ -254,6 +278,7 @@ impl Default for CloudProviderCreds {
             endpoint: String::new(),
             auth_style: AuthStyle::Bearer,
             default_model: None,
+            headers: BTreeMap::new(),
         }
     }
 }

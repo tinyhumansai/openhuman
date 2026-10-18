@@ -25,5 +25,7 @@ mod loader_and_search_tests;
 mod model_and_local_ai_tests;
 #[path = "ops_provider_ca_tests.rs"]
 mod provider_ca_tests;
+#[path = "ops_provider_headers_tests.rs"]
+mod provider_headers_tests;
 #[path = "ops_voice_and_autonomy_tests.rs"]
 mod voice_and_autonomy_tests;

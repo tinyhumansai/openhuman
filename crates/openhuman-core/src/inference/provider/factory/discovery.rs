@@ -66,7 +66,16 @@ pub(crate) fn model_limits_request(
         return None;
     }
     let auth_style = super::cloud_spec::registry_auth_style(resolution.entry.auth_style)?;
-    let (extra_headers, temperature_unsupported) = (Vec::new(), Vec::new());
+    // The entry's configured headers ride the listing too: a gateway that
+    // requires them on chat usually requires them on `/models` as well.
+    let extra_headers: Vec<(String, String)> = resolution
+        .entry
+        .headers
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    let temperature_unsupported = Vec::new();
+    let user_agent = super::request_identity::product_user_agent();
     super::cloud_spec::cloud_discovery_request(&super::cloud_spec::CloudBuild {
         spec: super::cloud_spec::cloud_provider_spec(resolution.entry, &resolution.effective_model),
         auth_style,
@@ -76,7 +85,7 @@ pub(crate) fn model_limits_request(
         native_tool_calling: true,
         extra_headers: &extra_headers,
         extra_query_params: &[],
-        user_agent: None,
+        user_agent: Some(user_agent.as_str()),
         codex: Some(&resolution.codex),
         http: None,
     })

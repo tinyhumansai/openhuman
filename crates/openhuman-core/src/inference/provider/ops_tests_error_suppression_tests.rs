@@ -16,6 +16,7 @@ fn list_configured_models_accepts_slug() {
         label: "OpenAI".to_string(),
         endpoint: "https://api.openai.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: None,
     });
 

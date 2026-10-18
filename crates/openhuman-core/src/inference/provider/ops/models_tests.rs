@@ -51,6 +51,7 @@ fn workspace_with_provider(
         label: slug.to_string(),
         endpoint: endpoint.to_string(),
         auth_style,
+        headers: Default::default(),
         default_model: None,
     });
     config

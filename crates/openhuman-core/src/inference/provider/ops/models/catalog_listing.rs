@@ -214,6 +214,20 @@ pub async fn list_configured_models_from_config(
                 openai_codex_user_agent("OpenHuman", env!("CARGO_PKG_VERSION")),
             )
             .header(OPENAI_CODEX_ORIGINATOR_HEADER, OPENAI_CODEX_ORIGINATOR);
+    } else if !entry
+        .headers
+        .keys()
+        .any(|name| name.eq_ignore_ascii_case("user-agent"))
+    {
+        request = request.header(
+            reqwest::header::USER_AGENT,
+            crate::inference::provider::factory::request_identity::product_user_agent(),
+        );
+    }
+    // The entry's configured headers (#7865) ride the listing like every other
+    // request to this provider.
+    for (name, value) in &entry.headers {
+        request = request.header(name.as_str(), value.as_str());
     }
 
     request = match entry.auth_style {

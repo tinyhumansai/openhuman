@@ -110,6 +110,7 @@ pub(super) fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationSta
         label: "OpenHuman".to_string(),
         endpoint: oh_endpoint,
         auth_style: AuthStyle::OpenhumanJwt,
+        headers: Default::default(),
         default_model: Some(oh_default_model),
     });
     stats.cloud_providers_seeded += 1;
@@ -139,6 +140,7 @@ pub(super) fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationSta
                 label: "Custom".to_string(),
                 endpoint: trimmed.to_string(),
                 auth_style: AuthStyle::Bearer,
+                headers: Default::default(),
                 default_model,
             });
             stats.cloud_providers_seeded += 1;

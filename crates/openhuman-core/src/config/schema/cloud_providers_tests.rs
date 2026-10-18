@@ -298,3 +298,70 @@ fn builtin_table_is_the_upstream_catalog_plus_the_managed_route() {
         assert_eq!(mapped.auth_style, expected, "{}", mapped.slug);
     }
 }
+
+#[test]
+fn cloud_provider_headers_table_round_trips_through_toml() {
+    use super::CloudProviderCreds;
+
+    let entry: CloudProviderCreds = toml::from_str(
+        r#"
+id = "p_opencode"
+slug = "opencode-go"
+label = "OpenCode Go"
+endpoint = "https://opencode.ai/zen/go/v1"
+auth_style = "bearer"
+
+[headers]
+x-opencode-session = "ses_fixed"
+X-Title = "openhuman"
+"#,
+    )
+    .expect("headers table parses");
+    assert_eq!(entry.headers.len(), 2);
+    assert_eq!(
+        entry.headers.get("x-opencode-session").map(String::as_str),
+        Some("ses_fixed")
+    );
+    assert_eq!(
+        entry.headers.get("X-Title").map(String::as_str),
+        Some("openhuman")
+    );
+
+    let rendered = toml::to_string(&entry).expect("serializes");
+    assert!(rendered.contains("[headers]"), "{rendered}");
+    let back: CloudProviderCreds = toml::from_str(&rendered).expect("re-parses");
+    assert_eq!(back, entry);
+}
+
+#[test]
+fn cloud_provider_headers_default_to_empty_and_are_omitted_when_empty() {
+    use super::CloudProviderCreds;
+
+    let entry: CloudProviderCreds = toml::from_str(
+        r#"
+id = "p_plain"
+slug = "plain"
+label = "Plain"
+endpoint = "https://api.example/v1"
+auth_style = "bearer"
+"#,
+    )
+    .expect("entry without headers parses");
+    assert!(entry.headers.is_empty());
+    assert!(CloudProviderCreds::default().headers.is_empty());
+
+    let rendered = toml::to_string(&entry).expect("serializes");
+    assert!(
+        !rendered.contains("headers"),
+        "an empty table must not be written: {rendered}"
+    );
+
+    let rejected = toml::from_str::<CloudProviderCreds>(
+        r#"
+slug = "bad"
+endpoint = "https://api.example/v1"
+headers = "not-a-table"
+"#,
+    );
+    assert!(rejected.is_err(), "a non-table `headers` value is rejected");
+}

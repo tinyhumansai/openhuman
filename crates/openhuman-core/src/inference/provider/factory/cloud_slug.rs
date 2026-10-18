@@ -2,10 +2,12 @@
 //! abstract-tier remapping, credentials, codex routing) and the crate-native builders.
 
 use super::*;
+use crate::core::runtime::DispatchCtx;
 #[cfg(not(test))]
 use crate::inference::provider::factory::access_gates::verify_backend_session_active;
 #[cfg(not(test))]
 use crate::inference::provider::factory::access_gates::verify_session_active;
+use crate::inference::provider::factory::request_identity::apply_request_identity;
 use crate::inference::provider::fallback_diagnostics;
 use tinyinference_llm::providers::anthropic::endpoint_is_anthropic_messages;
 
@@ -206,15 +208,21 @@ pub(super) fn resolve_cloud_slug<'a>(
 /// `verify_session_active`) runs before building. Temperature rides the per-call
 /// `ModelRequest` (managed/local parity; the `@<temp>` suffix still bakes a fixed
 /// override).
+///
+/// `ctx` supplies the turn origin the built client identifies its conversation
+/// by (the OpenCode Go session header, `request_identity`); a caller with no
+/// context of its own passes [`DispatchCtx::ambient`].
 pub(super) fn try_create_cloud_slug_chat_model(
+    ctx: &DispatchCtx,
     role: &str,
     config: &Config,
     egress: &EgressLedger,
 ) -> OptionalChatModelResult {
-    try_create_cloud_slug_chat_model_with_native_tools(role, config, true, egress)
+    try_create_cloud_slug_chat_model_with_native_tools(ctx, role, config, true, egress)
 }
 
 pub(super) fn try_create_cloud_slug_chat_model_with_native_tools(
+    ctx: &DispatchCtx,
     role: &str,
     config: &Config,
     native_tool_calling: bool,
@@ -227,6 +235,7 @@ pub(super) fn try_create_cloud_slug_chat_model_with_native_tools(
         resolved = resolve_primary_cloud_provider_string(config);
     }
     try_create_cloud_slug_chat_model_from_string_with_native_tools(
+        ctx,
         role,
         &resolved,
         config,
@@ -236,17 +245,19 @@ pub(super) fn try_create_cloud_slug_chat_model_with_native_tools(
 }
 
 pub(super) fn try_create_cloud_slug_chat_model_from_string(
+    ctx: &DispatchCtx,
     role: &str,
     provider: &str,
     config: &Config,
     egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     try_create_cloud_slug_chat_model_from_string_with_native_tools(
-        role, provider, config, true, egress,
+        ctx, role, provider, config, true, egress,
     )
 }
 
 pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
+    ctx: &DispatchCtx,
     role: &str,
     provider: &str,
     config: &Config,
@@ -311,6 +322,14 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         })
         .map(|route| route.headers.clone())
         .unwrap_or_default();
+    // The entry's own `headers` table (#7865): a provider requirement the auth
+    // style does not cover, configured per provider and sent on every request.
+    extra_headers.extend(
+        entry
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
     let mut extra_query_params: Vec<(String, String)> = Vec::new();
     let mut user_agent: Option<String> = None;
     let mut codex_route: Option<&tinyinference_llm::providers::openai::codex::OpenAiCodexRouting> =
@@ -372,6 +391,29 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
             codex_route = Some(&codex);
         }
     }
+
+    // Identify the product, not the HTTP library, to every OpenAI-compatible
+    // provider, and the conversation to OpenCode Go, which rejects a chat
+    // request without a per-conversation `x-opencode-session` (HTTP 400
+    // `MissingSessionID`, #7865). The session is derived from the turn this
+    // client is built for, so a thread's turns and its auxiliary calls (title,
+    // summary) share one; the Codex user agent set above and anything
+    // configured on the entry win over both.
+    let origin = ctx.turn_origin_or_scoped();
+    log::debug!(
+        "[providers][chat-factory] slug={slug} request identity origin={} configured_headers={}",
+        origin
+            .as_ref()
+            .map(|origin| origin.class())
+            .unwrap_or_else(|| "none".to_string()),
+        entry.headers.len()
+    );
+    apply_request_identity(
+        &entry.endpoint,
+        origin.as_ref(),
+        &mut extra_headers,
+        &mut user_agent,
+    );
 
     // Egress spine (privacy epic S2, #4436): committed to a BYOK cloud slug here
     // — past the managed/bespoke returns and the access
