@@ -70,9 +70,9 @@ Capability {
         category: CapabilityCategory::Conversation,
         description: "Choose which hosted engine transcribes your speech. \"Backend\" uses \
                       OpenHuman's transcription proxy and needs no setup; ElevenLabs and OpenAI \
-                      call the provider directly with your own API key. Audio always leaves the \
-                      device — the bundled offline whisper.cpp engine was removed, so there is \
-                      no local option.",
+                      call the provider directly with your own API key. Local-only privacy mode \
+                      blocks hosted and external transcription before audio leaves the device. \
+                      No local speech-to-text fallback is available.",
         how_to: "Settings → Voice → Speech recognition engine",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,

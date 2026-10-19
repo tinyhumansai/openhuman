@@ -93,6 +93,7 @@ pub async fn run_standalone(
     app_config: Config,
     server_config: VoiceServerConfig,
 ) -> Result<(), String> {
+    install_standalone_policy(&app_config);
     info!("{LOG_PREFIX} starting standalone voice server");
     info!("{LOG_PREFIX} hotkey: {}", server_config.hotkey);
     info!("{LOG_PREFIX} mode: {:?}", server_config.activation_mode);
@@ -115,3 +116,24 @@ pub async fn run_standalone(
     // The server.run() borrows &self, and we await it to completion.
     server_arc.run(ctx, &app_config).await
 }
+
+// Standalone voice does not run the core bootstrap that normally installs this
+// policy. Install it before the server can spawn recording/transcription tasks.
+pub(super) fn install_standalone_policy(config: &Config) {
+    crate::security::live_policy::install(
+        Arc::new(
+            crate::security::SecurityPolicy::from_config(
+                &config.autonomy,
+                &config.workspace_dir,
+                &config.action_dir,
+            )
+            .with_privacy_mode(config.privacy.mode),
+        ),
+        config.workspace_dir.clone(),
+        config.action_dir.clone(),
+    );
+}
+
+#[cfg(test)]
+#[path = "singleton_tests.rs"]
+mod tests;

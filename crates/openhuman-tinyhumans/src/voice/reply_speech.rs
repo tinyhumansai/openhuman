@@ -10,7 +10,9 @@
 //!
 //! Approval gate (#1339) classification: **internal**. Reply-speech is
 //! the user's own assistant speaking through the user's own speakers
-//! — there is no outbound side effect visible to a third party.
+//! — it does not perform an external action on the user's behalf. The text
+//! still leaves the device for synthesis, so the separate egress privacy
+//! policy must permit and disclose that transfer.
 //! Coordinate with #1206 voice work: if `reply_speech` is ever wrapped
 //! in a `Tool` impl, the `external_effect()` method MUST stay `false`
 //! (the trait's default) so the approval gate never prompts on TTS.
@@ -184,6 +186,14 @@ pub async fn synthesize_reply(
     // string, which matched none of the session-expiry classifiers and leaked
     // every lapsed-session TTS 401 to Sentry (TAURI-RUST-8X1). Every other error
     // keeps its full `{e:#}` anyhow chain so genuine TTS failures still report.
+    let speech_url = client
+        .url_for(SPEECH_PATH)
+        .map_err(|error| error.to_string())?;
+    super::egress::disclose_speech_transfer(
+        "openhuman_backend",
+        speech_url.as_str(),
+        super::egress::DataKind::Prompt,
+    )?;
     let raw = client
         .authed_json(
             &credential,

@@ -15,6 +15,7 @@
 //! - [`live`]: the `gemini-hosted` and `elevenlabs-hosted` live providers.
 
 pub mod cloud_transcribe;
+mod egress;
 pub mod live;
 pub mod realtime;
 pub mod reply_speech;

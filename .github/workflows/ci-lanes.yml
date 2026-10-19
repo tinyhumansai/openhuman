@@ -295,6 +295,13 @@ jobs:
           submodules: false
           persist-credentials: false
 
+      - name: Repair container home ownership
+        # GitHub bind-mounts a runner-owned home into this root container.
+        # The native module loader checks every ancestor's owner; repair the
+        # mount itself instead of weakening that production security check.
+        if: matrix.container != ''
+        run: chown "$(id -u):$(id -g)" "$HOME"
+
       - name: Trust the workspace for git
         # The checkout is owned by the runner uid; the container runs as root.
         if: matrix.container != ''

@@ -2,8 +2,8 @@
 description: >-
   One switch, enforced in the Rust core. Local-only mode blocks cloud model
   calls, network tools, web search, integrations and cloud embeddings, and
-  allows only on-device runtimes. Voice is the exception, because there is no
-  local speech-to-text engine.
+  allows only on-device runtimes. Hosted and external speech uploads are blocked;
+  local Piper speech synthesis remains available.
 icon: lock
 ---
 
@@ -16,7 +16,7 @@ The `[privacy]` config block defines three modes:
 | Mode | What it means |
 | --- | --- |
 | `standard` (default) | Normal operation. Managed cloud routing, BYO providers and local models are all available. |
-| `local_only` | No inference leaves the device. Every external chat provider is refused when it is built: the managed cloud, BYO cloud keys, even CLI delegates like Claude Code. Network tools, web search, integrations and cloud embeddings are refused at their egress points. Only local runtimes pass: Ollama, LM Studio, MLX and local OpenAI-compatible endpoints. Voice is the one exception, because no local speech-to-text engine exists. |
+| `local_only` | No inference leaves the device. Every external chat provider is refused when it is built: the managed cloud, BYO cloud keys, even CLI delegates like Claude Code. Network tools, web search, integrations and cloud embeddings are refused at their egress points. Only local runtimes pass: Ollama, LM Studio, MLX and local OpenAI-compatible endpoints. Hosted and external speech recognition and synthesis are refused. Local Piper synthesis remains available; dictation has no local STT fallback. |
 | `sensitive` | The base for an upcoming PII-aware tier (detection, redaction, destination disclosure). Today it behaves like `standard`. |
 
 ## Why enforcement matters
@@ -32,12 +32,16 @@ That makes the guarantee independent of prompts, agents, tools or upstream bugs.
 | Network tools (`http_request`, `web_fetch`, `curl`) | Refused, with a policy-blocked message in the tool result |
 | Web search (Exa, Tavily) | Refused the same way                                      |
 | Composio tool calls and integration requests | Refused with an error                                     |
+| Hosted and external STT/TTS | Refused before audio or speech text is uploaded |
+| Local Piper TTS | Permitted; speech synthesis stays on the device |
 | Cloud embeddings | Refused with an error                                     |
 | Local runtimes (Ollama, LM Studio, MLX, local OpenAI-compatible) | Always permitted, nothing leaves the device               |
 
 One deliberate exemption: backend control-plane round-trips keep flowing. These are sign-in, session, team, billing, and integration connection management and catalog reads. Blocking them breaks the app for no privacy gain. They carry auth tokens, ids and routing metadata, never user content.
 
-Voice is not covered. There is no local speech-to-text engine, so dictation and transcription still leave the device under `local_only`. They go to the hosted OpenHuman STT proxy, or to whichever third-party STT provider you configured. If that matters for your threat model, leave voice off.
+Hosted and external speech requests enforce the live privacy policy before dispatch, so local-only mode blocks microphone uploads and cloud speech synthesis. Dictation fails with a privacy error because no local speech-to-text fallback exists in the current product. Local Piper synthesis remains available because it processes speech text on the device without contacting an external provider.
+
+Permitted speech requests disclose their configured destination origin without including audio or spoken text in the disclosure event emitted before the request. External speech clients refuse HTTP redirects so user content cannot silently move to an undisclosed destination. Realtime voice sessions use a separate transport and remain outside this request-level enforcement change.
 
 Privacy mode governs data egress. It is separate from the [autonomy tiers](approval-gate.md) (readonly, supervised, full), which govern what the agent may do. You can run a fully autonomous agent that never sends a byte of inference off-device.
 

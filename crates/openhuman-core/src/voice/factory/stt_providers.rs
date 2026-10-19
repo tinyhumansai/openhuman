@@ -25,6 +25,7 @@ const LOG_PREFIX: &str = "[voice-factory]";
 /// clients live in `tinyinference_voice::external_stt`.
 pub struct ExternalSttProvider {
     slug: String,
+    endpoint: String,
     api_style: SttApiStyle,
     client: ExternalSttClient,
 }
@@ -37,11 +38,13 @@ impl ExternalSttProvider {
         api_key: impl Into<String>,
         api_style: SttApiStyle,
     ) -> Self {
+        let endpoint: String = endpoint.into();
         Self {
             slug: slug.into(),
+            endpoint: endpoint.clone(),
             api_style,
             client: ExternalSttClient::new(
-                reqwest::Client::new(),
+                super::super::egress::speech_http_client(),
                 model,
                 endpoint,
                 api_key,
@@ -75,6 +78,11 @@ impl SttProvider for ExternalSttProvider {
 
         let audio_bytes = base64_decode(audio_base64)?;
         let mime = mime_type.unwrap_or("audio/wav");
+        super::super::egress::disclose_speech_transfer(
+            &self.slug,
+            &self.endpoint,
+            crate::security::egress::DataKind::FileContent,
+        )?;
         let text = self
             .client
             .transcribe(&audio_bytes, mime, file_name, language)

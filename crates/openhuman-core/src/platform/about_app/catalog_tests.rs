@@ -573,3 +573,16 @@ fn computer_capabilities_disclose_the_components_ceiling() {
         );
     }
 }
+
+#[test]
+fn speech_recognition_description_explains_local_only_blocking() {
+    let capability = lookup("voice.stt_engine").expect("speech recognition capability");
+    assert!(capability.description.contains("Local-only privacy mode"));
+    assert!(capability
+        .description
+        .contains("blocks hosted and external transcription"));
+    assert!(capability
+        .description
+        .contains("No local speech-to-text fallback"));
+    assert!(!capability.description.contains("Audio always leaves"));
+}

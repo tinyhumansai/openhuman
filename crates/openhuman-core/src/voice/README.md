@@ -409,3 +409,30 @@ Tests sit beside their modules as `<module>_tests.rs` (for example
 - [Voice tools](../../../../docs/gitbooks/en/features/native-tools/voice.md)
 - [tinyvoice submodule](../../../../vendor/tinyvoice/README.md)
 - [Chat](../../../../docs/gitbooks/en/features/chat.md)
+
+## Speech request privacy
+
+Hosted transcription, hosted reply speech and external STT/TTS calls enforce
+OpenHuman's live egress policy before dispatching HTTP requests. In local-only
+mode those cloud/provider routes fail without uploading audio or text. Dictation
+has no local STT fallback; local Piper TTS does not cross this boundary.
+Standard and sensitive modes retain the existing request and response behavior.
+
+Permitted requests emit `ExternalTransferPending` with inference as the reason,
+`FileContent` for transcription audio and `Prompt` for text sent for synthesis.
+The descriptor names the provider and destination origin only; it never includes
+URL credentials, paths, query parameters, filenames, audio or spoken text.
+Voice calls currently have no chat routing argument, so these events are
+unrouted, like other background egress events. Realtime voice sessions are a
+separate transport and are outside this change.
+
+Regression tests in [`egress_tests.rs`](./egress_tests.rs) exercise external
+OpenAI-compatible STT/TTS, Deepgram STT and ElevenLabs STT/TTS against loopback
+mock servers. Hosted STT/TTS regressions live in
+[`openhuman-tinyhumans/src/voice/egress_tests.rs`](../../../openhuman-tinyhumans/src/voice/egress_tests.rs),
+where the hosted implementation is owned. Run both crates with the `voice` Cargo feature enabled.
+
+Standalone voice installs the loaded configuration’s live security policy before
+starting recording tasks, so worker threads enforce the saved privacy mode.
+External speech clients reject redirects because transfer disclosures name only
+the configured origin; users must configure the final provider endpoint directly.
