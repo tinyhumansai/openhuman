@@ -177,7 +177,7 @@ pub(crate) async fn thread_action_dir(
 }
 
 fn policy(config: &Config, root: &Path) -> SecurityPolicy {
-    let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, root);
+    let policy = SecurityPolicy::for_config_in(config, root);
     *policy
         .media_files_roots
         .lock()

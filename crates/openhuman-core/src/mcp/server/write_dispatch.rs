@@ -35,8 +35,7 @@ pub(super) fn enforce_write_policy_for_config(
     tool_name: &str,
     config: &Config,
 ) -> Result<(), ToolCallError> {
-    let policy =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let policy = SecurityPolicy::for_config(config);
     match policy.enforce_tool_operation(ToolOperation::Act, tool_name) {
         Ok(()) => Ok(()),
         Err(message) => {

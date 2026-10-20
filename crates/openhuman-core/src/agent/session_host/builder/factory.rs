@@ -146,11 +146,7 @@ impl OpenHumanSessionHost {
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
             host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
         );
-        let security = Arc::new(SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        ));
+        let security = Arc::new(SecurityPolicy::for_config(config));
         // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
         let audit = crate::security::get_or_create_workspace_audit_logger(
             crate::config::AuditConfig::default(),

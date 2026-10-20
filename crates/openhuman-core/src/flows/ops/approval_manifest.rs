@@ -41,8 +41,7 @@ pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -
         assemble_manifest, manifest_candidates, ManifestCandidate, ManifestClass,
     };
 
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::for_config(config);
     let gated = |class: CommandClass| {
         Some(ManifestClass {
             name: format!("{class:?}"),

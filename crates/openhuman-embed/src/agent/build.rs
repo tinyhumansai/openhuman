@@ -310,12 +310,9 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
         session_agent: Some(id.to_string()),
         profile: None,
         agent_policy: Some(std::sync::Arc::new(
-            openhuman_core::security::SecurityPolicy::from_config(
-                &config.autonomy,
-                &config.workspace_dir,
-                &config.action_dir,
-            )
-            .with_privacy_mode(config.privacy.mode),
+            // `for_config` already attaches the config's account root.
+            openhuman_core::security::SecurityPolicy::for_config(&config)
+                .with_privacy_mode(config.privacy.mode),
         )),
         approvals_disabled: !access.approval_gate_enabled(),
         definitions,

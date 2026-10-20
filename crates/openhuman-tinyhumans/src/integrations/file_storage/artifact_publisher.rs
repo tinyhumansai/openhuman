@@ -70,11 +70,7 @@ impl StorageArtifactPublisher {
 /// which the `storage_*` tools are absent.
 pub fn artifact_publisher(config: &Config) -> Option<Arc<dyn ArtifactPublisher>> {
     let client = crate::integrations::build_client(config)?;
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     Some(Arc::new(
         StorageArtifactPublisher::new(client, security).with_version_files(
             openhuman_embed::__host::artifact_publisher::version_files_dir(&config.workspace_dir),

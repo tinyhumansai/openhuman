@@ -258,6 +258,10 @@ impl SecurityPolicy {
             // effective enforcement mode correct without touching every caller.
             privacy_mode: crate::config::PrivacyMode::default(),
             workspace_dir: workspace_dir.to_path_buf(),
+            // The caller layers the real credential root on with
+            // `with_account_dir`; unset keeps the `workspace_dir`-parent
+            // inference every existing call site already relied on.
+            account_dir: None,
             action_dir: action_dir.to_path_buf(),
             workspace_only: autonomy_config.workspace_only,
             allowed_commands: autonomy_config.allowed_commands.clone(),
@@ -290,6 +294,45 @@ impl SecurityPolicy {
             self.privacy_mode
         );
         self.privacy_mode = privacy_mode;
+        self
+    }
+
+    /// [`from_config`](Self::from_config) for a whole [`Config`], with that
+    /// config's own account root attached.
+    ///
+    /// This is the form almost every caller wants, and the reason it exists is
+    /// that the alternative is a footgun: the account root is not derivable
+    /// from `workspace_dir` (see [`SecurityPolicy::account_dir`]), so it has to
+    /// be chained on, and a carve-out that silently does not apply wherever one
+    /// call site forgot is worse than no carve-out — you cannot tell the two
+    /// apart by reading the predicate. Prefer this over `from_config` wherever
+    /// a `Config` is in hand.
+    #[must_use]
+    pub fn for_config(config: &crate::config::Config) -> Self {
+        Self::for_config_in(config, &config.action_dir)
+    }
+
+    /// [`for_config`](Self::for_config) with the action root overridden, for the
+    /// callers that scope a policy to a directory of their own (an attachment
+    /// root, a turn workspace) rather than the config's `action_dir`.
+    #[must_use]
+    pub fn for_config_in(config: &crate::config::Config, action_dir: &Path) -> Self {
+        Self::from_config(&config.autonomy, &config.workspace_dir, action_dir)
+            .with_account_dir(config.config_path.parent())
+    }
+
+    /// Return a copy of this policy with the account / credential root set —
+    /// `config_path`'s parent, which is not always `workspace_dir`'s parent
+    /// (see [`SecurityPolicy::account_dir`]). Builder-style to match
+    /// [`with_privacy_mode`](Self::with_privacy_mode), so a call site reads as
+    /// `SecurityPolicy::from_config(..).with_account_dir(config.config_path.parent())`.
+    #[must_use]
+    pub fn with_account_dir(mut self, account_dir: Option<&Path>) -> Self {
+        self.account_dir = account_dir.map(Path::to_path_buf);
+        log::debug!(
+            "[openhuman:policy] account dir set on SecurityPolicy: {:?}",
+            self.account_dir
+        );
         self
     }
 

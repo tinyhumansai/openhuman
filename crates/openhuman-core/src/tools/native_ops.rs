@@ -77,11 +77,7 @@ pub fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String
         workspace = %config.workspace_dir.display(),
         "[native_ops] build_runtime_tools: start"
     );
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
     let audit = crate::security::get_or_create_workspace_audit_logger(
         crate::config::AuditConfig::default(),

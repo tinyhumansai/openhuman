@@ -500,6 +500,47 @@ fn publish_flow_gate_notification(
     });
 }
 
+/// What an installed gate will actually park, given the autonomy policy's
+/// master switch.
+///
+/// The gate is installed independently of `[autonomy] enabled`, but what
+/// *reaches* it is not. A tool declares itself external-effect through
+/// [`crate::security::SecurityPolicy::gate_decision`], which returns
+/// `GateDecision::Allow` for every [`crate::security::CommandClass`] while the
+/// policy is off — and off is the shipped default
+/// (`AutonomyConfig::enabled = false`). `shell`, `node_exec`, `npm_exec` and
+/// `python_exec` once derived `external_effect_with_args` from exactly that
+/// call. **That is no longer how it works**, and the note must not say so: a
+/// `shell` call reaches the gate (`ShellTool` declares an external effect for
+/// any non-empty command) and is settled by the shell-specific stage,
+/// `SecurityGate::shell_decision`, which classifies the command and returns
+/// `gate_decision`. With the policy off that answers `Allow`, so the call is
+/// **allowed without parking** — not "reports no external effect".
+///
+/// Only that stage is shell-specific. A tool that declares an external effect
+/// outright and never goes through `shell_decision` still parks with the policy
+/// off — `ScheduleTool` returns `true` for every mutating action independently
+/// of [`crate::security::SecurityPolicy`] — so the disabled note must not claim
+/// that nothing parks at all.
+///
+/// Describe the outcome, not the mechanism: an earlier revision of this note
+/// named four tools and an internal reason, and both went stale within a week
+/// when the shell authorization path was rebuilt on TinyBox analysis upstream.
+///
+/// The boot line is the one place an operator learns whether they are
+/// protected, so it must not claim a park that cannot happen.
+pub(crate) fn arming_note(autonomy_enabled: bool) -> &'static str {
+    if autonomy_enabled {
+        "Prompt-class external-effect tool calls park for approval in interactive chat turns"
+    } else {
+        "shell commands are allowed without parking: [autonomy] enabled = false (the shipped \
+         default) makes gate_decision() answer Allow for every command class, so the shell \
+         decision stage settles the call instead of parking it. Tools that declare an external \
+         effect outright (schedule, channel sends, …) still park — set [autonomy] enabled = true \
+         to gate commands too"
+    }
+}
+
 #[cfg(test)]
 #[path = "gate_tests.rs"]
 mod tests;

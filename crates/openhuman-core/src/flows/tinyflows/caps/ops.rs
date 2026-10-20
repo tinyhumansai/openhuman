@@ -631,11 +631,7 @@ pub fn build_capabilities(
         flow_run,
         ..Default::default()
     };
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(&config));
     let http_config = config.http_request.clone();
     let http_creds = Arc::new(HttpCredentialsStore::from_config(&config));
 

@@ -142,11 +142,7 @@ pub async fn run(ctx: &crate::core::runtime::DispatchCtx, config: Config) -> Res
 
     let poll_secs = config.reliability.scheduler_poll_secs.max(MIN_POLL_SECONDS);
     let mut interval = time::interval(Duration::from_secs(poll_secs));
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(&config));
 
     BUS.publish(DomainEvent::SystemStartup {
         component: "scheduler".to_string(),
@@ -263,11 +259,7 @@ async fn execute_via_bus(
     job: &CronJob,
     run_id: &str,
 ) -> Result<Attempt> {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     let binding = Binding::new(ctx, config, security);
     let host = bus_host::register(binding).await.map_err(|e| anyhow!(e))?;
     let proxy = module::run_proxy(config).await.map_err(|e| anyhow!(e))?;
