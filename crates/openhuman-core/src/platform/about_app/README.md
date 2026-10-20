@@ -84,3 +84,16 @@ No dependencies on other `openhuman` domains: capability metadata for other doma
 - [Platform and availability](../../../../../docs/gitbooks/en/features/platform.md)
 - [Tauri shell architecture](../../../../../docs/gitbooks/en/developing/architecture/tauri-shell.md)
 - [Architecture overview](../../../../../docs/gitbooks/en/developing/architecture.md)
+
+## Catalog truthfulness
+
+The catalog omits the unimplemented provider-specific Google, Notion and crypto
+exchange connection promises, and the duplicate “Delete All Data” promise
+(#7449). Generic Connections/Composio and OAuth capabilities remain available.
+The stable `settings.clear_app_data` entry describes the active user's local data;
+it does not claim to delete remote data or other users' profiles. Explicit useful
+limitations such as Composio direct-mode triggers retain `ComingSoon` status.
+
+Catalog and controller regression tests check list, category, lookup, search and
+serialized responses. This metadata change does not alter reset confirmation,
+reset execution or account isolation.

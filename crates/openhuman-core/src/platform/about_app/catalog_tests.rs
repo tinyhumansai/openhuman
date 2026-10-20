@@ -179,7 +179,6 @@ fn catalog_includes_additional_user_facing_surfaces() {
 
     for expected in [
         "workflows.open_connections_hub",
-        "workflows.connect_google",
         "auth.backup_recovery_phrase",
         "auth.configure_tool_access",
         "settings.manage_service",
@@ -375,7 +374,7 @@ fn catalog_how_to_uses_connections_nav_not_legacy_settings_paths() {
         how_to("channels.connect_platform"),
         "Connections > Channels"
     );
-    assert_eq!(how_to("workflows.connect_google"), "Connections > OAuth");
+    assert_eq!(how_to("workflows.open_connections_hub"), "Connections");
 }
 
 /// The `Settings > Local AI Model` panel no longer exists, and six `local_ai`
@@ -558,4 +557,60 @@ fn computer_capabilities_disclose_the_components_ceiling() {
             "{id} must name the typed error a switched-off computer answers"
         );
     }
+}
+
+#[test]
+fn retired_capability_promises_are_absent_from_every_catalog_read() {
+    for id in [
+        "workflows.connect_google",
+        "workflows.connect_notion",
+        "workflows.connect_crypto_exchange",
+        "settings.delete_all_data",
+    ] {
+        assert!(
+            lookup(id).is_none(),
+            "retired capability {id} must not resolve"
+        );
+        assert!(
+            search(id).is_empty(),
+            "retired capability {id} must not be searchable"
+        );
+        assert!(!all_capabilities().iter().any(|cap| cap.id == id));
+        for category in CapabilityCategory::ALL {
+            assert!(!capabilities_by_category(category)
+                .iter()
+                .any(|cap| cap.id == id));
+        }
+    }
+}
+
+#[test]
+fn implemented_connections_and_active_user_local_reset_remain_discoverable() {
+    for id in [
+        "workflows.open_connections_hub",
+        "composio.direct_mode",
+        "auth.login_oauth",
+    ] {
+        let cap = lookup(id).expect("implemented connection capability remains");
+        assert_ne!(cap.status, CapabilityStatus::ComingSoon);
+        assert!(search(id).iter().any(|found| found.id == id));
+    }
+    let clear = lookup("settings.clear_app_data").expect("implemented reset remains");
+    assert_eq!(clear.status, CapabilityStatus::Stable);
+    assert!(clear.description.contains("active user's local app data"));
+    assert!(clear
+        .description
+        .contains("Remote data and other users' profiles are not deleted"));
+    assert_eq!(clear.how_to, "Settings > Log Out & Clear App Data");
+    assert!(search("clear app data")
+        .iter()
+        .any(|cap| cap.id == clear.id));
+    assert!(capabilities_by_category(CapabilityCategory::Settings)
+        .iter()
+        .any(|cap| cap.id == clear.id));
+    // Keep an explicit, useful limitation rather than removing ComingSoon globally.
+    assert_eq!(
+        lookup("composio.direct_mode_triggers_gap").unwrap().status,
+        CapabilityStatus::ComingSoon
+    );
 }
