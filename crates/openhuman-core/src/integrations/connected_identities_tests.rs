@@ -10,14 +10,11 @@ fn prompt_identity_reads_do_not_exhaust_the_callers_blocking_pool() {
         .unwrap();
     let (done, result) = std::sync::mpsc::channel();
     runtime.spawn(async move {
-        let rendered = render_blocking(
-            async {
-                tokio::task::spawn_blocking(|| "connected identities".to_string())
-                    .await
-                    .unwrap()
-            },
-            &tokio::runtime::Handle::current(),
-        );
+        let rendered = render_blocking(async {
+            tokio::task::spawn_blocking(|| "connected identities".to_string())
+                .await
+                .unwrap()
+        });
         let _ = done.send(rendered);
     });
     let rendered = result.recv_timeout(std::time::Duration::from_secs(5));

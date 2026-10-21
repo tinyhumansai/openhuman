@@ -599,11 +599,21 @@ impl Drop for JobDispatcher {
     }
 }
 
-/// Keep manual work independent of the invocation's waiting future.
+/// Run manual ownership on the process-lived module runtime. A caller may
+/// stop driving its runtime immediately after receiving the result (including
+/// by entering a synchronous store bridge), while acknowledgement still uses
+/// the shared module connection.
 fn spawn_manual_owner(
     work: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<tokio::task::JoinHandle<()>> {
-    Ok(tokio::spawn(work))
+    #[cfg(feature = "modules")]
+    {
+        Ok(crate::modules::runtime::spawn_cleanup(work)?)
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        Ok(tokio::spawn(work))
+    }
 }
 
 #[cfg(all(test, feature = "modules"))]
