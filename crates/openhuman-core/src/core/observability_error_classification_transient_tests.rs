@@ -1,3 +1,5 @@
+#[cfg(feature = "crash-reporting")]
+#[test]
 fn transient_filter_drops_429_408_502_503_504() {
     for status in ["429", "408", "502", "503", "504"] {
         let event = event_with_tags(&[

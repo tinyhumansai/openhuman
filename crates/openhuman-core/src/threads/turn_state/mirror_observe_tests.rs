@@ -739,5 +739,4 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
     assert_eq!(activity.parent_call_id.as_deref(), Some("call-3"));
 }
 
-#[test]
 include!("mirror_observe_compaction_tests.rs");

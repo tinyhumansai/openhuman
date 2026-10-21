@@ -1,3 +1,4 @@
+#[test]
 fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     // DeepSeek is a built-in chat-completions-only Bearer provider: no

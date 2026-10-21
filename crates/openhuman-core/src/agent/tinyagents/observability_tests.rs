@@ -432,5 +432,4 @@ fn emit_recovered_unknown_tool_call(sink: &EventSink, call_id: &str) {
     });
 }
 
-#[tokio::test]
 include!("observability_tests_tool_rows.rs");

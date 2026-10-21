@@ -379,5 +379,4 @@ fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
     assert!(try_create_local_runtime_chat_model("chat", &cloud, &EgressLedger::none()).is_none());
 }
 
-#[test]
 include!("factory_crate_native_cloud_tests.rs");

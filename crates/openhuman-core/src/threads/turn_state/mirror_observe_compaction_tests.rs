@@ -1,3 +1,4 @@
+#[test]
 fn compacting_neither_flushes_nor_changes_the_phase() {
     let (_d, mut m) = fresh("t");
     m.observe(&AgentProgress::IterationStarted {

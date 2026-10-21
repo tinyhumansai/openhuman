@@ -1,3 +1,4 @@
+#[tokio::test]
 async fn unknown_tool_call_projects_exactly_one_failed_timeline_row() {
     // Production Langfuse showed two ERROR tool observations ~15ms apart for
     // every unknown-tool call: the bridge synthesised a Started/Completed pair

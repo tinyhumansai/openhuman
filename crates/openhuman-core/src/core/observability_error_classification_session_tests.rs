@@ -454,6 +454,4 @@ fn report_error_does_not_panic_with_many_tags() {
     );
 }
 
-#[cfg(feature = "crash-reporting")]
-#[test]
 include!("observability_error_classification_transient_tests.rs");
