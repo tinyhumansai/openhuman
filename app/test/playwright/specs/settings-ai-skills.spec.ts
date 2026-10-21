@@ -1,68 +1,10 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 import {
   bootAuthenticatedPage,
-  callCoreRpc,
   dismissWalkthroughIfPresent,
   waitForAppReady,
 } from '../helpers/core-rpc';
-
-/**
- * A managed catalog id from the shared mock fixture
- * (`scripts/mock-api/routes/llm.mjs`), so the value under test is one the
- * routing page would really be asked to display rather than a synthetic string.
- */
-const PINNED_MODEL = 'openrouter/nex-agi/nex-n2.5-mini';
-
-/**
- * Read `default_model` back from the core, not from the page's own state.
- *
- * `inference_get_client_config` answers in the `CommandResponse` envelope
- * (`{ result: ClientConfig }`), which is how `aiSettingsApi.loadAISettings`
- * unwraps it; older snapshots answered bare, so accept both rather than fail on
- * an envelope change that is not what this test is about.
- */
-async function pinnedDefaultModel(): Promise<string> {
-  const response = await callCoreRpc<{
-    result?: { default_model?: string };
-    default_model?: string;
-  }>('openhuman.inference_get_client_config', {});
-  const config = response.result ?? response;
-  return (config.default_model ?? '').trim();
-}
-
-/**
- * Make `isTauri()` true for this page.
- *
- * Without this the routing page never loads its config at all:
- * `openhumanGetClientConfig` (`app/src/utils/tauriCommands/config.ts:266-269`)
- * throws "Not running in Tauri" before issuing any RPC, so `default_model`
- * stays empty and the assertions below would fail for a reason that has nothing
- * to do with model configuration. The stubbed `invoke` is never reached —
- * `callCoreRpc` dispatches `openhuman.*` over HTTP in this lane, not through
- * the Tauri IPC bridge. Same shim as `chat-model-managed-catalog.spec.ts` and
- * `settings-advanced-config.spec.ts`.
- */
-async function emulateTauriRuntime(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const win = window as typeof window & {
-      isTauri?: boolean;
-      __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> };
-    };
-    win.isTauri = true;
-    win.__TAURI_INTERNALS__ = win.__TAURI_INTERNALS__ ?? {};
-    win.__TAURI_INTERNALS__.invoke = win.__TAURI_INTERNALS__.invoke ?? (async () => null);
-  });
-}
-
-/** Open Connections and select the Routing tab, where the default-model row lives. */
-async function openRoutingTab(page: Page): Promise<void> {
-  await page.goto('/#/settings/llm');
-  await waitForAppReady(page);
-  await dismissWalkthroughIfPresent(page);
-  await page.getByTestId('ai-tab-routing').click();
-  await expect(page.getByTestId('default-model-row')).toBeVisible({ timeout: 15_000 });
-}
 
 test.describe('Settings - AI & Skills', () => {
   test.beforeEach(async ({ page }) => {
