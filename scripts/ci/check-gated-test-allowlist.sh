@@ -98,6 +98,13 @@ core/runtime/services_tests.rs
 integrations/composio/ops/mod.rs
 mcp/server/resources_tests.rs
 modules/tinyflows.rs
+doctor/checks/channels.rs
+doctor/checks/inference_tests.rs
+doctor/checks/mcp.rs
+doctor/checks/skills.rs
+doctor/checks/voice.rs
+doctor/checks/wallet.rs
+doctor/checks/wallet_tests.rs
 skills/ops_discover.rs
 EOF
 )

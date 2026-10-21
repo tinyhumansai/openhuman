@@ -497,6 +497,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " core::all:: core::cli:: core::invoke:: core::session_expiry:: core::legacy_aliases:: core::runtime::" +
             " agent_registry::agents::loader:: commands::ops::tests:: memory::people::contacts_gate_tests::" +
             " memory::layout_migration::" +
+            " doctor::checks::" +
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
         },
         {
@@ -514,6 +515,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " --features modules,mcp,e2e-test-support --lib --" +
             " modules::runtime:: modules::registry:: modules::storage_grant_tinywallet::" +
             " modules::storage_grant_tinyconnectors:: modules::tinyflows::" +
+            " doctor::checks::" +
             " cron::bus_host::tests:: cron::documents_port::tests::" +
             " mcp::server::resources:: test_support::introspect:: --test-threads=1",
         },

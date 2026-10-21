@@ -128,7 +128,7 @@
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-core/src/inference/host_runtime/ops/agent_chat.rs",
-    "line": 591,
+    "line": 622,
     "text": "let run = crate::security::turn_origin::with_origin(",
     "occurrence": 1
   },
@@ -261,7 +261,7 @@
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-embed/src/turn_control.rs",
-    "line": 414,
+    "line": 415,
     "text": "openhuman_core::security::turn_origin::with_origin(origin, dispatch).await",
     "occurrence": 1
   },
@@ -275,21 +275,21 @@
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-tinyhumans/src/inference/managed_calls.rs",
-    "line": 109,
+    "line": 123,
     "text": "with_thread_id(apply_reasoning_hint(request), self.thread_id.as_deref()),",
     "occurrence": 1
   },
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-tinyhumans/src/inference/managed_calls.rs",
-    "line": 136,
+    "line": 153,
     "text": "with_thread_id(apply_reasoning_hint(request), self.thread_id.as_deref()),",
     "occurrence": 2
   },
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-tinyhumans/src/inference/managed_model.rs",
-    "line": 95,
+    "line": 99,
     "text": "pub fn with_thread_id(mut self, thread_id: Option<impl AsRef<str>>) -> Self {",
     "occurrence": 1
   },
@@ -303,8 +303,22 @@
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-tinyhumans/src/inference/mod.rs",
-    "line": 76,
+    "line": 77,
     "text": ".with_thread_id(request.thread_id);",
+    "occurrence": 1
+  },
+  {
+    "rule": "openhuman-task-local",
+    "path": "crates/openhuman-tinyhumans/src/inference/mod.rs",
+    "line": 110,
+    "text": ".with_thread_id(request.thread_id)",
+    "occurrence": 1
+  },
+  {
+    "rule": "openhuman-upstream-reexport",
+    "path": "crates/openhuman-core/src/agent/tinyagents/budget.rs",
+    "line": 10,
+    "text": "pub use tinyagents_harness::cost::{",
     "occurrence": 1
   },
   {
@@ -312,6 +326,13 @@
     "path": "crates/openhuman-core/src/tools/registry/mod.rs",
     "line": 18,
     "text": "pub use tinytools::{",
+    "occurrence": 1
+  },
+  {
+    "rule": "openhuman-upstream-reexport",
+    "path": "crates/openhuman-embed/src/complete.rs",
+    "line": 58,
+    "text": "pub use tinyagents_harness::observability::{",
     "occurrence": 1
   },
   {
@@ -331,29 +352,36 @@
   {
     "rule": "openhuman-upstream-reexport",
     "path": "crates/openhuman-embed/src/lib.rs",
-    "line": 217,
+    "line": 225,
     "text": "pub use tinyagents_harness::host::{LearningSink, TurnSummary};",
     "occurrence": 1
   },
   {
     "rule": "openhuman-upstream-reexport",
     "path": "crates/openhuman-embed/src/lib.rs",
-    "line": 219,
+    "line": 227,
     "text": "pub use tinyagents_hooks::stop::BudgetStopHook;",
     "occurrence": 1
   },
   {
     "rule": "openhuman-upstream-reexport",
     "path": "crates/openhuman-embed/src/lib.rs",
-    "line": 220,
+    "line": 228,
     "text": "pub use tinyagents_hooks::stop::{StopDecision, StopHook};",
     "occurrence": 1
   },
   {
     "rule": "openhuman-upstream-reexport",
     "path": "crates/openhuman-embed/src/lib.rs",
-    "line": 221,
+    "line": 229,
     "text": "pub use tinyagents_hooks::tool::{",
+    "occurrence": 1
+  },
+  {
+    "rule": "openhuman-upstream-reexport",
+    "path": "crates/openhuman-embed/src/lib.rs",
+    "line": 251,
+    "text": "pub use tinyagents_harness_tools::todos::TodoList;",
     "occurrence": 1
   },
   {
@@ -366,7 +394,7 @@
   {
     "rule": "openhuman-upstream-reexport",
     "path": "crates/openhuman-embed/src/observe.rs",
-    "line": 116,
+    "line": 119,
     "text": "pub use tinyagents_harness::observability::turn_observer::langfuse::*;",
     "occurrence": 1
   },
@@ -380,7 +408,7 @@
   {
     "rule": "tinyagents-moved-symbol-alias",
     "path": "vendor/tinyagents/crates/tinyagents-harness/src/tool/mod.rs",
-    "line": 210,
+    "line": 216,
     "text": "pub struct ToolRegistry<State: Send + Sync, Ctx: Send + Sync> {",
     "occurrence": 1
   },
@@ -457,7 +485,7 @@
   {
     "rule": "tinyagents-tool-calling-facade",
     "path": "vendor/tinyagents/crates/tinyagents-harness/src/lib.rs",
-    "line": 130,
+    "line": 126,
     "text": "pub use tinytools_agent;",
     "occurrence": 1
   },
@@ -499,7 +527,7 @@
   {
     "rule": "tinyagents-upstream-reexport",
     "path": "vendor/tinyagents/crates/tinyagents-graph/src/lib.rs",
-    "line": 48,
+    "line": 44,
     "text": "pub use tinyagents_harness::error::{Result, TinyAgentsError};",
     "occurrence": 1
   },
@@ -508,6 +536,13 @@
     "path": "vendor/tinyagents/crates/tinyagents-graph/src/orchestration.rs",
     "line": 7,
     "text": "pub use tinyagents_tasks::*;",
+    "occurrence": 1
+  },
+  {
+    "rule": "tinyagents-upstream-reexport",
+    "path": "vendor/tinyagents/crates/tinyagents-harness-tools/src/subagents/mod.rs",
+    "line": 7,
+    "text": "pub use tinyagents_orchestration::subagent::SubAgentJobRegistry;",
     "occurrence": 1
   },
   {
@@ -548,7 +583,7 @@
   {
     "rule": "tinyagents-upstream-reexport",
     "path": "vendor/tinyagents/crates/tinyagents-runtime/src/lib.rs",
-    "line": 33,
+    "line": 32,
     "text": "pub use tinyagents_session::transcript::TranscriptPartial;",
     "occurrence": 1
   },
