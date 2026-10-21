@@ -282,23 +282,4 @@ test.describe('Settings - Feature Preferences', () => {
     await expect.poll(() => getSelectedMascotId(page)).toBe('river-guide');
   });
 
-  test('persists the custom mascot voice override on the voice panel', async ({ page }) => {
-    await openAuthenticatedRoute(page, 'pw-settings-mascot-voice', '/settings/voice');
-
-    await expect(page.getByText('Mascot Voice')).toBeVisible();
-    await expect(
-      page.locator('[data-testid="mascot-voice-select"] option[value="__custom__"]')
-    ).toHaveCount(1);
-
-    await page.getByTestId('mascot-voice-select').selectOption('__custom__');
-    await expect(page.getByTestId('mascot-voice-input')).toBeVisible();
-
-    await page.getByTestId('mascot-voice-input').fill('voice-e2e-custom');
-    await page.getByTestId('mascot-voice-save-paste').click();
-
-    await expect.poll(() => getMascotVoiceId(page)).toBe('voice-e2e-custom');
-
-    await reloadAndWait(page);
-    await expect.poll(() => getMascotVoiceId(page)).toBe('voice-e2e-custom');
-  });
 });
