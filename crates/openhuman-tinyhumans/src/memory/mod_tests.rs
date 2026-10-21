@@ -2,7 +2,7 @@ use super::*;
 use crate::hosted::test_support;
 use openhuman_embed::__host::memory_engines::Binding;
 use openhuman_embed::__host::security::credentials::session_support::{
-    BackendCredential, SESSION_ISSUING_BACKEND_META, SESSION_EXPIRES_AT_META,
+    BackendCredential, SESSION_EXPIRES_AT_META, SESSION_ISSUING_BACKEND_META,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -214,8 +214,11 @@ fn store_session_with_metadata(
             }
         }
     });
-    std::fs::write(path, serde_json::to_vec(&doc).expect("serialize profile fixture"))
-        .expect("write profile fixture");
+    std::fs::write(
+        path,
+        serde_json::to_vec(&doc).expect("serialize profile fixture"),
+    )
+    .expect("write profile fixture");
 }
 
 fn persistent_tree(
@@ -357,14 +360,18 @@ async fn expired_or_wrong_issuer_session_skips_network_and_preserves_credentials
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let mut config = config_with_endpoint(&tmp, &server.uri());
-        config.resolved_endpoints.control_plane_url = Some("https://selected-backend.example.test".into());
+        config.resolved_endpoints.control_plane_url =
+            Some("https://selected-backend.example.test".into());
         store_session_with_metadata(&config, token, metadata);
         let before = persistent_tree(config.config_path.parent().unwrap());
 
         let health = read_only_health_probe(config.clone()).await;
 
         assert!(matches!(health, EngineHealth::Down(_)));
-        assert_eq!(persistent_tree(config.config_path.parent().unwrap()), before);
+        assert_eq!(
+            persistent_tree(config.config_path.parent().unwrap()),
+            before
+        );
     }
     assert!(server.received_requests().await.unwrap().is_empty());
 }
