@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { bootRuntimeReadyGuestPage, callCoreRpc, seedBrowserCoreMode } from '../helpers/core-rpc';
+import { bootAuthenticatedPage, callCoreRpc, seedBrowserCoreMode } from '../helpers/core-rpc';
 
 /**
  * Modal keyboard and focus behaviour, driven in a real browser.
@@ -56,7 +56,7 @@ async function openConnectDialog(
   opts: { keyName?: string } = {}
 ) {
   const keyName = opts.keyName ?? 'NOTION_API_KEY';
-  await bootRuntimeReadyGuestPage(page);
+  await bootAuthenticatedPage(page, `pw-focus-trap-${keyName.toLowerCase()}`);
   await declareVehicleServer(keyName);
   await seedBrowserCoreMode(page);
   await page.goto('/#/connections?tab=tools');
