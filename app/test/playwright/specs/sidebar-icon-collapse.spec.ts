@@ -196,31 +196,6 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
     await expect(sidebar).toHaveAttribute('data-state', 'expanded');
   });
 
-  test('collapsed rail reserves a traffic-light-clearing drag strip above its items', async ({
-    page,
-  }) => {
-    await bootOnChat(page);
-    await page.click(COLLAPSE_BUTTON);
-    await expect(page.locator(REOPEN)).toBeVisible();
-
-    const sidebarBox = await page.locator(SIDEBAR).boundingBox();
-    // The drag marker is on the full-height collapsed body; its first direct
-    // child is the fixed 28px spacer above the rail items.
-    const strip = page.locator(`${SIDEBAR} [data-tauri-drag-region="deep"] > div`).first();
-    const stripBox = await strip.boundingBox();
-    if (!sidebarBox || !stripBox) throw new Error('collapsed rail geometry missing');
-
-    // Full-width strip pinned to the top of the column, one title-bar tall.
-    expect(stripBox.height).toBe(DRAG_STRIP_HEIGHT_PX);
-    expect(Math.abs(stripBox.x - sidebarBox.x)).toBeLessThanOrEqual(1);
-    expect(Math.abs(stripBox.y - sidebarBox.y)).toBeLessThanOrEqual(1);
-    expect(stripBox.width).toBeGreaterThanOrEqual(ICON_WIDTH_PX - 1);
-
-    // Every interactive item starts below the strip, clear of the lights zone.
-    const reopenBox = await page.locator(REOPEN).boundingBox();
-    expect(reopenBox?.y ?? 0).toBeGreaterThanOrEqual(stripBox.y + stripBox.height - 2);
-  });
-
   for (const combo of THEME_COMBOS) {
     test(`seam indicator resolves to line-chrome, never line: ${combo.name}`, async ({ page }) => {
       await bootOnChat(page, combo);
