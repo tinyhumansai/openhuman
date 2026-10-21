@@ -278,6 +278,8 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
                 .unwrap(),
         )]),
     );
+    let debug_profile = openhuman_embed::__host::security::credentials::session_support::load_app_session_profile_read_only(&config_b);
+    assert!(debug_profile.as_ref().is_ok_and(|profile| profile.as_ref().is_some_and(|p| p.token.as_deref() == Some("selected-b-token"))), "unexpected read-only profile: {debug_profile:?}");
     let before_a = persistent_tree(config_a.config_path.parent().unwrap());
     let before_b = persistent_tree(config_b.config_path.parent().unwrap());
 
