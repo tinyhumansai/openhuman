@@ -1,7 +1,9 @@
 use super::*;
 use crate::hosted::test_support;
 use openhuman_embed::__host::memory_engines::Binding;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::security::credentials::session_support::{
+    BackendCredential, SESSION_ISSUING_BACKEND_META,
+};
 use openhuman_embed::__host::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
@@ -251,18 +253,12 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
     store_session_with_metadata(
         &config_a,
         "selected-a-token",
-        std::collections::HashMap::from([(
-            "session_issuing_backend".to_owned(),
-            server_a.uri(),
-        )]),
+        std::collections::HashMap::from([(SESSION_ISSUING_BACKEND_META.to_owned(), server_a.uri())]),
     );
     store_session_with_metadata(
         &config_b,
         "selected-b-token",
-        std::collections::HashMap::from([(
-            "session_issuing_backend".to_owned(),
-            server_b.uri(),
-        )]),
+        std::collections::HashMap::from([(SESSION_ISSUING_BACKEND_META.to_owned(), server_b.uri())]),
     );
     let before_a = persistent_tree(config_a.config_path.parent().unwrap());
     let before_b = persistent_tree(config_b.config_path.parent().unwrap());
@@ -301,10 +297,7 @@ async fn readonly_health_reports_down_without_exposing_backend_error_text() {
     store_session_with_metadata(
         &config,
         "health-down-token",
-        std::collections::HashMap::from([(
-            "session_issuing_backend".to_owned(),
-            server.uri(),
-        )]),
+        std::collections::HashMap::from([(SESSION_ISSUING_BACKEND_META.to_owned(), server.uri())]),
     );
 
     let health = read_only_health_probe(config).await;
@@ -327,7 +320,7 @@ async fn expired_or_wrong_issuer_session_skips_network_and_preserves_credentials
         (
             "wrong-issuer-session",
             std::collections::HashMap::from([(
-                "session_issuing_backend".to_owned(),
+                SESSION_ISSUING_BACKEND_META.to_owned(),
                 "https://other-backend.example.test".to_owned(),
             )]),
         ),
