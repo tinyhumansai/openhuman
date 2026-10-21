@@ -197,6 +197,7 @@ fn store_session_with_metadata(
     token: &str,
     metadata: std::collections::HashMap<String, String>,
 ) {
+    test_support::store_session(config, token);
     AuthService::from_config(config)
         .store_provider_token(
             APP_SESSION_PROVIDER,
@@ -247,8 +248,22 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
     let tmp_b = tempfile::tempdir().unwrap();
     let config_a = config_with_endpoint(&tmp_a, &server_a.uri());
     let config_b = config_with_endpoint(&tmp_b, &server_b.uri());
-    store_key(&config_a, "selected-a-token");
-    store_key(&config_b, "selected-b-token");
+    store_session_with_metadata(
+        &config_a,
+        "selected-a-token",
+        std::collections::HashMap::from([(
+            "session_issuing_backend".to_owned(),
+            server_a.uri(),
+        )]),
+    );
+    store_session_with_metadata(
+        &config_b,
+        "selected-b-token",
+        std::collections::HashMap::from([(
+            "session_issuing_backend".to_owned(),
+            server_b.uri(),
+        )]),
+    );
     let before_a = persistent_tree(config_a.config_path.parent().unwrap());
     let before_b = persistent_tree(config_b.config_path.parent().unwrap());
 
@@ -283,7 +298,14 @@ async fn readonly_health_reports_down_without_exposing_backend_error_text() {
     let server = health_server(500).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, &server.uri());
-    store_key(&config, "health-down-token");
+    store_session_with_metadata(
+        &config,
+        "health-down-token",
+        std::collections::HashMap::from([(
+            "session_issuing_backend".to_owned(),
+            server.uri(),
+        )]),
+    );
 
     let health = read_only_health_probe(config).await;
 
