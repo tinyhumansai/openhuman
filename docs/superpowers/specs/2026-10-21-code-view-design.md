@@ -225,3 +225,26 @@ chụp ảnh panel để so với mockup.
   xuất hiện cho các card đó, nhưng panel và nút làm mới vẫn hoạt động. Kiểm tra trong bước kiểm tra thật.
 - `Conversations.tsx` đã hơn 2300 dòng: chỉ thêm nút và chỗ gắn panel, mọi logic nằm trong `features/codeView/`.
 - Tô màu từng dòng diff riêng lẻ có thể tô sai chuỗi hoặc comment nhiều dòng; chấp nhận cho bản đầu.
+
+## 9. Điều chỉnh sau khảo sát code (trước khi lập plan)
+
+Khảo sát chi tiết lúc lập plan cho thấy vài giả định trong mục 3 và 5 không khớp code thật. Các điều chỉnh:
+
+1. **Không có header thread.** Tiêu đề thread chỉ hiện ở sidebar. Nút **Code** đặt ở thanh công cụ của ô soạn
+   tin (`assistantComposerFooterExtras`, cạnh nút chọn reasoning effort), cộng một lệnh command palette
+   "Open code panel" (`useRegisterAction`).
+2. **Card tool thật là `OpenHumanToolCall` → `AssistantUiToolCallCard`, và card cố ý không đọc Redux** (để render
+   được ở nơi không có store). Link **xem diff** đi qua prop `footer` có sẵn của card và chỉ phát một
+   `CustomEvent` (`openhuman:code-view-open`) trên `window`; `Conversations.tsx` lắng nghe rồi `dispatch`.
+3. **Tự làm mới không cần card dispatch:** `CodeViewSync` đếm số tool sửa file có `status === 'success'` trong
+   `state.chatRuntime.toolTimelineByThread[threadId]`; số đếm đổi thì tải lại (debounce 400ms).
+4. **Trạng thái git dùng chung:** slice giữ `root`, `files`, `loading`, `error`, `updatedAt` (thunk
+   `loadCodeStatus`, bỏ qua response cũ theo `requestId`). Nút Code và panel cùng đọc từ đó; bỏ trường
+   `changeCount` riêng.
+5. **Tô màu cú pháp:** khai báo trực tiếp `lowlight@3.3.0` và `highlight.js@11.11.1` (cả hai đã có trong lockfile),
+   đăng ký thêm `verilog`, `vhdl`, `tcl`, `dockerfile` ngoài bộ `common`. `FileView` cũng tô từng dòng, tối đa
+   5000 dòng đầu.
+6. **`core/all.rs` bị ghim 1216 dòng** trong `scripts/ci/check-openhuman-rust-layout.mjs`; thêm khối đăng ký 6 dòng
+   nên nâng mốc ghim lên 1222 trong cùng commit.
+7. **Hành động mở panel dùng chung** đặt ở `store/codeViewActions.ts` (`createAction`) để `chatRuntimeSlice` và
+   `codeViewSlice` tham chiếu lẫn nhau mà không tạo vòng import.
