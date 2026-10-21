@@ -207,7 +207,8 @@ async function completeTurn(page: Page, prompt: string, marker: string): Promise
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Chat transcript stick-to-bottom', () => {
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
     await resetMock();
     await setMockBehavior('llmStreamChunkDelayMs', '5');
   });
@@ -225,10 +226,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const overflowing = await scrollState(page);
-    test.skip(
-      overflowing.scrollHeight <= overflowing.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(overflowing.scrollHeight).toBeGreaterThan(overflowing.clientHeight + 200);
 
     // Park the reader well above the bottom, past the 80px stick threshold.
     const parkedTop = Math.max(0, overflowing.scrollHeight - overflowing.clientHeight - 600);
@@ -291,10 +289,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     await completeTurn(page, FIRST_PROMPT, 'FIRST-REPLY-END');
 
     const first = await scrollState(page);
-    test.skip(
-      first.scrollHeight <= first.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(first.scrollHeight).toBeGreaterThan(first.clientHeight + 200);
 
     await scrollTo(page, first.scrollHeight);
     expect((await scrollState(page)).distanceFromBottom).toBeLessThanOrEqual(80);
@@ -384,10 +379,7 @@ test.describe('Chat transcript stick-to-bottom', () => {
     expect(threadA, 'thread A must have an id').not.toBeNull();
 
     const overflowing = await scrollState(page);
-    test.skip(
-      overflowing.scrollHeight <= overflowing.clientHeight + 200,
-      'transcript did not overflow enough to scroll — viewport too tall for this fixture'
-    );
+    expect(overflowing.scrollHeight).toBeGreaterThan(overflowing.clientHeight + 200);
 
     // Thread B. Leaving A is what puts A's messages in the cache.
     await startNewThread(page);
