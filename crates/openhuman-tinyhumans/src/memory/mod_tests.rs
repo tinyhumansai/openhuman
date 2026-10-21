@@ -240,7 +240,7 @@ fn persistent_tree(
 
 #[tokio::test]
 async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
-    let _registry = crate::registry_test_lock();
+    let _registry = crate::registry_test_lock_async().await;
     let server_a = health_server(500).await;
     let server_b = health_server(200).await;
     let tmp_a = tempfile::tempdir().unwrap();
@@ -279,6 +279,7 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
 
 #[tokio::test]
 async fn readonly_health_reports_down_without_exposing_backend_error_text() {
+    let _registry = crate::registry_test_lock_async().await;
     let server = health_server(500).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, &server.uri());
