@@ -253,12 +253,18 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
     store_session_with_metadata(
         &config_a,
         "selected-a-token",
-        std::collections::HashMap::from([(SESSION_ISSUING_BACKEND_META.to_owned(), server_a.uri())]),
+        std::collections::HashMap::from([(
+            SESSION_ISSUING_BACKEND_META.to_owned(),
+            config_a.resolved_endpoints.control_plane_url.clone().unwrap(),
+        )]),
     );
     store_session_with_metadata(
         &config_b,
         "selected-b-token",
-        std::collections::HashMap::from([(SESSION_ISSUING_BACKEND_META.to_owned(), server_b.uri())]),
+        std::collections::HashMap::from([(
+            SESSION_ISSUING_BACKEND_META.to_owned(),
+            config_b.resolved_endpoints.control_plane_url.clone().unwrap(),
+        )]),
     );
     let before_a = persistent_tree(config_a.config_path.parent().unwrap());
     let before_b = persistent_tree(config_b.config_path.parent().unwrap());
@@ -297,7 +303,10 @@ async fn readonly_health_reports_down_without_exposing_backend_error_text() {
     store_session_with_metadata(
         &config,
         "health-down-token",
-        std::collections::HashMap::from([(SESSION_ISSUING_BACKEND_META.to_owned(), server.uri())]),
+        std::collections::HashMap::from([(
+            SESSION_ISSUING_BACKEND_META.to_owned(),
+            config.resolved_endpoints.control_plane_url.clone().unwrap(),
+        )]),
     );
 
     let health = read_only_health_probe(config).await;
