@@ -234,16 +234,18 @@ test("the session accepts a marked bundle and proceeds past the guard", () => {
   // session starts the mock backend and reaches its next precondition — the
   // standalone core binary, deliberately absent here.
   const tree = makeTree("e2e-web-session.sh");
+  const portBase = 20_000 + (process.pid % 40_000);
   try {
     const distWeb = path.join(tree.root, "app", "dist-web");
     fs.mkdirSync(distWeb, { recursive: true });
     fs.writeFileSync(path.join(distWeb, MARKER), "VITE_OPENHUMAN_TARGET=web\n");
     fs.writeFileSync(
       path.join(distWeb, ".e2e-build-ports.json"),
-      '{"e2e_mock_port":"18473","openhuman_core_port":"17788"}\n',
+      `${JSON.stringify({ e2e_mock_port: String(portBase), openhuman_core_port: String(portBase + 1) })}\n`,
     );
 
     const res = run(tree, "e2e-web-session.sh", {
+      E2E_PORT_BASE: String(portBase),
       OPENHUMAN_WORKSPACE: "",
       OPENHUMAN_KEYRING_MASTER_KEY: "",
       OPENHUMAN_KEYRING_MASTER_KEY_FILE: "/host/master.key",
