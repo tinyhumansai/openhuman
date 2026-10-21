@@ -259,7 +259,11 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
         "selected-a-token",
         std::collections::HashMap::from([(
             SESSION_ISSUING_BACKEND_META.to_owned(),
-            config_a.resolved_endpoints.control_plane_url.clone().unwrap(),
+            config_a
+                .resolved_endpoints
+                .control_plane_url
+                .clone()
+                .unwrap(),
         )]),
     );
     store_session_with_metadata(
@@ -267,7 +271,11 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
         "selected-b-token",
         std::collections::HashMap::from([(
             SESSION_ISSUING_BACKEND_META.to_owned(),
-            config_b.resolved_endpoints.control_plane_url.clone().unwrap(),
+            config_b
+                .resolved_endpoints
+                .control_plane_url
+                .clone()
+                .unwrap(),
         )]),
     );
     let before_a = persistent_tree(config_a.config_path.parent().unwrap());
