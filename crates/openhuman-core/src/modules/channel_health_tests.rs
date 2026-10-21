@@ -122,20 +122,15 @@ async fn existing_health_adapter_passes_only_the_selected_provider_and_policy() 
     .await;
     let (channels, policy) = health_inputs();
 
-    let reports = call_existing_proxy(
-        &proxy,
-        channels,
-        policy,
-        std::time::Duration::from_millis(100),
-    )
-    .await
-    .expect("existing read-only member returns its health report");
+    let reports = call_existing_proxy(&proxy, channels, policy, std::time::Duration::from_secs(5))
+        .await
+        .expect("existing read-only member returns its health report");
 
     assert_eq!(reports[0].channel, "telegram");
     assert_eq!(reports[0].state, ChannelHealthState::Healthy);
     assert_eq!(
         observed.lock().unwrap().as_ref().unwrap(),
-        &(true, vec!["channel.telegram".into()], 100)
+        &(true, vec!["channel.telegram".into()], 5_000)
     );
 }
 

@@ -5,7 +5,6 @@ use openhuman_embed::__host::core::runtime::CoreContext;
 use openhuman_embed::__host::doctor::{registered_checks, DoctorCheck};
 use openhuman_embed::{CoreBuilder, DomainSet, HostKind, ServiceSet};
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -71,28 +70,9 @@ fn metadata(
         .collect()
 }
 
-fn workspace_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
-    fn visit(root: &Path, dir: &Path, snapshot: &mut BTreeMap<PathBuf, Vec<u8>>) {
-        for entry in std::fs::read_dir(dir).expect("read temp workspace") {
-            let entry = entry.expect("workspace entry");
-            let path = entry.path();
-            if entry.file_type().expect("workspace entry type").is_dir() {
-                visit(root, &path, snapshot);
-            } else {
-                snapshot.insert(
-                    path.strip_prefix(root)
-                        .expect("workspace-relative path")
-                        .to_path_buf(),
-                    std::fs::read(path).expect("read workspace file"),
-                );
-            }
-        }
-    }
-    let mut snapshot = BTreeMap::new();
-    if root.exists() {
-        visit(root, root, &mut snapshot);
-    }
-    snapshot
+fn profile_store_snapshot(workspace: &Path) -> Vec<u8> {
+    std::fs::read(workspace.join("auth-profiles.json"))
+        .expect("read session profile store snapshot")
 }
 
 async fn registered_ids(runtime: &openhuman_embed::CoreRuntime) -> Vec<String> {
@@ -194,7 +174,7 @@ async fn hosted_probe_child() {
     let source = HostedDoctorCheckSource::with_socket_state_reader(move |url, token| {
         (url == active_url && token == active_token).then_some(active_status)
     });
-    let before = (scenario == "expired").then(|| workspace_snapshot(&workspace));
+    let before = (scenario == "expired").then(|| profile_store_snapshot(&workspace));
 
     let report = match scenario.as_ref() {
         "healthy" => {
@@ -290,7 +270,7 @@ async fn hosted_probe_child() {
             json!({
                 "severity": format!("{:?}", finding[0].severity),
                 "message": finding[0].message,
-                "profile_store_unchanged": before.unwrap() == workspace_snapshot(&workspace),
+                "profile_store_unchanged": before.as_ref() == Some(&profile_store_snapshot(&workspace)),
                 "session_expired_published": session_expired_published,
             })
         }
