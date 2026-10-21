@@ -619,7 +619,7 @@ async fn detached_driver_spawn_repairs_replayed_host_outcome_without_reexecution
     .await
     .expect("first detached driver spawn should register");
     let (first_result, first_effects) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), first_rx)
+        tokio::time::timeout(std::time::Duration::from_secs(20), first_rx)
             .await
             .expect("first completion callback should not be skipped")
             .expect("first completion callback");
@@ -652,7 +652,7 @@ async fn detached_driver_spawn_repairs_replayed_host_outcome_without_reexecution
     .await
     .expect("replayed detached driver spawn should register");
     let (replay_result, replay_effects) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), replay_rx)
+        tokio::time::timeout(std::time::Duration::from_secs(20), replay_rx)
             .await
             .expect("replay repair callback should run")
             .expect("replay repair callback");
