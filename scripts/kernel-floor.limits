@@ -756,10 +756,10 @@
 #                      host cannot shed it; `uuid`, `schemars`, `url` were
 #                      already in the graph. +4 packages / +4 names, native
 #                      unchanged. Measured: scripts/kernel-floor.sh flows.
-# 318/298/3 2026-10-21 The flows profile improved (EX63 run 39476165978,
-#                      Linux): 318 packages / 298 names against 338/315, after
-#                      merging upstream main (flows bus, #8159). The gate only
-#                      requires the limit to follow an improvement; no
-#                      dependency was added. Native unchanged.
+# 320/300/3 2026-10-21 The flows profile includes the required
+#                      tinyagents-harness-tools crate (generic harness-owned
+#                      todo/goal/subagent tools) and the `disk` sysinfo feature
+#                      used by storage diagnostics. These add two resolved
+#                      packages and crate names; native builds are unchanged.
 #                      Measured: scripts/kernel-floor.sh flows.
-flows:318:298:3
+flows:320:300:3
