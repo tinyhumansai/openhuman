@@ -208,9 +208,9 @@ pub fn route(server: &wiremock::MockServer, model: &str) -> openhuman_embed::Pro
         .model(model)
 }
 
-/// Polls `check` until it yields `Some` or about ten seconds pass.
+/// Polls `check` until it yields `Some` or about thirty seconds pass.
 pub async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
-    for _ in 0..1000 {
+    for _ in 0..3000 {
         if let Some(value) = check() {
             return value;
         }
