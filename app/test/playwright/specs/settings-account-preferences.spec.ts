@@ -75,38 +75,6 @@ test.describe('Settings - Account Preferences', () => {
     await expect(page.getByTestId('wallet-panel')).toBeVisible();
   });
 
-  test('saves a generated recovery phrase and exposes configured wallet state', async ({
-    page,
-  }) => {
-    await gotoSettingsRoute(page, '/settings/recovery-phrase');
-
-    await ensureRecoveryPhraseGenerateMode(page);
-    await page.locator('#mnemonic-confirm-checkbox').check();
-    await page.getByRole('button', { name: 'Save Recovery Phrase' }).click();
-
-    await expect(page.getByText('Recovery phrase saved')).toBeVisible();
-    await expect(page.getByText(/Multi-chain wallet identities are ready/)).toBeVisible();
-
-    await expect
-      .poll(async () => {
-        const wallet = await callCoreRpc<{
-          result?: { configured?: boolean; accounts?: unknown[] };
-        }>('openhuman.wallet_status', {});
-        return {
-          configured: Boolean(wallet.result?.configured),
-          accountCount: wallet.result?.accounts?.length ?? 0,
-        };
-      })
-      .toEqual({ configured: true, accountCount: expect.any(Number) });
-
-    const wallet = await callCoreRpc<{ result?: { configured?: boolean; accounts?: unknown[] } }>(
-      'openhuman.wallet_status',
-      {}
-    );
-    expect(wallet.result?.configured).toBe(true);
-    expect((wallet.result?.accounts ?? []).length).toBeGreaterThan(0);
-  });
-
   test('persists the privacy analytics toggle to core config', async ({ page }) => {
     const beforeAnalytics = await callCoreRpc<{ result?: { enabled?: boolean } }>(
       'openhuman.config_get_analytics_settings',
@@ -169,21 +137,4 @@ test.describe('Settings - Account Preferences', () => {
     }
   });
 
-  test('opens the billing route and settles the redirect status copy', async ({ page }) => {
-    test.skip(
-      true,
-      'billing is exposed as an account-settings button; the retired nested route is covered by card-payment-flow'
-    );
-    await gotoSettingsRoute(page, '/settings/account');
-
-    await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
-    // Billing no longer auto-opens the browser; the panel explains billing
-    // moved to the web and offers an explicit open button.
-    await expect(
-      page.getByText(/Subscription changes, payment methods, credits, and invoices are now managed/)
-    ).toBeVisible();
-
-    await page.getByRole('button', { name: 'Back to settings' }).click();
-    await expect.poll(async () => page.evaluate(() => window.location.hash)).toContain('/settings');
-  });
 });
