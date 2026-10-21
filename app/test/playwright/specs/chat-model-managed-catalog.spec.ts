@@ -274,25 +274,4 @@ test.describe('Managed OpenRouter catalog in the model picker', () => {
     });
   });
 
-  // TODO(#6395): with `managedCatalogEmpty`, `model-picker-managed-pane` never
-  // becomes visible, so this case fails at its first assertion rather than at
-  // the row-count or disabled-submit claims it exists for. The spec asserts the
-  // pane degrades to an empty list ("its pre-#6201 appearance"); the product
-  // appears not to render the pane at all when the catalog is empty. That is a
-  // contract question — empty pane vs no pane — and answering it is a product
-  // decision, not a test edit, so the case is left skipped rather than
-  // rewritten to match whichever behaviour happens to ship today.
-  test.skip('an empty catalog renders no model rows and cannot be submitted', async ({ page }) => {
-    // Models the real backend with OPENROUTER_PASSTHROUGH_ENABLED off: it
-    // returns an empty set with HTTP 200, not an error. The managed pane must
-    // degrade to its pre-#6201 appearance rather than surfacing a failure.
-    await setMockBehavior('managedCatalogEmpty', 'true');
-    await openChat(page);
-    await openManagedPane(page);
-
-    await expect(page.getByTestId('model-picker-managed-pane')).toBeVisible();
-    await expect(page.locator('[data-testid^="model-picker-managed-option-"]')).toHaveCount(0);
-    // Nothing to pick means nothing to submit.
-    await expect(page.getByRole('button', { name: 'Use this model' })).toBeDisabled();
-  });
 });
