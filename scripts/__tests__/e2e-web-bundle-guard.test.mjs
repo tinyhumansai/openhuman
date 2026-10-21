@@ -341,8 +341,8 @@ test("e2e-web-build.sh marks the bundle it builds, recording the E2E settings", 
     const recorded = fs.readFileSync(marker, "utf8");
     assert.match(recorded, /^VITE_OPENHUMAN_TARGET=web$/m);
     assert.match(recorded, /^VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE=cloud$/m);
-    assert.match(recorded, /^VITE_BACKEND_URL=http:\/\/127\.0\.0\.1:18473$/m);
-    assert.match(recorded, /^VITE_OPENHUMAN_CORE_RPC_URL=http:\/\/127\.0\.0\.1:17788\/rpc$/m);
+    assert.ok(recorded.includes(`VITE_BACKEND_URL=http://127.0.0.1:${TEST_PORT_BASE}\n`));
+    assert.ok(recorded.includes(`VITE_OPENHUMAN_CORE_RPC_URL=http://127.0.0.1:${TEST_PORT_BASE + 1}/rpc\n`));
   } finally {
     tree.cleanup();
   }
