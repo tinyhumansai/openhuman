@@ -75,7 +75,7 @@ test.describe('Settings - Account Preferences', () => {
     await expect(page.getByTestId('wallet-panel')).toBeVisible();
   });
 
-  test.skip('saves a generated recovery phrase and exposes configured wallet state', async ({
+  test('saves a generated recovery phrase and exposes configured wallet state', async ({
     page,
   }) => {
     await gotoSettingsRoute(page, '/settings/recovery-phrase');

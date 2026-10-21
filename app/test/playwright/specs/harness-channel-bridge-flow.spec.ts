@@ -150,5 +150,4 @@ test.describe('Harness - Cross-channel bridge flow', () => {
     ).toBeVisible();
   });
 
-  test.skip('telegram inbound/outbound bridge scenarios require a live listener restart in this lane', async () => {});
 });

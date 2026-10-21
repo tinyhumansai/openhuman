@@ -1,5 +1,4 @@
 import { test } from '@playwright/test';
 
-test.describe('Service connectivity flow (UI ↔ Rust service)', () => {
-  test.skip('service gate flow is native/service-mock dependent and not available in the browser lane', async () => {});
-});
+// Service availability prompts depend on the native Tauri service mock and are
+// covered by the desktop runner, not the browser-hosted Playwright lane.

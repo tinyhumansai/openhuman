@@ -192,5 +192,4 @@ test.describe('System tools - Shell + Git', () => {
     expect(lines.some(line => line.includes('follow-up commit asserted'))).toBe(true);
   });
 
-  test.skip('future deterministic mock LLM drives shell tool end-to-end', async () => {});
 });

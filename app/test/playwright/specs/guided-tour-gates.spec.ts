@@ -80,7 +80,7 @@ test.describe('Guided tour gates', () => {
       .toEqual({ completed: 'true', pending: null });
   });
 
-  test.skip('pending walkthrough resumes after reload', async ({ page }) => {
+  test('pending walkthrough resumes after reload', async ({ page }) => {
     await page.evaluate(() => {
       localStorage.removeItem('openhuman:walkthrough_completed');
       localStorage.setItem('openhuman:walkthrough_pending', 'true');

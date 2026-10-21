@@ -15,5 +15,4 @@ test.describe('Core port conflict recovery', () => {
     ).toBeVisible();
   });
 
-  test.skip('second instance surfaces clear conflict dialog once a visible banner exists', async () => {});
 });
