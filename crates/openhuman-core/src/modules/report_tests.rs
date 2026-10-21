@@ -51,7 +51,7 @@ fn terminal_reports_are_sanitized_and_deduplicated() {
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn a_pre_core_report_without_a_sentry_client_can_be_captured_later() {
-    let record = crate::modules::registry::find("tinyhosts").unwrap();
+    let record = crate::modules::registry::find("tinysearch").unwrap();
     let hub = std::sync::Arc::new(sentry::Hub::new_from_top(sentry::Hub::current()));
     hub.bind_client(None);
     sentry::Hub::run(hub, || {
@@ -64,7 +64,7 @@ fn a_pre_core_report_without_a_sentry_client_can_be_captured_later() {
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(
         events[0].tags.get("module").map(String::as_str),
-        Some("tinyhosts")
+        Some("tinysearch")
     );
 }
 

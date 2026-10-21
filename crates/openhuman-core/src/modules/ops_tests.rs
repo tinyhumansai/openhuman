@@ -349,7 +349,8 @@ fn terminal_resolution_cached_failure_is_reported_when_a_client_becomes_availabl
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn terminal_resolution_wait_timeout_is_not_reported_as_terminal() {
-    const MODULE: &str = "tinyvoice";
+    // Use an unconditional registry entry: voice is absent in default builds.
+    const MODULE: &str = "tinysearch";
     let table = tinybus::module::resolution::global();
     table.forget(MODULE);
     let _sender = table.mark_in_flight(MODULE);
