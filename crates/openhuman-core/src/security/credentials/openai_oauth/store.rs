@@ -210,10 +210,13 @@ fn try_refresh_oauth_token(refresh: &str) -> Result<OAuthTokenSet, String> {
         // `block_in_place` lets the multi-thread runtime move other tasks off this
         // worker before we synchronously drive the refresh future, avoiding a
         // deadlock when this lookup is reached from inside an async caller.
-        return tokio::task::block_in_place(|| {
-            handle.block_on(refresh_access_token(&cfg, &refresh))
-        })
-        .map_err(|e| e.to_string());
+        let refreshed =
+            tokio::task::block_in_place(|| handle.block_on(refresh_access_token(&cfg, &refresh)))
+                .map_err(|e| e.to_string())?;
+        if refreshed.access_token.trim().is_empty() {
+            return Err("OAuth refresh response contained an empty access token".to_owned());
+        }
+        return Ok(refreshed);
     }
     Err("tokio runtime required to refresh openai oauth token".to_string())
 }
