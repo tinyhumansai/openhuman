@@ -1,6 +1,26 @@
 use super::*;
 use crate::core::runtime::DispatchCtx;
 
+async fn isolated_dispatch() -> (tempfile::TempDir, crate::core::runtime::CoreRuntime) {
+    use crate::core::runtime::{CoreBuilder, DomainSet, HostKind, ServiceSet};
+
+    let workspace = tempfile::tempdir().expect("isolated workspace");
+    let config = crate::config::Config {
+        workspace_dir: workspace.path().join("workspace"),
+        action_dir: workspace.path().join("workspace"),
+        config_path: workspace.path().join("config.toml"),
+        ..crate::config::Config::default()
+    };
+    let runtime = CoreBuilder::new(HostKind::Library)
+        .services(ServiceSet::none())
+        .domains(DomainSet::none())
+        .config(config)
+        .build()
+        .await
+        .expect("isolated runtime");
+    (workspace, runtime)
+}
+
 #[test]
 fn registered_controllers_match_schemas() {
     let schemas = all_controller_schemas();
@@ -29,9 +49,10 @@ fn require_str_rejects_blank_and_missing() {
 #[tokio::test]
 async fn cancel_unknown_task_is_a_noop_false() {
     let _lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let (_workspace, runtime) = isolated_dispatch().await;
     let mut params = Map::new();
     params.insert("taskId".into(), json!("sub-does-not-exist"));
-    let out = handle_subagent_cancel(DispatchCtx::process_default(), params)
+    let out = handle_subagent_cancel(DispatchCtx::new(runtime.context().clone()), params)
         .await
         .expect("handler ok");
     // Outcome wraps the payload under `data`.
