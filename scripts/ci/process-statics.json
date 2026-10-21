@@ -207,7 +207,7 @@
     "count": 1,
     "category": "A",
     "reason": "A dedicated one-worker runtime for synchronous prompt rendering; it owns no tenant data, and each render future receives its explicit DispatchCtx.",
-    "verification": "integrations/connected_identities_tests.rs: rendering_connected_identities_uses_explicit_dispatch_context"
+    "verification": "integrations/connected_identities_tests.rs: prompt_identity_reads_do_not_exhaust_the_callers_blocking_pool"
   },
   {
     "file": "crates/openhuman-core/src/integrations/composio/client/factory.rs",
