@@ -24,7 +24,7 @@ pub fn render_connected_identities(ctx: &crate::core::runtime::DispatchCtx) -> S
     if handle.runtime_flavor() != tokio::runtime::RuntimeFlavor::MultiThread {
         return String::new();
     }
-    tokio::task::block_in_place(|| handle.block_on(render_section(ctx)))
+    render_blocking(render_section(ctx), &handle)
 }
 
 async fn render_section(ctx: &crate::core::runtime::DispatchCtx) -> String {
@@ -60,3 +60,14 @@ async fn render_section(ctx: &crate::core::runtime::DispatchCtx) -> String {
         String::new()
     })
 }
+
+fn render_blocking(
+    render: impl std::future::Future<Output = String>,
+    handle: &tokio::runtime::Handle,
+) -> String {
+    tokio::task::block_in_place(|| handle.block_on(render))
+}
+
+#[cfg(test)]
+#[path = "connected_identities_tests.rs"]
+mod tests;
