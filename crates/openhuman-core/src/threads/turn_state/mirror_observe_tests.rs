@@ -741,4 +741,3 @@ fn subagent_completed_persists_capped_output_on_the_activity() {
 
 #[test]
 include!("mirror_observe_compaction_tests.rs");
-

@@ -72,7 +72,8 @@ fn http_server(url: &str) -> Value {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "TinyBox Linux jail lacks isolated networking for stdio MCP")]
+// TinyBox Linux jail does not provide isolated networking for stdio MCP.
+#[cfg_attr(target_os = "linux", ignore)]
 async fn module_tool_call_reports_unknown_tool_as_error() {
     let (_tmp, config) = fresh_workspace_config();
     let server_id = install_server(&config, "@openhuman-test/echo", stdio_server()).await;
@@ -99,7 +100,8 @@ async fn module_tool_call_reports_unknown_tool_as_error() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "TinyBox Linux jail lacks isolated networking for stdio MCP")]
+// TinyBox Linux jail does not provide isolated networking for stdio MCP.
+#[cfg_attr(target_os = "linux", ignore)]
 async fn disabling_server_drops_its_live_module_connection() {
     let (_tmp, config) = fresh_workspace_config();
     let server_id = install_server(&config, "@openhuman-test/echo", stdio_server()).await;
@@ -146,7 +148,8 @@ async fn disabled_server_accepts_environment_update_without_reconnecting() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "linux", ignore = "TinyBox Linux jail lacks isolated networking for stdio MCP")]
+// TinyBox Linux jail does not provide isolated networking for stdio MCP.
+#[cfg_attr(target_os = "linux", ignore)]
 async fn per_config_lookups_are_isolated_by_workspace() {
     use openhuman_core::mcp::registry::{connections, ops};
 
