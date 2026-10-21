@@ -469,6 +469,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
         {
           name: "embed-offline-examples",
           when: core,
+          env: { RUST_MIN_STACK: "67108864" },
           // Dev profile: the release-declared linux_fleet measurement then
           // shares the plain dev build instead of a thin-LTO one nothing else
           // can reuse (and that would need cleaning afterwards).
