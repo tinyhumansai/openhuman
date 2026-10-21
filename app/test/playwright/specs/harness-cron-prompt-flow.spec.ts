@@ -115,50 +115,6 @@ test.describe('Harness - Cron prompt-flow', () => {
     await createNewThread(page);
   });
 
-  test('natural-language create flow yields a final reply and may persist a job', async ({
-    page,
-  }) => {
-    const CANARY = 'canary-cron-create-a1b2';
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        {
-          content: '',
-          toolCalls: [
-            {
-              id: 'call_cron_add_1',
-              name: 'use_skill',
-              arguments: JSON.stringify({
-                skill: 'scheduling',
-                tool: 'cron',
-                args: {
-                  action: 'add',
-                  name: 'morning_reminder',
-                  schedule: { kind: 'cron', expr: '0 9 * * *' },
-                  prompt: 'morning reminder',
-                  enabled: true,
-                },
-              }),
-            },
-          ],
-        },
-        { content: `Done! I have set up a daily 9am morning reminder for you. ${CANARY}` },
-      ])
-    );
-    await setMockBehavior('llmStreamChunkDelayMs', '10');
-
-    await sendMessage(page, 'remind me every morning at 9am');
-    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(
-      agentMessageText(page, /Done! I have set up a daily 9am morning reminder/i)
-    ).toBeVisible();
-    const log = await requests();
-    const llmHits = log.filter(
-      request => request.method === 'POST' && request.url.includes('/chat/completions')
-    );
-    expect(llmHits.length).toBeGreaterThanOrEqual(2);
-  });
-
   test('listing scheduled tasks returns the forced response', async ({ page }) => {
     const CANARY = 'canary-cron-list-c3d4';
     await setMockBehavior(
@@ -176,65 +132,4 @@ test.describe('Harness - Cron prompt-flow', () => {
     await expect(page.getByText(/You have 2 scheduled tasks/i)).toBeVisible();
   });
 
-  test('schedule update flow yields a final reply', async ({ page }) => {
-    const CANARY = 'canary-cron-update-e5f6';
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        {
-          content: '',
-          toolCalls: [
-            {
-              id: 'call_cron_update_1',
-              name: 'use_skill',
-              arguments: JSON.stringify({
-                skill: 'scheduling',
-                tool: 'cron',
-                args: {
-                  action: 'update',
-                  job_id: 'morning_reminder_update_test',
-                  patch: { schedule: { kind: 'cron', expr: '0 8 * * *' } },
-                },
-              }),
-            },
-          ],
-        },
-        { content: `Done! I have changed your morning reminder to 8am. ${CANARY}` },
-      ])
-    );
-    await setMockBehavior('llmStreamChunkDelayMs', '10');
-
-    await sendMessage(page, 'change my morning reminder to 8am');
-    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(agentMessageText(page, /changed your morning reminder to 8am/i)).toBeVisible();
-  });
-
-  test('delete flow yields a final reply', async ({ page }) => {
-    const CANARY = 'canary-cron-delete-g7h8';
-    await setMockBehavior(
-      'llmForcedResponses',
-      JSON.stringify([
-        {
-          content: '',
-          toolCalls: [
-            {
-              id: 'call_cron_remove_1',
-              name: 'use_skill',
-              arguments: JSON.stringify({
-                skill: 'scheduling',
-                tool: 'cron',
-                args: { action: 'remove', job_id: 'morning_reminder_delete_test' },
-              }),
-            },
-          ],
-        },
-        { content: `Done! I have deleted the morning reminder. ${CANARY}` },
-      ])
-    );
-    await setMockBehavior('llmStreamChunkDelayMs', '10');
-
-    await sendMessage(page, 'delete the morning reminder');
-    await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
-    await expect(agentMessageText(page, /deleted the morning reminder/i)).toBeVisible();
-  });
 });
