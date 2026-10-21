@@ -320,7 +320,7 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
 }
 
 #[tokio::test]
-async fn readonly_health_reports_down_without_exposing_backend_error_text() {
+async fn readonly_health_reports_degraded_without_exposing_backend_error_text() {
     let _registry = crate::registry_test_lock_async().await;
     let server = health_server(500).await;
     let tmp = tempfile::tempdir().unwrap();
@@ -338,7 +338,8 @@ async fn readonly_health_reports_down_without_exposing_backend_error_text() {
 
     let health = read_only_health_probe(config).await;
 
-    assert!(matches!(health, EngineHealth::Down(_)), "{health:?}");
+    assert!(matches!(health, EngineHealth::Degraded(_)), "{health:?}");
+    assert!(!format!("{health:?}").contains("fixture secret"));
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
