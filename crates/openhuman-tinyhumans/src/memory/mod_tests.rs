@@ -199,6 +199,15 @@ fn store_session_with_metadata(
     token: &str,
     metadata: std::collections::HashMap<String, String>,
 ) {
+    let key_path = config.workspace_dir.join("keyring/master.key");
+    std::fs::create_dir_all(key_path.parent().unwrap()).expect("create fixture key directory");
+    std::fs::write(&key_path, "11".repeat(32)).expect("write fixture master key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+            .expect("protect fixture master key");
+    }
     test_support::store_session(config, token);
     AuthService::from_config(config)
         .store_provider_token(
@@ -278,8 +287,6 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
                 .unwrap(),
         )]),
     );
-    let debug_profile = openhuman_embed::__host::security::credentials::session_support::load_app_session_profile_read_only(&config_b);
-    assert!(debug_profile.as_ref().is_ok_and(|profile| profile.as_ref().is_some_and(|p| p.token.as_deref() == Some("selected-b-token"))), "unexpected read-only profile: {debug_profile:?}");
     let before_a = persistent_tree(config_a.config_path.parent().unwrap());
     let before_b = persistent_tree(config_b.config_path.parent().unwrap());
 
