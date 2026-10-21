@@ -286,18 +286,12 @@ test.describe('Settings - Feature Preferences', () => {
     await openAuthenticatedRoute(page, 'pw-settings-mascot-voice', '/settings/voice');
 
     await expect(page.getByText('Mascot Voice')).toBeVisible();
-    test.skip(
-      (await page
-        .locator('[data-testid="mascot-voice-select"] option[value="__custom__"]')
-        .count()) === 0,
-      'custom mascot voice option is unavailable in this build'
-    );
+    await expect(
+      page.locator('[data-testid="mascot-voice-select"] option[value="__custom__"]')
+    ).toHaveCount(1);
 
     await page.getByTestId('mascot-voice-select').selectOption('__custom__');
-    test.skip(
-      (await page.getByTestId('mascot-voice-input').count()) === 0,
-      'custom mascot voice input did not appear after selecting __custom__'
-    );
+    await expect(page.getByTestId('mascot-voice-input')).toBeVisible();
 
     await page.getByTestId('mascot-voice-input').fill('voice-e2e-custom');
     await page.getByTestId('mascot-voice-save-paste').click();

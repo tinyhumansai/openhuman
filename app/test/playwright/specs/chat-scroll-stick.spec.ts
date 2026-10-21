@@ -321,8 +321,8 @@ test.describe('Chat transcript stick-to-bottom', () => {
     // keeps the newest content on screen thereafter. For a reply TALLER than
     // the viewport the two are mutually exclusive — the question is pushed off
     // the top by the answer it is waiting for. This fixture deliberately uses
-    // an overflowing reply (`test.skip` above requires the transcript to
-    // overflow), so the prompt is expected to leave the viewport here.
+    // an overflowing reply (asserted above), so the prompt is expected to
+    // leave the viewport here.
     //
     // Keeping the old assertion would have pinned the defect in place: it is
     // satisfied by the pin alone, so it stayed green for a reader who could not
