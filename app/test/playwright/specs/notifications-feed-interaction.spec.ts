@@ -173,7 +173,7 @@ test.describe('Notifications — read state', () => {
       item('n-system-1', 'system', 'Core restarted'),
     ]);
 
-    const markAll = page.getByRole('button', { name: /mark all read/i });
+    const markAll = page.getByRole('button', { name: /mark all as read/i });
     await expect(markAll).toBeEnabled({ timeout: 20_000 });
 
     await markAll.click();
@@ -186,7 +186,7 @@ test.describe('Notifications — read state', () => {
     await openFeedWith(page, [item('n-agents-1', 'agents', 'Agent finished a task', true)]);
 
     await expect(rows(page)).toHaveCount(1, { timeout: 20_000 });
-    await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled();
   });
 
   test('read state survives a reload', async ({ page }) => {
@@ -194,8 +194,8 @@ test.describe('Notifications — read state', () => {
     // not, the feed re-accuses the user of everything they just dismissed.
     await openFeedWith(page, [item('n-agents-1', 'agents', 'Agent finished a task')]);
 
-    await page.getByRole('button', { name: /mark all read/i }).click();
-    await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled({
+    await page.getByRole('button', { name: /mark all as read/i }).click();
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
       timeout: 10_000,
     });
 
