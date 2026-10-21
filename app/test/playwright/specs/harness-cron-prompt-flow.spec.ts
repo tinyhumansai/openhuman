@@ -109,10 +109,6 @@ async function sendMessage(page: Page, prompt: string): Promise<void> {
 }
 
 test.describe('Harness - Cron prompt-flow', () => {
-  test.skip(
-    true,
-    'cron prompt flows (orchestrator -> use_skill scheduling/cron) are not deterministic here'
-  );
   test.beforeEach(async ({ page }) => {
     await resetMock();
     await openChat(page);
