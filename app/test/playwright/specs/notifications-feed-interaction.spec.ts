@@ -232,7 +232,7 @@ test.describe('Notifications — read state', () => {
     await page.goto('/#/notifications?view=main');
     await waitForAppReady(page);
 
-    await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled({
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
       timeout: 20_000,
     });
   });

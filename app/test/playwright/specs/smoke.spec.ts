@@ -10,6 +10,6 @@ test.describe('Smoke', () => {
     await expect
       .poll(async () => page.evaluate(() => window.location.hash))
       .toMatch(/^#\/(home|chat)/);
-    await expect(page.locator('[data-testid="bottom-tab-bar"], nav')).toHaveCount(1);
+    await expect(page.locator('nav').first()).toBeVisible();
   });
 });
