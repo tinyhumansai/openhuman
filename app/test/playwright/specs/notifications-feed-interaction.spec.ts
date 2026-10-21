@@ -167,9 +167,7 @@ test.describe('Notifications — read state', () => {
       .locator('[role="button"]')
       .click();
 
-    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
-      timeout: 10_000,
-    });
+    await expect(page.getByText(/1 unread/i)).toBeVisible({ timeout: 10_000 });
   });
 
   test('Mark all read clears the count and disables itself', async ({ page }) => {
