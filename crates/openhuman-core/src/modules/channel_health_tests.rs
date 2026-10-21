@@ -24,7 +24,11 @@ fn health_inputs() -> (ChannelsConfig, HttpProxyPolicy) {
 #[test]
 fn existing_health_adapter_passes_only_the_selected_provider_and_policy() {
     let (channels, policy) = health_inputs();
-    let (_, _, timeout) = health_check_args(channels.clone(), policy.clone(), std::time::Duration::from_secs(5));
+    let (_, _, timeout) = health_check_args(
+        channels.clone(),
+        policy.clone(),
+        std::time::Duration::from_secs(5),
+    );
     assert!(channels.telegram.is_some());
     assert_eq!(policy.service_selectors, ["channel.telegram"]);
     assert_eq!(timeout, 5_000);
