@@ -140,22 +140,81 @@ function WaitingLine({ kind }: { kind: WaitingOnUser }) {
   );
 }
 
+/**
+ * Maximum reasonable thinking duration for a single turn (15 minutes).
+ * Any timestamp older than this is considered stale from an abandoned/crashed turn.
+ */
+const MAX_TURN_THINKING_MS = 15 * 60 * 1000;
+
+/** Thread ID -> { requestId: string, startedAt: number }. Scoped strictly to the active turn. */
+const threadTurnStarts = new Map<string, { requestId: string; startedAt: number }>();
+
 export function AgentRunningStatus() {
   const { t } = useT();
   const summary = useTaskSummary();
   const strings = useAgentStatusStrings();
   const waiting = useWaitingOnUser();
   const parentWaits = useParentWaitsOnSubagents();
+  const threadId = useAuiThreadId();
   const [tick, setTick] = useState(0);
-  const [startedAt] = useState(() => Date.now());
+
+  const liveRequestId = useAppSelector(state =>
+    threadId ? state.chatRuntime.liveRequestIdByThread?.[threadId] : undefined
+  );
+  const streamingRequestId = useAppSelector(state =>
+    threadId ? state.chatRuntime.streamingAssistantByThread?.[threadId]?.requestId : undefined
+  );
+  const currentRequestId = liveRequestId ?? streamingRequestId ?? 'active';
+
   const thinking = summary.total === 0 && waiting === null;
+
+  const [startedAt, setStartedAt] = useState(() => {
+    if (threadId) {
+      const existing = threadTurnStarts.get(threadId);
+      if (
+        existing &&
+        existing.requestId === currentRequestId &&
+        Date.now() - existing.startedAt < MAX_TURN_THINKING_MS
+      ) {
+        return existing.startedAt;
+      }
+      const now = Date.now();
+      threadTurnStarts.set(threadId, { requestId: currentRequestId, startedAt: now });
+      return now;
+    }
+    return Date.now();
+  });
+
+  // Keep startedAt synchronized strictly to the current response / request ID.
+  useEffect(() => {
+    if (threadId) {
+      const existing = threadTurnStarts.get(threadId);
+      if (
+        !existing ||
+        existing.requestId !== currentRequestId ||
+        Date.now() - existing.startedAt >= MAX_TURN_THINKING_MS
+      ) {
+        const now = Date.now();
+        threadTurnStarts.set(threadId, { requestId: currentRequestId, startedAt: now });
+        setStartedAt(now);
+      } else {
+        setStartedAt(existing.startedAt);
+      }
+    }
+  }, [threadId, currentRequestId]);
+
   const elapsedMs = useTaskElapsed({ startedAt }, thinking);
 
   useEffect(() => {
-    if (!thinking) return undefined;
+    if (!thinking) {
+      if (threadId) {
+        threadTurnStarts.delete(threadId);
+      }
+      return undefined;
+    }
     const timer = window.setInterval(() => setTick(value => value + 1), 120);
     return () => window.clearInterval(timer);
-  }, [thinking]);
+  }, [thinking, threadId]);
 
   if (waiting !== null) return <WaitingLine kind={waiting} />;
 
