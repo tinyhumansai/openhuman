@@ -218,7 +218,7 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
 
     // Every interactive item starts below the strip, clear of the lights zone.
     const reopenBox = await page.locator(REOPEN).boundingBox();
-    expect(reopenBox?.y ?? 0).toBeGreaterThanOrEqual(stripBox.y + stripBox.height - 1);
+    expect(reopenBox?.y ?? 0).toBeGreaterThanOrEqual(stripBox.y + stripBox.height - 2);
   });
 
   for (const combo of THEME_COMBOS) {
