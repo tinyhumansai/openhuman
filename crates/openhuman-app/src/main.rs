@@ -43,6 +43,18 @@ fn main() {
         return;
     }
 
+    // WebKitGTK's DMABUF renderer cannot allocate GBM buffers on NVIDIA
+    // ("Failed to create GBM buffer ... Permission denied"), leaving the window
+    // blank. Fall back to the non-DMABUF path unless the user chose otherwise
+    // (`WEBKIT_DISABLE_DMABUF_RENDERER=0` re-enables it). Set here, before any
+    // thread or webview exists, so the env write is race-free.
+    // ponytail: applies to every Linux GPU, costs some compositing speed on
+    // working drivers; gate on `/proc/driver/nvidia` if that ever matters.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     openhuman::run()
 }
 
