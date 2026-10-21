@@ -162,12 +162,9 @@ async fn registered_voice_provider_ids_resolve_without_calling_the_factory() {
 
     let findings = run_only(config, PROVIDER_REF).await;
 
-    assert!(
-        findings
-            .iter()
-            .all(|result| result.check_id != PROVIDER_REF),
-        "registered STT/TTS providers should resolve without constructing them: {findings:#?}"
-    );
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    assert_eq!(findings[0].check_id, PROVIDER_REF);
+    assert_eq!(findings[0].severity, FindingSeverity::Pass);
 }
 
 #[cfg(feature = "voice")]
