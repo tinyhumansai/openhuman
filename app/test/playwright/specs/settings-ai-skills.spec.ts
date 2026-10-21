@@ -101,12 +101,8 @@ test.describe('Settings - AI & Skills', () => {
    * `default_model` would ship green.
    *
    * This deliberately drives the value in over the core RPC rather than through
-   * the picker dialog. The picker's internals are being rebuilt under #6395 —
-   * `chat-model-managed-catalog.spec.ts` is `test.describe.skip`ped for exactly
-   * that reason — so a spec that clicked through it would be rewritten with the
-   * picker and would meanwhile cover nothing. The durable claim, and the one no
-   * spec makes today, is the contract either implementation must honour: what
-   * the core holds is what the routing page shows, before and after a reload.
+   * the picker dialog. This isolates the routing page's read-back contract from
+   * the composer picker's write path, which has separate browser coverage.
    *
    * The complementary direction (picker click -> core write) stays covered at
    * VU level by `AIPanel.test.tsx` ("pins a managed default model from the

@@ -218,19 +218,7 @@ test.describe('Managed OpenRouter catalog in the model picker', () => {
     ).toHaveAttribute('aria-selected', 'true', { timeout: 20_000 });
   });
 
-  // TODO(#6395): a managed pick does not survive a page reload. Measured, not
-  // assumed: after picking `nex-n2.5-mini` and reopening the chat, the chip
-  // reads `e2e-mock-model` again. The write half is still implemented —
-  // `applyComposerModel` (`features/conversations/Conversations.tsx:441-457`)
-  // calls `openhuman.inference_update_model_settings` with `default_model` — so
-  // this is a read-back gap, not a missing write: on a fresh page
-  // `composerModelOverride` is null and the chip falls back to
-  // `composerModelOverride ?? CHAT_MODEL_HINT` (`:1099`), which is the config's
-  // seeded default rather than the persisted one. Left failing-and-skipped
-  // rather than weakened: the assertion states the contract the issue title
-  // names ("selection and persistence"), and relaxing it would hide exactly the
-  // regression it exists to catch.
-  test.skip('a composer pick is the global default and survives a fresh page', async ({ page }) => {
+  test('a composer pick is the global default and survives a fresh page', async ({ page }) => {
     // The picker writes `default_model` through the core, so a brand-new page
     // (new composer state, same core) still resolves and shows the pinned
     // model — the pick is not a per-session override.
