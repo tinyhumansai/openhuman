@@ -25,6 +25,7 @@ const repoRoot = path.join(
   "..",
 );
 const MARKER = "openhuman-e2e-bundle.marker";
+const TEST_PORT_BASE = 20_000 + (process.pid % 40_000);
 const BUNDLE_INPUTS = ["src/App.tsx", "public/favicon.ico", "index.html", "vite.config.ts"];
 
 function writeExecutable(file, body) {
@@ -134,11 +135,12 @@ function run(tree, script, extraEnv = {}) {
   const env = {
     ...process.env,
     PATH: `${tree.bin}:${process.env.PATH}`,
-    // Do not let a developer's shell select real build tools or different
-    // harness ports; the assertions exercise the fixed contract below.
+    // Keep these fixtures isolated from live E2E sessions in other worktrees.
     CARGO_BIN: path.join(tree.bin, "cargo"),
-    E2E_MOCK_PORT: "18473",
-    OPENHUMAN_CORE_PORT: "17788",
+    E2E_PORT_BASE: String(TEST_PORT_BASE),
+    E2E_MOCK_PORT: String(TEST_PORT_BASE),
+    OPENHUMAN_CORE_PORT: String(TEST_PORT_BASE + 1),
+    E2E_WEB_PORT: String(TEST_PORT_BASE + 2),
     RUST_HOST_TRIPLE: "test-triple",
     OPENHUMAN_WORKSPACE: path.join(tree.root, "workspace"),
     OPENHUMAN_KEYRING_MASTER_KEY: "11".repeat(32),
@@ -209,7 +211,7 @@ test("an ephemeral explicit workspace can generate a private key", () => {
     fs.writeFileSync(path.join(distWeb, MARKER), "VITE_OPENHUMAN_TARGET=web\n");
     fs.writeFileSync(
       path.join(distWeb, ".e2e-build-ports.json"),
-      '{"e2e_mock_port":"18473","openhuman_core_port":"17788"}\n',
+      `${JSON.stringify({ e2e_mock_port: String(TEST_PORT_BASE), openhuman_core_port: String(TEST_PORT_BASE + 1) })}\n`,
     );
 
     const res = run(tree, "e2e-web-session.sh", {
@@ -234,18 +236,16 @@ test("the session accepts a marked bundle and proceeds past the guard", () => {
   // session starts the mock backend and reaches its next precondition — the
   // standalone core binary, deliberately absent here.
   const tree = makeTree("e2e-web-session.sh");
-  const portBase = 20_000 + (process.pid % 40_000);
   try {
     const distWeb = path.join(tree.root, "app", "dist-web");
     fs.mkdirSync(distWeb, { recursive: true });
     fs.writeFileSync(path.join(distWeb, MARKER), "VITE_OPENHUMAN_TARGET=web\n");
     fs.writeFileSync(
       path.join(distWeb, ".e2e-build-ports.json"),
-      `${JSON.stringify({ e2e_mock_port: String(portBase), openhuman_core_port: String(portBase + 1) })}\n`,
+      `${JSON.stringify({ e2e_mock_port: String(TEST_PORT_BASE), openhuman_core_port: String(TEST_PORT_BASE + 1) })}\n`,
     );
 
     const res = run(tree, "e2e-web-session.sh", {
-      E2E_PORT_BASE: String(portBase),
       OPENHUMAN_WORKSPACE: "",
       OPENHUMAN_KEYRING_MASTER_KEY: "",
       OPENHUMAN_KEYRING_MASTER_KEY_FILE: "/host/master.key",
