@@ -338,7 +338,7 @@ async fn readonly_health_reports_down_without_exposing_backend_error_text() {
 
     let health = read_only_health_probe(config).await;
 
-    assert!(matches!(health, EngineHealth::Down(_)));
+    assert!(matches!(health, EngineHealth::Down(_)), "{health:?}");
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
