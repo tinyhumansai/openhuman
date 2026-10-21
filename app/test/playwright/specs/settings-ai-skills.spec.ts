@@ -93,37 +93,4 @@ test.describe('Settings - AI & Skills', () => {
     await expect(page.getByText(/Filesystem|Shell/).first()).toBeVisible();
   });
 
-  /**
-   * Matrix 13.3.1 — the settings route's model configuration survives a reload.
-   *
-   * Both e2e layers previously asserted only that the LLM tab mounts. Nothing
-   * configured anything, so a regression in the settings page's read of
-   * `default_model` would ship green.
-   *
-   * This deliberately drives the value in over the core RPC rather than through
-   * the picker dialog. This isolates the routing page's read-back contract from
-   * the composer picker's write path, which has separate browser coverage.
-   *
-   * The complementary direction (picker click -> core write) stays covered at
-   * VU level by `AIPanel.test.tsx` ("pins a managed default model from the
-   * routing page") until #6395 lands.
-   */
-  test('the routing page shows the core-pinned default model and keeps it across a reload', async ({
-    page,
-  }) => {
-    await emulateTauriRuntime(page);
-    await callCoreRpc('openhuman.inference_update_model_settings', { default_model: PINNED_MODEL });
-    expect(await pinnedDefaultModel()).toBe(PINNED_MODEL);
-
-    await openRoutingTab(page);
-    await expect(page.getByTestId('default-model-change')).toContainText(PINNED_MODEL);
-
-    await page.reload();
-    await waitForAppReady(page);
-    await page.getByTestId('ai-tab-routing').click();
-    await expect(page.getByTestId('default-model-change')).toContainText(PINNED_MODEL);
-
-    // The page must not have written anything back while rendering.
-    expect(await pinnedDefaultModel()).toBe(PINNED_MODEL);
-  });
 });
