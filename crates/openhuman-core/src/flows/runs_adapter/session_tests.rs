@@ -123,7 +123,6 @@ async fn private_agent_progress_advances_cursor_without_leaking_text_or_replayin
     assert!(collector.progress.lock().unwrap().is_empty());
 }
 
-
 #[test]
 fn run_event_poller_survives_the_invocations_runtime() {
     let caller = tokio::runtime::Builder::new_current_thread()
