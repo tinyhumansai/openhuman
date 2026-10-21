@@ -37,5 +37,4 @@ test.describe('Tauri commands', () => {
     expect(Array.isArray(payload)).toBe(true);
     expect((payload as unknown[]).length).toBeGreaterThan(0);
   });
-
 });

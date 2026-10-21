@@ -176,5 +176,4 @@ test.describe('Telegram channel - connect / disconnect RPC flow', () => {
     expect(status?.connected).toBe(true);
     expect(status?.hasCredentials ?? status?.has_credentials).toBe(true);
   });
-
 });

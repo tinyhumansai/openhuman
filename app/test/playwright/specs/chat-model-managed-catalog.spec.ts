@@ -261,5 +261,4 @@ test.describe('Managed OpenRouter catalog in the model picker', () => {
       timeout: 20_000,
     });
   });
-
 });

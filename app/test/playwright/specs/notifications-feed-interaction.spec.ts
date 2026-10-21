@@ -75,9 +75,7 @@ async function openFeedWith(page: Page, items: SeedItem[]): Promise<void> {
   if (await welcomeCta.isVisible().catch(() => false)) await welcomeCta.click();
   await page.evaluate(payload => {
     const store = (
-      window as typeof window & {
-        __OPENHUMAN_STORE__?: { dispatch(action: unknown): void };
-      }
+      window as typeof window & { __OPENHUMAN_STORE__?: { dispatch(action: unknown): void } }
     ).__OPENHUMAN_STORE__;
     if (!store) throw new Error('application store is not available');
     for (const notification of payload) {
@@ -162,10 +160,7 @@ test.describe('Notifications — read state', () => {
     // the click did anything.
     await expect(page.getByText(/2 unread/i)).toBeVisible();
 
-    await rows(page)
-      .filter({ hasText: 'Meeting starts soon' })
-      .locator('[role="button"]')
-      .click();
+    await rows(page).filter({ hasText: 'Meeting starts soon' }).locator('[role="button"]').click();
 
     await expect(page.getByText(/1 unread/i)).toBeVisible({ timeout: 10_000 });
   });

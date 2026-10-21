@@ -131,5 +131,4 @@ test.describe('Harness - Cron prompt-flow', () => {
     await expect(agentMessageText(page, CANARY)).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/You have 2 scheduled tasks/i)).toBeVisible();
   });
-
 });

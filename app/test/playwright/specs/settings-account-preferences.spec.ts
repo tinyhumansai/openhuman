@@ -113,5 +113,4 @@ test.describe('Settings - Account Preferences', () => {
       await callCoreRpc('openhuman.config_update_user_timezone', { timezone: original ?? null });
     }
   });
-
 });

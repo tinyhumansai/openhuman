@@ -281,5 +281,4 @@ test.describe('Settings - Feature Preferences', () => {
     await waitForAppReady(page);
     await expect.poll(() => getSelectedMascotId(page)).toBe('river-guide');
   });
-
 });

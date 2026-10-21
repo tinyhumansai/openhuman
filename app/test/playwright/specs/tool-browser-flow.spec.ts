@@ -44,5 +44,4 @@ test.describe('System tools - Browser (open URL + automation registry)', () => {
       expect(defs.find(def => def?.id === retired)).toBeUndefined();
     }
   });
-
 });

@@ -34,5 +34,4 @@ test.describe('Settings - AI & Skills', () => {
     await expect(page.getByText('Tools').first()).toBeVisible();
     await expect(page.getByText(/Filesystem|Shell/).first()).toBeVisible();
   });
-
 });

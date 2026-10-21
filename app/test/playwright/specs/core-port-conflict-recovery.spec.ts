@@ -14,5 +14,4 @@ test.describe('Core port conflict recovery', () => {
       page.locator('[data-testid="chat-message-input"], [data-testid="onboarding-welcome-step"]')
     ).toBeVisible();
   });
-
 });
