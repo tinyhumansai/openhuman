@@ -336,10 +336,13 @@ pub(crate) fn remove(session: &Arc<RunSession>) {
     }
 }
 
+// A reply can be followed immediately by a synchronous catalog call. Keep
+// PollRun and its connection-lock waiters off that caller's runtime, and keep
+// projecting events if the invocation's runtime is no longer driven.
 fn spawn_poller(
     work: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<tokio::task::JoinHandle<()>, String> {
-    Ok(tokio::spawn(work))
+    crate::modules::runtime::spawn_cleanup(work).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
