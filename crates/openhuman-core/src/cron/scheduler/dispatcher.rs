@@ -53,7 +53,7 @@ pub(crate) async fn run_job_now(
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     let ctx = ctx.clone();
     let config = config.clone();
-    tokio::spawn(async move {
+    spawn_manual_owner(async move {
         let mut reply_tx = Some(reply_tx);
         let result = own_manual_run(ctx, config, job, run_id, wait, delivery, &mut reply_tx).await;
         if let Err(error) = result {
@@ -62,7 +62,7 @@ pub(crate) async fn run_job_now(
             }
             tracing::warn!(%error, "[cron:scheduler] manual worker owner stopped before acknowledgement");
         }
-    });
+    })?;
     reply_rx
         .await
         .map_err(|_| anyhow!("cron manual worker owner stopped before reporting admission"))?
@@ -598,3 +598,14 @@ impl Drop for JobDispatcher {
         });
     }
 }
+
+/// Keep manual work independent of the invocation's waiting future.
+fn spawn_manual_owner(
+    work: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<tokio::task::JoinHandle<()>> {
+    Ok(tokio::spawn(work))
+}
+
+#[cfg(all(test, feature = "modules"))]
+#[path = "dispatcher_tests.rs"]
+mod tests;
