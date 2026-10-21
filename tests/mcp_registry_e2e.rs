@@ -2,8 +2,8 @@
 //!
 //! These tests use TinyBus' normal loader with the verified TinyMCP artifact
 //! staged on `OPENHUMAN_MODULE_PATH`; no implementation crate is linked into
-//! this host test. Cases that spawn stdio servers remain ignored on Linux
-//! until TinyBox supports the required isolated networking.
+//! this host test. These cases avoid launching untrusted stdio servers because
+//! Linux TinyBox does not yet provide the required isolated networking.
 
 #![cfg(feature = "mcp")]
 
