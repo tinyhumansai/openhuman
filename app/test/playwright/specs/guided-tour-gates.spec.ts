@@ -34,14 +34,17 @@ test.describe('Guided tour gates', () => {
     await waitForAppReady(page);
   });
 
-  test.skip('tour starts from home and can navigate forward to the connections step', async ({
+  test('tour starts from home and can navigate forward to the connections step', async ({
     page,
   }) => {
-    // Joyride retains its internal step index after the automatically completed
-    // onboarding tour. Restarting the walkthrough on the mounted instance does
-    // not reliably reset it to step zero; the desktop E2E suite documents the
-    // same product gap. Re-enable when AppWalkthrough owns an explicit stepIndex.
-    await armWalkthrough(page);
+    // Mount a fresh walkthrough instance after arming it. Restarting Joyride
+    // on the already-mounted instance retains its previous step index.
+    await page.evaluate(() => {
+      localStorage.removeItem('openhuman:walkthrough_completed');
+      localStorage.setItem('openhuman:walkthrough_pending', 'true');
+    });
+    await page.reload();
+    await waitForAppReady(page);
 
     const panel = await tooltip(page);
     await expect(panel).toBeVisible();
