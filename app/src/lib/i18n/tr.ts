@@ -630,6 +630,15 @@ const messages: TranslationMap = {
   'invites.redeemPlaceholder': 'Davet kodu',
   'invites.redeemSubmit': 'Kullan',
   'devOptions.titleDiagnostics': 'Geliştirici ve tanılama',
+  'devOptions.doctor.run': 'Tanılamayı çalıştır',
+  'devOptions.doctor.runLive': 'Canlı denetimleri çalıştır',
+  'devOptions.doctor.liveWarning':
+    'Canlı denetimler model veya gömme çağrılarında token harcayabilir. Devam edilsin mi?',
+  'devOptions.doctor.severity.pass': 'Başarılı',
+  'devOptions.doctor.severity.info': 'Bilgi',
+  'devOptions.doctor.severity.warn': 'Uyarı',
+  'devOptions.doctor.severity.error': 'Hata',
+  'devOptions.doctor.severity.skipped': 'Atlandı',
   'devOptions.diagnostics': 'Tanılama',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Araç envanteri, politika durumu, MCP izin listeleri ve son engellemeler',

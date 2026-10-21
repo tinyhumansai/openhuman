@@ -5,6 +5,45 @@
 use tinyinference_llm::model::ProviderError;
 use tinyinference_llm::Error as TiError;
 
+/// Resolve the managed backend bearer from a read-only selected-profile
+/// snapshot. Inspection never refreshes credentials or publishes expiry.
+pub(super) fn managed_bearer_for_inspection(
+    config: &openhuman_embed::__host::config::Config,
+) -> anyhow::Result<String> {
+    use openhuman_embed::__host::security::credentials::session_support::{
+        check_session_backend, classify_session_token, is_local_session_token,
+        load_app_session_profile_read_only, SessionTokenCheck,
+    };
+
+    if let Some(key) =
+        openhuman_embed::__host::security::credentials::api_key::get_api_key_read_only(config)
+            .map_err(|_| anyhow::anyhow!("managed API key profile is unavailable or invalid"))?
+    {
+        let endpoint = format!(
+            "{}/openai/v1",
+            crate::backend::url::effective_api_url(&config.api_url).trim_end_matches('/')
+        );
+        anyhow::ensure!(
+            crate::client::endpoint::is_managed_endpoint_for_api_key(&endpoint),
+            "managed API key endpoint is not an approved managed endpoint"
+        );
+        return Ok(key);
+    }
+
+    let profile = load_app_session_profile_read_only(config)
+        .map_err(|_| anyhow::anyhow!("managed session profile is unavailable or invalid"))?;
+    check_session_backend(config, profile.as_ref())
+        .map_err(|_| anyhow::anyhow!("managed session belongs to a different backend"))?;
+    match classify_session_token(profile.as_ref(), chrono::Utc::now()) {
+        SessionTokenCheck::Live(token) if !is_local_session_token(&token) => Ok(token),
+        SessionTokenCheck::Expired => anyhow::bail!("managed session is expired"),
+        SessionTokenCheck::Live(_) => {
+            anyhow::bail!("offline local session cannot call managed inference")
+        }
+        SessionTokenCheck::Absent => anyhow::bail!("managed session credential is unavailable"),
+    }
+}
+
 /// The bearer a classified app-session token yields for managed inference.
 ///
 /// Separate from `OpenHumanBackendModel::resolve_bearer` so the decision is

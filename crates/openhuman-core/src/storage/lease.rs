@@ -171,6 +171,15 @@ pub trait LeaseStore: Send + Sync {
     /// [`LeaseError::Storage`].
     async fn holder(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError>;
 
+    /// Reads the stored holder without declaring schema or creating local
+    /// lease files. Implementations that cannot guarantee a read-only lookup
+    /// fail closed.
+    async fn holder_readonly(&self, _key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        Err(LeaseError::Storage(StorageError::backend(
+            "lease store does not support read-only holder inspection",
+        )))
+    }
+
     /// The fence a storage driver enforces for `node`'s grant on `key` at
     /// `epoch`, when the record lives in the storage ports at all: the
     /// record must still name `node` at `epoch`, unreleased. The driver then

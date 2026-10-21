@@ -62,7 +62,7 @@ fn the_three_spec_views_share_their_leaf_schemas() {
     // rewrite mutate in place would silently scope the durable set, and a
     // change that deep-copied everything again would still pass an
     // exclusion-only test.
-    let use_skill = tinyagents_harness::tool::packs::USE_SKILL;
+    let use_skill = tinyagents_harness_tools::skills::USE_SKILL;
     let mut saw_scoped_use_skill = false;
     let mut saw_scoped_spawn = false;
 

@@ -10,7 +10,7 @@ use super::super::delegate_graph::DelegateGraphDispatch;
 use crate::tools::delegate::DelegateToolDispatch;
 use tinyagents_harness::context::RunConfig;
 use tinyagents_harness::tool::ToolDispatch;
-use tinyagents_harness::tools::AskClarificationTool;
+use tinyagents_harness_tools::AskClarificationTool;
 
 struct DelegationRegistrationTool {
     name: &'static str,

@@ -223,7 +223,7 @@ async fn seed_goal(
     objective: &str,
 ) -> Result<(), String> {
     let store = openhuman_core::storage::sessions::stores_or_ephemeral(workspace).kv;
-    tinyagents_graph::goals::store::set(&store, thread_id, objective, None)
+    tinyagents_harness_tools::goals::store::set(&store, thread_id, objective, None)
         .await
         .map(|_| ())
         .map_err(|error| error.to_string())

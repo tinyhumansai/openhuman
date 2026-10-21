@@ -734,6 +734,15 @@ const en: TranslationMap = {
 
   // Developer Options / Developer & Diagnostics
   'devOptions.titleDiagnostics': 'Developer & Diagnostics',
+  'devOptions.doctor.run': 'Run doctor',
+  'devOptions.doctor.runLive': 'Run live checks',
+  'devOptions.doctor.liveWarning':
+    'Live checks may spend tokens on model or embedding calls. Continue?',
+  'devOptions.doctor.severity.pass': 'Pass',
+  'devOptions.doctor.severity.info': 'Info',
+  'devOptions.doctor.severity.warn': 'Warning',
+  'devOptions.doctor.severity.error': 'Error',
+  'devOptions.doctor.severity.skipped': 'Skipped',
   'devOptions.diagnostics': 'Diagnostics',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Tool inventory, policy posture, MCP allowlists, and recent blocks',

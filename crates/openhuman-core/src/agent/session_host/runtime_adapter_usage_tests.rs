@@ -61,7 +61,7 @@ async fn committed_goal_accounting_saturates_direct_plus_inclusive_child_tokens(
     );
     crate::core::runtime::CoreContext::scope(core, async {
         let goal_store = crate::storage::sessions::stores_or_ephemeral(workspace.path()).kv;
-        tinyagents_graph::goals::store::set(
+        tinyagents_harness_tools::goals::store::set(
             &goal_store,
             "saturated-goal",
             "complete safely",
@@ -70,7 +70,7 @@ async fn committed_goal_accounting_saturates_direct_plus_inclusive_child_tokens(
         .await
         .unwrap();
         assert!(
-            tinyagents_graph::goals::store::get(&goal_store, "saturated-goal")
+            tinyagents_harness_tools::goals::store::get(&goal_store, "saturated-goal")
                 .await
                 .unwrap()
                 .is_some(),
@@ -108,7 +108,7 @@ async fn committed_goal_accounting_saturates_direct_plus_inclusive_child_tokens(
         )
         .await;
 
-        let goal = tinyagents_graph::goals::store::get(&goal_store, "saturated-goal")
+        let goal = tinyagents_harness_tools::goals::store::get(&goal_store, "saturated-goal")
             .await
             .unwrap()
             .unwrap();

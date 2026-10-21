@@ -89,7 +89,8 @@ pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};
 pub use openhuman_core::agent::tinyagents::host::LastTurnUsage;
 pub use openhuman_core::agent::{HostAttachment, HostTools, HostTurnTools, TurnContext};
 pub use openhuman_core::{
-    CoreBuilder, CoreRuntime, DaemonConfig, DomainSet, HostKind, ServiceSet, TokenSource,
+    CoreBootMode, CoreBuilder, CoreRuntime, DaemonConfig, DomainSet, HostKind, ServiceSet,
+    TokenSource,
 };
 /// Declarative execution requirements for host-owned tools, from the core's vendored contract.
 pub use tinytools::ToolPolicy;
@@ -122,6 +123,12 @@ pub mod channels;
 pub mod chat_surface;
 pub mod complete;
 pub mod config;
+/// Pure command-line argument parsers shared by host-owned command facades.
+pub mod cli {
+    pub use openhuman_core::core::cli::{
+        parse_cli_args_after_launch_options, parse_function_params,
+    };
+}
 mod core_agent;
 pub mod cron;
 pub mod embeddings;
@@ -238,10 +245,10 @@ pub mod seams {
 /// is held to. The persisted record types are the harness's own serde codecs,
 /// so hosts can encode and decode stored state without duplicating wire shapes.
 pub mod session_store {
-    pub use tinyagents_graph::todos::TodoList;
     pub use tinyagents_harness::events::{AgentEvent, HarnessRunStatus};
     pub use tinyagents_harness::ids::ExecutionStatus;
     pub use tinyagents_harness::observability::AgentObservation;
+    pub use tinyagents_harness_tools::todos::TodoList;
     pub use tinyagents_session::port::{AgentStores, SessionStoreProvider};
     pub use tinyagents_session::port::{
         AppendStore, InMemorySessionStores, InMemoryTranscriptLocator, InMemoryTurnStates, Store,

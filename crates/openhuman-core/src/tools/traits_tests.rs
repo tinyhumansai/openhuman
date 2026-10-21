@@ -47,9 +47,9 @@ async fn a_tool_written_against_this_path_satisfies_the_shared_trait() {
 }
 
 #[test]
-fn a_tool_carrying_no_host_extension_yields_none() {
+fn a_tool_carrying_no_host_extension_has_no_delegation_target() {
     let tool = DummyTool;
-    assert!(pack_registry_handle(&tool).is_none());
+    assert!(delegation_target(&tool).is_none());
 }
 
 #[test]

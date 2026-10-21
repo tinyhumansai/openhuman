@@ -480,7 +480,7 @@ pub(super) fn install_turn_middleware(
     match todo_store {
         Some(store) if verify_before_finish::applies(is_subagent, agent_id) => {
             harness.push_middleware(Arc::new(
-                tinyagents_graph::todos::TodoSequenceMiddleware::new(store),
+                tinyagents_harness_tools::todos::TodoSequenceMiddleware::new(store),
             ));
         }
         _ => tracing::debug!(

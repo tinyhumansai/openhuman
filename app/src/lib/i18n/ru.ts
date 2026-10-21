@@ -677,6 +677,15 @@ const messages: TranslationMap = {
   'invites.title': 'Приглашения',
   'invites.noInvites': 'Активных приглашений нет',
   'devOptions.titleDiagnostics': 'Разработчик и Диагностика',
+  'devOptions.doctor.run': 'Запустить диагностику',
+  'devOptions.doctor.runLive': 'Запустить проверки в реальном времени',
+  'devOptions.doctor.liveWarning':
+    'Проверки в реальном времени могут расходовать токены при вызовах модели или эмбеддингов. Продолжить?',
+  'devOptions.doctor.severity.pass': 'Пройдено',
+  'devOptions.doctor.severity.info': 'Информация',
+  'devOptions.doctor.severity.warn': 'Предупреждение',
+  'devOptions.doctor.severity.error': 'Ошибка',
+  'devOptions.doctor.severity.skipped': 'Пропущено',
   'devOptions.diagnostics': 'Диагностика',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Инвентаризация инструментов, положение политики, белые списки MCP и недавние блокировки',

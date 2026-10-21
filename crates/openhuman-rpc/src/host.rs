@@ -37,7 +37,9 @@
 use std::sync::Arc;
 
 #[cfg(feature = "server")]
-use openhuman_tinyhumans::embed::{ServiceSet, TokenSource};
+use openhuman_tinyhumans::embed::{
+    ConfigSource, CoreBootMode, RuntimeConfig, ServiceSet, TokenSource, Workspace,
+};
 use openhuman_tinyhumans::RuntimeBuilder;
 #[cfg(feature = "server")]
 use tokio_util::sync::CancellationToken;
@@ -48,6 +50,10 @@ pub use crate::server::EmbeddedReadySignal;
 #[path = "host/secret_storage.rs"]
 mod secret_storage;
 
+#[cfg(feature = "server")]
+#[path = "host/doctor_cli.rs"]
+mod doctor_cli;
+
 /// The CLI host's builder: the `cli` preset with this crate's server as the
 /// `run` / `serve` launcher and the `http_host.*` controllers registered.
 #[cfg(feature = "server")]
@@ -55,6 +61,78 @@ pub fn cli_builder() -> RuntimeBuilder {
     RuntimeBuilder::cli()
         .server_launcher(crate::server::cli::launch)
         .controller_extension(crate::http_host::extension())
+}
+
+/// Prepare the CLI host for a one-shot in-process command without booting a
+/// runtime or installing the server's storage-backed session store.
+///
+/// Config loading depends on the TinyHumans enricher and persistent hosts need
+/// the encrypted-file secret backend installed before a report reads config.
+#[cfg(feature = "server")]
+pub fn prepare_cli_host() {
+    openhuman_tinyhumans::register_hooks();
+    prepare_cli_environment();
+}
+
+/// Build a side-effect-limited runtime for the CLI's one-shot doctor command.
+///
+/// The effective desktop config is selected before the core boots. The normal
+/// doctor RPC then runs through `CoreRuntime::invoke`, preserving the shared
+/// report path and context-scoped TinyHumans checks. An invalid explicit
+/// profile uses a safe in-memory config pinned to the root so the RPC can
+/// return its single `profile/exists` finding without loading ambient config.
+#[cfg(feature = "server")]
+pub async fn doctor_runtime(
+    requested_profile: Option<&str>,
+) -> anyhow::Result<openhuman_tinyhumans::embed::Runtime> {
+    prepare_cli_host();
+    let root = crate::embed::config::default_root_openhuman_dir()?;
+    let config = match crate::core_host::doctor::profile::resolve_desktop_profile_for_doctor(
+        &root,
+        requested_profile,
+    )
+    .await
+    {
+        Ok(selection) => selection.config,
+        Err(_) if requested_profile.is_some() => doctor_fallback_config(&root),
+        Err(error) => anyhow::bail!("doctor profile selection failed: {}", error.message()),
+    };
+
+    Ok(doctor_builder(config).build().await?)
+}
+
+#[cfg(feature = "server")]
+fn doctor_builder(config: RuntimeConfig) -> RuntimeBuilder {
+    let bearer = Arc::new(uuid::Uuid::new_v4().simple().to_string());
+    cli_builder()
+        .workspace(Workspace::Inherit)
+        .config_source(ConfigSource::Resolved)
+        .config(config)
+        .boot_mode(CoreBootMode::Inspection)
+        .services(ServiceSet::none())
+        .token(TokenSource::Fixed(bearer))
+}
+
+#[cfg(feature = "server")]
+fn doctor_fallback_config(root: &std::path::Path) -> RuntimeConfig {
+    RuntimeConfig {
+        config_path: root.join("config.toml"),
+        workspace_dir: root.join("workspace"),
+        action_dir: root.join("action"),
+        ..RuntimeConfig::default()
+    }
+}
+
+#[cfg(feature = "server")]
+fn prepare_cli_environment() {
+    // The preflight reads URLs before normal CLI dispatch loads `.env` itself.
+    if let Err(error) = crate::core_host::core::cli::load_dotenv_for_cli() {
+        log::warn!(
+            "[rpc:host] cli: early dotenv load failed ({error}); a host setting supplied only \
+         in that file will not be seen"
+        );
+    }
+    secret_storage::install();
 }
 
 /// Parse the side-effect-free embedding capability command.
@@ -83,6 +161,9 @@ fn embed_info(args: &[String]) -> anyhow::Result<Option<crate::embed::RuntimeInf
 pub fn cli(args: &[String]) -> anyhow::Result<()> {
     // Config reads below (and in the dispatcher) need the enricher.
     openhuman_tinyhumans::register_hooks();
+    if let Some(result) = doctor_cli::try_run(args) {
+        return result;
+    }
     // Introspection belongs above the core: never introduce a core -> embed dependency.
     if let Some(info) = embed_info(args)? {
         println!("{}", serde_json::to_string_pretty(&info)?);
@@ -94,15 +175,7 @@ pub fn cli(args: &[String]) -> anyhow::Result<()> {
         args.first().map(String::as_str).unwrap_or("<none>"),
         args.len()
     );
-    // The preflight reads the URL before the dispatcher loads `.env`
-    // itself, so a URL supplied through the dotenv file must be loaded now.
-    if let Err(error) = crate::core_host::core::cli::load_dotenv_for_cli() {
-        log::warn!(
-            "[rpc:host] cli: early dotenv load failed ({error}); a host setting supplied only \
-         in that file will not be seen"
-        );
-    }
-    secret_storage::install();
+    prepare_cli_environment();
     let mut builder = cli_builder();
     if cli_command_uses_storage(args, |namespace| {
         // `subsystems` only renders status; it never touches stored state.
@@ -164,6 +237,7 @@ fn cli_command_uses_storage(args: &[String], has_cli_handler: impl Fn(&str) -> b
     let tail: Vec<&str> = rest.collect();
     match command {
         "run" | "serve" | "tui" | "chat" | "sentry-test" => false,
+        "doctor" if matches!(tail.first().copied(), Some("report" | "models")) => false,
         // The MCP server speaks stdio when given no function and runs agent
         // sessions, so it needs the backend.
         "mcp" | "mcp-server" => !tail.iter().any(|a| is_help(a)),

@@ -114,6 +114,14 @@ fn token_defaults_to_env_or_file_and_is_overridable() {
 }
 
 #[test]
+fn runtime_builder_defaults_to_normal_core_boot() {
+    assert_eq!(
+        RuntimeBuilder::new().boot_mode,
+        openhuman_core::core::runtime::CoreBootMode::Normal
+    );
+}
+
+#[test]
 fn listen_records_host_and_port_for_the_transport() {
     let builder = RuntimeBuilder::new();
     assert_eq!(

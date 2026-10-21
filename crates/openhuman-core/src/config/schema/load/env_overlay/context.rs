@@ -8,30 +8,79 @@ impl Config {
         if let Some(flag) = env.get("OPENHUMAN_CONTEXT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.context.enabled = true,
-                "0" | "false" | "no" | "off" => self.context.enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.enabled",
+                        &["OPENHUMAN_CONTEXT_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.enabled",
+                        &["OPENHUMAN_CONTEXT_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(flag) = env.get("OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.context.microcompact_enabled = true,
-                "0" | "false" | "no" | "off" => self.context.microcompact_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.microcompact_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.microcompact_enabled",
+                        &["OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.microcompact_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.microcompact_enabled",
+                        &["OPENHUMAN_CONTEXT_MICROCOMPACT_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(flag) = env.get("OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.context.autocompact_enabled = true,
-                "0" | "false" | "no" | "off" => self.context.autocompact_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.autocompact_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.autocompact_enabled",
+                        &["OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED"],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.autocompact_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.autocompact_enabled",
+                        &["OPENHUMAN_CONTEXT_AUTOCOMPACT_ENABLED"],
+                    );
+                }
                 _ => {}
             }
         }
         if let Some(val) = env.get("OPENHUMAN_COMPACTION_STRATEGY") {
             match crate::config::CompactionStrategy::parse(&val) {
-                Some(strategy) => self.context.compaction_strategy = strategy,
+                Some(strategy) => {
+                    self.context.compaction_strategy = strategy;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_strategy",
+                        &["OPENHUMAN_COMPACTION_STRATEGY"],
+                    );
+                }
                 None if val.trim().is_empty() => {}
                 None => tracing::warn!(
                     value = %val.trim(),
@@ -43,9 +92,23 @@ impl Config {
         // empty value clears an override set in `config.toml`.
         if let Some(val) = env.get("OPENHUMAN_COMPACTION_TRIGGER_TOKENS") {
             match val.trim() {
-                "" | "0" => self.context.compaction_trigger_tokens = None,
+                "" | "0" => {
+                    self.context.compaction_trigger_tokens = None;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_trigger_tokens",
+                        &["OPENHUMAN_COMPACTION_TRIGGER_TOKENS"],
+                    );
+                }
                 raw => match raw.parse::<u64>() {
-                    Ok(tokens) => self.context.compaction_trigger_tokens = Some(tokens),
+                    Ok(tokens) => {
+                        self.context.compaction_trigger_tokens = Some(tokens);
+                        self.record_env_override(
+                            env,
+                            "context.compaction_trigger_tokens",
+                            &["OPENHUMAN_COMPACTION_TRIGGER_TOKENS"],
+                        );
+                    }
                     Err(_) => tracing::warn!(
                         value = raw,
                         "[config] ignoring unparseable OPENHUMAN_COMPACTION_TRIGGER_TOKENS"
@@ -56,6 +119,11 @@ impl Config {
         if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES") {
             if let Ok(n) = val.trim().parse::<usize>() {
                 self.context.tool_result_budget_bytes = n;
+                self.record_env_override(
+                    env,
+                    "context.tool_result_budget_bytes",
+                    &["OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES"],
+                );
             }
         }
         // Switch for native tool-output compaction (Stage 1a). On by
@@ -66,8 +134,28 @@ impl Config {
             .or_else(|| env.get("OPENHUMAN_CONTEXT_COMPACTION_ENABLED"))
         {
             match flag.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => self.context.compaction_enabled = true,
-                "0" | "false" | "no" | "off" => self.context.compaction_enabled = false,
+                "1" | "true" | "yes" | "on" => {
+                    self.context.compaction_enabled = true;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_enabled",
+                        &[
+                            "OPENHUMAN_COMPACTION",
+                            "OPENHUMAN_CONTEXT_COMPACTION_ENABLED",
+                        ],
+                    );
+                }
+                "0" | "false" | "no" | "off" => {
+                    self.context.compaction_enabled = false;
+                    self.record_env_override(
+                        env,
+                        "context.compaction_enabled",
+                        &[
+                            "OPENHUMAN_COMPACTION",
+                            "OPENHUMAN_CONTEXT_COMPACTION_ENABLED",
+                        ],
+                    );
+                }
                 _ => {}
             }
         }
@@ -75,6 +163,11 @@ impl Config {
             let model = model.trim();
             if !model.is_empty() {
                 self.context.summarizer_model = Some(model.to_string());
+                self.record_env_override(
+                    env,
+                    "context.summarizer_model",
+                    &["OPENHUMAN_CONTEXT_SUMMARIZER_MODEL"],
+                );
             }
         }
         let context_default =

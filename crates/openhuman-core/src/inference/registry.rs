@@ -14,9 +14,11 @@
 //! The tables know nothing about what a provider talks to. With nothing
 //! registered every consult point behaves exactly as before.
 
+use std::collections::hash_map::RandomState;
 use std::future::Future;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tinyinference_embeddings::EmbeddingModel;
 use tinyinference_llm::model::discover::DiscoveryRequest;
@@ -77,6 +79,63 @@ pub struct ChatModelEntry {
 }
 
 static CHAT_MODELS: HookSlot<ChatModelEntry> = HookSlot::new("inference::chat_models");
+
+/// A managed chat-model factory that is safe for inspection calls through
+/// invoke/stream: it must use a frozen, read-only credential snapshot and
+/// must not refresh or publish credential state.
+pub type InspectionChatModelFactory = PreparedInspectionChatModelFactory;
+
+/// An inspection-safe model and the resolved wire identity it invokes.
+/// `credential` is retained only long enough for the core to build a
+/// report-local deduplication key; it must never be logged or reported.
+pub struct InspectionChatModelBuild {
+    /// Frozen chat model that invokes the resolved route.
+    pub model: Arc<dyn ChatModel<()>>,
+    /// Safe provider model identifier selected for the route.
+    pub model_id: String,
+    /// Effective request endpoint used by the model.
+    pub endpoint: String,
+    /// Exact frozen bearer/key used by the model. Never expose in findings.
+    pub credential: String,
+}
+
+/// Inspection-safe provider callback. Unlike the runtime callback this must
+/// return the same frozen route identity used by the model invocation.
+pub type PreparedInspectionChatModelFactory = Arc<
+    dyn for<'a> Fn(&ChatModelRequest<'a>) -> anyhow::Result<InspectionChatModelBuild> + Send + Sync,
+>;
+
+static INSPECTION_CHAT_MODELS: HookSlot<InspectionChatModelFactory> =
+    HookSlot::new("inference::inspection_chat_models");
+
+/// Registers an inspection-safe managed model factory process-wide.
+pub fn register_inspection_chat_model(
+    provider_id: impl Into<String>,
+    factory: PreparedInspectionChatModelFactory,
+) {
+    INSPECTION_CHAT_MODELS.register(provider_id, factory);
+}
+
+/// Registers an inspection-safe managed model factory for the context built
+/// from `extensions`.
+pub fn register_inspection_chat_model_in(
+    extensions: &Extensions,
+    provider_id: impl Into<String>,
+    factory: PreparedInspectionChatModelFactory,
+) {
+    INSPECTION_CHAT_MODELS.register_in(extensions, provider_id, factory);
+}
+
+/// Removes the process-wide inspection-safe managed model factory.
+pub fn unregister_inspection_chat_model(provider_id: &str) -> bool {
+    INSPECTION_CHAT_MODELS.unregister(provider_id)
+}
+
+pub(crate) fn inspection_chat_model(
+    provider_id: &str,
+) -> Option<PreparedInspectionChatModelFactory> {
+    INSPECTION_CHAT_MODELS.get(provider_id)
+}
 
 /// Registers the chat-model provider `provider_id` for the whole process.
 pub fn register_chat_model(provider_id: impl Into<String>, entry: ChatModelEntry) {
@@ -142,6 +201,46 @@ pub type EmbeddingFactory = Arc<
 >;
 
 static EMBEDDINGS: HookSlot<EmbeddingFactory> = HookSlot::new("inference::embeddings");
+
+/// A managed embedding factory safe for doctor inspection: it uses a frozen
+/// credential snapshot and never refreshes or publishes credential state.
+pub type InspectionEmbeddingFactory = EmbeddingFactory;
+
+static INSPECTION_EMBEDDINGS: HookSlot<InspectionEmbeddingFactory> =
+    HookSlot::new("inference::inspection-embeddings");
+
+/// Registers a managed embedding factory for read-only credential inspection.
+pub fn register_inspection_embedding<F>(provider_id: impl Into<String>, factory: F)
+where
+    F: for<'a> Fn(
+            &EmbeddingRequest<'a>,
+        ) -> tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>
+        + Send
+        + Sync
+        + 'static,
+{
+    INSPECTION_EMBEDDINGS.register(provider_id, Arc::new(factory));
+}
+
+/// Registers an inspection-safe embedding factory for one core context.
+pub fn register_inspection_embedding_in<F>(
+    extensions: &Extensions,
+    provider_id: impl Into<String>,
+    factory: F,
+) where
+    F: for<'a> Fn(
+            &EmbeddingRequest<'a>,
+        ) -> tinyinference_embeddings::Result<Box<dyn EmbeddingModel>>
+        + Send
+        + Sync
+        + 'static,
+{
+    INSPECTION_EMBEDDINGS.register_in(extensions, provider_id, Arc::new(factory));
+}
+
+pub(crate) fn inspection_embedding(provider_id: &str) -> Option<InspectionEmbeddingFactory> {
+    INSPECTION_EMBEDDINGS.get(provider_id)
+}
 
 /// Registers the embedding provider `provider_id` for the whole process.
 pub fn register_embedding<F>(provider_id: impl Into<String>, factory: F)
@@ -244,6 +343,117 @@ pub fn unregister_catalog(provider_id: &str) -> bool {
 /// The registered catalog, if any.
 pub(crate) fn catalog(provider_id: &str) -> Option<CatalogEntry> {
     CATALOGS.get(provider_id)
+}
+
+/// Safe outcomes from an inspection-only catalog request. Error response
+/// bodies stay at the adapter boundary so Findings can never echo them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectionCatalogError {
+    /// The selected credential was rejected or lacks catalog access.
+    AuthOrAccess,
+    /// The provider does not expose a model-listing route.
+    NoCatalog,
+    /// The selected profile, endpoint, or read-only credential could not be
+    /// inspected safely.
+    Unavailable,
+    /// The catalog request failed for another bounded, safe-to-summarize
+    /// reason.
+    Failure,
+}
+
+/// A catalog result is prepared before the doctor consults its cache. The
+/// opaque identity captures the exact frozen credential and endpoint; the
+/// lazy future captures those same values and is dropped on a cache hit.
+///
+/// Fields are intentionally private and this type does not implement
+/// `Debug`, `Serialize`, or `Display`, so credential identities cannot leak
+/// through reports or logs.
+pub struct PreparedInspectionCatalog {
+    identity: InspectionCatalogIdentity,
+    fetch: BoxFuture<Result<Outcome<serde_json::Value>, InspectionCatalogError>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct InspectionCatalogIdentity(u64);
+
+impl PreparedInspectionCatalog {
+    /// Creates a prepared request using a stable, process-keyed identity over
+    /// the provider, effective listing URL, and credential snapshot. The
+    /// fetch future must use the same credential snapshot passed here.
+    pub fn new(
+        provider_id: &str,
+        effective_listing_url: &str,
+        credential: Option<&str>,
+        fetch: BoxFuture<Result<Outcome<serde_json::Value>, InspectionCatalogError>>,
+    ) -> Self {
+        let normalized_url = reqwest::Url::parse(effective_listing_url)
+            .map(|url| url.to_string())
+            .unwrap_or_else(|_| effective_listing_url.to_owned());
+        let credential = credential
+            .map(str::trim)
+            .filter(|credential| !credential.is_empty());
+        static IDENTITY_HASHER: OnceLock<RandomState> = OnceLock::new();
+        let mut hasher = IDENTITY_HASHER.get_or_init(RandomState::new).build_hasher();
+        provider_id.hash(&mut hasher);
+        normalized_url.hash(&mut hasher);
+        credential.hash(&mut hasher);
+        Self {
+            identity: InspectionCatalogIdentity(hasher.finish()),
+            fetch,
+        }
+    }
+
+    pub(crate) fn identity(&self) -> InspectionCatalogIdentity {
+        self.identity
+    }
+
+    /// Runs the prepared request. Callers consult their cache before invoking
+    /// this method; dropping the value leaves the network future unpolled.
+    pub fn fetch(self) -> BoxFuture<Result<Outcome<serde_json::Value>, InspectionCatalogError>> {
+        self.fetch
+    }
+}
+
+/// An inspection-safe catalog preparer. It must read credentials without
+/// refreshing, publishing expiry, or modifying profile state, then freeze the
+/// credential into the returned request before the core checks its cache.
+pub type InspectionCatalogListing = Arc<
+    dyn Fn(
+            Config,
+            CatalogRequest,
+        ) -> BoxFuture<Result<PreparedInspectionCatalog, InspectionCatalogError>>
+        + Send
+        + Sync,
+>;
+
+static INSPECTION_CATALOGS: HookSlot<InspectionCatalogListing> =
+    HookSlot::new("inference::inspection_catalogs");
+
+/// Registers an inspection-safe catalog preparer for the whole process.
+pub fn register_inspection_catalog(
+    provider_id: impl Into<String>,
+    listing: InspectionCatalogListing,
+) {
+    INSPECTION_CATALOGS.register(provider_id, listing);
+}
+
+/// Registers an inspection-safe catalog preparer for a context built from
+/// `extensions`.
+pub fn register_inspection_catalog_in(
+    extensions: &Extensions,
+    provider_id: impl Into<String>,
+    listing: InspectionCatalogListing,
+) {
+    INSPECTION_CATALOGS.register_in(extensions, provider_id, listing);
+}
+
+/// Removes a process-wide inspection-safe catalog preparer.
+pub fn unregister_inspection_catalog(provider_id: &str) -> bool {
+    INSPECTION_CATALOGS.unregister(provider_id)
+}
+
+pub(crate) fn inspection_catalog(provider_id: &str) -> Option<InspectionCatalogListing> {
+    INSPECTION_CATALOGS.get(provider_id)
 }
 
 #[cfg(test)]

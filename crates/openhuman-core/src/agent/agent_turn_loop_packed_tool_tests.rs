@@ -46,8 +46,9 @@ async fn turn_routes_a_bare_packed_tool_call_through_use_skill() {
     ]));
     let ran = Arc::new(Mutex::new(None));
     let mut tools: Vec<Box<dyn Tool>> = vec![Box::new(RecordingPackedTool(ran.clone()))];
-    crate::tools::toolpacks::append_pack_tools(&mut tools);
-
+    // The public registry helper only returns its tool vector. The session
+    // builder must replace the canonical proxy with a session-owned handle.
+    let _pack_registry_handle = crate::tools::toolpacks::append_pack_tools(&mut tools);
     let (mut agent, _tmp) = build_agent_with(provider, tools, Box::new(NativeDialect));
     assert!(
         !agent
@@ -131,7 +132,7 @@ async fn turn_does_not_route_a_bare_call_the_session_would_refuse() {
     ]));
     let ran = Arc::new(Mutex::new(false));
     let mut tools: Vec<Box<dyn Tool>> = vec![Box::new(WritePackedTool(ran.clone()))];
-    crate::tools::toolpacks::append_pack_tools(&mut tools);
+    let _pack_registry_handle = crate::tools::toolpacks::append_pack_tools(&mut tools);
     // The builder's default event channel is `internal`; cap it at read-only.
     let config = AgentConfig {
         channel_permissions: std::collections::HashMap::from([(

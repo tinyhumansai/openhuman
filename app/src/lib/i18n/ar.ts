@@ -654,6 +654,15 @@ const messages: TranslationMap = {
   'invites.title': 'الدعوات',
   'invites.noInvites': 'لا توجد دعوات معلقة',
   'devOptions.titleDiagnostics': 'المطور والتشخيص',
+  'devOptions.doctor.run': 'تشغيل الفحص',
+  'devOptions.doctor.runLive': 'تشغيل الفحوصات المباشرة',
+  'devOptions.doctor.liveWarning':
+    'قد تستهلك الفحوصات المباشرة رموزًا عند اختبار استدعاءات النماذج أو التضمين. هل تريد المتابعة؟',
+  'devOptions.doctor.severity.pass': 'ناجح',
+  'devOptions.doctor.severity.info': 'معلومات',
+  'devOptions.doctor.severity.warn': 'تحذير',
+  'devOptions.doctor.severity.error': 'خطأ',
+  'devOptions.doctor.severity.skipped': 'تم التخطي',
   'devOptions.diagnostics': 'التشخيص',
   'devOptions.toolPolicyDiagnosticsDesc':
     'قوائم جرد المواد، ووضع السياسات، والقوائم المسموح بها بx0xx، والوحدات الأخيرة',

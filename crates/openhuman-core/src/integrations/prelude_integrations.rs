@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use tinyagents_runtime::ToolSnapshot;
+use tinyagents_harness::tool::ToolSnapshot;
 
 use super::OpenHumanTurnPrelude;
 

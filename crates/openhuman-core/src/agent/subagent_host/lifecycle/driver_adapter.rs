@@ -1,4 +1,5 @@
 use super::*;
+use tinyagents_harness::tool::ToolSnapshot;
 
 pub(crate) struct OpenHumanDriverBundle {
     pub(crate) driver:

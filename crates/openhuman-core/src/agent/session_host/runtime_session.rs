@@ -29,11 +29,12 @@ type ActiveTerminalSidecar = std::sync::Arc<
 use std::sync::Arc;
 
 use anyhow::Result;
-use tinyagents_graph::goals::ThreadGoalStatus;
 use tinyagents_harness::multimodal::markers::extract_image_placeholders_in_text;
+use tinyagents_harness::tool::ToolSnapshot;
+use tinyagents_harness_tools::goals::ThreadGoalStatus;
 use tinyagents_runtime::{
-    CommitReceipt, ResumePreparation, SessionBuilder, SessionTerminal, ToolSnapshot,
-    TranscriptTarget, TurnPreparation,
+    CommitReceipt, ResumePreparation, SessionBuilder, SessionTerminal, TranscriptTarget,
+    TurnPreparation,
 };
 use tinyinference_llm::message::Message;
 
@@ -91,6 +92,7 @@ struct OpenHumanTurnPrelude {
             crate::agent::tinyagents::host::OpenHumanRunContext,
         >,
     >,
+    pack_registry_handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
     tool_dispatcher: Arc<dyn tinytools_agent::dialect::ToolDialect>,
     workspace_dir: std::path::PathBuf,
     action_dir: std::path::PathBuf,

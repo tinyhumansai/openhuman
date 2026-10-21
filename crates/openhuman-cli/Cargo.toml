@@ -409,6 +409,7 @@ sha2 = "0.10"
 tar = "0.4"
 tinyagents-graph = { path = "../../vendor/tinyagents/crates/tinyagents-graph", features = ["sqlite", "storage-drivers"] }
 tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", features = ["sqlite", "multimodal"] }
+tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false, features = ["goals"] }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
 tinydocs-bus = { path = "../../vendor/tinydocs/crates/tinydocs-bus" }
@@ -495,6 +496,10 @@ linked-modules = ["modules", "dep:openhuman-modules-linked"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+[[test]]
+name = "doctor_e2e"
+path = "../../tests/doctor_e2e.rs"
 
 [[test]]
 name = "embeddings_opt_out"

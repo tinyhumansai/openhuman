@@ -2,13 +2,13 @@
 //! execution distinction the whole pack mechanism rests on.
 
 use super::*;
-use tinyagents_harness::tool::packs::{route_sentence, USE_SKILL};
+use tinyagents_harness_tools::skills::{route_sentence, USE_SKILL};
 
 // ── the index must agree with the gate too ──────────────────────────────────
 
 /// A spec shaped like the one `UseSkillTool` publishes.
 fn use_skill_spec() -> tinytools::ToolSpec {
-    let tools = registry_with_all(&["build_workflow"]);
+    let (tools, _handle) = registry_with_all(&["build_workflow"]);
     let tool = find(&tools, USE_SKILL);
     tinytools::ToolSpec {
         name: tool.name().to_string(),
@@ -32,7 +32,7 @@ fn the_index_drops_a_pack_this_session_can_call_nothing_in() {
     // Only the workflows pack is reachable.
     let workflows = pack("workflows").expect("workflows pack");
     let kept =
-        tinyagents_harness::tool::packs::scope_use_skill_spec(&CATALOG, &mut spec, &|name| {
+        tinyagents_harness_tools::skills::scope_use_skill_spec(&CATALOG, &mut spec, &|name| {
             workflows.tools.contains(&name)
         });
     assert!(
@@ -60,7 +60,7 @@ fn the_index_drops_a_pack_this_session_can_call_nothing_in() {
 fn the_skill_enum_offers_only_reachable_packs() {
     let mut spec = use_skill_spec();
     let workflows = pack("workflows").expect("workflows pack");
-    tinyagents_harness::tool::packs::scope_use_skill_spec(&CATALOG, &mut spec, &|name| {
+    tinyagents_harness_tools::skills::scope_use_skill_spec(&CATALOG, &mut spec, &|name| {
         workflows.tools.contains(&name)
     });
 
@@ -85,7 +85,7 @@ fn the_skill_enum_offers_only_reachable_packs() {
 fn a_session_that_can_reach_no_pack_loses_use_skill() {
     let mut spec = use_skill_spec();
     assert!(
-        !tinyagents_harness::tool::packs::scope_use_skill_spec(&CATALOG, &mut spec, &|_| false),
+        !tinyagents_harness_tools::skills::scope_use_skill_spec(&CATALOG, &mut spec, &|_| false),
         "with nothing reachable, use_skill must be dropped, not emptied"
     );
 }
@@ -97,7 +97,7 @@ fn scoping_the_index_only_ever_shrinks_it() {
     let mut spec = use_skill_spec();
     let before = spec.description.len();
     let workflows = pack("workflows").expect("workflows pack");
-    tinyagents_harness::tool::packs::scope_use_skill_spec(&CATALOG, &mut spec, &|name| {
+    tinyagents_harness_tools::skills::scope_use_skill_spec(&CATALOG, &mut spec, &|name| {
         workflows.tools.contains(&name)
     });
     assert!(
@@ -119,7 +119,7 @@ fn scoping_the_index_only_ever_shrinks_it() {
 fn a_withheld_packed_tool_is_hidden_but_not_denied() {
     use tinytools::{ToolPolicyAction, ToolPolicyEngine};
 
-    let tools = registry_with_all(&["goal_set", "build_workflow"]);
+    let (tools, _handle) = registry_with_all(&["goal_set", "build_workflow"]);
     // The real shape: the harness seeds `visible` with everything, then
     // `strip_packed_from_visible` removes the packed names for a non-owner.
     let mut visible: HashSet<String> = tools.iter().map(|t| t.name().to_string()).collect();
@@ -197,7 +197,7 @@ fn rebinding_a_pack_handle_repoints_it_at_the_new_registry() {
     let name = pack("web3").unwrap().tools[0];
 
     // The agent's first tool `Arc`, with the packed tool marked Dangerous.
-    let first = registry_with(name, PermissionLevel::Dangerous);
+    let (first, handle) = registry_with(name, PermissionLevel::Dangerous);
     let use_skill = find(&first, USE_SKILL);
     let args = json!({"skill": "web3", "tool": name});
     assert_eq!(
@@ -214,13 +214,11 @@ fn rebinding_a_pack_handle_repoints_it_at_the_new_registry() {
         external: false,
         timeout: ToolTimeout::Inherit,
     })];
-    append_pack_tools(&mut rebuilt);
+    let _rebuilt_handle = append_pack_tools(&mut rebuilt);
     let rebuilt = Arc::new(rebuilt);
 
     // Re-point the ORIGINAL handle at it, which is what a rebuild does.
-    crate::tools::host_extensions::pack_registry_handle(use_skill)
-        .expect("use_skill exposes a pack registry handle")
-        .bind(Arc::downgrade(&rebuilt));
+    handle.bind(Arc::downgrade(&rebuilt));
 
     assert_eq!(
         use_skill.permission_level_with_args(&args),
@@ -240,14 +238,12 @@ fn rebinding_a_pack_handle_repoints_it_at_the_new_registry() {
 /// not mention a tool that gate will refuse.
 #[test]
 fn a_non_owner_listing_omits_the_tools_the_gate_will_refuse() {
-    let tools = registry_with_all(&["build_workflow", "propose_workflow"]);
-    let handle = crate::tools::host_extensions::pack_registry_handle(find(&tools, USE_SKILL))
-        .expect("use_skill carries the pack handle");
+    let (_tools, handle) = registry_with_all(&["build_workflow", "propose_workflow"]);
 
-    let rendered = tinyagents_harness::tool::packs::render_pack_filtered(
+    let rendered = tinyagents_harness_tools::skills::render_pack_filtered(
         &CATALOG,
         "workflows",
-        handle,
+        &handle,
         &|name: &str| name != "propose_workflow",
         "",
     )
@@ -267,15 +263,13 @@ fn a_non_owner_listing_omits_the_tools_the_gate_will_refuse() {
 /// way out. A bare "no tools available" is the dead end the model retried into.
 #[test]
 fn a_listing_with_nothing_callable_names_the_route_out() {
-    let tools = registry_with_all(&["build_workflow", "propose_workflow"]);
-    let handle = crate::tools::host_extensions::pack_registry_handle(find(&tools, USE_SKILL))
-        .expect("use_skill carries the pack handle");
+    let (_tools, handle) = registry_with_all(&["build_workflow", "propose_workflow"]);
 
     let route = route_sentence(&["build_workflow".to_string()], &["workflow_builder"]);
-    let err = tinyagents_harness::tool::packs::render_pack_filtered(
+    let err = tinyagents_harness_tools::skills::render_pack_filtered(
         &CATALOG,
         "workflows",
-        handle,
+        &handle,
         &|_| false,
         &route,
     )
@@ -340,7 +334,7 @@ fn a_direct_hand_off_closes_its_owners_pack_and_nothing_else() {
         delegate("hand_off_to_skill_setup", "skill_setup"),
         delegate("create_image", "image_agent"),
     ];
-    let raw = registry_with_all(&[
+    let (raw, _handle) = registry_with_all(&[
         "skill_registry_install",
         "media_generate_image",
         "wallet_status",
@@ -402,7 +396,7 @@ fn a_packed_hand_off_leaves_its_owners_pack_open() {
         agent_id: DelegationTarget("skill_setup".to_string()),
         tool_description: String::new(),
     });
-    let raw = registry_with_all(&["skill_registry_install"]);
+    let (raw, _handle) = registry_with_all(&["skill_registry_install"]);
     let tools: Vec<&dyn tinytools::Tool> = raw
         .iter()
         .map(|t| t.as_ref())
@@ -440,7 +434,7 @@ fn a_named_scope_session_closes_the_pack_its_visible_list_never_mentions() {
         agent_id: DelegationTarget("skill_setup".to_string()),
         tool_description: String::new(),
     });
-    let raw = registry_with_all(&["skill_registry_install"]);
+    let (raw, _handle) = registry_with_all(&["skill_registry_install"]);
     let tools: Vec<&dyn tinytools::Tool> = raw
         .iter()
         .map(|t| t.as_ref())
@@ -508,7 +502,7 @@ fn the_orchestrators_only_file_creator_is_never_closed() {
             }) as Box<dyn tinytools::Tool>
         })
         .collect();
-    let raw = registry_with_all(&["file_write", "file_read"]);
+    let (raw, _handle) = registry_with_all(&["file_write", "file_read"]);
     let tools: Vec<&dyn tinytools::Tool> = raw
         .iter()
         .map(|t| t.as_ref())

@@ -104,7 +104,12 @@ tinyagents-hooks = { workspace = true, features = ["goals"] }
 tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", features = [
     "sqlite",
     "multimodal",
-    "builtin-tools",
+] }
+tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false, features = [
+    "goals",
+    "skills",
+    "subagents",
+    "todos",
 ] }
 tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus", features = ["storage"] }
 tiny-artifacts = { path = "../../vendor/tiny-artifacts/crates/tiny-artifacts" }
@@ -233,6 +238,7 @@ tinyskills-drivers = { path = "../../vendor/tinyskills/crates/tinyskills-drivers
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
+serde_ignored = "0.1"
 # (Removed `html2md` dep. dhat-rs profiling on real Gmail inboxes
 # showed `html2md::walk` and `html2md::tables::handle` allocating
 # ~894 MB peak heap on a 10 KB HTML input from Otter.ai-style emails
@@ -336,7 +342,7 @@ aho-corasick = "1.1"
 walkdir = "2"
 hostname = "0.4.2"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
 # HTTP server framework for the domain-owned routes (`/v1`, dictation, the MCP
 # HTTP transport). Exclusive to the default-ON `http-server`
 # feature (#5048); the JSON-RPC server that mounts them lives in

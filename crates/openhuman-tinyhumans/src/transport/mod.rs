@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::memory::{CallbackBearerSource, MemoryError};
+use openhuman_embed::__host::memory::CallbackBearerSource;
 use openhuman_embed::__host::memory_engines::BearerSource;
 use openhuman_embed::__host::security::credentials::session_support::{
     resolve_backend_credential, BackendCredential,
@@ -133,7 +133,7 @@ impl BackendTransport for SdkBackendTransport {
                     .map(BackendCredential::into_secret)
                     .map_err(|error| {
                         log::debug!("[tinyhumans-transport] memory bearer unavailable: {error}");
-                        MemoryError::Unauthorized(
+                        tinymemory_api::Error::Unauthorized(
                             "the backend credential is unavailable".to_string(),
                         )
                     })

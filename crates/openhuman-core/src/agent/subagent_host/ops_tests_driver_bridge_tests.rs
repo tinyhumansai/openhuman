@@ -266,9 +266,10 @@ async fn closing_a_durable_driver_session_cancels_only_its_registered_child() {
         DurableSubagentSession, DurableSubagentStatus, OpenHumanTinySubagentSessionStore,
         SubagentSessionStore as HostSessionStore,
     };
+    use tinyagents_harness_tools::subagents::{SubAgentJobAction, SubAgentJobsTool};
     use tinyagents_orchestration::subagent::{
-        SubAgentJobAction, SubAgentJobRegistry, SubAgentJobStatus, SubAgentJobsTool,
-        SubagentSessionStore as TinySessionStore, SubagentTaskKey,
+        SubAgentJobRegistry, SubAgentJobStatus, SubagentSessionStore as TinySessionStore,
+        SubagentTaskKey,
     };
 
     let scratch = tempfile::tempdir().expect("isolated driver close fixture");
@@ -386,7 +387,7 @@ async fn closing_a_durable_driver_session_cancels_only_its_registered_child() {
     let message_store: std::sync::Arc<dyn TinySessionStore> = std::sync::Arc::new(port.clone());
     let message_dispatch: crate::agent::tinyagents::tool_registration::RegisteredToolDispatch =
         std::sync::Arc::new(
-            tinyagents_orchestration::subagent::SubAgentMessageTool::new(jobs.clone())
+            tinyagents_harness_tools::subagents::SubAgentMessageTool::new(jobs.clone())
                 .with_tool_name("steer_subagent")
                 .with_argument_fields("task_id", "subagent_session_id", "message", "__request_id")
                 .with_lane_field("mode")

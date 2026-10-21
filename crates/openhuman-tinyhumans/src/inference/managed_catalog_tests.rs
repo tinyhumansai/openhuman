@@ -93,3 +93,7 @@ fn with_neither_credential_the_catalog_is_empty() {
         ListingAuth::Empty("session expired")
     );
 }
+
+#[cfg(test)]
+#[path = "managed_catalog_inspection_tests.rs"]
+mod inspection_tests;

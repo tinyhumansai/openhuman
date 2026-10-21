@@ -30,8 +30,8 @@ use openhuman_embed::seams::{
 use tinytools::ToolRanker;
 
 use openhuman_embed::{
-    Access, ApiKey, ConfigSource, DomainSet, HostKind, Provider, Runtime, RuntimeConfig,
-    ServiceSet, Session, SessionStoreProvider, TokenSource, ToolGroups, Workspace,
+    Access, ApiKey, ConfigSource, CoreBootMode, DomainSet, HostKind, Provider, Runtime,
+    RuntimeConfig, ServiceSet, Session, SessionStoreProvider, TokenSource, ToolGroups, Workspace,
 };
 
 use crate::install::{wiring, InstallError, InstallOptions};
@@ -137,6 +137,10 @@ impl RuntimeBuilder {
     forward!(
         /// See [`openhuman_embed::RuntimeBuilder::config_source`].
         config_source(source: ConfigSource)
+    );
+    forward!(
+        /// See [`openhuman_embed::RuntimeBuilder::boot_mode`].
+        boot_mode(mode: CoreBootMode)
     );
     forward!(
         /// See [`openhuman_embed::RuntimeBuilder::provider`].
@@ -263,9 +267,14 @@ impl RuntimeBuilder {
     /// controller extension and the Jev ranker as the tool ranker. For entry
     /// points that take an embed builder rather than this one.
     pub fn connect(self) -> Result<openhuman_embed::RuntimeBuilder, InstallError> {
-        let wiring = wiring(&self.install)?;
+        let Self { inner, install } = self;
+        let mut wiring_result = None;
+        let inner = inner.configure_core_extensions(|extensions| {
+            wiring_result = Some(wiring(&install, extensions));
+        });
+        let wiring = wiring_result.expect("core extensions are configured synchronously")?;
         log::debug!("[tinyhumans] connecting embed builder: {wiring:?}");
-        let mut inner = self.inner;
+        let mut inner = inner;
         if let Some(extension) = wiring.controllers {
             inner = inner.controller_extension(extension);
         }

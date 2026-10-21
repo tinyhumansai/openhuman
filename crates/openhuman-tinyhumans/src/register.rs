@@ -9,12 +9,21 @@
 //! second `install` is harmless.
 
 use crate::install::InstallOptions;
+use openhuman_embed::__host::core::slots::Extensions;
+
+/// Where registrations contributed during setup should be visible.
+pub(crate) enum DoctorRegistration<'a> {
+    /// Compatibility hosts install the TinyHumans layer for the whole process.
+    Process,
+    /// RuntimeBuilder hosts bind checks to the CoreContext they create.
+    Context(&'a Extensions),
+}
 #[cfg(feature = "voice")]
 use crate::voice;
 use crate::{channels, client, inference, integrations, memory};
 
 /// Registers every area's hooks with the core.
-pub(crate) fn register_all(options: &InstallOptions) {
+pub(crate) fn register_all(options: &InstallOptions, doctor_registration: DoctorRegistration<'_>) {
     log::debug!("[tinyhumans] register_all: registering core hooks");
     client::register(options);
     integrations::register(options);
@@ -23,6 +32,7 @@ pub(crate) fn register_all(options: &InstallOptions) {
     inference::register(options);
     channels::register(options);
     memory::register(options);
+    crate::doctor::register(doctor_registration);
 }
 
 #[cfg(test)]

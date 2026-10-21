@@ -37,10 +37,130 @@ pub fn create_chat_model_with_model_id_in(
     Ok((with_default_temperature(model, temperature), model_id))
 }
 
+/// Build a chat model for static inspection, sharing the runtime constructor
+/// while resolving stored credentials through the read-only profile snapshot.
+/// It never calls the model and never runs runtime session-expiry gates.
+pub(crate) fn create_chat_model_with_model_id_in_for_inspection(
+    ctx: &DispatchCtx,
+    role: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
+    let prepared =
+        create_chat_model_with_identity_in_for_inspection(ctx, role, config, temperature)?;
+    Ok((prepared.model, prepared.model_id))
+}
+
+/// Build a model for a live inspection call and preserve the exact resolved
+/// endpoint, frozen credential, and wire-model identity used by that model.
+pub(crate) fn create_chat_model_with_identity_in_for_inspection(
+    _ctx: &DispatchCtx,
+    role: &str,
+    config: &Config,
+    temperature: f64,
+) -> anyhow::Result<PreparedInspectionChatModel> {
+    let mut resolved = provider_for_role(role, config);
+    if resolved.trim().is_empty() || resolved.trim() == "cloud" {
+        resolved = resolve_primary_cloud_provider_string(config);
+    }
+    if resolves_to_managed_backend(role, config) {
+        let build = managed_backend::managed_chat_model_build_for_inspection(role, config, None)?;
+        return Ok(prepared_inspection_model(
+            build.model,
+            build.model_id.clone(),
+            build.endpoint,
+            build.credential,
+            temperature,
+            InspectionOutputBudgetCapability::Bounded,
+        ));
+    }
+    if let Some(result) =
+        try_create_claude_agent_sdk_chat_model_for_inspection(role, &resolved, config)
+    {
+        let (model, model_id, endpoint, credential) = result?;
+        return Ok(prepared_inspection_model(
+            model,
+            model_id.clone(),
+            endpoint,
+            credential,
+            temperature,
+            InspectionOutputBudgetCapability::Bounded,
+        ));
+    }
+    if let Some(result) = try_create_claude_code_chat_model_for_inspection(role, &resolved, config)
+    {
+        let (model, model_id, endpoint, credential) = result?;
+        return Ok(prepared_inspection_model(
+            model,
+            model_id.clone(),
+            endpoint,
+            credential,
+            temperature,
+            InspectionOutputBudgetCapability::Bounded,
+        ));
+    }
+    if let Some(result) = try_create_local_runtime_chat_model_for_inspection(role, config) {
+        let (model, model_id, endpoint, credential) = result?;
+        return Ok(prepared_inspection_model(
+            model,
+            model_id.clone(),
+            endpoint,
+            credential,
+            temperature,
+            InspectionOutputBudgetCapability::Bounded,
+        ));
+    }
+    if let Some(result) =
+        try_create_cloud_slug_chat_model_for_inspection_with_identity(role, config)
+    {
+        let (model, model_id, endpoint, credential, output_budget) = result?;
+        return Ok(prepared_inspection_model(
+            model,
+            model_id.clone(),
+            endpoint,
+            credential,
+            temperature,
+            output_budget,
+        ));
+    }
+    Err(unresolved_chat_model_error_with_access(
+        role,
+        &provider_for_role(role, config),
+        config,
+        &EgressLedger::none(),
+        CredentialAccess::Inspection,
+    ))
+}
+
+fn prepared_inspection_model(
+    model: Arc<dyn ChatModel<()>>,
+    model_id: String,
+    endpoint: String,
+    credential: String,
+    temperature: f64,
+    output_budget: InspectionOutputBudgetCapability,
+) -> PreparedInspectionChatModel {
+    PreparedInspectionChatModel {
+        model: with_default_temperature(model, temperature),
+        identity: InspectionRequestIdentity::new(endpoint, credential, model_id.clone()),
+        model_id,
+        output_budget,
+    }
+}
+
 pub(super) fn create_chat_model_with_model_id_inner(
     ctx: &DispatchCtx,
     role: &str,
     config: &Config,
+) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
+    create_chat_model_with_model_id_inner_and_access(ctx, role, config, CredentialAccess::Runtime)
+}
+
+fn create_chat_model_with_model_id_inner_and_access(
+    ctx: &DispatchCtx,
+    role: &str,
+    config: &Config,
+    credential_access: CredentialAccess,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
     if let Some(model) = ctx.host_overrides().and_then(|local| local.model_for(role)) {
         return Ok((
@@ -73,7 +193,12 @@ pub(super) fn create_chat_model_with_model_id_inner(
     };
     if !test_override_active {
         if resolves_to_managed_backend(role, config) {
-            return make_openhuman_backend_model(role, config);
+            return match credential_access {
+                CredentialAccess::Runtime => make_openhuman_backend_model(role, config),
+                CredentialAccess::Inspection => {
+                    super::managed_backend::managed_chat_model_for_inspection(role, config, None)
+                }
+            };
         }
         if let Some(result) =
             try_create_claude_agent_sdk_chat_model(role, config, &EgressLedger::none())
@@ -98,16 +223,24 @@ pub(super) fn create_chat_model_with_model_id_inner(
         // codex-oauth or `/v1/responses` fallback) → crate-native `ChatModel`
         // (issue #4727 Phase 3, conservative subset). `openai`/codex, custom
         // proxy slugs, and the managed entry return `None` and fall through.
-        if let Some(result) = try_create_cloud_slug_chat_model(role, config, &EgressLedger::none())
-        {
+        let cloud_slug = match credential_access {
+            CredentialAccess::Runtime => {
+                try_create_cloud_slug_chat_model(role, config, &EgressLedger::none())
+            }
+            CredentialAccess::Inspection => {
+                try_create_cloud_slug_chat_model_for_inspection(role, config, &EgressLedger::none())
+            }
+        };
+        if let Some(result) = cloud_slug {
             return result;
         }
     }
-    Err(unresolved_chat_model_error(
+    Err(unresolved_chat_model_error_with_access(
         role,
         &provider_for_role(role, config),
         config,
         &EgressLedger::none(),
+        credential_access,
     ))
 }
 
@@ -369,6 +502,22 @@ pub(super) fn unresolved_chat_model_error(
     config: &Config,
     egress: &EgressLedger,
 ) -> anyhow::Error {
+    unresolved_chat_model_error_with_access(
+        role,
+        provider,
+        config,
+        egress,
+        CredentialAccess::Runtime,
+    )
+}
+
+pub(super) fn unresolved_chat_model_error_with_access(
+    role: &str,
+    provider: &str,
+    config: &Config,
+    egress: &EgressLedger,
+    credential_access: CredentialAccess,
+) -> anyhow::Error {
     let p = provider.trim();
 
     if let Err(error) = enforce_local_only_inference(role, p) {
@@ -391,17 +540,20 @@ pub(super) fn unresolved_chat_model_error(
     }
 
     if p.is_empty() || p == "cloud" {
-        return unresolved_chat_model_error(
+        return unresolved_chat_model_error_with_access(
             role,
             &resolve_primary_cloud_provider_string(config),
             config,
             egress,
+            credential_access,
         );
     }
 
     #[cfg(not(test))]
-    if let Err(error) = verify_session_active(config) {
-        return error;
+    if credential_access == CredentialAccess::Runtime {
+        if let Err(error) = verify_session_active(config) {
+            return error;
+        }
     }
 
     // Preserve the legacy chokepoint's disclosure ordering for invalid custom
@@ -418,7 +570,13 @@ pub(super) fn unresolved_chat_model_error(
             );
         }
         let (model, _) = split_model_and_temperature(model_with_temperature);
-        return match resolve_cloud_slug(role, slug.trim(), &model, config) {
+        return match resolve_cloud_slug_with_access(
+            role,
+            slug.trim(),
+            &model,
+            config,
+            credential_access,
+        ) {
             Err(error) => error,
             Ok(_) => anyhow::anyhow!(
                 "[chat-factory] configured provider '{}' for role '{}' did not produce a crate-native chat model",

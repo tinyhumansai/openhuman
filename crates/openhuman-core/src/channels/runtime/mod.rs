@@ -6,7 +6,6 @@ mod startup;
 #[cfg(test)]
 mod supervision;
 
-pub(crate) use startup::hydrate_channel_credentials;
 pub(crate) use startup::prepare_runtime_limits;
 pub use startup::start_channels;
 pub(crate) use startup::start_channels_with_session;

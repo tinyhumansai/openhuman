@@ -237,7 +237,9 @@ impl OpenHumanTurnPrelude {
             }
         }
         let synthesized_tools = Arc::new(synthesized);
-        crate::tools::toolpacks::bind_synthesized_pack_registry(&surface.tools, &synthesized_tools);
+        if let Some(handle) = self.pack_registry_handle.as_ref() {
+            crate::tools::toolpacks::bind_synthesized_pack_registry(handle, &synthesized_tools);
+        }
         let all_tools = surface
             .tools
             .iter()

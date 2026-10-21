@@ -5,11 +5,12 @@ use super::*;
 use crate::agent::tinyagents::TurnModelSource;
 use crate::inference::turn_models::TurnModels;
 use async_trait::async_trait;
+use tinyagents_harness::tool::ToolSnapshot;
 use tinyagents_harness::turn_policy::{
     DEFAULT_MODEL_CALL_TIMEOUT_SECS, LOCAL_MODEL_CALL_TIMEOUT_SECS,
 };
 use tinyagents_runtime::turn_driver::{SharedToolSet, TurnControls, TurnDriver};
-use tinyagents_runtime::{DriverRequest, ToolSnapshot};
+use tinyagents_runtime::DriverRequest;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinytools::{Tool, ToolResult};
 

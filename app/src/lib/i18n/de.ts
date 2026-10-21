@@ -690,6 +690,15 @@ const messages: TranslationMap = {
   'invites.title': 'Lädt ein',
   'invites.noInvites': 'Keine ausstehenden Einladungen',
   'devOptions.titleDiagnostics': 'Entwickler & Diagnose',
+  'devOptions.doctor.run': 'Diagnose ausführen',
+  'devOptions.doctor.runLive': 'Live-Prüfungen ausführen',
+  'devOptions.doctor.liveWarning':
+    'Live-Prüfungen können bei Modell- oder Embedding-Aufrufen Tokens verbrauchen. Fortfahren?',
+  'devOptions.doctor.severity.pass': 'Bestanden',
+  'devOptions.doctor.severity.info': 'Info',
+  'devOptions.doctor.severity.warn': 'Warnung',
+  'devOptions.doctor.severity.error': 'Fehler',
+  'devOptions.doctor.severity.skipped': 'Übersprungen',
   'devOptions.diagnostics': 'Diagnose',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Werkzeuginventar, Richtlinienstatus, MCP-Zulassungslisten und aktuelle Sperren',

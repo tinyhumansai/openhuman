@@ -30,7 +30,7 @@ pub struct ThreadGoalGetResponse {
 /// thread has never written one.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ThreadTodosGetResponse {
-    pub todos: Vec<tinyagents_graph::todos::TodoItem>,
+    pub todos: Vec<tinyagents_harness_tools::todos::TodoItem>,
 }
 
 /// `threads.goal_get` — read a thread's current goal without waiting for the
@@ -62,7 +62,7 @@ pub async fn todos_get(
         return Err("thread_id is required".to_string());
     }
     let store = crate::storage::sessions::stores_or_ephemeral(&dir).kv;
-    let todos = match tinyagents_graph::todos::store::list(&store, thread_id).await {
+    let todos = match tinyagents_harness_tools::todos::store::list(&store, thread_id).await {
         Ok(snapshot) => snapshot.items,
         Err(e) => {
             log::debug!("[threads] todos_get thread_id={thread_id} list failed: {e}");

@@ -34,6 +34,7 @@ use openhuman_core::agent::tinyagents::discovery::{
 };
 use openhuman_core::core::all::{register_controller_extension, ControllerExtension};
 use openhuman_core::core::server_launcher::{install_server_launcher, ServerLauncher};
+use openhuman_core::core::slots::Extensions;
 use openhuman_core::security::SecurityPolicy;
 use openhuman_core::storage::StorageBackend;
 use tinytools::ToolRanker;
@@ -83,6 +84,7 @@ impl From<Arc<dyn StorageBackend>> for StorageSource {
 #[derive(Default)]
 pub(crate) struct HostSeams {
     pub(crate) controller_extensions: Vec<ControllerExtension>,
+    pub(crate) core_extensions: Extensions,
     pub(crate) tool_ranker: Option<Arc<dyn ToolRanker>>,
     pub(crate) post_turn_hooks: Vec<Arc<dyn LearningSink>>,
     pub(crate) tool_hooks: Vec<Arc<dyn ToolHook<OpenHumanRunContext>>>,
@@ -407,6 +409,17 @@ impl Drop for InstalledSeams {
 }
 
 impl RuntimeBuilder {
+    /// Configure context-scoped core hooks before this runtime is built.
+    ///
+    /// The callback receives the same extension set that is attached to the
+    /// runtime's `CoreContext`; registrations remain isolated from other core
+    /// contexts in the process. This is intended for layered host crates.
+    #[doc(hidden)]
+    pub fn configure_core_extensions(self, configure: impl FnOnce(&Extensions)) -> Self {
+        configure(&self.seams.core_extensions);
+        self
+    }
+
     /// Contribute controllers to the core's registry, as the TinyHumans layer
     /// does for its hosted RPC proxies. May be called more than once.
     ///

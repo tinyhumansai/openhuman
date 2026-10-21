@@ -63,7 +63,7 @@ pub(crate) mod subscribers;
 pub mod tenant;
 
 pub use agent_scope::{agent_scope_dir, slot_for, AgentContextRegistry, AgentScopedState};
-pub use builder::{CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
+pub use builder::{CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
 pub use context::{AutonomyTierSource, ContextOverlay, CoreContext};
 pub use dispatch_ctx::DispatchCtx;
 pub use mode::{current_mode, is_saas, Mode};

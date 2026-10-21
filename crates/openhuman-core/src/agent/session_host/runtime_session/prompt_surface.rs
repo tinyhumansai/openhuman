@@ -12,6 +12,7 @@ impl OpenHumanSessionHost {
             prompt_builder: self.prompt_builder.clone(),
             context_config: self.context_config.clone(),
             tool_policy: self.tool_policy.clone(),
+            pack_registry_handle: self.pack_registry_handle.clone(),
             tool_dispatcher: self.tool_dispatcher.clone(),
             workspace_dir: self.workspace_dir.clone(),
             action_dir: self.action_dir.clone(),

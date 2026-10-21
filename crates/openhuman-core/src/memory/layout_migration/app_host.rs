@@ -14,6 +14,7 @@ use super::state::StateKvMigrationStore;
 use crate::config::{Config, MemoryLayoutMode};
 use crate::memory::engine::{self, CORTEXDB_ENGINE};
 use crate::memory::scope;
+use crate::memory::MemoryError;
 use tinymemory_api::{Error, Result};
 
 /// The app's [`lm::LayoutHost`], bound to one account's config.
@@ -73,8 +74,8 @@ impl lm::LayoutHost for AppHost {
         let bind = || -> Result<Engines> {
             let root = signed_in_root(config)?;
             Ok(Engines {
-                legacy: engine::bind_with_root(config, None)?.engine,
-                tree: engine::bind_with_root(config, Some(&root))?.engine,
+                legacy: bind_engine(config, None)?.engine,
+                tree: bind_engine(config, Some(&root))?.engine,
             })
         };
         bind().map_err(to_module)
@@ -144,7 +145,7 @@ pub(super) fn claim(config: &Config) -> Result<Option<FsLegacyClaim>> {
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .ok_or_else(signed_out)?;
-    let endpoint = engine::bind_with_root(config, None)?.endpoint;
+    let endpoint = bind_engine(config, None)?.endpoint;
     Ok(Some(FsLegacyClaim::new(app_dir, &endpoint, &owner)))
 }
 
@@ -154,6 +155,26 @@ fn signed_in_root(config: &Config) -> Result<String> {
 
 fn signed_out() -> Error {
     Error::Off("sign in to move memory into its own layout".to_string())
+}
+
+fn bind_engine(config: &Config, root: Option<&str>) -> Result<engine::BoundEngine> {
+    engine::bind_with_root(config, root).map_err(memory_error_to_engine)
+}
+
+fn memory_error_to_engine(error: MemoryError) -> Error {
+    match error {
+        MemoryError::Off(message) => Error::Off(message),
+        MemoryError::Unsupported(message) => Error::Unsupported(message),
+        MemoryError::InvalidRequest(message) => Error::InvalidRequest(message),
+        MemoryError::Unauthorized(message) => Error::Unauthorized(message),
+        MemoryError::InsufficientCredits(message) => Error::InsufficientCredits(message),
+        // TinyMemory has no plan-specific API variant. Preserve the stable
+        // marker so the host can recover OpenHuman's PLAN_REQUIRED category.
+        MemoryError::PlanRequired(message) => Error::Engine(message),
+        MemoryError::Unavailable(message) => Error::Unavailable(message),
+        MemoryError::Engine(message) => Error::Engine(message),
+        MemoryError::ConfigConflict(error) => Error::Conflict(error.message),
+    }
 }
 
 #[cfg(test)]

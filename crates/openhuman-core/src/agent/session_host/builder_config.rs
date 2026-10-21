@@ -17,6 +17,8 @@ pub struct SessionHostBuilder {
     /// Explicit host config for injected-model attachment staging and services.
     pub(super) runtime_config: Option<Arc<crate::config::Config>>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
+    /// Host-owned handle shared with the durable `use_skill` tool.
+    pub(super) pack_registry_handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
     /// Delegation tools synthesised for the session's initial connection set.
     /// Held in [`OpenHumanSessionHost::synthesized_tools`], never inside [`OpenHumanSessionHost::tools`].
     pub(super) synthesized_tools: Option<Vec<Box<dyn Tool>>>,

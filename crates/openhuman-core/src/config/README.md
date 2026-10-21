@@ -108,7 +108,8 @@ process-global user's settings.
 Overrides are applied after parsing and never written back to disk.
 
 1. `Config::apply_env_overrides` ([`schema/load/env_overlay.rs`](./schema/load/env_overlay.rs) plus one submodule per section) reads
-   `OPENHUMAN_*` variables such as `OPENHUMAN_MODEL` and `OPENHUMAN_TOOL_DISPATCHER`. Only namespaced
+   `OPENHUMAN_*` variables such as `OPENHUMAN_DEFAULT_MODEL` (with `OPENHUMAN_MODEL` kept as an alias)
+   and `OPENHUMAN_TOOL_DISPATCHER`. Only namespaced
    names are honored. Tests call the pure `apply_env_overlay_with` with a map-backed `EnvLookup`
    ([`schema/load/env.rs`](./schema/load/env.rs)) so they do not touch the process environment.
 2. The same call publishes process-wide state: the proxy settings go to `set_runtime_proxy_config`

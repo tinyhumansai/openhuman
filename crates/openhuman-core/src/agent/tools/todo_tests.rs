@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::{json, Value};
-use tinyagents_graph::todos::{TodoItem, TodoStatus};
+use tinyagents_harness_tools::todos::{TodoItem, TodoStatus};
 
 /// Serialize tests that share the process-global scratch store. Same lock
 /// process-global scratch store.
@@ -30,7 +30,7 @@ fn test_workspace() -> std::path::PathBuf {
 }
 
 async fn reset_scratch(workspace_dir: &std::path::Path) {
-    tinyagents_graph::todos::store::clear(&todo_store(workspace_dir), "_scratch_")
+    tinyagents_harness_tools::todos::store::clear(&todo_store(workspace_dir), "_scratch_")
         .await
         .expect("clear scratch");
 }
@@ -228,7 +228,7 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
         id: parent.session_id.clone(),
     };
     let item = TodoItem::with_status("carried over", TodoStatus::InProgress);
-    tinyagents_graph::todos::store::replace(
+    tinyagents_harness_tools::todos::store::replace(
         &todo_store(&workspace_dir),
         legacy_scope.key(),
         vec![item],
@@ -240,7 +240,7 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
     let read = tool
         .execute_with_parent_context(
             json!({}),
-            Some(parent),
+            Some(parent.clone()),
             Some(&ThreadContext("thread-legacy")),
         )
         .await
@@ -254,11 +254,42 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
     let thread_scope = TodoScope::Session {
         id: "thread-legacy".into(),
     };
-    let migrated =
-        tinyagents_graph::todos::store::list(&todo_store(&workspace_dir), thread_scope.key())
-            .await
-            .unwrap();
+    let migrated = tinyagents_harness_tools::todos::store::list(
+        &todo_store(&workspace_dir),
+        thread_scope.key(),
+    )
+    .await
+    .unwrap();
     assert_eq!(migrated.items.len(), 1);
+
+    // Clearing the new thread-keyed list must remain authoritative. The empty
+    // list is persisted, so a later read must not treat it as an absent target
+    // and copy the still-present legacy row back into it.
+    let cleared = tool
+        .execute_with_parent_context(
+            json!({ "todos": [] }),
+            Some(parent.clone()),
+            Some(&ThreadContext("thread-legacy")),
+        )
+        .await
+        .unwrap();
+    assert!(payload(&cleared)["todos"].as_array().unwrap().is_empty());
+
+    let read_after_clear = tool
+        .execute_with_parent_context(
+            json!({}),
+            Some(parent),
+            Some(&ThreadContext("thread-legacy")),
+        )
+        .await
+        .unwrap();
+    assert!(
+        payload(&read_after_clear)["todos"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "a cleared migrated list must not be resurrected from the legacy key"
+    );
 }
 
 #[tokio::test]
@@ -270,21 +301,26 @@ async fn sessions_do_not_see_each_other_and_a_list_survives_across_turns() {
     let b = TodoScope::Session {
         id: "sess-b".into(),
     };
-    tinyagents_graph::todos::store::clear(&todo_store(&workspace_dir), a.key())
+    tinyagents_harness_tools::todos::store::clear(&todo_store(&workspace_dir), a.key())
         .await
         .unwrap();
-    tinyagents_graph::todos::store::clear(&todo_store(&workspace_dir), b.key())
+    tinyagents_harness_tools::todos::store::clear(&todo_store(&workspace_dir), b.key())
         .await
         .unwrap();
 
     let item = TodoItem::with_status("only in a", TodoStatus::InProgress);
-    tinyagents_graph::todos::store::replace(&todo_store(&workspace_dir), a.key(), vec![item])
-        .await
-        .unwrap();
+    tinyagents_harness_tools::todos::store::replace(
+        &todo_store(&workspace_dir),
+        a.key(),
+        vec![item],
+    )
+    .await
+    .unwrap();
 
-    let a_again = tinyagents_graph::todos::store::list(&todo_store(&workspace_dir), a.key())
-        .await
-        .unwrap();
+    let a_again =
+        tinyagents_harness_tools::todos::store::list(&todo_store(&workspace_dir), a.key())
+            .await
+            .unwrap();
     assert_eq!(
         a_again.items.len(),
         1,
@@ -292,7 +328,7 @@ async fn sessions_do_not_see_each_other_and_a_list_survives_across_turns() {
     );
     assert_eq!(a_again.thread_id, "sess-a");
     assert!(
-        tinyagents_graph::todos::store::list(&todo_store(&workspace_dir), b.key())
+        tinyagents_harness_tools::todos::store::list(&todo_store(&workspace_dir), b.key())
             .await
             .unwrap()
             .items

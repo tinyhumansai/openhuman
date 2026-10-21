@@ -364,6 +364,24 @@ impl EncryptedFileBackend {
         }
     }
 
+    /// Read one namespaced secret from this explicit profile store without
+    /// initializing global keyring state, importing legacy files, or
+    /// quarantining corrupt data. Returns an error when no read-only key is
+    /// available, so callers can report the result as unavailable rather
+    /// than treating it as a missing credential.
+    pub fn get_profile_read_only(
+        &self,
+        namespaced_key: &str,
+    ) -> Result<Option<String>, SecretStorageError> {
+        let key =
+            key_source::profile_master_key_read_only(&self.workspace_dir)?.ok_or_else(|| {
+                SecretStorageError::Backend(
+                    "profile master key unavailable for read-only secret lookup".into(),
+                )
+            })?;
+        self.get_with_key_read_only(&key, namespaced_key)
+    }
+
     fn key(&self) -> Option<Zeroizing<[u8; KEY_LEN]>> {
         #[cfg(test)]
         {
@@ -621,6 +639,19 @@ impl EncryptedFileBackend {
             let name = name.clone();
             async move { store.get(&name).await }
         })?;
+        adapter::utf8(namespaced_key, value)
+    }
+
+    fn get_with_key_read_only(
+        &self,
+        key: &[u8; KEY_LEN],
+        namespaced_key: &str,
+    ) -> Result<Option<String>, SecretStorageError> {
+        use tinystoragedrivers::secrets::SecretStore as _;
+        let name = namespaced_key.to_string();
+        let store = self.store(key);
+        let value = crate::storage::block_on(async move { store.get(&name).await })
+            .map_err(adapter::backend_error)?;
         adapter::utf8(namespaced_key, value)
     }
 

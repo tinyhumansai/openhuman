@@ -57,6 +57,9 @@ pub struct OpenHumanBackendModel {
     /// the managed backend model: BYOK and third-party models must never see
     /// this backend-only extension.
     pub(super) thread_id: Option<String>,
+    /// Frozen bearer for inspection-only calls. When set, invocation never
+    /// consults mutable credential storage or publishes session state.
+    pub(super) inspection_bearer: Option<String>,
 }
 
 impl OpenHumanBackendModel {
@@ -86,6 +89,7 @@ impl OpenHumanBackendModel {
                 ..ModelProfile::default()
             },
             thread_id: None,
+            inspection_bearer: None,
         }
     }
 
@@ -98,6 +102,17 @@ impl OpenHumanBackendModel {
             (!thread_id.is_empty()).then(|| thread_id.to_owned())
         });
         self
+    }
+
+    /// Pin a credential from the read-only inspection snapshot for subsequent
+    /// calls. This model must not be used as a runtime model.
+    pub fn with_inspection_bearer(mut self, bearer: String) -> Self {
+        self.inspection_bearer = Some(bearer);
+        self
+    }
+
+    pub(super) fn is_inspection_safe(&self) -> bool {
+        self.inspection_bearer.is_some()
     }
 
     /// Force prompt-guided tool calling for toolsets that exceed the managed
@@ -119,6 +134,9 @@ impl OpenHumanBackendModel {
     }
 
     pub(super) fn resolve_bearer(&self) -> anyhow::Result<String> {
+        if let Some(bearer) = self.inspection_bearer.as_ref() {
+            return Ok(bearer.clone());
+        }
         use openhuman_embed::__host::security::credentials::session_support::classify_session_token;
 
         // A stored API key (library runtime) is the bearer outright: the

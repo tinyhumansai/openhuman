@@ -4,7 +4,7 @@
 //! could edit would let a caller move a dangerous tool out of the advertised
 //! surface (or back into it) without review. Adding a pack is a source change.
 
-use tinyagents_harness::tool::packs::{PackCatalog, ToolPack};
+use tinyagents_harness_tools::skills::{PackCatalog, ToolPack};
 
 /// Every pack this build knows about.
 ///
@@ -410,7 +410,7 @@ pub(crate) const DELIBERATELY_UNPACKED_FLEET_TOOLS: &[&str] = &[
 ];
 
 /// The lookup surface over [`PACKS`] handed to the generic `use_skill` tool
-/// (`tinyagents_harness::tool::packs`). `NOT_FOUND_MARKER` is the host's status
+/// (`tinyagents_harness_tools::skills`). `NOT_FOUND_MARKER` is the host's status
 /// vocabulary, so a "no such skill / tool" result classifies as `NotFound`.
 pub const CATALOG: PackCatalog = PackCatalog::new(PACKS, tinytools::status::NOT_FOUND_MARKER);
 

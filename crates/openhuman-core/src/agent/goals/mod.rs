@@ -1,4 +1,4 @@
-//! Thin OpenHuman host adapters for [`tinyagents_graph::goals`].
+//! Thin OpenHuman host adapters for [`tinyagents_harness_tools::goals`].
 //!
 //! Tinyagents owns the goal types, lifecycle, persistence, prompt rendering,
 //! graph continuation, and native harness tools. This module contains the
@@ -9,7 +9,7 @@
 pub mod runtime;
 pub mod tools;
 
-use tinyagents_graph::goals::ThreadGoal;
+use tinyagents_harness_tools::goals::ThreadGoal;
 pub use tools::goal_tools;
 
 /// Serialize a [`ThreadGoal`] for the `goal` field on `ThreadGoalUpdated` /

@@ -3,7 +3,7 @@ use super::*;
 async fn account_turn_charges_active_goal_and_trips_budget() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    tinyagents_graph::goals::store::set(
+    tinyagents_harness_tools::goals::store::set(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-acct",
         "obj",
@@ -12,7 +12,7 @@ async fn account_turn_charges_active_goal_and_trips_budget() {
     .await
     .unwrap();
     account_turn_against_goal(&dir, Some("t-acct"), 80, 40, 3).await; // 120 >= 100
-    let g = tinyagents_graph::goals::store::get(
+    let g = tinyagents_harness_tools::goals::store::get(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-acct",
     )
@@ -26,7 +26,7 @@ async fn account_turn_charges_active_goal_and_trips_budget() {
 async fn account_turn_skips_non_active_goal() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    tinyagents_graph::goals::store::set(
+    tinyagents_harness_tools::goals::store::set(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-paused",
         "obj",
@@ -34,14 +34,14 @@ async fn account_turn_skips_non_active_goal() {
     )
     .await
     .unwrap();
-    tinyagents_graph::goals::store::pause(
+    tinyagents_harness_tools::goals::store::pause(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-paused",
     )
     .await
     .unwrap();
     account_turn_against_goal(&dir, Some("t-paused"), 500, 500, 1).await;
-    let g = tinyagents_graph::goals::store::get(
+    let g = tinyagents_harness_tools::goals::store::get(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-paused",
     )
@@ -57,7 +57,7 @@ async fn complete_for_thread_settles_active_goal() {
     // later turn stops re-injecting its `[active_goal]` block (#1725).
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    tinyagents_graph::goals::store::set(
+    tinyagents_harness_tools::goals::store::set(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-complete",
         "obj",
@@ -66,7 +66,7 @@ async fn complete_for_thread_settles_active_goal() {
     .await
     .unwrap();
     complete_for_thread(&dir, Some("t-complete")).await;
-    let g = tinyagents_graph::goals::store::get(
+    let g = tinyagents_harness_tools::goals::store::get(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-complete",
     )
@@ -90,7 +90,7 @@ async fn clear_for_thread_removes_the_goal_row() {
     // injects no goal block at all — the strongest anti-leak guarantee.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    tinyagents_graph::goals::store::set(
+    tinyagents_harness_tools::goals::store::set(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-clear",
         "obj",
@@ -99,7 +99,7 @@ async fn clear_for_thread_removes_the_goal_row() {
     .await
     .unwrap();
     clear_for_thread(&dir, Some("t-clear")).await;
-    let g = tinyagents_graph::goals::store::get(
+    let g = tinyagents_harness_tools::goals::store::get(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-clear",
     )
@@ -119,7 +119,7 @@ async fn complete_and_clear_are_safe_without_a_goal_or_thread() {
     let dir = tmp.path().to_path_buf();
     complete_for_thread(&dir, Some("t-empty")).await;
     clear_for_thread(&dir, Some("t-empty")).await;
-    assert!(tinyagents_graph::goals::store::get(
+    assert!(tinyagents_harness_tools::goals::store::get(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "t-empty"
     )
@@ -129,40 +129,4 @@ async fn complete_and_clear_are_safe_without_a_goal_or_thread() {
     // No ambient thread scope at all.
     complete_for_thread(&dir, None).await;
     clear_for_thread(&dir, None).await;
-}
-
-#[tokio::test]
-async fn account_turn_clears_suppression_without_losing_usage() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().to_path_buf();
-    let goal = tinyagents_graph::goals::store::set(
-        &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
-        "t-suppressed",
-        "obj",
-        Some(1000),
-    )
-    .await
-    .unwrap();
-    tinyagents_graph::goals::store::set_continuation_suppressed_if(
-        &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
-        "t-suppressed",
-        &goal.goal_id,
-        true,
-    )
-    .await
-    .unwrap();
-
-    account_turn_against_goal(&dir, Some("t-suppressed"), 80, 40, 3).await;
-
-    let updated = tinyagents_graph::goals::store::get(
-        &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
-        "t-suppressed",
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(updated.goal_id, goal.goal_id);
-    assert!(!updated.continuation_suppressed);
-    assert_eq!(updated.tokens_used, 120);
-    assert_eq!(updated.time_used_seconds, 3);
 }

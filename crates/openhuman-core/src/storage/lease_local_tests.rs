@@ -1,6 +1,40 @@
 use super::*;
 
 #[tokio::test]
+async fn doctor_holder_inspection_does_not_create_a_lock_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let key_dir = local_dir(dir.path(), "k");
+    fs::create_dir_all(&key_dir).unwrap();
+    fs::write(
+        key_dir.join(RECORD_FILE),
+        serde_json::to_vec(&LeaseRecord {
+            owner: "previous-node".into(),
+            endpoint: None,
+            epoch: 1,
+            expires_at_ms: u64::MAX,
+            released: false,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let lock_path = key_dir.join(LOCK_FILE);
+    assert!(!lock_path.exists());
+
+    let observer = LocalLeases::new(dir.path(), "doctor");
+    let record = observer.holder_readonly("k").await.unwrap().unwrap();
+
+    assert_eq!(record.owner, "previous-node");
+    assert!(
+        !record.is_live(0),
+        "the absent lock means no holder is live"
+    );
+    assert!(
+        !lock_path.exists(),
+        "a read-only holder inspection must not create the lock file"
+    );
+}
+
+#[tokio::test]
 async fn a_second_instance_on_one_root_is_held_out() {
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = (

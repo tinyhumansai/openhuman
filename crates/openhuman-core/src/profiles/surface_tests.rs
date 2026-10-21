@@ -42,6 +42,20 @@ fn the_saas_planes_never_overlap() {
 }
 
 #[test]
+fn doctor_report_is_available_to_both_authorized_saas_scopes() {
+    let doctor = "openhuman.doctor_report";
+    assert!(visible_in(true, Scope::Operator, doctor, false));
+    assert!(visible_in(true, Scope::User, doctor, false));
+    assert!(!visible_in(true, Scope::None, doctor, false));
+    assert!(!visible_in(
+        true,
+        Scope::User,
+        "openhuman.config_get_config",
+        false
+    ));
+}
+
+#[test]
 fn chat_is_open_but_other_channel_methods_are_not() {
     assert!(visible_in(
         true,

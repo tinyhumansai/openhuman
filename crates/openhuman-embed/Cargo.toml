@@ -79,6 +79,7 @@ tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus" }
 # the core's so one copy resolves.
 tinyagents-hooks = { workspace = true }
 tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
+tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-harness-tools", default-features = false, features = ["todos"] }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
 # Native persisted todo codec exposed by the existing session-store contract.
@@ -102,6 +103,7 @@ uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["conformance"] }
 dirs = "6"
+zeroize = "1"
 # `cron_tests` builds core `CronJob`s, whose schedule types live in the
 # tinyflows bus contract.
 tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }

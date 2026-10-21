@@ -1,5 +1,14 @@
-use super::{DomainSet, ServiceSet};
+use super::{CoreBootMode, CoreBuilder, DomainSet, ServiceSet};
 use crate::core::all::DomainGroup;
+use crate::core::types::HostKind;
+
+#[test]
+fn core_builder_defaults_to_normal_boot_mode() {
+    assert_eq!(
+        CoreBuilder::new(HostKind::Library).boot_mode,
+        CoreBootMode::Normal
+    );
+}
 
 #[test]
 fn domain_set_presets_have_expected_flags() {

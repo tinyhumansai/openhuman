@@ -84,7 +84,7 @@ async fn channel_turn_runs_through_the_graph() {
 #[tokio::test]
 async fn channel_turn_pauses_on_ask_user_clarification() {
     let registry: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(
-        tinyagents_harness::tools::AskClarificationTool::new(),
+        tinyagents_harness_tools::AskClarificationTool::new(),
     )]);
     let mut history = vec![TranscriptMessage::user("build me a workflow")];
     let scripted: Arc<dyn ChatModel<()>> = Arc::new(ScriptedModel::new(vec![

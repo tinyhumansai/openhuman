@@ -10,7 +10,7 @@
 //! below in the order they are declared (module declarations are kept
 //! alphabetical, with the `rpc` re-export sitting between `platform` and
 //! `runtime` — keep new modules sorted the same way): `agent`, `agent_registry`, `api`, `artifacts`, `attachments`,
-//! `channels`, `config`, `core`, `cron`, `desktop`, `flows` (feature
+//! `channels`, `config`, `core`, `cron`, `desktop`, `doctor`, `flows` (feature
 //! `flows`), `hooks`, `hosting` (feature `hosting`),
 //! `inference`, `integrations`,
 //! `mcp`, `media` (feature `media`), `memory`, `modules` (feature
@@ -63,6 +63,7 @@ pub mod config;
 pub mod core;
 pub mod cron;
 pub mod desktop;
+pub mod doctor;
 #[cfg(feature = "flows")]
 pub mod flows;
 pub mod hooks;
@@ -107,7 +108,9 @@ pub use config::DaemonConfig;
 /// the Tauri shell, a CLI, a stdio MCP server, or a cloud/team server — via
 /// [`CoreBuilder`] → [`CoreRuntime`]. See `crates/openhuman-embed/README.md`
 /// and [`crate::core::runtime`] for the composition this builds on.
-pub use core::runtime::{CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
+pub use core::runtime::{
+    CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource,
+};
 pub use core::types::HostKind;
 
 /// Runs the core logic based on the provided command-line arguments.

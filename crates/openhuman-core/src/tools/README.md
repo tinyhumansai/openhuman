@@ -141,7 +141,7 @@ Where the built-in tools come from:
 | `file_read`, `file_write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `read_diff`, `csv_export`, `git_operations`, `run_linter`, `run_tests`, `image_info`, `read_workspace_state` | `tinytools_std::filesystem`, gated by [`impl/filesystem/gate.rs`](./impl/filesystem/gate.rs) |
 | `detect_tools`, `curl`, `pushover` | `tinytools_std` |
 | `http_request`, `web_fetch` | `tinytools_std::network`, wired with host limits, TinyJuice extraction and the x402 handler in [`impl/network/host.rs`](./impl/network/host.rs) |
-| `current_time`, `resolve_time`, `ask_user_clarification`, `wait`, `wait_loop` | `tinyagents_harness::tools` |
+| `current_time`, `resolve_time`, `ask_user_clarification`, `wait`, `wait_loop` | `tinyagents_harness_tools` |
 | `shell`, `install_tool`, `schedule`, `proxy_config`, `lsp`, `update_check`, `update_apply`, `retrieve_tool_output` | [`impl/system/`](./impl/system/) |
 | `gitbooks_search`, `gitbooks_get_page`, `gmail_unsubscribe`, `mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`, `mcp_<server>_<tool>` | [`impl/network/`](./impl/network/) (MCP tools behind `mcp`) |
 | `browser`, `browser_open` | [`impl/browser/`](./impl/browser/) (behind `modules`) |

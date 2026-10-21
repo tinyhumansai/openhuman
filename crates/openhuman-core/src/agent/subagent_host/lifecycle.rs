@@ -17,7 +17,6 @@ use tinyagents_orchestration::subagent::{
     SubagentPersistenceDisposition, SubagentPlanner, SubagentRequest, SubagentResume,
     SubagentRunResult, SubagentTaskKey, SubagentTerminalPersistenceDisposition,
 };
-use tinyagents_runtime::ToolSnapshot;
 use tinyinference_llm::{
     message::Message,
     usage::{ChargedAmount, Usage, UsageTotals},
@@ -365,7 +364,8 @@ async fn invoke_driver_tool_with_request(
     continuation: Option<(SubagentTaskKey, SubagentResume)>,
 ) -> Result<(tinytools::ToolResult, OpenHumanDriverBundle), SubagentRunError> {
     use tinyagents_harness::tool::ToolDispatch;
-    use tinyagents_orchestration::subagent::{DriverSubAgentTool, SubAgentJobRegistry};
+    use tinyagents_harness_tools::subagents::DriverSubAgentTool;
+    use tinyagents_orchestration::subagent::SubAgentJobRegistry;
     use tinytools::{PermissionLevel, ToolCallOptions, ToolCategory, ToolScope, ToolTimeout};
 
     let task_id = host_request

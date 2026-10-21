@@ -13,6 +13,7 @@ impl SessionHostBuilder {
             turn_model_source: None,
             runtime_config: None,
             tools: None,
+            pack_registry_handle: None,
             synthesized_tools: None,
             visible_tool_names: None,
             withheld_tool_names: std::collections::HashSet::new(),
@@ -92,6 +93,16 @@ impl SessionHostBuilder {
     /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    /// Retains the host-owned pack handle used by the session's `use_skill`
+    /// tool so registry refreshes can rebind its durable and synthesized views.
+    pub fn pack_registry_handle(
+        mut self,
+        handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
+    ) -> Self {
+        self.pack_registry_handle = handle;
         self
     }
 

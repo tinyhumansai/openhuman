@@ -27,6 +27,7 @@ pub mod background;
 pub mod capabilities;
 pub mod credentials;
 pub mod cron;
+pub(crate) mod doctor;
 pub mod fence;
 pub mod gateway;
 pub mod host;

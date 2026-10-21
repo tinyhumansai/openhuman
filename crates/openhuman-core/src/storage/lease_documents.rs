@@ -22,7 +22,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tinystoragedrivers::primitives::{self, Acquire, Acquisition};
 use tinystoragedrivers::{
-    CollectionSpec, DocumentStore, Fence, Filter, Key, Leases, Scope, StorageBackend, Version,
+    CollectionSpec, DocumentStore, ErrorKind, Fence, Filter, Key, Leases, Scope, StorageBackend,
+    Version,
 };
 
 use super::lease::{
@@ -342,6 +343,38 @@ impl LeaseStore for DocumentLeases {
             .inspect(LEASE_OWNER, key)
             .await?
             .map(record_of))
+    }
+
+    async fn holder_readonly(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        validate_key(key)?;
+        match self
+            .docs
+            .validate_collection_spec(&CollectionSpec::new(LEASE_COLLECTION))
+            .await
+        {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                match self
+                    .docs
+                    .validate_collection_spec(&CollectionSpec::new("leases"))
+                    .await
+                {
+                    Ok(()) => {
+                        return Err(LeaseError::Storage(StorageError::backend(
+                            "legacy profile leases require explicit storage migration",
+                        )));
+                    }
+                    Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(LeaseError::Storage(error)),
+                }
+            }
+            Err(error) => return Err(LeaseError::Storage(error)),
+        }
+        self.leases_at(0)
+            .inspect(LEASE_OWNER, key)
+            .await
+            .map(|record| record.map(record_of))
+            .map_err(LeaseError::from)
     }
 
     fn driver_fence(&self, key: &str, node: &str, epoch: u64) -> Option<Fence> {

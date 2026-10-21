@@ -51,6 +51,11 @@ const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub enum GithubGateError {
     /// No active Composio connection found whose `toolkit == "github"`.
     ComposioGithubMissing,
+    /// The doctor could not find a connector runtime already serving this
+    /// selected configuration. Workflow execution still uses the live probes.
+    ComposioProbeUnavailable,
+    /// A matching existing connector returned a failed or malformed response.
+    ComposioProbeFailed,
     /// `git --version` failed (binary missing, non-zero exit, …). The
     /// payload carries the underlying error message for the run log.
     GitBinaryMissing(String),
@@ -82,6 +87,12 @@ impl GithubGateError {
                  Connect via `composio_authorize github` (or Connections → \
                  OAuth → GitHub) and re-run."
                     .to_string()
+            }
+            GithubGateError::ComposioProbeUnavailable => {
+                "GitHub preflight could not inspect a matching ready connector. Rerun after the selected connector is available.".to_string()
+            }
+            GithubGateError::ComposioProbeFailed => {
+                "GitHub preflight could not read connection status from the existing connector. Rerun doctor and review the connector status.".to_string()
             }
             GithubGateError::GitBinaryMissing(err) => format!(
                 "GitHub preflight failed: local `git` is not available ({err}). \
@@ -124,6 +135,8 @@ impl GithubGateError {
     pub fn tag(&self) -> &'static str {
         match self {
             GithubGateError::ComposioGithubMissing => "composio_github_missing",
+            GithubGateError::ComposioProbeUnavailable => "composio_probe_unavailable",
+            GithubGateError::ComposioProbeFailed => "composio_probe_failed",
             GithubGateError::GitBinaryMissing(_) => "git_binary_missing",
             GithubGateError::GitUserNameMissing => "git_user_name_missing",
             GithubGateError::GitUserEmailMissing => "git_user_email_missing",
@@ -147,6 +160,21 @@ pub trait PreflightProbes: Send + Sync {
     /// registered, profile lookup failed, empty username).
     async fn composio_identity(&self, toolkit: &str) -> Option<String>;
 
+    /// Detailed inspection result. Implementations used by doctor override
+    /// this to distinguish a missing ready runtime from a real negative result.
+    async fn composio_toolkit_status(&self, toolkit: &str) -> PreflightProbeStatus<bool> {
+        PreflightProbeStatus::Available(self.composio_toolkit_active(toolkit).await)
+    }
+
+    /// Detailed identity result for doctor. Legacy workflow probes retain their
+    /// established `Option` behavior through this default.
+    async fn composio_identity_status(
+        &self,
+        toolkit: &str,
+    ) -> PreflightProbeStatus<Option<String>> {
+        PreflightProbeStatus::Available(self.composio_identity(toolkit).await)
+    }
+
     /// `git --version` outcome. `Ok(())` when git is on PATH and exits
     /// zero; `Err(message)` otherwise.
     async fn git_version(&self) -> Result<(), String>;
@@ -158,6 +186,15 @@ pub trait PreflightProbes: Send + Sync {
     /// `git config --global user.email` trimmed value, or empty when
     /// unset / blank.
     async fn git_user_email(&self) -> String;
+}
+
+/// Read-only probe outcome used by doctor to report unavailable runtimes
+/// separately from a live connector's negative or failed result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreflightProbeStatus<T> {
+    Available(T),
+    Unavailable,
+    Failed,
 }
 
 /// Production probes — hits real Composio (via
@@ -238,7 +275,7 @@ async fn git_config_value(key: &str) -> String {
 ///
 /// The gate is a no-op (immediate `Ok(())`) when the `[github]` block
 /// is absent (`cfg: None`) or `required = false`.
-pub async fn run_github_preflight<P: PreflightProbes>(
+pub async fn run_github_preflight<P: PreflightProbes + ?Sized>(
     cfg: Option<&WorkflowGithubConfig>,
     probes: &P,
 ) -> Result<(), GithubGateError> {
@@ -252,9 +289,16 @@ pub async fn run_github_preflight<P: PreflightProbes>(
     }
 
     // (1) Composio GitHub integration must be connected.
-    if !probes.composio_toolkit_active("github").await {
-        tracing::warn!("[workflows:preflight] github gate fail: composio_github_missing");
-        return Err(GithubGateError::ComposioGithubMissing);
+    match probes.composio_toolkit_status("github").await {
+        PreflightProbeStatus::Available(true) => {}
+        PreflightProbeStatus::Available(false) => {
+            tracing::warn!("[workflows:preflight] github gate fail: composio_github_missing");
+            return Err(GithubGateError::ComposioGithubMissing);
+        }
+        PreflightProbeStatus::Unavailable => {
+            return Err(GithubGateError::ComposioProbeUnavailable);
+        }
+        PreflightProbeStatus::Failed => return Err(GithubGateError::ComposioProbeFailed),
     }
 
     // (2) git binary present.
@@ -287,28 +331,32 @@ pub async fn run_github_preflight<P: PreflightProbes>(
         IdentityMatch::Any => {
             // "any" still requires the Composio side to surface an
             // identity — confirms the connection is genuinely usable.
-            match probes.composio_identity("github").await {
-                Some(_) => {
+            match probes.composio_identity_status("github").await {
+                PreflightProbeStatus::Available(Some(_)) => {
                     tracing::debug!("[workflows:preflight] github gate pass (identity_match=any)");
                     Ok(())
                 }
-                None => {
-                    tracing::warn!(
-                        "[workflows:preflight] github gate fail: composio_identity_unresolved (identity_match=any)"
-                    );
+                PreflightProbeStatus::Available(None) => {
+                    tracing::warn!("[workflows:preflight] github gate fail: composio_identity_unresolved (identity_match=any)");
                     Err(GithubGateError::ComposioIdentityUnresolved)
                 }
+                PreflightProbeStatus::Unavailable => Err(GithubGateError::ComposioProbeUnavailable),
+                PreflightProbeStatus::Failed => Err(GithubGateError::ComposioProbeFailed),
             }
         }
         IdentityMatch::Strict => {
-            let composio_name = match probes.composio_identity("github").await {
-                Some(n) => n,
-                None => {
+            let composio_name = match probes.composio_identity_status("github").await {
+                PreflightProbeStatus::Available(Some(n)) => n,
+                PreflightProbeStatus::Available(None) => {
                     tracing::warn!(
                         "[workflows:preflight] github gate fail: composio_identity_unresolved (identity_match=strict)"
                     );
                     return Err(GithubGateError::ComposioIdentityUnresolved);
                 }
+                PreflightProbeStatus::Unavailable => {
+                    return Err(GithubGateError::ComposioProbeUnavailable);
+                }
+                PreflightProbeStatus::Failed => return Err(GithubGateError::ComposioProbeFailed),
             };
             if composio_name.trim().eq_ignore_ascii_case(git_name.trim()) {
                 tracing::debug!(

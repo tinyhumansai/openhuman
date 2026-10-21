@@ -92,6 +92,10 @@ tinyinference-providers = { path = "../../vendor/tinyagents/vendor/tinyinference
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
 tinyinference-embeddings = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
 tinyinference-core = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
+# The hosted memory engine uses the same TinyMemory contract and integration
+# implementation as the core, keeping the vendor crates unified in one graph.
+tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["local-safety"] }
+tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-integrations", default-features = false, features = ["cortex", "brain", "sources-network", "safety", "legacy-import"] }
 # Managed media generation (`integrations::media`): the OpenRouter image and
 # video generators, over the same vendored crates the core's harness uses.
 tinyinference-image = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-image", optional = true }

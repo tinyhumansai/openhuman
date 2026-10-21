@@ -678,6 +678,15 @@ const messages: TranslationMap = {
   'invites.title': 'Undangan',
   'invites.noInvites': 'Tidak ada undangan tertunda',
   'devOptions.titleDiagnostics': 'Developer & Diagnostik',
+  'devOptions.doctor.run': 'Jalankan diagnosis',
+  'devOptions.doctor.runLive': 'Jalankan pemeriksaan langsung',
+  'devOptions.doctor.liveWarning':
+    'Pemeriksaan langsung dapat menggunakan token untuk panggilan model atau embedding. Lanjutkan?',
+  'devOptions.doctor.severity.pass': 'Lulus',
+  'devOptions.doctor.severity.info': 'Info',
+  'devOptions.doctor.severity.warn': 'Peringatan',
+  'devOptions.doctor.severity.error': 'Error',
+  'devOptions.doctor.severity.skipped': 'Dilewati',
   'devOptions.diagnostics': 'Diagnostik',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Alat inventaris, postur kebijakan, allowzes MCP, dan blok terbaru',

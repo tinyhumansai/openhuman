@@ -87,7 +87,10 @@ pub fn profiles_schemas(function: &str) -> ControllerSchema {
             description: "Create the profile that serves a gateway user, if it does not exist.",
             inputs: vec![string_field("user_id", "The gateway's id for the user.")],
             outputs: vec![
-                string_field("profile_id", "The user's profile id: the user id itself when it fits the raw charset (raw mode), else h-<sha256 prefix>."),
+                string_field(
+                    "profile_id",
+                    "The user's profile id: the user id itself when it fits the raw charset (raw mode), else h-<sha256 prefix>.",
+                ),
                 bool_field("created", "False when the profile already existed."),
             ],
         },
@@ -127,7 +130,10 @@ pub fn profiles_schemas(function: &str) -> ControllerSchema {
                     required: true,
                 },
                 bool_field("open", "Whether it is loaded right now."),
-                bool_field("has_credential", "Whether a backend credential is installed."),
+                bool_field(
+                    "has_credential",
+                    "Whether a backend credential is installed.",
+                ),
             ],
         },
         "set_credential" => ControllerSchema {

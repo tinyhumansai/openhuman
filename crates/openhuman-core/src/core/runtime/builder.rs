@@ -158,10 +158,27 @@ pub enum TokenSource {
     EnvOrFile,
 }
 
+/// Startup work a core runtime performs before it can dispatch in-process RPC.
+///
+/// Normal runtimes load their workspace stores, bootstrap subscribers and
+/// recover interrupted work. Inspection runtimes require a supplied config and
+/// fixed bearer, then construct a real context without those persistent boot
+/// effects. The selected RPC operation still decides which reads, network
+/// probes and opt-in live writes it performs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CoreBootMode {
+    /// Initialize workspace stores and runtime infrastructure as usual.
+    #[default]
+    Normal,
+    /// Build a dispatchable context without startup persistence or services.
+    Inspection,
+}
+
 /// Builder for a [`CoreRuntime`]. Construct with [`CoreBuilder::new`], then
 /// [`CoreBuilder::build`] to initialize the core.
 pub struct CoreBuilder {
     host_kind: HostKind,
+    boot_mode: CoreBootMode,
     token: TokenSource,
     services: ServiceSet,
     domains: DomainSet,
@@ -178,6 +195,7 @@ impl CoreBuilder {
     pub fn new(host_kind: HostKind) -> Self {
         Self {
             host_kind,
+            boot_mode: CoreBootMode::Normal,
             token: TokenSource::EnvOrFile,
             services: ServiceSet::desktop(),
             domains: DomainSet::full(),
@@ -187,6 +205,17 @@ impl CoreBuilder {
             config: None,
             extensions: crate::core::slots::Extensions::new(),
         }
+    }
+
+    /// Select normal startup or a side-effect-limited inspection context.
+    ///
+    /// [`CoreBootMode::Inspection`] requires [`Self::config`] and a
+    /// [`TokenSource::Fixed`] bearer. It never discovers an ambient config,
+    /// opens or installs a storage backend, initializes workspace stores,
+    /// recovers prior work, or starts background services.
+    pub fn boot_mode(mut self, mode: CoreBootMode) -> Self {
+        self.boot_mode = mode;
+        self
     }
 
     /// Binds hook registrations (see [`crate::core::slots`]) to the context
@@ -334,12 +363,28 @@ impl CoreBuilder {
     /// The init sequence itself is owned by [`CoreContext::init`] (Phase 2,
     /// Stage A).
     pub async fn build(self) -> anyhow::Result<CoreRuntime> {
-        let (ctx, has_operator_token, config) = CoreContext::init_with_config(
+        if self.boot_mode == CoreBootMode::Inspection {
+            anyhow::ensure!(
+                self.config.is_some(),
+                "inspection boot requires a caller-supplied config"
+            );
+            anyhow::ensure!(
+                matches!(&self.token, TokenSource::Fixed(_)),
+                "inspection boot requires a process-local fixed RPC bearer"
+            );
+            anyhow::ensure!(
+                crate::storage::installed().is_none(),
+                "inspection boot requires no installed storage backend"
+            );
+        }
+
+        let (ctx, has_operator_token, config) = CoreContext::init_with_boot_mode(
             self.host_kind,
             &self.token,
             self.domains,
             self.tool_groups.clone(),
             self.config,
+            self.boot_mode,
         )
         .await?;
         ctx.extensions().merge_from(&self.extensions);
@@ -352,8 +397,10 @@ impl CoreBuilder {
         // Retired scheduled jobs must be pruned before `build()` exposes
         // in-process RPC or agent turns. Running this from `serve()` is too
         // late for embedders that only build and invoke.
-        if let Some(cfg) = config.as_ref() {
-            crate::core::runtime::services::run_legacy_migrations(cfg).await;
+        if self.boot_mode == CoreBootMode::Normal {
+            if let Some(cfg) = config.as_ref() {
+                crate::core::runtime::services::run_legacy_migrations(cfg).await;
+            }
         }
 
         // Reap agent runs orphaned by a previous process (crash / restart /
@@ -365,14 +412,20 @@ impl CoreBuilder {
         // status store has no executor to advance it and would be listed as
         // active forever. Best-effort — a store that cannot be read logs and
         // reaps nothing rather than failing the build.
-        if let Some(cfg) = config.as_ref() {
-            crate::agent::tinyagents::reaper::reap_orphaned_runs(&cfg.workspace_dir).await;
+        if self.boot_mode == CoreBootMode::Normal {
+            if let Some(cfg) = config.as_ref() {
+                crate::agent::tinyagents::reaper::reap_orphaned_runs(&cfg.workspace_dir).await;
+            }
         }
 
         Ok(CoreRuntime {
             ctx,
             config,
-            services: components.narrow_services(self.services),
+            services: if self.boot_mode == CoreBootMode::Inspection {
+                ServiceSet::none()
+            } else {
+                components.narrow_services(self.services)
+            },
             has_operator_token,
             host: self.host,
             port: self.port,

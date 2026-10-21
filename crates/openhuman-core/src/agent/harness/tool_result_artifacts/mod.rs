@@ -174,7 +174,7 @@ pub(crate) fn artifact_read_target(
     tool_name: &str,
     args: &Value,
 ) -> Option<ArtifactRead> {
-    let wrapper = tinyagents_harness::tool::packs::USE_SKILL;
+    let wrapper = tinyagents_harness_tools::skills::USE_SKILL;
     match store {
         Some(store) => store.read_target(tool_name, args, wrapper),
         None => tool_results::artifact_read_target(tool_name, args, READ_TOOL, wrapper),

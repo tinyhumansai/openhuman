@@ -243,6 +243,16 @@ impl LeaseStore for PausedAfterCheck {
         Ok(record)
     }
 
+    async fn holder_readonly(
+        &self,
+        key: &str,
+    ) -> std::result::Result<
+        Option<crate::storage::lease::LeaseRecord>,
+        crate::storage::lease::LeaseError,
+    > {
+        self.inner.holder_readonly(key).await
+    }
+
     fn driver_fence(&self, key: &str, node: &str, epoch: u64) -> Option<tinystoragedrivers::Fence> {
         self.inner.driver_fence(key, node, epoch)
     }

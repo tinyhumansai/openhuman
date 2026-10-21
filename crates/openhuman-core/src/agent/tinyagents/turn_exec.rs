@@ -14,11 +14,12 @@ use anyhow::Result;
 use tinyagents_harness::runtime::AgentHarness;
 use tinyagents_harness::runtime::{AgentInvocation, AgentTurnRequest, InvocationRuntime};
 use tinyagents_harness::store::{InMemoryStore as ToolResultArtifactIndexStore, StoreRegistry};
+use tinyagents_harness::tool::ToolSnapshot;
 use tinyagents_harness::turn_policy::effective_max_iterations;
 use tinyagents_runtime::turn_driver::{
     SubagentScope as DriverSubagentScope, TurnControls, TurnDriver, TurnScope,
 };
-use tinyagents_runtime::{DriverRequest, ToolSnapshot};
+use tinyagents_runtime::DriverRequest;
 
 use crate::agent::harness::tool_result_artifacts::TINYAGENTS_TOOL_RESULT_ARTIFACT_STORE;
 use crate::agent::tinyagents::host::OpenHumanRunContext;

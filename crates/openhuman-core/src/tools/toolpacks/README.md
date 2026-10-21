@@ -35,7 +35,7 @@ constructed and executable but unadvertised: the agent sees one small tool,
   session-scoped listing (`render_pack_filtered` + `route_sentence`) is
   produced by the tinyagents policy middleware, which is the only layer that
   holds the session (see below).
-- `tinyagents_harness::tool::packs::PackRegistryHandle` is the late-bound, non-owning (`Weak`) view the
+- `tinyagents_harness_tools::skills::PackRegistryHandle` is the late-bound, non-owning (`Weak`) view the
   proxy dispatches through. It holds two registries: the durable tool `Arc`
   and the agent's `synthesized_tools` `Arc`, where every `delegate_*` tool
   lives. Each must be rebound after its `Arc` is replaced, or packed
@@ -43,7 +43,7 @@ constructed and executable but unadvertised: the agent sees one small tool,
   on `Tool::host_extension` and is read back by
   `tools::host_extensions::pack_registry_handle`. The proxy itself
   (`UseSkillTool`, `PackCatalog`, `ToolPack`, the listing/scoping renderers) lives in
-  `tinyagents_harness::tool::packs`; this module keeps the pack table
+  `tinyagents_harness_tools::skills`; this module keeps the pack table
   (`registry::PACKS`, handed over as `registry::CATALOG`), the group posture and the
   registry binding.
 - `ops::strip_packed_from_visible` does the actual compression: it removes a

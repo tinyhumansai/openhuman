@@ -34,7 +34,10 @@
 //! shutdown path because there is nothing a shutdown could reclaim.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tinybus::module::{ModuleRuntime, RuntimeNames};
 
 /// The module bus, built once on first use.
@@ -135,6 +138,56 @@ async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<(
 #[must_use]
 pub fn is_started() -> bool {
     RUNTIME.get().is_some_and(Result::is_ok)
+}
+
+/// Returns the current runtime only when it was already started and its host
+/// callbacks are serving. Unlike [`runtime`], this accessor never starts a
+/// runtime or installs callbacks.
+pub(crate) fn existing_runtime() -> Option<&'static ModuleRuntime> {
+    let runtime = RUNTIME.get()?.as_ref().ok()?;
+    CALLBACKS.get()?.as_ref().ok()?;
+    Some(runtime)
+}
+
+/// A safe, sanitized result for a call through the already-serving module bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExistingModuleCallError {
+    Unavailable,
+    Failed,
+}
+
+/// Call a read-only capability on a module that is already ready. This never
+/// starts the module runtime, loads a module, or retries through a ModuleClient.
+pub(crate) async fn call_if_ready<Request, Reply>(
+    id: &str,
+    member: &str,
+    request: Request,
+    timeout: Duration,
+) -> Result<Option<Reply>, ExistingModuleCallError>
+where
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
+{
+    if super::ops::state_of(id) != super::types::ModuleState::Ready {
+        return Ok(None);
+    }
+    let Some(runtime) = existing_runtime() else {
+        return Ok(None);
+    };
+    let record = super::registry::find(id).ok_or(ExistingModuleCallError::Unavailable)?;
+    let proxy = runtime
+        .proxy(record.bus_name, record.object_path)
+        .map_err(|_| ExistingModuleCallError::Unavailable)?
+        .with_timeout(timeout);
+    match tokio::time::timeout(
+        timeout,
+        proxy.call_confidential::<Reply>(member, (request,)),
+    )
+    .await
+    {
+        Ok(Ok(reply)) => Ok(Some(reply)),
+        Ok(Err(_)) | Err(_) => Err(ExistingModuleCallError::Failed),
+    }
 }
 
 /// Whether `id` is admitted and currently serving on an already-started

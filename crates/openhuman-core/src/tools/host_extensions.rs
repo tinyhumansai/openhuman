@@ -5,21 +5,9 @@
 //! host implementation details, not portable tool-trait APIs.
 
 use crate::agent::orchestration::tools::DelegationTarget;
-use tinyagents_harness::tool::packs::{PackRegistryHandle, PackToolExtension};
 #[cfg(test)]
 use tinytools::{PermissionLevel, ToolCategory, ToolResult, ToolScope};
 use tinytools::{Tool, ToolRunContext};
-
-/// Reads a tool's pack-registry handle from its erased host extension.
-pub fn pack_registry_handle(tool: &dyn Tool) -> Option<&PackRegistryHandle> {
-    tool.host_extension()
-        .and_then(|any| any.downcast_ref::<PackToolExtension>())
-        .map(PackToolExtension::registry_handle)
-        .or_else(|| {
-            tool.host_extension()
-                .and_then(|any| any.downcast_ref::<PackRegistryHandle>())
-        })
-}
 
 /// Reads the target agent a synthesized `delegate_*` tool routes to.
 pub fn delegation_target(tool: &dyn Tool) -> Option<&str> {

@@ -144,7 +144,7 @@ pub(super) fn visible_tool_specs_for_policy(
             // below already does the real per-tool narrowing via `is_callable`
             // (and drops the spec entirely when nothing survives), so this
             // filter only needs to gate *other* tools on the static ceiling.
-            spec.name == tinyagents_harness::tool::packs::USE_SKILL
+            spec.name == tinyagents_harness_tools::skills::USE_SKILL
                 || tool_policy.is_allowed(&spec.name)
         })
         .cloned()
@@ -161,7 +161,7 @@ pub(super) fn visible_tool_specs_for_policy(
                 }
                 return Some(spec);
             }
-            if spec.name == tinyagents_harness::tool::packs::USE_SKILL {
+            if spec.name == tinyagents_harness_tools::skills::USE_SKILL {
                 // `false` means no pack has a callable tool: an empty index and
                 // an empty enum are not a tool, so drop it rather than ship one.
                 // `Arc::make_mut`, not `&mut spec`: the three spec views share
@@ -170,7 +170,7 @@ pub(super) fn visible_tool_specs_for_policy(
                 // `durable_tool_specs` is meant to stay the unscoped truth.
                 // This copies exactly the one spec being rewritten and leaves
                 // the other ~48 visible schemas shared.
-                return tinyagents_harness::tool::packs::scope_use_skill_spec(
+                return tinyagents_harness_tools::skills::scope_use_skill_spec(
                     &crate::tools::toolpacks::CATALOG,
                     Arc::make_mut(&mut spec),
                     &is_callable,

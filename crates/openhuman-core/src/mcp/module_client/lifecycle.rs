@@ -51,6 +51,54 @@ impl McpConfiguredClient {
         table().snapshot()
     }
 
+    /// Observes an already-open MCP client for this exact workspace and
+    /// configuration. This path never creates a client or drives its
+    /// lifecycle, so an absent or stale runtime is reported as `None`.
+    pub(crate) async fn existing_status_for_config(
+        config: &Config,
+    ) -> Result<Option<Vec<tinymcp_bus::ConnStatus>>, ModuleCallError> {
+        let data_dir = crate::core::runtime::agent_scope_dir(config);
+        let key = client_key(&data_dir);
+        let Some(client) = table()
+            .snapshot()
+            .into_iter()
+            .find(|(candidate, _)| candidate == &key)
+            .map(|(_, client)| client)
+        else {
+            return Ok(None);
+        };
+        client
+            .existing_status_if_open(&super::super::host::client_config(config))
+            .await
+    }
+
+    async fn existing_status_if_open(
+        &self,
+        selected_config: &McpClientConfig,
+    ) -> Result<Option<Vec<tinymcp_bus::ConnStatus>>, ModuleCallError> {
+        if SHUTTING_DOWN.load(Ordering::Acquire) || self.retiring.load(Ordering::Acquire) {
+            return Err(ModuleCallError::Unavailable);
+        }
+        let state = self.state.lock().await;
+        if SHUTTING_DOWN.load(Ordering::Acquire) || self.retiring.load(Ordering::Acquire) {
+            return Err(ModuleCallError::Unavailable);
+        }
+        let Some(object) = state.open_object() else {
+            return Ok(None);
+        };
+        if object.config != *selected_config {
+            return Ok(None);
+        }
+        let args = serde_json::to_value(()).map_err(|_| ModuleCallError::ModuleFault)?;
+        let reply = self
+            .port
+            .call_object_if_ready(&object.object_path, names::methods::STATUS, args, false)
+            .await?;
+        serde_json::from_value(reply)
+            .map(Some)
+            .map_err(|_| ModuleCallError::ModuleFault)
+    }
+
     /// Drain observations from the module-owned supervisor for an open child.
     /// An object that is opening or closing is skipped and will be revisited
     /// on the next host poll.

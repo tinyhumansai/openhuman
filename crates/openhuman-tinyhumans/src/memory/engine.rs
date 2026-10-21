@@ -18,12 +18,77 @@ use async_trait::async_trait;
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::memory_engines::{
     build_cached, rooted, BearerSource, Binding, EngineCredential, EngineRequest, EngineSettings,
-    TINYHUMANS_ENGINE,
+    ReadOnlyEngineError, TINYHUMANS_ENGINE,
 };
 use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
 
 use crate::backend::headers::attribution_headers;
 use crate::backend::url::effective_backend_api_url;
+
+/// Constructs an uncached TinyHumans engine for bounded, read-only inspection
+/// of an explicitly selected config. #502 may reuse this for its live probe;
+/// ordinary [`bind`] remains on its existing mutable credential/cache path.
+pub(crate) fn build_read_only_engine(
+    config: &Config,
+) -> Result<Arc<dyn tinymemory_api::MemoryEngine>, ReadOnlyEngineError> {
+    let (credential, is_api_key) =
+        match openhuman_embed::__host::security::credentials::api_key::get_api_key_read_only(config)
+        {
+            Ok(Some(key)) => (key, true),
+            Ok(None) => (
+                read_only_session_token(config)?
+                    .ok_or(ReadOnlyEngineError::CredentialsUnavailable)?,
+                false,
+            ),
+            Err(_) => return Err(ReadOnlyEngineError::CredentialsUnavailable),
+        };
+    let endpoint = endpoint_for(config);
+    crate::client::endpoint::validate_credential_endpoint(&endpoint, is_api_key)
+        .map_err(|_| ReadOnlyEngineError::EndpointUnavailable)?;
+    let headers = crate::backend::headers::attribution_headers()
+        .map_err(|_| ReadOnlyEngineError::InvalidConfiguration)?
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_owned(), value.to_owned()))
+        })
+        .collect();
+    let settings = EngineSettings {
+        endpoint: Some(endpoint),
+        headers,
+        tenant_root: true,
+        ..EngineSettings::default()
+    };
+    tinymemory_integrations::build_engine(
+        TINYHUMANS_ENGINE,
+        &settings,
+        EngineCredential::Static(credential),
+    )
+    .map_err(|_| ReadOnlyEngineError::InvalidConfiguration)
+}
+
+fn read_only_session_token(config: &Config) -> Result<Option<String>, ReadOnlyEngineError> {
+    use openhuman_embed::__host::security::credentials::session_support::{
+        check_session_backend, classify_session_token, is_local_session_token,
+        load_app_session_profile_read_only, SessionTokenCheck,
+    };
+
+    let profile = load_app_session_profile_read_only(config)
+        .map_err(|_| ReadOnlyEngineError::CredentialsUnavailable)?;
+    let Some(profile) = profile else {
+        return Ok(None);
+    };
+    check_session_backend(config, Some(&profile))
+        .map_err(|_| ReadOnlyEngineError::CredentialsUnavailable)?;
+    match classify_session_token(Some(&profile), chrono::Utc::now()) {
+        SessionTokenCheck::Live(token) if !is_local_session_token(&token) => Ok(Some(token)),
+        SessionTokenCheck::Live(_) | SessionTokenCheck::Absent | SessionTokenCheck::Expired => {
+            Ok(None)
+        }
+    }
+}
 
 fn off(endpoint: Option<String>, reason: &str) -> Binding {
     Binding::Off {

@@ -13,7 +13,10 @@ impl Config {
     pub(super) fn apply_modules_env<E: EnvLookup + ?Sized>(&mut self, env: &E) {
         if let Some(raw) = env.get(MODULE_SOURCE_ENV) {
             match ModuleSourceMode::parse(&raw) {
-                Some(mode) => self.modules.source = mode,
+                Some(mode) => {
+                    self.modules.source = mode;
+                    self.record_env_override(env, "modules.source", &[MODULE_SOURCE_ENV]);
+                }
                 None => tracing::warn!(
                     "[modules] ignoring invalid {MODULE_SOURCE_ENV} (valid: release, linked, source)"
                 ),
@@ -30,6 +33,7 @@ impl Config {
             self.modules
                 .overrides
                 .push(ModuleOverride::with_source(record.id, mode));
+            self.record_env_override_var(env, "modules.overrides[].source", &key);
         }
     }
 }

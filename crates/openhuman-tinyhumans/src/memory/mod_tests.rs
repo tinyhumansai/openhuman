@@ -176,6 +176,153 @@ async fn host_bearer_rejects_a_local_session_token() {
     ));
 }
 
+async fn health_server(status: u16) -> wiremock::MockServer {
+    use wiremock::matchers::{method, path};
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/memory/scopes"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(status).set_body_json(json!({
+                "success": true,
+                "data": { "items": [] }
+            })),
+        )
+        .mount(&server)
+        .await;
+    server
+}
+
+fn store_session_with_metadata(
+    config: &openhuman_embed::__host::config::Config,
+    token: &str,
+    metadata: std::collections::HashMap<String, String>,
+) {
+    AuthService::from_config(config)
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            token,
+            metadata,
+            true,
+        )
+        .expect("store selected session fixture");
+}
+
+fn persistent_tree(
+    path: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    fn visit(
+        root: &std::path::Path,
+        at: &std::path::Path,
+        out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+    ) {
+        for entry in std::fs::read_dir(at).expect("read fixture tree") {
+            let entry = entry.expect("read fixture entry");
+            let path = entry.path();
+            if path.is_dir() {
+                visit(root, &path, out);
+            } else {
+                out.insert(
+                    path.strip_prefix(root)
+                        .expect("relative fixture path")
+                        .to_path_buf(),
+                    std::fs::read(path).expect("read fixture file"),
+                );
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    if path.exists() {
+        visit(path, path, &mut out);
+    }
+    out
+}
+
+#[tokio::test]
+async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
+    let _registry = crate::registry_test_lock();
+    let server_a = health_server(500).await;
+    let server_b = health_server(200).await;
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    let config_a = config_with_endpoint(&tmp_a, &server_a.uri());
+    let config_b = config_with_endpoint(&tmp_b, &server_b.uri());
+    store_key(&config_a, "selected-a-token");
+    store_key(&config_b, "selected-b-token");
+    let before_a = persistent_tree(config_a.config_path.parent().unwrap());
+    let before_b = persistent_tree(config_b.config_path.parent().unwrap());
+
+    let health = read_only_health_probe(config_b.clone()).await;
+
+    assert_eq!(health, EngineHealth::Ok);
+    assert!(server_a.received_requests().await.unwrap().is_empty());
+    let requests = server_b.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Bearer selected-b-token"
+    );
+    assert_eq!(
+        persistent_tree(config_a.config_path.parent().unwrap()),
+        before_a
+    );
+    assert_eq!(
+        persistent_tree(config_b.config_path.parent().unwrap()),
+        before_b
+    );
+}
+
+#[tokio::test]
+async fn readonly_health_reports_down_without_exposing_backend_error_text() {
+    let server = health_server(500).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_endpoint(&tmp, &server.uri());
+    store_key(&config, "health-down-token");
+
+    let health = read_only_health_probe(config).await;
+
+    assert!(matches!(health, EngineHealth::Down(_)));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn expired_or_wrong_issuer_session_skips_network_and_preserves_credentials() {
+    let server = health_server(200).await;
+    for (token, metadata) in [
+        (
+            "expired-session",
+            std::collections::HashMap::from([(
+                openhuman_embed::__host::security::credentials::session_support::SESSION_EXPIRES_AT_META.to_owned(),
+                (chrono::Utc::now() - chrono::Duration::minutes(2)).to_rfc3339(),
+            )]),
+        ),
+        (
+            "wrong-issuer-session",
+            std::collections::HashMap::from([(
+                "session_issuing_backend".to_owned(),
+                "https://other-backend.example.test".to_owned(),
+            )]),
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = config_with_endpoint(&tmp, &server.uri());
+        config.resolved_endpoints.control_plane_url = Some("https://selected-backend.example.test".into());
+        store_session_with_metadata(&config, token, metadata);
+        let before = persistent_tree(config.config_path.parent().unwrap());
+
+        let health = read_only_health_probe(config.clone()).await;
+
+        assert!(matches!(health, EngineHealth::Down(_)));
+        assert_eq!(persistent_tree(config.config_path.parent().unwrap()), before);
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
 #[test]
 fn registering_twice_leaves_one_engine() {
     let _registry = crate::registry_test_lock();

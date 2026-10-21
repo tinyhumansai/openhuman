@@ -22,8 +22,8 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tinyagents_harness::context::RunConfig;
-use tinyagents_harness::tool::packs::{PackRegistryHandle, UseSkillTool, USE_SKILL};
 use tinyagents_harness::CallId;
+use tinyagents_harness_tools::skills::{PackRegistryHandle, UseSkillTool, USE_SKILL};
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinytools::{Tool, ToolCallOptions, ToolResult};
@@ -154,7 +154,7 @@ fn build_use_skill_dispatch_with_target(
 
     let adapter = shared_tool_adapter(
         vec![durable.clone()],
-        tinyagents_harness::tool::packs::USE_SKILL,
+        tinyagents_harness_tools::skills::USE_SKILL,
     )
     .expect("use_skill resolves in the durable registry it was just placed in");
     let dispatch = dispatch_selector(vec![durable])(USE_SKILL, Arc::new(adapter) as Arc<dyn Tool>)

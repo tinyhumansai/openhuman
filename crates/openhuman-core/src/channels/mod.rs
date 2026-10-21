@@ -104,8 +104,6 @@ pub use yuanbao::YuanbaoChannel;
 pub use runtime::test_support;
 
 #[cfg(feature = "channels")]
-pub use commands::doctor_channels;
-#[cfg(feature = "channels")]
 // Channel system-prompt assembly lives in
 // `crate::channels::prompt` alongside the rest of
 // the prompt-building code. Re-exported here for callers that used the

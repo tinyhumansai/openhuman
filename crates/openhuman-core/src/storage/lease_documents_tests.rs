@@ -3,12 +3,37 @@ use super::*;
 use std::time::Duration;
 
 use crate::storage::MemoryStorage;
-use tinystoragedrivers::Precondition;
+use tinystoragedrivers::{CollectionSpec, Precondition, Scope};
 
 const TTL: Duration = Duration::from_millis(1_000);
 
 fn node(storage: &MemoryStorage, id: &str) -> DocumentLeases {
     DocumentLeases::cluster(storage, id, Some(format!("http://{id}")), TTL).unwrap()
+}
+
+#[tokio::test]
+async fn doctor_holder_inspection_does_not_declare_the_lease_collection() {
+    let storage = MemoryStorage::new();
+    let leases = node(&storage, "a");
+    let documents = storage
+        .for_scope(&Scope::new(CLUSTER_SCOPE).unwrap())
+        .unwrap();
+    let spec = CollectionSpec::new(LEASE_COLLECTION);
+
+    assert!(documents
+        .documents()
+        .validate_collection_spec(&spec)
+        .await
+        .is_err());
+    assert!(leases.holder_readonly("alice").await.unwrap().is_none());
+    assert!(
+        documents
+            .documents()
+            .validate_collection_spec(&spec)
+            .await
+            .is_err(),
+        "a doctor-style holder inspection must not create storage schema"
+    );
 }
 
 #[tokio::test]

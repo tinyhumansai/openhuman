@@ -2,12 +2,12 @@
 
 use anyhow::Context;
 
-use super::{AuthProfile, AuthProfilesStore, KeychainSecrets, KEYCHAIN_AUTH_PREFIX};
+use super::{AuthProfile, AuthProfilesStore, KeychainSecrets};
 
 impl AuthProfilesStore {
     /// Build a keychain key for an auth profile's combined secret payload.
     pub(super) fn keychain_key_for_profile(&self, profile_id: &str) -> String {
-        format!("{KEYCHAIN_AUTH_PREFIX}{profile_id}")
+        super::auth_profile_secret_key(profile_id)
     }
 
     /// Store auth secrets for a profile in the OS keychain.

@@ -690,6 +690,15 @@ const messages: TranslationMap = {
   'invites.title': 'Invitations',
   'invites.noInvites': 'Aucune invitation en attente',
   'devOptions.titleDiagnostics': 'Développeur et Diagnostics',
+  'devOptions.doctor.run': 'Lancer le diagnostic',
+  'devOptions.doctor.runLive': 'Lancer les vérifications en direct',
+  'devOptions.doctor.liveWarning':
+    'Les vérifications en direct peuvent consommer des jetons lors des appels de modèle ou d’intégration. Continuer ?',
+  'devOptions.doctor.severity.pass': 'Réussi',
+  'devOptions.doctor.severity.info': 'Info',
+  'devOptions.doctor.severity.warn': 'Avertissement',
+  'devOptions.doctor.severity.error': 'Erreur',
+  'devOptions.doctor.severity.skipped': 'Ignoré',
   'devOptions.diagnostics': 'Diagnostic',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Inventaire des outils, posture de la politique, listes autorisées MCP et blocages récents',

@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// Whether an environment source is configured according to the same
+/// whitespace handling used before key parsing. Invalid Unicode is present
+/// and must remain an error, so it counts as configured here.
+pub(crate) fn env_source_is_configured(value: &std::ffi::OsStr) -> bool {
+    match value.to_str() {
+        Some(value) => !value.trim().is_empty(),
+        None => true,
+    }
+}
+
 /// Only `NotPresent` means unset. Invalid Unicode must not fall through to the
 /// next source, where a new key could orphan the encrypted secrets.
 pub(super) fn env_value(
@@ -25,8 +35,12 @@ pub(super) fn master_key_from_env(
     file: Option<&str>,
     read_file: impl FnOnce(&Path) -> Result<String, String>,
 ) -> Result<Option<([u8; KEY_LEN], String)>, String> {
-    let inline = inline.map(str::trim).filter(|value| !value.is_empty());
-    let file = file.map(str::trim).filter(|value| !value.is_empty());
+    let inline = inline
+        .filter(|value| env_source_is_configured(std::ffi::OsStr::new(value)))
+        .map(str::trim);
+    let file = file
+        .filter(|value| env_source_is_configured(std::ffi::OsStr::new(value)))
+        .map(str::trim);
     match (inline, file) {
         (None, None) => Ok(None),
         (Some(_), Some(_)) => Err(format!(
@@ -124,6 +138,61 @@ pub(super) fn workspace_master_key(
             "cannot inspect workspace master key".into(),
         )),
     }
+}
+
+/// Resolves a key for a profile-scoped diagnostic read without creating or
+/// changing key state. Explicit operator key variables retain their normal
+/// precedence; otherwise only an existing key file beneath `workspace` is
+/// considered. Host key sources are excluded because they can prompt or mint.
+pub(super) fn profile_master_key_read_only(
+    workspace: &Path,
+) -> Result<Option<Zeroizing<[u8; 32]>>, SecretStorageError> {
+    let inline = env_value(MASTER_KEY_ENV, std::env::var(MASTER_KEY_ENV))
+        .map_err(SecretStorageError::Backend)?;
+    let file = env_value(MASTER_KEY_FILE_ENV, std::env::var(MASTER_KEY_FILE_ENV))
+        .map_err(SecretStorageError::Backend)?;
+    if let Some((key, _)) = master_key_from_env(
+        inline.as_deref(),
+        file.as_deref(),
+        super::read_master_key_file,
+    )
+    .map_err(SecretStorageError::Backend)?
+    {
+        return Ok(Some(Zeroizing::new(key)));
+    }
+
+    let path = workspace.join("keyring/master.key");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            return Err(SecretStorageError::Backend(
+                "cannot inspect profile master key".into(),
+            ));
+        }
+    };
+    if !metadata.file_type().is_file() {
+        return Err(SecretStorageError::Backend(
+            "profile master key must be a regular file".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(SecretStorageError::Backend(
+                "profile master key requires permissions 0600".into(),
+            ));
+        }
+    }
+    let text = Zeroizing::new(
+        std::fs::read_to_string(&path)
+            .map_err(|_| SecretStorageError::Backend("cannot read profile master key".into()))?,
+    );
+    parse_master_key_hex(text.trim())
+        .map(Zeroizing::new)
+        .map(Some)
+        .map_err(SecretStorageError::Backend)
 }
 
 #[cfg(test)]

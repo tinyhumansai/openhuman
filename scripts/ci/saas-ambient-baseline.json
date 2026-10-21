@@ -589,7 +589,7 @@
   },
   {
     "rule": "bare-spawn",
-    "path": "crates/openhuman-core/src/platform/doctor/ops.rs",
+    "path": "crates/openhuman-core/src/doctor/ops.rs",
     "line": 20,
     "text": "let report = tokio::task::spawn_blocking(move || doctor::run(&config_clone, memory))",
     "occurrence": 1

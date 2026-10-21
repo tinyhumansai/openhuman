@@ -7,6 +7,20 @@ fn lookup_returns_expected_capability() {
     assert_eq!(capability.status, CapabilityStatus::Beta);
 }
 
+#[test]
+fn doctor_health_is_advertised_as_an_intelligence_capability() {
+    let capability = lookup("intelligence.doctor_health")
+        .expect("the doctor health diagnostic is a user-facing capability");
+
+    assert_eq!(capability.domain, "doctor");
+    assert_eq!(capability.category, CapabilityCategory::Intelligence);
+    assert!(capability
+        .description
+        .to_ascii_lowercase()
+        .contains("diagnostic"));
+    assert!(capability.how_to.contains("doctor_health"));
+}
+
 /// The removed desktop push-to-talk server must not be advertised, while the
 /// mobile and live voice capabilities remain discoverable.
 #[test]

@@ -4,13 +4,18 @@
 use super::*;
 #[cfg(feature = "jev")]
 use openhuman_embed::__host::agent::tinyagents::discovery::installed_tool_ranker;
+use openhuman_embed::__host::core::slots::Extensions;
 use openhuman_embed::seams::DomainGroup;
+
+fn test_wiring(options: &InstallOptions) -> Result<Wiring, InstallError> {
+    wiring(options, &Extensions::new())
+}
 
 #[test]
 fn default_wiring_carries_hosted_controllers_and_the_jev_ranker() {
     let _registry = crate::registry_test_lock();
 
-    let wired = wiring(&InstallOptions::default()).expect("wiring");
+    let wired = test_wiring(&InstallOptions::default()).expect("wiring");
     assert_eq!(
         wired.controllers.as_ref().map(|ext| ext.group),
         Some(DomainGroup::Hosted)
@@ -28,7 +33,7 @@ fn default_wiring_carries_hosted_controllers_and_the_jev_ranker() {
 fn options_turn_controllers_and_ranker_off() {
     let _registry = crate::registry_test_lock();
 
-    let wired = wiring(
+    let wired = test_wiring(
         &InstallOptions::default()
             .hosted_controllers(false)
             .tool_ranker(false),
@@ -44,8 +49,8 @@ fn wiring_reuses_the_process_transport() {
 
     // A product-identity change drops the cached transport; hold its lock.
     let _guard = crate::backend::product::product_identity_test_lock();
-    let first = wiring(&InstallOptions::default()).expect("first");
-    let second = wiring(&InstallOptions::default()).expect("second");
+    let first = test_wiring(&InstallOptions::default()).expect("first");
+    let second = test_wiring(&InstallOptions::default()).expect("second");
     assert!(Arc::ptr_eq(&first.transport, &second.transport));
 }
 
@@ -64,6 +69,6 @@ fn install_registers_hosted_controllers_and_installs_the_ranker() {
     #[cfg(feature = "jev")]
     assert!(installed_tool_ranker().is_some());
     // The same transport the builder path binds.
-    let wired = wiring(&InstallOptions::default()).expect("wiring");
+    let wired = test_wiring(&InstallOptions::default()).expect("wiring");
     assert!(Arc::ptr_eq(&transport, &wired.transport));
 }

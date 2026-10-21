@@ -18,7 +18,6 @@
 use std::future::Future;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use crate::core::runtime::TokenSource;
 use crate::core::types::HostKind;
 
 #[path = "context_accessors.rs"]
@@ -135,200 +134,10 @@ pub struct CoreContext {
 /// The workspace a context is bound to.
 struct WorkspaceBinding {
     workspace_dir: Option<std::path::PathBuf>,
+    config_path: Option<std::path::PathBuf>,
 }
 
 impl CoreContext {
-    /// Run the core initialization sequence and return the context plus whether
-    /// an operator-supplied RPC bearer exists (for the public-bind safety check
-    /// in `openhuman_rpc::server::serve`) plus the loaded config, when boot reached
-    /// workspace-bound init. Order is load-bearing and mirrors the original
-    /// `run_server_inner` sequence:
-    ///
-    /// 1. register controllers, 2. master key, 3. seed RPC bearer,
-    /// 4. workspace stores ([`init_stores`]), 5. pure runtime registration.
-    ///
-    /// `preloaded_config` lets an embedder supply the [`Config`] outright
-    /// instead of having step 4 discover one from disk and the environment. See
-    /// [`init_with_config`](Self::init_with_config) for why that matters.
-    pub async fn init(
-        host_kind: HostKind,
-        token: &TokenSource,
-        domains: crate::core::runtime::DomainSet,
-    ) -> anyhow::Result<(Arc<CoreContext>, bool, Option<crate::config::Config>)> {
-        Self::init_with_config(host_kind, token, domains, Default::default(), None).await
-    }
-
-    /// [`init`](Self::init) with an optional caller-supplied configuration.
-    ///
-    /// Passing `Some(config)` skips `Config::load_or_init()` entirely — the
-    /// config is used verbatim, exactly as loaded config would be. This is the
-    /// seam that lets a library embedder configure the core with struct fields
-    /// rather than by mutating the process environment before `build()`, which
-    /// is order-dependent, process-global, and invisible at the call site.
-    ///
-    /// Note it does not make the core hermetic on its own: `init_stores`, the
-    /// session database and the keyring still write beneath
-    /// `config.workspace_dir`. It decides *where*, not *whether*.
-    pub async fn init_with_config(
-        host_kind: HostKind,
-        token: &TokenSource,
-        mut domains: crate::core::runtime::DomainSet,
-        mut tool_groups: crate::tools::toolpacks::ToolGroups,
-        preloaded_config: Option<crate::config::Config>,
-    ) -> anyhow::Result<(Arc<CoreContext>, bool, Option<crate::config::Config>)> {
-        log::debug!(
-            "[core-context] init: host_kind={host_kind:?} domains={domains:?} \
-             tool_groups={tool_groups:?}"
-        );
-        crate::core::runtime::mode::admit_core(host_kind, DEFAULT_CONTEXT.get().is_some())
-            .map_err(|e| anyhow::anyhow!("[core-context] {e}"))?;
-        // 1. Ensure all controllers are registered before anything dispatches.
-        let _ = crate::core::all::all_registered_controllers();
-
-        // 2. Load the master encryption key before any config/credential op that
-        //    needs to decrypt secrets. No-op if already called (e.g. from
-        //    run_core_from_args for the CLI).
-        if let Some(config) = &preloaded_config {
-            crate::security::secret_storage::init_workspace(&config.workspace_dir);
-        }
-        crate::security::secret_storage::init_master_key().map_err(anyhow::Error::msg)?;
-
-        // 4. Seed the per-process RPC bearer. `Fixed` seeds the in-memory value
-        //    directly (never touches the env); `EnvOrFile` reads
-        //    OPENHUMAN_CORE_TOKEN or generates + writes {root}/core.token.
-        //
-        //    `has_operator_token` records whether an OPERATOR-supplied bearer
-        //    exists (in-memory handoff or env var). The self-generated core.token
-        //    file does NOT count — remote clients cannot read it — so it must not
-        //    satisfy the public-bind safety check in `serve`.
-        let has_operator_token = match token {
-            TokenSource::Fixed(token) => {
-                crate::core::auth::init_rpc_token_with_value(token)?;
-                !token.trim().is_empty()
-            }
-            TokenSource::EnvOrFile => {
-                // A caller-supplied config scopes the core's state, so a
-                // self-generated bearer must land beside it rather than under
-                // the operator's real `~/.openhuman` root — otherwise an
-                // "ephemeral" harness still writes a `core.token` into the
-                // operator's install. Fall back to the default root only when
-                // no config was supplied.
-                let token_dir = preloaded_config
-                    .as_ref()
-                    .map(|cfg| {
-                        cfg.config_path
-                            .parent()
-                            .map(|p| p.to_path_buf())
-                            .unwrap_or_else(|| cfg.config_path.clone())
-                    })
-                    .unwrap_or_else(|| {
-                        crate::config::default_root_openhuman_dir().unwrap_or_else(|_| {
-                            dirs::home_dir()
-                                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                                .join(".openhuman")
-                        })
-                    });
-                crate::core::auth::init_rpc_token(&token_dir)?;
-                std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .is_some()
-            }
-        };
-
-        // 5. Resolve config once, then initialize workspace-bound stores
-        //    (memory, attachments, people) with that exact workspace.
-        // Kept for the context: `preloaded_config` is consumed below, and the
-        // whole point is that handlers can reach it after boot.
-        let embedder_config = preloaded_config.clone();
-        let latest_embedder_config = embedder_config.clone().map(|config| {
-            let snapshot = Arc::new(std::sync::Mutex::new(config));
-            crate::config::Config::bind_context_snapshot(&snapshot);
-            snapshot
-        });
-        let loaded = match preloaded_config {
-            // A supplied config is authoritative: no disk read, no env overlay,
-            // and no `Err` arm to reach, because there was nothing to fail.
-            Some(cfg) => {
-                log::debug!("[core-context] init: using caller-supplied config (scoped workspace)");
-                Ok(cfg)
-            }
-            None => crate::config::Config::load_or_init().await,
-        };
-        // `[components]` can only narrow what the host chose.
-        let components = match &loaded {
-            Ok(cfg) => crate::core::runtime::ComponentSet::from_config(&cfg.components),
-            Err(_) => crate::core::runtime::ComponentSet::all(),
-        };
-        domains = components.narrow_domains(domains);
-        tool_groups = components.narrow_tool_groups(tool_groups);
-        log::debug!("[core-context] init: components={components:?} effective domains={domains:?}");
-        let config = match loaded {
-            Ok(cfg) => {
-                init_stores(&cfg, domains).await;
-                Some(cfg)
-            }
-            Err(e) => {
-                log::error!(
-                    "[boot] workspace-bound store init SKIPPED — \
-                     Config::load_or_init failed ({e:#}). Memory persistence is \
-                     DISABLED for this run; no silent fallback to the default \
-                     workspace (which would cause chunk loss / cross-workspace \
-                     bleed-over). Fix config.toml or set OPENHUMAN_WORKSPACE to a \
-                     writable path, then restart."
-                );
-                None
-            }
-        };
-        let workspace_dir = config.as_ref().map(|cfg| cfg.workspace_dir.clone());
-
-        // Construct and publish the context before bootstrap. Host-installed
-        // session providers may resolve their cold-boot recovery workspace via
-        // CoreContext, which does not exist until this point.
-        let ctx = Arc::new(CoreContext {
-            host_kind,
-            workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
-                workspace_dir: workspace_dir.clone(),
-            }))),
-            domains,
-            tool_groups,
-            autonomy_tier_source: if embedder_config.is_some() {
-                super::AutonomyTierSource::Captured
-            } else {
-                super::AutonomyTierSource::LiveConfig
-            },
-            autonomy_tier_ceiling: None,
-            components,
-            embedder_config,
-            latest_embedder_config,
-            user_skill_roots: true,
-            extensions: Default::default(),
-            turn_origin: None,
-            channel_thread: None,
-            session_agent: None,
-            profile: None,
-            agent: Default::default(),
-            bare: false,
-        });
-        let _ = DEFAULT_CONTEXT.set(ctx.clone());
-
-        // 6. Long-lived runtime infrastructure: event bus, domain subscribers,
-        //    ledgers, agent-definition registry, live security policy, approval
-        //    gate, socket manager. Idempotent (Once-guarded internally). Selected
-        //    background jobs start later, from CoreRuntime::start_services(), after a transport binds
-        //    succeeds.
-        let runtime_config = config.clone();
-        super::bootstrap::bootstrap_core_runtime(
-            host_kind,
-            config,
-            domains,
-            &super::DispatchCtx::new(ctx.clone()),
-        )
-        .await;
-
-        Ok((ctx, has_operator_token, runtime_config))
-    }
-
     /// The host that constructed this context (Tauri shell / CLI / Docker).
     pub fn host_kind(&self) -> HostKind {
         self.host_kind
@@ -369,7 +178,7 @@ impl CoreContext {
     /// process default; scoped readers observe its config and policy.
     pub fn derive_with(&self, overlay: ContextOverlay) -> Arc<CoreContext> {
         let parent_config = self.latest_embedder_config();
-        self.derive_with_parent_config_inner(parent_config.as_ref(), overlay)
+        self.derive_with_parent_config_inner(parent_config.as_ref(), overlay, false)
     }
 
     /// Derive a child using the exact parent configuration it was built from.
@@ -383,13 +192,14 @@ impl CoreContext {
         parent_config: &crate::config::Config,
         overlay: ContextOverlay,
     ) -> Arc<CoreContext> {
-        self.derive_with_parent_config_inner(Some(parent_config), overlay)
+        self.derive_with_parent_config_inner(Some(parent_config), overlay, false)
     }
 
     fn derive_with_parent_config_inner(
         &self,
         parent_config: Option<&crate::config::Config>,
         mut overlay: ContextOverlay,
+        fresh_state: bool,
     ) -> Arc<CoreContext> {
         // Clamped to what this context can already dispatch. A derived
         // overlay may only narrow: callers outside this crate (embed's
@@ -399,6 +209,11 @@ impl CoreContext {
         // caller of `derive_with` cannot widen a restricted parent's domains
         // just by omitting that check.
         let domains = self.domains.intersect(&overlay.domains);
+        let components = if fresh_state {
+            crate::core::runtime::ComponentSet::from_config(&overlay.config.components)
+        } else {
+            self.components
+        };
         if domains != overlay.domains {
             log::warn!(
                 "[core-context] derive: overlay requested domains={:?} wider than \
@@ -416,9 +231,10 @@ impl CoreContext {
             overlay.tool_groups,
             overlay.user_skill_roots
         );
-        // A derived context over the parent's workspace shares the parent's
-        // binding handle, so a workspace rebind reaches it. One that carries
-        // another workspace keeps that override.
+        // A derived context over the parent's workspace and config root shares
+        // its current binding snapshot. A later parent rebind replaces the
+        // parent's handle, leaving already-derived work on the prior binding.
+        // Another workspace or config root gets its own binding from the start.
         let shared_binding = {
             let parent_handle = self.workspace_binding.read();
             let parent_handle = parent_handle
@@ -428,16 +244,19 @@ impl CoreContext {
             let can_share = parent_handle.as_ref().is_some_and(|handle| {
                 handle.read().ok().is_some_and(|parent| {
                     parent.workspace_dir.as_deref() == Some(overlay.config.workspace_dir.as_path())
+                        && parent.config_path.as_deref()
+                            == Some(overlay.config.config_path.as_path())
                 })
             });
             match (can_share, parent_handle.as_ref()) {
                 (true, Some(handle)) => Arc::clone(handle),
                 _ => Arc::new(RwLock::new(WorkspaceBinding {
                     workspace_dir: Some(overlay.config.workspace_dir.clone()),
+                    config_path: Some(overlay.config.config_path.clone()),
                 })),
             }
         };
-        let agent = self.agent.derive(&mut overlay);
+        let agent = self.agent.derive(&mut overlay, fresh_state);
         config_access::record_context_config_overlay(self.profile(), parent_config, &mut overlay);
         overlay.config.runtime_state.context_snapshot = None;
         let latest_embedder_config = Some(Arc::new(std::sync::Mutex::new(overlay.config.clone())));
@@ -449,6 +268,7 @@ impl CoreContext {
             workspace_binding: RwLock::new(shared_binding),
             domains,
             tool_groups: overlay.tool_groups,
+            components,
             autonomy_tier_source: overlay
                 .autonomy_tier_source
                 .unwrap_or(self.autonomy_tier_source),
@@ -456,7 +276,6 @@ impl CoreContext {
                 self.autonomy_tier_ceiling,
                 overlay.autonomy_tier_ceiling,
             ),
-            components: self.components,
             embedder_config: Some(overlay.config),
             latest_embedder_config,
             user_skill_roots: overlay.user_skill_roots,
@@ -492,6 +311,26 @@ impl CoreContext {
             })
     }
 
+    /// The workspace and config path hint from one binding snapshot. The hint
+    /// is captured during normal boot even when no embedder config was supplied.
+    pub(crate) fn workspace_config_binding(
+        &self,
+    ) -> Result<(std::path::PathBuf, Option<std::path::PathBuf>), String> {
+        let handle = self
+            .workspace_binding
+            .read()
+            .map_err(|e| format!("workspace unavailable: context lock poisoned: {e}"))?;
+        let binding = handle
+            .read()
+            .map_err(|e| format!("workspace unavailable: binding lock poisoned: {e}"))?;
+        let workspace = binding.workspace_dir.clone().ok_or_else(|| {
+            "workspace unavailable: Config::load_or_init failed during core boot; \
+             fix config.toml or OPENHUMAN_WORKSPACE and restart"
+                .to_string()
+        })?;
+        Ok((workspace, binding.config_path.clone()))
+    }
+
     /// The context for the current dispatch: the one scoped by
     /// [`CoreContext::scope`] if inside a scope, else the process
     /// [`DEFAULT_CONTEXT`]. Returns `None` only before any context is built
@@ -513,6 +352,13 @@ impl CoreContext {
     /// passed to [`CoreContext::scope`] explicitly and are not the process
     /// default.
     pub fn rebind_default_workspace(workspace_dir: &std::path::Path) -> Result<(), String> {
+        Self::rebind_default_workspace_with_config(workspace_dir, None)
+    }
+
+    pub(crate) fn rebind_default_workspace_with_config(
+        workspace_dir: &std::path::Path,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), String> {
         let Some(ctx) = DEFAULT_CONTEXT.get() else {
             log::debug!(
                 "[core-context] default context not initialized; skipped workspace rebind to {}",
@@ -520,20 +366,25 @@ impl CoreContext {
             );
             return Ok(());
         };
-        ctx.rebind_workspace(workspace_dir)
+        ctx.rebind_workspace(workspace_dir, config_path)
     }
 
-    fn rebind_workspace(&self, workspace_dir: &std::path::Path) -> Result<(), String> {
+    pub(crate) fn rebind_workspace(
+        &self,
+        workspace_dir: &std::path::Path,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), String> {
         let mut binding_handle = self
             .workspace_binding
             .write()
             .map_err(|e| format!("workspace rebind failed: binding handle lock poisoned: {e}"))?;
-        let already = binding_handle
-            .read()
-            .map_err(|e| format!("workspace rebind failed: binding lock poisoned: {e}"))?
-            .workspace_dir
-            .as_deref()
-            == Some(workspace_dir);
+        let already = {
+            let binding = binding_handle
+                .read()
+                .map_err(|e| format!("workspace rebind failed: binding lock poisoned: {e}"))?;
+            binding.workspace_dir.as_deref() == Some(workspace_dir)
+                && binding.config_path.as_deref() == config_path
+        };
         if already {
             log::debug!(
                 "[core-context] workspace {} already bound",
@@ -547,6 +398,7 @@ impl CoreContext {
         );
         *binding_handle = Arc::new(RwLock::new(WorkspaceBinding {
             workspace_dir: Some(workspace_dir.to_path_buf()),
+            config_path: config_path.map(std::path::Path::to_path_buf),
         }));
         Ok(())
     }
@@ -604,112 +456,12 @@ impl CoreContext {
 /// workspace (Sentry OPENHUMAN-CORE-48), the workspace-bound init is skipped
 /// entirely; the server still comes up and the operator sees the loud error.
 /// Per-`DomainGroup` gating decision for each workspace-bound store that
-/// [`init_stores`] initializes. Extracted as a pure value so the store-gating
-/// mapping (which store is owned by which `DomainGroup`) has a single source of
-/// truth that `init_stores` consumes and tests assert directly — without
-/// touching process-global store state or booting a runtime (#4796 DoD item 3).
-///
-/// The keyring-path log and the credentials Sentry bind in `init_stores` are
-/// intentionally *not* represented here: they are unguarded core infra every
-/// `DomainSet` needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StoreInitPlan {
-    /// Reporting the memory engine binding (`memory::engine`) — gated on
-    /// [`DomainGroup::Memory`].
-    pub memory: bool,
-    /// `agent::multimodal` attachments sidecar dir — gated on [`DomainGroup::Agent`].
-    pub agent_attachments: bool,
-    /// legacy-workflow prune under `skills::registry` — gated on [`DomainGroup::Skills`].
-    pub skills_prune: bool,
-}
+#[path = "context_store_init.rs"]
+mod store_init;
+pub use store_init::{init_stores, StoreInitPlan};
 
-impl StoreInitPlan {
-    /// The store-init plan for `domains`. Pure: no side effects, no globals.
-    pub fn for_domains(domains: crate::core::runtime::DomainSet) -> Self {
-        use crate::core::all::DomainGroup;
-        Self {
-            memory: domains.allows(DomainGroup::Memory),
-            agent_attachments: domains.allows(DomainGroup::Agent),
-            skills_prune: domains.allows(DomainGroup::Skills),
-        }
-    }
-}
-
-pub async fn init_stores(cfg: &crate::config::Config, domains: crate::core::runtime::DomainSet) {
-    let plan = StoreInitPlan::for_domains(domains);
-
-    let keyring_dir = crate::security::secret_storage::store::workspace_dir_for_file_backend();
-    // Keyring path log + credentials Sentry bind (below) are unguarded — they
-    // are core infra every DomainSet needs. Each workspace-bound store init is
-    // gated on its owning DomainGroup so an excluded domain's store stays
-    // uninitialized under `harness()`/`none()` (#4796 DoD item 3).
-    log::info!(
-        "[boot] paths: config={} workspace={} keyring_dir={} keyring_backend={} domains={:?}",
-        cfg.config_path.display(),
-        cfg.workspace_dir.display(),
-        keyring_dir.display(),
-        crate::security::secret_storage::backend_name(),
-        domains,
-    );
-    if plan.memory {
-        let binding = crate::memory::engine::resolve(cfg);
-        match &binding {
-            crate::memory::engine::Binding::On(bound) => {
-                log::info!("[boot] memory engine bound: id={}", bound.id)
-            }
-            crate::memory::engine::Binding::Off { reason, .. } => {
-                log::info!("[boot] memory is off: {reason}")
-            }
-        }
-    } else {
-        log::debug!("[boot] memory engine bind SKIPPED — Memory domain disabled");
-    }
-    // Install the on-disk image-attachment sidecar dir so inbound
-    // image markers persist under <workspace>/attachments/ instead
-    // of an in-memory FIFO (survives restarts + delegation hops).
-    // Also fires a best-effort stale-file sweep.
-    if plan.agent_attachments {
-        crate::agent::multimodal::init_attachments_dir(cfg.workspace_dir.join("attachments"));
-        log::info!(
-            "[boot] image attachments sidecar dir = {}",
-            cfg.workspace_dir.join("attachments").display()
-        );
-    } else {
-        log::debug!("[boot] image attachments sidecar dir SKIPPED — Agent domain disabled");
-    }
-    // (The WhatsApp data store moved to the Tauri shell; the core no longer
-    // initializes it here. The shell lazily opens it from its own workspace
-    // dir when the first ingest / query arrives.)
-    // Prune legacy bundled skills (dev-workflow / github-issue-crusher
-    // / pr-review-shepherd) that older builds seeded into
-    // <workspace>/skills/. OpenHuman no longer ships bundled defaults;
-    // this removes the stale dirs on upgrade. Idempotent.
-    if plan.skills_prune {
-        crate::skills::registry::prune_legacy_default_workflows(&cfg.workspace_dir);
-    } else {
-        log::debug!("[boot] skills legacy-workflow prune SKIPPED — Skills domain disabled");
-    }
-    // Boot-time Sentry user binding — issue #3135. If the user is
-    // already signed in (typical desktop restart), the auth-profile
-    // store has their `user_id` *now*, before any background loop
-    // (Composio sync tick, cron, etc.) fires its first event.
-    // Reading from the store here means subsequent events carry
-    // `user.id` even when no `app_state_snapshot` RPC has run yet.
-    match crate::security::credentials::session_support::build_session_state(cfg) {
-        Ok(state) => {
-            if let Some(uid) = state.user_id.as_deref() {
-                crate::security::credentials::sentry_scope::bind(uid);
-            }
-            // The host-supplied user payload survives restarts in the profile
-            // store; seed the identity slot from it so prompt composition sees
-            // the signed-in user before any host RPC runs.
-            crate::security::credentials::identity::set_current_user(state.user);
-        }
-        Err(e) => {
-            log::debug!("[boot] sentry scope user bind skipped — build_session_state failed: {e}")
-        }
-    }
-}
+#[path = "context_boot.rs"]
+mod boot;
 
 #[path = "context_turn_origin.rs"]
 mod turn_origin_scope;
@@ -719,6 +471,9 @@ mod for_agent_scope;
 
 #[path = "context_agent.rs"]
 mod agent_parts;
+
+#[path = "context_inspection.rs"]
+mod inspection;
 
 #[path = "context_overlay.rs"]
 mod overlay;

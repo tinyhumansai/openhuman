@@ -94,6 +94,28 @@ impl SecretStore {
         }
     }
 
+    /// Decrypt one existing `enc2:` value using an explicitly supplied key.
+    /// This does not consult or initialize the process keyring and does not
+    /// migrate legacy `enc:` values.
+    pub(crate) fn decrypt_with_existing_key(value: &str, key: &str) -> Result<String> {
+        let Some(hex_str) = value.strip_prefix("enc2:") else {
+            if value.starts_with("enc:") {
+                anyhow::bail!("legacy encrypted value is unavailable to read-only inspection");
+            }
+            return Ok(value.to_string());
+        };
+
+        let key_bytes = decode_key_hex(key.trim())?;
+        let key: [u8; KEY_LEN] = key_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid secret key length"))?;
+        let key = Zeroizing::new(key);
+        let blob = crypto::hex_decode(hex_str).map_err(anyhow::Error::msg)?;
+        let plaintext = crypto::chacha20_decrypt(&key, &blob).map_err(anyhow::Error::msg)?;
+        String::from_utf8(plaintext).context("decrypted secret is not valid UTF-8")
+    }
+
     /// Decrypt a secret and return a migrated `enc2:` value if the input used legacy `enc:` format.
     ///
     /// Returns `(plaintext, Some(new_enc2_value))` if migration occurred, or

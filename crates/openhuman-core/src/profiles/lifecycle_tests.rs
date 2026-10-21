@@ -88,6 +88,10 @@ impl LeaseStore for PausingLeases {
     async fn holder(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
         self.inner.holder(key).await
     }
+
+    async fn holder_readonly(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        self.inner.holder_readonly(key).await
+    }
 }
 
 #[tokio::test]

@@ -14,20 +14,45 @@ impl Config {
             if !key.is_empty() {
                 self.seltz.api_key = Some(key);
                 self.seltz.enabled = true;
+                self.record_env_override(
+                    env,
+                    "seltz.api_key",
+                    &["OPENHUMAN_SELTZ_API_KEY", "SELTZ_API_KEY"],
+                );
+                self.record_env_override(
+                    env,
+                    "seltz.enabled",
+                    &["OPENHUMAN_SELTZ_API_KEY", "SELTZ_API_KEY"],
+                );
                 self.search
                     .providers
                     .insert("seltz".into(), SearchProviderSettings::direct());
+                self.record_env_override(
+                    env,
+                    "search.providers.seltz",
+                    &["OPENHUMAN_SELTZ_API_KEY", "SELTZ_API_KEY"],
+                );
             }
         }
         if let Some(url) = env.get_any(&["OPENHUMAN_SELTZ_API_URL", "SELTZ_API_URL"]) {
             if !url.is_empty() {
                 self.seltz.api_url = Some(url);
+                self.record_env_override(
+                    env,
+                    "seltz.api_url",
+                    &["OPENHUMAN_SELTZ_API_URL", "SELTZ_API_URL"],
+                );
             }
         }
         if let Some(max) = env.get_any(&["OPENHUMAN_SELTZ_MAX_RESULTS", "SELTZ_MAX_RESULTS"]) {
             if let Ok(n) = max.parse::<usize>() {
                 if (1..=20).contains(&n) {
                     self.seltz.max_results = n;
+                    self.record_env_override(
+                        env,
+                        "seltz.max_results",
+                        &["OPENHUMAN_SELTZ_MAX_RESULTS", "SELTZ_MAX_RESULTS"],
+                    );
                 }
             }
         }
@@ -35,12 +60,27 @@ impl Config {
         if let Some(flag) = env.get_any(&["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"]) {
             if let Some(enabled) = parse_env_bool("OPENHUMAN_SEARXNG_ENABLED", &flag) {
                 self.searxng.enabled = enabled;
+                self.record_env_override(
+                    env,
+                    "searxng.enabled",
+                    &["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"],
+                );
                 if enabled {
                     self.search
                         .providers
                         .insert("searxng".into(), SearchProviderSettings::direct());
+                    self.record_env_override(
+                        env,
+                        "search.providers.searxng",
+                        &["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"],
+                    );
                 } else {
                     self.search.providers.remove("searxng");
+                    self.record_env_override(
+                        env,
+                        "search.providers.searxng",
+                        &["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"],
+                    );
                 }
             }
         }
@@ -48,12 +88,22 @@ impl Config {
             let url = url.trim();
             if !url.is_empty() {
                 self.searxng.base_url = url.to_string();
+                self.record_env_override(
+                    env,
+                    "searxng.base_url",
+                    &["OPENHUMAN_SEARXNG_BASE_URL", "SEARXNG_BASE_URL"],
+                );
             }
         }
         if let Some(max) = env.get_any(&["OPENHUMAN_SEARXNG_MAX_RESULTS", "SEARXNG_MAX_RESULTS"]) {
             if let Ok(n) = max.parse::<usize>() {
                 if (1..=50).contains(&n) {
                     self.searxng.max_results = n;
+                    self.record_env_override(
+                        env,
+                        "searxng.max_results",
+                        &["OPENHUMAN_SEARXNG_MAX_RESULTS", "SEARXNG_MAX_RESULTS"],
+                    );
                 }
             }
         }
@@ -64,6 +114,14 @@ impl Config {
             let language = language.trim();
             if !language.is_empty() {
                 self.searxng.default_language = language.to_string();
+                self.record_env_override(
+                    env,
+                    "searxng.default_language",
+                    &[
+                        "OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE",
+                        "SEARXNG_DEFAULT_LANGUAGE",
+                    ],
+                );
             }
         }
         if let Some(timeout_secs) = env.get_any(&[
@@ -75,6 +133,16 @@ impl Config {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.searxng.timeout_secs = timeout_secs;
+                    self.record_env_override(
+                        env,
+                        "searxng.timeout_secs",
+                        &[
+                            "OPENHUMAN_SEARXNG_TIMEOUT_SECS",
+                            "OPENHUMAN_SEARXNG_TIMEOUT_SECONDS",
+                            "SEARXNG_TIMEOUT_SECS",
+                            "SEARXNG_TIMEOUT_SECONDS",
+                        ],
+                    );
                 }
             }
         }
@@ -82,12 +150,19 @@ impl Config {
         if let Some(flag) = env.get_any(&["OPENHUMAN_SEARCH_ENABLED"]) {
             if let Some(enabled) = parse_env_bool("OPENHUMAN_SEARCH_ENABLED", &flag) {
                 self.search.enabled = Some(enabled);
+                self.record_env_override(env, "search.enabled", &["OPENHUMAN_SEARCH_ENABLED"]);
             }
         }
         if let Some(engine) = env.get_any(&["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"]) {
             if !engine.trim().is_empty() {
                 if let Err(error) = self.search.apply_legacy_engine(&engine) {
                     log::warn!("[config][search] ignoring SEARCH_ENGINE: {error}");
+                } else {
+                    self.record_env_override(
+                        env,
+                        "search.providers",
+                        &["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"],
+                    );
                 }
             }
         }
@@ -128,6 +203,7 @@ impl Config {
                 );
             }
             self.search.providers = providers;
+            self.record_env_override(env, "search.providers", &["OPENHUMAN_SEARCH_PROVIDERS"]);
         }
         // The dedicated provider toggles and credentials take precedence over
         // the provider-set shorthand, which replaces the map above.
@@ -136,6 +212,11 @@ impl Config {
                 self.search
                     .providers
                     .insert("seltz".into(), SearchProviderSettings::direct());
+                self.record_env_override(
+                    env,
+                    "search.providers.seltz",
+                    &["OPENHUMAN_SELTZ_API_KEY", "SELTZ_API_KEY"],
+                );
             }
         }
         if let Some(flag) = env.get_any(&["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"]) {
@@ -144,26 +225,41 @@ impl Config {
                     self.search
                         .providers
                         .insert("searxng".into(), SearchProviderSettings::direct());
+                    self.record_env_override(
+                        env,
+                        "search.providers.searxng",
+                        &["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"],
+                    );
                 } else {
                     self.search.providers.remove("searxng");
+                    self.record_env_override(
+                        env,
+                        "search.providers.searxng",
+                        &["OPENHUMAN_SEARXNG_ENABLED", "SEARXNG_ENABLED"],
+                    );
                 }
             }
         }
         // `exa=direct,gemini=managed` — changes routes of listed providers.
-        let mut routes: Vec<(String, String)> = Vec::new();
+        let mut routes: Vec<(String, String, &str)> = Vec::new();
         if let Some(value) = env.get_any(&["OPENHUMAN_SEARCH_ROUTES"]) {
             routes.extend(value.split(',').filter_map(|pair| {
-                pair.split_once('=')
-                    .map(|(p, r)| (p.trim().to_ascii_lowercase(), r.trim().to_string()))
+                pair.split_once('=').map(|(p, r)| {
+                    (
+                        p.trim().to_ascii_lowercase(),
+                        r.trim().to_string(),
+                        "OPENHUMAN_SEARCH_ROUTES",
+                    )
+                })
             }));
         }
         if let Some(value) = env.get_any(&["OPENHUMAN_GEMINI_ROUTE"]) {
             log::warn!(
                 "[config][search] OPENHUMAN_GEMINI_ROUTE is deprecated; use OPENHUMAN_SEARCH_ROUTES=gemini=<route>"
             );
-            routes.push(("gemini".into(), value));
+            routes.push(("gemini".into(), value, "OPENHUMAN_GEMINI_ROUTE"));
         }
-        for (provider, route) in routes {
+        for (provider, route, env_var) in routes {
             match ProviderRoute::parse(&route) {
                 Some(route)
                     if SEARCH_PROVIDERS.contains(&provider.as_str())
@@ -174,6 +270,11 @@ impl Config {
                         .get_mut(&provider)
                         .expect("checked above")
                         .route = route;
+                    self.record_env_override_var(
+                        env,
+                        &format!("search.providers.{provider}.route"),
+                        env_var,
+                    );
                 }
                 _ => log::warn!("[config][search] ignoring route '{provider}={route}'"),
             }
@@ -196,11 +297,19 @@ impl Config {
                     .filter(|p| SEARCH_PROVIDERS.contains(&p.as_str()))
                     .collect();
                 self.search.roles.insert(role, order);
+                self.record_env_override(env, "search.roles", &["OPENHUMAN_SEARCH_ROLES"]);
             }
         }
         if let Some(mode) = env.get_any(&["OPENHUMAN_SEARCH_PRESENTATION"]) {
             match PresentationMode::parse(&mode) {
-                Some(mode) => self.search.presentation = mode,
+                Some(mode) => {
+                    self.search.presentation = mode;
+                    self.record_env_override(
+                        env,
+                        "search.presentation",
+                        &["OPENHUMAN_SEARCH_PRESENTATION"],
+                    );
+                }
                 None => {
                     log::warn!("[config][search] ignoring OPENHUMAN_SEARCH_PRESENTATION='{mode}'")
                 }
@@ -214,42 +323,82 @@ impl Config {
         if let Some(key) = env.get_any(&["OPENHUMAN_PARALLEL_API_KEY", "PARALLEL_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.parallel.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.parallel.api_key",
+                    &["OPENHUMAN_PARALLEL_API_KEY", "PARALLEL_API_KEY"],
+                );
             }
         }
         if let Some(key) = env.get_any(&["OPENHUMAN_GEMINI_API_KEY", "GEMINI_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.gemini.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.gemini.api_key",
+                    &["OPENHUMAN_GEMINI_API_KEY", "GEMINI_API_KEY"],
+                );
             }
         }
         if let Some(key) = env.get_any(&["OPENHUMAN_BRAVE_API_KEY", "BRAVE_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.brave.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.brave.api_key",
+                    &["OPENHUMAN_BRAVE_API_KEY", "BRAVE_API_KEY"],
+                );
             }
         }
         if let Some(key) = env.get_any(&["OPENHUMAN_QUERIT_API_KEY", "QUERIT_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.querit.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.querit.api_key",
+                    &["OPENHUMAN_QUERIT_API_KEY", "QUERIT_API_KEY"],
+                );
             }
         }
         if let Some(key) = env.get_any(&["OPENHUMAN_EXA_API_KEY", "EXA_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.exa.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.exa.api_key",
+                    &["OPENHUMAN_EXA_API_KEY", "EXA_API_KEY"],
+                );
             }
         }
         if let Some(key) = env.get_any(&["OPENHUMAN_TAVILY_API_KEY", "TAVILY_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.tavily.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.tavily.api_key",
+                    &["OPENHUMAN_TAVILY_API_KEY", "TAVILY_API_KEY"],
+                );
             }
         }
         if let Some(key) = env.get_any(&["OPENHUMAN_TINYFISH_API_KEY", "TINYFISH_API_KEY"]) {
             if !key.trim().is_empty() {
                 self.search.tinyfish.api_key = Some(key);
+                self.record_env_override(
+                    env,
+                    "search.tinyfish.api_key",
+                    &["OPENHUMAN_TINYFISH_API_KEY", "TINYFISH_API_KEY"],
+                );
             }
         }
         if let Some(max) = env.get_any(&["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"]) {
             if let Ok(n) = max.parse::<usize>() {
                 if (1..=20).contains(&n) {
                     self.search.max_results = n;
+                    self.record_env_override(
+                        env,
+                        "search.max_results",
+                        &["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"],
+                    );
                 }
             }
         }
@@ -257,6 +406,11 @@ impl Config {
             if let Ok(n) = t.parse::<u64>() {
                 if n > 0 {
                     self.search.timeout_secs = n;
+                    self.record_env_override(
+                        env,
+                        "search.timeout_secs",
+                        &["OPENHUMAN_SEARCH_TIMEOUT_SECS", "SEARCH_TIMEOUT_SECS"],
+                    );
                 }
             }
         }
@@ -274,6 +428,11 @@ impl Config {
             if let Ok(max_results) = max_results.parse::<usize>() {
                 if (1..=10).contains(&max_results) {
                     self.web_search.max_results = max_results;
+                    self.record_env_override(
+                        env,
+                        "web_search.max_results",
+                        &["OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "WEB_SEARCH_MAX_RESULTS"],
+                    );
                 }
             }
         }
@@ -285,6 +444,14 @@ impl Config {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.web_search.timeout_secs = timeout_secs;
+                    self.record_env_override(
+                        env,
+                        "web_search.timeout_secs",
+                        &[
+                            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
+                            "WEB_SEARCH_TIMEOUT_SECS",
+                        ],
+                    );
                 }
             }
         }

@@ -133,7 +133,7 @@ async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_toke
         .mount(&server)
         .await;
 
-    let _env_guard = EnvVarGuard::set(
+    let _env_guard = EnvVarGuard::locked_async().await.with(
         "OPENAI_CODEX_OAUTH_TOKEN_URL",
         format!("{}/token", server.uri()),
     );

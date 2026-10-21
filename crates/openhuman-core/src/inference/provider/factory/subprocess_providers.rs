@@ -33,6 +33,53 @@ pub(super) fn try_create_claude_agent_sdk_chat_model_from_string(
     Some(Ok((chat, model)))
 }
 
+/// Creates a bounded one-shot CLI model only when the explicit environment
+/// credential can be frozen and passed to the inspection-only wrapper.
+pub(super) fn try_create_claude_agent_sdk_chat_model_for_inspection(
+    role: &str,
+    provider: &str,
+    config: &Config,
+) -> InspectionChatModelResult {
+    let model = claude_agent_sdk_model_from_string(provider, config)?;
+    Some((|| {
+        enforce_local_only_inference(role, provider)?;
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let auth_token = std::env::var("ANTHROPIC_AUTH_TOKEN")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let credential = api_key
+            .as_deref()
+            .or(auth_token.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("explicit Claude API credential is unavailable"))?
+            .to_string();
+        let base_url = std::env::var("ANTHROPIC_BASE_URL")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let endpoint = base_url
+            .as_deref()
+            .unwrap_or("https://api.anthropic.com")
+            .trim_end_matches('/')
+            .to_string();
+        let auth =
+            tinyagents_harness::providers::claude_agent_sdk::ClaudeAgentSdkInspectionAuth::new(
+                api_key, auth_token, base_url,
+            )?;
+        let chat = ClaudeAgentSdkProvider::for_inspection(
+            (&config.claude_agent_sdk).into(),
+            model.clone(),
+            auth,
+        );
+        Ok((
+            Arc::new(chat) as Arc<dyn ChatModel<()>>,
+            model.clone(),
+            endpoint,
+            credential,
+        ))
+    })())
+}
+
 pub(super) fn prepare_claude_agent_sdk_chat_model(
     role: &str,
     provider: &str,
@@ -127,6 +174,25 @@ pub(super) fn try_create_claude_code_chat_model_from_string(
         Err(error) => return Some(Err(error)),
     };
     Some(Ok((chat, configured_model)))
+}
+
+/// Uses the same Claude CLI for a one-shot, tool-free inspection request. The
+/// route is unavailable without an explicit API credential; the saved CLI
+/// session is never read.
+pub(super) fn try_create_claude_code_chat_model_for_inspection(
+    role: &str,
+    provider: &str,
+    config: &Config,
+) -> InspectionChatModelResult {
+    let provider = provider.trim();
+    let model_with_temp =
+        provider.strip_prefix(tinyagents_harness::providers::claude_code::PROVIDER_PREFIX)?;
+    let (configured_model, _) = split_model_and_temperature(model_with_temp);
+    if configured_model.is_empty() {
+        return Some(Err(anyhow::anyhow!("Claude CLI route has an empty model")));
+    }
+    let sdk_provider = format!("{CLAUDE_AGENT_SDK_PREFIX}{configured_model}");
+    try_create_claude_agent_sdk_chat_model_for_inspection(role, &sdk_provider, config)
 }
 
 #[derive(Debug)]

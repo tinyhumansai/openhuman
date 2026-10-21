@@ -103,6 +103,40 @@ pub(super) fn managed_chat_model(
     })
 }
 
+/// Build a managed model only through the host's explicitly inspection-safe
+/// callback. This path never falls back to the runtime factory: doing so could
+/// defer mutable credential access until invoke/stream.
+pub(super) fn managed_chat_model_for_inspection(
+    role: &str,
+    config: &Config,
+    model_override: Option<&str>,
+) -> anyhow::Result<ManagedChatModel> {
+    let build = managed_chat_model_build_for_inspection(role, config, model_override)?;
+    Ok((build.model, build.model_id))
+}
+
+pub(super) fn managed_chat_model_build_for_inspection(
+    role: &str,
+    config: &Config,
+    model_override: Option<&str>,
+) -> anyhow::Result<crate::inference::registry::InspectionChatModelBuild> {
+    enforce_local_only_inference(role, PROVIDER_OPENHUMAN)?;
+    let Some(factory) = crate::inference::registry::inspection_chat_model(PROVIDER_OPENHUMAN)
+    else {
+        return Err(managed_unavailable_error());
+    };
+    let model = resolve_managed_model(role, config, model_override);
+    (factory)(&crate::inference::registry::ChatModelRequest {
+        role,
+        config,
+        model_override: Some(&model),
+        default_model: None,
+        native_tool_calling: true,
+        thread_id: None,
+        egress: &EgressLedger::none(),
+    })
+}
+
 /// Construct a managed turn model with the explicit OpenHuman thread attached.
 pub(crate) fn make_openhuman_backend_model_for_thread(
     role: &str,

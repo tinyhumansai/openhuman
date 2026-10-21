@@ -24,6 +24,97 @@ fn write_secret(backend: &EncryptedFileBackend, key: &[u8; KEY_LEN], value: &str
     backend.set_with_key(key, "user:token", value).unwrap();
 }
 
+fn write_profile_key(workspace: &Path, key: &[u8; KEY_LEN]) {
+    let path = workspace.join("keyring/master.key");
+    let encoded = crypto::hex_encode(key);
+    file_store::write_atomic(&path, encoded.as_bytes()).unwrap();
+}
+
+#[test]
+fn profile_read_only_secret_lookup_uses_only_the_selected_store() {
+    let account_a = secrets_tempdir();
+    let account_b = secrets_tempdir();
+    let key_a = [0x42; KEY_LEN];
+    let key_b = [0x24; KEY_LEN];
+    write_profile_key(account_a.path(), &key_a);
+    write_profile_key(account_b.path(), &key_b);
+
+    let store_a = EncryptedFileBackend::new(account_a.path());
+    let store_b = EncryptedFileBackend::new(account_b.path());
+    store_a
+        .set_with_key(&key_a, "account:session", "account-a-session")
+        .unwrap();
+    store_b
+        .set_with_key(&key_b, "account:other", "account-b-other")
+        .unwrap();
+    let legacy = account_b.path().join(LEGACY_DEV_KEYCHAIN);
+    std::fs::write(
+        &legacy,
+        serde_json::to_vec(&HashMap::from([(
+            "account:session".to_string(),
+            "ambient-session".to_string(),
+        )]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        store_b.get_profile_read_only("account:session").unwrap(),
+        None
+    );
+    assert_eq!(
+        store_a
+            .get_profile_read_only("account:session")
+            .unwrap()
+            .as_deref(),
+        Some("account-a-session")
+    );
+    assert!(
+        legacy.exists(),
+        "read-only lookup must not import legacy data"
+    );
+}
+
+#[test]
+fn profile_read_only_secret_lookup_does_not_create_a_missing_key() {
+    let _env = crate::config::test_env::EnvVarGuard::locked_unset_many(&[
+        MASTER_KEY_ENV,
+        MASTER_KEY_FILE_ENV,
+    ]);
+    let workspace = secrets_tempdir();
+    let backend = EncryptedFileBackend::new(workspace.path());
+
+    let error = backend
+        .get_profile_read_only("account:session")
+        .unwrap_err();
+
+    assert!(error.to_string().contains("master key unavailable"));
+    assert!(!workspace.path().join("keyring/master.key").exists());
+}
+
+#[test]
+fn profile_read_only_secret_lookup_preserves_corrupt_store_bytes() {
+    let workspace = secrets_tempdir();
+    let key = [0x42; KEY_LEN];
+    write_profile_key(workspace.path(), &key);
+    let backend = EncryptedFileBackend::new(workspace.path());
+    std::fs::write(&backend.path, b"corrupt encrypted store").unwrap();
+
+    assert!(backend.get_profile_read_only("user:token").is_err());
+
+    assert_eq!(
+        std::fs::read(&backend.path).unwrap(),
+        b"corrupt encrypted store"
+    );
+    assert!(!std::fs::read_dir(workspace.path())
+        .unwrap()
+        .flatten()
+        .any(|entry| entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("secrets.enc.corrupt.")));
+}
+
 #[test]
 fn legacy_plaintext_is_removed_only_after_verified_encrypted_migration() {
     let dir = secrets_tempdir();

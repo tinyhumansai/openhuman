@@ -1,16 +1,14 @@
 //! The `openhuman-core` binary.
 //!
-//! A host like the desktop app and the TUI: it depends on `openhuman-rpc`
-//! alone and boots through the shared host entry
-//! [`openhuman_rpc::host::cli`], which connects the TinyHumans backend,
-//! registers the server launcher and the `http_host` controllers, and runs
-//! the core's command-line dispatcher. This file only owns what is specific
-//! to the process: SIGPIPE, the early `.env`, and (with `crash-reporting`)
-//! the Sentry client, built from embed's shared `before_send` chain.
+//! The binary depends on `openhuman-rpc` alone. The doctor command is handled
+//! in this CLI host before the generic namespace dispatcher; other commands
+//! continue through [`openhuman_rpc::host::cli`]. This file owns process-level
+//! details: SIGPIPE, the early `.env`, and (with `crash-reporting`) the shared
+//! Sentry client.
 
 use openhuman_rpc::embed::process;
 
-fn main() {
+fn main() -> std::process::ExitCode {
     restore_default_sigpipe();
 
     // Load `.env` before Sentry so a DSN defined only in the dotenv file is
@@ -33,9 +31,16 @@ fn main() {
     let _sentry_guard = init_sentry();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Err(err) = openhuman_rpc::host::cli(&args) {
-        eprintln!("{err}");
-        std::process::exit(1);
+    if doctor::is_doctor_command(&args) {
+        return std::process::ExitCode::from(doctor::run(&args[1..]));
+    }
+
+    match openhuman_rpc::host::cli(&args) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::ExitCode::from(1)
+        }
     }
 }
 
@@ -80,3 +85,5 @@ fn init_sentry() -> process::sentry::sdk::ClientInitGuard {
 #[cfg(all(test, feature = "crash-reporting"))]
 #[path = "main_tests.rs"]
 mod tests;
+
+mod doctor;

@@ -39,6 +39,31 @@ impl ManagedEmbeddingModel {
         )
     }
 
+    /// Builds an inspection model with a frozen bearer from the selected
+    /// profile. The normal credential store is never consulted at embed time.
+    pub fn from_request_for_inspection(
+        request: &EmbeddingRequest<'_>,
+    ) -> tinyinference_embeddings::Result<Self> {
+        let config = request.config.ok_or_else(|| {
+            tinyinference_embeddings::Error::Validation(
+                "selected managed embedding config is unavailable".to_owned(),
+            )
+        })?;
+        let bearer =
+            super::managed_session::managed_bearer_for_inspection(config).map_err(|_| {
+                tinyinference_embeddings::Error::Validation(
+                    "selected managed embedding credential is unavailable".to_owned(),
+                )
+            })?;
+        Ok(Self::new_with_bearer(
+            config.api_url.clone(),
+            bearer,
+            request.model,
+            request.dimensions,
+            None,
+        ))
+    }
+
     /// Builds the embedder against `api_url` (or the default backend) with
     /// credentials read from `state_dir`.
     pub fn new(
@@ -86,6 +111,31 @@ impl ManagedEmbeddingModel {
                 })
         });
         let model = model.to_string();
+        Self {
+            inner: Arc::new(CloudEmbeddingModel::new(
+                base_url,
+                model.clone(),
+                dimensions,
+                bearer,
+            )),
+            model,
+            chat,
+        }
+    }
+
+    fn new_with_bearer(
+        api_url: Option<String>,
+        bearer_value: String,
+        model: &str,
+        dimensions: usize,
+        chat: Option<ApprovalChatContext>,
+    ) -> Self {
+        let base_url = format!(
+            "{}/openai/v1",
+            effective_api_url(&api_url).trim_end_matches('/')
+        );
+        let bearer: BearerResolver = Arc::new(move || Ok(bearer_value.clone()));
+        let model = model.to_owned();
         Self {
             inner: Arc::new(CloudEmbeddingModel::new(
                 base_url,

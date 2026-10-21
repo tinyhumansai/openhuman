@@ -669,6 +669,15 @@ const messages: TranslationMap = {
   'invites.title': 'इनवाइट्स',
   'invites.noInvites': 'कोई पेंडिंग इनवाइट नहीं',
   'devOptions.titleDiagnostics': 'डेवलपर और डायग्नोस्टिक्स',
+  'devOptions.doctor.run': 'डायग्नोस्टिक्स चलाएँ',
+  'devOptions.doctor.runLive': 'लाइव जाँच चलाएँ',
+  'devOptions.doctor.liveWarning':
+    'लाइव जाँच मॉडल या एम्बेडिंग कॉल पर टोकन खर्च कर सकती है। जारी रखें?',
+  'devOptions.doctor.severity.pass': 'पास',
+  'devOptions.doctor.severity.info': 'जानकारी',
+  'devOptions.doctor.severity.warn': 'चेतावनी',
+  'devOptions.doctor.severity.error': 'त्रुटि',
+  'devOptions.doctor.severity.skipped': 'छोड़ा गया',
   'devOptions.diagnostics': 'डायग्नोस्टिक्स',
   'devOptions.toolPolicyDiagnosticsDesc':
     'उपकरण सूची, नीति मुद्रा, MCP अनुमतिसूची, और हाल के ब्लॉक',

@@ -40,6 +40,70 @@ fn is_connected_tracks_status_transitions() {
 }
 
 #[test]
+fn status_for_preserves_owner_status_but_rejects_foreign_and_retired_identities() {
+    let manager = SocketManager::new();
+    let url = "https://backend-b.example/socket.io";
+    let token = "session-b";
+    *manager.shared.connection_identity.write() = Some((url.to_owned(), token.to_owned()));
+
+    for status in [
+        ConnectionStatus::Disconnected,
+        ConnectionStatus::Connecting,
+        ConnectionStatus::Connected,
+        ConnectionStatus::Reconnecting,
+        ConnectionStatus::Error,
+    ] {
+        *manager.shared.status.write() = status;
+        assert_eq!(manager.status_for(url, token), Some(status));
+        assert_eq!(
+            manager.status_for("https://backend-a.example/socket.io", token),
+            None
+        );
+        assert_eq!(manager.status_for(url, "session-a"), None);
+    }
+
+    *manager.shared.connection_identity.write() = None;
+    assert_eq!(manager.status_for(url, token), None);
+}
+
+#[test]
+fn status_for_does_not_pair_a_stale_status_with_a_new_owner() {
+    let manager = SocketManager::new();
+    let url_a = "https://backend-a.example/socket.io";
+    let token_a = "session-a";
+    let url_b = "https://backend-b.example/socket.io";
+    let token_b = "session-b";
+    *manager.shared.connection_identity.write() = Some((url_a.to_owned(), token_a.to_owned()));
+    *manager.shared.status.write() = ConnectionStatus::Connected;
+    let mut transitioned_in_observer = false;
+
+    let status = manager.status_for_with_snapshot_observer(url_b, token_b, || {
+        if let Some(mut owner) = manager.shared.connection_identity.try_write() {
+            // Model disconnect(A) followed by the start of connect(B) in the
+            // gap between reading status and attributing it to an identity.
+            *owner = Some((url_b.to_owned(), token_b.to_owned()));
+            *manager.shared.status.write() = ConnectionStatus::Disconnected;
+            transitioned_in_observer = true;
+        }
+    });
+
+    assert_eq!(
+        status, None,
+        "A's Connected state must not be reported for B"
+    );
+    if !transitioned_in_observer {
+        // The fixed implementation holds the read guard through the injected
+        // interleaving point, so complete B's simulated start after the query.
+        *manager.shared.status.write() = ConnectionStatus::Disconnected;
+        *manager.shared.connection_identity.write() = Some((url_b.to_owned(), token_b.to_owned()));
+    }
+    assert_eq!(
+        manager.status_for(url_b, token_b),
+        Some(ConnectionStatus::Disconnected)
+    );
+}
+
+#[test]
 fn get_state_reflects_stored_sid_and_status() {
     let mgr = SocketManager::new();
     *mgr.shared.status.write() = ConnectionStatus::Connected;

@@ -4,18 +4,38 @@ use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
 use super::registry;
-use tinyagents_harness::tool::packs::{PackRegistryHandle, UseSkillTool, USE_SKILL};
+use tinyagents_harness_tools::skills::{PackRegistryHandle, UseSkillTool, USE_SKILL};
 use tinytools::Tool;
 
-/// Append `use_skill` to a freshly built registry.
-///
-/// It starts unbound; [`bind_pack_registry`] gives it its view of the registry
-/// once that is behind an `Arc`.
-pub fn append_pack_tools(tools: &mut Vec<Box<dyn Tool>>) {
+/// Append `use_skill` to a freshly built registry and return the handle its
+/// owner must retain for later rebinding.
+pub fn append_pack_tools(tools: &mut Vec<Box<dyn Tool>>) -> PackRegistryHandle {
+    let handle = PackRegistryHandle::default();
     tools.push(Box::new(UseSkillTool::new(
-        PackRegistryHandle::default(),
+        handle.clone(),
         registry::CATALOG,
     )));
+    handle
+}
+
+/// Whether `tool` is the canonical OpenHuman `use_skill` proxy built from the
+/// compiled pack catalog. Public callers of `all_tools()` cannot carry the
+/// handle separately, so the session builder uses this signature to replace
+/// only that proxy with a session-owned handle before binding it.
+pub(crate) fn is_canonical_use_skill_tool(tool: &dyn Tool) -> bool {
+    if tool.name() != USE_SKILL
+        || tool
+            .host_extension()
+            .and_then(|extension| {
+                extension.downcast_ref::<tinyagents_harness::tool::ToolCallBinding>()
+            })
+            .is_none()
+    {
+        return false;
+    }
+    let canonical = UseSkillTool::new(PackRegistryHandle::default(), registry::CATALOG);
+    tool.description() == canonical.description()
+        && tool.parameters_schema() == canonical.parameters_schema()
 }
 
 /// Point the pack tool at the durable registry it lives in.
@@ -28,10 +48,13 @@ pub fn append_pack_tools(tools: &mut Vec<Box<dyn Tool>>) {
 /// This is only half the registry. Every `delegate_*` tool lives in the agent's
 /// separate `synthesized_tools` `Arc`, so a packed delegate is reachable only
 /// once [`bind_synthesized_pack_registry`] has run too.
-pub fn bind_pack_registry(tools: &Arc<Vec<Box<dyn Tool>>>) {
+pub fn bind_pack_registry(handle: &PackRegistryHandle, tools: &Arc<Vec<Box<dyn Tool>>>) {
     let weak: Weak<Vec<Box<dyn Tool>>> = Arc::downgrade(tools);
-    let bound = for_each_pack_tool(tools, |handle| handle.bind(weak.clone()));
-    tracing::debug!(bound, "[toolpacks] bound pack tool to durable registry");
+    handle.bind(weak);
+    tracing::debug!(
+        tools = tools.len(),
+        "[toolpacks] bound pack tool to durable registry"
+    );
 }
 
 /// Point the pack tool at the synthesised delegate set.
@@ -45,34 +68,15 @@ pub fn bind_pack_registry(tools: &Arc<Vec<Box<dyn Tool>>>) {
 /// at which point every packed delegate reports "no tool in skill" instead of
 /// running.
 pub fn bind_synthesized_pack_registry(
-    durable: &Arc<Vec<Box<dyn Tool>>>,
+    handle: &PackRegistryHandle,
     synthesized: &Arc<Vec<Box<dyn Tool>>>,
 ) {
     let weak: Weak<Vec<Box<dyn Tool>>> = Arc::downgrade(synthesized);
-    let bound = for_each_pack_tool(durable, |handle| handle.bind_synthesized(weak.clone()));
+    handle.bind_synthesized(weak);
     tracing::debug!(
-        bound,
         delegates = synthesized.len(),
         "[toolpacks] bound pack tool to synthesised delegate set"
     );
-}
-
-/// Apply `edit` to every pack tool's handle in `tools`, returning how many.
-fn for_each_pack_tool(
-    tools: &Arc<Vec<Box<dyn Tool>>>,
-    mut edit: impl FnMut(&PackRegistryHandle),
-) -> usize {
-    let mut bound = 0usize;
-    for tool in tools.iter() {
-        if tool.name() != USE_SKILL {
-            continue;
-        }
-        if let Some(handle) = crate::tools::host_extensions::pack_registry_handle(tool.as_ref()) {
-            edit(handle);
-            bound += 1;
-        }
-    }
-    bound
 }
 
 /// Remove packed tool names from an agent's advertised set.

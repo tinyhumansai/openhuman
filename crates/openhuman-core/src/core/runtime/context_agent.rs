@@ -32,7 +32,7 @@ impl Default for AgentParts {
 impl AgentParts {
     /// The parts of a context derived from one owning `self` with `overlay`.
     /// An overlay that names an agent gets state slots of its own.
-    pub(super) fn derive(&self, overlay: &mut ContextOverlay) -> Self {
+    pub(super) fn derive(&self, overlay: &mut ContextOverlay, fresh_state: bool) -> Self {
         Self {
             host_overrides: overlay
                 .host_overrides
@@ -44,7 +44,7 @@ impl AgentParts {
                 .definitions
                 .take()
                 .or_else(|| self.definitions.clone()),
-            state: if overlay.session_agent.is_some() || overlay.profile.is_some() {
+            state: if fresh_state || overlay.session_agent.is_some() || overlay.profile.is_some() {
                 Default::default()
             } else {
                 Arc::clone(&self.state)

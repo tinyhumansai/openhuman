@@ -67,6 +67,40 @@ async fn assert_host_scrubbing(
 }
 
 #[tokio::test]
+async fn read_only_inspection_engines_use_the_native_host_scrub_policy() {
+    let reference = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
+    let guarded = guard_read_only_engine(reference.clone());
+    let bound = BoundEngine {
+        id: reference.descriptor().id.to_string(),
+        endpoint: "doctor://inspection".to_owned(),
+        engine: guarded,
+    };
+
+    assert_host_scrubbing(bound, &reference).await;
+}
+
+#[test]
+fn read_only_inspection_uses_the_current_v3_user_root_only_for_v3_layout() {
+    let mut config = crate::config::Config::default();
+    config.config_path =
+        "/home/operator/.openhuman/users/6512ab0f6512ab0f6512ab0f/config.toml".into();
+
+    assert_eq!(inspection_layout_root(&config).unwrap(), None);
+
+    config.memory.layout = crate::config::MemoryLayoutMode::V3;
+    assert_eq!(
+        inspection_layout_root(&config).unwrap().as_deref(),
+        Some("org:6512ab0f6512ab0f6512ab0f")
+    );
+
+    config.config_path = "/home/operator/.openhuman/config.toml".into();
+    assert_eq!(
+        inspection_layout_root(&config),
+        Err(ReadOnlyEngineError::CredentialsUnavailable)
+    );
+}
+
+#[tokio::test]
 async fn installed_host_engine_binding_uses_the_host_scrub_policy() {
     const CHILD_FLAG: &str = "OPENHUMAN_MEMORY_HOST_POLICY_CHILD";
     const CHILD_MARKER: &str = "HOST_ENGINE_POLICY_CHILD_EXECUTED";
@@ -507,7 +541,10 @@ fn a_disabled_memory_component_binds_no_engine() {
     assert!(off_reason(resolve(&config)).contains("components"));
     assert!(!is_on(&config));
     assert!(switched_off(&config));
-    assert!(matches!(bind_with_root(&config, None), Err(Error::Off(_))));
+    assert!(matches!(
+        bind_with_root(&config, None),
+        Err(MemoryError::Off(_))
+    ));
 }
 
 #[test]

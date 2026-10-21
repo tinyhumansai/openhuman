@@ -687,6 +687,15 @@ const messages: TranslationMap = {
   'invites.title': 'Invitaciones',
   'invites.noInvites': 'Sin invitaciones pendientes',
   'devOptions.titleDiagnostics': 'Desarrollador y Diagnóstico',
+  'devOptions.doctor.run': 'Ejecutar diagnóstico',
+  'devOptions.doctor.runLive': 'Ejecutar comprobaciones en vivo',
+  'devOptions.doctor.liveWarning':
+    'Las comprobaciones en vivo pueden consumir tokens al probar modelos o embeddings. ¿Continuar?',
+  'devOptions.doctor.severity.pass': 'Correcto',
+  'devOptions.doctor.severity.info': 'Información',
+  'devOptions.doctor.severity.warn': 'Advertencia',
+  'devOptions.doctor.severity.error': 'Error',
+  'devOptions.doctor.severity.skipped': 'Omitido',
   'devOptions.diagnostics': 'Diagnósticos',
   'devOptions.toolPolicyDiagnosticsDesc':
     'Inventario de herramientas, postura política, listas permitidas de MCP y bloqueos recientes',

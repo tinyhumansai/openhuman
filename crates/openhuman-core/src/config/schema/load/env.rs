@@ -15,6 +15,11 @@ pub(crate) trait EnvLookup {
         self.get(key).is_some()
     }
 
+    /// Whether a present value was installed by the tracked dotenv load.
+    fn is_from_dotenv(&self, _key: &str) -> bool {
+        false
+    }
+
     /// Looks up the first non-`None` value across `keys`, preserving the
     /// precedence used by the manual `or_else` chains throughout this
     /// module (e.g. `OPENHUMAN_FOO` wins over the bare `FOO` alias).
@@ -33,6 +38,10 @@ impl EnvLookup for ProcessEnv {
 
     fn contains(&self, key: &str) -> bool {
         std::env::var_os(key).is_some()
+    }
+
+    fn is_from_dotenv(&self, key: &str) -> bool {
+        std::env::var_os(key).is_some() && super::dotenv_loaded_variable(key)
     }
 }
 
@@ -55,6 +64,10 @@ impl EnvLookup for ProcessEnvWithoutWorkspace {
         } else {
             ProcessEnv.contains(key)
         }
+    }
+
+    fn is_from_dotenv(&self, key: &str) -> bool {
+        key != "OPENHUMAN_WORKSPACE" && ProcessEnv.is_from_dotenv(key)
     }
 }
 

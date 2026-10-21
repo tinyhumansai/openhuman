@@ -50,9 +50,8 @@ The event-driven pieces:
   (`WebhookIncomingRequest`, `ComposioTriggerReceived`,
   `ChannelInboundMessage`, device tunnel events) for other domains to handle.
 
-Some members read state other domains own instead of keeping their own.
-[`doctor`](./doctor) reads the daemon state file `service` writes and the memory engine
-status from `memory`. [`connectivity`](./connectivity) reads the `SocketManager` state to tell
+The top-level [`doctor`](../doctor) domain reads the daemon state file
+`service` writes and the memory engine status from `memory`. [`connectivity`](./connectivity) reads the `SocketManager` state to tell
 the frontend which of its connection channels is broken.
 
 ## Layout
@@ -62,7 +61,6 @@ the frontend which of its connection channels is broken.
 | [`about_app/`](about_app/README.md) | The user-facing capability catalog: what each feature does, where it is in the UI, its maturity, and its privacy disclosure. A compile-time static table with list, lookup, and search. Update it when user-visible capabilities change. |
 | [`connectivity/`](connectivity/README.md) | `connectivity_diag` (backend socket state, loop liveness, core PID and port, a loopback port probe) and the listen-port picker the core uses to bind its HTTP listener, including stale-listener takeover and the Windows excluded-port fallback. |
 | [`cost/`](cost/README.md) | Token usage and USD cost: an append-only `costs.jsonl` ledger, day and month aggregates, the 7-day dashboard, the static pricing and context-window catalog (`catalog.rs`), and managed vs BYOK route classification (`route.rs`). |
-| [`doctor/`](doctor/README.md) | Self-checks over config, workspace, the daemon state file, the environment, the memory engine, and the embedding model, aggregated into a severity-tagged `DoctorReport`. Powers `openhuman doctor` and the Settings health view. |
 | [`health/`](health/README.md) | The in-process component health registry, the `HealthVerdict` behind `GET /health`, and static system info. |
 | [`proc_metrics/`](proc_metrics/README.md) | Cross-platform RSS and peak-RSS sampling for this process and its tree. Used by the `rss-bench` and `library-profile` bins in openhuman-benchmarks (`profile/`). No RPC. |
 | [`service/`](service/README.md) | Installs the core as a per-user OS service (LaunchAgent, systemd user unit, Windows scheduled task), self-restart and graceful shutdown over the bus, daemon-host tray preferences, and a file-backed mock for E2E (`OPENHUMAN_SERVICE_MOCK`). |
@@ -79,7 +77,6 @@ There is no type shared across the family. The ones contributors touch most:
 - `CostTracker` and `cost::init_global` / `try_global` / `rebind_global`
   ([`cost/global.rs`](./cost/global.rs)). The tracker is bound to one workspace, and signing in or
   out rebinds it so usage lands in the right user's ledger.
-- `DoctorReport` ([`doctor/core/types.rs`](./doctor/core/types.rs)).
 - `SocketManager` and `token_provider_from_config` ([`socket/`](./socket/)).
 - `pick_listen_port_for_host` and its variants ([`connectivity/`](./connectivity/)), used by the
   RPC host when binding.
@@ -94,14 +91,13 @@ Method names are `openhuman.<namespace>_<function>`.
 | [`about_app`](./about_app) | `list`, `lookup`, `search` |
 | `connectivity` | `diag` |
 | [`cost`](./cost) | `get_dashboard`, `get_daily_history`, `get_summary`, `get_usage_log` |
-| [`doctor`](./doctor) | `report`, `models` |
 | `health` | `snapshot`, `system_info` |
 | `service` | `install`, `start`, `stop`, `status`, `uninstall`, `restart`, `shutdown`, `daemon_host_get`, `daemon_host_set` |
 | `socket` | `connect`, `connect_with_session`, `disconnect`, `emit`, `state` |
 | [`update`](./update) | `version`, `check`, `apply`, `run` |
 
 Agent tools from this family (registered in `tools/ops.rs`):
-`health_snapshot`, `health_system_info`, `doctor_health`, `doctor_models`,
+`health_snapshot`, `health_system_info`,
 `cost_get_dashboard`, `cost_get_daily_history`, `cost_get_summary`,
 `service_restart`, `service_shutdown`, and `daemon_host_prefs_set`. The
 lifecycle mutators ship off by default through the user tool filter.

@@ -25,9 +25,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "Connectivity diagnostics for the local sidecar, listening port, and backend Socket.IO state.",
         ),
         "cron" => Some("Manage scheduled jobs and run history."),
-        "inbound" => Some(
-            "Inbound event queues: depths and outcome counts, dead letters and redrive.",
-        ),
+        "inbound" => {
+            Some("Inbound event queues: depths and outcome counts, dead letters and redrive.")
+        }
         "flows" => Some("Create, store, and run automation workflows."),
         "dashboard" => {
             Some("Operator-facing dashboard aggregations: per-model health comparison rows.")

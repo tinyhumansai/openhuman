@@ -39,7 +39,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     // A packed install route is already named under "Capabilities not in your
     // tool list"; the skills section names it only when it is on the belt.
     let skill_install = hand_off_route(ctx, "skill_setup")
-        .filter(|route| !route.contains(tinyagents_harness::tool::packs::USE_SKILL));
+        .filter(|route| !route.contains(tinyagents_harness_tools::skills::USE_SKILL));
     // An empty visibility set is the builder's unfiltered sentinel. Preserve
     // the MCP route for those sessions while suppressing it in gated-off builds.
     // Registered is enough: the orchestrator defers the registry tools
@@ -258,7 +258,7 @@ fn hand_off_route(ctx: &PromptContext<'_>, specialist: &str) -> Option<String> {
     // tool you do not have" failure this whole block exists to end (#6302).
     if !ctx
         .visible_tool_names
-        .contains(tinyagents_harness::tool::packs::USE_SKILL)
+        .contains(tinyagents_harness_tools::skills::USE_SKILL)
     {
         return None;
     }
@@ -281,7 +281,7 @@ fn run_workflow_route(ctx: &PromptContext<'_>) -> Option<String> {
     // which case the policy gate would refuse the call this names.
     if !ctx
         .visible_tool_names
-        .contains(tinyagents_harness::tool::packs::USE_SKILL)
+        .contains(tinyagents_harness_tools::skills::USE_SKILL)
         || !belt_lists(ctx, RUN_WORKFLOW)
     {
         return None;

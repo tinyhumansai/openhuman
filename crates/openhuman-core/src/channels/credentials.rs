@@ -48,3 +48,52 @@ pub(crate) fn resolve_email_password(
     }
     email_cfg
 }
+
+/// Read the email password for doctor inspection without opening the mutable
+/// auth-profile store or probing the OS keychain.
+pub(crate) fn resolve_email_password_read_only(
+    mut email_cfg: tinychannels_bus::config::EmailConfig,
+    config: &Config,
+) -> tinychannels_bus::config::EmailConfig {
+    if !email_cfg.password.is_empty() {
+        return email_cfg;
+    }
+    let provider = crate::security::credentials::channel_credential_provider(
+        "email",
+        tinychannels_bus::controllers::ChannelAuthMode::ApiKey,
+    );
+    if let Ok(Some(profile)) =
+        crate::security::credentials::AuthService::get_profile_read_only(config, &provider, None)
+    {
+        if profile.metadata.get("username").map(String::as_str) == Some(email_cfg.username.as_str())
+        {
+            if let Some(password) = profile.metadata.get("password") {
+                email_cfg.password = password.clone();
+            }
+        }
+    }
+    email_cfg
+}
+
+/// Fill Yuanbao's app secret for doctor health inspection using only the
+/// selected config's read-only credential snapshot.
+pub(crate) fn resolve_yuanbao_app_secret_read_only(
+    mut yb_cfg: tinychannels_bus::config::YuanbaoConfig,
+    config: &Config,
+) -> tinychannels_bus::config::YuanbaoConfig {
+    if !yb_cfg.app_secret.is_empty() {
+        return yb_cfg;
+    }
+    if let Ok(Some(profile)) = crate::security::credentials::AuthService::get_profile_read_only(
+        config,
+        "channel:yuanbao:api_key",
+        None,
+    ) {
+        if profile.metadata.get("app_key").map(String::as_str) == Some(yb_cfg.app_key.as_str()) {
+            if let Some(secret) = profile.metadata.get("app_secret") {
+                yb_cfg.app_secret = secret.clone();
+            }
+        }
+    }
+    yb_cfg
+}

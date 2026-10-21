@@ -1,39 +1,7 @@
 use super::*;
 
 #[test]
-fn report_lines_cover_every_state() {
-    assert_eq!(
-        report_line("Telegram", ChannelHealthState::Healthy),
-        "  ✅ Telegram  healthy"
-    );
-    assert!(report_line("Slack", ChannelHealthState::Unhealthy).contains("unhealthy"));
-    assert!(report_line("Slack", ChannelHealthState::Timeout).contains("timed out"));
-}
-
-#[test]
-fn channel_labels_use_definition_display_names() {
-    assert_eq!(channel_label("telegram"), "Telegram");
-    assert_eq!(channel_label("not-a-channel"), "not-a-channel");
-}
-
-#[tokio::test]
-async fn doctor_with_no_channels_is_ok() {
-    doctor_channels(Config::default()).await.unwrap();
-}
-
-#[tokio::test]
-async fn doctor_with_configured_provider_requires_the_module() {
-    let mut config = Config::default();
-    config.modules.enabled = false;
-    config.channels_config.imessage = Some(tinychannels_bus::config::IMessageConfig {
-        allowed_contacts: vec![],
-    });
-    let error = doctor_channels(config).await.unwrap_err();
-    assert!(error.to_string().contains("module unavailable"), "{error}");
-}
-
-#[test]
-fn doctor_provider_selection_ignores_cli_and_relay_only_configuration() {
+fn provider_selection_ignores_cli_and_relay_only_configuration() {
     let mut config = Config::default();
     config.channels_config.relay = Some(Default::default());
     assert!(configured_providers(&config).is_empty());
@@ -41,4 +9,24 @@ fn doctor_provider_selection_ignores_cli_and_relay_only_configuration() {
         allowed_contacts: vec![],
     });
     assert_eq!(configured_providers(&config), vec!["imessage"]);
+}
+
+#[test]
+fn listener_configuration_includes_channels_and_nonempty_relays_but_not_push_webhooks() {
+    let mut config = Config::default();
+    config.channels_config.webhook = Some(tinychannels_bus::config::WebhookConfig {
+        port: 0,
+        secret: None,
+    });
+    assert!(!has_listener_configuration(&config));
+
+    config.channels_config.relay = Some(tinychannels_bus::config::RelayRuntimeConfig {
+        url: "https://relay.example.invalid".into(),
+        identities: vec![tinychannels_bus::config::RelayRuntimeIdentityConfig {
+            platform: "discord".into(),
+            bot_id: "doctor-test-bot".into(),
+        }],
+        ..Default::default()
+    });
+    assert!(has_listener_configuration(&config));
 }

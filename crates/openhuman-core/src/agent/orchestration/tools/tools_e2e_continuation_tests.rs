@@ -12,7 +12,7 @@ async fn continue_subagent_resumes_paused_job_through_shared_driver() {
         seen: Mutex::new(Vec::new()),
     });
     let ask_tool: Box<dyn tinytools::Tool> =
-        Box::new(tinyagents_harness::tools::AskClarificationTool::new());
+        Box::new(tinyagents_harness_tools::AskClarificationTool::new());
     let ask_spec = Arc::new(ask_tool.spec());
     let mut parent = parent_context(workspace.path(), provider.clone(), vec![]);
     parent.all_tools = Arc::new(vec![ask_tool]);
@@ -126,7 +126,7 @@ async fn cancelling_a_paused_driver_through_rpc_settles_once_with_its_reason() {
         seen: Mutex::new(Vec::new()),
     });
     let ask_tool: Box<dyn tinytools::Tool> =
-        Box::new(tinyagents_harness::tools::AskClarificationTool::new());
+        Box::new(tinyagents_harness_tools::AskClarificationTool::new());
     let ask_spec = Arc::new(ask_tool.spec());
     let mut parent = parent_context(workspace.path(), provider.clone(), vec![]);
     parent.workspace_dir = workspace.path().to_path_buf();

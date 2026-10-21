@@ -293,6 +293,10 @@ impl LeaseStore for PausingRenewals {
     async fn holder(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
         self.inner.holder(key).await
     }
+
+    async fn holder_readonly(&self, key: &str) -> Result<Option<LeaseRecord>, LeaseError> {
+        self.inner.holder_readonly(key).await
+    }
 }
 
 /// An operator release that lands while the heartbeat is renewing the same

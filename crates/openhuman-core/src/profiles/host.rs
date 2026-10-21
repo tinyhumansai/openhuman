@@ -197,7 +197,11 @@ impl ProfileHost {
 
     /// [`Self::forced_config`] plus the operator's direct providers, for any
     /// config that serves chat, relay or cron turns.
-    fn serving_config(&self, layout: &ProfileLayout, id: &ProfileId) -> Result<Config, String> {
+    pub(super) fn serving_config(
+        &self,
+        layout: &ProfileLayout,
+        id: &ProfileId,
+    ) -> Result<Config, String> {
         let mut config = self.forced_config(layout, id);
         super::provider_settings::ProfileProviderSettings::from_saas(&self.saas)
             .map_err(|error| error.to_string())?
@@ -634,8 +638,11 @@ static HOST: OnceLock<Arc<ProfileHost>> = OnceLock::new();
 /// Install the process's profile host. A SaaS boot does this once; later calls
 /// are ignored.
 pub fn install(host: Arc<ProfileHost>) {
-    if HOST.set(host).is_err() {
-        log::warn!("[profiles] profile host already installed; keeping the first");
+    match HOST.set(Arc::clone(&host)) {
+        Ok(()) => super::doctor::register_check_source(host),
+        Err(_) => {
+            log::warn!("[profiles] profile host already installed; keeping the first");
+        }
     }
 }
 

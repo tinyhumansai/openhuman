@@ -157,6 +157,8 @@ pub struct OpenHumanSessionHost {
     /// which *does* change mid-session, lives in [`Self::synthesized_tools`]
     /// instead. See that field for why.
     pub(super) tools: Arc<Vec<Box<dyn Tool>>>,
+    /// Handle shared with the durable `use_skill` tool for safe registry rebinding.
+    pub(super) pack_registry_handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
     /// The delegation tools synthesised for the current connection set —
     /// `delegate_<toolkit>` skill tools and archetype delegates, produced by
     /// [`crate::tools::orchestrator_tools::collect_orchestrator_tools`].

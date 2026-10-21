@@ -209,15 +209,60 @@ fn load_dotenv_for_cli_reads_cwd_dotenv_without_overwriting_existing_env() {
 
     let loaded_backend = std::env::var("BACKEND_URL").ok();
     let loaded_app_env = std::env::var("OPENHUMAN_APP_ENV").ok();
+    let second_result = load_dotenv_for_cli();
 
     std::env::set_current_dir(&original_dir).expect("restore current dir");
 
     result.expect("dotenv load should succeed");
+    second_result.expect("repeated dotenv load should succeed");
     assert_eq!(
         loaded_backend.as_deref(),
         Some("https://staging-api.example.test")
     );
     assert_eq!(loaded_app_env.as_deref(), Some("production"));
+
+    let load = crate::config::schema::load::current_dotenv_load()
+        .expect("successful dotenv load should record its provenance");
+    assert_eq!(
+        std::fs::canonicalize(&load.path).expect("recorded dotenv path exists"),
+        std::fs::canonicalize(&env_path).expect("loaded dotenv path exists")
+    );
+    assert_eq!(load.loaded_vars, ["BACKEND_URL"]);
+    assert_eq!(load.skipped_vars, ["OPENHUMAN_APP_ENV"]);
+}
+
+#[test]
+fn load_dotenv_for_cli_keeps_valid_prefix_variables_when_later_line_is_malformed() {
+    let _guard = env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let env_path = tmp.path().join(".env");
+    std::fs::write(
+        &env_path,
+        concat!(
+            "OPENHUMAN_DOTENV_PREFIX_TEST=fake-prefix\n",
+            "OPENHUMAN_DOTENV_PREEXISTING_TEST=file-value\n",
+            "BROKEN=\"unterminated\n"
+        ),
+    )
+    .expect("write malformed dotenv file");
+    let _vars = EnvVarGuard::unset("OPENHUMAN_DOTENV_PREFIX_TEST")
+        .with("OPENHUMAN_DOTENV_PREEXISTING_TEST", "process-value")
+        .with("OPENHUMAN_DOTENV_PATH", env_path.as_os_str());
+
+    let result = load_dotenv_for_cli();
+
+    assert!(
+        result.is_err(),
+        "malformed dotenv should still return an error"
+    );
+    assert_eq!(
+        std::env::var("OPENHUMAN_DOTENV_PREFIX_TEST").as_deref(),
+        Ok("fake-prefix")
+    );
+    assert_eq!(
+        std::env::var("OPENHUMAN_DOTENV_PREEXISTING_TEST").as_deref(),
+        Ok("process-value")
+    );
 }
 
 // --- `mcp` compile-time gate (#4799) ------------------------------------

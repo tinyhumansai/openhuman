@@ -89,18 +89,18 @@ fn active_domain_set() -> Option<crate::core::runtime::DomainSet> {
     crate::core::runtime::context::CoreContext::current().map(|c| c.domains())
 }
 
-/// Whether the given [`DomainGroup`] is enabled under the ambient
-/// [`DomainSet`](crate::core::runtime::DomainSet). No active context ⇒ `true`
-/// (full, no filter) so pre-boot unit tests and non-context callers see every
-/// domain, exactly as before #4796.
+/// Whether the given [`DomainGroup`] is enabled under the ambient [`DomainSet`].
 fn group_allowed(group: DomainGroup) -> bool {
     active_domain_set().map_or(group != DomainGroup::Operator, |s| s.allows(group))
 }
 
-/// Whether `g` is live in the ambient scope: its family is enabled and, for a
-/// SaaS user, the method is on the user surface (`profiles::surface`).
+/// Whether `g` is live in the ambient scope.
 fn visible(g: &GroupedController) -> bool {
-    group_allowed(g.group) && on_surface(g)
+    let doctor_report = g.controller.rpc_method_name() == "openhuman.doctor_report";
+    // Only the shared report bypasses its group gate; surface checks still apply.
+    let saas_doctor_report = crate::core::runtime::is_saas() && doctor_report;
+    // That surface check denies missing scopes and unrelated Platform methods.
+    (group_allowed(g.group) || saas_doctor_report) && on_surface(g)
 }
 
 fn on_surface(g: &GroupedController) -> bool {
@@ -410,7 +410,7 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Platform,
-        crate::platform::doctor::all_doctor_registered_controllers(),
+        crate::doctor::all_doctor_registered_controllers(),
     );
     // User-authored hooks — inspect, reload, and test-fire `hooks.json` entries.
     push(

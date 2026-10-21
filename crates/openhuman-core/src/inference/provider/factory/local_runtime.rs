@@ -39,6 +39,44 @@ pub(super) fn try_create_local_runtime_chat_model_from_string(
     config: &Config,
     egress: &EgressLedger,
 ) -> OptionalChatModelResult {
+    try_create_local_runtime_chat_model_from_string_with_identity(
+        role, provider, config, egress, false, None,
+    )
+}
+
+pub(super) fn try_create_local_runtime_chat_model_for_inspection(
+    role: &str,
+    config: &Config,
+) -> InspectionChatModelResult {
+    let provider = provider_for_role(role, config);
+    let mut identity = None;
+    let result = try_create_local_runtime_chat_model_from_string_with_identity(
+        role,
+        &provider,
+        config,
+        &EgressLedger::none(),
+        true,
+        Some(&mut identity),
+    )?;
+    Some(result.and_then(|(model, model_id)| {
+        let (endpoint, credential, wire_model) = identity.ok_or_else(|| {
+            anyhow::anyhow!("inspection route did not expose its frozen wire identity")
+        })?;
+        if wire_model != model_id {
+            anyhow::bail!("inspection route model identity did not match its constructed model");
+        }
+        Ok((model, model_id, endpoint, credential))
+    }))
+}
+
+fn try_create_local_runtime_chat_model_from_string_with_identity(
+    role: &str,
+    provider: &str,
+    config: &Config,
+    egress: &EgressLedger,
+    inspection: bool,
+    inspection_identity: Option<&mut Option<(String, String, String)>>,
+) -> OptionalChatModelResult {
     use tinyinference_local::local_runtime::{
         resolve_local_runtime, LocalRuntimeAuth, LocalRuntimeInputs,
     };
@@ -58,8 +96,10 @@ pub(super) fn try_create_local_runtime_chat_model_from_string(
     if let Err(e) = enforce_local_only_inference(role, &p) {
         return Some(Err(e));
     }
-    if let Err(e) = verify_provider_session(config, provider) {
-        return Some(Err(e));
+    if !inspection {
+        if let Err(e) = verify_provider_session(config, provider) {
+            return Some(Err(e));
+        }
     }
 
     // Egress spine (privacy epic S2, #4436): committed to a local runtime here
@@ -81,6 +121,17 @@ pub(super) fn try_create_local_runtime_chat_model_from_string(
         Ok(r) => r,
         Err(e) => return Some(Err(anyhow::anyhow!("{e}"))),
     };
+    if let Some(identity) = inspection_identity {
+        let credential = match &resolved.auth {
+            LocalRuntimeAuth::None => String::new(),
+            LocalRuntimeAuth::Bearer => resolved.api_key.clone(),
+        };
+        *identity = Some((
+            resolved.endpoint.clone(),
+            credential,
+            resolved.model.clone(),
+        ));
+    }
     let auth = match resolved.auth {
         LocalRuntimeAuth::None => CompatAuthStyle::None,
         LocalRuntimeAuth::Bearer => CompatAuthStyle::Bearer,

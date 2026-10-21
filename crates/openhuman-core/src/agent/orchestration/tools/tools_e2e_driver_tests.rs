@@ -10,9 +10,8 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
     use crate::tools::toolpacks::ToolGroups;
     use tinyagents_harness::context::RunContext;
     use tinyagents_harness::tool::ToolDispatch;
-    use tinyagents_orchestration::subagent::{
-        SubAgentJobRegistry, SubAgentJobStatus, SubAgentJobsTool,
-    };
+    use tinyagents_harness_tools::subagents::SubAgentJobsTool;
+    use tinyagents_orchestration::subagent::{SubAgentJobRegistry, SubAgentJobStatus};
 
     struct GatedModel {
         calls: std::sync::atomic::AtomicUsize,
@@ -206,7 +205,7 @@ async fn force_fresh_cancels_old_driver_before_creating_a_new_session() {
             Some("force-fresh-parent-thread".into()),
         );
     let wait = SubAgentJobsTool::new((*jobs).clone())
-        .with_fixed_action(tinyagents_orchestration::subagent::SubAgentJobAction::Await)
+        .with_fixed_action(tinyagents_harness_tools::subagents::SubAgentJobAction::Await)
         .with_identifier_fields("task_id", "subagent_session_id")
         .with_sessions(Arc::new(session_port), |_| {
             "force-fresh-parent-session".to_owned()

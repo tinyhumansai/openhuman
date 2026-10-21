@@ -106,6 +106,23 @@ pub mod core {
     }
 }
 
+/// The generic doctor hook for checks contributed by a layered host.
+pub mod doctor {
+    /// The read-only desktop profile resolver used by the RPC host's one-shot
+    /// doctor boot.
+    pub mod profile {
+        pub use openhuman_core::doctor::profile::{
+            resolve_desktop_profile_for_doctor, DesktopProfileError, DesktopProfileSelection,
+        };
+    }
+
+    pub use openhuman_core::doctor::registry::registered_checks;
+    pub use openhuman_core::doctor::{
+        register_check_source, register_check_source_in, DoctorCheck, DoctorCheckSource,
+        DoctorConfigSource, DoctorCtx, DoctorTier, Finding, FindingSeverity,
+    };
+}
+
 /// tinyhumans (every hosted controller loads its config) and rpc (server).
 pub mod config {
     pub use openhuman_core::config::{
@@ -233,16 +250,18 @@ pub mod security {
         }
         pub mod session_support {
             pub use openhuman_core::security::credentials::session_support::{
-                build_session_state, classify_session_token, current_session_is_local,
-                get_session_token, is_local_session_token, load_app_session_profile,
-                publish_local_session_expiry, resolve_backend_credential, BackendCredential,
-                SessionTokenCheck, LOCAL_SESSION_BACKEND_UNAVAILABLE,
+                build_session_state, check_session_backend, classify_session_token,
+                current_session_is_local, get_session_token, is_local_session_token,
+                load_app_session_profile, load_app_session_profile_read_only,
+                publish_local_session_expiry, resolve_backend_credential, session_token_for_config,
+                BackendCredential, SessionTokenCheck, LOCAL_SESSION_BACKEND_UNAVAILABLE,
                 LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE, SESSION_EXPIRES_AT_META,
+                SESSION_ISSUING_BACKEND_META,
             };
         }
         pub mod api_key {
             pub use openhuman_core::security::credentials::api_key::{
-                get_api_key_in, store_api_key, store_api_key_in,
+                get_api_key, get_api_key_in, get_api_key_read_only, store_api_key, store_api_key_in,
             };
         }
     }
@@ -362,22 +381,31 @@ pub mod inference_registry {
     pub use openhuman_core::inference::provider::openhuman_backend_model::REASONING_OFF_METADATA_KEY;
     pub use openhuman_core::inference::registry::{
         register_catalog, register_catalog_in, register_chat_model, register_chat_model_in,
-        register_embedding, register_embedding_in, unregister_catalog, unregister_chat_model,
-        unregister_embedding, BoxFuture, CatalogEntry, CatalogLimits, CatalogListing,
-        CatalogRequest, ChatModelEntry, ChatModelFactory, ChatModelRequest, EmbeddingFactory,
-        EmbeddingRequest, ReadinessProbe,
+        register_embedding, register_embedding_in, register_inspection_catalog,
+        register_inspection_catalog_in, register_inspection_chat_model,
+        register_inspection_chat_model_in, register_inspection_embedding,
+        register_inspection_embedding_in, unregister_catalog, unregister_chat_model,
+        unregister_embedding, unregister_inspection_catalog, unregister_inspection_chat_model,
+        BoxFuture, CatalogEntry, CatalogLimits, CatalogListing, CatalogRequest, ChatModelEntry,
+        ChatModelFactory, ChatModelRequest, EmbeddingFactory, EmbeddingRequest,
+        InspectionCatalogError, InspectionCatalogListing, InspectionChatModelBuild,
+        InspectionChatModelFactory, InspectionEmbeddingFactory, PreparedInspectionCatalog,
+        PreparedInspectionChatModelFactory, ReadinessProbe,
     };
 }
 
 /// Memory engines by id, and the free-background-work predicate.
 pub mod memory_engines {
     pub use openhuman_core::memory::engine::{
-        build_cached, rooted, BearerSource, Binding, BoundEngine, EngineCredential, EngineSettings,
-        TINYHUMANS_ENGINE,
+        build_cached, rooted, BearerSource, Binding, BoundEngine, EngineCredential, EngineHealth,
+        EngineSettings, TINYHUMANS_ENGINE,
     };
     pub use openhuman_core::memory::engine_registry::{
-        bound_engine, register_memory_engine, register_memory_engine_in, unregister_memory_engine,
-        EngineBuilder, EngineEntry, EngineFuture, EngineRequest, FreeBackground,
+        bound_engine, register_memory_engine, register_memory_engine_in,
+        register_memory_health_probe, register_memory_health_probe_in,
+        register_read_only_engine_factory, register_read_only_engine_factory_in,
+        unregister_memory_engine, EngineBuilder, EngineEntry, EngineFuture, EngineRequest,
+        FreeBackground, ReadOnlyEngineError, ReadOnlyEngineFactory, ReadOnlyHealthProbe,
     };
 }
 
@@ -446,6 +474,12 @@ pub mod platform {
     }
     pub mod health {
         pub use openhuman_core::platform::health::{snapshot, verdict};
+    }
+
+    /// tinyhumans: read-only view of the live Socket.IO connection state.
+    pub mod socket {
+        pub use openhuman_core::platform::socket::global_socket_manager;
+        pub use openhuman_core::platform::socket::models::ConnectionStatus;
     }
 }
 

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tinyagents_runtime::ToolSnapshot;
+use tinyagents_harness::tool::ToolSnapshot;
 use tinytools::ToolSpec;
 
 #[cfg(feature = "flows")]

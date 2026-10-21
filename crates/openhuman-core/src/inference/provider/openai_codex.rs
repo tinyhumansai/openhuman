@@ -43,3 +43,25 @@ pub(crate) fn resolve_openai_codex_routing(
         OpenAiCodexRouting::standard(endpoint)
     })
 }
+
+/// Resolve Codex routing from the OAuth metadata that belongs to the exact
+/// read-only credential selected for inspection. A plain API-key bearer must
+/// not consult the separate saved OAuth profile at all.
+pub(crate) fn resolve_openai_codex_routing_for_inspection(
+    slug: &str,
+    endpoint: &str,
+    bearer_is_oauth: bool,
+    account_id: Option<String>,
+) -> OpenAiCodexRouting {
+    if slug == "openai" && bearer_is_oauth {
+        OpenAiCodexRouting {
+            endpoint: OPENAI_CODEX_BACKEND_BASE_URL.to_string(),
+            using_oauth: true,
+            account_id: account_id
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        }
+    } else {
+        OpenAiCodexRouting::standard(endpoint)
+    }
+}

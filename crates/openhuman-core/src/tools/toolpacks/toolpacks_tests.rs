@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::*;
-use tinyagents_harness::tool::packs::USE_SKILL;
+use tinyagents_harness_tools::skills::PackRegistryHandle;
+use tinyagents_harness_tools::skills::USE_SKILL;
 use tinytools::{PermissionLevel, Tool, ToolResult, ToolTimeout};
 
 struct FakeTool {
@@ -47,7 +48,7 @@ impl Tool for FakeTool {
 }
 
 /// A registry holding several real packed tools plus the two pack tools, bound.
-fn registry_with_all(names: &[&'static str]) -> Arc<Vec<Box<dyn Tool>>> {
+fn registry_with_all(names: &[&'static str]) -> (Arc<Vec<Box<dyn Tool>>>, PackRegistryHandle) {
     let mut tools: Vec<Box<dyn Tool>> = names
         .iter()
         .map(|name| {
@@ -59,24 +60,27 @@ fn registry_with_all(names: &[&'static str]) -> Arc<Vec<Box<dyn Tool>>> {
             }) as Box<dyn Tool>
         })
         .collect();
-    append_pack_tools(&mut tools);
+    let handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
-    tools
+    bind_pack_registry(&handle, &tools);
+    (tools, handle)
 }
 
 /// A registry holding one real packed tool plus the two pack tools, bound.
-fn registry_with(name: &'static str, level: PermissionLevel) -> Arc<Vec<Box<dyn Tool>>> {
+fn registry_with(
+    name: &'static str,
+    level: PermissionLevel,
+) -> (Arc<Vec<Box<dyn Tool>>>, PackRegistryHandle) {
     let mut tools: Vec<Box<dyn Tool>> = vec![Box::new(FakeTool {
         name,
         level,
         external: false,
         timeout: ToolTimeout::Inherit,
     })];
-    append_pack_tools(&mut tools);
+    let handle = append_pack_tools(&mut tools);
     let tools = Arc::new(tools);
-    bind_pack_registry(&tools);
-    tools
+    bind_pack_registry(&handle, &tools);
+    (tools, handle)
 }
 
 fn find<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
@@ -96,9 +100,12 @@ type ToolRegistry = Arc<Vec<Box<dyn Tool>>>;
 /// This is not a contrived shape. Every `delegate_*` tool is synthesised into
 /// `OpenHumanSessionHost::synthesized_tools`, a different `Arc` from the durable registry
 /// (#6145), and seven delegates were already packed.
-fn split_registries(name: &'static str, level: PermissionLevel) -> (ToolRegistry, ToolRegistry) {
+fn split_registries(
+    name: &'static str,
+    level: PermissionLevel,
+) -> (ToolRegistry, ToolRegistry, PackRegistryHandle) {
     let mut durable: Vec<Box<dyn Tool>> = Vec::new();
-    append_pack_tools(&mut durable);
+    let handle = append_pack_tools(&mut durable);
     let durable = Arc::new(durable);
     let synthesized: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![Box::new(FakeTool {
         name,
@@ -106,9 +113,9 @@ fn split_registries(name: &'static str, level: PermissionLevel) -> (ToolRegistry
         external: false,
         timeout: ToolTimeout::Inherit,
     })]);
-    bind_pack_registry(&durable);
-    bind_synthesized_pack_registry(&durable, &synthesized);
-    (durable, synthesized)
+    bind_pack_registry(&handle, &durable);
+    bind_synthesized_pack_registry(&handle, &synthesized);
+    (durable, synthesized, handle)
 }
 
 /// A packed **delegate** must be reachable, not merely withheld.
@@ -121,7 +128,8 @@ fn split_registries(name: &'static str, level: PermissionLevel) -> (ToolRegistry
 /// model then cannot call is strictly worse than never packing it.
 #[tokio::test]
 async fn a_packed_delegate_in_the_synthesised_set_is_reachable() {
-    let (durable, _synthesized) = split_registries("manage_tasks", PermissionLevel::ReadOnly);
+    let (durable, _synthesized, _handle) =
+        split_registries("manage_tasks", PermissionLevel::ReadOnly);
     let use_skill = find(&durable, USE_SKILL);
 
     // Disclosure half: the schema must render even though the tool is in the

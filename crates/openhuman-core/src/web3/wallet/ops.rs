@@ -9,7 +9,7 @@ mod types;
 
 use crate::core::runtime::DispatchCtx;
 use types::StoredWalletState;
-pub(crate) use types::WalletSecretMaterial;
+pub(crate) use types::{inspect_stored_wallet_state, WalletSecretMaterial};
 pub use types::{
     GeneratedRecoveryPhrase, RecoveryPhraseValidation, RevealRecoveryPhraseResult, WalletAccount,
     WalletChain, WalletRecoveryMaterial, WalletSetupParams, WalletSetupSource, WalletStatus,

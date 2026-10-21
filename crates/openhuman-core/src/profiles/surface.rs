@@ -13,6 +13,11 @@
 
 use crate::core::runtime::is_saas;
 
+/// Diagnostic reports are safe in both the operator plane and a user's own
+/// profile scope. Selection of another profile is authorized in the report
+/// handler before it reads profile state.
+const SHARED_SAAS_METHODS: &[&str] = &["openhuman.doctor_report"];
+
 /// Every RPC method a user may dispatch. Grows as each family's per-user
 /// isolation lands; a method is listed only once nothing it touches is
 /// shared between users.
@@ -107,11 +112,12 @@ pub fn current_scope() -> Scope {
 ///
 /// A SaaS task with no scope sees nothing: missing scope fails closed.
 pub fn visible_in(saas: bool, scope: Scope, method: &str, operator_plane: bool) -> bool {
+    let shared = SHARED_SAAS_METHODS.contains(&method);
     match (saas, scope) {
         (false, _) => true,
         (true, Scope::None) => false,
-        (true, Scope::Operator) => operator_plane,
-        (true, Scope::User) => !operator_plane && USER_METHODS.contains(&method),
+        (true, Scope::Operator) => operator_plane || shared,
+        (true, Scope::User) => !operator_plane && (USER_METHODS.contains(&method) || shared),
     }
 }
 

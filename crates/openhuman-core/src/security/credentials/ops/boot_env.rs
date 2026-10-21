@@ -36,7 +36,9 @@ pub fn seed_api_key_from_env(config: &Config) {
         return;
     };
     if api_key::has_api_key(config) {
-        log::debug!("[auth][boot] {BACKEND_API_KEY_ENV} set but an api key is already stored; keeping the stored one");
+        log::debug!(
+            "[auth][boot] {BACKEND_API_KEY_ENV} set but an api key is already stored; keeping the stored one"
+        );
         return;
     }
     match api_key::store_api_key(config, &key) {
@@ -55,7 +57,9 @@ pub async fn seed_session_from_env(ctx: &DispatchCtx, config: &Config) {
         return;
     };
     if matches!(get_session_token(config), Ok(Some(_))) {
-        log::debug!("[auth][boot] {BACKEND_SESSION_TOKEN_ENV} set but a session is already stored; keeping the stored one");
+        log::debug!(
+            "[auth][boot] {BACKEND_SESSION_TOKEN_ENV} set but a session is already stored; keeping the stored one"
+        );
         return;
     }
     let request = SetCredentialRequest {

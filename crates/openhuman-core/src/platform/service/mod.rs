@@ -2,7 +2,6 @@
 
 pub mod bus;
 mod core;
-pub mod daemon;
 pub mod daemon_host;
 pub mod ops;
 mod restart;

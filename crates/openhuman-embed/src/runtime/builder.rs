@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use openhuman_core::config::Config;
-use openhuman_core::core::runtime::{DomainSet, ServiceSet, TokenSource};
+use openhuman_core::core::runtime::{CoreBootMode, DomainSet, ServiceSet, TokenSource};
 use openhuman_core::core::types::HostKind;
 use openhuman_core::tools::toolpacks::ToolGroups;
 use tinyagents_session::port::SessionStoreProvider;
@@ -81,6 +81,7 @@ pub struct RuntimeBuilder {
     pub(super) workspace_dir: Option<PathBuf>,
     pub(super) action_dir: Option<PathBuf>,
     pub(super) config_source: ConfigSource,
+    pub(super) boot_mode: CoreBootMode,
     pub(super) provider: Provider,
     pub(super) access: Access,
     pub(super) services: Option<ServiceSet>,
@@ -127,6 +128,7 @@ impl RuntimeBuilder {
             workspace_dir: None,
             action_dir: None,
             config_source: ConfigSource::Resolved,
+            boot_mode: CoreBootMode::Normal,
             provider: Provider::inherit(),
             access: Access::default(),
             services: None,
@@ -334,6 +336,18 @@ impl RuntimeBuilder {
     /// [`ConfigSource::Discovered`].
     pub fn config_source(mut self, source: ConfigSource) -> Self {
         self.config_source = source;
+        self
+    }
+
+    /// Choose normal host startup or a side-effect-limited inspection build.
+    ///
+    /// Inspection requires an inherited workspace, a supplied resolved
+    /// config, and a fixed in-memory bearer. It does not discover ambient
+    /// config, open persistent storage, install session stores, bootstrap
+    /// workspace state, or start background services. The runtime still has
+    /// a real `CoreContext` and can dispatch in-process RPC.
+    pub fn boot_mode(mut self, mode: CoreBootMode) -> Self {
+        self.boot_mode = mode;
         self
     }
 

@@ -40,7 +40,7 @@ async fn set_persists_to_the_workspace_store_and_answers_goal_and_text() {
     assert_eq!(payload["goal"]["tokenBudget"], 5000);
     assert!(payload["text"].as_str().unwrap().starts_with("Goal set."));
 
-    let stored = tinyagents_graph::goals::store::get(
+    let stored = tinyagents_harness_tools::goals::store::get(
         &crate::storage::sessions::stores_or_ephemeral(tmp.path()).kv,
         "thread-host-tools",
     )

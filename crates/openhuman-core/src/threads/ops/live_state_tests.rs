@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::config::TEST_ENV_LOCK;
-use tinyagents_graph::todos::{TodoItem, TodoStatus};
+use tinyagents_harness_tools::todos::{TodoItem, TodoStatus};
 
 #[test]
 fn thread_live_state_request_parses_thread_id() {
@@ -63,7 +63,7 @@ async fn goal_get_reads_back_a_stored_goal() {
         .await
         .unwrap()
         .workspace_dir;
-    tinyagents_graph::goals::store::set(
+    tinyagents_harness_tools::goals::store::set(
         &crate::storage::sessions::stores_or_ephemeral(&dir).kv,
         "thread-goal-live",
         "ship it",
@@ -102,7 +102,7 @@ async fn todos_get_reads_back_what_the_todo_tool_wrote() {
     assert!(empty_json["data"]["todos"].as_array().unwrap().is_empty());
 
     let store = crate::storage::sessions::stores_or_ephemeral(&dir).kv;
-    tinyagents_graph::todos::store::replace(
+    tinyagents_harness_tools::todos::store::replace(
         &store,
         "thread-todos-live",
         vec![TodoItem::with_status("write tests", TodoStatus::InProgress)],

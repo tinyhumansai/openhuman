@@ -12,6 +12,7 @@ use tinyagents_harness::middleware::{
     DenialRenderer, MiddlewareToolOutcome, PolicyDecision, ToolCallPolicy, ToolHandler,
     ToolMiddleware, ToolPolicyGateMiddleware,
 };
+use tinyagents_harness_tools::skills::PackRegistryHandle;
 use tinyinference_llm::tool::ToolCall as TaToolCall;
 use tinytools::ToolResult as TaToolResult;
 
@@ -143,7 +144,7 @@ impl ToolPolicyMiddleware {
     #[cfg(test)]
     pub(crate) fn route_for_pack(
         &self,
-        pack: &tinyagents_harness::tool::packs::ToolPack,
+        pack: &tinyagents_harness_tools::skills::ToolPack,
     ) -> String {
         self.host.route_for_pack(pack)
     }
@@ -151,9 +152,9 @@ impl ToolPolicyMiddleware {
     #[cfg(test)]
     pub(crate) fn no_such_pack_tool<'a>(
         &self,
-        pack: &'static tinyagents_harness::tool::packs::ToolPack,
+        pack: &'static tinyagents_harness_tools::skills::ToolPack,
         tool: &'a str,
-    ) -> tinyagents_harness::tool::packs::NoSuchPackTool<'a> {
+    ) -> tinyagents_harness_tools::skills::NoSuchPackTool<'a> {
         self.host.no_such_pack_tool(pack, tool)
     }
 }
@@ -221,9 +222,9 @@ impl ToolPolicyHostState {
     /// the tools in it this session can call, or the pack's route when none.
     pub(crate) fn no_such_pack_tool<'a>(
         &self,
-        pack: &'static tinyagents_harness::tool::packs::ToolPack,
+        pack: &'static tinyagents_harness_tools::skills::ToolPack,
         tool: &'a str,
-    ) -> tinyagents_harness::tool::packs::NoSuchPackTool<'a> {
+    ) -> tinyagents_harness_tools::skills::NoSuchPackTool<'a> {
         let callable = pack
             .tools
             .iter()
@@ -233,7 +234,7 @@ impl ToolPolicyHostState {
                     && !self.session.decision_for(name).blocks_execution()
             })
             .collect();
-        tinyagents_harness::tool::packs::NoSuchPackTool {
+        tinyagents_harness_tools::skills::NoSuchPackTool {
             not_found_marker: tinytools::status::NOT_FOUND_MARKER,
             skill: pack.id,
             tool,
@@ -245,9 +246,9 @@ impl ToolPolicyHostState {
     /// The route sentence for a pack, resolved against THIS session.
     pub(crate) fn route_for_pack(
         &self,
-        pack: &tinyagents_harness::tool::packs::ToolPack,
+        pack: &tinyagents_harness_tools::skills::ToolPack,
     ) -> String {
-        tinyagents_harness::tool::packs::route_sentence(
+        tinyagents_harness_tools::skills::route_sentence(
             &self.callable_delegates_for(pack.owners),
             pack.owners,
         )
@@ -264,23 +265,28 @@ impl ToolPolicyHostState {
     /// tool named, no `skill` argument, no pack handle), so the call falls
     /// through to the tool's own `execute` unchanged.
     pub(crate) fn render_skill_for_session(&self, call: &TaToolCall) -> Option<TaToolResult> {
-        if tinyagents_harness::tool::packs::named_tool(&call.arguments).is_some() {
+        if tinyagents_harness_tools::skills::named_tool(&call.arguments).is_some() {
             return None;
         }
         let skill = call
             .arguments
             .get("skill")
             .and_then(serde_json::Value::as_str)?;
-        let tool = self.resolve_tool(&call.name)?;
-        let handle = crate::tools::host_extensions::pack_registry_handle(tool.as_ref())?;
+        self.resolve_tool(&call.name)?;
+        let durable = self.tool_sets.first()?;
+        let handle = PackRegistryHandle::default();
+        handle.bind(Arc::downgrade(durable));
+        if let Some(synthesized) = self.tool_sets.get(1) {
+            handle.bind_synthesized(Arc::downgrade(synthesized));
+        }
         let is_callable = |name: &str| !self.session.decision_for(name).blocks_execution();
         let route = crate::tools::toolpacks::pack(skill)
             .map(|pack| self.route_for_pack(pack))
             .unwrap_or_default();
-        let rendered = tinyagents_harness::tool::packs::render_pack_filtered(
+        let rendered = tinyagents_harness_tools::skills::render_pack_filtered(
             &crate::tools::toolpacks::CATALOG,
             skill,
-            handle,
+            &handle,
             // The same predicate the gate applies to `use_skill`'s inner tool.
             // Two sources of truth for "can this session call it" is the bug.
             &is_callable,

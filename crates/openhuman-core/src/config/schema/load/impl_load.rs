@@ -7,8 +7,7 @@ use super::dirs::{
 };
 use super::env::{EnvLookup, NoEnv, ProcessEnv, ProcessEnvWithoutWorkspace};
 use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_components, migrate_legacy_inference_url,
-    migrate_legacy_memory_backend, migrate_search_settings,
+    apply_loaded_config_migrations, migrate_components, migrate_legacy_memory_backend,
 };
 use super::secrets::{
     decrypt_config_secrets, decrypt_config_secrets_strict, encrypt_config_secrets,
@@ -354,12 +353,8 @@ impl Config {
         config.workspace_dir = workspace_dir;
         config.action_dir = resolve_action_dir(&config.action_dir_override);
         config.recovered_from_corruption = config_was_corrupted;
-        migrate_legacy_inference_url(&mut config);
         let migration_raw = migration_source(&config_path, &raw).await;
-        migrate_legacy_memory_backend(&mut config, &migration_raw);
-        migrate_components(&mut config, &migration_raw);
-        migrate_cloud_provider_slugs(&mut config);
-        migrate_search_settings(&mut config);
+        apply_loaded_config_migrations(&mut config, &migration_raw);
         config.apply_env_overrides_from(env);
 
         if config_was_corrupted {

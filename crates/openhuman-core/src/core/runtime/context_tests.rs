@@ -6,6 +6,7 @@ fn ctx(dir: &str) -> Arc<CoreContext> {
         host_kind: HostKind::Cli,
         workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
             workspace_dir: Some(PathBuf::from(dir)),
+            config_path: None,
         }))),
         domains: crate::core::runtime::DomainSet::full(),
         tool_groups: Default::default(),
@@ -369,6 +370,7 @@ fn degraded_context_rejects_workspace_bound_stores() {
         host_kind: HostKind::Cli,
         workspace_binding: RwLock::new(Arc::new(RwLock::new(WorkspaceBinding {
             workspace_dir: None,
+            config_path: None,
         }))),
         domains: crate::core::runtime::DomainSet::full(),
         tool_groups: Default::default(),
@@ -403,3 +405,14 @@ fn degraded_context_rejects_workspace_bound_stores() {
 
 #[path = "context_turn_origin_tests.rs"]
 mod turn_origin_tests;
+#[test]
+fn inspection_context_uses_captured_autonomy_tier_without_a_ceiling() {
+    let context = CoreContext::for_inspection(crate::config::Config::default());
+
+    assert_eq!(
+        context.autonomy_tier_source(),
+        AutonomyTierSource::Captured,
+        "inspection runs against its explicitly supplied config snapshot"
+    );
+    assert_eq!(context.autonomy_tier_ceiling(), None);
+}

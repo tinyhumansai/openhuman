@@ -10,7 +10,6 @@ Service-management domain for the OpenHuman core daemon. It installs/uninstalls 
 - Resolve the daemon executable to launch (env override `OPENHUMAN_CORE_BIN`, else sibling `openhuman-core[-*]` next to the current exe; macOS also searches `../Resources`).
 - Persist and read daemon-host UI preferences (`show_tray`) next to the main config.
 - Provide a deterministic, file-backed **mock** service backend for E2E tests (`OPENHUMAN_SERVICE_MOCK`).
-- Expose `daemon_state.json` path helper consumed by doctor/health reporting.
 
 ## Key files
 
@@ -27,7 +26,6 @@ Service-management domain for the OpenHuman core daemon. It installs/uninstalls 
 | `crates/openhuman-core/src/platform/service/macos.rs` | LaunchAgent (`com.openhuman.core.plist`) install/start/stop/status/uninstall via `launchctl`; migrates legacy labels. |
 | `crates/openhuman-core/src/platform/service/linux.rs` | systemd user-unit install/lifecycle via `systemctl --user`. |
 | `crates/openhuman-core/src/platform/service/windows.rs` | Scheduled-task install/lifecycle via `schtasks`. |
-| `crates/openhuman-core/src/platform/service/daemon.rs` | `state_file_path(config)` → `<config_dir>/daemon_state.json`, used by doctor/health. |
 | `crates/openhuman-core/src/platform/service/daemon_host.rs` | `DaemonHostConfig { show_tray }` + async `load_for_config_dir` / `save_for_config_dir` (JSON next to config, `daemon_host_config.json`). |
 | `crates/openhuman-core/src/platform/service/mock.rs` | File-backed deterministic mock backend gated on `OPENHUMAN_SERVICE_MOCK`; supports forced failures and an `agent_running` flag (`mock_agent_running`). |
 | `crates/openhuman-core/src/platform/service/mock_tests.rs` | Sibling test suite for [`mock.rs`](./mock.rs). |
@@ -42,7 +40,7 @@ From [`mod.rs`](./mod.rs) re-exports:
 - `restart::{apply_startup_restart_delay_from_env, RestartStatus}` (and `restart::trigger_self_restart_now` via the `restart` module path).
 - `shutdown::ShutdownStatus`.
 - `schemas::all_service_controller_schemas` / `all_service_registered_controllers`.
-- `daemon::state_file_path`, `daemon_host::{DaemonHostConfig, …}` (via their `pub mod` paths).
+- `daemon_host::{DaemonHostConfig, …}` (via its `pub mod` path).
 
 ## RPC / controllers
 
@@ -79,7 +77,6 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 ## Persistence
 
 - Daemon-host prefs: `daemon_host_config.json` next to the main config (`DaemonHostConfig { show_tray }`, default `true`); read/written async by [`daemon_host.rs`](./daemon_host.rs).
-- Daemon state path: `daemon_state.json` next to config (`daemon::state_file_path`), consumed by doctor/health (not written here).
 - Service unit files: written by the per-OS impls (macOS plist in `~/Library/LaunchAgents`, Linux systemd user unit, Windows scheduled task).
 - Mock state: `service-mock-state.json` (overridable via `OPENHUMAN_SERVICE_MOCK_STATE_FILE`) tracking `installed`/`running`/`agent_running`/forced `failures`, only when the mock is enabled.
 
@@ -95,7 +92,6 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 
 - `crates/openhuman-core/src/core/all.rs`: registers the service controllers (`all_service_registered_controllers`).
 - `crates/openhuman-core/src/core/runtime/subscribers.rs`: registers the restart/shutdown event-bus subscribers at startup.
-- `crates/openhuman-core/src/platform/doctor/core.rs`: reads `service::daemon::state_file_path`.
 - `crates/openhuman-core/src/platform/update/ops.rs` (`rpc::service_restart` after a self-replace), `crates/openhuman-core/src/config/ops/loader/runtime_flags.rs` (`mock::mock_agent_running`), `crates/openhuman-core/src/desktop/app_state/ops/{types,runtime_snapshot}.rs` (`ServiceState`/`ServiceStatus`, `status`): call into `crate::platform::service`.
 - `crates/openhuman-core/src/tools/mod.rs`: re-exports `platform::service::tools::*`.
 - `lib.rs`: module wiring.
@@ -110,7 +106,6 @@ Both subscribers are registered idempotently from `crates/openhuman-core/src/cor
 - `OPENHUMAN_SERVICE_MOCK` short-circuits **every** lifecycle dispatcher to the file-backed mock: used for deterministic E2E; it can also inject forced per-operation failures.
 - Windows command spawns set `CREATE_NO_WINDOW` (`common::no_window`) so polled `schtasks /Query` calls don't flash a console.
 - Lifecycle RPCs are deliberately **not** unit-tested (they mutate real OS state or kill the process); RPC-adapter coverage lives in `tests/json_rpc_e2e.rs`. `daemon_host_get`/`set` and the restart/shutdown publish paths are unit-tested.
-- `daemon.rs::state_file_path` and `common.rs::state_file_path` (mock) both compute paths next to config but for different files (`daemon_state.json` vs the mock state file).
 
 ## Further reading
 

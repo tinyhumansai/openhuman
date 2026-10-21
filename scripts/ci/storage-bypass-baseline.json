@@ -162,13 +162,6 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/platform/doctor/core/workspace_checks.rs",
-    "line": 30,
-    "text": "match std::fs::OpenOptions::new()",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
     "path": "crates/openhuman-core/src/platform/service/daemon_host.rs",
     "line": 43,
     "text": "tokio::fs::write(path, bytes)",

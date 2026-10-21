@@ -226,14 +226,19 @@ export function handleIntegrations(ctx) {
       ? parsedBody.input
       : [parsedBody?.input ?? ""];
     // Honor the OpenAI `dimensions` parameter when present (the embeddings
-    // client sends it for `text-embedding-3-*` models). The save-time
-    // verification probe validates `vector.len() == configured dims`, so the
-    // returned vector must match the requested size; default to 4 for callers
-    // that don't request a specific size.
+    // client sends it for `text-embedding-3-*` models). Managed embeddings
+    // don't send that parameter, so tests can set `embeddingDimensions` to the
+    // managed model's fixed width. Keep the historical 4-wide default for
+    // callers without either value.
+    const configuredDims = Number(mockBehavior.embeddingDimensions);
+    const fallbackDims =
+      Number.isInteger(configuredDims) && configuredDims > 0
+        ? configuredDims
+        : 4;
     const requestedDims =
       Number.isInteger(parsedBody?.dimensions) && parsedBody.dimensions > 0
         ? parsedBody.dimensions
-        : 4;
+        : fallbackDims;
     const data = inputs.map((input, index) => {
       const text = String(input ?? "");
       // Keep the vector deterministic so callers that cache / compare

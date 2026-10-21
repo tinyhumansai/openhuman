@@ -161,8 +161,10 @@ pub(crate) async fn ws_loop(
         // would otherwise leave `SocketManager::is_live_for` comparing against
         // the token this loop was spawned with and tearing down a healthy socket
         // on the next connect (#6181).
-        *shared.connection_identity.write() = Some((url.clone(), token.clone()));
-        *shared.status.write() = ConnectionStatus::Connecting;
+        shared.set_connection_snapshot(
+            Some((url.clone(), token.clone())),
+            ConnectionStatus::Connecting,
+        );
         emit_state_change(&shared);
 
         // Taken before the attempt so a stalled first dial counts toward the

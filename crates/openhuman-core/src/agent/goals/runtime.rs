@@ -10,9 +10,10 @@
 //!   persistence and completed-turn accounting.
 
 use std::path::Path;
+use std::time::Duration;
 
-use tinyagents_graph::goals::budget as crate_budget;
-use tinyagents_graph::goals::{ThreadGoal, ThreadGoalStatus};
+use tinyagents_harness_tools::goals::budget as crate_budget;
+use tinyagents_harness_tools::goals::{ThreadGoal, ThreadGoalStatus};
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
@@ -21,7 +22,7 @@ use crate::core::events::DomainEvent;
 pub async fn load_for_thread(workspace_dir: &Path, thread_id: Option<&str>) -> Option<ThreadGoal> {
     let thread_id = normalized_thread(thread_id)?;
     let store = crate::storage::sessions::stores_or_ephemeral(workspace_dir).kv;
-    match tinyagents_graph::goals::store::get(&store, &thread_id)
+    match tinyagents_harness_tools::goals::store::get(&store, &thread_id)
         .await
         .map_err(|e| e.to_string())
     {
@@ -41,7 +42,7 @@ pub async fn resume_for_thread(
 ) -> Option<Option<ThreadGoal>> {
     let thread_id = normalized_thread(thread_id)?;
     let store = crate::storage::sessions::stores_or_ephemeral(workspace_dir).kv;
-    match tinyagents_graph::goals::store::resume(&store, &thread_id)
+    match tinyagents_harness_tools::goals::store::resume(&store, &thread_id)
         .await
         .map_err(|e| e.to_string())
     {
@@ -77,7 +78,7 @@ pub async fn complete_for_thread(workspace_dir: &Path, thread_id: Option<&str>) 
         return;
     };
     let store = crate::storage::sessions::stores_or_ephemeral(workspace_dir).kv;
-    match tinyagents_graph::goals::store::complete(&store, &thread_id)
+    match tinyagents_harness_tools::goals::store::complete(&store, &thread_id)
         .await
         .map_err(|e| e.to_string())
     {
@@ -109,7 +110,7 @@ pub async fn clear_for_thread(workspace_dir: &Path, thread_id: Option<&str>) {
         return;
     };
     let store = crate::storage::sessions::stores_or_ephemeral(workspace_dir).kv;
-    match tinyagents_graph::goals::store::clear(&store, &thread_id)
+    match tinyagents_harness_tools::goals::store::clear(&store, &thread_id)
         .await
         .map_err(|e| e.to_string())
     {
@@ -134,7 +135,7 @@ fn turn_tokens(input: u64, output: u64) -> u64 {
 /// Account a finished turn's usage against an explicit thread's goal.
 ///
 /// The accounting rules are the crate's
-/// ([`crate_budget::account_turn`](tinyagents_graph::goals::account_turn)):
+/// ([`crate_budget::account_turn`](tinyagents_harness_tools::goals::account_turn)):
 /// only **active** goals are charged, so a paused/complete/budget-limited goal
 /// doesn't accrue usage from incidental chat. OpenHuman runs no autonomous
 /// goal continuation, so every accounted turn is user-initiated.
@@ -154,7 +155,7 @@ pub async fn account_turn_against_goal(
         return;
     };
     let store = crate::storage::sessions::stores_or_ephemeral(workspace_dir).kv;
-    let prev = match tinyagents_graph::goals::store::get(&store, &thread_id)
+    let prev = match tinyagents_harness_tools::goals::store::get(&store, &thread_id)
         .await
         .map_err(|e| e.to_string())
     {
@@ -168,7 +169,9 @@ pub async fn account_turn_against_goal(
     let prev_status = prev.status;
     let prev_tokens_used = prev.tokens_used;
 
-    match crate_budget::account_turn(&store, &thread_id, input, output, secs, true).await {
+    match crate_budget::account_turn(&store, &thread_id, input, output, Duration::from_secs(secs))
+        .await
+    {
         Ok(Some(updated)) => {
             tracing::debug!(
                 thread_id = %thread_id,

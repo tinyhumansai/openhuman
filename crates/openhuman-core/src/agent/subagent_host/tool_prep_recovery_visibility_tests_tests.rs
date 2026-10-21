@@ -1,7 +1,7 @@
 use super::*;
 use crate::inference::tokenjuice::LEGACY_RETRIEVE_TOOL_NAME as RECOVERY_TOOL_NAME;
 use crate::tools::retrieve_tool_output_tool;
-use tinyagents_harness::tools::CurrentTimeTool;
+use tinyagents_harness_tools::CurrentTimeTool;
 
 fn tools() -> Vec<Box<dyn tinytools::Tool>> {
     vec![

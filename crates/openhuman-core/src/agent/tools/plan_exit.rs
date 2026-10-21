@@ -25,8 +25,8 @@ fn mode_lookup(context: &dyn ToolRunContext) -> Option<RunModeHandle> {
     ))
 }
 
-fn owner_tool() -> tinyagents_harness::tool::plan_exit::PlanExitTool {
-    tinyagents_harness::tool::plan_exit::PlanExitTool::new(Arc::new(mode_lookup))
+fn owner_tool() -> tinyagents_harness_tools::PlanExitTool {
+    tinyagents_harness_tools::PlanExitTool::new(Arc::new(mode_lookup))
 }
 
 /// Public unit-shaped compatibility adapter around TinyAgents' tool engine.
@@ -47,11 +47,11 @@ impl Default for PlanExitTool {
 #[async_trait]
 impl Tool for PlanExitTool {
     fn name(&self) -> &str {
-        tinyagents_harness::tool::plan_exit::PlanExitTool::NAME
+        tinyagents_harness_tools::PlanExitTool::NAME
     }
 
     fn description(&self) -> &str {
-        tinyagents_harness::tool::plan_exit::PlanExitTool::DESCRIPTION
+        tinyagents_harness_tools::PlanExitTool::DESCRIPTION
     }
 
     fn parameters_schema(&self) -> Value {

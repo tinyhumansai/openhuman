@@ -249,7 +249,7 @@ impl OpenHumanTurnPrelude {
             }
         };
         if let Some(goal) = &active_goal {
-            if let Some(block) = tinyagents_graph::goals::active_goal_context_block(goal) {
+            if let Some(block) = tinyagents_harness_tools::goals::active_goal_context_block(goal) {
                 context.push_str(&block);
             }
             if let Some(hook) = tinyagents_hooks::stop::GoalBudgetStopHook::for_goal(
