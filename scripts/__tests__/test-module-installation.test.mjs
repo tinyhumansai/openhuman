@@ -380,7 +380,7 @@ for (const [runner, archiveVariable, directoryVariable] of [
 }
 
 for (const runner of ["test-rust-with-mock.sh", "test-rust-e2e.sh"]) {
-  test(`${runner} supplies the TinyMCP artifact and executes ignored registry cases`, () => {
+  test(`${runner} supplies the TinyMCP artifact to registry cases`, () => {
     const source = readFileSync(
       new URL(`../${runner}`, import.meta.url),
       "utf8",
@@ -483,11 +483,19 @@ for (const runner of ["test-rust-with-mock.sh", "test-rust-e2e.sh"]) {
           run.split("\n")[0].split(":").includes(moduleDir),
           "the pinned TinyMCP release directory is on the module search path",
         );
-        assert.match(
-          run,
-          /^ARG=--ignored$/m,
-          "ignored cases must actually execute",
-        );
+        if (runner === "test-rust-with-mock.sh") {
+          assert.doesNotMatch(
+            run,
+            /^ARG=--ignored$/m,
+            "Linux-supported cases run in the normal test pass",
+          );
+        } else {
+          assert.match(
+            run,
+            /^ARG=--ignored$/m,
+            "the E2E runner explicitly selects the live registry cases",
+          );
+        }
         assert.match(run, /^ARG=--test-threads=1$/m);
       }
       assert.match(
