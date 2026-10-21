@@ -967,7 +967,7 @@ async fn doctor_report_and_models_are_internally_consistent() {
         findings
             .iter()
             .any(|finding| finding.get("check_id").and_then(Value::as_str)
-                == Some("config/semantics")),
+                == Some("config/parse")),
         "the config check always runs: {result}"
     );
     assert!(

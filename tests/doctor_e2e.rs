@@ -564,6 +564,12 @@ fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
             .collect::<Vec<_>>();
         entries.sort();
         for path in entries {
+            // LLVM coverage writes these process-local files into the test's
+            // current directory; they are instrumentation output, not doctor
+            // state or a mutation of the selected profile.
+            if path.extension().is_some_and(|extension| extension == "profraw") {
+                continue;
+            }
             let relative = path
                 .strip_prefix(root)
                 .expect("path remains under fixture root");
