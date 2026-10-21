@@ -203,7 +203,7 @@
     "file": "crates/openhuman-core/src/integrations/connected_identities.rs",
     "scope": "",
     "name": "RUNTIME",
-    "type": "OnceLock<Result<tokio::runtime::Runtime,std::io::Error>>",
+    "type": "std::sync::OnceLock<Result<tokio::runtime::Runtime,std::io::Error>>",
     "count": 1,
     "category": "A",
     "reason": "A dedicated one-worker runtime for synchronous prompt rendering; it owns no tenant data, and each render future receives its explicit DispatchCtx.",
