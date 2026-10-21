@@ -2,10 +2,7 @@ use super::*;
 use crate::hosted::test_support;
 use openhuman_embed::__host::memory_engines::Binding;
 use openhuman_embed::__host::security::credentials::session_support::{
-    BackendCredential, SESSION_ISSUING_BACKEND_META,
-};
-use openhuman_embed::__host::security::credentials::{
-    AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+    BackendCredential, SESSION_ISSUING_BACKEND_META, SESSION_EXPIRES_AT_META,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -199,25 +196,26 @@ fn store_session_with_metadata(
     token: &str,
     metadata: std::collections::HashMap<String, String>,
 ) {
-    let key_path = config.workspace_dir.join("keyring/master.key");
-    std::fs::create_dir_all(key_path.parent().unwrap()).expect("create fixture key directory");
-    std::fs::write(&key_path, "11".repeat(32)).expect("write fixture master key");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
-            .expect("protect fixture master key");
-    }
-    test_support::store_session(config, token);
-    AuthService::from_config(config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            DEFAULT_AUTH_PROFILE_NAME,
-            token,
-            metadata,
-            true,
-        )
-        .expect("store selected session fixture");
+    let state_dir = config.config_path.parent().expect("config state directory");
+    std::fs::create_dir_all(state_dir).expect("create profile fixture directory");
+    let path = state_dir.join("auth-profiles.json");
+    let doc = json!({
+        "schema_version": 1,
+        "active_profiles": {},
+        "profiles": {
+            "app-session:default": {
+                "provider": "app-session",
+                "profile_name": "default",
+                "kind": "token",
+                "token": token,
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "metadata": metadata,
+            }
+        }
+    });
+    std::fs::write(path, serde_json::to_vec(&doc).expect("serialize profile fixture"))
+        .expect("write profile fixture");
 }
 
 fn persistent_tree(
@@ -345,7 +343,7 @@ async fn expired_or_wrong_issuer_session_skips_network_and_preserves_credentials
         (
             "expired-session",
             std::collections::HashMap::from([(
-                openhuman_embed::__host::security::credentials::session_support::SESSION_EXPIRES_AT_META.to_owned(),
+                SESSION_EXPIRES_AT_META.to_owned(),
                 (chrono::Utc::now() - chrono::Duration::minutes(2)).to_rfc3339(),
             )]),
         ),
