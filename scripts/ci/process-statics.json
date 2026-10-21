@@ -200,6 +200,16 @@
     "verification": "inference/registry_tests.rs: a_registered_catalog_answers_the_model_listing_for_its_provider"
   },
   {
+    "file": "crates/openhuman-core/src/integrations/connected_identities.rs",
+    "scope": "",
+    "name": "RUNTIME",
+    "type": "OnceLock<Result<tokio::runtime::Runtime,std::io::Error>>",
+    "count": 1,
+    "category": "A",
+    "reason": "A dedicated one-worker runtime for synchronous prompt rendering; it owns no tenant data, and each render future receives its explicit DispatchCtx.",
+    "verification": "integrations/connected_identities_tests.rs: rendering_connected_identities_uses_explicit_dispatch_context"
+  },
+  {
     "file": "crates/openhuman-core/src/integrations/composio/client/factory.rs",
     "scope": "",
     "name": "ROUTE_BUILDERS",
