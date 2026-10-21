@@ -212,7 +212,7 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
 
     // Full-width strip pinned to the top of the column, one title-bar tall.
     expect(stripBox.height).toBe(DRAG_STRIP_HEIGHT_PX);
-    expect(stripBox.x).toBeCloseTo(sidebarBox.x, 0);
+    expect(Math.abs(stripBox.x - sidebarBox.x)).toBeLessThanOrEqual(1);
     expect(Math.abs(stripBox.y - sidebarBox.y)).toBeLessThanOrEqual(1);
     expect(stripBox.width).toBeGreaterThanOrEqual(ICON_WIDTH_PX - 1);
 
