@@ -90,6 +90,10 @@ async fn run_job_now_keeps_best_effort_failure_successful_and_records_failed_del
 
 #[tokio::test]
 async fn run_job_now_pairs_trigger_and_completion_after_delivery() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
     use crate::core::events::DomainEvent;
     use tinybus::EventHandler;
 
