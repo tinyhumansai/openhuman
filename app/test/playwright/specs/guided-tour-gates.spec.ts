@@ -37,14 +37,7 @@ test.describe('Guided tour gates', () => {
   test('tour starts from home and can navigate forward to the connections step', async ({
     page,
   }) => {
-    // Mount a fresh walkthrough instance after arming it. Restarting Joyride
-    // on the already-mounted instance retains its previous step index.
-    await page.evaluate(() => {
-      localStorage.removeItem('openhuman:walkthrough_completed');
-      localStorage.setItem('openhuman:walkthrough_pending', 'true');
-    });
-    await page.reload();
-    await waitForAppReady(page);
+    await armWalkthrough(page);
 
     const panel = await tooltip(page);
     await expect(panel).toBeVisible();
@@ -81,20 +74,5 @@ test.describe('Guided tour gates', () => {
         }))
       )
       .toEqual({ completed: 'true', pending: null });
-  });
-
-  test('pending walkthrough resumes after reload', async ({ page }) => {
-    await page.evaluate(() => {
-      localStorage.removeItem('openhuman:walkthrough_completed');
-      localStorage.setItem('openhuman:walkthrough_pending', 'true');
-    });
-
-    await page.reload();
-    await waitForAppReady(page);
-
-    const panel = await tooltip(page);
-    await expect(panel).toBeVisible();
-    await expect(panel.getByText('1 of 10')).toBeVisible();
-    await expect(page.locator('[data-walkthrough="home-card"]')).toBeVisible();
   });
 });

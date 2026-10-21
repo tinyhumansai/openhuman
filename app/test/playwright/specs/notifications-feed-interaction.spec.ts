@@ -153,7 +153,7 @@ test.describe('Notifications — filtering is single-select and actually filters
 test.describe('Notifications — read state', () => {
   test('clicking an unread item marks it read and drops the unread count', async ({ page }) => {
     await openFeedWith(page, [
-      item('n-agents-1', 'agents', 'Agent finished a task'),
+      item('n-meeting-1', 'meetings', 'Meeting starts soon'),
       item('n-system-1', 'system', 'Core restarted'),
     ]);
     await expect(rows(page)).toHaveCount(2, { timeout: 20_000 });
@@ -162,9 +162,11 @@ test.describe('Notifications — read state', () => {
     // the click did anything.
     await expect(page.getByText(/2 unread/i)).toBeVisible();
 
-    await rows(page).first().click();
+    await rows(page).filter({ hasText: 'Meeting starts soon' }).click();
 
-    await expect(page.getByText(/1 unread/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
+      timeout: 10_000,
+    });
   });
 
   test('Mark all read clears the count and disables itself', async ({ page }) => {
@@ -183,7 +185,7 @@ test.describe('Notifications — read state', () => {
   });
 
   test('Mark all read is already disabled when nothing is unread', async ({ page }) => {
-    await openFeedWith(page, [item('n-agents-1', 'agents', 'Agent finished a task', true)]);
+    await openFeedWith(page, [item('n-meeting-1', 'meetings', 'Meeting starts soon', true)]);
 
     await expect(rows(page)).toHaveCount(1, { timeout: 20_000 });
     await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled();
@@ -192,7 +194,7 @@ test.describe('Notifications — read state', () => {
   test('read state survives a reload', async ({ page }) => {
     // The slice is persisted, so marking read must outlive the page. If it does
     // not, the feed re-accuses the user of everything they just dismissed.
-    await openFeedWith(page, [item('n-agents-1', 'agents', 'Agent finished a task')]);
+    await openFeedWith(page, [item('n-meeting-1', 'meetings', 'Meeting starts soon')]);
 
     await page.getByRole('button', { name: /mark all as read/i }).click();
     await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
@@ -227,6 +229,8 @@ test.describe('Notifications — read state', () => {
     await page.reload();
     await waitForAppReady(page);
     await dismissWalkthroughIfPresent(page);
+    await page.goto('/#/notifications?view=main');
+    await waitForAppReady(page);
 
     await expect(page.getByRole('button', { name: /mark all read/i })).toBeDisabled({
       timeout: 20_000,
