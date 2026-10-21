@@ -68,8 +68,7 @@ async function openConnectDialog(
     has: page.locator(`td:first-child:has-text("${SERVER_NAME}")`),
   });
   await expect(row).toBeVisible({ timeout: 20_000 });
-  await row.click();
-  const connect = page.getByRole('button', { name: 'Connect', exact: true });
+  const connect = page.getByRole('button', { name: `Connect ${SERVER_NAME}` });
   await expect(connect).toBeVisible({ timeout: 10_000 });
 
   // A focusable element outside the dialog, so focus restore has somewhere
@@ -89,12 +88,7 @@ async function openConnectDialog(
   // focused before the dialog took over: `Enter` on the anchor does nothing,
   // so drive the click through the DOM instead of a pointer, which would move
   // focus first.
-  await page.evaluate(() => {
-    const button = Array.from(document.querySelectorAll('button')).find(
-      candidate => candidate.textContent?.trim() === 'Connect'
-    );
-    button?.click();
-  });
+  await connect.evaluate(button => (button as HTMLButtonElement).click());
 
   const dialog = page.locator(DIALOG);
   await expect(dialog).toBeVisible({ timeout: 10_000 });
