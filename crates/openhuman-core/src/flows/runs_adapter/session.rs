@@ -195,15 +195,15 @@ impl RunSession {
     }
 
     /// Start the one PollRun task for this process/run owner.
-    pub(super) fn start_polling(self: &Arc<Self>, proxy: tinybus::Proxy) {
+    pub(super) fn start_polling(self: &Arc<Self>, proxy: tinybus::Proxy) -> Result<(), String> {
         if self
             .poller_started
             .swap(true, std::sync::atomic::Ordering::AcqRel)
         {
-            return;
+            return Ok(());
         }
         let session = Arc::clone(self);
-        tokio::spawn(async move {
+        spawn_poller(async move {
             loop {
                 match session.drain(&proxy, true).await {
                     Ok(true) => {
@@ -222,7 +222,12 @@ impl RunSession {
                     }
                 }
             }
-        });
+        })
+        .map(|_| ())
+        .inspect_err(|_| {
+            self.poller_started
+                .store(false, std::sync::atomic::Ordering::Release);
+        })
     }
 
     /// Poll all currently available pages. The lock prevents a resume waiter
@@ -329,6 +334,12 @@ pub(crate) fn remove(session: &Arc<RunSession>) {
     {
         sessions.remove(&key);
     }
+}
+
+fn spawn_poller(
+    work: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<tokio::task::JoinHandle<()>, String> {
+    Ok(tokio::spawn(work))
 }
 
 #[cfg(test)]

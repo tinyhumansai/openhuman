@@ -164,7 +164,7 @@ pub(crate) async fn start_run(
             Ok(started) => started,
             Err(error) => {
                 match run_exists(config, bindings.storage(), run_id).await {
-                    Ok(true) | Err(_) => session.start_polling(proxy),
+                    Ok(true) | Err(_) => session.start_polling(proxy)?,
                     Ok(false) => session::remove(&session),
                 }
                 return Err(error.wire_message());
@@ -174,14 +174,14 @@ pub(crate) async fn start_run(
         // A malformed acknowledgement does not prove the module failed to
         // admit the requested actor. Keep both callbacks served until the
         // owner-scoped PollRun stream gives us a terminal answer.
-        session.start_polling(proxy);
+        session.start_polling(proxy)?;
         return Err("TinyFlows admitted a different run id".to_string());
     }
     if started.already_running {
         session::remove(&session);
         return Err(format!("flow run '{run_id}' is already running"));
     }
-    session.start_polling(proxy);
+    session.start_polling(proxy)?;
     Ok((session, receiver))
 }
 
@@ -341,7 +341,7 @@ pub(crate) async fn resume_and_wait(
             if terminal || (inserted && !uncertain) {
                 session::remove(&session);
             } else if inserted || uncertain {
-                session.start_polling(proxy);
+                session.start_polling(proxy)?;
             }
             return Err(error.wire_message());
         }
@@ -357,7 +357,7 @@ pub(crate) async fn resume_and_wait(
     session.set_trigger(FlowRunTrigger::Resume);
     session.mark_resumed();
     session.replace_bindings(candidate);
-    session.start_polling(proxy);
+    session.start_polling(proxy)?;
     wait_for_outcome(&mut receiver, &request.run_id, baseline).await
 }
 
