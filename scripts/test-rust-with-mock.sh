@@ -174,6 +174,15 @@ if [ ! -f "$tinybox_dir/libtinybox.$module_ext" ]; then
 fi
 export OPENHUMAN_MODULE_PATH="$tinybox_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
 
+if [ "$module_ext" = "dll" ]; then
+  tinychannels_artifact="$tinychannels_dir/tinychannels_module.dll"
+elif [ "$module_ext" = "dylib" ]; then
+  tinychannels_artifact="$tinychannels_dir/libtinychannels_module.dylib"
+else
+  tinychannels_artifact="$tinychannels_dir/libtinychannels_module.so"
+fi
+export OPENHUMAN_CHANNELS_TEST_ARTIFACT="$tinychannels_artifact"
+
 # The MCP registry E2E targets exercise real TinyMCP lifecycle calls through
 # the host's module adapter, so they load the released, checksum-pinned module
 # just as the self-hosted CI installer does (source mode builds it instead).

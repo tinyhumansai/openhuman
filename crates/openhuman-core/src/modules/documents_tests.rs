@@ -179,7 +179,6 @@ async fn spreadsheet_structured_extraction_is_unavailable_before_loading_the_doc
 }
 
 #[tokio::test]
-#[ignore = "needs a built TinyDocs module and its own process; set OPENHUMAN_MODULE_PATH"]
 async fn held_outputs_are_released_after_success_read_failure_and_cancellation() {
     async fn held_docx(config: &Config) -> (tinybus::Proxy, OutputRef) {
         let (runtime, record) = ready(config).await.expect("module should be ready");

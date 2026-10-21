@@ -72,9 +72,16 @@ if [ -z "${tinymcp_artifact}" ]; then
   echo "::error::the tinymcp release holds no module library" >&2
   exit 1
 fi
+tinychannels_artifact="$(find "${dest}/tinychannels" -maxdepth 2 -type f \
+  \( -name libtinychannels_module.so -o -name libtinychannels_module.dylib -o -name tinychannels_module.dll \) | head -n 1)"
+if [ -z "${tinychannels_artifact}" ]; then
+  echo "::error::the tinychannels release holds no module library" >&2
+  exit 1
+fi
 {
   echo "OPENHUMAN_MODULE_PATH=${module_dirs}${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
   echo "OPENHUMAN_TINYMCP_TEST_MODULE=${tinymcp_artifact}"
+  echo "OPENHUMAN_CHANNELS_TEST_ARTIFACT=${tinychannels_artifact}"
   echo "OPENHUMAN_TEST_MODULES_STAGED=1"
 } > "${env_file}"
 log "wrote ${env_file}"

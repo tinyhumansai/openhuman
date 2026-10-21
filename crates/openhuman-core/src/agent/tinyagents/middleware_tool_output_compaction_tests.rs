@@ -16,7 +16,6 @@ fn compaction_exempt_tools_contains_every_proposal_tool() {
 }
 
 #[tokio::test]
-#[ignore = "requires a built TinyJuice module"]
 async fn tool_output_tabulates_a_large_graph_for_a_non_exempt_tool() {
     // Sanity baseline proving this test's payload actually exercises real
     // tinyjuice tabulation (and isn't just below-threshold): a tool name
