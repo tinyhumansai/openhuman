@@ -164,6 +164,8 @@ async function openFeedWith(page: Page, items: SeedItem[]): Promise<void> {
   await page.goto('/#/notifications');
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
+  const welcomeCta = page.getByTestId('notifications-welcome-cta-view');
+  if (await welcomeCta.isVisible().catch(() => false)) await welcomeCta.click();
   await expect(page.getByTestId('system-events-section')).toBeVisible({ timeout: 20_000 });
 }
 
