@@ -1,10 +1,9 @@
 //! Native-module integration tests for the MCP registry host adapter.
 //!
-//! These tests use TinyBus' normal loader with a locally supplied TinyMCP
-//! artifact. Build one with `node scripts/modules/build.mjs tinymcp` and set
-//! `OPENHUMAN_MODULE_SOURCE_DIR` (or put the verified platform library on
-//! `OPENHUMAN_MODULE_PATH`) to run them with `--ignored`; no implementation crate is linked
-//! into this host test.
+//! These tests use TinyBus' normal loader with the verified TinyMCP artifact
+//! staged on `OPENHUMAN_MODULE_PATH`; no implementation crate is linked into
+//! this host test. Cases that spawn stdio servers remain ignored on Linux
+//! until TinyBox supports the required isolated networking.
 
 #![cfg(feature = "mcp")]
 
@@ -73,7 +72,10 @@ fn http_server(url: &str) -> Value {
 }
 
 #[tokio::test]
-#[ignore = "requires a TinyMCP library: node scripts/modules/build.mjs tinymcp"]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "TinyBox cannot provide the isolated networking required to run the stdio MCP server on Linux"
+)]
 async fn module_tool_call_reports_unknown_tool_as_error() {
     let (_tmp, config) = fresh_workspace_config();
     let server_id = install_server(&config, "@openhuman-test/echo", stdio_server()).await;
@@ -100,7 +102,10 @@ async fn module_tool_call_reports_unknown_tool_as_error() {
 }
 
 #[tokio::test]
-#[ignore = "requires a TinyMCP library: node scripts/modules/build.mjs tinymcp"]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "TinyBox cannot provide the isolated networking required to run the stdio MCP server on Linux"
+)]
 async fn disabling_server_drops_its_live_module_connection() {
     let (_tmp, config) = fresh_workspace_config();
     let server_id = install_server(&config, "@openhuman-test/echo", stdio_server()).await;
@@ -126,7 +131,6 @@ async fn disabling_server_drops_its_live_module_connection() {
 }
 
 #[tokio::test]
-#[ignore = "requires a TinyMCP library: node scripts/modules/build.mjs tinymcp"]
 async fn disabled_server_accepts_environment_update_without_reconnecting() {
     use std::collections::HashMap;
 
@@ -148,7 +152,10 @@ async fn disabled_server_accepts_environment_update_without_reconnecting() {
 }
 
 #[tokio::test]
-#[ignore = "requires a TinyMCP library: node scripts/modules/build.mjs tinymcp"]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "TinyBox cannot provide the isolated networking required to run the stdio MCP server on Linux"
+)]
 async fn per_config_lookups_are_isolated_by_workspace() {
     use openhuman_core::mcp::registry::{connections, ops};
 
@@ -176,7 +183,6 @@ async fn per_config_lookups_are_isolated_by_workspace() {
 }
 
 #[tokio::test]
-#[ignore = "requires a TinyMCP library: node scripts/modules/build.mjs tinymcp"]
 async fn disabled_install_is_not_dialed_during_startup() {
     use openhuman_core::mcp::registry::{connections, ops};
 
@@ -202,7 +208,6 @@ async fn disabled_install_is_not_dialed_during_startup() {
 }
 
 #[tokio::test]
-#[ignore = "requires a TinyMCP library: node scripts/modules/build.mjs tinymcp"]
 async fn per_config_auth_failure_surfaces_401_reason_without_cross_workspace_leak() {
     use openhuman_core::mcp::registry::{connections, ops};
     use wiremock::matchers::any;
