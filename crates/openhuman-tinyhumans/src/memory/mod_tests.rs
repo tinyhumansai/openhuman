@@ -250,6 +250,10 @@ async fn readonly_health_uses_the_selected_config_credential_and_endpoint() {
     let tmp_b = tempfile::tempdir().unwrap();
     let config_a = config_with_endpoint(&tmp_a, &server_a.uri());
     let config_b = config_with_endpoint(&tmp_b, &server_b.uri());
+    let mut config_a = config_a;
+    let mut config_b = config_b;
+    config_a.resolved_endpoints.control_plane_url = Some(server_a.uri());
+    config_b.resolved_endpoints.control_plane_url = Some(server_b.uri());
     store_session_with_metadata(
         &config_a,
         "selected-a-token",
@@ -300,6 +304,8 @@ async fn readonly_health_reports_down_without_exposing_backend_error_text() {
     let server = health_server(500).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, &server.uri());
+    let mut config = config;
+    config.resolved_endpoints.control_plane_url = Some(server.uri());
     store_session_with_metadata(
         &config,
         "health-down-token",
