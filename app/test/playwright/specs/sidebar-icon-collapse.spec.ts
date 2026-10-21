@@ -46,7 +46,6 @@ const ICON_WIDTH_PX = 88;
 /** Mirrors `SIDEBAR_KEYBOARD_STEP` in `app/src/components/ui/Sidebar.tsx`. */
 const KEYBOARD_STEP_PX = 16;
 /** Mirrors `WINDOW_DRAG_BAR_HEIGHT` in `app/src/components/layout/shell/WindowDragBar.tsx`. */
-const DRAG_STRIP_HEIGHT_PX = 28;
 /** Mirrors `SIDEBAR_MIN_WIDTH` / `SIDEBAR_MAX_WIDTH` in `app/src/components/ui/Sidebar.tsx`. */
 const MIN_WIDTH_PX = 188;
 const MAX_WIDTH_PX = 420;
