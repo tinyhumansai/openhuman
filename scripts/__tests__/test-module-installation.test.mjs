@@ -156,6 +156,15 @@ test("CI exports the staged TinyMCP library for the multi-server suite", () => {
   );
 });
 
+test("CI exports the staged TinyChannels library for its runtime suite", () => {
+  const source = readFileSync(installer, "utf8");
+  assert.match(
+    source,
+    /echo "OPENHUMAN_CHANNELS_TEST_ARTIFACT=\$\{tinychannels_artifact\}"/,
+    "the released-runtime test loads the verified TinyChannels artifact directly",
+  );
+});
+
 test("MCP registry Rust integration tests run serially", () => {
   const source = readFileSync(localRustRunner, "utf8");
   assert.match(
