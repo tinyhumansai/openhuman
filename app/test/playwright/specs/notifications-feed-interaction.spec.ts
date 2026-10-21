@@ -162,7 +162,10 @@ test.describe('Notifications — read state', () => {
     // the click did anything.
     await expect(page.getByText(/2 unread/i)).toBeVisible();
 
-    await rows(page).filter({ hasText: 'Meeting starts soon' }).click();
+    await rows(page)
+      .filter({ hasText: 'Meeting starts soon' })
+      .locator('[role="button"]')
+      .click();
 
     await expect(page.getByRole('button', { name: /mark all as read/i })).toBeDisabled({
       timeout: 10_000,
