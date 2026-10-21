@@ -2,7 +2,8 @@ use super::*;
 use crate::core::runtime::DispatchCtx;
 
 async fn isolated_dispatch() -> (tempfile::TempDir, crate::core::runtime::CoreRuntime) {
-    use crate::core::runtime::{CoreBuilder, DomainSet, HostKind, ServiceSet};
+    use crate::core::runtime::{CoreBuilder, DomainSet, ServiceSet};
+    use crate::core::types::HostKind;
 
     let workspace = tempfile::tempdir().expect("isolated workspace");
     let config = crate::config::Config {
