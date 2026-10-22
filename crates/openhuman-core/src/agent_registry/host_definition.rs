@@ -9,12 +9,17 @@
 //! (`<workspace>/agents`, `$OPENHUMAN_HOME/agents`).
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use anyhow::Result;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tinyagents_definition::{DefinitionSet, DefinitionSource, DefinitionValidation, ModelSpec};
+use tinyagents_definition::{
+    DefinitionSet, DefinitionSource, DefinitionValidation, ModelSpec, SubagentEntry,
+};
 use tinyjuice_bus::types::AgentTokenjuiceCompression;
+
+use crate::agent_registry::types::{AgentRegistryEntry, AgentRegistrySource};
 
 #[cfg(test)]
 #[path = "host_definition_tests.rs"]
@@ -182,7 +187,13 @@ pub struct AgentDefinitionRegistry {
     set: DefinitionSet<AgentExt>,
 }
 
-static GLOBAL: OnceLock<Arc<AgentDefinitionRegistry>> = OnceLock::new();
+static GLOBAL: RwLock<Option<Arc<AgentDefinitionRegistry>>> = RwLock::new(None);
+
+/// Pristine registry captured at initialisation, before any user-authored
+/// entry is overlaid. [`Self::apply_registry_entries`] rebuilds every refresh
+/// from this base, so a removed entry — or an empty refresh — restores the
+/// harness policy instead of leaving a stale overlay in the process registry.
+static PRISTINE: RwLock<Option<Arc<AgentDefinitionRegistry>>> = RwLock::new(None);
 
 impl AgentDefinitionRegistry {
     /// Build a registry containing only the built-in definitions.
@@ -273,36 +284,48 @@ impl AgentDefinitionRegistry {
 
     /// Initialise the global registry. Subsequent calls are no-ops.
     pub fn init_global(workspace: &Path) -> Result<()> {
-        let registry = Self::load(workspace)?;
-        match GLOBAL.set(Arc::new(registry)) {
-            Ok(()) => {
-                tracing::info!(
-                    "[agent_defs] global registry initialised with {} definitions",
-                    GLOBAL.get().map(|r| r.len()).unwrap_or(0)
-                );
-                Ok(())
-            }
-            Err(_) => {
-                tracing::debug!("[agent_defs] global registry already initialised; ignoring");
-                Ok(())
-            }
+        let mut global = GLOBAL.write();
+        if global.is_some() {
+            tracing::debug!("[agent_defs] global registry already initialised; ignoring");
+            return Ok(());
         }
-    }
-
-    /// Initialise the global registry with builtins only (no workspace scan).
-    pub fn init_global_builtins() -> Result<()> {
-        let _ = GLOBAL.set(Arc::new(Self::builtins_only()));
+        let registry = Self::load(workspace)?;
+        tracing::info!(
+            "[agent_defs] global registry initialised with {} definitions",
+            registry.len()
+        );
+        let registry = Arc::new(registry);
+        *PRISTINE.write() = Some(Arc::clone(&registry));
+        *global = Some(registry);
         Ok(())
     }
 
-    /// Borrow the global registry, if initialised.
-    pub fn global() -> Option<&'static Self> {
-        GLOBAL.get().map(Arc::as_ref)
+    /// Initialise the global registry with builtins only (no workspace scan).
+    /// No-op when already initialised.
+    pub fn init_global_builtins() -> Result<()> {
+        let mut global = GLOBAL.write();
+        if global.is_none() {
+            let registry = Arc::new(Self::builtins_only());
+            *PRISTINE.write() = Some(Arc::clone(&registry));
+            *global = Some(registry);
+        }
+        Ok(())
+    }
+
+    /// Replace the process registry outright. Prefer [`Self::init_global`]
+    /// for startup; this exists for [`Self::apply_registry_entries`] and tests.
+    pub fn set_global(registry: Arc<Self>) {
+        *GLOBAL.write() = Some(registry);
+    }
+
+    /// The process registry, if initialised.
+    pub fn global() -> Option<Arc<Self>> {
+        GLOBAL.read().clone()
     }
 
     /// Clones the durable process registry for a host capability bundle.
     pub fn global_arc() -> Option<Arc<Self>> {
-        GLOBAL.get().cloned()
+        Self::global()
     }
 
     /// Resolve definitions from an explicitly supplied core before falling
@@ -330,5 +353,75 @@ impl AgentDefinitionRegistry {
         Self {
             set: self.set.with_definitions(definitions),
         }
+    }
+
+    /// A copy of this registry with one user-authored registry entry overlaid:
+    /// the harness definition stays the base, the entry's `subagents.allowlist`
+    /// wins. Custom agents ship no harness definition, so an enabled
+    /// `Custom`-source entry is synthesized into a runnable definition and
+    /// added. Returns `None` for ids the harness does not know and that are
+    /// not enabled custom entries.
+    pub fn with_entry_overlay(&self, entry: &AgentRegistryEntry) -> Option<Self> {
+        self.overlay_entry(entry)
+            .map(|def| self.with_definitions([def]))
+    }
+
+    /// Re-apply user-authored registry entries to the process registry.
+    ///
+    /// `agent_registry_*` mutations (notably `update_agent`) persist to the
+    /// config file, but the process registry — what `spawn_async_subagent`'s
+    /// enum and the dispatch allowlist read — is otherwise built once from
+    /// the shipped definitions. Without this refresh the registry keeps
+    /// serving the compiled `subagents` policy until the next restart (#6934).
+    ///
+    /// No-op when the global was never initialised. The write lock is held
+    /// across read, overlay, and store so concurrent updates cannot each
+    /// start from the same stale registry and overwrite one another. Every
+    /// refresh rebuilds from the pristine harness definitions, so an entry
+    /// removed from the list — including an empty refresh — restores the
+    /// original policy instead of leaving a stale overlay behind.
+    pub fn apply_registry_entries(entries: &[AgentRegistryEntry]) {
+        let mut global = GLOBAL.write();
+        let base = PRISTINE.read().clone().or_else(|| global.clone());
+        let Some(base) = base else {
+            return;
+        };
+        let overlaid: Vec<AgentDefinition> = entries
+            .iter()
+            .filter_map(|entry| base.overlay_entry(entry))
+            .collect();
+        let applied = overlaid.len();
+        let next = Arc::new(base.with_definitions(overlaid));
+        tracing::debug!(
+            "[agent_defs] refreshed process registry from {} entries ({} applied)",
+            entries.len(),
+            applied
+        );
+        *global = Some(next);
+    }
+
+    /// Overlay one registry entry onto its harness definition, if present.
+    /// Custom agents ship no harness definition, so an enabled `Custom`-source
+    /// entry is synthesized into a runnable definition instead — otherwise a
+    /// custom id the parent allowlist permits resolves to nothing at spawn.
+    /// Mirrors [`crate::agent_registry::find_custom_in_config`]: disabled
+    /// entries stay unresolvable, and `Default`-source ids the harness does
+    /// not know are still skipped.
+    fn overlay_entry(&self, entry: &AgentRegistryEntry) -> Option<AgentDefinition> {
+        let Some(base) = self.get(&entry.id) else {
+            if entry.enabled && matches!(entry.source, AgentRegistrySource::Custom) {
+                return Some(crate::agent_registry::definition_from_registry_entry(entry));
+            }
+            return None;
+        };
+        let mut def = base.clone();
+        def.subagents = entry
+            .subagents
+            .allowlist
+            .iter()
+            .cloned()
+            .map(SubagentEntry::AgentId)
+            .collect();
+        Some(def)
     }
 }

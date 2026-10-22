@@ -16,17 +16,17 @@ fn a_thread_renamed_session_still_resolves_to_its_registry_entry() {
     let registry = crate::agent_registry::host_definition::AgentDefinitionRegistry::global()
         .expect("init_global_builtins publishes the registry");
 
-    let exact = resolve_definition(registry, "orchestrator").expect("exact id must resolve");
+    let exact = resolve_definition(&registry, "orchestrator").expect("exact id must resolve");
     assert_eq!(exact.id, "orchestrator");
 
-    let renamed = resolve_definition(registry, "orchestrator_thread-captu")
+    let renamed = resolve_definition(&registry, "orchestrator_thread-captu")
         .expect("a thread-renamed session must resolve to its registry entry");
     assert_eq!(renamed.id, "orchestrator");
 
     // Not a rename, just a different agent: must not be swallowed by a
     // shorter id that happens to be a prefix.
     assert!(
-        resolve_definition(registry, "orchestratorish").is_none(),
+        resolve_definition(&registry, "orchestratorish").is_none(),
         "a name that merely starts with an id is not that agent"
     );
 }

@@ -1,8 +1,13 @@
 use super::*;
+use crate::agent_registry::types::{AgentRegistryEntry, AgentRegistrySource, AgentSubagentPolicy};
 use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
 use std::fs;
 use std::io::Write;
 use tinyagents_definition::PromptSource;
+
+/// Serializes the process-registry refresh tests: they mutate the process-wide
+/// registry, so parallel execution would interleave their applies and asserts.
+static REGISTRY_REFRESH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn named(id: &str, when: &str) -> AgentDefinition {
     let mut definition = AgentDefinitionRegistry::builtins_only()
@@ -457,4 +462,263 @@ wildcard = {}
         defs[0].tools,
         tinyagents_definition::ToolScope::Wildcard
     ));
+}
+fn registry_entry_with_allowlist(id: &str, allowlist: Vec<String>) -> AgentRegistryEntry {
+    AgentRegistryEntry {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: String::new(),
+        source: AgentRegistrySource::Default,
+        enabled: true,
+        model: None,
+        system_prompt: None,
+        tool_allowlist: Vec::new(),
+        tool_denylist: Vec::new(),
+        tool_rules: None,
+        subagents: AgentSubagentPolicy::from_allowlist(allowlist),
+        tags: Vec::new(),
+        metadata: serde_json::Value::Null,
+    }
+}
+
+fn custom_registry_entry(id: &str, allowlist: Vec<String>) -> AgentRegistryEntry {
+    let mut entry = registry_entry_with_allowlist(id, allowlist);
+    entry.source = AgentRegistrySource::Custom;
+    entry
+}
+
+#[test]
+fn entry_overlay_replaces_the_harness_subagents_allowlist() {
+    let registry = AgentDefinitionRegistry::builtins_only();
+    let compiled: Vec<String> = registry
+        .get("orchestrator")
+        .expect("built-in orchestrator")
+        .allowed_subagent_ids();
+    assert!(
+        !compiled.is_empty(),
+        "the test needs a non-empty compiled allowlist to prove the override wins"
+    );
+
+    let entry = registry_entry_with_allowlist("orchestrator", vec!["researcher".to_string()]);
+    let overlaid = registry
+        .with_entry_overlay(&entry)
+        .expect("orchestrator is a harness definition");
+    assert_eq!(
+        overlaid
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        vec!["researcher".to_string()],
+        "the registry entry's allowlist must win over the compiled one (#6934)"
+    );
+    // The receiver is untouched: the overlay returns a copy.
+    assert_eq!(
+        registry
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        compiled
+    );
+}
+
+#[test]
+fn entry_overlay_skips_ids_the_harness_does_not_know() {
+    let registry = AgentDefinitionRegistry::builtins_only();
+    let entry = registry_entry_with_allowlist("researcher", vec!["other".to_string()]);
+    assert!(
+        registry.with_entry_overlay(&entry).is_none(),
+        "custom agents resolve through find_custom_in_config at session build, \
+         not through the harness registry"
+    );
+}
+
+#[test]
+fn apply_registry_entries_refreshes_the_process_registry() {
+    let _refresh_lock = REGISTRY_REFRESH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    /// Restores the process registry on drop, so parallel tests are
+    /// unaffected even when an assertion below panics.
+    struct RestoreGlobal(Option<std::sync::Arc<AgentDefinitionRegistry>>);
+    impl Drop for RestoreGlobal {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                AgentDefinitionRegistry::set_global(previous);
+            }
+        }
+    }
+
+    AgentDefinitionRegistry::init_global_builtins().expect("init");
+    let _restore = RestoreGlobal(Some(
+        AgentDefinitionRegistry::global().expect("initialised"),
+    ));
+
+    let entry = registry_entry_with_allowlist("orchestrator", vec!["researcher".to_string()]);
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&entry));
+
+    let after = AgentDefinitionRegistry::global().expect("still initialised");
+    assert_eq!(
+        after
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        vec!["researcher".to_string()],
+        "update_agent must reach the process registry without a restart (#6934)"
+    );
+}
+
+#[test]
+fn apply_registry_entries_empty_refresh_restores_pristine_policy() {
+    let _refresh_lock = REGISTRY_REFRESH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    /// Restores the process registry on drop, so parallel tests are
+    /// unaffected even when an assertion below panics.
+    struct RestoreGlobal(Option<std::sync::Arc<AgentDefinitionRegistry>>);
+    impl Drop for RestoreGlobal {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                AgentDefinitionRegistry::set_global(previous);
+            }
+        }
+    }
+
+    AgentDefinitionRegistry::init_global_builtins().expect("init");
+    let _restore = RestoreGlobal(Some(
+        AgentDefinitionRegistry::global().expect("initialised"),
+    ));
+
+    let compiled: Vec<String> = AgentDefinitionRegistry::global()
+        .expect("initialised")
+        .get("orchestrator")
+        .expect("built-in orchestrator")
+        .allowed_subagent_ids();
+    assert!(
+        !compiled.is_empty() && compiled != vec!["researcher".to_string()],
+        "the test needs a compiled allowlist that differs from the override"
+    );
+
+    // Override, then refresh with an empty list: the harness policy must win
+    // again instead of the stale override lingering.
+    let entry = registry_entry_with_allowlist("orchestrator", vec!["researcher".to_string()]);
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&entry));
+    AgentDefinitionRegistry::apply_registry_entries(&[]);
+
+    assert_eq!(
+        AgentDefinitionRegistry::global()
+            .expect("still initialised")
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        compiled,
+        "an empty refresh must restore the pristine harness policy"
+    );
+}
+
+#[test]
+fn apply_registry_entries_removed_entry_does_not_linger() {
+    let _refresh_lock = REGISTRY_REFRESH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    /// Restores the process registry on drop, so parallel tests are
+    /// unaffected even when an assertion below panics.
+    struct RestoreGlobal(Option<std::sync::Arc<AgentDefinitionRegistry>>);
+    impl Drop for RestoreGlobal {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                AgentDefinitionRegistry::set_global(previous);
+            }
+        }
+    }
+
+    AgentDefinitionRegistry::init_global_builtins().expect("init");
+    let _restore = RestoreGlobal(Some(
+        AgentDefinitionRegistry::global().expect("initialised"),
+    ));
+
+    let compiled: Vec<String> = AgentDefinitionRegistry::global()
+        .expect("initialised")
+        .get("orchestrator")
+        .expect("built-in orchestrator")
+        .allowed_subagent_ids();
+    assert!(
+        !compiled.is_empty() && compiled != vec!["researcher".to_string()],
+        "the test needs a compiled allowlist that differs from the override"
+    );
+
+    // The second refresh drops the orchestrator override entirely: the
+    // orchestrator policy must fall back to the pristine harness one.
+    let first = registry_entry_with_allowlist("orchestrator", vec!["researcher".to_string()]);
+    let second = registry_entry_with_allowlist("summarizer", vec!["orchestrator".to_string()]);
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&first));
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&second));
+
+    let after = AgentDefinitionRegistry::global().expect("still initialised");
+    assert_eq!(
+        after
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        compiled,
+        "a removed entry must not linger in the process registry"
+    );
+    assert_eq!(
+        after
+            .get("summarizer")
+            .expect("summarizer")
+            .allowed_subagent_ids(),
+        vec!["orchestrator".to_string()],
+        "the current entry list still applies"
+    );
+}
+
+#[test]
+fn apply_registry_entries_registers_enabled_custom_agents() {
+    let _refresh_lock = REGISTRY_REFRESH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    /// Restores the process registry on drop, so parallel tests are
+    /// unaffected even when an assertion below panics.
+    struct RestoreGlobal(Option<std::sync::Arc<AgentDefinitionRegistry>>);
+    impl Drop for RestoreGlobal {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                AgentDefinitionRegistry::set_global(previous);
+            }
+        }
+    }
+
+    AgentDefinitionRegistry::init_global_builtins().expect("init");
+    let _restore = RestoreGlobal(Some(
+        AgentDefinitionRegistry::global().expect("initialised"),
+    ));
+
+    // A custom id the parent allowlist permits must resolve to a runnable
+    // definition, not be rejected as unknown at spawn.
+    let custom = custom_registry_entry("finance_analyst", vec!["researcher".to_string()]);
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&custom));
+
+    let after = AgentDefinitionRegistry::global().expect("still initialised");
+    let def = after
+        .get("finance_analyst")
+        .expect("enabled custom agent is registered");
+    assert_eq!(def.id, "finance_analyst");
+    assert_eq!(
+        def.allowed_subagent_ids(),
+        vec!["researcher".to_string()],
+        "the custom entry's allowlist carries over"
+    );
+
+    // A disabled custom entry stays unresolvable, mirroring
+    // `find_custom_in_config`.
+    let mut disabled = custom_registry_entry("disabled_analyst", vec!["researcher".to_string()]);
+    disabled.enabled = false;
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&disabled));
+    assert!(
+        AgentDefinitionRegistry::global()
+            .expect("still initialised")
+            .get("disabled_analyst")
+            .is_none(),
+        "disabled custom entries must not be registered"
+    );
 }

@@ -203,6 +203,12 @@ pub(crate) async fn bootstrap_core_runtime(
                  spawn_subagent will be unavailable until restart"
             );
         }
+        // Merge user-authored agent registry entries (e.g. `agent_registry_update`
+        // overrides) so `spawn_async_subagent`'s enum and dispatch see them from
+        // boot instead of only after the next mutation (#6934). Idempotent.
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::apply_registry_entries(
+            &cfg.agent_registry.entries,
+        );
     } else {
         log::debug!("[boot] agent definition registry SKIPPED — Agent domain disabled");
     }

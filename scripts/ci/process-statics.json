@@ -313,11 +313,21 @@
     "file": "crates/openhuman-core/src/agent_registry/host_definition.rs",
     "scope": "",
     "name": "GLOBAL",
-    "type": "OnceLock<Arc<AgentDefinitionRegistry>>",
+    "type": "RwLock<Option<Arc<AgentDefinitionRegistry>>>",
     "count": 1,
     "category": "A",
-    "reason": "The process registry is operator configuration in single-user hosts; SaaS startup installs built-ins only and refuses workspace or home overrides, so it cannot carry one SaaS profile's definitions into another.",
-    "verification": "core/runtime/saas_tests.rs: boot_refuses_a_registry_with_workspace_definitions"
+    "reason": "Process-wide agent definition registry: built-in harness definitions plus config allowlist overlays applied at boot and on update_agent. The same definitions serve every tenant in the process; it carries no per-tenant data.",
+    "verification": "agent_registry/host_definition_tests.rs: apply_registry_entries_refreshes_the_process_registry"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent_registry/host_definition.rs",
+    "scope": "",
+    "name": "PRISTINE",
+    "type": "RwLock<Option<Arc<AgentDefinitionRegistry>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Pristine copy of the built-in agent definitions captured at initialisation, before any user-authored entry is overlaid. Refreshes rebuild from this base so a removed entry restores the harness policy instead of leaving a stale overlay. It carries no per-tenant data.",
+    "verification": "agent_registry/host_definition_tests.rs: apply_registry_entries_refreshes_the_process_registry"
   },
   {
     "file": "crates/openhuman-core/src/agent_runs/context_breakdown.rs",
