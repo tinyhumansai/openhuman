@@ -3,6 +3,8 @@
 //! protection, fail-closed command classification, always-forbidden paths).
 
 mod command_checks;
+pub mod command_scans;
+pub use command_scans::*;
 mod enforcement;
 mod path_checks;
 
@@ -17,8 +19,8 @@ pub(crate) use path_checks::{
     ALWAYS_FORBIDDEN_PREFIXES, SENSITIVE_COMPONENTS, SENSITIVE_FILES, SENSITIVE_PAIRS,
 };
 pub use types::{
-    tool_result_artifacts_dir, ActionTracker, AutonomyLevel, CommandRiskLevel, GateDecision,
-    SecurityPolicy, ToolOperation, TrustedAccess, TrustedRoot,
+    ActionTracker, AutonomyLevel, CommandRiskLevel, GateDecision, SecurityPolicy, ToolOperation,
+    TrustedAccess, TrustedRoot, tool_result_artifacts_dir,
 };
 
 #[cfg(test)]

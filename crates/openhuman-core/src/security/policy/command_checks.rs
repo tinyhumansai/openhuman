@@ -38,6 +38,12 @@ impl SecurityPolicy {
         if self.autonomy == AutonomyLevel::ReadOnly {
             return false;
         }
+        if self
+            .check_unbounded_system_scan_analysis(analysis)
+            .is_some()
+        {
+            return false;
+        }
         // Full access deliberately bypasses the supervised command allowlist.
         if self.autonomy == AutonomyLevel::Full {
             return true;
@@ -71,6 +77,22 @@ impl SecurityPolicy {
         saw_command
     }
 
+    /// Check whether module-provided command facts describe an unbounded system scan.
+    #[cfg(feature = "modules")]
+    pub fn check_unbounded_system_scan_analysis(
+        &self,
+        analysis: &crate::modules::tinybox::contract::CommandAnalysis,
+    ) -> Option<String> {
+        for segment in &analysis.segments {
+            let base = segment.normalized_name.as_str();
+            let args: Vec<&str> = segment.arguments.iter().map(|s| s.as_str()).collect();
+            if let Some(target) = check_unbounded_segment_scan(base, &args) {
+                return Some(target);
+            }
+        }
+        None
+    }
+
     /// Apply OpenHuman's shell policy to generic facts returned by TinyBox.
     /// The module supplies parsing facts, while this host owns path checks,
     /// autonomy tiers, and approval decisions.
@@ -93,6 +115,11 @@ impl SecurityPolicy {
 
         if !self.enabled {
             return Ok(class);
+        }
+        if let Some(target) = self.check_unbounded_system_scan_analysis(analysis) {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Unbounded system scan of '{target}' was blocked. Narrow the search to the project or a specific permitted SDK/toolchain directory."
+            ));
         }
         if self.gate_decision(class) == GateDecision::Block {
             return Err(format!(
@@ -302,6 +329,11 @@ impl SecurityPolicy {
         if !self.enabled {
             return Ok(class);
         }
+        if let Some(target) = is_unbounded_system_scan(command) {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Unbounded system scan of '{target}' was blocked. Narrow the search to the project or a specific permitted SDK/toolchain directory."
+            ));
+        }
         if self.gate_decision(class) == GateDecision::Block {
             return Err(format!(
                 "{POLICY_BLOCKED_MARKER} Security policy: read-only mode — only read commands are \
@@ -486,6 +518,9 @@ impl SecurityPolicy {
         if !self.enabled {
             return true;
         }
+        if is_unbounded_system_scan(command).is_some() {
+            return false;
+        }
         if self.autonomy == AutonomyLevel::ReadOnly {
             return false;
         }
@@ -626,3 +661,9 @@ impl SecurityPolicy {
         }
     }
 }
+
+pub use super::command_scans::*;
+
+#[cfg(test)]
+#[path = "command_checks_tests.rs"]
+mod tests;
