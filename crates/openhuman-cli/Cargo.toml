@@ -176,6 +176,11 @@ name = "embedded_server_shutdown_e2e"
 path = "../../tests/embedded_server_shutdown_e2e.rs"
 
 [[test]]
+# Its own binary: it boots a core and owns the process event bus.
+name = "socketio_bridge_e2e"
+path = "../../tests/socketio_bridge_e2e.rs"
+
+[[test]]
 name = "observability_smoke"
 path = "../../tests/observability_smoke.rs"
 # The `is_*_event` Sentry filters are all `#[cfg(feature = "crash-reporting")]`.

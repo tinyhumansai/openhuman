@@ -94,7 +94,7 @@ serde_json = "1"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"], optional = true }
-socketioxide = { version = "0.15", features = ["extensions"], optional = true }
+socketioxide = { version = "0.18.7", features = ["extensions"], optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 tokio-stream = { version = "0.1.18", default-features = false, features = ["sync"], optional = true }
 tokio-util = { version = "0.7", features = ["rt", "io"], optional = true }
