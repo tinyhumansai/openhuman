@@ -123,6 +123,12 @@ whisper.cpp is retired; speech-to-text goes through the engine configured in
 bindings call `crate::voice::create_stt_provider` for it. Local TTS uses a Piper binary the user
 installed (`PIPER_BIN` or `PATH`).
 
+The settings screen saves `local_ai` before it checks that the runtime answers, so it calls
+`update_local_settings` with `checkpoint: true`: the core keeps the previous section (key included)
+in `local_checkpoint.rs` and returns a `checkpoint_id`. When the check fails, `rollback_local_settings`
+restores it, unless `local_ai` was saved again since, so an older attempt never undoes a newer save.
+The screen never reads the stored key.
+
 `agent_chat_for` in [`host_runtime/ops/agent_chat.rs`](./host_runtime/ops/agent_chat.rs) is the native agent-turn entry used by
 `openhuman-rpc` and `openhuman-embed`. It runs the turn under the agent's own `CoreContext`,
 resumes the thread's session with `ResumeMode::Session`, and is boxed on purpose so other crates
@@ -244,7 +250,7 @@ All controllers are pushed into the registry in [`core/all.rs`](../core/all.rs) 
 
 - Models and routing: `resolve_model`, `list_models`, `test_provider_model`.
 - Status and settings: `status`, `get_client_config`, `update_model_settings`,
-  `update_local_settings`, `diagnostics`, `provider_auth_errors`.
+  `update_local_settings`, `rollback_local_settings`, `diagnostics`, `provider_auth_errors`.
 - One-shot inference: `summarize`, `prompt`, `vision_prompt`, `analyze_sentiment`.
 - OpenAI/Codex OAuth: `openai_oauth_start`, `openai_oauth_complete`,
   `openai_oauth_import_codex_cli`, `openai_oauth_status`, `openai_oauth_disconnect`.

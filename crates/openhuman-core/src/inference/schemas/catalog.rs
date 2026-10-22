@@ -126,8 +126,25 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "usage_embeddings",
                     "Whether embeddings workload may use the local provider.",
                 ),
+                optional_bool(
+                    "checkpoint",
+                    "Keep the previous local settings in the core and add a `checkpoint_id` to the snapshot, so a failed connection check can undo this save with rollback_local_settings.",
+                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "rollback_local_settings" => ControllerSchema {
+            namespace: "inference",
+            function: "rollback_local_settings",
+            description: "Restore the local inference settings a checkpointed update_local_settings replaced, unless they have been saved again since.",
+            inputs: vec![required_string(
+                "checkpoint_id",
+                "The checkpoint_id returned by update_local_settings.",
+            )],
+            outputs: vec![json_output(
+                "result",
+                "{ restored: bool }: false when a newer save superseded the checkpoint.",
+            )],
         },
         "list_models" => ControllerSchema {
             namespace: "inference",

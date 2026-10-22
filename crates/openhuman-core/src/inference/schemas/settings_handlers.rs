@@ -74,6 +74,12 @@ pub(super) struct InferenceUpdateLocalSettingsParams {
     chat_model_id: Option<String>,
     usage_embeddings: Option<bool>,
     api_key: Option<String>,
+    checkpoint: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct InferenceRollbackLocalSettingsParams {
+    checkpoint_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,7 +289,27 @@ pub(super) fn handle_inference_update_local_settings(
             usage_embeddings: update.usage_embeddings,
             api_key: update.api_key,
         };
-        to_json(crate::inference::rpc::inference_update_local_settings(&ctx, patch).await?)
+        to_json(
+            crate::inference::rpc::inference_update_local_settings(
+                &ctx,
+                patch,
+                update.checkpoint.unwrap_or(false),
+            )
+            .await?,
+        )
+    })
+}
+
+pub(super) fn handle_inference_rollback_local_settings(
+    ctx: DispatchCtx,
+    params: Map<String, Value>,
+) -> ControllerFuture {
+    Box::pin(async move {
+        let request = deserialize_params::<InferenceRollbackLocalSettingsParams>(params)?;
+        to_json(
+            crate::inference::rpc::inference_rollback_local_settings(&ctx, &request.checkpoint_id)
+                .await?,
+        )
     })
 }
 

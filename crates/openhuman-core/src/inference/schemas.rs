@@ -40,6 +40,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_client_config"),
         schemas("update_model_settings"),
         schemas("update_local_settings"),
+        schemas("rollback_local_settings"),
         schemas("list_models"),
         schemas("provider_auth_errors"),
         schemas("diagnostics"),
@@ -81,6 +82,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_local_settings"),
             handler: handle_inference_update_local_settings,
+        },
+        RegisteredController {
+            schema: schemas("rollback_local_settings"),
+            handler: handle_inference_rollback_local_settings,
         },
         RegisteredController {
             schema: schemas("list_models"),

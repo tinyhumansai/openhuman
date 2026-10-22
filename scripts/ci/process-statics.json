@@ -558,5 +558,15 @@
     "category": "A",
     "reason": "The module's shipped queues.json and pipeline.json, parsed once; immutable process configuration with no tenant data.",
     "verification": "inbound/settings_tests.rs: the_defaults_resolve_to_the_shipped_files_in_storage"
+  },
+  {
+    "file": "crates/openhuman-core/src/inference/local_checkpoint.rs",
+    "scope": "",
+    "name": "CHECKPOINTS",
+    "type": "LazyLock<Mutex<HashMap<PathBuf,Checkpoint>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Keyed by the config file path the dispatch context loaded, so a checkpoint (the prior local_ai section, including its key) is only ever restored into the config it was taken from; one entry per config, replaced by the next checkpointed save and removed by its rollback.",
+    "verification": "inference/local_checkpoint_tests.rs: a_checkpoint_only_restores_into_its_own_config"
   }
 ]

@@ -274,33 +274,60 @@ pub async fn inference_update_model_settings(
     result
 }
 
+/// `checkpoint` keeps the prior `local_ai` in the core so a failed connection
+/// attempt can be undone with [`inference_rollback_local_settings`] (#8172).
 pub async fn inference_update_local_settings(
     ctx: &DispatchCtx,
     update: config_rpc::LocalAiSettingsPatch,
+    checkpoint: bool,
 ) -> Result<Outcome<Value>, String> {
-    debug!("{LOG_PREFIX} update_local_settings:start");
-    let result = config_rpc::load_and_apply_local_ai_settings(ctx, update).await;
+    debug!(checkpoint, "{LOG_PREFIX} update_local_settings:start");
+    let result = if checkpoint {
+        let mut config = ctx.load_config().await?;
+        crate::inference::local_checkpoint::apply_with_checkpoint(&mut config, update).await
+    } else {
+        config_rpc::load_and_apply_local_ai_settings(ctx, update).await
+    };
     match &result {
         Ok(_) => {
             debug!("{LOG_PREFIX} update_local_settings:ok");
-            // The endpoint, provider or models may have changed: drop the
-            // cached probe verdict so the next status poll re-probes the
-            // user's runtime instead of reporting the old endpoint's state.
-            match ctx.load_config().await {
-                Ok(config) => {
-                    let runtime = crate::inference::local_runtime_config(&config);
-                    local_runtime::global(&config).reset_to_idle(&runtime);
-                    debug!("{LOG_PREFIX} update_local_settings:probe_reset");
-                }
-                Err(err) => warn!(
-                    error = %err,
-                    "{LOG_PREFIX} update_local_settings:probe_reset_skipped (config reload failed)"
-                ),
-            }
+            reset_local_probe(ctx).await;
         }
         Err(err) => warn!(error = %err, "{LOG_PREFIX} update_local_settings:error"),
     }
     result
+}
+
+/// Restores the `local_ai` settings a checkpointed update replaced, unless a
+/// newer save has happened since. Answers `{ "restored": bool }`.
+pub async fn inference_rollback_local_settings(
+    ctx: &DispatchCtx,
+    checkpoint_id: &str,
+) -> Result<Outcome<Value>, String> {
+    let mut config = ctx.load_config().await?;
+    let restored = crate::inference::local_checkpoint::rollback(&mut config, checkpoint_id).await?;
+    debug!(restored, "{LOG_PREFIX} rollback_local_settings:done");
+    if restored {
+        reset_local_probe(ctx).await;
+    }
+    Ok(Outcome::new(json!({ "restored": restored }), vec![]))
+}
+
+/// The endpoint, provider or models may have changed: drop the cached probe
+/// verdict so the next status poll re-probes the user's runtime instead of
+/// reporting the old endpoint's state.
+async fn reset_local_probe(ctx: &DispatchCtx) {
+    match ctx.load_config().await {
+        Ok(config) => {
+            let runtime = crate::inference::local_runtime_config(&config);
+            local_runtime::global(&config).reset_to_idle(&runtime);
+            debug!("{LOG_PREFIX} update_local_settings:probe_reset");
+        }
+        Err(err) => warn!(
+            error = %err,
+            "{LOG_PREFIX} update_local_settings:probe_reset_skipped (config reload failed)"
+        ),
+    }
 }
 
 pub async fn inference_list_models(provider_id: &str) -> Result<Outcome<Value>, String> {

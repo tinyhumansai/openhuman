@@ -33,6 +33,7 @@ fn inference_schema_function_names_are_stable() {
     assert!(functions.contains(&"get_client_config"));
     assert!(functions.contains(&"update_model_settings"));
     assert!(functions.contains(&"update_local_settings"));
+    assert!(functions.contains(&"rollback_local_settings"));
     assert!(functions.contains(&"list_models"));
     // Local model presets, device profiling and tiering were removed: the
     // user runs their own local runtime and picks models there.
@@ -156,4 +157,55 @@ async fn inference_prompt_handler_rejects_invalid_shape() {
         .await
         .expect_err("invalid params");
     assert!(err.contains("invalid params"));
+}
+
+/// The connect flow saves local settings under a checkpoint and undoes them
+/// through the rollback RPC when the runtime does not answer (#8172).
+#[tokio::test]
+async fn inference_local_settings_checkpoint_rolls_back_over_rpc() {
+    let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard =
+        crate::config::test_env::EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
+    let ctx = DispatchCtx::ambient();
+    let before = ctx.load_config().await.expect("config").local_ai.provider;
+
+    let params = Map::from_iter([
+        ("provider".to_string(), Value::from("lm_studio")),
+        (
+            "base_url".to_string(),
+            Value::from("http://127.0.0.1:1234/v1"),
+        ),
+        ("api_key".to_string(), Value::from("attempted-key")),
+        ("checkpoint".to_string(), Value::Bool(true)),
+    ]);
+    let saved = handle_inference_update_local_settings(ctx.clone(), params)
+        .await
+        .expect("checkpointed save");
+    let saved = saved.get("result").unwrap_or(&saved);
+    let checkpoint_id = saved["checkpoint_id"]
+        .as_str()
+        .expect("checkpoint_id in the snapshot")
+        .to_string();
+
+    let rollback = |id: String| {
+        let ctx = ctx.clone();
+        async move {
+            let params = Map::from_iter([("checkpoint_id".to_string(), Value::from(id))]);
+            let value = handle_inference_rollback_local_settings(ctx, params)
+                .await
+                .expect("rollback");
+            value.get("result").unwrap_or(&value)["restored"].clone()
+        }
+    };
+    assert_eq!(rollback(checkpoint_id.clone()).await, Value::Bool(true));
+    let restored = ctx.load_config().await.expect("config").local_ai;
+    assert_eq!(restored.provider, before);
+    assert_eq!(restored.api_key, None);
+
+    assert_eq!(
+        rollback(checkpoint_id).await,
+        Value::Bool(false),
+        "a checkpoint is restored once"
+    );
 }

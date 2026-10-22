@@ -19,7 +19,11 @@ import {
   type ProviderAuthError,
   setCloudProviderKey,
 } from '../../../../services/api/aiSettingsApi';
-import { openhumanUpdateLocalAiSettings } from '../../../../utils/tauriCommands/config';
+import {
+  type LocalAiSettingsUpdate,
+  openhumanRollbackLocalAiSettings,
+  openhumanUpdateLocalAiSettings,
+} from '../../../../utils/tauriCommands/config';
 import { presentProviderSetupError } from '../ProviderSetupErrorNotice';
 import {
   type AISettings,
@@ -162,33 +166,36 @@ export function useProviderConnect({
           maskedKey: maskKeyLabel(!isCliLogin),
         };
 
+        let localPatch: LocalAiSettingsUpdate | null = null;
         if (isLocalRuntime && slug === 'ollama') {
-          const baseUrl = endpoint.replace(/\/v1\/?$/, '');
-          await openhumanUpdateLocalAiSettings({
-            base_url: baseUrl,
-            provider: 'ollama',
-            runtime_enabled: true,
-            opt_in_confirmed: true,
-          });
+          localPatch = { base_url: endpoint.replace(/\/v1\/?$/, ''), provider: 'ollama' };
         } else if (isLocalRuntime && slug === 'lmstudio') {
-          await openhumanUpdateLocalAiSettings({
-            base_url: endpoint,
-            provider: 'lm_studio',
-            runtime_enabled: true,
-            opt_in_confirmed: true,
-          });
+          localPatch = { base_url: endpoint, provider: 'lm_studio' };
         } else if (isLocalRuntime && slug === 'omlx') {
           // OMLX: OpenAI-compatible local runtime that also requires a Bearer
           // key. Persist both the endpoint and the key into local_ai (the Rust
           // factory's omlx branch reads `local_ai.api_key` as the Bearer token).
-          await openhumanUpdateLocalAiSettings({
-            base_url: endpoint,
-            api_key: trimmed,
-            provider: 'omlx',
+          localPatch = { base_url: endpoint, api_key: trimmed, provider: 'omlx' };
+        }
+        // The core keeps the previous local settings (key included) under a
+        // checkpoint, so a failed connection check below can put them back
+        // without this screen ever reading the stored key (#8172).
+        let localCheckpointId: string | null = null;
+        if (localPatch) {
+          const saved = await openhumanUpdateLocalAiSettings({
+            ...localPatch,
             runtime_enabled: true,
             opt_in_confirmed: true,
+            checkpoint: true,
           });
+          localCheckpointId = saved.result.checkpoint_id ?? null;
         }
+        const rollbackLocalAi = async () => {
+          if (!localCheckpointId) return;
+          await openhumanRollbackLocalAiSettings(localCheckpointId).catch(rollbackErr =>
+            console.warn(`[ai-settings] rollback local_ai failed slug=${slug}`, rollbackErr)
+          );
+        };
 
         if (slug !== 'openhuman') {
           const currentSettings = latestSettings.current;
@@ -251,6 +258,7 @@ export function useProviderConnect({
                 rollbackErr
               )
             );
+            await rollbackLocalAi();
             throw writeError;
           }
           if (!isCodexOAuth && !isCliLogin) {
@@ -276,6 +284,7 @@ export function useProviderConnect({
                 await flushCloudProviders(priorWireProviders).catch(rollbackErr =>
                   console.warn(`[ai-settings] rollback flush failed slug=${slug}`, rollbackErr)
                 );
+                await rollbackLocalAi();
                 if (isKeyProvider) {
                   await clearCloudProviderKey(slug).catch(rollbackErr =>
                     console.warn(
