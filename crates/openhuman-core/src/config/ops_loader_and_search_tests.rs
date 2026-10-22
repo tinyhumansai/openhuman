@@ -376,6 +376,42 @@ fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
     );
 }
 
+#[test]
+fn client_config_json_exposes_oci_settings_only_on_oci_entries() {
+    use crate::config::schema::cloud_providers::{
+        AuthStyle, CloudProviderCreds, OciAuthMode, OciProviderSettings,
+    };
+    let mut cfg = Config::default();
+    cfg.cloud_providers = vec![
+        CloudProviderCreds {
+            id: "p_oci".into(),
+            slug: "oci".into(),
+            auth_style: AuthStyle::Oci,
+            oci: Some(OciProviderSettings {
+                auth_mode: OciAuthMode::SessionToken,
+                profile: Some("DEFAULT".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        CloudProviderCreds {
+            id: "p_openai".into(),
+            slug: "openai".into(),
+            ..Default::default()
+        },
+    ];
+    let value = client_config_json(&cfg);
+    let providers = value["cloud_providers"]
+        .as_array()
+        .expect("cloud_providers");
+    let oci = providers.iter().find(|p| p["slug"] == "oci").unwrap();
+    assert_eq!(oci["auth_style"], "oci");
+    assert_eq!(oci["oci"]["auth_mode"], "session_token");
+    assert_eq!(oci["oci"]["profile"], "DEFAULT");
+    let openai = providers.iter().find(|p| p["slug"] == "openai").unwrap();
+    assert!(openai.get("oci").is_none());
+}
+
 // ── agent_server_status ────────────────────────────────────────
 
 #[test]

@@ -254,7 +254,7 @@ pub(super) fn resolve_cloud_slug_with_access<'a>(
     // never trip this.
     if (implicit_fallback || credential_access == CredentialAccess::Inspection)
         && key.trim().is_empty()
-        && matches!(entry.auth_style, AuthStyle::Bearer | AuthStyle::Anthropic)
+        && super::oci::entry_requires_stored_key(entry)
     {
         anyhow::bail!("{}", missing_credentials());
     }
@@ -448,7 +448,7 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for
     )
 }
 
-fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
+pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
     role: &str,
     provider: &str,
     config: &Config,
@@ -555,6 +555,35 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
             );
         }
         AuthStyle::Anthropic | AuthStyle::None => {}
+        AuthStyle::Oci => {
+            // OCI Generative AI: the native provider (API key, signed
+            // profile, session token, or principal), not the OpenAI-compatible
+            // builder below. Disclose the egress like every other BYOK slug.
+            crate::security::egress::emit_external_transfer_in(
+                egress,
+                crate::security::egress::EgressDescriptor::inference(&slug, &effective_model, true),
+            );
+            return Some(
+                super::oci::build_oci_chat_model(
+                    &slug,
+                    entry,
+                    key.as_str(),
+                    &effective_model,
+                    temperature_override,
+                )
+                .map(|(chat, endpoint)| {
+                    if let Some(identity) = inspection_identity {
+                        *identity = Some((
+                            endpoint,
+                            key.clone(),
+                            effective_model.clone(),
+                            InspectionOutputBudgetCapability::Bounded,
+                        ));
+                    }
+                    (chat, effective_model.clone())
+                }),
+            );
+        }
         style
             if crate::config::schema::cloud_providers::is_hosted_auth_style_for(
                 extensions, style,
@@ -660,7 +689,7 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         None => None,
     };
     let auth_style = cloud_spec::registry_auth_style(entry.auth_style)
-        .expect("managed JWT entries returned above");
+        .expect("managed JWT and OCI entries returned above");
     let chat = cloud_spec::build_cloud_model(cloud_spec::CloudBuild {
         spec: cloud_spec::cloud_provider_spec(entry, &effective_model),
         auth_style,

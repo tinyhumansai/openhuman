@@ -5,6 +5,7 @@ import { type AISettings, EMPTY_SETTINGS } from '../aiPanelTypes';
 import { useProviderConnect } from '../useProviderConnect';
 
 const api = vi.hoisted(() => ({
+  clearCloudProviderKey: vi.fn(),
   flushCloudProviders: vi.fn(),
   listProviderModels: vi.fn(),
   loadProviderAuthErrors: vi.fn(),
@@ -13,6 +14,7 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../../../../../services/api/aiSettingsApi', async importOriginal => ({
   ...(await importOriginal<typeof import('../../../../../services/api/aiSettingsApi')>()),
+  clearCloudProviderKey: api.clearCloudProviderKey,
   flushCloudProviders: api.flushCloudProviders,
   listProviderModels: api.listProviderModels,
   loadProviderAuthErrors: api.loadProviderAuthErrors,
@@ -20,6 +22,8 @@ vi.mock('../../../../../services/api/aiSettingsApi', async importOriginal => ({
 }));
 
 beforeEach(() => {
+  api.clearCloudProviderKey.mockReset();
+  api.clearCloudProviderKey.mockResolvedValue(undefined);
   api.flushCloudProviders.mockReset();
   api.flushCloudProviders.mockResolvedValue(undefined);
   api.listProviderModels.mockReset();
@@ -356,5 +360,209 @@ describe('useProviderConnect', () => {
         expect.objectContaining({ slug: 'anthropic' }),
       ])
     );
+  });
+
+  describe('OCI Generative AI', () => {
+    const ociProvider = (maskedKey: string) => ({
+      id: 'p_oci',
+      slug: 'oci',
+      label: 'OCI Generative AI',
+      endpoint: 'https://inference.generativeai.us-chicago-1.oci.oraclecloud.com',
+      authStyle: 'oci' as const,
+      maskedKey,
+      oci: {
+        auth_mode: 'api_key' as const,
+        transport: 'openai' as const,
+        region: 'us-chicago-1',
+        project_id: 'p',
+      },
+    });
+    const renderConnect = (settings: AISettings, persist = vi.fn().mockResolvedValue(undefined)) =>
+      renderHook(() =>
+        useProviderConnect({
+          draft: settings,
+          saved: settings,
+          persist,
+          t: key => key,
+          onConnected: vi.fn(),
+        })
+      );
+
+    it('stores the API key after the flush and skips the /models probe', async () => {
+      const persist = vi.fn().mockResolvedValue(undefined);
+      const { result } = renderConnect(EMPTY_SETTINGS, persist);
+      const oci = {
+        auth_mode: 'api_key' as const,
+        transport: 'openai' as const,
+        region: 'us-chicago-1',
+      };
+
+      await act(async () => {
+        await result.current.connectProvider({
+          slug: 'oci',
+          value: ' genai-key ',
+          credentialMode: 'oci',
+          oci,
+        });
+      });
+
+      expect(api.flushCloudProviders).toHaveBeenCalledWith([
+        expect.objectContaining({ slug: 'oci', auth_style: 'oci', oci }),
+      ]);
+      expect(api.setCloudProviderKey).toHaveBeenCalledWith('oci', 'genai-key');
+      expect(api.flushCloudProviders.mock.invocationCallOrder[0]).toBeLessThan(
+        api.setCloudProviderKey.mock.invocationCallOrder[0]
+      );
+      expect(api.listProviderModels).not.toHaveBeenCalled();
+      expect(api.clearCloudProviderKey).not.toHaveBeenCalled();
+      expect(persist).toHaveBeenCalledWith(
+        expect.objectContaining({ cloudProviders: [expect.objectContaining({ slug: 'oci', oci })] })
+      );
+    });
+
+    it('keeps the stored API key when an edit leaves the field blank', async () => {
+      const settings: AISettings = { ...EMPTY_SETTINGS, cloudProviders: [ociProvider('••••key')] };
+      const persist = vi.fn().mockResolvedValue(undefined);
+      const { result } = renderConnect(settings, persist);
+
+      await act(async () => {
+        await result.current.connectProvider({
+          slug: 'oci',
+          value: '',
+          credentialMode: 'oci',
+          oci: {
+            auth_mode: 'api_key',
+            transport: 'actions',
+            region: 'us-chicago-1',
+            compartment_id: 'c',
+          },
+        });
+      });
+
+      expect(api.setCloudProviderKey).not.toHaveBeenCalled();
+      const saved = persist.mock.calls[0][0].cloudProviders[0];
+      expect(saved.maskedKey.startsWith('••••')).toBe(true);
+      expect(saved.oci.transport).toBe('actions');
+    });
+
+    it('drops a stale API key when switching to a signed mode', async () => {
+      const settings: AISettings = { ...EMPTY_SETTINGS, cloudProviders: [ociProvider('••••key')] };
+      const { result } = renderConnect(settings);
+
+      await act(async () => {
+        await result.current.connectProvider({
+          slug: 'oci',
+          value: '',
+          credentialMode: 'oci',
+          oci: {
+            auth_mode: 'session_token',
+            transport: 'openai',
+            profile: 'SESSION',
+            compartment_id: 'c',
+          },
+        });
+      });
+
+      expect(api.clearCloudProviderKey).toHaveBeenCalledWith('oci');
+      expect(api.setCloudProviderKey).not.toHaveBeenCalled();
+      expect(api.listProviderModels).not.toHaveBeenCalled();
+    });
+
+    it('aborts the switch and restores the providers when the key cannot be deleted', async () => {
+      const settings: AISettings = { ...EMPTY_SETTINGS, cloudProviders: [ociProvider('••••key')] };
+      const persist = vi.fn().mockResolvedValue(undefined);
+      api.clearCloudProviderKey.mockRejectedValueOnce(new Error('keyring locked'));
+      const { result } = renderConnect(settings, persist);
+
+      await expect(
+        act(async () => {
+          await result.current.connectProvider({
+            slug: 'oci',
+            value: '',
+            credentialMode: 'oci',
+            oci: {
+              auth_mode: 'config_profile',
+              transport: 'openai',
+              compartment_id: 'c',
+              project_id: 'p',
+            },
+          });
+        })
+      ).rejects.toThrow('keyring locked');
+
+      expect(api.flushCloudProviders).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          slug: 'oci',
+          oci: expect.objectContaining({ auth_mode: 'api_key' }),
+        }),
+      ]);
+      expect(persist).not.toHaveBeenCalled();
+    });
+
+    it('persists a blank endpoint so the core routes by region, keeping explicit overrides', async () => {
+      const oci = {
+        auth_mode: 'api_key' as const,
+        transport: 'openai' as const,
+        region: 'eu-frankfurt-1',
+        project_id: 'p',
+      };
+      const { result } = renderConnect({
+        ...EMPTY_SETTINGS,
+        cloudProviders: [ociProvider('••••key')],
+      });
+      await act(async () => {
+        await result.current.connectProvider({
+          slug: 'oci',
+          value: '',
+          credentialMode: 'oci',
+          oci,
+        });
+      });
+      expect(api.flushCloudProviders).toHaveBeenLastCalledWith([
+        expect.objectContaining({ slug: 'oci', endpoint: '' }),
+      ]);
+
+      const custom = {
+        ...ociProvider('••••key'),
+        id: 'p_oci-private',
+        slug: 'oci-private',
+        label: 'OCI private',
+        endpoint: 'https://genai.private.example.oraclecloud.com',
+      };
+      const { result: second } = renderConnect({ ...EMPTY_SETTINGS, cloudProviders: [custom] });
+      await act(async () => {
+        await second.current.connectProvider({
+          slug: 'oci-private',
+          value: '',
+          credentialMode: 'oci',
+          oci,
+        });
+      });
+      expect(api.flushCloudProviders).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          slug: 'oci-private',
+          label: 'OCI private',
+          auth_style: 'oci',
+          endpoint: 'https://genai.private.example.oraclecloud.com',
+        }),
+      ]);
+    });
+
+    it('rejects a connection without OCI settings and leaves the queue usable', async () => {
+      const { result } = renderConnect(EMPTY_SETTINGS);
+
+      await expect(
+        result.current.connectProvider({ slug: 'oci', value: '', credentialMode: 'oci' })
+      ).rejects.toThrow('OCI settings are required');
+
+      await act(async () => {
+        await result.current.connectProvider({
+          slug: 'openai',
+          value: 'sk-test',
+          credentialMode: 'api_key',
+        });
+      });
+      expect(api.setCloudProviderKey).toHaveBeenCalledWith('openai', 'sk-test');
+    });
   });
 });

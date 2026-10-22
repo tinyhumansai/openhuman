@@ -21,6 +21,7 @@ async fn a_brand_new_workspace_persists_and_reopens_generic_config() {
                     endpoint: "https://fixture.example/v1".to_string(),
                     auth_style: crate::config::schema::AuthStyle::Bearer,
                     default_model: None,
+                    oci: None,
                 });
             true
         }),

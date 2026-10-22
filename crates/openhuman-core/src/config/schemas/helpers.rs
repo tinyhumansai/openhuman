@@ -23,7 +23,7 @@ pub(super) struct CloudProviderUpdate {
     #[serde(default)]
     pub(super) label: Option<String>,
     pub(super) endpoint: String,
-    /// Auth style: "bearer" | "anthropic" | "openhuman_jwt" | "none".
+    /// Auth style: "bearer" | "anthropic" | "openhuman_jwt" | "none" | "oci".
     #[serde(default)]
     pub(super) auth_style: Option<String>,
     /// Optional PEM CA bundle for this provider. Empty string removes it.
@@ -37,6 +37,9 @@ pub(super) struct CloudProviderUpdate {
     /// Legacy field — tolerated on read.
     #[serde(default)]
     pub(super) default_model: Option<String>,
+    /// OCI Generative AI settings (`auth_style = "oci"` only).
+    #[serde(default)]
+    pub(super) oci: Option<crate::config::schema::cloud_providers::OciProviderSettings>,
 }
 
 #[derive(Debug, Deserialize)]

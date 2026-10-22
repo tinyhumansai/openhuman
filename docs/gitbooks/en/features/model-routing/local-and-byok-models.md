@@ -52,17 +52,17 @@ ollama pull moondream:1.8b-v2-q4_K_S   # vision, small
 
 A text-only model on Ollama still accepts an image request. It silently drops the image and answers from the prompt text alone, which reads as a confident but invented description. OpenHuman refuses to route a vision request to a chat-only model, but it helps to know which is which.
 
-| Model                      | Size     | Chat    | Vision  | Embeddings                         |
-| -------------------------- | -------- | ------- | ------- | ---------------------------------- |
-| `gemma3:270m-it-qat`       | 0.2 GB   | Yes     | No      | No                                 |
-| `gemma3:1b-it-qat`         | 1.0 GB   | Yes     | No      | No                                 |
-| `gemma3:4b-it-qat`         | 4.0 GB   | Yes     | Yes     | No                                 |
-| `gemma3n:e4b-it-q8_0`      | 9.5 GB   | Yes     | No      | No                                 |
-| `gemma4:e4b-it-q8_0`       | 11.6 GB  | Yes     | Yes     | No                                 |
-| `moondream:1.8b-v2-q4_K_S` | 1.7 GB   | Minimal | Yes     | No                                 |
-| `llava:7b`                 | 4.7 GB   | Minimal | Yes     | No                                 |
-| `bge-m3`                   | 1.2 GB   | No      | No      | Yes, 1024 dimensions               |
-| `all-minilm:latest`        | 0.05 GB  | No      | No      | 384 dimensions                     |
+| Model                      | Size    | Chat    | Vision | Embeddings           |
+| -------------------------- | ------- | ------- | ------ | -------------------- |
+| `gemma3:270m-it-qat`       | 0.2 GB  | Yes     | No     | No                   |
+| `gemma3:1b-it-qat`         | 1.0 GB  | Yes     | No     | No                   |
+| `gemma3:4b-it-qat`         | 4.0 GB  | Yes     | Yes    | No                   |
+| `gemma3n:e4b-it-q8_0`      | 9.5 GB  | Yes     | No     | No                   |
+| `gemma4:e4b-it-q8_0`       | 11.6 GB | Yes     | Yes    | No                   |
+| `moondream:1.8b-v2-q4_K_S` | 1.7 GB  | Minimal | Yes    | No                   |
+| `llava:7b`                 | 4.7 GB  | Minimal | Yes    | No                   |
+| `bge-m3`                   | 1.2 GB  | No      | No     | Yes, 1024 dimensions |
+| `all-minilm:latest`        | 0.05 GB | No      | No     | 384 dimensions       |
 
 Two traps:
 
@@ -128,6 +128,8 @@ Add your key in the desktop app under the LLM settings. It is stored in the OS k
 
 `openai`, `anthropic`, `google`, `openrouter`, `orcarouter`, `groq`, `mistral`, `deepseek`, `together`, `fireworks`, `cerebras`, `xai`, `moonshot`, `gmi`, `huggingface`, `nvidia`, `zai`, `minimax`, `stepfun`, `kilocode`, `deepinfra`, `novita`, `venice`, `vercel-ai-gateway`, `sumopod`, `modelscope`
 
+`oci` is also built in, but it needs more than a key: its host follows the region you pick, and most of its sign-in methods store no key at all. See [OCI Generative AI](#oci-generative-ai).
+
 Anything else that speaks the OpenAI-compatible API also works. Register it with your own slug and endpoint, and it routes the same way.
 
 For an HTTPS endpoint signed by a private or corporate CA, upload its PEM CA certificate in the custom provider editor. OpenHuman trusts that certificate for this provider's model listing and inference requests. You can also install the CA in the operating system's trust store; on macOS and Linux, `SSL_CERT_FILE` supplies a PEM bundle to the core process.
@@ -150,6 +152,88 @@ To make one provider the default for everything that is not pinned, set `primary
 ### 3. Check that the model supports the workload
 
 BYOK gets your provider's capabilities, not OpenHuman's. Before you pin `vision_provider`, confirm the model accepts image input. Before you pin `embeddings_provider`, confirm the provider serves an embeddings endpoint. Not every chat provider does.
+
+### OCI Generative AI
+
+The `oci` slug talks to Oracle Cloud Infrastructure Generative AI through a native provider, not the OpenAI-compatible shim, so it can use OCI's own authentication. Pick **OCI Generative AI** in the LLM settings, or add an entry by hand. The model is the OCI model id: `oci:openai.gpt-5.5`, `oci:cohere.command-a-03-2025`, `oci:meta.llama-3.3-70b-instruct`.
+
+Everything except the optional API key is plain settings in `config.toml`. Key material for the profile modes is read from your OCI config directory when the model is built and is never copied into OpenHuman's config.
+
+| `auth_mode`             | Credential                                                              | Notes                                                     |
+| ----------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------- |
+| `api_key` (default)     | OCI Generative AI API key, kept in the OS keyring                       | Needs `region`.                                           |
+| `config_profile`        | API-signing-key profile in `~/.oci/config`                              | Region defaults to the profile's.                         |
+| `session_token`         | Session-token profile from `oci session authenticate`                   | Token refreshes are picked up without a restart.          |
+| `resource_principal`    | `OCI_RESOURCE_PRINCIPAL_*` environment (Functions, Container Instances) | Version 2.2 only.                                         |
+| `instance_principal`    | Compute instance identity                                               | Requires a build with the `oci-principals` cargo feature. |
+| `oke_workload_identity` | OKE workload identity                                                   | Requires a build with the `oci-principals` cargo feature. |
+
+`transport` selects the wire protocol:
+
+| `transport`        | Endpoint                                                                          | Required settings                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `openai` (default) | `/openai/v1`, Chat Completions                                                    | `project_id`, the Generative AI project OCID (sent as `OpenAI-Project`). `compartment_id` too, unless `auth_mode = "api_key"`. |
+| `actions`          | `/20231130/actions/v1`, Chat Completions                                          | `compartment_id`                                                                                                               |
+| `native_generic`   | `/20231130/actions/chat`, `apiFormat: GENERIC` (Meta, xAI, Google, OpenAI-family) | `compartment_id`                                                                                                               |
+| `native_cohere`    | `/20231130/actions/chat`, `apiFormat: COHERE` (Cohere Command)                    | `compartment_id`                                                                                                               |
+
+Set `dedicated_endpoint_id` to address a dedicated AI cluster endpoint instead of an on-demand model. The service host comes from `region`. Leave the entry's `endpoint` blank unless you need a different host, such as another realm or a private endpoint; a non-blank `endpoint` replaces the region-derived host.
+
+```toml
+# API key (stored in the keyring from the settings panel)
+[[cloud_providers]]
+slug = "oci"
+label = "OCI Generative AI"
+auth_style = "oci"
+[cloud_providers.oci]
+auth_mode = "api_key"
+region = "us-chicago-1"
+project_id = "ocid1.generativeaiproject.oc1..<your-project>"
+transport = "openai"
+
+# API-signing-key profile, native Cohere chat
+[[cloud_providers]]
+slug = "oci-cohere"
+auth_style = "oci"
+[cloud_providers.oci]
+auth_mode = "config_profile"
+config_file = "~/.oci/config"   # optional; default $OCI_CLI_CONFIG_FILE or ~/.oci/config
+profile = "DEFAULT"
+compartment_id = "ocid1.compartment.oc1..<your-compartment>"
+transport = "native_cohere"
+
+# Session token (run `oci session authenticate --profile-name SESSION` first)
+[[cloud_providers]]
+slug = "oci-session"
+auth_style = "oci"
+[cloud_providers.oci]
+auth_mode = "session_token"
+profile = "SESSION"
+region = "us-chicago-1"
+compartment_id = "ocid1.compartment.oc1..<your-compartment>"
+transport = "native_generic"
+
+# Principals (no stored secret)
+[[cloud_providers]]
+slug = "oci-principal"
+auth_style = "oci"
+[cloud_providers.oci]
+auth_mode = "instance_principal"   # or "resource_principal" / "oke_workload_identity"
+region = "us-ashburn-1"
+compartment_id = "ocid1.compartment.oc1..<your-compartment>"
+project_id = "ocid1.generativeaiproject.oc1..<your-project>"
+transport = "openai"
+```
+
+Workload routes are top-level keys. Put them at the top of `config.toml`, above the first `[[cloud_providers]]` header: below it, TOML reads them as part of the last `[cloud_providers.oci]` table and they route nothing.
+
+```toml
+# Top of config.toml, before any [[cloud_providers]] table
+chat_provider = "oci:openai.gpt-5.5"
+reasoning_provider = "oci-cohere:cohere.command-a-03-2025"
+```
+
+Errors name the missing field (`oci.region`, `oci.compartment_id`, `oci.project_id`) or the mismatch (a session-token profile used with `config_profile`). The model dropdown cannot list OCI models, so type the model id.
 
 ## Mixing routes
 

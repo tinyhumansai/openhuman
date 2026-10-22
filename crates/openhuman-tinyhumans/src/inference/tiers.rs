@@ -163,6 +163,7 @@ pub(crate) fn normalize_config(config: &mut Config) -> bool {
                     .to_string(),
                 auth_style: preset.auth_style,
                 default_model: config.default_model.clone(),
+                oci: None,
             },
         );
         changed = true;

@@ -5097,6 +5097,41 @@ const messages: TranslationMap = {
   'settings.layout.corners.none': 'কোনোটিই নয়',
 
   'settings.layout.corners.round': 'গোলাকার',
+
+  'settings.ai.oci.description':
+    'Oracle Cloud Infrastructure Generative AI-এর সাথে সংযুক্ত হন। অনুরোধ কীভাবে প্রমাণীকৃত হবে এবং কোন প্রোটোকল ব্যবহৃত হবে তা বেছে নিন।',
+  'settings.ai.oci.authMode': 'প্রমাণীকরণ',
+  'settings.ai.oci.mode.apiKey': 'API কী',
+  'settings.ai.oci.mode.configProfile': 'OCI কনফিগ প্রোফাইল',
+  'settings.ai.oci.mode.sessionToken': 'সেশন টোকেন',
+  'settings.ai.oci.mode.resourcePrincipal': 'রিসোর্স প্রিন্সিপাল',
+  'settings.ai.oci.mode.instancePrincipal': 'ইনস্ট্যান্স প্রিন্সিপাল',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE ওয়ার্কলোড আইডেন্টিটি',
+  'settings.ai.oci.apiKeyKeepHint':
+    'এই ডিভাইসে এনক্রিপ্ট করে সংরক্ষিত। সংরক্ষিত কী রাখতে ফাঁকা রাখুন।',
+  'settings.ai.oci.configFile': 'OCI কনফিগ ফাইল',
+  'settings.ai.oci.profile': 'প্রোফাইল',
+  'settings.ai.oci.profileHint':
+    'সাইনিং কী প্রয়োজনে আপনার OCI কনফিগ থেকে পড়া হয় এবং কখনও OpenHuman-এ কপি করা হয় না।',
+  'settings.ai.oci.principalHint':
+    'কোনো গোপন তথ্য সংরক্ষিত হয় না। ক্রেডেনশিয়াল OCI রানটাইম পরিবেশ থেকে আসে।',
+  'settings.ai.oci.principalBuildHint':
+    'Instance principal এবং OKE ওয়ার্কলোড আইডেন্টিটির জন্য OCI principals সমর্থন সহ বিল্ড প্রয়োজন।',
+  'settings.ai.oci.region': 'অঞ্চল',
+  'settings.ai.oci.compartment': 'কম্পার্টমেন্ট OCID',
+  'settings.ai.oci.project': 'Generative AI প্রকল্পের OCID',
+  'settings.ai.oci.transport': 'প্রোটোকল',
+  'settings.ai.oci.transport.openai': 'OpenAI-সামঞ্জস্যপূর্ণ',
+  'settings.ai.oci.transport.actions': 'OpenAI-সামঞ্জস্যপূর্ণ (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'নেটিভ চ্যাট (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'নেটিভ চ্যাট (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'ডেডিকেটেড এন্ডপয়েন্টের OCID (ঐচ্ছিক)',
+  'settings.ai.oci.regionRequired': 'অঞ্চল আবশ্যক (যেমন us-chicago-1)।',
+  'settings.ai.oci.compartmentRequired':
+    'এই প্রোটোকল ও সাইন-ইন পদ্ধতির জন্য কম্পার্টমেন্ট OCID প্রয়োজন।',
+  'settings.ai.oci.projectRequired':
+    'OpenAI-সামঞ্জস্যপূর্ণ প্রোটোকলের জন্য Generative AI প্রকল্পের OCID প্রয়োজন।',
+  'settings.ai.oci.editSettings': 'OCI সেটিংস সম্পাদনা করুন',
 };
 
 export default messages;

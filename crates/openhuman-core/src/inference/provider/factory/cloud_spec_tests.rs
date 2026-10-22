@@ -59,7 +59,9 @@ fn managed_jwt_style_never_maps_onto_the_registry() {
 #[test]
 fn registry_builds_a_model_for_every_unmanaged_builtin_preset() {
     for preset in crate::config::schema::cloud_providers::builtin_cloud_providers().iter() {
-        if preset.auth_style == AuthStyle::OpenhumanJwt {
+        // The managed route and OCI (its own native provider) never reach the
+        // compatible registry.
+        if matches!(preset.auth_style, AuthStyle::OpenhumanJwt | AuthStyle::Oci) {
             continue;
         }
         let creds = entry(preset.slug, preset.endpoint, preset.auth_style);
@@ -103,4 +105,11 @@ fn discovery_request_uses_x_api_key_for_anthropic_and_skips_codex_oauth() {
     let mut with_oauth = build(&openai, "gpt", "tok");
     with_oauth.codex = Some(&oauth);
     assert!(cloud_discovery_request(&with_oauth).is_none());
+}
+
+#[test]
+fn oci_has_no_compatible_registry_auth_style() {
+    assert_eq!(registry_auth_style(AuthStyle::Oci), None);
+    assert_eq!(registry_auth_style(AuthStyle::OpenhumanJwt), None);
+    assert!(registry_auth_style(AuthStyle::Bearer).is_some());
 }

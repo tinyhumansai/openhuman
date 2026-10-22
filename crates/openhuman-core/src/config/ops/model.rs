@@ -216,6 +216,7 @@ fn complete_byok_route(config: &mut Config, explicit: &ExplicitRolePins) {
                 endpoint: endpoint.clone(),
                 auth_style: AuthStyle::Bearer,
                 default_model: Some(model.clone()),
+                oci: None,
             });
             BYOK_INFERENCE_SLUG.to_string()
         }

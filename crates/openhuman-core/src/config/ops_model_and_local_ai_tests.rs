@@ -214,6 +214,7 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             endpoint: "https://api.tinyhumans.ai".into(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: Some("reasoning-v1".into()),
+            oci: None,
         },
         CloudProviderCreds {
             id: "myopenai-1".into(),
@@ -222,6 +223,7 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             endpoint: "https://api.openai.com".into(),
             auth_style: AuthStyle::Bearer,
             default_model: Some("gpt-4o".into()),
+            oci: None,
         },
     ];
 
@@ -237,6 +239,7 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             endpoint: "https://api.openai.com/v1".into(),
             auth_style: AuthStyle::Bearer,
             default_model: Some("gpt-4o-mini".into()),
+            oci: None,
         }]),
         ..Default::default()
     };
@@ -278,6 +281,7 @@ async fn apply_model_settings_does_not_double_add_reserved_entries() {
         endpoint: "https://api.tinyhumans.ai".into(),
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: Some("reasoning-v1".into()),
+        oci: None,
     }];
 
     let patch = ModelSettingsPatch {
@@ -288,6 +292,7 @@ async fn apply_model_settings_does_not_double_add_reserved_entries() {
             endpoint: "https://api.tinyhumans.ai".into(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: Some("reasoning-v1".into()),
+            oci: None,
         }]),
         ..Default::default()
     };

@@ -23,7 +23,39 @@ export interface ModelRoute {
 }
 
 /** Authentication header style. Matches Rust AuthStyle enum. */
-export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
+export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none' | 'oci';
+
+/** How OCI Generative AI requests authenticate. Matches Rust `OciAuthMode`. */
+export type OciAuthMode =
+  | 'api_key'
+  | 'config_profile'
+  | 'session_token'
+  | 'resource_principal'
+  | 'instance_principal'
+  | 'oke_workload_identity';
+
+/** Wire protocol to OCI Generative AI. Matches Rust `OciTransportKind`. */
+export type OciTransport = 'openai' | 'actions' | 'native_generic' | 'native_cohere';
+
+/**
+ * Non-secret OCI Generative AI settings carried on an `auth_style: 'oci'`
+ * provider entry. Matches Rust `OciProviderSettings`. The only secret an OCI
+ * provider owns is the GenAI API key for `api_key` mode, which is stored in
+ * the keyring like every other provider key (never here).
+ */
+export interface OciSettings {
+  auth_mode: OciAuthMode;
+  /** OCI config file for the profile modes; empty ⇒ `~/.oci/config`. */
+  config_file?: string;
+  /** Profile inside the config file; empty ⇒ `DEFAULT`. */
+  profile?: string;
+  region?: string;
+  compartment_id?: string;
+  project_id?: string;
+  transport: OciTransport;
+  /** Dedicated AI cluster endpoint OCID; empty ⇒ on-demand serving. */
+  dedicated_endpoint_id?: string;
+}
 
 /**
  * Endpoint config for one cloud LLM provider (new slug-keyed shape).
@@ -41,6 +73,8 @@ export interface CloudProviderCreds {
   auth_style: AuthStyle;
   /** Optional PEM CA bundle trusted only for this provider. */
   ca_cert_pem?: string | null;
+  /** Present only on `auth_style: 'oci'` entries. */
+  oci?: OciSettings;
 }
 
 /**
@@ -89,7 +123,7 @@ export interface ModelSettingsUpdate {
   /**
    * When present, REPLACES `config.cloud_providers` wholesale. API keys are
    * NOT carried here — store them via `authStoreProviderCredentials`.
-   * Each entry: { id?, slug, label?, endpoint, auth_style? }
+   * Each entry: { id?, slug, label?, endpoint, auth_style?, oci? }
    */
   cloud_providers?: CloudProviderCreds[] | null;
   /**

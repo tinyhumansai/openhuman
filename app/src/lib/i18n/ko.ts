@@ -5047,6 +5047,40 @@ const messages: TranslationMap = {
 
   'settings.layout.contrast.subtle': '은은하게',
   'settings.layout.contrast.default': '기본값',
+
+  'settings.ai.oci.description':
+    'Oracle Cloud Infrastructure Generative AI에 연결합니다. 요청 인증 방식과 사용할 프로토콜을 선택하세요.',
+  'settings.ai.oci.authMode': '인증',
+  'settings.ai.oci.mode.apiKey': 'API 키',
+  'settings.ai.oci.mode.configProfile': 'OCI 구성 프로필',
+  'settings.ai.oci.mode.sessionToken': '세션 토큰',
+  'settings.ai.oci.mode.resourcePrincipal': '리소스 프린시펄',
+  'settings.ai.oci.mode.instancePrincipal': '인스턴스 프린시펄',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE 워크로드 ID',
+  'settings.ai.oci.apiKeyKeepHint':
+    '이 기기에 암호화되어 저장됩니다. 비워 두면 저장된 키를 유지합니다.',
+  'settings.ai.oci.configFile': 'OCI 구성 파일',
+  'settings.ai.oci.profile': '프로필',
+  'settings.ai.oci.profileHint':
+    '서명 키는 필요할 때 OCI 구성에서 읽으며 OpenHuman에 복사되지 않습니다.',
+  'settings.ai.oci.principalHint':
+    '저장되는 비밀 정보가 없습니다. 자격 증명은 OCI 런타임 환경에서 가져옵니다.',
+  'settings.ai.oci.principalBuildHint':
+    '인스턴스 프린시펄과 OKE 워크로드 ID는 OCI 프린시펄을 지원하는 빌드가 필요합니다.',
+  'settings.ai.oci.region': '리전',
+  'settings.ai.oci.compartment': '구획 OCID',
+  'settings.ai.oci.project': 'Generative AI 프로젝트 OCID',
+  'settings.ai.oci.transport': '프로토콜',
+  'settings.ai.oci.transport.openai': 'OpenAI 호환',
+  'settings.ai.oci.transport.actions': 'OpenAI 호환(actions)',
+  'settings.ai.oci.transport.nativeGeneric': '네이티브 채팅(Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': '네이티브 채팅(Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': '전용 엔드포인트 OCID(선택 사항)',
+  'settings.ai.oci.regionRequired': '리전은 필수입니다(예: us-chicago-1).',
+  'settings.ai.oci.compartmentRequired': '이 프로토콜과 로그인 방식에는 구획 OCID가 필요합니다.',
+  'settings.ai.oci.projectRequired':
+    'OpenAI 호환 프로토콜에는 Generative AI 프로젝트 OCID가 필요합니다.',
+  'settings.ai.oci.editSettings': 'OCI 설정 편집',
 };
 
 export default messages;

@@ -5096,6 +5096,41 @@ const messages: TranslationMap = {
   'onboarding.custom.localDefaultDisabledReason':
     'प्रबंधित सेटअप के लिए OpenHuman खाता आवश्यक है। लोकल सेशन में आपको हर सेवा खुद कॉन्फ़िगर करनी होती है।',
   'settings.layout.contrast.strong': 'मज़बूत',
+
+  'settings.ai.oci.description':
+    'Oracle Cloud Infrastructure Generative AI से कनेक्ट करें। चुनें कि अनुरोध कैसे प्रमाणित हों और कौन सा प्रोटोकॉल उपयोग हो।',
+  'settings.ai.oci.authMode': 'प्रमाणीकरण',
+  'settings.ai.oci.mode.apiKey': 'API कुंजी',
+  'settings.ai.oci.mode.configProfile': 'OCI कॉन्फ़िग प्रोफ़ाइल',
+  'settings.ai.oci.mode.sessionToken': 'सेशन टोकन',
+  'settings.ai.oci.mode.resourcePrincipal': 'संसाधन प्रिंसिपल',
+  'settings.ai.oci.mode.instancePrincipal': 'इंस्टेंस प्रिंसिपल',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE वर्कलोड आइडेंटिटी',
+  'settings.ai.oci.apiKeyKeepHint':
+    'इस डिवाइस पर एन्क्रिप्टेड रूप में स्टोर है। सहेजी हुई key रखने के लिए खाली छोड़ें।',
+  'settings.ai.oci.configFile': 'OCI कॉन्फ़िग फ़ाइल',
+  'settings.ai.oci.profile': 'प्रोफ़ाइल',
+  'settings.ai.oci.profileHint':
+    'साइनिंग keys ज़रूरत पड़ने पर आपके OCI कॉन्फ़िग से पढ़ी जाती हैं और OpenHuman में कभी कॉपी नहीं होतीं।',
+  'settings.ai.oci.principalHint':
+    'कोई सीक्रेट स्टोर नहीं होता। क्रेडेंशियल OCI रनटाइम परिवेश से आते हैं।',
+  'settings.ai.oci.principalBuildHint':
+    'Instance principal और OKE वर्कलोड आइडेंटिटी के लिए OCI principals सपोर्ट वाला बिल्ड चाहिए।',
+  'settings.ai.oci.region': 'रीजन',
+  'settings.ai.oci.compartment': 'कम्पार्टमेंट OCID',
+  'settings.ai.oci.project': 'Generative AI प्रोजेक्ट OCID',
+  'settings.ai.oci.transport': 'प्रोटोकॉल',
+  'settings.ai.oci.transport.openai': 'OpenAI-संगत',
+  'settings.ai.oci.transport.actions': 'OpenAI-संगत (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'नेटिव चैट (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'नेटिव चैट (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'डेडिकेटेड एंडपॉइंट OCID (वैकल्पिक)',
+  'settings.ai.oci.regionRequired': 'रीजन आवश्यक है (उदाहरण: us-chicago-1)।',
+  'settings.ai.oci.compartmentRequired':
+    'इस प्रोटोकॉल और साइन-इन तरीके के लिए कम्पार्टमेंट OCID आवश्यक है।',
+  'settings.ai.oci.projectRequired':
+    'OpenAI-संगत प्रोटोकॉल के लिए Generative AI प्रोजेक्ट OCID आवश्यक है।',
+  'settings.ai.oci.editSettings': 'OCI सेटिंग्स संपादित करें',
 };
 
 export default messages;

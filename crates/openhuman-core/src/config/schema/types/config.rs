@@ -400,6 +400,8 @@ pub struct Config {
     //   "openrouter:<model>"   → type=openrouter; Bearer auth
     //   "orcarouter:<model>"   → type=orcarouter; Bearer auth (e.g. "orcarouter:orcarouter/auto")
     //   "custom:<model>"       → type=custom; Bearer auth
+    //   "oci:<model>"          → auth_style=oci; OCI Generative AI native provider
+    //                            (settings in `CloudProviderCreds::oci`, e.g. "oci:xai.grok-4")
     //   "ollama:<model>"       → local Ollama at config.local_ai.base_url
     //
     // Per-workload fields default to None, which the factory treats as "cloud".

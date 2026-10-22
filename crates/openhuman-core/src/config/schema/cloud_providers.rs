@@ -28,6 +28,8 @@ static HOSTED_CLOUD_IDENTITY: HookSlot<HostedCloudIdentityClassifier> =
 static HOSTED_AUTH_STYLE: HookSlot<HostedAuthStyleClassifier> =
     HookSlot::new("config::hosted_auth_style");
 
+pub use super::oci_settings::{OciAuthMode, OciProviderSettings, OciTransportKind};
+
 /// A built-in cloud provider preset in the host's [`AuthStyle`] vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltinCloudProvider {
@@ -104,6 +106,7 @@ impl From<&tinyinference_providers::builtin::BuiltinCloudProvider> for BuiltinCl
             auth_style: match preset.auth_style {
                 BuiltinAuthStyle::Bearer => AuthStyle::Bearer,
                 BuiltinAuthStyle::Anthropic => AuthStyle::Anthropic,
+                BuiltinAuthStyle::Oci => AuthStyle::Oci,
             },
         }
     }
@@ -148,6 +151,7 @@ pub fn builtin_presets() -> BuiltinPresets {
         // converted into runtime bearer authentication.
         auth_style: match preset.auth_style {
             AuthStyle::Anthropic => BuiltinAuthStyle::Anthropic,
+            AuthStyle::Oci => BuiltinAuthStyle::Oci,
             AuthStyle::Bearer | AuthStyle::OpenhumanJwt | AuthStyle::None => {
                 BuiltinAuthStyle::Bearer
             }
@@ -188,6 +192,9 @@ pub enum AuthStyle {
     OpenhumanJwt,
     /// No auth header — e.g. local Ollama.
     None,
+    /// OCI Generative AI. Authentication (API key, signed profile, session
+    /// token, or a principal) is described by [`CloudProviderCreds::oci`].
+    Oci,
 }
 
 impl AuthStyle {
@@ -198,8 +205,9 @@ impl AuthStyle {
             "anthropic" => Ok(Self::Anthropic),
             "openhuman_jwt" | "openhumanjwt" => Ok(Self::OpenhumanJwt),
             "none" => Ok(Self::None),
+            "oci" => Ok(Self::Oci),
             other => Err(format!(
-                "unknown auth_style '{}'; valid: bearer, anthropic, openhuman_jwt, none",
+                "unknown auth_style '{}'; valid: bearer, anthropic, openhuman_jwt, none, oci",
                 other
             )),
         }
@@ -211,6 +219,7 @@ impl AuthStyle {
             Self::Anthropic => "anthropic",
             Self::OpenhumanJwt => "openhuman_jwt",
             Self::None => "none",
+            Self::Oci => "oci",
         }
     }
 }
@@ -246,6 +255,12 @@ pub struct CloudProviderCreds {
     // inference settings RPC depend on this field; replacement needs route migration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+
+    /// OCI Generative AI settings; only meaningful when
+    /// `auth_style == AuthStyle::Oci`. Non-secret: the API key (api_key mode)
+    /// stays in the credential store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oci: Option<OciProviderSettings>,
 }
 
 impl Default for CloudProviderCreds {
@@ -257,6 +272,7 @@ impl Default for CloudProviderCreds {
             endpoint: String::new(),
             auth_style: AuthStyle::Bearer,
             default_model: None,
+            oci: None,
         }
     }
 }

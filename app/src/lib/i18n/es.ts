@@ -5200,6 +5200,41 @@ const messages: TranslationMap = {
   'flows.nodeKind.dedup': 'Omitir duplicados',
 
   'settings.layout.corners.round': 'Redondeado',
+
+  'settings.ai.oci.description':
+    'Conéctate a Oracle Cloud Infrastructure Generative AI. Elige cómo se autentican las solicitudes y qué protocolo usar.',
+  'settings.ai.oci.authMode': 'Autenticación',
+  'settings.ai.oci.mode.apiKey': 'Clave de API',
+  'settings.ai.oci.mode.configProfile': 'Perfil de configuración de OCI',
+  'settings.ai.oci.mode.sessionToken': 'Token de sesión',
+  'settings.ai.oci.mode.resourcePrincipal': 'Entidad principal de recurso',
+  'settings.ai.oci.mode.instancePrincipal': 'Entidad principal de instancia',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'Identidad de carga de trabajo de OKE',
+  'settings.ai.oci.apiKeyKeepHint':
+    'Almacenada cifrada en este dispositivo. Déjalo en blanco para conservar la clave guardada.',
+  'settings.ai.oci.configFile': 'Archivo de configuración de OCI',
+  'settings.ai.oci.profile': 'Perfil',
+  'settings.ai.oci.profileHint':
+    'Las claves de firma se leen de tu configuración de OCI cuando hacen falta y nunca se copian a OpenHuman.',
+  'settings.ai.oci.principalHint':
+    'No se almacena ningún secreto. Las credenciales provienen del entorno de ejecución de OCI.',
+  'settings.ai.oci.principalBuildHint':
+    'Instance principal y la identidad de carga de trabajo de OKE requieren una compilación con compatibilidad con principals de OCI.',
+  'settings.ai.oci.region': 'Región',
+  'settings.ai.oci.compartment': 'OCID del compartimento',
+  'settings.ai.oci.project': 'OCID del proyecto de Generative AI',
+  'settings.ai.oci.transport': 'Protocolo',
+  'settings.ai.oci.transport.openai': 'Compatible con OpenAI',
+  'settings.ai.oci.transport.actions': 'Compatible con OpenAI (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'Chat nativo (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'Chat nativo (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'OCID del endpoint dedicado (opcional)',
+  'settings.ai.oci.regionRequired': 'La región es obligatoria (por ejemplo, us-chicago-1).',
+  'settings.ai.oci.compartmentRequired':
+    'Se requiere el OCID del compartimento para este protocolo y método de inicio de sesión.',
+  'settings.ai.oci.projectRequired':
+    'Se requiere el OCID del proyecto de Generative AI para el protocolo compatible con OpenAI.',
+  'settings.ai.oci.editSettings': 'Editar ajustes de OCI',
 };
 
 export default messages;

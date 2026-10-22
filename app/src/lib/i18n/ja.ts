@@ -5453,6 +5453,41 @@ const messages: TranslationMap = {
   'settings.layout.corners.round': '丸み',
 
   'settings.layout.contrast.strong': '強',
+
+  'settings.ai.oci.description':
+    'Oracle Cloud Infrastructure Generative AI に接続します。リクエストの認証方法と使用するプロトコルを選択してください。',
+  'settings.ai.oci.authMode': '認証',
+  'settings.ai.oci.mode.apiKey': 'API キー',
+  'settings.ai.oci.mode.configProfile': 'OCI 構成プロファイル',
+  'settings.ai.oci.mode.sessionToken': 'セッショントークン',
+  'settings.ai.oci.mode.resourcePrincipal': 'リソースプリンシパル',
+  'settings.ai.oci.mode.instancePrincipal': 'インスタンスプリンシパル',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE ワークロードアイデンティティ',
+  'settings.ai.oci.apiKeyKeepHint':
+    'このデバイスに暗号化して保存されます。保存済みのキーを使い続ける場合は空欄のままにしてください。',
+  'settings.ai.oci.configFile': 'OCI 構成ファイル',
+  'settings.ai.oci.profile': 'プロファイル',
+  'settings.ai.oci.profileHint':
+    '署名キーは必要なときに OCI 構成から読み込まれ、OpenHuman にコピーされることはありません。',
+  'settings.ai.oci.principalHint':
+    'シークレットは保存されません。認証情報は OCI のランタイム環境から取得されます。',
+  'settings.ai.oci.principalBuildHint':
+    'インスタンスプリンシパルと OKE ワークロードアイデンティティには、OCI プリンシパル対応のビルドが必要です。',
+  'settings.ai.oci.region': 'リージョン',
+  'settings.ai.oci.compartment': 'コンパートメント OCID',
+  'settings.ai.oci.project': 'Generative AI プロジェクト OCID',
+  'settings.ai.oci.transport': 'プロトコル',
+  'settings.ai.oci.transport.openai': 'OpenAI 互換',
+  'settings.ai.oci.transport.actions': 'OpenAI 互換（actions）',
+  'settings.ai.oci.transport.nativeGeneric': 'ネイティブチャット（Meta、xAI、Google、OpenAI）',
+  'settings.ai.oci.transport.nativeCohere': 'ネイティブチャット（Cohere）',
+  'settings.ai.oci.dedicatedEndpoint': '専用エンドポイント OCID（任意）',
+  'settings.ai.oci.regionRequired': 'リージョンは必須です（例: us-chicago-1）。',
+  'settings.ai.oci.compartmentRequired':
+    'このプロトコルとサインイン方法にはコンパートメント OCID が必要です。',
+  'settings.ai.oci.projectRequired':
+    'OpenAI 互換プロトコルには Generative AI プロジェクト OCID が必要です。',
+  'settings.ai.oci.editSettings': 'OCI 設定を編集',
 };
 
 export default messages;

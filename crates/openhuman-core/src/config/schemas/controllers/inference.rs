@@ -118,24 +118,7 @@ pub(super) fn handle_update_model_settings(
                             } else {
                                 e.endpoint
                             };
-                            let auth_style = match e
-                                .auth_style
-                                .as_deref()
-                                .unwrap_or(legacy_auth)
-                                .to_ascii_lowercase()
-                                .as_str()
-                            {
-                                "bearer" => AuthStyle::Bearer,
-                                "anthropic" => AuthStyle::Anthropic,
-                                "openhuman_jwt" | "openhumanjwt" => AuthStyle::OpenhumanJwt,
-                                "none" => AuthStyle::None,
-                                other => {
-                                    return Err(format!(
-                                        "unknown auth_style '{}'; valid: bearer, anthropic, openhuman_jwt, none",
-                                        other
-                                    ))
-                                }
-                            };
+                            let auth_style = AuthStyle::parse(e.auth_style.as_deref().unwrap_or(legacy_auth))?;
                             let id = e
                                 .id
                                 .filter(|s| !s.trim().is_empty())
@@ -151,6 +134,7 @@ pub(super) fn handle_update_model_settings(
                                 endpoint,
                                 auth_style,
                                 default_model: e.default_model,
+                                oci: e.oci,
                             };
                             Ok(entry)
                         })

@@ -86,7 +86,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 FieldSchema {
                     name: "cloud_providers",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                    comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style, ca_cert_pem}. The optional PEM CA bundle is trusted only for this provider; an empty string clears it. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
+                    comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style, ca_cert_pem, oci?}. auth_style is one of bearer, anthropic, openhuman_jwt, none, oci; `oci` carries the non-secret OCI Generative AI settings {auth_mode, config_file, profile, region, compartment_id, project_id, transport, dedicated_endpoint_id}. The optional PEM CA bundle is trusted only for this provider; an empty string clears it. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
                     required: false,
                 },
                 optional_string("primary_cloud", "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears."),

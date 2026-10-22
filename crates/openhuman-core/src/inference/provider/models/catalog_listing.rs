@@ -221,6 +221,21 @@ pub async fn list_configured_models_from_config(
         };
     }
 
+    // OCI Generative AI signs (or bears an API key on) each request and its
+    // model catalog is a control-plane API, not an OpenAI `/models` route, so
+    // there is nothing to probe here. Return an empty list; the settings UI
+    // takes a typed OCI model id (e.g. `openai.gpt-5.5`).
+    if entry.auth_style == crate::config::schema::cloud_providers::AuthStyle::Oci {
+        log::debug!(
+            "[providers][list_models] oci slug={} model listing unavailable; returning empty list",
+            entry.slug
+        );
+        return Ok(crate::core::Outcome::new(
+            serde_json::json!({ "models": Vec::<ModelInfo>::new() }),
+            vec!["OCI Generative AI model listing is not available; enter a model id".to_string()],
+        ));
+    }
+
     // Sentry TAURI-RUST-114C/114D: the app stores Claude Code with the cosmetic
     // endpoint `cli://claude-code`. It runs as a local CLI and has no `/models`
     // listing, and reqwest cannot build a request for a non-http(s) URL, so the

@@ -5141,6 +5141,41 @@ const messages: TranslationMap = {
   'flows.nodeKind.loop': 'Loop',
 
   'settings.layout.corners.round': 'Membulat',
+
+  'settings.ai.oci.description':
+    'Hubungkan ke Oracle Cloud Infrastructure Generative AI. Pilih cara permintaan diautentikasi dan protokol yang digunakan.',
+  'settings.ai.oci.authMode': 'Autentikasi',
+  'settings.ai.oci.mode.apiKey': 'Kunci API',
+  'settings.ai.oci.mode.configProfile': 'Profil konfigurasi OCI',
+  'settings.ai.oci.mode.sessionToken': 'Token sesi',
+  'settings.ai.oci.mode.resourcePrincipal': 'Prinsipal sumber daya',
+  'settings.ai.oci.mode.instancePrincipal': 'Prinsipal instans',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'Identitas workload OKE',
+  'settings.ai.oci.apiKeyKeepHint':
+    'Disimpan terenkripsi di perangkat ini. Biarkan kosong untuk mempertahankan key yang tersimpan.',
+  'settings.ai.oci.configFile': 'File konfigurasi OCI',
+  'settings.ai.oci.profile': 'Profil',
+  'settings.ai.oci.profileHint':
+    'Key penandatanganan dibaca dari konfigurasi OCI Anda saat dibutuhkan dan tidak pernah disalin ke OpenHuman.',
+  'settings.ai.oci.principalHint':
+    'Tidak ada rahasia yang disimpan. Kredensial berasal dari lingkungan runtime OCI.',
+  'settings.ai.oci.principalBuildHint':
+    'Instance principal dan identitas workload OKE memerlukan build dengan dukungan principal OCI.',
+  'settings.ai.oci.region': 'Region',
+  'settings.ai.oci.compartment': 'OCID compartment',
+  'settings.ai.oci.project': 'OCID proyek Generative AI',
+  'settings.ai.oci.transport': 'Protokol',
+  'settings.ai.oci.transport.openai': 'Kompatibel dengan OpenAI',
+  'settings.ai.oci.transport.actions': 'Kompatibel dengan OpenAI (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'Chat native (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'Chat native (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'OCID endpoint khusus (opsional)',
+  'settings.ai.oci.regionRequired': 'Region wajib diisi (misalnya us-chicago-1).',
+  'settings.ai.oci.compartmentRequired':
+    'OCID compartment wajib diisi untuk protokol dan metode masuk ini.',
+  'settings.ai.oci.projectRequired':
+    'OCID proyek Generative AI wajib diisi untuk protokol yang kompatibel dengan OpenAI.',
+  'settings.ai.oci.editSettings': 'Edit pengaturan OCI',
 };
 
 export default messages;

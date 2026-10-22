@@ -55,14 +55,23 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         .cloud_providers
         .iter()
         .map(|c| {
-            serde_json::json!({
+            let mut entry = serde_json::json!({
                 "id": c.id,
                 "slug": c.slug,
                 "label": c.label,
                 "endpoint": c.endpoint,
                 "auth_style": c.auth_style.as_str(),
                 "ca_cert_pem": config.cloud_provider_ca_certs.get(&c.slug),
-            })
+            });
+            // Non-secret OCI settings only; present solely on OCI entries so
+            // every other provider's snapshot shape is unchanged.
+            if let (Some(oci), Some(map)) = (c.oci.as_ref(), entry.as_object_mut()) {
+                map.insert(
+                    "oci".to_string(),
+                    serde_json::to_value(oci).unwrap_or(serde_json::Value::Null),
+                );
+            }
+            entry
         })
         .collect();
     let model_registry: Vec<serde_json::Value> = config

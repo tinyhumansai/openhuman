@@ -28,6 +28,7 @@ import {
   type OllamaState,
   type ProviderRef,
   type RoutingMap,
+  toWireCloudProvider,
 } from './aiPanelTypes';
 
 /** Providers with no `/models` endpoint, never re-probed at save time. */
@@ -42,6 +43,7 @@ function toPanelProvider(p: CloudProviderView): CloudProvider {
     caCertPem: p.ca_cert_pem ?? '',
     authStyle: p.auth_style,
     maskedKey: maskKeyLabel(p.has_api_key),
+    ...(p.oci ? { oci: p.oci } : {}),
   };
 }
 
@@ -77,6 +79,7 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       ca_cert_pem: p.caCertPem ?? '',
       auth_style: p.authStyle,
       has_api_key: p.maskedKey.startsWith('••••'),
+      ...(p.oci ? { oci: p.oci } : {}),
     })),
     routing: {
       chat: panel.routing.chat,
@@ -136,14 +139,7 @@ export function useAISettings() {
       p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug)
     );
     if (JSON.stringify(userProviders) === JSON.stringify(savedUserProviders)) return;
-    const wire = userProviders.map(p => ({
-      id: p.id,
-      slug: p.slug,
-      label: p.label,
-      endpoint: p.endpoint,
-      ca_cert_pem: p.caCertPem ?? '',
-      auth_style: p.authStyle,
-    }));
+    const wire = userProviders.map(toWireCloudProvider);
     flushCloudProviders(wire).catch(err =>
       console.warn('[ai-settings] eager cloud_providers flush failed:', err)
     );

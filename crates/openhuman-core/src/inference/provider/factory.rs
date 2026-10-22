@@ -19,6 +19,7 @@ mod credentials;
 mod inspection;
 mod local_runtime;
 mod managed_backend;
+mod oci;
 mod routing;
 mod subprocess_providers;
 

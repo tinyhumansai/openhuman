@@ -49,7 +49,9 @@ impl From<AuthStyle> for CompatAuthStyle {
         match style {
             AuthStyle::Bearer => Self::Bearer,
             AuthStyle::Anthropic => Self::Anthropic,
-            AuthStyle::None | AuthStyle::OpenhumanJwt => Self::None,
+            // OCI never reaches the compatible registry; its listing and
+            // models go through the native provider.
+            AuthStyle::None | AuthStyle::OpenhumanJwt | AuthStyle::Oci => Self::None,
         }
     }
 }
@@ -61,7 +63,7 @@ pub(super) fn registry_auth_style(style: AuthStyle) -> Option<CompatAuthStyle> {
         AuthStyle::Bearer => Some(CompatAuthStyle::Bearer),
         AuthStyle::Anthropic => Some(CompatAuthStyle::Anthropic),
         AuthStyle::None => Some(CompatAuthStyle::None),
-        AuthStyle::OpenhumanJwt => None,
+        AuthStyle::OpenhumanJwt | AuthStyle::Oci => None,
     }
 }
 

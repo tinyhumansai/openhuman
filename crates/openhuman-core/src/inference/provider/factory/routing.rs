@@ -203,6 +203,17 @@ pub(super) fn route_has_usable_credentials(resolved: &str, config: &Config) -> b
     if let Some((slug, _)) = r.split_once(':') {
         let slug = slug.trim();
         if !slug.is_empty() {
+            let keyless_oci = config.cloud_providers.iter().any(|entry| {
+                entry.slug == slug
+                    && entry.auth_style == AuthStyle::Oci
+                    && !super::oci::entry_requires_stored_key(entry)
+            });
+            if keyless_oci {
+                log::debug!(
+                    "[billing] route_has_usable_credentials slug={slug} usable=true (keyless oci)"
+                );
+                return true;
+            }
             match lookup_key_for_slug(slug, config) {
                 Ok(key) => {
                     let usable = !key.trim().is_empty();

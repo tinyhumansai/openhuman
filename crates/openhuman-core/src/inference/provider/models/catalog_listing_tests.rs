@@ -181,6 +181,7 @@ fn cloud_providers_entry_takes_precedence_over_local_runtime_synthesis() {
         endpoint: "https://ollama.example.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: None,
+        oci: None,
     });
 
     let resolved = config
@@ -240,5 +241,28 @@ fn missing_cloud_providers_entry_for_unknown_slug_still_errors() {
     assert!(
         resolved.is_none(),
         "unknown slug with no cloud_providers entry must NOT synthesize",
+    );
+}
+
+#[tokio::test]
+async fn oci_entries_answer_with_an_empty_catalog_without_a_network_request() {
+    // OCI Generative AI has no OpenAI-style `/models` route; the port would
+    // refuse a connection if the listing ever reached it.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = configure_generic_workspace(&tmp, "http://127.0.0.1:0/v1".to_string()).await;
+    config.cloud_providers[0].auth_style = AuthStyle::Oci;
+
+    let outcome = catalog_listing::list_configured_models_from_config("generic-test", &config)
+        .await
+        .expect("an OCI entry lists no models instead of failing");
+
+    assert_eq!(outcome.value["models"], serde_json::json!([]));
+    assert!(
+        outcome
+            .logs
+            .iter()
+            .any(|log| log.contains("enter a model id")),
+        "{:?}",
+        outcome.logs
     );
 }

@@ -182,6 +182,7 @@ fn provider_descriptors_use_configured_slugs_and_keep_managed_aliases() {
                 endpoint: "https://inference.example.test/v1".into(),
                 auth_style: AuthStyle::Bearer,
                 default_model: None,
+                oci: None,
             },
             CloudProviderCreds {
                 id: "p_openhuman_managed".into(),
@@ -190,6 +191,7 @@ fn provider_descriptors_use_configured_slugs_and_keep_managed_aliases() {
                 endpoint: "https://api.openhuman.ai/v1".into(),
                 auth_style: AuthStyle::OpenhumanJwt,
                 default_model: None,
+                oci: None,
             },
         ],
         ..crate::config::Config::default()

@@ -202,6 +202,7 @@ async fn models_tool_reports_each_configured_catalog_outcome() {
             endpoint: format!("{}/available/v1", server.uri()),
             auth_style: crate::config::schema::cloud_providers::AuthStyle::None,
             default_model: None,
+            oci: None,
         },
         crate::config::schema::cloud_providers::CloudProviderCreds {
             id: "p_doctor_tool_models_missing".into(),
@@ -210,6 +211,7 @@ async fn models_tool_reports_each_configured_catalog_outcome() {
             endpoint: format!("{}/missing/v1", server.uri()),
             auth_style: crate::config::schema::cloud_providers::AuthStyle::None,
             default_model: None,
+            oci: None,
         },
     ];
 

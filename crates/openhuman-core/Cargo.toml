@@ -667,6 +667,17 @@ tinymemes = ["modules", "dep:tinymemes-bus", "dep:tinyinference-decisions"]
 # triage. Runtime switches: `[components] eventqueues` and `[inbound] enabled`;
 # off (or with the module unavailable) the direct triage path runs as before.
 inbound-queues = ["modules", "dep:tinyeventqueues-bus"]
+# OCI Generative AI instance-principal and OKE workload-identity auth
+# (`tinyinference-llm/oci-principals`). Default-OFF and product-OFF: both flows
+# only exist on OCI compute / OKE, never on a desktop, and the gate pulls
+# OpenSSL (RSA session keys, X.509 parsing) into the build, which is a native
+# toolchain cost the shipped Windows/macOS/Linux app should not pay. Headless
+# and server builds that run on OCI opt in with
+# `--features oci-principals`. Off, the `instance_principal` /
+# `oke_workload_identity` auth modes fail with an explicit "unsupported in this
+# build" error naming this gate; every other OCI auth mode works regardless.
+# Leaf gate; building it needs `OPENSSL_DIR` (e.g. `/opt/homebrew/opt/openssl@3`).
+oci-principals = ["tinyinference-llm/oci-principals"]
 # The dynamic module host (`openhuman::modules`): the loader that admits a
 # compiled `cdylib` through tinybus's ABI descriptor, manifest, dependency and
 # SHA-256 gates, plus the `modules` RPC namespace and the registry of modules

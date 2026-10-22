@@ -25,6 +25,7 @@ async fn handle_runtime_command_routes_configured_provider_slug_and_alias() {
             endpoint: "https://provider.example.test/v1".into(),
             auth_style: AuthStyle::Bearer,
             default_model: None,
+            oci: None,
         },
         CloudProviderCreds {
             id: "p_managed_123".into(),
@@ -33,6 +34,7 @@ async fn handle_runtime_command_routes_configured_provider_slug_and_alias() {
             endpoint: "https://api.openhuman.ai/v1".into(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: None,
+            oci: None,
         },
     ];
     ctx.config = Some(Arc::new(config));

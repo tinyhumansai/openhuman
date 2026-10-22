@@ -13,6 +13,7 @@ fn openai_entry(id: &str, slug: &str) -> CloudProviderCreds {
         endpoint: "https://api.openai.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("gpt-4o".to_string()),
+        oci: None,
     }
 }
 

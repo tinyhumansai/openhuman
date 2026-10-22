@@ -248,3 +248,40 @@ fn default_model_with_bare_openai_keeps_managed_fallback() {
         "bare openai must resolve to the managed backend"
     );
 }
+
+fn oci_entry(auth_mode: crate::config::schema::cloud_providers::OciAuthMode) -> CloudProviderCreds {
+    CloudProviderCreds {
+        id: "p_oci".to_string(),
+        slug: "oci".to_string(),
+        label: "OCI Generative AI".to_string(),
+        auth_style: AuthStyle::Oci,
+        oci: Some(
+            crate::config::schema::cloud_providers::OciProviderSettings {
+                auth_mode,
+                ..Default::default()
+            },
+        ),
+        ..Default::default()
+    }
+}
+
+/// OCI profile, session-token and principal modes keep no key in the
+/// credential store, so the billing gate must not require one for them.
+#[test]
+fn keyless_oci_routes_count_as_usable_credentials() {
+    use crate::config::schema::cloud_providers::OciAuthMode;
+    for mode in [
+        OciAuthMode::ConfigProfile,
+        OciAuthMode::SessionToken,
+        OciAuthMode::ResourcePrincipal,
+        OciAuthMode::InstancePrincipal,
+        OciAuthMode::OkeWorkloadIdentity,
+    ] {
+        let mut config = Config::default();
+        config.cloud_providers = vec![oci_entry(mode)];
+        assert!(
+            route_has_usable_credentials("oci:openai.gpt-5.5", &config),
+            "{mode:?}"
+        );
+    }
+}

@@ -112,6 +112,7 @@ fn fixture_managed_entry(id: &str) -> CloudProviderCreds {
         endpoint: "https://fixture.managed.test/v1".to_string(),
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: Some("fixture/managed-default".into()),
+        oci: None,
     }
 }
 
@@ -255,6 +256,7 @@ fn openai_entry(id: &str, slug: &str) -> CloudProviderCreds {
         endpoint: "https://api.openai.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("gpt-4o".to_string()),
+        oci: None,
     }
 }
 
@@ -266,6 +268,7 @@ fn anthropic_entry(id: &str, slug: &str) -> CloudProviderCreds {
         endpoint: "https://api.anthropic.com/v1".to_string(),
         auth_style: AuthStyle::Anthropic,
         default_model: Some("claude-sonnet-4-6".to_string()),
+        oci: None,
     }
 }
 
@@ -277,6 +280,7 @@ fn nvidia_nim_entry(id: &str, default_model: Option<&str>) -> CloudProviderCreds
         endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: default_model.map(ToString::to_string),
+        oci: None,
     }
 }
 
@@ -580,6 +584,7 @@ fn deepseek_entry(id: &str) -> CloudProviderCreds {
         endpoint: "https://api.deepseek.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("deepseek-chat".to_string()),
+        oci: None,
     }
 }
 

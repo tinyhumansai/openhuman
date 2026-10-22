@@ -119,6 +119,7 @@ fn config_for_catalog(
         endpoint,
         auth_style: AuthStyle::None,
         default_model: None,
+        oci: None,
     }];
     (root, config)
 }
@@ -416,6 +417,7 @@ async fn prepared_catalog_identity_changes_when_managed_credential_rotates_in_pl
         endpoint: endpoint.clone(),
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: None,
+        oci: None,
     }];
     let mut config_b = config_a.clone();
     config_b.api_key = Some("fixture-managed-credential-b".into());
@@ -479,6 +481,7 @@ async fn a_slow_provider_times_out_without_blocking_the_other_catalog() {
             endpoint: slow_endpoint,
             auth_style: AuthStyle::None,
             default_model: None,
+            oci: None,
         },
         CloudProviderCreds {
             id: "p_doctor_497_fast".into(),
@@ -487,6 +490,7 @@ async fn a_slow_provider_times_out_without_blocking_the_other_catalog() {
             endpoint: fast_endpoint,
             auth_style: AuthStyle::None,
             default_model: None,
+            oci: None,
         },
     ];
 

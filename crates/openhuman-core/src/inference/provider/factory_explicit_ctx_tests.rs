@@ -260,6 +260,7 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
             endpoint: "https://hosted.example.test/v1".to_string(),
             auth_style: AuthStyle::OpenhumanJwt,
             default_model: Some("fixture/model-v1".to_string()),
+            oci: None,
         });
 
         let observed = CoreContext::scope(context_b, async {

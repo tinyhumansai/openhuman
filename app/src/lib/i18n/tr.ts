@@ -5099,6 +5099,41 @@ const messages: TranslationMap = {
   'settings.appearance.showChatMascot': "Tiny'yi mesaj kutusunda göster",
   'onboarding.custom.localDefaultDisabledReason':
     'Yönetilen kurulum için bir OpenHuman hesabı gerekir. Yerel oturumda her hizmeti kendiniz yapılandırırsınız.',
+
+  'settings.ai.oci.description':
+    'Oracle Cloud Infrastructure Generative AI hizmetine bağlanın. İsteklerin nasıl doğrulanacağını ve hangi protokolün kullanılacağını seçin.',
+  'settings.ai.oci.authMode': 'Kimlik doğrulama',
+  'settings.ai.oci.mode.apiKey': 'API anahtarı',
+  'settings.ai.oci.mode.configProfile': 'OCI yapılandırma profili',
+  'settings.ai.oci.mode.sessionToken': 'Oturum belirteci',
+  'settings.ai.oci.mode.resourcePrincipal': 'Kaynak sorumlusu',
+  'settings.ai.oci.mode.instancePrincipal': 'Örnek sorumlusu',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE iş yükü kimliği',
+  'settings.ai.oci.apiKeyKeepHint':
+    'Bu cihazda şifrelenmiş olarak saklanır. Kayıtlı anahtarı korumak için boş bırakın.',
+  'settings.ai.oci.configFile': 'OCI yapılandırma dosyası',
+  'settings.ai.oci.profile': 'Profil',
+  'settings.ai.oci.profileHint':
+    'İmzalama anahtarları gerektiğinde OCI yapılandırmanızdan okunur ve OpenHuman içine asla kopyalanmaz.',
+  'settings.ai.oci.principalHint':
+    'Hiçbir gizli bilgi saklanmaz. Kimlik bilgileri OCI çalışma ortamından gelir.',
+  'settings.ai.oci.principalBuildHint':
+    'Örnek sorumlusu ve OKE iş yükü kimliği, OCI sorumlusu desteği içeren bir derleme gerektirir.',
+  'settings.ai.oci.region': 'Bölge',
+  'settings.ai.oci.compartment': 'Bölme OCID’si',
+  'settings.ai.oci.project': 'Generative AI proje OCID’si',
+  'settings.ai.oci.transport': 'Protokol',
+  'settings.ai.oci.transport.openai': 'OpenAI uyumlu',
+  'settings.ai.oci.transport.actions': 'OpenAI uyumlu (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'Yerel sohbet (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'Yerel sohbet (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'Ayrılmış uç nokta OCID’si (isteğe bağlı)',
+  'settings.ai.oci.regionRequired': 'Bölge gereklidir (örneğin us-chicago-1).',
+  'settings.ai.oci.compartmentRequired':
+    'Bu protokol ve oturum açma yöntemi için bölme OCID’si gereklidir.',
+  'settings.ai.oci.projectRequired':
+    'OpenAI uyumlu protokol için Generative AI proje OCID’si gereklidir.',
+  'settings.ai.oci.editSettings': 'OCI ayarlarını düzenle',
 };
 
 export default messages;

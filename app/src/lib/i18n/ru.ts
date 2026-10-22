@@ -5153,6 +5153,41 @@ const messages: TranslationMap = {
   'settings.layout.contrast.subtle': 'Незаметный',
 
   'settings.layout.contrast.strong': 'Высокий',
+
+  'settings.ai.oci.description':
+    'Подключитесь к Oracle Cloud Infrastructure Generative AI. Выберите способ аутентификации запросов и используемый протокол.',
+  'settings.ai.oci.authMode': 'Аутентификация',
+  'settings.ai.oci.mode.apiKey': 'API-ключ',
+  'settings.ai.oci.mode.configProfile': 'Профиль конфигурации OCI',
+  'settings.ai.oci.mode.sessionToken': 'Токен сеанса',
+  'settings.ai.oci.mode.resourcePrincipal': 'Субъект ресурса',
+  'settings.ai.oci.mode.instancePrincipal': 'Субъект экземпляра',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'Идентификация рабочей нагрузки OKE',
+  'settings.ai.oci.apiKeyKeepHint':
+    'Хранится в зашифрованном виде на этом устройстве. Оставьте поле пустым, чтобы сохранить текущий ключ.',
+  'settings.ai.oci.configFile': 'Файл конфигурации OCI',
+  'settings.ai.oci.profile': 'Профиль',
+  'settings.ai.oci.profileHint':
+    'Ключи подписи читаются из вашей конфигурации OCI по мере необходимости и никогда не копируются в OpenHuman.',
+  'settings.ai.oci.principalHint':
+    'Секреты не хранятся. Учётные данные берутся из среды выполнения OCI.',
+  'settings.ai.oci.principalBuildHint':
+    'Для Instance principal и идентификации рабочей нагрузки OKE нужна сборка с поддержкой принципалов OCI.',
+  'settings.ai.oci.region': 'Регион',
+  'settings.ai.oci.compartment': 'OCID компартмента',
+  'settings.ai.oci.project': 'OCID проекта Generative AI',
+  'settings.ai.oci.transport': 'Протокол',
+  'settings.ai.oci.transport.openai': 'Совместимый с OpenAI',
+  'settings.ai.oci.transport.actions': 'Совместимый с OpenAI (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'Нативный чат (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'Нативный чат (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'OCID выделенной конечной точки (необязательно)',
+  'settings.ai.oci.regionRequired': 'Укажите регион (например, us-chicago-1).',
+  'settings.ai.oci.compartmentRequired':
+    'Для этого протокола и способа входа требуется OCID компартмента.',
+  'settings.ai.oci.projectRequired':
+    'Для протокола, совместимого с OpenAI, требуется OCID проекта Generative AI.',
+  'settings.ai.oci.editSettings': 'Изменить настройки OCI',
 };
 
 export default messages;

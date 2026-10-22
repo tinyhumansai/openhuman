@@ -5374,6 +5374,41 @@ const en: TranslationMap = {
   'settings.appearance.showChatMascot': 'Show Tiny on the message box',
 
   'settings.layout.corners.round': 'Rounded',
+
+  'settings.ai.oci.description':
+    'Connect to Oracle Cloud Infrastructure Generative AI. Choose how requests are authenticated and which protocol to use.',
+  'settings.ai.oci.authMode': 'Authentication',
+  'settings.ai.oci.mode.apiKey': 'API key',
+  'settings.ai.oci.mode.configProfile': 'OCI config profile',
+  'settings.ai.oci.mode.sessionToken': 'Session token',
+  'settings.ai.oci.mode.resourcePrincipal': 'Resource principal',
+  'settings.ai.oci.mode.instancePrincipal': 'Instance principal',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE workload identity',
+  'settings.ai.oci.apiKeyKeepHint':
+    'Stored encrypted on this device. Leave blank to keep the saved key.',
+  'settings.ai.oci.configFile': 'OCI config file',
+  'settings.ai.oci.profile': 'Profile',
+  'settings.ai.oci.profileHint':
+    'Signing keys are read from your OCI config when needed and are never copied into OpenHuman.',
+  'settings.ai.oci.principalHint':
+    'No secret is stored. Credentials come from the OCI runtime environment.',
+  'settings.ai.oci.principalBuildHint':
+    'Instance principal and OKE workload identity need a build with OCI principals support.',
+  'settings.ai.oci.region': 'Region',
+  'settings.ai.oci.compartment': 'Compartment OCID',
+  'settings.ai.oci.project': 'Generative AI project OCID',
+  'settings.ai.oci.transport': 'Protocol',
+  'settings.ai.oci.transport.openai': 'OpenAI-compatible',
+  'settings.ai.oci.transport.actions': 'OpenAI-compatible (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'Native chat (Meta, xAI, Google, OpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'Native chat (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'Dedicated endpoint OCID (optional)',
+  'settings.ai.oci.regionRequired': 'Region is required (for example us-chicago-1).',
+  'settings.ai.oci.compartmentRequired':
+    'Compartment OCID is required for this protocol and sign-in method.',
+  'settings.ai.oci.projectRequired':
+    'Generative AI project OCID is required for the OpenAI-compatible protocol.',
+  'settings.ai.oci.editSettings': 'Edit OCI settings',
 };
 
 export default en;

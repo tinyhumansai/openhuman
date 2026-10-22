@@ -54,6 +54,7 @@ fn workspace_with_provider(
         endpoint: endpoint.to_string(),
         auth_style,
         default_model: None,
+        oci: None,
     });
     config
 }

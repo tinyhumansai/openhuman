@@ -5000,6 +5000,40 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'خفيف',
 
   'settings.layout.corners.round': 'مستدير',
+
+  'settings.ai.oci.description':
+    'اتصل بـ Oracle Cloud Infrastructure Generative AI. اختر طريقة مصادقة الطلبات والبروتوكول المستخدم.',
+  'settings.ai.oci.authMode': 'المصادقة',
+  'settings.ai.oci.mode.apiKey': 'مفتاح API',
+  'settings.ai.oci.mode.configProfile': 'ملف تعريف تكوين OCI',
+  'settings.ai.oci.mode.sessionToken': 'رمز الجلسة',
+  'settings.ai.oci.mode.resourcePrincipal': 'هوية المورد',
+  'settings.ai.oci.mode.instancePrincipal': 'هوية المثيل',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'هوية حمل عمل OKE',
+  'settings.ai.oci.apiKeyKeepHint':
+    'محفوظ مشفّرًا على هذا الجهاز. اتركه فارغًا للاحتفاظ بالمفتاح المحفوظ.',
+  'settings.ai.oci.configFile': 'ملف تكوين OCI',
+  'settings.ai.oci.profile': 'ملف التعريف',
+  'settings.ai.oci.profileHint':
+    'تُقرأ مفاتيح التوقيع من تكوين OCI عند الحاجة ولا تُنسخ أبدًا إلى OpenHuman.',
+  'settings.ai.oci.principalHint': 'لا يتم تخزين أي سر. تأتي بيانات الاعتماد من بيئة تشغيل OCI.',
+  'settings.ai.oci.principalBuildHint':
+    'يتطلب Instance principal وهوية حمل عمل OKE إصدارًا يدعم OCI principals.',
+  'settings.ai.oci.region': 'المنطقة',
+  'settings.ai.oci.compartment': 'معرّف OCID للحجرة',
+  'settings.ai.oci.project': 'معرّف OCID لمشروع Generative AI',
+  'settings.ai.oci.transport': 'البروتوكول',
+  'settings.ai.oci.transport.openai': 'متوافق مع OpenAI',
+  'settings.ai.oci.transport.actions': 'متوافق مع OpenAI (actions)',
+  'settings.ai.oci.transport.nativeGeneric': 'دردشة أصلية (Meta وxAI وGoogle وOpenAI)',
+  'settings.ai.oci.transport.nativeCohere': 'دردشة أصلية (Cohere)',
+  'settings.ai.oci.dedicatedEndpoint': 'معرّف OCID لنقطة النهاية المخصصة (اختياري)',
+  'settings.ai.oci.regionRequired': 'المنطقة مطلوبة (مثل us-chicago-1).',
+  'settings.ai.oci.compartmentRequired':
+    'معرّف OCID للحجيرة مطلوب لهذا البروتوكول وطريقة تسجيل الدخول هذه.',
+  'settings.ai.oci.projectRequired':
+    'معرّف OCID لمشروع Generative AI مطلوب للبروتوكول المتوافق مع OpenAI.',
+  'settings.ai.oci.editSettings': 'تعديل إعدادات OCI',
 };
 
 export default messages;

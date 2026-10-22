@@ -109,6 +109,7 @@ fn seed_legacy_custom_provider(config: &mut Config, stats: &mut MigrationStats) 
                 endpoint: trimmed.to_string(),
                 auth_style: AuthStyle::Bearer,
                 default_model,
+                oci: None,
             });
             stats.cloud_providers_seeded += 1;
             log::info!(

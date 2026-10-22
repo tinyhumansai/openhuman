@@ -118,6 +118,7 @@ async fn a_byok_cloud_fallback_without_a_key_reports_construction_failure() {
         endpoint: "https://doctor-test.invalid/v1".to_owned(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("test-model".to_owned()),
+        oci: None,
     }];
     config.vision_provider = Some("cloud".to_owned());
 
@@ -244,6 +245,7 @@ async fn a_fully_configured_managed_default_constructs_cleanly() {
         endpoint: "https://api.openhuman.invalid/v1".to_owned(),
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: Some("managed-test-model".to_owned()),
+        oci: None,
     }];
     let before = filesystem_snapshot(temp.path());
     let core_context = crate::core::runtime::CoreContext::for_test_with_extensions(

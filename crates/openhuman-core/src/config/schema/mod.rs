@@ -3,6 +3,7 @@
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
 pub mod cloud_providers;
+pub mod oci_settings;
 pub use cloud_providers::{generate_provider_id, is_slug_reserved, AuthStyle, CloudProviderCreds};
 
 fn generate_provider_id_with_prefix(prefix: &str, slug: &str) -> String {

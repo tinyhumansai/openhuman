@@ -4815,6 +4815,36 @@ const messages: TranslationMap = {
 
   'settings.layout.corners.round': '圆角',
   'settings.layout.contrast.subtle': '微妙',
+
+  'settings.ai.oci.description':
+    '连接到 Oracle Cloud Infrastructure Generative AI。选择请求的认证方式和使用的协议。',
+  'settings.ai.oci.authMode': '认证',
+  'settings.ai.oci.mode.apiKey': 'API 密钥',
+  'settings.ai.oci.mode.configProfile': 'OCI 配置文件配置集',
+  'settings.ai.oci.mode.sessionToken': '会话令牌',
+  'settings.ai.oci.mode.resourcePrincipal': '资源主体',
+  'settings.ai.oci.mode.instancePrincipal': '实例主体',
+  'settings.ai.oci.mode.okeWorkloadIdentity': 'OKE 工作负载身份',
+  'settings.ai.oci.apiKeyKeepHint': '已加密存储在此设备上。留空则保留已保存的密钥。',
+  'settings.ai.oci.configFile': 'OCI 配置文件',
+  'settings.ai.oci.profile': '配置集',
+  'settings.ai.oci.profileHint':
+    '签名密钥仅在需要时从您的 OCI 配置中读取，绝不会复制到 OpenHuman。',
+  'settings.ai.oci.principalHint': '不存储任何机密。凭据来自 OCI 运行时环境。',
+  'settings.ai.oci.principalBuildHint': '实例主体和 OKE 工作负载身份需要支持 OCI 主体的构建版本。',
+  'settings.ai.oci.region': '区域',
+  'settings.ai.oci.compartment': '隔离区 OCID',
+  'settings.ai.oci.project': 'Generative AI 项目 OCID',
+  'settings.ai.oci.transport': '协议',
+  'settings.ai.oci.transport.openai': '兼容 OpenAI',
+  'settings.ai.oci.transport.actions': '兼容 OpenAI（actions）',
+  'settings.ai.oci.transport.nativeGeneric': '原生聊天（Meta、xAI、Google、OpenAI）',
+  'settings.ai.oci.transport.nativeCohere': '原生聊天（Cohere）',
+  'settings.ai.oci.dedicatedEndpoint': '专用终端节点 OCID（可选）',
+  'settings.ai.oci.regionRequired': '区域为必填项（例如 us-chicago-1）。',
+  'settings.ai.oci.compartmentRequired': '此协议和登录方式需要区间 OCID。',
+  'settings.ai.oci.projectRequired': 'OpenAI 兼容协议需要 Generative AI 项目 OCID。',
+  'settings.ai.oci.editSettings': '编辑 OCI 设置',
 };
 
 export default messages;

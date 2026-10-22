@@ -114,6 +114,7 @@ fn config_for_catalog(
         endpoint,
         auth_style: AuthStyle::None,
         default_model: None,
+        oci: None,
     }];
     (root, config)
 }

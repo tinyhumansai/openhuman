@@ -203,6 +203,7 @@ async fn a_byok_cloud_fallback_without_a_key_reports_construction_failure() {
         endpoint: "https://doctor-test.invalid/v1".to_owned(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("test-model".to_owned()),
+        oci: None,
     }];
     config.vision_provider = Some("cloud".to_owned());
 
@@ -327,6 +328,7 @@ async fn inspection_reports_refresh_required_without_refreshing_or_publishing_se
         endpoint: "https://api.openai.invalid/v1".to_owned(),
         auth_style: AuthStyle::Bearer,
         default_model: Some("gpt-4o".to_owned()),
+        oci: None,
     }];
     config.resolved_endpoints.control_plane_url = Some("https://api.openhuman.invalid".to_owned());
 
@@ -503,6 +505,7 @@ async fn a_fully_configured_managed_default_constructs_cleanly() {
         endpoint: "https://api.openhuman.invalid/v1".to_owned(),
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: Some("managed-test-model".to_owned()),
+        oci: None,
     }];
     let before = filesystem_snapshot(temp.path());
     let core_context = crate::core::runtime::CoreContext::for_test_with_extensions(
@@ -552,6 +555,7 @@ async fn missing_byok_model_is_reported_by_the_native_construct_check() {
         endpoint: "https://provider.example.invalid/v1".to_owned(),
         auth_style: AuthStyle::Bearer,
         default_model: None,
+        oci: None,
     }];
 
     let findings = run_only(config, CONSTRUCT).await;

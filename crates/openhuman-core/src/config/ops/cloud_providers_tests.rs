@@ -10,6 +10,7 @@ fn update(slug: &str) -> CloudProviderUpdate {
         ca_cert_pem: None,
         legacy_type: None,
         default_model: None,
+        oci: None,
     }
 }
 
@@ -77,14 +78,14 @@ fn builder_preserves_auth_aliases_and_unknown_error() {
     entry.auth_style = Some("OddAuth".to_string());
     assert_eq!(
         build_cloud_provider_creds(vec![entry]).unwrap_err(),
-        "unknown auth_style 'oddauth'; valid: bearer, anthropic, openhuman_jwt, none"
+        "unknown auth_style 'oddauth'; valid: bearer, anthropic, openhuman_jwt, none, oci"
     );
 
     let mut padded = update("custom");
     padded.auth_style = Some(" anthropic ".to_string());
     assert_eq!(
         build_cloud_provider_creds(vec![padded]).unwrap_err(),
-        "unknown auth_style ' anthropic '; valid: bearer, anthropic, openhuman_jwt, none"
+        "unknown auth_style ' anthropic '; valid: bearer, anthropic, openhuman_jwt, none, oci"
     );
 }
 
