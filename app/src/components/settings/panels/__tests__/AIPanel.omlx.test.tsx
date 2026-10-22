@@ -198,3 +198,49 @@ describe('AIPanel OMLX connect', () => {
     expect(arg).toMatchObject({ api_key: 'sk-omlx-test' });
   });
 });
+
+describe('AIPanel LM Studio connect', () => {
+  const openLmStudioConnectDialog = async () => {
+    fireEvent.click(await screen.findByTestId('add-provider-open'));
+    const trigger = await screen.findByTestId('add-provider-select-local');
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.keyDown(await screen.findByTestId('add-provider-option-lmstudio'), { key: 'Enter' });
+    return await screen.findByRole('dialog', { name: /Connect LM Studio/i });
+  };
+
+  const save = async (dialog: HTMLElement, key: string) => {
+    fireEvent.change(within(dialog).getByLabelText(/API key \(optional\)/i), {
+      target: { value: key },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+    await waitFor(() => expect(openhumanUpdateLocalAiSettingsMock).toHaveBeenCalled());
+    return vi.mocked(openhumanUpdateLocalAiSettingsMock).mock.calls[0][0];
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
+    vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
+    vi.mocked(listProviderModels).mockResolvedValue([]);
+    vi.mocked(creditsApi.getTeamUsage).mockResolvedValue(baseUsage);
+    vi.mocked(creditsApi.getTransactions).mockResolvedValue({ transactions: [], total: 0 });
+    vi.mocked(listComposioConnections).mockResolvedValue({ connections: [] });
+  });
+
+  it('persists the API key for an LM Studio server that requires authentication', async () => {
+    renderWithProviders(<AIPanel />);
+    const arg = await save(await openLmStudioConnectDialog(), '  lm-secret  ');
+    expect(arg).toMatchObject({
+      provider: 'lm_studio',
+      base_url: 'http://localhost:1234/v1',
+      api_key: 'lm-secret',
+    });
+  });
+
+  it('saves without a key, sending an empty one so a stale key is cleared', async () => {
+    renderWithProviders(<AIPanel />);
+    const arg = await save(await openLmStudioConnectDialog(), '');
+    expect(arg).toMatchObject({ provider: 'lm_studio', api_key: '' });
+  });
+});

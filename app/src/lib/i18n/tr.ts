@@ -2487,6 +2487,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': 'Bulut sağlayıcı ekle',
   'settings.ai.addProvider': 'Sağlayıcı ekle',
   'settings.ai.apiKeyFieldLabel': 'API anahtarı',
+  'settings.ai.apiKeyOptionalFieldLabel': 'API anahtarı (isteğe bağlı)',
   'settings.ai.apiKeyRequired': 'Devam etmek için lütfen API anahtarınızı yapıştırın.',
   'settings.ai.apiKeyStoredEncrypted': 'API anahtarınız bu cihazda şifrelenmiş olarak saklanır.',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

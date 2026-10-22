@@ -31,6 +31,7 @@ export const ProviderKeyDialog = ({
   label,
   isLocalRuntime,
   endpointKeyMode = false,
+  keyOptional = false,
   initialValue,
   initialKeyValue,
   oauthAction,
@@ -43,11 +44,17 @@ export const ProviderKeyDialog = ({
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
   /**
-   * When true (OMLX), render BOTH an "Endpoint URL" field AND an "API key"
-   * field. `onSubmit` then receives the API key as `value` and the endpoint
-   * via the `endpoint` argument.
+   * When true (OMLX, LM Studio), render BOTH an "Endpoint URL" field AND an
+   * "API key" field. `onSubmit` then receives the API key as `value` and the
+   * endpoint via the `endpoint` argument.
    */
   endpointKeyMode?: boolean;
+  /**
+   * In `endpointKeyMode`, allow saving with an empty key (LM Studio only needs
+   * one when its "Require Authentication" setting is on). An empty key clears
+   * a previously saved one.
+   */
+  keyOptional?: boolean;
   /** Pre-populate the field when editing an existing provider's endpoint. */
   initialValue?: string;
   /** Pre-populate the API key field in `endpointKeyMode`. */
@@ -110,7 +117,7 @@ export const ProviderKeyDialog = ({
       setError(t('settings.ai.endpointProtocolRequired'));
       return;
     }
-    if (endpointKeyMode && !trimmedKey) {
+    if (endpointKeyMode && !keyOptional && !trimmedKey) {
       setError(t('settings.ai.apiKeyRequired'));
       return;
     }
@@ -245,15 +252,17 @@ export const ProviderKeyDialog = ({
               setError(null);
             }}
           />
-          {/* OMLX (endpointKeyMode): render the API key field in addition to
-              the endpoint field above — the runtime is OpenAI-compatible but
-              gated behind a Bearer key. */}
+          {/* endpointKeyMode (OMLX, LM Studio): render the API key field in
+              addition to the endpoint field above — the runtime is
+              OpenAI-compatible and may be gated behind a Bearer key. */}
           {endpointKeyMode ? (
             <>
               <Label
                 htmlFor="provider-key-input-key"
                 className="mt-3 text-xs text-content-secondary">
-                {t('settings.ai.apiKeyFieldLabel')}
+                {keyOptional
+                  ? t('settings.ai.apiKeyOptionalFieldLabel')
+                  : t('settings.ai.apiKeyFieldLabel')}
               </Label>
               <TextField
                 id="provider-key-input-key"

@@ -2792,6 +2792,7 @@ const en: TranslationMap = {
   'settings.ai.addCloudProvider': 'Add cloud provider',
   'settings.ai.addProvider': 'Add Provider',
   'settings.ai.apiKeyFieldLabel': 'API Key',
+  'settings.ai.apiKeyOptionalFieldLabel': 'API Key (optional)',
   'settings.ai.apiKeyRequired': 'Please paste your API key to continue.',
   'settings.ai.apiKeyStoredEncrypted': 'Your API key is stored encrypted on this device.',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

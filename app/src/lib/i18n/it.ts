@@ -2415,6 +2415,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': 'Aggiungi provider cloud',
   'settings.ai.addProvider': 'Salvataggio…',
   'settings.ai.apiKeyFieldLabel': 'Etichetta campo chiave API',
+  'settings.ai.apiKeyOptionalFieldLabel': 'Chiave API (facoltativa)',
   'settings.ai.apiKeyRequired': 'Incolla la tua chiave API per continuare.',
   'settings.ai.apiKeyStoredEncrypted': 'Chiave API memorizzata crittografata',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

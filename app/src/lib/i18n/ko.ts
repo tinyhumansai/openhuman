@@ -2355,6 +2355,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': '클라우드 제공업체 추가',
   'settings.ai.addProvider': '저장 중…',
   'settings.ai.apiKeyFieldLabel': 'API 키 필드 라벨',
+  'settings.ai.apiKeyOptionalFieldLabel': 'API 키 (선택)',
   'settings.ai.apiKeyRequired': '계속하려면 API 키를 붙여넣어 주세요.',
   'settings.ai.apiKeyStoredEncrypted': 'API 키가 암호화되어 저장됨',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

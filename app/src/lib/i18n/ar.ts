@@ -2331,6 +2331,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': 'إضافة مزود سحابي',
   'settings.ai.addProvider': 'جارٍ الحفظ…',
   'settings.ai.apiKeyFieldLabel': 'تسمية حقل مفتاح API',
+  'settings.ai.apiKeyOptionalFieldLabel': 'مفتاح API (اختياري)',
   'settings.ai.apiKeyRequired': 'يرجى لصق مفتاح API للمتابعة.',
   'settings.ai.apiKeyStoredEncrypted': 'مفتاح API محفوظ مشفّرًا',
   'settings.ai.apiKeysEncrypted': 'مفاتيح API مشفّرة',

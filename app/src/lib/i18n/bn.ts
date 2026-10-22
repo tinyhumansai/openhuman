@@ -2376,6 +2376,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': 'ক্লাউড প্রোভাইডার যোগ করুন',
   'settings.ai.addProvider': 'সংরক্ষণ হচ্ছে…',
   'settings.ai.apiKeyFieldLabel': 'API কী ফিল্ড লেবেল',
+  'settings.ai.apiKeyOptionalFieldLabel': 'API কী (ঐচ্ছিক)',
   'settings.ai.apiKeyRequired': 'চালিয়ে যেতে আপনার API কী পেস্ট করুন।',
   'settings.ai.apiKeyStoredEncrypted': 'API কী এনক্রিপ্ট করে সংরক্ষিত',
   'settings.ai.apiKeysEncrypted': 'xqx+x',

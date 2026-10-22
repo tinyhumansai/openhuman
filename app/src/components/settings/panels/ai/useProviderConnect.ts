@@ -171,8 +171,11 @@ export function useProviderConnect({
             opt_in_confirmed: true,
           });
         } else if (isLocalRuntime && slug === 'lmstudio') {
+          // The key is optional and rides `local_ai.api_key` as a Bearer token
+          // (LM Studio's "Require Authentication"); an empty one clears it.
           await openhumanUpdateLocalAiSettings({
             base_url: endpoint,
+            ...(isEndpointKey ? { api_key: trimmed } : {}),
             provider: 'lm_studio',
             runtime_enabled: true,
             opt_in_confirmed: true,

@@ -2398,6 +2398,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': 'Tambah penyedia cloud',
   'settings.ai.addProvider': 'Menyimpan...',
   'settings.ai.apiKeyFieldLabel': 'Label kolom API key',
+  'settings.ai.apiKeyOptionalFieldLabel': 'API key (opsional)',
   'settings.ai.apiKeyRequired': 'Tempelkan API key Anda untuk melanjutkan.',
   'settings.ai.apiKeyStoredEncrypted': 'API key disimpan terenkripsi',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

@@ -2241,6 +2241,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': '添加云端提供商',
   'settings.ai.addProvider': '保存中…',
   'settings.ai.apiKeyFieldLabel': 'API 密钥',
+  'settings.ai.apiKeyOptionalFieldLabel': 'API 密钥（可选）',
   'settings.ai.apiKeyRequired': '请粘贴你的 API 密钥以继续。',
   'settings.ai.apiKeyStoredEncrypted': 'API 密钥已加密存储',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

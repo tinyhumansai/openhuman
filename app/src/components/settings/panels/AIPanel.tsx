@@ -390,9 +390,11 @@ const AIPanel = ({
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           isLocalRuntime={Boolean(pendingLocalLabel)}
-          // OMLX is the only endpoint+key local runtime: render both an endpoint
-          // field (prefilled with the localhost default) and an API key field.
-          endpointKeyMode={keyDialogFor === 'omlx'}
+          // OMLX and LM Studio are the endpoint+key local runtimes: render both an
+          // endpoint field (prefilled with the localhost default) and an API key
+          // field. LM Studio's key is optional ("Require Authentication").
+          endpointKeyMode={keyDialogFor === 'omlx' || keyDialogFor === 'lmstudio'}
+          keyOptional={keyDialogFor === 'lmstudio'}
           initialValue={
             pendingLocalLabel
               ? (draft.cloudProviders.find(cp => cp.slug === keyDialogFor)?.endpoint ??
@@ -444,12 +446,12 @@ const AIPanel = ({
             await connectProvider({
               slug: keyDialogFor,
               localLabel: pendingLocalLabel,
-              // In endpoint_key (OMLX) mode the dialog hands back the API key as
-              // `value` and the endpoint URL as `endpoint`.
+              // In endpoint_key (OMLX, LM Studio) mode the dialog hands back the
+              // API key as `value` and the endpoint URL as `endpoint`.
               value,
               endpoint,
               credentialMode:
-                keyDialogFor === 'omlx'
+                keyDialogFor === 'omlx' || keyDialogFor === 'lmstudio'
                   ? 'endpoint_key'
                   : pendingLocalLabel
                     ? 'endpoint'

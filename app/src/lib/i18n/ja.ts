@@ -2800,6 +2800,7 @@ const messages: TranslationMap = {
   'settings.ai.addCloudProvider': 'クラウドプロバイダーを追加',
   'settings.ai.addProvider': 'プロバイダーを追加',
   'settings.ai.apiKeyFieldLabel': 'APIキー',
+  'settings.ai.apiKeyOptionalFieldLabel': 'APIキー（任意）',
   'settings.ai.apiKeyRequired': '続行するにはAPIキーを貼り付けてください。',
   'settings.ai.apiKeyStoredEncrypted': 'APIキーはこのデバイス上で暗号化されて保存されます。',
   'settings.ai.apiKeysEncrypted': 'auth-profiles.json',

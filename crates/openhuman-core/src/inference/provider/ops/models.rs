@@ -29,7 +29,7 @@ use tinyinference_llm::catalog::{
 };
 
 #[cfg(test)]
-use catalog_listing::resolve_local_runtime_key;
+use catalog_listing::{probe_auth_style, resolve_local_runtime_key};
 
 pub use catalog_listing::{list_configured_models, list_configured_models_from_config};
 pub use local_runtime::synthesize_local_runtime_entry;
