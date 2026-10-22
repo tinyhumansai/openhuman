@@ -32,10 +32,7 @@ impl OpenHumanSessionHost {
             on_progress: self.on_progress.clone(),
             run_queue: self.run_queue.clone(),
             host_env: self.host_env.clone(),
-            allowed_subagent_ids: self
-                .resolved_definition()
-                .map(|definition| definition.allowed_subagent_ids().into_iter().collect())
-                .unwrap_or_default(),
+            allowed_subagent_ids: self.effective_subagent_ids(),
             sandbox_mode: self
                 .resolved_definition()
                 .map(|definition| definition.sandbox_mode)

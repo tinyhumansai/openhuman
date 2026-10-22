@@ -12,6 +12,7 @@ impl SessionHostBuilder {
         Self {
             turn_model_source: None,
             runtime_config: None,
+            registry_config: None,
             tools: None,
             pack_registry_handle: None,
             synthesized_tools: None,
@@ -68,6 +69,14 @@ impl SessionHostBuilder {
                 .with_attachment_config(config.clone()),
         );
         self.runtime_config = Some(config);
+        self
+    }
+
+    /// The config snapshot the session's subagent policy is read from while
+    /// building, so the `spawn_async_subagent` enum honours a saved registry
+    /// override of this agent's `subagents` (#6934).
+    pub fn registry_config(mut self, config: Arc<crate::config::Config>) -> Self {
+        self.registry_config = Some(config);
         self
     }
 

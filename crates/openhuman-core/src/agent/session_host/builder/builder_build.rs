@@ -39,9 +39,18 @@ impl SessionHostBuilder {
             .as_deref()
             .map(|definition| definition.id.clone())
             .or_else(|| self.agent_definition_name.clone());
+        // The registry override is read from the session's config snapshot,
+        // so the enum follows a saved `subagents` edit (#6934).
+        let policy_config = self
+            .registry_config
+            .clone()
+            .or_else(|| self.runtime_config.clone());
         if let Some(agent_id) = spawn_scope_id {
-            let allowed = super::allowed_subagent_ids_for(agent_id.trim());
-            if !allowed.is_empty() {
+            if let Some(allowed) = super::allowed_subagent_ids_for(
+                agent_id.trim(),
+                policy_config.as_deref(),
+                self.session_definition.as_deref(),
+            ) {
                 if let Some(slot) = tools
                     .iter_mut()
                     .find(|tool| tool.name() == "spawn_async_subagent")
@@ -283,8 +292,13 @@ impl SessionHostBuilder {
         // provider. The explicit visible-tool allowlist and the resolved
         // channel permission policy must stay aligned so prompt-visible
         // tools cannot exceed the runtime execution boundary.
-        let visible_tool_specs_unfiltered =
-            visible_tool_specs_for_policy(&tool_specs, &visible_names, &tool_policy_session);
+        let visible_tool_specs_unfiltered = visible_tool_specs_for_policy(
+            &tool_specs,
+            &visible_names,
+            &tool_policy_session,
+            policy_config.as_deref(),
+            self.session_definition.as_deref(),
+        );
 
         // Dedupe by tool name. Anthropic (and other strict providers)
         // rejects a chat/completions request that lists two tools with

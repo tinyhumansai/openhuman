@@ -16,6 +16,12 @@ pub struct SessionHostBuilder {
     pub(super) turn_model_source: Option<TurnModelSource>,
     /// Explicit host config for injected-model attachment staging and services.
     pub(super) runtime_config: Option<Arc<crate::config::Config>>,
+    /// The config snapshot the session's subagent policy is read from while
+    /// building: a saved registry override of this agent's `subagents`
+    /// scopes the `spawn_async_subagent` enum (#6934). Unlike
+    /// `runtime_config`, it changes no workspace, attachment or time-zone
+    /// default. Falls back to `runtime_config` when unset.
+    pub(super) registry_config: Option<Arc<crate::config::Config>>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// Host-owned handle shared with the durable `use_skill` tool.
     pub(super) pack_registry_handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,

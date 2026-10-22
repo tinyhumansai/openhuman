@@ -801,7 +801,8 @@ impl OpenHumanSessionHost {
             .post_turn_hooks(post_turn_hooks)
             .agent_definition_name(agent_id.to_string())
             .omit_memory_context(effective_omit_memory_context)
-            .tokenjuice_compression(effective_tokenjuice_compression);
+            .tokenjuice_compression(effective_tokenjuice_compression)
+            .registry_config(Arc::clone(&base_config));
         if let Some(ps) = payload_summarizer {
             builder = builder.payload_summarizer(ps);
         }
@@ -815,10 +816,8 @@ impl OpenHumanSessionHost {
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;
-        // The same snapshot `base_config` already holds — `Config` is immutable
-        // after construction, so a second deep clone bought nothing but a
-        // second resident copy of a 95-field struct with nested `Vec`s
-        // (openhuman#6218).
+        // The same snapshot `base_config` already holds — `Config` is immutable,
+        // so a second deep clone bought only a second resident copy (#6218).
         agent.runtime_config = Some(Arc::clone(&base_config));
         agent.hosted_base = AgentDefinitionRegistry::current().map(|definitions| {
             Arc::new(crate::agent::tinyagents::host::OpenHumanHostBase {

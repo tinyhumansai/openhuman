@@ -725,3 +725,6 @@ async fn newly_connected_action_cannot_shadow_a_permanent_source() {
         .iter()
         .any(|tool| tool.name() == "GMAIL_SEND_EMAIL"));
 }
+
+#[path = "runtime_session_subagent_override_tests.rs"]
+mod subagent_override_tests;

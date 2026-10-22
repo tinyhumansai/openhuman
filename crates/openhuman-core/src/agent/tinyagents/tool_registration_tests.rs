@@ -100,6 +100,7 @@ async fn static_live_harness_builder_resolves_control_aliases_from_the_execution
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     let parent = ParentExecutionContext {
+        runtime_config: None,
         agent_definition_id: "live-orchestrator".into(),
         allowed_subagent_ids: HashSet::new(),
         turn_model_source: crate::agent::tinyagents::TurnModelSource::from_model(model),
@@ -211,6 +212,7 @@ async fn live_close_alias_enforces_parent_thread_ownership() {
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     let parent = ParentExecutionContext {
+        runtime_config: None,
         agent_definition_id: "live-orchestrator".into(),
         allowed_subagent_ids: HashSet::new(),
         turn_model_source: crate::agent::tinyagents::TurnModelSource::from_model(model),

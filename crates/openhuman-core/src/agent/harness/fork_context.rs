@@ -42,6 +42,14 @@ pub struct ParentExecutionContext {
     /// generic `spawn_subagent` tool. Empty means no generic subagent spawns.
     pub allowed_subagent_ids: HashSet<String>,
 
+    /// The session's `Config` snapshot, when the parent was built from one.
+    /// Spawn tools resolve a child id against the harness registry *and*
+    /// `config.agent_registry` (a custom agent is only in the latter), so a
+    /// registry edit takes effect without a restart (#6934). `None` for
+    /// parents built without a config (tests, some background builders):
+    /// those fall back to the harness registry alone.
+    pub runtime_config: Option<Arc<crate::config::Config>>,
+
     /// Parent's model source — sub-agents build off the same source so
     /// connection pools, retry budgets, and credentials are shared (issue #4249,
     /// Phase 3 / Motion A; replaces the raw `Arc<dyn Provider>`).

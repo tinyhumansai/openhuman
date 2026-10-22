@@ -265,9 +265,13 @@ impl SpawnWorkerThreadTool {
         let registry = AgentDefinitionRegistry::current()
             .ok_or_else(|| anyhow::anyhow!("AgentDefinitionRegistry not initialised"))?;
 
-        let definition = registry
-            .get(&agent_id)
-            .ok_or_else(|| anyhow::anyhow!("agent_id '{}' not found", agent_id))?;
+        // Harness registry, then an enabled custom agent in the config (#6934).
+        let definition = crate::agent_registry::resolve_spawnable_definition(
+            &registry,
+            parent.runtime_config.as_deref(),
+            &agent_id,
+        )
+        .ok_or_else(|| anyhow::anyhow!("agent_id '{}' not found", agent_id))?;
 
         if !parent.allowed_subagent_ids.contains(&definition.id) {
             tracing::warn!(

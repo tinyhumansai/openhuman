@@ -19,6 +19,9 @@ the harness runs come from [`agents/`](agents/) below.
   deserializes from a legacy bare list of ids. `AgentRegistryEntry::validate`
   enforces non-blank id/name/description and an ASCII `[A-Za-z0-9_-]` id
   charset for both the entry and its subagent allowlist.
+- [`effective.rs`](effective.rs): the registry as a running session sees it:
+  a saved `subagents` override and enabled custom agents applied over the
+  harness registry (see below).
 - [`defaults.rs`](defaults.rs): `default_agents()` loads the built-ins from
   [`agents::load_builtins`](agents/loader.rs) and maps each `AgentDefinition`
   to a `Default`-sourced registry entry (tier becomes the single tag,
@@ -85,6 +88,28 @@ Workspace-level overrides (`<workspace_dir>/agents/*.toml`, with a
 `tinyagents_definition::DefinitionSet::load_dirs` and replace built-ins on id collision;
 `AgentDefinitionRegistry::load` re-runs the owner validation after that
 merge.
+
+Config-level edits (`config.agent_registry.entries`: `agent_registry_update`
+on a shipped agent saves a `Default`-sourced copy with the patch applied;
+`agent_registry_create_custom` saves a `Custom` entry) are **not** merged into
+`AgentDefinitionRegistry`, which is loaded once per process. The runtime reads
+them through [`effective.rs`](effective.rs) instead, from the `Config` snapshot
+a session is built with, so they take effect for sessions built after the save
+without a restart:
+
+- `effective_subagent_allowlist`: a saved override's `subagents.allowlist`
+  replaces the shipped list (only when it differs from it, so an edit that
+  touched something else does not freeze the allowlist at that snapshot) in
+  the `spawn_async_subagent` enum, the scoped tool instance, the synthesised
+  delegate tools, and the parent's execute-side gate
+  (`ParentExecutionContext::allowed_subagent_ids`). An empty override withdraws
+  `spawn_async_subagent` from the session.
+- `resolve_spawnable_definition` / `spawnable_ids`: every spawn path resolves
+  a child id against the harness registry first, then an enabled `Custom`
+  entry via `definition_from_registry_entry`, so a user-authored sub-agent is
+  dispatchable once the parent's allowlist names it (#6934). The parent's
+  config travels on `ParentExecutionContext::runtime_config`; a parent built
+  without one resolves against the harness registry alone.
 
 The 12 archetypes in this directory:
 

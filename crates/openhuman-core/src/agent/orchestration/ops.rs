@@ -161,7 +161,7 @@ impl AgentOrchestrationSession {
         parent: ParentExecutionContext,
         request: SpawnAgentRequest,
     ) -> Result<SpawnAgentResponse, OrchestrationError> {
-        let definition = resolve_definition(&request)?;
+        let definition = resolve_definition(&parent, &request)?;
         self.spawn_agent_with_definition(parent, definition, request)
             .await
     }
@@ -625,17 +625,26 @@ fn snapshot_of(
     }
 }
 
-fn resolve_definition(request: &SpawnAgentRequest) -> Result<AgentDefinition, OrchestrationError> {
+/// Harness registry first, then an enabled custom agent in the parent's
+/// config snapshot — a user-authored sub-agent lives only in the latter
+/// (#6934). A parent built without a config resolves against the harness
+/// registry alone.
+fn resolve_definition(
+    parent: &ParentExecutionContext,
+    request: &SpawnAgentRequest,
+) -> Result<AgentDefinition, OrchestrationError> {
     let agent_id = request.agent_id.trim();
     if agent_id.is_empty() || request.prompt.trim().is_empty() {
         return Err(OrchestrationError::InvalidSpawnRequest);
     }
     let registry =
         AgentDefinitionRegistry::current().ok_or(OrchestrationError::RegistryUnavailable)?;
-    registry
-        .get(agent_id)
-        .cloned()
-        .ok_or_else(|| OrchestrationError::DefinitionNotFound(agent_id.to_string()))
+    crate::agent_registry::resolve_spawnable_definition(
+        &registry,
+        parent.runtime_config.as_deref(),
+        agent_id,
+    )
+    .ok_or_else(|| OrchestrationError::DefinitionNotFound(agent_id.to_string()))
 }
 
 fn now() -> String {

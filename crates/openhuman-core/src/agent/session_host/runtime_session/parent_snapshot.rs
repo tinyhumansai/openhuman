@@ -28,6 +28,7 @@ impl OpenHumanTurnPrelude {
         crate::agent::harness::ParentExecutionContext {
             agent_definition_id: self.agent_definition_id.clone(),
             allowed_subagent_ids: self.allowed_subagent_ids.clone(),
+            runtime_config: self.runtime_config.clone(),
             turn_model_source: self.turn_model_source.clone(),
             all_tools: surface.tools.clone(),
             all_tool_specs: surface.durable_tool_specs.clone(),

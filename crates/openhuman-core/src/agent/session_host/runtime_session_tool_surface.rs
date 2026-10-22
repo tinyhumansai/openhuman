@@ -45,6 +45,52 @@ fn reconcile_surface_names(
     *permanent = managed.permanent;
 }
 
+/// `definition` with its `[subagents]` list replaced by a saved registry
+/// override from `config`, when one differs from the shipped list.
+fn effective_definition(
+    config: Option<&crate::config::Config>,
+    mut definition: crate::agent_registry::host_definition::AgentDefinition,
+) -> crate::agent_registry::host_definition::AgentDefinition {
+    let effective = crate::agent_registry::effective_subagent_allowlist(config, &definition);
+    if effective != definition.allowed_subagent_ids() {
+        tracing::debug!(
+            agent = %definition.id,
+            ids = effective.len(),
+            "[session] applying saved subagents override to the delegation surface"
+        );
+        // Skills wildcards are not agent ids; keep them beside the override.
+        let skills = definition
+            .subagents
+            .into_iter()
+            .filter(|entry| matches!(entry, tinyagents_definition::SubagentEntry::Skills(_)));
+        definition.subagents = effective
+            .into_iter()
+            .map(tinyagents_definition::SubagentEntry::AgentId)
+            .chain(skills)
+            .collect();
+    }
+    definition
+}
+
+/// Just the delegation targets of `definition`, each resolved like a spawn:
+/// the process registry first, then an enabled custom agent in `config`, so a
+/// user-authored sub-agent gets its delegate tool too (#6934).
+fn delegate_registry(
+    registry: &crate::agent_registry::host_definition::AgentDefinitionRegistry,
+    config: Option<&crate::config::Config>,
+    definition: &crate::agent_registry::host_definition::AgentDefinition,
+) -> crate::agent_registry::host_definition::AgentDefinitionRegistry {
+    let mut delegates = crate::agent_registry::host_definition::AgentDefinitionRegistry::default();
+    for id in definition.allowed_subagent_ids() {
+        if let Some(target) =
+            crate::agent_registry::resolve_spawnable_definition(registry, config, &id)
+        {
+            delegates.insert(target);
+        }
+    }
+    delegates
+}
+
 impl OpenHumanTurnPrelude {
     /// Rebuild every delegation-dependent tool view from the current cached
     /// integration set, replacing rather than appending. A revoked delegate is
@@ -58,7 +104,10 @@ impl OpenHumanTurnPrelude {
         let Some(registry) = AgentDefinitionRegistry::current() else {
             return Ok(());
         };
-        let definition = self.session_definition(&registry);
+        // A saved `subagents` override replaces the shipped list (#6934).
+        let definition = self
+            .session_definition(&registry)
+            .map(|definition| effective_definition(self.runtime_config.as_deref(), definition));
         let has_recorded_tool_snapshot = self
             .mutable
             .lock()
@@ -103,7 +152,11 @@ impl OpenHumanTurnPrelude {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut collected = definition
             .as_ref()
-            .map(|definition| collect_orchestrator_tools(definition, &registry, &integrations))
+            .map(|definition| {
+                let delegates =
+                    delegate_registry(&registry, self.runtime_config.as_deref(), definition);
+                collect_orchestrator_tools(definition, &delegates, &integrations)
+            })
             .unwrap_or_default();
         #[cfg(feature = "mcp")]
         collected.extend(mcp_tools);
@@ -278,6 +331,8 @@ impl OpenHumanTurnPrelude {
                 &specs,
                 &surface.visible_tool_names,
                 &policy,
+                self.runtime_config.as_deref(),
+                definition.as_ref(),
             ),
         );
         surface.tool_specs = Arc::new(specs);

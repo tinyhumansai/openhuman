@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn custom_delegate_is_treated_as_spawn_tool() {
     assert!(is_subagent_spawn_tool("spawn_subagent"));
+    assert!(is_subagent_spawn_tool("spawn_async_subagent"));
     assert!(is_subagent_spawn_tool("delegate_researcher"));
     assert!(!is_subagent_spawn_tool("directory_resolve"));
 }
@@ -172,4 +173,60 @@ fn rule_withheld_tools_leave_the_child_prompt_but_stay_allowed() {
     assert_eq!(prompt.len(), 1);
     assert_eq!(prompt[0].name, "file_read");
     assert_eq!(rule_listed_indices(&allowed, &tools, None), allowed);
+}
+
+/// A custom agent resolved for spawning keeps its `tool_allowlist` as its
+/// scope, so one that lists `spawn_async_subagent` would inherit the parent's
+/// instance. The child surface must not carry it (#6934): the scope filter
+/// treats it as a spawn tool, like `spawn_subagent` and `delegate_*`.
+#[test]
+fn custom_agent_allowlisting_spawn_async_subagent_loses_it_on_the_child_surface() {
+    use crate::agent_registry::{AgentRegistryEntry, AgentRegistrySource};
+
+    let mut config = crate::config::Config::default();
+    config.agent_registry.entries = vec![AgentRegistryEntry {
+        id: "fan_out_helper".to_string(),
+        name: "Fan-out helper".to_string(),
+        description: "Custom agent that names the async spawn tool.".to_string(),
+        source: AgentRegistrySource::Custom,
+        enabled: true,
+        model: None,
+        system_prompt: Some("Do the work.".to_string()),
+        tool_allowlist: vec![
+            "spawn_async_subagent".to_string(),
+            "current_time".to_string(),
+        ],
+        tool_denylist: Vec::new(),
+        tool_rules: None,
+        subagents: Default::default(),
+        tags: Vec::new(),
+        metadata: serde_json::Value::Null,
+    }];
+    let registry = crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only();
+    let definition = crate::agent_registry::resolve_spawnable_definition(
+        &registry,
+        Some(&config),
+        "fan_out_helper",
+    )
+    .expect("an enabled custom agent resolves for spawning");
+    assert!(
+        matches!(&definition.tools, tinyagents_definition::ToolScope::Named(names)
+            if names.iter().any(|name| name == "spawn_async_subagent")),
+        "fixture: the custom scope names the spawn tool"
+    );
+
+    let parent_tools: Vec<Box<dyn tinytools::Tool>> = vec![
+        Box::new(crate::agent::orchestration::tools::SpawnAsyncSubagentTool::new()),
+        Box::new(tinyagents_harness_tools::CurrentTimeTool::new()),
+    ];
+    let allowed = filter_tool_indices(&parent_tools, &definition.tools, &[], None);
+    let child: Vec<&str> = allowed.iter().map(|&i| parent_tools[i].name()).collect();
+    assert!(
+        !child.contains(&"spawn_async_subagent"),
+        "a child must not be able to spawn async sub-agents: {child:?}"
+    );
+    assert!(
+        child.contains(&"current_time"),
+        "ordinary tools survive: {child:?}"
+    );
 }

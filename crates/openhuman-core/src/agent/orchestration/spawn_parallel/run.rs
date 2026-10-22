@@ -62,7 +62,7 @@ pub(crate) async fn run_spawn_parallel_tasks_with_cancellation_and_workspace(
     let progress_sink = parent.on_progress.clone();
     let action_root =
         resolve_spawn_parallel_action_root(parent_workspace_descriptor.as_ref()).await;
-    let definitions = snapshot_agent_definitions(&registry);
+    let definitions = snapshot_agent_definitions(&registry, parent.runtime_config.as_deref());
     if cancel.is_cancelled() {
         return Ok(SpawnParallelGraphOutcome::Cancelled(
             "spawn_parallel_agents cancelled at validate".to_string(),

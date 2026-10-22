@@ -258,6 +258,7 @@ async fn unscoped_async_spawn_refuses_before_persisting_a_running_session() {
         "exercise the real file fallback"
     );
     let parent = ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: std::collections::HashSet::from(["task_manager_agent".into()]),

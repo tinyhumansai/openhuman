@@ -111,6 +111,23 @@ impl OpenHumanSessionHost {
         self.runtime_config.clone()
     }
 
+    /// The sub-agent ids this session's turn may dispatch: the resolved
+    /// definition's `[subagents]` list with a saved registry override
+    /// (`agent_registry_update`) applied from the config snapshot, so an edit
+    /// gates the next turn without a restart (#6934).
+    pub(crate) fn effective_subagent_ids(&self) -> std::collections::HashSet<String> {
+        self.resolved_definition()
+            .map(|definition| {
+                crate::agent_registry::effective_subagent_allowlist(
+                    self.runtime_config.as_deref(),
+                    &definition,
+                )
+                .into_iter()
+                .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The definition this session runs under: the one it was built from when
     /// the factory had one, else the process registry's entry for
     /// `agent_definition_id`.

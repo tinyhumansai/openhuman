@@ -131,6 +131,8 @@ impl OpenHumanSessionHost {
             self.tool_specs.as_slice(),
             &self.visible_tool_names,
             &self.tool_policy_session,
+            self.runtime_config.as_deref(),
+            self.resolved_definition().as_deref(),
         );
         self.visible_tool_specs = Arc::new(super::super::super::builder::dedup_visible_tool_specs(
             visible_specs,

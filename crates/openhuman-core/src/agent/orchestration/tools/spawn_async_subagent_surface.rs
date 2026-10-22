@@ -28,8 +28,13 @@ use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 
 pub struct SpawnAsyncSubagentTool {
     /// The ids this instance advertises in its `agent_id` enum. Empty means
-    /// the whole registry. See [`SpawnAsyncSubagentTool::scoped`].
+    /// the whole registry unless the instance is `scoped`. See
+    /// [`SpawnAsyncSubagentTool::scoped`].
     advertised_ids: Vec<String>,
+    /// Built by [`SpawnAsyncSubagentTool::scoped`]: `advertised_ids` is the
+    /// whole answer, so an empty list stays empty instead of widening to the
+    /// registry (a saved override can clear an allowlist, #6934).
+    scoped: bool,
 }
 
 /// Harness dispatch for the detached child path. It owns the typed parent run
@@ -78,6 +83,7 @@ impl SpawnAsyncSubagentTool {
     pub fn new() -> Self {
         Self {
             advertised_ids: Vec::new(),
+            scoped: false,
         }
     }
 
@@ -96,6 +102,7 @@ impl SpawnAsyncSubagentTool {
         ids.dedup();
         Self {
             advertised_ids: ids,
+            scoped: true,
         }
     }
 }
@@ -223,7 +230,7 @@ impl Tool for SpawnAsyncSubagentTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        let scoped = !self.advertised_ids.is_empty();
+        let scoped = self.scoped || !self.advertised_ids.is_empty();
         let agent_ids: Vec<String> = if scoped {
             self.advertised_ids.clone()
         } else {
@@ -232,7 +239,7 @@ impl Tool for SpawnAsyncSubagentTool {
                 .unwrap_or_default()
         };
 
-        let agent_id_schema = if agent_ids.is_empty() {
+        let agent_id_schema = if agent_ids.is_empty() && !scoped {
             json!({
                 "type": "string",
                 "description": "Sub-agent id (e.g. planner, critic, summarizer)."

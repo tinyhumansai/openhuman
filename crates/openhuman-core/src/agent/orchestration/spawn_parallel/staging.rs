@@ -232,13 +232,18 @@ fn shared_workspace_write_claim(
     Ok(Some(paths))
 }
 
+/// Every definition a task may name: the harness registry, plus the enabled
+/// custom agents in the parent's config, which live only there (#6934).
 pub(crate) fn snapshot_agent_definitions(
     registry: &AgentDefinitionRegistry,
+    config: Option<&crate::config::Config>,
 ) -> HashMap<String, AgentDefinition> {
-    registry
-        .list()
+    crate::agent_registry::spawnable_ids(registry, config)
         .into_iter()
-        .map(|definition| (definition.id.clone(), definition.clone()))
+        .filter_map(|id| {
+            crate::agent_registry::resolve_spawnable_definition(registry, config, &id)
+                .map(|definition| (id, definition))
+        })
         .collect()
 }
 

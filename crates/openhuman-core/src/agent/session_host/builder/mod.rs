@@ -109,6 +109,8 @@ pub(super) fn visible_tool_specs_for_policy(
     tool_specs: &[Arc<ToolSpec>],
     visible_names: &std::collections::HashSet<String>,
     tool_policy: &ToolPolicySession,
+    config: Option<&crate::config::Config>,
+    definition: Option<&AgentDefinition>,
 ) -> Vec<Arc<ToolSpec>> {
     // `use_skill`'s description carries the pack index, and its `skill` enum
     // carries the pack ids. Both are built once in `UseSkillTool::new`, before
@@ -152,12 +154,19 @@ pub(super) fn visible_tool_specs_for_policy(
             if spec.name == "spawn_async_subagent" {
                 // Same narrowing for the spawn enum: advertise only the ids
                 // this agent's `[subagents]` allowlist lets `execute` dispatch.
-                let allowed = allowed_subagent_ids_for(&tool_policy.profile.agent_id);
-                if !allowed.is_empty() {
-                    crate::agent::orchestration::tools::scope_spawn_async_subagent_spec(
-                        Arc::make_mut(&mut spec),
-                        &allowed,
-                    );
+                // A resolved agent whose effective allowlist is empty (shipped
+                // that way, or a saved override cleared it) may spawn nothing:
+                // `execute` refuses every id, so drop the tool rather than fall
+                // back to the unscoped whole-registry enum.
+                match allowed_subagent_ids_for(&tool_policy.profile.agent_id, config, definition) {
+                    Some(allowed) if allowed.is_empty() => return None,
+                    Some(allowed) => {
+                        crate::agent::orchestration::tools::scope_spawn_async_subagent_spec(
+                            Arc::make_mut(&mut spec),
+                            &allowed,
+                        )
+                    }
+                    None => {}
                 }
                 return Some(spec);
             }
@@ -266,33 +275,76 @@ pub(super) fn should_synthesize_delegation_tools(def: &AgentDefinition) -> bool 
     }
 }
 
-/// The sub-agent ids `agent_id`'s registry entry allows it to spawn.
+/// The definition `agent_id` runs under for subagent policy: the session's
+/// own definition, then the process registry, then an enabled custom agent in
+/// `config` ([`crate::agent_registry::resolve_spawnable_definition`]).
 ///
 /// Tolerates the web channel's `orchestrator_<thread>` rename the same way the
-/// orchestrator prompt does: exact match first, then the longest registry id
-/// the name extends at an `_` boundary. Empty when the registry is not up or
-/// the id resolves to nothing, which leaves the schema untouched.
-fn allowed_subagent_ids_for(agent_id: &str) -> Vec<String> {
-    let Some(registry) = crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
-    else {
-        return Vec::new();
+/// orchestrator prompt does: exact match first, then the longest known id the
+/// name extends at an `_` boundary, so a shorter session id never shadows a
+/// longer custom definition that also matches.
+pub(super) fn policy_definition_for(
+    agent_id: &str,
+    config: Option<&crate::config::Config>,
+    definition: Option<&AgentDefinition>,
+) -> Option<AgentDefinition> {
+    let agent_id = agent_id.trim();
+    let registry = crate::agent_registry::host_definition::AgentDefinitionRegistry::current();
+    let resolve = |id: &str| -> Option<AgentDefinition> {
+        if let Some(own) = definition.filter(|own| own.id == id) {
+            return Some(own.clone());
+        }
+        match registry.as_deref() {
+            Some(registry) => {
+                crate::agent_registry::resolve_spawnable_definition(registry, config, id)
+            }
+            None => crate::agent_registry::find_custom_in_config(config?, id)
+                .map(|entry| crate::agent_registry::definition_from_registry_entry(&entry)),
+        }
     };
-    let definition = registry.get(agent_id).or_else(|| {
-        let best = registry
-            .list()
-            .iter()
-            .filter(|d| {
-                agent_id
-                    .strip_prefix(d.id.as_str())
-                    .is_some_and(|rest| rest.starts_with('_'))
+    if let Some(resolved) = resolve(agent_id) {
+        return Some(resolved);
+    }
+    let mut known: Vec<String> = match registry.as_deref() {
+        Some(registry) => crate::agent_registry::spawnable_ids(registry, config),
+        None => config
+            .map(|config| {
+                config
+                    .agent_registry
+                    .entries
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect()
             })
-            .max_by_key(|d| d.id.len())?
-            .id
-            .clone();
-        registry.get(&best)
-    });
-    let Some(definition) = definition else {
-        return Vec::new();
+            .unwrap_or_default(),
     };
-    definition.allowed_subagent_ids()
+    known.extend(definition.map(|own| own.id.clone()));
+    let best = known
+        .into_iter()
+        .filter(|id| {
+            agent_id
+                .strip_prefix(id.as_str())
+                .is_some_and(|rest| rest.starts_with('_'))
+        })
+        .max_by_key(String::len)?;
+    resolve(&best)
+}
+
+/// The sub-agent ids `agent_id` may spawn: its definition's `[subagents]`
+/// list, replaced by a saved registry override (`agent_registry_update` on
+/// this agent) when `config` carries one, so the advertised enum follows the
+/// user's edit without a restart (#6934).
+///
+/// `None` when the id resolves to nothing, which leaves the schema untouched;
+/// `Some(empty)` is a resolved agent that may spawn nothing (deny-all, like
+/// the execute gate).
+fn allowed_subagent_ids_for(
+    agent_id: &str,
+    config: Option<&crate::config::Config>,
+    definition: Option<&AgentDefinition>,
+) -> Option<Vec<String>> {
+    let resolved = policy_definition_for(agent_id, config, definition)?;
+    Some(crate::agent_registry::effective_subagent_allowlist(
+        config, &resolved,
+    ))
 }
