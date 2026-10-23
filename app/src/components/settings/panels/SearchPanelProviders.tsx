@@ -64,8 +64,16 @@ function connectedDetail(provider: SearchProviderInfo, t: Translate): string {
   if (provider.takes_key)
     return provider.key_configured
       ? t('settings.search.detailOwnKey')
-      : t('settings.search.detailNoKey');
+      : provider.key_optional
+        ? t('settings.search.detailKeyOptional')
+        : t('settings.search.detailNoKey');
   return t('settings.search.routeDirect');
+}
+
+/** A catalogue tile's secondary line: what it can do, plus "no key needed" when that applies. */
+function tileDetail(provider: SearchProviderInfo, t: Translate): string {
+  const roles = rolesSummary(provider, t);
+  return provider.key_optional ? `${roles} · ${t('settings.search.detailKeyOptional')}` : roles;
 }
 
 const SearchPanelProviders = ({
@@ -274,7 +282,7 @@ const SearchPanelProviders = ({
                 </p>
               </div>
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {ownKey.map(p => tile(p, rolesSummary(p, t)))}
+                {ownKey.map(p => tile(p, tileDetail(p, t)))}
               </div>
             </section>
           )}

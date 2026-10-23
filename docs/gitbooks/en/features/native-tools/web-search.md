@@ -32,9 +32,9 @@ The default order is:
 
 | Role     | Default providers, in order                                        |
 | -------- | ------------------------------------------------------------------ |
-| Search   | Exa, Brave, Tavily, Parallel, Querit, Seltz, SearXNG, TinyFish     |
+| Search   | Exa, Brave, Tavily, Parallel, Querit, Seltz, SearXNG, TinyFish, Keenable |
 | Answer   | Gemini, Exa, Parallel                                              |
-| Contents | Exa, Tavily, Parallel, TinyFish                                    |
+| Contents | Exa, Tavily, Parallel, TinyFish, Keenable                          |
 
 Providers that are off are skipped, so with the defaults only Exa and Gemini serve.
 
@@ -56,8 +56,9 @@ Every provider has a route:
 | Querit   | Own key            | Search                    | Off by default.                                                                                       |
 | Seltz    | Own key            | Search                    | Off by default.                                                                                       |
 | SearXNG  | Own instance       | Search                    | Off by default. Uses the URL of your own [SearXNG](https://docs.searxng.org/) instance, not a key.    |
+| Keenable | Own key (optional) | Search, contents          | Off by default. Works without a key: [Keenable](https://keenable.ai) serves keyless public endpoints, rate-limited per IP. A key of your own raises the limits. |
 
-A provider is usable when it is on, its route is available (you are signed in for the included route, or a key is saved for the own-key route), and search as a whole is on. The settings page shows this as a badge on each provider: Ready, Needs key, Sign in required or Off.
+A provider is usable when it is on, its route is available (you are signed in for the included route, or a key is saved for the own-key route; Keenable needs no key), and search as a whole is on. The settings page shows this as a badge on each provider: Ready, Needs key, Sign in required or Off.
 
 If you use OpenHuman without signing in (a local session), the included route is unavailable. Turn on a provider with your own key to keep web search working.
 
@@ -108,7 +109,7 @@ Environment overrides:
 | `OPENHUMAN_SEARCH_PROVIDERS`                                                                                     | Replaces the provider set, for example `exa:managed,gemini,brave`.                    |
 | `OPENHUMAN_SEARCH_ROUTES`                                                                                        | Changes routes, for example `exa=direct,gemini=managed`.                              |
 | `OPENHUMAN_SEARCH_ROLES`                                                                                         | Sets role orders, for example `search=brave\|exa;answer=gemini`.                      |
-| `OPENHUMAN_EXA_API_KEY`, `OPENHUMAN_GEMINI_API_KEY`, `OPENHUMAN_BRAVE_API_KEY`, `OPENHUMAN_TAVILY_API_KEY`, `OPENHUMAN_QUERIT_API_KEY`, `OPENHUMAN_PARALLEL_API_KEY`, `OPENHUMAN_SELTZ_API_KEY` | Provider keys. The unprefixed names (`EXA_API_KEY`, `GEMINI_API_KEY`, …) work too. |
+| `OPENHUMAN_EXA_API_KEY`, `OPENHUMAN_GEMINI_API_KEY`, `OPENHUMAN_BRAVE_API_KEY`, `OPENHUMAN_TAVILY_API_KEY`, `OPENHUMAN_QUERIT_API_KEY`, `OPENHUMAN_PARALLEL_API_KEY`, `OPENHUMAN_KEENABLE_API_KEY`, `OPENHUMAN_SELTZ_API_KEY` | Provider keys. The unprefixed names (`EXA_API_KEY`, `GEMINI_API_KEY`, …) work too. |
 
 Treat environment-provided keys as secrets.
 
