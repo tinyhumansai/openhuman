@@ -9,10 +9,8 @@ use serde_json::Value;
 
 use super::live_config::live_composio_config;
 use super::redact::redact_composio_outcome;
-use crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool;
 use crate::config::Config;
-use crate::core::runtime::DispatchCtx;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult, ToolRunContext};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult};
 
 use super::super::client::{resolve_composio_route, ComposioRoute};
 use super::super::module_client::{self as connectors};
@@ -75,20 +73,8 @@ impl Tool for ComposioListToolsTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        let ctx = dispatch_ctx_for_tool(None);
-        let (config, outcome) = Box::pin(self.execute_unredacted(&ctx, args, options)).await;
-        redact_composio_outcome(&config, outcome)
-    }
-
-    async fn execute_with_context(
-        &self,
-        args: Value,
-        options: ToolCallOptions,
-        context: Option<&dyn ToolRunContext>,
-    ) -> anyhow::Result<ToolResult> {
-        let ctx = dispatch_ctx_for_tool(context);
-        let (config, outcome) = Box::pin(self.execute_unredacted(&ctx, args, options)).await;
-        redact_composio_outcome(&config, outcome)
+        let (config, outcome) = Box::pin(self.execute_unredacted(args, options)).await;
+        redact_composio_outcome(&config, outcome).await
     }
 
     fn supports_markdown(&self) -> bool {
@@ -103,7 +89,6 @@ impl ComposioListToolsTool {
     /// this tool was registered.
     async fn execute_unredacted(
         &self,
-        ctx: &DispatchCtx,
         args: Value,
         options: ToolCallOptions,
     ) -> (Box<Config>, anyhow::Result<ToolResult>) {
@@ -195,7 +180,8 @@ impl ComposioListToolsTool {
         // The module owns the route's query construction and applies the
         // user's stored scope preference to the listing (the default request),
         // so the host does not filter a second time.
-        super::super::ops::ensure_user_scopes_migrated(ctx, &live_config).await;
+        let dispatch = crate::core::runtime::DispatchCtx::ambient_turn();
+        super::super::ops::ensure_user_scopes_migrated(&dispatch, &live_config).await;
         let request = ComposioListToolsRequest {
             toolkits: toolkits.clone().unwrap_or_default(),
             tags: tags.clone().unwrap_or_default(),

@@ -251,7 +251,9 @@ description: "Access configures turn identity and permission policy; the host ch
 
 `Access` groups permission level, origin, standing grants and trusted roots. Choose an origin and tier together: a trusted local host request and an external channel message are different security contexts. `Access::full()` configures both access fields. A sandbox is an additional execution boundary, configured through `AgentDefinitionSpec`.
 
-The core autonomy policy is disabled by default. Set `config.autonomy.enabled` when you require its command classification, approval gate, allowlist and budget enforcement. Platform isolation and the credential/system-root safety floor have separate responsibilities; a tool group filter is not an operating-system sandbox.
+Approvals are the TinySecurity module's: it owns each request's durable lifecycle, exact binding, grants, expiry and audit trail, and the core serves the module's store, audit sink and prompt. A runtime therefore needs the module loaded (`security-module`, on by default) to ask a human for anything; without it a gated call is denied rather than waved through. A request an earlier launch left pending cannot be resumed and is not listed.
+
+The core autonomy policy is disabled by default. Set `config.security.autonomy.enabled` when you require its command classification, approval gate, allowlist and budget enforcement. Platform isolation and the credential/system-root safety floor have separate responsibilities; a tool group filter is not an operating-system sandbox.
 
 ## Runtime and agent scope
 
@@ -638,7 +640,10 @@ A structured `CoreError::Domain` carries a stable kind and `expected_user_state`
             ),
     )?;
     let full = runtime.agent(AgentSpec::new("full").access(openhuman_embed::Access::full()))?;
-    assert_ne!(read.config().autonomy.level, full.config().autonomy.level);
+    assert_ne!(
+        read.config().security.autonomy.level,
+        full.config().security.autonomy.level
+    );
     assert!(!read.run("Write a marker").await?.reply.is_empty());
     assert!(
         !marker.exists(),
@@ -2236,7 +2241,10 @@ The SQLite example sets `config.storage.url` to a `sqlite:` URL under a temporar
         .build()
         .await?;
     let storage = runtime.storage().expect("configured SQLite backend");
-    assert_eq!(storage.driver(), "sqlite");
+    assert_eq!(
+        runtime.capabilities().storage.driver.as_deref(),
+        Some("sqlite")
+    );
     let scoped = storage.for_scope(&Scope::local())?;
     let documents = scoped.documents();
     documents
@@ -2285,7 +2293,10 @@ Run `cargo run -p openhuman-embed --example storage --features storage-sqlite`. 
     // An explicit environment variable is the only path to a live database.
     if let Ok(url) = std::env::var("OPENHUMAN_EXAMPLE_MONGODB_URL") {
         let live = RuntimeBuilder::library().storage(url).build().await?;
-        assert_eq!(live.storage().expect("MongoDB backend").driver(), "mongodb");
+        assert_eq!(
+            live.capabilities().storage.driver.as_deref(),
+            Some("mongodb")
+        );
     }
 ```
 
@@ -2442,6 +2453,7 @@ Use the typed error and the effective capability report together. A method that 
 | Credential master-key failure | Initialize process master-key state before persisting a runtime API key; check headless key/file setup without printing its value. |
 | Invalid or insecure provider route | Supply a nonblank endpoint/key and use HTTPS for remote bearer routes. Loopback fixtures are separate from remote endpoints. |
 | Stack overflow on a nested turn | Use the documented Tokio worker stack; the default 2 MiB stack is insufficient. Follow the runnable example support setup. |
+| A gated call is denied with "the approval engine could not evaluate" | The TinySecurity module is absent, untrusted or faulted, or the storage scope could not be resolved. Approvals fail closed; check `modules` and the module source. |
 | A write is waiting indefinitely | Poll the same agent's approvals or retain an active callback subscription. Check origin, enabled autonomy and trusted action roots. |
 | Streaming appears stalled | Drain the bounded progress stream while work runs; inspect the final result. Dropping it cancels forwarding and the turn cooperatively. |
 | A skill is absent | Copy a real bundle into the agent's skill directory; symlinked bundles are rejected. New instructions need a new session. |
@@ -2827,7 +2839,7 @@ This matrix comes from the default-feature compiled capability-report example. R
 | `storage-file` | No |
 | `storage-mongodb` | No |
 | `storage-s3` | No |
-| `storage-sqlite` | No |
+| `storage-sqlite` | Yes |
 | `tinymemes` | Yes |
 | `voice` | No |
 | `web3` | No |
@@ -3107,7 +3119,7 @@ The compiled capability report describes this build:
     "storage-file": false,
     "storage-mongodb": false,
     "storage-s3": false,
-    "storage-sqlite": false,
+    "storage-sqlite": true,
     "tinymemes": true,
     "voice": false,
     "web3": false

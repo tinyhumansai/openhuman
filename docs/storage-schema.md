@@ -89,10 +89,7 @@ Record shapes and migrations stay with their owners.
 | Collection | Indexes | Expiry field | Search fields |
 | --- | --- | --- | --- |
 | `box.boxes` |  |  |  |
-| `box.cli_imports` |  |  |  |
 | `box.jail_index` |  |  |  |
-| `box.migrations` |  |  |  |
-| `box.templates` |  |  |  |
 
 ## tinychannels-bus
 
@@ -181,4 +178,3 @@ Record shapes and migrations stay with their owners.
 | Collection | Indexes | Expiry field | Search fields |
 | --- | --- | --- | --- |
 | `wallet.budgets` |  |  |  |
-| `wallet.migrations` |  |  |  |

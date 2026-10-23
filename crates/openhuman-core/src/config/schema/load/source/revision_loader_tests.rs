@@ -19,7 +19,7 @@ async fn discovered_parent_config_is_used_to_record_agent_overrides() {
         .await
         .unwrap();
     assert!(base.mcp_client.enabled);
-    assert!(!base.autonomy.enabled);
+    assert!(!base.security.autonomy.enabled);
     assert!(base.memory.agent_id.is_none());
 
     // Normal core boot discovers its config internally, so its context has no
@@ -27,7 +27,7 @@ async fn discovered_parent_config_is_used_to_record_agent_overrides() {
     // separately loaded base config.
     let parent = CoreContext::for_test(DomainSet::full(), Some(base.workspace_dir.clone()));
     let mut agent_config = base.clone();
-    agent_config.autonomy.enabled = true;
+    agent_config.security.autonomy.enabled = true;
     agent_config.mcp_client.enabled = false;
     agent_config.memory.agent_id = Some("runtime-agent-memory".into());
     let child = parent.derive_with_parent_config(
@@ -56,7 +56,7 @@ async fn discovered_parent_config_is_used_to_record_agent_overrides() {
     .await;
 
     assert_eq!(refreshed.default_model.as_deref(), Some("external-winner"));
-    assert!(refreshed.autonomy.enabled);
+    assert!(refreshed.security.autonomy.enabled);
     assert!(!refreshed.mcp_client.enabled);
     assert_eq!(
         refreshed.memory.agent_id.as_deref(),

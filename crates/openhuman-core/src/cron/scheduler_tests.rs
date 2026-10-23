@@ -233,8 +233,8 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
     config.reliability.scheduler_retries = 2;
     config.reliability.provider_backoff_ms = 2_000;
     // Read-only autonomy: `can_act()` is false, so the shell runner refuses.
-    config.autonomy.enabled = true;
-    config.autonomy.level = AutonomyLevel::ReadOnly;
+    config.security.autonomy.enabled = true;
+    config.security.autonomy.level = AutonomyLevel::ReadOnly;
 
     let counter = tmp.path().join("blocked-attempts.log");
     let command = counting_failure_command(&counter);
@@ -247,13 +247,16 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
         &command,
     )
     .unwrap();
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::from_config(
+        &config.security.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    );
     // Fixture guard: if the policy still permits acting, the command would run
     // and this test would be measuring the retryable path instead of the
     // blocked one — passing for entirely the wrong reason.
     assert!(
-        !security.can_act(),
+        !security.tier_allows_acting_blocking(),
         "fixture must be read-only, or this test does not exercise the blocked path"
     );
 
@@ -304,11 +307,17 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
 async fn a_shell_job_runs_on_this_platform() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::from_config(
+        &config.security.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    );
     // Fixture guard: a policy that refused to act would make this pass by
     // never spawning anything.
-    assert!(security.can_act(), "the fixture policy must permit acting");
+    assert!(
+        security.tier_allows_acting_blocking(),
+        "the fixture policy must permit acting"
+    );
 
     let job = test_job("echo tinyhumans");
 
@@ -333,10 +342,13 @@ async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp).await;
     config.modules.enabled = false;
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::from_config(
+        &config.security.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    );
 
-    let result = authorize_shell_command(&config, &security, "echo must-not-run").await;
+    let result = authorize_shell_command(&security, "echo must-not-run").await;
 
     assert_eq!(result, Err("Command analysis is unavailable.".to_owned()));
 }
@@ -360,11 +372,17 @@ async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
 async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::from_config(
+        &config.security.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    );
     // Fixture guard: a policy that refused to act would report failure for a
     // reason that has nothing to do with the pipeline.
-    assert!(security.can_act(), "the fixture policy must permit acting");
+    assert!(
+        security.tier_allows_acting_blocking(),
+        "the fixture policy must permit acting"
+    );
 
     let job = test_job("false | true");
 
@@ -381,4 +399,31 @@ async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
         "`false | true` is a success under a plain `-lc`; pipefail would make it \
          a failure and re-status every existing job with a pipeline in it: {output}"
     );
+}
+
+#[tokio::test]
+async fn scheduled_shell_requires_an_allow_verdict_before_jail_execution() {
+    use crate::security::policy::native_commands_stub::StubGateway;
+    use crate::security::{GateDecision, SecurityPolicy};
+    use tinysecurity_bus::CommandClass;
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let marker = tmp.path().join("scheduled-shell-ran");
+    let job = test_job(&format!("touch {}", marker.display()));
+
+    for gate in [GateDecision::Block, GateDecision::Prompt] {
+        let security =
+            SecurityPolicy::default().with_gateway(StubGateway::gate(CommandClass::Write, gate));
+        let (success, output) = run_job_command(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            &config,
+            &security,
+            &job,
+        )
+        .await;
+        assert!(!success, "{gate:?} must not start scheduled code");
+        assert!(output.contains("blocked by security policy"), "{output}");
+        assert!(!marker.exists(), "{gate:?} must not execute the command");
+    }
 }

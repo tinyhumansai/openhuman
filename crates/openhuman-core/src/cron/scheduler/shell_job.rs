@@ -1,61 +1,66 @@
-//! Execution of `JobType::Shell` jobs under the security policy and a hard
-//! timeout.
+//! Execution of `JobType::Shell` jobs under the security policy (the module
+//! analyses the command) and a hard timeout.
 
 use crate::config::Config;
+use crate::security::policy::{CommandFlow, CommandQuery, CommandStage, Refusal};
+use crate::security::GateDecision;
 use crate::security::SecurityPolicy;
 use tinyflows_bus::schedule::types::CronJob;
 use tokio::time::Duration;
 
 pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
-/// Check a scheduled shell command using the parser facts from the pinned
-/// TinyBox module. The host owns the allowlist and protected-path decisions;
-/// a missing module is a refusal, never a request to parse locally.
+/// Check a scheduled shell command when a job is created or edited. The
+/// security module classifies it under the scheduled-execution rule (curated
+/// allowlist plus the configured risk restrictions); this host only reports
+/// the verdict. A missing or faulted module is a refusal, never a request to
+/// parse locally. Nothing is reserved from the hourly budget.
 pub(crate) async fn authorize_shell_command(
-    config: &Config,
     security: &SecurityPolicy,
     command: &str,
 ) -> Result<(), String> {
-    #[cfg(feature = "modules")]
-    {
-        let analysis = match crate::modules::tinybox::analyze_command(config, command.to_owned())
-            .await
-        {
-            Ok(analysis) => analysis,
-            Err(e) => {
-                tracing::warn!(error = %e, "[cron:shell] command analysis unavailable");
-                #[cfg(test)]
-                {
-                    if !config.modules.enabled {
-                        return Err("Command analysis is unavailable.".to_owned());
-                    }
-                    // Scheduler unit tests exercise process and retry behavior
-                    // without loading a native artifact. Production has no
-                    // parser fallback and fails closed below.
-                    security
-                        .check_gated_command(command)
-                        .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-                    if !security.is_command_allowed(command) {
-                        return Err("blocked by security policy: command not allowed".to_owned());
-                    }
-                    return Ok(());
-                }
-                #[cfg(not(test))]
-                return Err("Command analysis is unavailable.".to_owned());
+    ask_module(security, command, CommandStage::Authorize).await
+}
+
+/// Admit a scheduled shell command immediately before it runs. As
+/// [`authorize_shell_command`], and an allowed command also spends one action
+/// of the scope's hourly budget.
+pub(crate) async fn admit_shell_command(
+    security: &SecurityPolicy,
+    command: &str,
+) -> Result<(), String> {
+    ask_module(security, command, CommandStage::Execute).await
+}
+
+async fn ask_module(
+    security: &SecurityPolicy,
+    command: &str,
+    stage: CommandStage,
+) -> Result<(), String> {
+    let verdict = security
+        .check_command(CommandQuery {
+            command,
+            declared: None,
+            flow: CommandFlow::Scheduled,
+            stage,
+        })
+        .await
+        .map_err(|refusal| {
+            log::debug!("[cron][shell] command refused stage={stage:?} reason={refusal:?}");
+            match refusal {
+                Refusal::Protected => "blocked by security policy: command rejected".to_owned(),
+                Refusal::RateLimit => "blocked by security policy: rate limit exceeded".to_owned(),
+                Refusal::Unavailable => "Command analysis is unavailable.".to_owned(),
+                _ => "blocked by security policy: command not allowed".to_owned(),
             }
-        };
-        security
-            .check_gated_command_analysis(&analysis)
-            .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-        if !security.is_command_allowed_analysis(&analysis) {
-            return Err("blocked by security policy: command not allowed".to_owned());
-        }
-        Ok(())
-    }
-    #[cfg(not(feature = "modules"))]
-    {
-        let _ = (config, security, command);
-        Err("Command analysis is unavailable.".to_owned())
+        })?;
+    match verdict.gate {
+        GateDecision::Allow => Ok(()),
+        GateDecision::Prompt => Err(
+            "blocked by security policy: scheduled commands cannot wait for interactive approval"
+                .to_owned(),
+        ),
+        GateDecision::Block => Err("blocked by security policy: command rejected".to_owned()),
     }
 }
 
@@ -76,54 +81,47 @@ pub(super) async fn run_job_command(
 }
 
 pub(super) async fn run_job_command_with_timeout(
-    ctx: &crate::core::runtime::DispatchCtx,
+    _ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     security: &SecurityPolicy,
     job: &CronJob,
     timeout: Duration,
 ) -> (bool, String) {
-    if !security.can_act() {
-        return (
-            false,
-            "blocked by security policy: autonomy is read-only".to_string(),
-        );
-    }
-
-    if security.is_rate_limited() {
-        return (
-            false,
-            "blocked by security policy: rate limit exceeded".to_string(),
-        );
-    }
-
-    if let Err(reason) = authorize_shell_command(config, security, &job.command).await {
+    // The module's Execute-stage check owns the autonomy tier and the hourly
+    // action budget; an allowed command spends one action there.
+    if let Err(reason) = admit_shell_command(security, &job.command).await {
         return (false, reason);
     }
 
-    if !security.record_action() {
-        return (
-            false,
-            "blocked by security policy: action budget exhausted".to_string(),
-        );
-    }
-
-    // Cron keeps host execution semantics (the host's own network, no jail)
-    // and a pipeline's default exit status: retries are spent on it.
-    let output = match crate::sandbox::shell_exec::run_host(
-        ctx,
+    // A scheduled command is text typed into a schedule, so it runs under the
+    // untrusted-spawn gate: the TinyBox jail (or the configured container),
+    // refused when the isolation floor cannot be met. The host's own network
+    // stays available and a pipeline keeps its default exit status, because
+    // retries are spent on it.
+    let output = match crate::sandbox::untrusted::run(crate::sandbox::untrusted::UntrustedShell {
+        dispatch_ctx: None,
         config,
-        &job.command,
-        &config.action_dir,
-        &config.workspace_dir,
-        std::collections::BTreeMap::new(),
+        command: &job.command,
+        cwd: &config.action_dir,
+        state_dir: &config.workspace_dir,
         timeout,
-        true,
-        None,
-    )
+        preserve_pipeline_status: true,
+        env: &crate::sandbox::untrusted::NO_ENV,
+        stdin: None,
+    })
     .await
     {
         Ok(output) => output,
-        Err(_) => return (false, "Command execution is unavailable.".to_owned()),
+        Err(error) if error.is::<crate::sandbox::ops::IsolationFloor>() => {
+            log::warn!("[cron][shell] refused: the sandbox is below the isolation floor");
+            // The `blocked by security policy:` prefix halts the retry loop: a
+            // missing jail does not appear by waiting.
+            return (false, format!("blocked by security policy: {error}"));
+        }
+        Err(error) => {
+            log::warn!("[cron][shell] sandboxed execution failed: {error}");
+            return (false, "Command execution is unavailable.".to_owned());
+        }
     };
     if output.timed_out {
         return (

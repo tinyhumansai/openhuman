@@ -273,7 +273,15 @@ async fn scenario() {
             .await
             .unwrap();
         let handle = runtime.open(user).await.unwrap();
-        assert!(handle.context().embedder_config().unwrap().autonomy.enabled);
+        assert!(
+            handle
+                .context()
+                .embedder_config()
+                .unwrap()
+                .security
+                .autonomy
+                .enabled
+        );
         assert_eq!(
             handle
                 .context()

@@ -278,13 +278,17 @@ fn contains(folder: &Path, inside: &Path) -> bool {
 /// `/private/etc`: a `/private/...` path is also checked without that prefix,
 /// as the protected prefixes name the familiar form.
 pub fn refused_path(path: &Path) -> Option<String> {
-    let forbidden = |p: &Path| crate::security::SecurityPolicy::is_always_forbidden(p);
-    let aliased = path
-        .strip_prefix("/private")
-        .ok()
-        .map(|rest| Path::new("/").join(rest));
-    (forbidden(path) || aliased.as_deref().is_some_and(forbidden))
-        .then(|| "the file is in a protected location".to_string())
+    #[cfg(feature = "security-module")]
+    let refused = crate::modules::security::gap::is_protected_blocking(path);
+    // Without the mandatory policy module there is no authority to admit a
+    // path. Keep the artifact writer closed rather than introducing a local
+    // path classifier as a fallback.
+    #[cfg(not(feature = "security-module"))]
+    let refused = {
+        let _ = path;
+        true
+    };
+    refused.then(|| "the file is in a protected location".to_string())
 }
 
 /// [`file_roots`] as the crate's folders, with [`refused_path`] as their guard.
@@ -367,7 +371,7 @@ pub fn registered_tools(
     let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
     {
         let (service, author) = (service.clone(), author.clone());
-        tools.push(Box::new(PerCallTool::new(move |chat, _| {
+        tools.push(Box::new(PerCallTool::new(move |chat, _, _| {
             tiny_artifacts::CreateArtifactTool::new(service(chat), author.clone())
         })));
     }
@@ -376,7 +380,7 @@ pub fn registered_tools(
     ))));
     {
         let (service, author) = (service.clone(), author.clone());
-        tools.push(Box::new(PerCallTool::new(move |chat, _| {
+        tools.push(Box::new(PerCallTool::new(move |chat, _, _| {
             tiny_artifacts::UpdateArtifactTool::new(service(chat), author.clone())
         })));
     }
@@ -385,12 +389,12 @@ pub fn registered_tools(
     ))));
     {
         let service = service.clone();
-        tools.push(Box::new(PerCallTool::new(move |chat, _| {
+        tools.push(Box::new(PerCallTool::new(move |chat, _, _| {
             tiny_artifacts::DeleteArtifactTool::new(service(chat))
         })));
     }
     if can_publish {
-        tools.push(Box::new(PerCallTool::new(move |chat, _| {
+        tools.push(Box::new(PerCallTool::new(move |chat, _, _| {
             tiny_artifacts::ShareArtifactTool::new(service(chat))
         })));
     }

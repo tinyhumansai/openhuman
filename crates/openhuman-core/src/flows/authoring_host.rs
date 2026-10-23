@@ -127,14 +127,17 @@ impl ApprovalCallbacks {
                 use tinyflows_bus::catalog::{ManifestCandidate, ManifestClass};
 
                 let security = SecurityPolicy::from_config(
-                    &config.autonomy,
+                    &config.security.autonomy,
                     &config.workspace_dir,
                     &config.action_dir,
                 );
                 let gated = |class: CommandClass| {
                     Some(ManifestClass {
                         name: format!("{class:?}"),
-                        blocked: security.gate_decision(class) == GateDecision::Block,
+                        blocked: security
+                            .command_class_gate_blocking(class)
+                            .map(|decision| decision == GateDecision::Block)
+                            .unwrap_or(true),
                         skip: false,
                     })
                 };
@@ -156,7 +159,10 @@ impl ApprovalCallbacks {
                             let class = classify_composio_action_for_tier(&slug).await;
                             Some(ManifestClass {
                                 name: format!("{class:?}"),
-                                blocked: security.gate_decision(class) == GateDecision::Block,
+                                blocked: security
+                                    .command_class_gate_blocking(class)
+                                    .map(|decision| decision == GateDecision::Block)
+                                    .unwrap_or(true),
                                 skip: class == CommandClass::Read,
                             })
                         }

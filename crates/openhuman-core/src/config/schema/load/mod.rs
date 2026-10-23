@@ -34,10 +34,6 @@ pub use dirs::{
     PRE_LOGIN_USER_ID,
 };
 
-// redact_url_for_log is pub(super) for the schema module; tests inside load
-// can access it because they are a submodule and use `use super::*`.
-pub(super) use migrate::redact_url_for_log;
-
 // The wire contract between the config loader (which appends the marker to a
 // read failure) and `core::observability::expected_error_kind` (which keys on
 // it to keep an ownership mismatch paging instead of demoting it as

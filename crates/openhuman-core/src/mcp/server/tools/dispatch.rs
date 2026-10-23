@@ -5,7 +5,7 @@ use tinyinference_llm::tool::ToolSchema;
 use crate::agent::OpenHumanSessionHost;
 use crate::agent_registry::host_definition::AgentDefinitionRegistry;
 use crate::core::all;
-use crate::security::{SecurityPolicy, ToolOperation};
+use crate::security::SecurityPolicy;
 
 use super::super::write_dispatch;
 use super::params::{build_rpc_params, validate_controller_params};
@@ -62,15 +62,12 @@ pub async fn call_tool(
     };
     match spec.name {
         "core.list_tools" => {
-            enforce_read_policy(ctx, spec.name).await?;
             return list_core_tools(ctx).await;
         }
         "core.tool_instructions" => {
-            enforce_read_policy(ctx, spec.name).await?;
             return core_tool_instructions(ctx).await;
         }
         "agent.list_subagents" => {
-            enforce_read_policy(ctx, spec.name).await?;
             return list_subagents(ctx).await;
         }
         "agent.run_subagent" => {
@@ -79,7 +76,9 @@ pub async fn call_tool(
         }
         "memory.learn" | "memory.forget" => {
             let config = write_dispatch::load_write_config(ctx, spec.name).await?;
-            if let Err(err) = write_dispatch::enforce_write_policy_for_config(spec.name, &config) {
+            if let Err(err) =
+                write_dispatch::enforce_write_policy_for_config(spec.name, &config).await
+            {
                 write_dispatch::audit_write_rejection(
                     &config,
                     spec.name,
@@ -122,7 +121,6 @@ pub async fn call_tool(
     }
 
     validate_controller_params(&spec, &params)?;
-    enforce_read_policy(ctx, spec.name).await?;
 
     let rpc_method = spec.rpc_method.ok_or_else(|| {
         ToolCallError::Internal(format!(
@@ -165,31 +163,6 @@ pub async fn call_tool(
     }
 }
 
-async fn enforce_read_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), ToolCallError> {
-    // Config-load failure is an internal/server issue (disk error, corrupt
-    // config), not bad client input — report it as `-32603 Internal error`
-    // rather than `-32602 Invalid params`.
-    let config = match ctx.load_config().await {
-        Ok(config) => config,
-        Err(err) => {
-            log::warn!(
-                "[mcp_server] enforce_read_policy config load failed tool={tool_name} error={err}"
-            );
-            return Err(ToolCallError::Internal(format!(
-                "failed to load config: {err}"
-            )));
-        }
-    };
-    let policy =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
-    // A policy denial *is* something the caller can act on (toggle autonomy,
-    // approve the tool) — keep that as `InvalidParams` so clients surface the
-    // reason text instead of a generic internal-error banner.
-    policy
-        .enforce_tool_operation(ToolOperation::Read, tool_name)
-        .map_err(ToolCallError::InvalidParams)
-}
-
 async fn enforce_act_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), ToolCallError> {
     let config = match ctx.load_config().await {
         Ok(config) => config,
@@ -202,10 +175,10 @@ async fn enforce_act_policy(ctx: &DispatchCtx, tool_name: &str) -> Result<(), To
             )));
         }
     };
-    let policy =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let policy = SecurityPolicy::from_full_config(&config);
     policy
-        .enforce_tool_operation(ToolOperation::Act, tool_name)
+        .spend_action(tool_name)
+        .await
         .map_err(ToolCallError::InvalidParams)
 }
 

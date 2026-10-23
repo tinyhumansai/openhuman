@@ -5,7 +5,7 @@
 //! [`tinyagents_harness::artifacts::tool_results`]. What stays here is what only
 //! the host can decide:
 //!
-//! * **the redactor**: the same `sanitize_text` pass that scrubs a worker
+//! * **the redactor**: the same `security::redact::text` pass that scrubs a worker
 //!   artifact ([`SanitizingRedactor`]), because an artifact on disk is exactly as
 //!   readable as the tool result it replaces;
 //! * **the tool vocabulary**: `file_read` opens an artifact and `use_skill` is the

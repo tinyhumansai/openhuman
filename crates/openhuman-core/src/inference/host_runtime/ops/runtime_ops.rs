@@ -50,7 +50,7 @@ pub async fn local_ai_summarize(
     text: &str,
     max_tokens: Option<u32>,
 ) -> Result<Outcome<String>, String> {
-    enforce_user_prompt_or_reject(text.trim(), "local_ai.ops.local_ai_summarize")?;
+    enforce_user_prompt_or_reject(text.trim(), "local_ai.ops.local_ai_summarize").await?;
 
     let service = local_ai::global(config);
     let runtime = crate::inference::local_runtime_config(config);
@@ -69,7 +69,7 @@ pub async fn local_ai_prompt(
     max_tokens: Option<u32>,
     no_think: Option<bool>,
 ) -> Result<Outcome<String>, String> {
-    enforce_user_prompt_or_reject(prompt.trim(), "local_ai.ops.local_ai_prompt")?;
+    enforce_user_prompt_or_reject(prompt.trim(), "local_ai.ops.local_ai_prompt").await?;
 
     let service = local_ai::global(config);
     let runtime = crate::inference::local_runtime_config(config);
@@ -93,7 +93,7 @@ pub async fn local_ai_vision_prompt(
     image_refs: &[String],
     max_tokens: Option<u32>,
 ) -> Result<Outcome<String>, String> {
-    enforce_user_prompt_or_reject(prompt.trim(), "local_ai.ops.local_ai_vision_prompt")?;
+    enforce_user_prompt_or_reject(prompt.trim(), "local_ai.ops.local_ai_vision_prompt").await?;
 
     let service = local_ai::global(config);
     let runtime = crate::inference::local_runtime_config(config);

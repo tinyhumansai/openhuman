@@ -20,10 +20,10 @@
 //! Some tools stay out whatever the allowlist says ([`HARD_DENIED`]): they
 //! change the process, install code, or reach state shared by every user.
 //!
-//! There is no per-user approval surface yet, so in SaaS the approval gate
-//! does not park: it allows a tool from an allowlisted group, whose reach the
-//! sandbox and path policy already bound, and refuses anything else
-//! ([`gate_verdict`]).
+//! The deployment's allowlist pre-authorizes tools whose reach the sandbox and
+//! path policy bound. A rejected call can continue to the user's approval
+//! surface only when it came from a routable WebChat; calls from background,
+//! CLI, or unscoped work remain denied ([`gate_verdict`]).
 
 use std::path::Path;
 
@@ -212,15 +212,33 @@ fn current_named_tools(
     ctx.host_overrides()?.named_tools()
 }
 
-/// The approval gate's answer in SaaS, where it never parks: `Ok` for a tool
-/// in an allowlisted group, otherwise the refusal.
+/// The deployment's pre-authorization verdict in SaaS: `Ok` for a tool in an
+/// allowlisted group, otherwise a rejection for the host's user-approval path.
 pub fn gate_verdict_with(tool: &str, groups: &[SaasToolGroup]) -> Result<(), String> {
     if admits_with(tool, false, groups) {
         return Ok(());
     }
     Err(format!(
-        "'{tool}' needs an approval, and this deployment has no approval surface for users"
+        "'{tool}' is not in the deployment's allowlisted tool groups"
     ))
+}
+
+/// Whether a rejected tool is specifically withheld pending a person's
+/// approval, rather than denied by the hosted capability boundary.
+pub fn requires_user_approval(ctx: &crate::core::runtime::DispatchCtx, tool: &str) -> bool {
+    if super::capabilities::ProfileCapabilities::in_ctx(ctx)
+        .is_some_and(|caps| caps.authorizes_approval(ctx, tool))
+    {
+        false
+    } else {
+        requires_user_approval_with(tool, &allowlisted())
+    }
+}
+
+/// Whether the deployment's allowlisted groups leave `tool` for a per-user
+/// approval decision.
+pub fn requires_user_approval_with(tool: &str, groups: &[SaasToolGroup]) -> bool {
+    !admits_with(tool, false, groups)
 }
 
 /// [`gate_verdict_with`] for the running deployment.
@@ -304,6 +322,7 @@ pub fn sandbox_policy_with(
             read_only_rootfs: Some(true),
             extra_caps_drop: Vec::new(),
         }),
+        mount_workspace: true,
     })
 }
 

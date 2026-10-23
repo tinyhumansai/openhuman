@@ -42,8 +42,8 @@ It wins over the configured one for every config in the process, so a host
 with its own store (or a test binary with an in-memory engine) runs the
 whole lifecycle without a TinyHumans session or a CortexDB key.
 
-Whatever engine is bound, TinyMemory's native `EngineBinder` wraps it in a
-scrubbing decorator using `security::scrub::host_policy` and a timing
+Whatever engine is bound, TinyMemory's native `EngineBinder` wraps it in its
+own `tinyredact::Policy::corroborated()` scrubbing decorator and a timing
 decorator. Every text a `StoreItem` carries is scrubbed before the engine sees
 it. This also covers writes TinyMemory makes through its own types
 (`AgentMemory::pre_turn`, `Brain::ingest`, background ingests). The timing

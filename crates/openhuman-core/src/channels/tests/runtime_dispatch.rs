@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tinychannels_bus as traits;
 use tokio::sync::Barrier;
 
 #[tokio::test]

@@ -35,8 +35,6 @@ use crate::storage::schema_support::fresh_key;
 use crate::storage::{block_on, DocumentStore, DocumentStoreExt, Storage, StorageError};
 use tinystoragedrivers::{CollectionSpec, ErrorKind, Filter, Precondition, Query, Sort, Versioned};
 
-#[cfg(feature = "legacy-import")]
-use super::storage_schema::legacy_collections;
 use super::storage_schema::specs;
 pub(super) use super::storage_schema::{trust_id, APPROVALS, FLOW_TRUST};
 
@@ -72,19 +70,6 @@ pub(super) fn for_agent(config: &Config, agent: &str) -> Result<Docs> {
         .for_scope(&crate::storage::scope_for_agent(agent))
         .map_err(|error| anyhow!("[approval::store] open the agent's scope: {error}"))?;
     Ok(Docs::new(&scoped))
-}
-
-/// The legacy `approval.db`, as the storage importer reads it.
-#[cfg(feature = "legacy-import")]
-pub(crate) fn import_source() -> crate::storage::import::Source {
-    crate::storage::import::Source {
-        domain: "approval",
-        owner: "approvals",
-        db: "approval/approval.db",
-        collections: legacy_collections,
-        read_legacy: |scratch, _real| super::store_import::read(scratch),
-        rekey: |record, _config| record,
-    }
 }
 
 /// The collections the approval store keeps.
@@ -150,6 +135,8 @@ fn to_audit(stored: &Versioned<Value>) -> Option<ApprovalAuditEntry> {
         expires_at: pending.expires_at,
         decided_at,
         decision,
+        decided_by: None,
+        judge: None,
     })
 }
 
@@ -157,7 +144,7 @@ fn to_audit(stored: &Versioned<Value>) -> Option<ApprovalAuditEntry> {
 /// sanitize first, so truncation can never split a secret past the redactor.
 fn audit_error(error: Option<&str>) -> Option<String> {
     error.map(|raw| {
-        let sanitized = crate::security::scrub::sanitize_text(raw).value;
+        let sanitized = crate::security::redact::text(raw);
         if sanitized.chars().count() > 512 {
             let head: String = sanitized.chars().take(511).collect();
             format!("{head}…")

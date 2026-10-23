@@ -14,7 +14,7 @@ async fn run() -> anyhow::Result<()> {
     let backend = support::stub_backend().await;
     let provider = support::provider("hello from the stub").await;
     let mut config = support::offline_config();
-    config.autonomy.enabled = true;
+    config.security.autonomy.enabled = true;
     let runtime = Runtime::builder()
         .config(config)
         .workspace(Workspace::Ephemeral)

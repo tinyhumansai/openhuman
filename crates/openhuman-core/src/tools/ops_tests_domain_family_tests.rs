@@ -1,21 +1,102 @@
 use super::*;
 #[cfg(feature = "modules")]
-use crate::tools::BrowserOpenTool;
 use crate::tools::{filter_tools_by_user_preference, http_request_tool};
+#[cfg(feature = "security-module")]
 use tinytools_std::filesystem::{ApplyPatchTool, CsvExportTool};
 
-/// Every acting tool gates on `can_act()` and returns its own read-only refusal
-/// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
-/// harness recognizes the block as a hard reject and halts on a verbatim repeat
-/// (see the marker detection in
-/// `tinyagents::middleware::RepeatedToolFailureMiddleware`). This pins every tool's
-/// literal to the marker const — drift between them fails here rather than
-/// silently letting the agent grind on a doomed call. Args are the minimum
-/// needed to reach the `can_act()` check in each tool.
+#[tokio::test]
+async fn all_tools_executes_stock_family_against_fake_backend() {
+    let backend = integration_test_support::spawn_fake_integration_backend().await;
+    let tmp = TempDir::new().unwrap();
+    let cfg = integration_test_config(&tmp, &backend.base_url);
+    store_test_session_token(&cfg);
+    let tools = integration_tools_for_config(&tmp, &cfg);
+
+    let quote = find_tool(&tools, "stock_quote")
+        .execute(serde_json::json!({ "symbol": "AAPL" }))
+        .await
+        .expect("stock_quote execute");
+    assert!(quote.output().contains("AAPL"));
+    assert!(quote.output().contains("latest trading day 2026-05-16"));
+
+    let exchange = find_tool(&tools, "stock_exchange_rate")
+        .execute(serde_json::json!({
+            "from_currency": "BTC",
+            "to_currency": "USD"
+        }))
+        .await
+        .expect("stock_exchange_rate execute");
+    assert!(exchange.output().contains("BTC/USD = 42.5"));
+
+    let options = find_tool(&tools, "stock_options")
+        .execute(serde_json::json!({
+            "symbol": "AAPL",
+            "require_greeks": true
+        }))
+        .await
+        .expect("stock_options execute");
+    assert!(options.output().contains("AAPL options chain"));
+    assert!(options.output().contains("call 2026-06-19 @ 250"));
+
+    let crypto = find_tool(&tools, "stock_crypto_series")
+        .execute(serde_json::json!({
+            "symbol": "BTC",
+            "market": "USD",
+            "limit": 2
+        }))
+        .await
+        .expect("stock_crypto_series execute");
+    assert!(crypto.output().contains("BTC/USD"));
+    assert!(crypto.output().contains("2026-05-16"));
+
+    let commodity = find_tool(&tools, "stock_commodity")
+        .execute(serde_json::json!({
+            "commodity": "WTI",
+            "interval": "weekly",
+            "limit": 2
+        }))
+        .await
+        .expect("stock_commodity execute");
+    assert!(commodity.output().contains("WTI (weekly)"));
+    assert!(commodity.output().contains("2026-05-16  80.1000"));
+
+    let requests = backend.requests();
+    let paths: Vec<&str> = requests.iter().map(|req| req.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "/agent-integrations/financial-apis/quote",
+            "/agent-integrations/financial-apis/exchange-rate",
+            "/agent-integrations/financial-apis/options",
+            "/agent-integrations/financial-apis/crypto-series",
+            "/agent-integrations/financial-apis/commodity",
+        ]
+    );
+    assert_eq!(requests[2].body["requireGreeks"], serde_json::json!(true));
+}
+
+#[cfg(feature = "security-module")]
+/// The shared filesystem and network tools ask their gate whether the tier lets
+/// them act (`FsGate::can_act` / `NetGate::can_act`, answered by the TinySecurity
+/// module) and return their own read-only refusal string. Each of those must
+/// carry [`POLICY_BLOCKED_MARKER`] so the agent harness recognizes the block as a
+/// hard reject and halts on a verbatim repeat (see the marker detection in
+/// `tinyagents::middleware::RepeatedToolFailureMiddleware`). This pins every
+/// tool's literal to the marker const, so drift fails here rather than silently
+/// letting the agent grind on a doomed call. Args are the minimum needed to reach
+/// the `can_act()` check in each tool. The module is scripted to answer
+/// "read-only"; the host tools that no longer carry their own check (browser,
+/// schedule, install_tool, ...) are refused by the tool gate instead
+/// (`tools/native_ops_tests.rs`, `middleware/security_gate_tests.rs`).
 #[tokio::test]
 async fn readonly_acting_tools_carry_policy_blocked_marker() {
     use crate::security::AutonomyLevel;
     use tinytools::status::POLICY_BLOCKED_MARKER;
+
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::allowing()
+            .budget(|_, _| tinysecurity_bus::BudgetDecision2::ReadOnlyMode),
+    ));
 
     let tmp = TempDir::new().unwrap();
     let sec = Arc::new(SecurityPolicy {
@@ -33,19 +114,6 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
         (
             Box::new(CsvExportTool::new(sec.clone())),
             serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
-        ),
-        // The `computer`-family tools are compiled out with the
-        // `desktop-automation` feature; gate these two cases per-element so the
-        // rest of the read-only policy assertions still run in the slim build.
-        #[cfg(feature = "modules")]
-        (
-            Box::new(BrowserOpenTool::new(
-                sec.clone(),
-                Arc::new(crate::modules::browser::BrowserClient::new(Arc::new(
-                    crate::config::Config::default(),
-                ))),
-            )),
-            serde_json::json!({ "url": "https://example.com" }),
         ),
         (
             Box::new(http_request_tool(
@@ -120,24 +188,16 @@ fn productivity_default_off_tools_retained_when_opted_in() {
 }
 
 #[tokio::test]
-async fn artifacts_created_through_the_registry_are_listed() {
+async fn artifact_list_through_registry_returns_envelope() {
     let tmp = TempDir::new().unwrap();
     let tools = expansion_tools_for(&tmp);
-    let created = find_tool(&tools, "create_artifact")
-        .execute(serde_json::json!({ "kind": "markdown", "title": "Notes", "body": "# hi" }))
+    let out = find_tool(&tools, "artifact_list")
+        .execute(serde_json::json!({ "limit": 10 }))
         .await
-        .expect("create_artifact execute");
-    assert!(!created.is_error, "{}", created.output_for_llm(false));
-
-    let out = find_tool(&tools, "list_artifacts")
-        .execute(serde_json::json!({}))
-        .await
-        .expect("list_artifacts execute");
+        .expect("artifact_list execute");
     let body = out.output_for_llm(false);
-    assert!(
-        body.contains("\"title\":\"Notes\""),
-        "listing missing the artifact: {body}"
-    );
+    assert!(body.contains("artifacts"), "envelope missing: {body}");
+    assert!(body.contains("total"), "envelope missing total: {body}");
 }
 
 #[test]

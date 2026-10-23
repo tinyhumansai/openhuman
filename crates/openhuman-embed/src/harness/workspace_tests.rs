@@ -35,7 +35,7 @@ fn an_ephemeral_root_lives_until_its_last_holder_drops() {
 
 #[test]
 fn the_action_dir_is_never_inside_the_workspace() {
-    // `is_workspace_internal_path` blocks agent writes beneath the workspace
+    // the internal-state reservation blocks agent writes beneath the workspace
     // fail-closed, so an action_dir nested in it would be an agent that cannot
     // write anywhere — with no error, just refusals.
     let resolved = ResolvedWorkspace::resolve(&Workspace::Ephemeral, None).expect("resolve");

@@ -3,7 +3,9 @@
 //!
 //! Before the storage ports, each small domain kept its own SQLite file under
 //! the workspace (`approval/approval.db`, `devices/devices.db`,
-//! `notifications/notifications.db`, `task_sources/sources.db`). An install
+//! `notifications/notifications.db`, `task_sources/sources.db`); the approval
+//! history of `approval/approval.db` is fed to the security module by its own
+//! startup importer instead (`security::approval::native`). An install
 //! that moves to a backend ([`super::install`]) must not start from empty
 //! stores, so the host runs this importer once the backend is installed.
 //!
@@ -233,7 +235,6 @@ pub struct Report {
 #[cfg(feature = "legacy-import")]
 pub fn sources() -> Vec<Source> {
     vec![
-        crate::security::approval::import_source(),
         crate::security::devices::import_source(),
         crate::desktop::notifications::import_source(),
         crate::integrations::task_sources::import_source(),

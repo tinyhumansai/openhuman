@@ -113,7 +113,6 @@ fn process_default_affects_registered_tools_without_a_core_context() {
             crate::tools::ops::all_tools(
                 std::sync::Arc::new(config.clone()),
                 &security,
-                crate::security::AuditLogger::disabled(),
                 &browser,
                 &http,
                 std::path::Path::new("/tmp/openhuman-tool-groups"),

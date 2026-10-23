@@ -44,10 +44,10 @@ pub async fn get_privacy_mode(ctx: &DispatchCtx) -> Result<Outcome<serde_json::V
     let config = ctx.load_config().await?;
     log::debug!(
         "[privacy][rpc] get_privacy_mode -> {:?}",
-        config.privacy.mode
+        config.security.privacy.mode
     );
     Ok(Outcome::single_log(
-        privacy_mode_value(config.privacy.mode),
+        privacy_mode_value(config.security.privacy.mode),
         "privacy mode read",
     ))
 }
@@ -63,10 +63,10 @@ pub async fn apply_privacy_settings(
         let mode = parse_privacy_mode(&raw)?;
         log::debug!(
             "[privacy][rpc] apply_privacy_settings: {:?} -> {:?}",
-            config.privacy.mode,
+            config.security.privacy.mode,
             mode
         );
-        config.privacy.mode = mode;
+        config.security.privacy.mode = mode;
     }
 
     config.save().await.map_err(super::config_save_error)?;
@@ -74,10 +74,10 @@ pub async fn apply_privacy_settings(
     // Hot-swap the live policy so enforcement takes effect without a restart.
     // `Err` here just means no session runtime is installed yet (e.g. CLI) — the
     // persisted value will be picked up on the next `install`; log and continue.
-    match crate::security::live_policy::reload_privacy(config.privacy.mode) {
+    match crate::security::live_policy::reload_privacy(config.security.privacy.mode) {
         Ok(generation) => log::debug!(
             "[privacy][rpc] live policy reloaded to {:?} (generation={generation})",
-            config.privacy.mode
+            config.security.privacy.mode
         ),
         Err(e) => log::debug!(
             "[privacy][rpc] live policy not reloaded ({e}); persisted value applies on next install"
@@ -85,7 +85,7 @@ pub async fn apply_privacy_settings(
     }
 
     Ok(Outcome::new(
-        privacy_mode_value(config.privacy.mode),
+        privacy_mode_value(config.security.privacy.mode),
         vec![format!(
             "privacy mode saved to {}",
             config.config_path.display()

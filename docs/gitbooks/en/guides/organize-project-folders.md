@@ -27,7 +27,7 @@ The agent works inside a boundary you define. With the autonomy policy on at the
 ### 1. Decide where the agent may act
 
 {% hint style="warning" %}
-Everything in this step needs the autonomy policy switched on. It is off by default. Set `[autonomy] enabled = true` in `config.toml` (`~/.openhuman/config.toml`, or `%USERPROFILE%\.openhuman\config.toml` on Windows). Without it, trusted roots, `workspace_only` and the approval gate do nothing, and acting tool calls run unprompted. Credential stores and system roots stay blocked either way.
+Everything in this step needs the autonomy policy switched on. It is off by default. Set `[security.autonomy] enabled = true` in `config.toml` (`~/.openhuman/config.toml`, or `%USERPROFILE%\.openhuman\config.toml` on Windows). Without it, trusted roots, `workspace_only` and the approval gate do nothing, and acting tool calls run unprompted. Credential stores and system roots stay blocked either way.
 {% endhint %}
 
 Confining the agent to its working folder needs two things: the policy enabled and `workspace_only` on. With both, the agent reads and writes only in its working folder and has no access to the rest of your disk. If either is off, the boundary is not enforced.
@@ -41,7 +41,7 @@ Keep the boundary as tight as the task. Grant the one folder, not your home dire
 
 ### 2. Set the autonomy tier
 
-In the same `[autonomy]` block, `level` decides how much runs without asking:
+In the same `[security.autonomy]` block, `level` decides how much runs without asking:
 
 - `supervised` (recommended): the agent proposes each change, and you approve moves, renames and deletes as they come, except for tools on the always-allow list.
 - `full`: routine file writes run automatically. Still keep the trusted root tight so "automatic" stays contained.

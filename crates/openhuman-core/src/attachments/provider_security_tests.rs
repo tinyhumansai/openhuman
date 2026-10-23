@@ -111,6 +111,29 @@ async fn fifo_attachment_is_rejected_without_waiting_for_a_writer() {
     let mut config = Config::default();
     config.action_dir = temp.path().to_path_buf();
     config.workspace_dir = temp.path().join("internal");
+
+    // The first path validation of a process loads the security module, which
+    // can outlast the 2 s window below and has nothing to do with whether the
+    // FIFO open blocks. Warm it on a regular file first, retrying while the
+    // module is still loading, exactly as a module-backed test arms it.
+    let warm = temp.path().join("warm.png");
+    std::fs::write(&warm, b"warm").unwrap();
+    let warm_scope = AttachmentAccessScope {
+        external_channel: false,
+        workspace: Some(temp.path().to_path_buf()),
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        match crate::attachments::resolve_path(&config, "warm.png", &warm_scope).await {
+            Ok(_) => break,
+            Err(error) if std::time::Instant::now() < deadline => {
+                log::debug!("[attachments][test] module still loading: {error}");
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("the security module must answer a path validation: {error}"),
+        }
+    }
+
     let model = Arc::new(NeverCalled::default());
     let wrapped = wrap_injected(
         &crate::core::runtime::DispatchCtx::host_default(),

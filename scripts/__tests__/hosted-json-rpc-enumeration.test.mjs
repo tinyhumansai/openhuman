@@ -19,7 +19,7 @@ function runCoreStep(mode) {
       "utf8",
     );
     const block = workflow.match(
-      /- name: Test core crate \(openhuman\)[\s\S]*?        run: \|\n([\s\S]*?)(?=\n  rust-core-tests-windows:)/,
+      /- name: Test core crate \(openhuman\)[\s\S]*?        run: \|\n([\s\S]*?)(?=\n  [a-z0-9_-]+:\n)/,
     );
     assert.ok(block, "hosted core step exists");
     const command = block[1]

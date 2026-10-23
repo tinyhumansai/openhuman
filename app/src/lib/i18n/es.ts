@@ -3508,6 +3508,18 @@ const messages: TranslationMap = {
     'Elija cómo se almacenan los secretos cuando el llavero del SO no está disponible.',
   'keyring.settings.grantConsent': 'Permitir almacenamiento local cifrado',
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
+  'keyring.settings.toolTrustTitle': 'Herramientas de confianza',
+  'keyring.settings.toolTrustDescription':
+    'Las herramientas que elegiste permitir siempre pueden ejecutarse sin volver a preguntar. Revoca un permiso para volver a solicitar aprobación.',
+  'keyring.settings.toolTrustLoading': 'Cargando herramientas de confianza…',
+  'keyring.settings.toolTrustEmpty': 'No hay herramientas de confianza',
+  'keyring.settings.toolTrustRevoke': 'Revocar',
+  'keyring.settings.toolTrustRevoking': 'Revocando…',
+  'keyring.settings.toolTrustRetry': 'Reintentar',
+  'keyring.settings.toolTrustLoadFailed':
+    'No se pudieron cargar las herramientas de confianza. Inténtalo de nuevo.',
+  'keyring.settings.toolTrustRevokeFailed':
+    'No se pudo revocar la herramienta de confianza. Inténtalo de nuevo.',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
   // Chat: agent-generated artifacts (#2779)
@@ -3884,6 +3896,12 @@ const messages: TranslationMap = {
   'settings.approvalHistory.tableTitle': 'Decisiones',
   'settings.approvalHistory.tableDesc':
     'Cada aprobación o negación, con la herramienta y lo que se le pidió que hiciera.',
+  'settings.approvalHistory.autoJev': 'Aprobado automáticamente por Jev',
+  'settings.approvalHistory.autoPolicy': 'Aprobado automáticamente por política',
+  'settings.approvalHistory.judgeScores':
+    'Intención {intent} · Reversible {reversible} · Exfiltración {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'Veredicto en caché',
+  'settings.approvalHistory.judgeExpires': 'La concesión caduca {time}',
   'settings.approvalHistory.column.time': 'Hora',
   'settings.approvalHistory.column.tool': 'Herramienta / acción',
   'settings.approvalHistory.column.decision': 'Decisión',
@@ -4705,13 +4723,9 @@ const messages: TranslationMap = {
   'settings.sandbox.backendName.none': 'Ninguno',
   'settings.sandbox.backendName.docker': 'Docker',
   'settings.sandbox.backendName.landlock': 'Landlock',
-  'settings.sandbox.backendName.firejail': 'Firejail',
-  'settings.sandbox.backendName.bubblewrap': 'Bubblewrap',
   'settings.sandbox.backendHint.auto': 'Utilice el mejor backend disponible',
   'settings.sandbox.backendHint.docker': 'Ejecutar herramientas en un contenedor',
   'settings.sandbox.backendHint.landlock': 'Reglas de acceso a archivos de kernel',
-  'settings.sandbox.backendHint.firejail': 'Cadena de proceso espacial',
-  'settings.sandbox.backendHint.bubblewrap': 'Espacios de nombre de usuario ligeros',
   'settings.sandbox.backendHint.none': 'Ejecutar herramientas directamente, sin aislamiento',
   'devOptions.toolPolicyDiagnostics.inventory.title': 'Inventario de herramientas',
   'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Herramientas totales',

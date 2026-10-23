@@ -13,7 +13,7 @@ use tinytools::{IndirectCall, PermissionLevel, Tool, ToolCallOptions, ToolResult
 use crate::{
     config::Config,
     mcp::{host, module_client::McpConfiguredClient},
-    security::{SecurityPolicy, ToolOperation},
+    security::SecurityPolicy,
 };
 
 /// Lists configured MCP servers through TinyMCP's safe summary operation.
@@ -237,7 +237,7 @@ impl Tool for McpListToolsTool {
                 meta: None,
             })
             .collect();
-        let safe = crate::mcp::registry::tools_safe_for_agent(&server, policy_tools);
+        let safe = crate::mcp::registry::tools_safe_for_agent(&server, policy_tools).await;
         let safe_names: std::collections::HashSet<_> =
             safe.into_iter().map(|tool| tool.name).collect();
         let payload = display
@@ -383,10 +383,6 @@ impl Tool for McpCallTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        self.security
-            .enforce_tool_operation(ToolOperation::Act, self.name())
-            .map_err(|error| anyhow::anyhow!(error))?;
-
         let server = required_string_arg(&args, "server")?;
         let tool = required_string_arg(&args, "tool")?;
         let arguments = args

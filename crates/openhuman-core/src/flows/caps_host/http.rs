@@ -122,7 +122,7 @@ impl OpenHumanHttp {
         let security =
             Arc::new(current_tier_policy(&self.ctx, &self.config, &self.security).await?);
         let tier_decision =
-            enforce_node_tier_gate(&security, CommandClass::Network, "http_request")?;
+            enforce_node_tier_gate(&security, CommandClass::Network, "http_request").await?;
 
         let portability = module::portability_proxy(&self.config)
             .await
@@ -142,7 +142,7 @@ impl OpenHumanHttp {
         // is injected, so a stored secret never lands in the approval UI or
         // audit trail. Injection happens strictly after this point.
         let summary = inspected.redacted_summary;
-        let redacted = crate::security::approval::redact_args(&request);
+        let redacted = crate::security::redact::arguments(&request);
         let (outcome, audit_id) = gate_call_for_tier(
             &self.ctx,
             &self.approval,

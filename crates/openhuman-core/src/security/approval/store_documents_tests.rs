@@ -295,9 +295,12 @@ fn an_unreadable_source_context_reads_as_absent() {
 }
 
 #[test]
-fn a_missing_error_stays_missing() {
+fn unavailable_audit_error_text_is_suppressed() {
     assert!(audit_error(None).is_none());
-    assert_eq!(audit_error(Some("plain")).as_deref(), Some("plain"));
+    assert_eq!(
+        audit_error(Some("plain")).as_deref(),
+        Some(crate::core::log_redaction::SUPPRESSED)
+    );
 }
 
 #[test]

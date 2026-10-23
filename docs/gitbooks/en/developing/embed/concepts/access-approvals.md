@@ -6,7 +6,9 @@ description: "Access configures turn identity and permission policy; the host ch
 
 `Access` groups permission level, origin, standing grants and trusted roots. Choose an origin and tier together: a trusted local host request and an external channel message are different security contexts. `Access::full()` configures both access fields. A sandbox is an additional execution boundary, configured through `AgentDefinitionSpec`.
 
-The core autonomy policy is disabled by default. Set `config.autonomy.enabled` when you require its command classification, approval gate, allowlist and budget enforcement. Platform isolation and the credential/system-root safety floor have separate responsibilities; a tool group filter is not an operating-system sandbox.
+Approvals are the TinySecurity module's: it owns each request's durable lifecycle, exact binding, grants, expiry and audit trail, and the core serves the module's store, audit sink and prompt. A runtime therefore needs the module loaded (`security-module`, on by default) to ask a human for anything; without it a gated call is denied rather than waved through. A request an earlier launch left pending cannot be resumed and is not listed.
+
+The core autonomy policy is disabled by default. Set `config.security.autonomy.enabled` when you require its command classification, approval gate, allowlist and budget enforcement. Platform isolation and the credential/system-root safety floor have separate responsibilities; a tool group filter is not an operating-system sandbox.
 
 ## Runtime and agent scope
 

@@ -15,6 +15,7 @@ Use the typed error and the effective capability report together. A method that 
 | Credential master-key failure | Initialize process master-key state before persisting a runtime API key; check headless key/file setup without printing its value. |
 | Invalid or insecure provider route | Supply a nonblank endpoint/key and use HTTPS for remote bearer routes. Loopback fixtures are separate from remote endpoints. |
 | Stack overflow on a nested turn | Use the documented Tokio worker stack; the default 2 MiB stack is insufficient. Follow the runnable example support setup. |
+| A gated call is denied with "the approval engine could not evaluate" | The TinySecurity module is absent, untrusted or faulted, or the storage scope could not be resolved. Approvals fail closed; check `modules` and the module source. |
 | A write is waiting indefinitely | Poll the same agent's approvals or retain an active callback subscription. Check origin, enabled autonomy and trusted action roots. |
 | Streaming appears stalled | Drain the bounded progress stream while work runs; inspect the final result. Dropping it cancels forwarding and the turn cooperatively. |
 | A skill is absent | Copy a real bundle into the agent's skill directory; symlinked bundles are rejected. New instructions need a new session. |

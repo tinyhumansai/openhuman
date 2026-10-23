@@ -83,7 +83,7 @@ async fn the_gate_off_switch_still_refuses_an_unlabelled_origin() {
 }
 
 #[tokio::test]
-async fn each_agent_answers_from_its_own_auto_approve_list() {
+async fn legacy_auto_approve_lists_are_not_replayed_as_module_grants() {
     let (gate, _dir) = test_gate();
     let listed = SecurityPolicy {
         auto_approve: vec!["shell".into()],
@@ -96,7 +96,7 @@ async fn each_agent_answers_from_its_own_auto_approve_list() {
         ..SecurityPolicy::default()
     };
 
-    let allowed = gated_call(
+    let configured = gated_call(
         &gate,
         agent_ctx("listed", Some(listed), false),
         web_origin(),
@@ -104,18 +104,24 @@ async fn each_agent_answers_from_its_own_auto_approve_list() {
     )
     .await;
     assert!(
-        matches!(allowed, Some(GateOutcome::Allow)),
-        "got {allowed:?}"
+        !matches!(configured, Some(GateOutcome::Allow)),
+        "legacy config must not resurrect a revoked durable grant: {configured:?}"
     );
+    let seen = stub_of(&gate).seen();
+    assert!(seen[0].posture.auto_approve_all == false);
+    assert_eq!(seen[0].legacy_tool_grants, ["shell"]);
 
-    let parked = gated_call(
+    let unconfigured = gated_call(
         &gate,
         agent_ctx("unlisted", Some(unlisted), false),
         web_origin(),
         "shell",
     )
     .await;
-    assert!(parked.is_none(), "an agent without the grant must park");
+    assert!(
+        !matches!(unconfigured, Some(GateOutcome::Allow)),
+        "an agent without a durable grant must not be auto-approved: {unconfigured:?}"
+    );
 }
 
 #[tokio::test]

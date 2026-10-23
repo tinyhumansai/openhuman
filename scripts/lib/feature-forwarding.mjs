@@ -472,6 +472,8 @@ export const CHAIN_GATES_NOT_FORWARDED = {
   'openhuman-embed': {
     'rss-bench':
       'Library-side hook for the embedded-RSS benchmark (#5046). Its binaries live in tinyhumansai/openhuman-benchmarks (`profile/`, #6944), which enables the core gate directly; no host in this repository turns it on.',
+    'native-security-tests':
+      'Opt-in fixture tests for released native security artifacts. They are run directly against openhuman-core in CI and do not expose a runtime capability to embedders.',
   },
 };
 

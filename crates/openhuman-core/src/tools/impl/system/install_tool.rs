@@ -1,31 +1,14 @@
 //! Tool: install_tool — install an OS / language package, heavily gated.
 //!
-//! This is the highest-blast-radius tool: it changes the user's machine. It is
-//! therefore gated on `SecurityPolicy.allow_tool_install` (intended to be set
-//! only in Full access mode), runs the package manager via an explicit argv
-//! (never a shell string, so the package name can't inject commands), validates
-//! the package name against a strict charset, and records an audit log line.
-//!
-//! It deliberately does NOT auto-prepend `sudo`: system managers that need root
-//! (apt/dnf/pacman) will surface a permissions error, which the agent should
-//! relay rather than silently escalate. User-scoped managers (brew, pipx,
-//! `npm -g`, `cargo install`) work without elevation.
+//! Host package-manager execution is disabled until the installer can run inside
+//! an approved isolated environment. Human approval does not isolate package
+//! install scripts from the host.
 
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
 use tinytools::{PermissionLevel, Tool, ToolResult};
-use tokio::process::Command as TokioCommand;
-
-use tinytools_std::detect_tools::find_on_path;
-
-/// Hard cap on an install before it is killed.
-const INSTALL_TIMEOUT_SECS: u64 = 300;
-/// Per-stream cap on captured installer output (1 MiB) — verbose package
-/// managers can emit very large stdout/stderr and spike memory.
-const MAX_OUTPUT_BYTES: usize = 1_048_576;
 
 pub struct InstallToolTool {
     security: Arc<SecurityPolicy>,
@@ -37,40 +20,15 @@ impl InstallToolTool {
     }
 }
 
-/// Map a manager id to its binary + the argv prefix that precedes the package.
-fn manager_argv(manager: &str) -> Option<(&'static str, Vec<&'static str>)> {
-    match manager {
-        "apt" | "apt-get" => Some(("apt-get", vec!["install", "-y"])),
-        "dnf" => Some(("dnf", vec!["install", "-y"])),
-        "yum" => Some(("yum", vec!["install", "-y"])),
-        "pacman" => Some(("pacman", vec!["-S", "--noconfirm"])),
-        "apk" => Some(("apk", vec!["add"])),
-        "brew" => Some(("brew", vec!["install"])),
-        "winget" => Some(("winget", vec!["install", "-e", "--id"])),
-        "pipx" => Some(("pipx", vec!["install"])),
-        "npm" => Some(("npm", vec!["install", "-g"])),
-        "cargo" => Some(("cargo", vec!["install"])),
-        _ => None,
-    }
-}
-
-/// Best-effort detection of the host's system package manager.
-fn detect_system_manager() -> Option<&'static str> {
-    ["apt-get", "dnf", "yum", "pacman", "apk", "brew", "winget"]
-        .into_iter()
-        .find(|&m| find_on_path(m).is_some())
-        .map(|v| v as _)
-}
-
-/// A package name is accepted only if it contains exclusively characters that
-/// appear in real package identifiers — letters, digits and `._+-@/:`. This
-/// blocks shell metacharacters even though we never build a shell string.
-fn is_valid_package_name(pkg: &str) -> bool {
-    !pkg.is_empty()
-        && pkg.len() <= 200
-        && pkg.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-' | '@' | '/' | ':')
-        })
+/// The refusal returned to a SaaS tenant, or `None` for a single-user host.
+fn refuse_under_saas(saas: bool) -> Option<ToolResult> {
+    saas.then(|| {
+        tracing::warn!("[install_tool] refused under SaaS");
+        ToolResult::error(
+            "[policy-denied] install_tool is not available in SaaS mode: it would change the \
+             shared host, not the tenant's sandbox.",
+        )
+    })
 }
 
 #[async_trait]
@@ -80,9 +38,8 @@ impl Tool for InstallToolTool {
     }
 
     fn description(&self) -> &str {
-        "Install an OS or language package on the host (apt/dnf/pacman/apk/brew/winget/pipx/\
-         npm -g/cargo). HIGH IMPACT: only available when the user has enabled tool installation \
-         (Full access mode). Prefer detect_tools first; only install what's actually missing."
+        "OS package installation is currently unavailable because package-manager scripts are not \
+         confined to an approved isolated environment."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -131,9 +88,14 @@ impl InstallToolTool {
     /// Runs the install for a turn whose approval context is `approval`.
     pub(crate) async fn run(
         &self,
-        args: serde_json::Value,
+        _args: serde_json::Value,
         approval: &crate::security::approval::ApprovalTurnContext,
     ) -> anyhow::Result<ToolResult> {
+        // Gate -1: a package install changes the machine the core runs on, which
+        // under SaaS is shared by every tenant. Never, for any tenant.
+        if let Some(refusal) = refuse_under_saas(crate::core::runtime::is_saas()) {
+            return Ok(refusal);
+        }
         // Gate 0: installs mutate the host (not the workspace), so they must
         // never run without an explicit human Approve. The ApprovalGate only
         // parks for an interactive turn (a chat context on the turn's approval
@@ -153,111 +115,9 @@ impl InstallToolTool {
                  (Full access mode / allow_tool_install) before installing tools.",
             ));
         }
-        // Gate 2: read-only autonomy never installs.
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only.",
-            ));
-        }
-        // Gate 3: rate limit.
-        if self.security.is_rate_limited() {
-            return Ok(ToolResult::error(
-                "Rate limit exceeded: too many actions in the last hour",
-            ));
-        }
-
-        let package = match args.get("package").and_then(|v| v.as_str()) {
-            Some(p) => p.trim(),
-            None => return Ok(ToolResult::error("Missing 'package' parameter")),
-        };
-        if !is_valid_package_name(package) {
-            return Ok(ToolResult::error(format!(
-                "Invalid package name '{package}': only letters, digits and ._+-@/: are allowed"
-            )));
-        }
-
-        let manager = match args.get("manager").and_then(|v| v.as_str()) {
-            Some(m) => m.to_string(),
-            None => match detect_system_manager() {
-                Some(m) => m.to_string(),
-                None => {
-                    return Ok(ToolResult::error(
-                        "No supported package manager detected on PATH. Pass 'manager' explicitly \
-                         (e.g. brew, pipx, npm, cargo).",
-                    ));
-                }
-            },
-        };
-
-        let Some((program, prefix)) = manager_argv(&manager) else {
-            return Ok(ToolResult::error(format!(
-                "Unsupported package manager '{manager}'"
-            )));
-        };
-        if find_on_path(program).is_none() {
-            return Ok(ToolResult::error(format!(
-                "Package manager '{program}' is not installed on PATH"
-            )));
-        }
-
-        // Spend an action against the rate budget.
-        if !self.security.record_action() {
-            return Ok(ToolResult::error(
-                "Rate limit exceeded: action budget exhausted",
-            ));
-        }
-
-        tracing::warn!(
-            channel = "tool:install_tool",
-            manager = %program,
-            package = %package,
-            "[install_tool] installing OS package (gated by allow_tool_install)"
-        );
-
-        let mut cmd = TokioCommand::new(program);
-        cmd.args(&prefix).arg(package);
-        cmd.current_dir(&self.security.workspace_dir);
-
-        let output = match tinytools_std::timeout::output_or_kill(
-            &mut cmd,
-            Duration::from_secs(INSTALL_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => {
-                return Ok(ToolResult::error(format!(
-                    "Failed to launch {program}: {e}"
-                )));
-            }
-            Err(_) => {
-                return Ok(ToolResult::error(format!(
-                    "Install timed out after {INSTALL_TIMEOUT_SECS}s and was killed"
-                )));
-            }
-        };
-
-        let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        if stdout.len() > MAX_OUTPUT_BYTES {
-            stdout.truncate(crate::util::floor_char_boundary(&stdout, MAX_OUTPUT_BYTES));
-            stdout.push_str("\n... [stdout truncated at 1 MiB]");
-        }
-        if stderr.len() > MAX_OUTPUT_BYTES {
-            stderr.truncate(crate::util::floor_char_boundary(&stderr, MAX_OUTPUT_BYTES));
-            stderr.push_str("\n... [stderr truncated at 1 MiB]");
-        }
-        if output.status.success() {
-            Ok(ToolResult::success(format!(
-                "Installed '{package}' via {program}.\n{stdout}"
-            )))
-        } else {
-            Ok(ToolResult::error(format!(
-                "{program} failed to install '{package}' (exit {:?}).\n{}",
-                output.status.code(),
-                if stderr.is_empty() { stdout } else { stderr }
-            )))
-        }
+        Ok(ToolResult::error(
+            "OS package installation is unavailable until an isolated package installer exists.",
+        ))
     }
 }
 

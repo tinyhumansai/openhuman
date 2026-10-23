@@ -19,7 +19,7 @@
 //! core vouches for ([`FileRoots`], built by the caller or from config — never
 //! taken from the record), and the file must be absolute, free of `..`,
 //! strictly inside that root (after resolving symlinks when it exists), and never a
-//! path [`SecurityPolicy::is_always_forbidden`] rejects. That last check is the
+//! path the TinySecurity protected-path floor (`security::floor`) rejects. That last check is the
 //! same floor the agent's own file tools keep when the autonomy policy is off,
 //! so a hand-edited record cannot reach further than the agent already could.
 //! (`artifacts/` is deliberately not a workspace-internal dir: the agent reads
@@ -29,7 +29,6 @@ use std::path::{Component, Path, PathBuf};
 
 use super::store::{artifacts_root, get_artifact};
 use super::types::{ArtifactMeta, ArtifactStatus};
-use crate::security::SecurityPolicy;
 
 /// The files folders the core vouches for: where new files go, plus every
 /// folder an existing record may legitimately point into. A record's
@@ -232,7 +231,7 @@ fn check_within(root: &Path, file: &Path) -> Result<(), &'static str> {
     if file == root || !file.starts_with(root) {
         return Err("file is outside its files folder");
     }
-    if SecurityPolicy::is_always_forbidden(file) {
+    if crate::security::floor::is_protected_blocking(file) {
         return Err("file is in a protected location");
     }
     // A symlink inside the folder must not lead out of it. Fail closed: when
@@ -250,7 +249,7 @@ fn check_within(root: &Path, file: &Path) -> Result<(), &'static str> {
                 return Err("file could not be resolved");
             };
             if !canon_file.starts_with(&canon_root)
-                || SecurityPolicy::is_always_forbidden(&canon_file)
+                || crate::security::floor::is_protected_blocking(&canon_file)
             {
                 return Err("file resolves outside its files folder");
             }
@@ -328,6 +327,6 @@ pub(crate) async fn remove_empty_placeholder(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "security-module"))]
 #[path = "files_tests.rs"]
 mod tests;

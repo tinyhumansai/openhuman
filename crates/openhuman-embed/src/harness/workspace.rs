@@ -156,7 +156,7 @@ impl ResolvedWorkspace {
     /// `profile/src/bin/library_profile/harness.rs::fixture()` in openhuman-benchmarks, which is the recipe
     /// already proven against real turns: a `workspace/` for internal state and
     /// a sibling `action/` for the agent's read/write root. Keeping them
-    /// siblings rather than nesting matters — `is_workspace_internal_path`
+    /// siblings rather than nesting matters — the internal-state reservation
     /// blocks agent writes beneath the workspace fail-closed, so an `action_dir`
     /// inside it would be an agent that cannot write anywhere.
     ///
@@ -209,7 +209,7 @@ impl ResolvedWorkspace {
                 let parent = dir.parent().filter(|parent| !parent.as_os_str().is_empty());
                 let action_dir = action_dir_override
                     .map(Path::to_path_buf)
-                    // A sibling, for the `is_workspace_internal_path` reason
+                    // A sibling, for the the internal-state reservation reason
                     // above. `dir.parent()` is `None` (or an empty path) only
                     // for a filesystem root or a path with no parent — all
                     // cases where a sibling is meaningless anyway, and using

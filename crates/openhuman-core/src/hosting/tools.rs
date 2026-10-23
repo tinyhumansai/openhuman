@@ -45,7 +45,7 @@ pub fn resolve_in_workspace(workspace_dir: &Path, relative: &str) -> anyhow::Res
     let root = workspace_dir
         .canonicalize()
         .map_err(|_| anyhow::anyhow!("cannot access the workspace directory"))?;
-    if crate::security::SecurityPolicy::is_always_forbidden(&root) {
+    if crate::security::floor::is_protected_blocking(&root) {
         anyhow::bail!("workspace path is always forbidden");
     }
     let canonical = root
@@ -55,7 +55,7 @@ pub fn resolve_in_workspace(workspace_dir: &Path, relative: &str) -> anyhow::Res
     if !canonical.starts_with(&root) {
         anyhow::bail!("path escapes the workspace");
     }
-    if crate::security::SecurityPolicy::is_always_forbidden(&canonical) {
+    if crate::security::floor::is_protected_blocking(&canonical) {
         anyhow::bail!("workspace path is always forbidden");
     }
     if !canonical.is_dir() {

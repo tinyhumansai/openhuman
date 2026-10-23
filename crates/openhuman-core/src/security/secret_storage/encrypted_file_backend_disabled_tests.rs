@@ -14,4 +14,9 @@ fn selecting_encrypted_file_fails_closed_when_the_feature_is_disabled() {
         .unwrap_err()
         .to_string()
         .contains("enable the secret-file feature"));
+    assert!(backend
+        .get_profile_read_only("token")
+        .unwrap_err()
+        .to_string()
+        .contains("enable the secret-file feature"));
 }

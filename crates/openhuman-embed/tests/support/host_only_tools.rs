@@ -271,11 +271,11 @@ pub fn host_only_forces_read_only_access_and_sandbox() {
                 ))
                 .expect("agent");
             assert_eq!(
-                agent.config().autonomy.level,
+                agent.config().security.autonomy.level,
                 openhuman_core::security::AutonomyLevel::ReadOnly
             );
             assert!(agent.access().turn_origin().is_none());
-            assert!(agent.config().autonomy.trusted_roots.is_empty());
+            assert!(agent.config().security.autonomy.trusted_roots.is_empty());
         })
         .await
         .expect("test task");

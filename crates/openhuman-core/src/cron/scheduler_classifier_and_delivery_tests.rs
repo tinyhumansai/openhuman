@@ -464,7 +464,7 @@ async fn scheduler_tick_once_publishes_health_recovery_signal_on_empty_queue() {
     let _handle = BUS.subscribe(collector).expect("bus subscriber installed");
 
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));
@@ -537,7 +537,7 @@ async fn scheduler_tick_once_does_not_re_emit_recovery_signal_on_steady_state() 
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

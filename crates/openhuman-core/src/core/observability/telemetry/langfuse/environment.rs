@@ -48,18 +48,13 @@ pub(crate) fn environment_for_base(config: &Config, base: &str) -> &'static str 
     let Ok(parsed) = url::Url::parse(base) else {
         return "external";
     };
-    if crate::util::url::host_is_local(&parsed) {
-        return "development";
-    }
-    if parsed.scheme() != "https" {
-        return "external";
-    }
-    // Only the known buckets are honoured, so a host cannot invent a
-    // pushable one; the allowlist in [`push_allowed`] still has the final say.
+    // Classification comes from the host-resolved deployment metadata. The
+    // core must not infer a trusted destination from a URL's IP or hostname:
+    // that classification controls whether session credentials may be sent.
     match config.resolved_endpoints.deployment_environment.as_deref() {
-        Some("production") => "production",
-        Some("staging") => "staging",
-        Some("development") => "development",
+        Some("development") if matches!(parsed.scheme(), "http" | "https") => "development",
+        Some("production") if parsed.scheme() == "https" => "production",
+        Some("staging") if parsed.scheme() == "https" => "staging",
         _ => "external",
     }
 }

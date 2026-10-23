@@ -18,12 +18,13 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
     // A broker URL may carry credentials too; show it redacted.
     if let Some(url) = config.inbound.queue_url.as_deref() {
         value["inbound"]["queue_url"] =
-            serde_json::Value::String(crate::config::schema::storage::redact_url(url));
+            serde_json::Value::String(crate::security::redact::endpoint_origin(url));
     }
-    // A storage URL may carry database credentials; show it redacted.
+    // A storage URL may carry credentials and a sensitive database name; only
+    // show its origin, and suppress it if TinySecurity cannot answer.
     if let Some(url) = config.storage.url.as_deref() {
         value["storage"]["url"] =
-            serde_json::Value::String(crate::config::schema::storage::redact_url(url));
+            serde_json::Value::String(crate::security::redact::endpoint_origin(url));
     }
     #[cfg(feature = "modules")]
     let browser_billing_route = crate::modules::desktop::billing_route(config);

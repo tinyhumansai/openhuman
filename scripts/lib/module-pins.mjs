@@ -52,8 +52,7 @@ export function parseAllList(src) {
   return (
     block[1]
       .replace(/\/\/[^\n]*/g, "")
-      // `#[cfg(feature = "…")]` on an element: the record is still in `ALL` for
-      // the builds that carry its optional contract crate, so it is still pinned.
+      // cfg-gated elements stay pinned when their feature is present.
       .replace(/#\[[^\]]*\]/g, "")
       .split(",")
       .map((s) => s.trim())

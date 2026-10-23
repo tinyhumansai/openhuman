@@ -11,8 +11,8 @@ async fn readonly_tier_refusal_keeps_one_capability_envelope_before_curation() {
     config.action_dir = dir.path().join("action");
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     std::fs::create_dir_all(&config.action_dir).unwrap();
-    config.autonomy.enabled = true;
-    config.autonomy.level = AutonomyLevel::ReadOnly;
+    config.security.autonomy.enabled = true;
+    config.security.autonomy.level = AutonomyLevel::ReadOnly;
     config.save().await.unwrap();
 
     let dispatch =
@@ -20,8 +20,11 @@ async fn readonly_tier_refusal_keeps_one_capability_envelope_before_curation() {
             crate::core::runtime::DomainSet::full(),
             Some(config.workspace_dir.clone()),
         ));
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::from_config(
+        &config.security.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    );
     let approval = ApprovalTurnContext::default();
     let call = ToolCallCtx {
         dispatch: &dispatch,

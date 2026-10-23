@@ -76,7 +76,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
         // the agent dead-ends. Rewrite the content into the structured
         // `Blocked / Reason / Workaround / relay` shape here — the last `after_tool`
         // hook, so the enriched text is what the transcript keeps. The marker is
-        // preserved, and already-structured `ToolPolicyMiddleware` denials (which
+        // preserved, and already-structured policy-gate denials (which
         // carry a `Workaround:` suffix) are left untouched. This runs before
         // classification below, which still recognises the preserved marker.
         if let Some(enriched) = crate::agent::tinyagents::policy_denial::maybe_enrich_policy_block(

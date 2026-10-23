@@ -43,8 +43,9 @@
 pub use openhuman_embed::__host::config::app_env::{
     app_env_from_env, is_staging_app_env, APP_ENV_VAR, VITE_APP_ENV_VAR,
 };
+use openhuman_embed::__host::util::url::is_private_or_local_host;
 pub use openhuman_embed::__host::util::url::{
-    host_is_local, join_url, normalize_api_base_url, normalize_backend_api_base_url,
+    join_url, normalize_api_base_url, normalize_backend_api_base_url,
 };
 
 // ─── Public constants ────────────────────────────────────────────────────────
@@ -168,7 +169,7 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
             .is_some_and(|host| presets.host_is_builtin_cloud_provider(&host));
 
         tracing::debug!(
-            api_url = %redact_url_for_log(u),
+            api_url = %scrub_secrets(u),
             is_local_ai,
             is_inference_provider,
             is_cloud_inference,
@@ -204,15 +205,15 @@ pub fn effective_backend_api_url(api_url: &Option<String>) -> String {
         if (!is_local_ai && !is_inference_provider && !is_cloud_inference) || is_openhuman {
             let normalized = normalize_backend_api_base_url(u);
             tracing::trace!(
-                api_url        = %redact_url_for_log(u),
-                normalized_url = %redact_url_for_log(&normalized),
+                api_url        = %scrub_secrets(u),
+                normalized_url = %scrub_secrets(&normalized),
                 "[tinyhumans::backend::url] using configured backend api_url override"
             );
             return normalized;
         }
 
         tracing::debug!(
-            api_url = %redact_url_for_log(u),
+            api_url = %scrub_secrets(u),
             is_local_ai,
             is_inference_provider,
             is_cloud_inference,
@@ -278,7 +279,7 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     }
 
     // ── Signal 2: loopback / private host + secondary LLM signal ───────────
-    if !host_is_local(&parsed) {
+    if !parsed.host_str().is_some_and(is_private_or_local_host) {
         return false;
     }
 
@@ -393,7 +394,7 @@ pub fn looks_like_inference_provider_endpoint(url: &str) -> bool {
 /// must still reach the real backend (not fall back to the default chain).
 fn looks_like_openhuman_backend_endpoint(url: &str) -> bool {
     let trimmed = url.trim();
-    let redacted = redact_url_for_log(trimmed);
+    let redacted = scrub_secrets(trimmed);
 
     let parsed = match url::Url::parse(trimmed) {
         Ok(p) => {
@@ -502,7 +503,7 @@ fn compile_time_api_base_env_values() -> [Option<&'static str>; 2] {
 ///
 /// Falls back to a scheme-prefixed parse for bare-host strings like
 /// `localhost:1234` so those are still sanitised rather than returned verbatim.
-use openhuman_embed::__host::util::redact_url_for_log;
+use openhuman_embed::__host::util::log_redaction::scrub_secrets;
 
 /// Emit a single `warn!` log the **first time** the backend URL falls back
 /// from a user-set local-AI endpoint. Uses `std::sync::Once` to suppress
@@ -512,7 +513,7 @@ fn warn_backend_url_fallback_once(local_url: &str) {
     static WARNED: Once = Once::new();
     WARNED.call_once(|| {
         tracing::warn!(
-            local_url = %redact_url_for_log(local_url),
+            local_url = %scrub_secrets(local_url),
             "[tinyhumans::backend::url] config.api_url looks like a local-AI endpoint; \
              integrations base will fall back to env/default backend so \
              /agent-integrations/* requests don't 404 against your local LLM"

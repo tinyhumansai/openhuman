@@ -335,7 +335,11 @@ Capability {
         category: CapabilityCategory::Settings,
         description: "Review a read-only audit trail of past tool-approval decisions \
                       (Approve once / Always allow / Deny), newest first. Summaries are \
-                      scrubbed of chat content and arguments are shown as redacted shape only.",
+                      scrubbed of chat content and arguments are shown as redacted shape only. \
+                      Decisions made automatically show who decided: the optional Jev judge \
+                      (`[security.auto_approve.judge]`, off by default, per-origin opt-in) \
+                      records its scores and the grant expiry; any low-confidence, failed or \
+                      over-budget judgement falls to a person.",
         how_to: "Settings → Agent OS access → View approval history",
         status: CapabilityStatus::Stable,
         privacy: None,
@@ -376,6 +380,39 @@ Capability {
         privacy: None,
     },
 Capability {
+        id: "security.native_policy_module",
+        name: "Fail-Closed Security Module",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "File access, shell command classification and gating, the tool policy gate \
+                      (tier, hourly budget and read-only cron turns), approvals, sandbox \
+                      planning, text redaction and prompt scans, and the Sensitive privacy \
+                      mode check are answered by the TinySecurity native module, loaded only \
+                      from a digest-pinned release. Every tool call passes one policy gate \
+                      first; a denial beats a required approval, which beats an allow. If the \
+                      module is missing, untrusted, slow or answers badly, the action is denied \
+                      rather than falling back to a weaker local check. Approval requests are \
+                      stored and decided by the module and expire as denied after ten minutes; \
+                      the prompt surface and the optional Jev auto-approve judge run in the core.",
+        how_to: "Always on in builds with the security-module feature; no setting to change.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+Capability {
+        id: "security.privacy_mode",
+        name: "Privacy Mode",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Choose how much leaves the device. Local-only refuses every external model, \
+                      network tool, search, integration and cloud embedding. Sensitive checks each \
+                      outgoing payload with the security module's redaction and refuses content \
+                      that holds a credential or identifier, or that could not be checked. \
+                      Backend control-plane calls and local runtimes are unaffected.",
+        how_to: "Set [privacy] mode (standard, sensitive or local_only) in config.toml, or change it in Settings.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+Capability {
         id: "security.sandbox_backends",
         name: "Sandbox Execution Backends",
         domain: "security",
@@ -383,7 +420,16 @@ Capability {
         description: "Route agent tool execution (shell, filesystem, process) through sandbox \
                       backends — Docker containers or OS-level jails (Landlock/Seatbelt) — for \
                       reduced blast radius on remote, channel, cron, or background sessions. \
-                      Configurable per agent/session/channel with safe defaults for non-main sessions.",
+                      Configurable per agent/session/channel with safe defaults for non-main sessions. \
+                      Each sandboxed command is planned by the TinySecurity module before it runs: \
+                      the module sets the mounts, the network and the isolation floor, and a \
+                      command it refuses, or cannot plan because of a fault, does not run. The \
+                      jail denies reads of credential stores. Hook commands, scheduled shell \
+                      jobs and registry-installed MCP servers run only in a jail suitable for \
+                      untrusted code, and hosted multi-tenant deployments ignore \
+                      OPENHUMAN_SANDBOX=off. Current limitations: local sandboxing is refused \
+                      on macOS (Seatbelt is best-effort) and sandboxed commands are planned \
+                      offline; TinyBox issue #27 tracks the remaining capability and network enforcement work.",
         how_to: "Set sandbox_mode = \"sandboxed\" in agent.toml, or configure runtime.kind = \
                  \"docker\" in the TOML config. Use openhuman.sandbox_status / \
                  openhuman.sandbox_resolve_policy RPC to inspect. Switched off by [components] sandbox = false (also set by the legacy [sandbox] enabled = false), which never loads the TinyBox module, runs commands unjailed under the Rust path checks, and answers COMPONENT_DISABLED:sandbox.",

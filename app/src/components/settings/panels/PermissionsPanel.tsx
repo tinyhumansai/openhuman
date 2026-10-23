@@ -13,11 +13,9 @@ import Button from '../../ui/Button';
 import { SettingsStatusLine, SettingsTextField } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 
-// Installs are always *available* but never silent: every `install_tool` call
-// is routed through the approval gate, so the user is asked to Approve/Deny
-// each install in chat. There is no per-user "disable installs" knob here —
-// the consent is captured per-install by the gate, not by a static config flag.
-const ALLOW_TOOL_INSTALL = true;
+// Kept false for compatibility with older config shapes. Host package-manager
+// execution is unavailable until it can run in an approved isolated environment.
+const ALLOW_TOOL_INSTALL = false;
 
 interface PresetOption {
   id: AutonomyLevel;

@@ -1,0 +1,200 @@
+{
+  "rows": [
+    {
+      "file": "crates/openhuman-app/src/claude_code.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/core_process.rs",
+      "spawns": 4,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/file_logging.rs",
+      "spawns": 3,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/lib.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/mcp_commands.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/process_kill.rs",
+      "spawns": 5,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/process_recovery.rs",
+      "spawns": 3,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-cli/src/bin/fleet.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/doctor/checks/runtime.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/doctor/checks/sandbox.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/linux.rs",
+      "spawns": 8,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/macos.rs",
+      "spawns": 21,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/restart.rs",
+      "spawns": 1,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/windows.rs",
+      "spawns": 6,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/sandbox/ops.rs",
+      "spawns": 1,
+      "trust": "operator",
+      "plan": "Agent shell -> TinySecurity SandboxPlan2/ConsumeSandboxPlan2; module chooses TinyBox or an explicitly operator-disabled host run outside SaaS",
+      "executor": "module-planned",
+      "test": "crates/openhuman-core/src/sandbox/spawn_plan/facts_tests.rs",
+      "note": "Agent is registered TrustedHost; direct host execution is reachable only through a consumed host_run plan after operator-off facts. Untrusted hook/scheduled text uses sandbox::untrusted and the module refuses host_run (untrusted_tests.rs; spawn_plan/integration_tests.rs untrusted_text_never_gets_a_run_on_the_host)."
+    },
+    {
+      "file": "crates/openhuman-core/src/sandbox/untrusted.rs",
+      "spawns": 1,
+      "trust": "untrusted",
+      "plan": "scheduled shell jobs, command hooks and TinyFlows code-node scripts -> TinySecurity SandboxPlan2/ConsumeSandboxPlan2 and TinyBox jail or Docker; refused below the isolation floor",
+      "executor": "jailed",
+      "test": "crates/openhuman-core/src/sandbox/untrusted_tests.rs",
+      "note": "the shared gate is called by cron shell jobs, command hooks and flows/caps_host/code.rs; flow scripts pass their DispatchCtx explicitly. It has no unjailed branch: the operator's switch is declared to the module, which plans a run on the host only for the trusted operator, never for untrusted source or under SaaS"
+    },
+    {
+      "file": "crates/openhuman-core/src/security/secret_storage/encrypted_store.rs",
+      "spawns": 4,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/skills/preflight.rs",
+      "spawns": 2,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/skills/runtime/ops.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a",
+      "note": "fixed argv: `node --version` / `python3 --version`, no skill-supplied text reaches the command"
+    },
+    {
+      "file": "crates/openhuman-tui/src/app/artifacts.rs",
+      "spawns": 3,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-tui/src/browser_login.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    }
+  ],
+  "modules": [
+    {
+      "module": "tinyagents-hooks",
+      "route": "User-authored command hooks -> HookEnvironment CommandSpawner -> OpenHuman SandboxedHookSpawner -> TinySecurity plan -> TinyBox jail; refused when the isolation floor is unavailable",
+      "trust": "untrusted",
+      "executor": "jailed",
+      "test": "crates/openhuman-core/src/hooks/spawner_tests.rs",
+      "note": "OpenHuman does not install the engine's legacy synchronous shell fallback; command hooks require the host spawner"
+    },
+    {
+      "module": "tinymcp",
+      "route": "MCP servers installed from the registry, and every stdio server under SaaS: StdioSpawner -> JailedSpawner -> tinybox StartStdio (tinybox-bus 1.21), enforcement Enforced with the untrusted-code isolation floor and the credential-store deny_read; refused when no backend meets it",
+      "trust": "untrusted",
+      "executor": "jailed",
+      "test": "crates/openhuman-core/src/mcp/stdio_sandbox_tests.rs",
+      "note": "the module refuses a stdio server that is neither operator_trusted nor given a stdio_sandbox, so there is no unconfined fallback (tinymcp transport/stdio/jailed_tests.rs)"
+    },
+    {
+      "module": "tinymcp",
+      "route": "stdio servers declared in the operator's own [mcp_client.servers]: direct child process, operator_trusted set by mcp::host::client_config, never under SaaS",
+      "trust": "operator",
+      "executor": "direct",
+      "test": "crates/openhuman-core/src/mcp/host_tests.rs"
+    }
+  ]
+}

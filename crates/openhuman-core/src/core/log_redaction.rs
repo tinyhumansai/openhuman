@@ -8,12 +8,70 @@
 //! `tracing` log line. This module owns the one redaction pass used by both the
 //! Sentry path (`src/main.rs`) and the always-on log path, so the patterns
 //! cannot drift between them. Always compiled (no feature gate).
+//!
+//! ## Before the module serves (decision, #7328)
+//!
+//! Logging starts before the TinySecurity module loads, and a build without
+//! `security-module` never has one. Nothing can ask the module yet, so the
+//! choice is between passing lines through, masking only what is
+//! recognisable, or dropping them. This module is the **fixed boot floor**
+//! (tinysecurity ADR 7): a line is never emitted raw. The floor patterns
+//! below mask recognisable secrets in place, input over
+//! [`FLOOR_MAX_INPUT_BYTES`] is replaced whole by [`SUPPRESSED`], and once the
+//! module is armed ([`install_module_scrubber`]) its answer replaces the floor
+//! result. A module that is slow or faulted leaves the floor result, never
+//! the original text. This is the only host-owned pattern list; every other
+//! redaction in the host is a call into the module.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+/// Input above this size is suppressed rather than scanned or printed (ADR 7).
+pub const FLOOR_MAX_INPUT_BYTES: usize = 256 * 1024;
+
+/// Replacement for suppressed (oversized) input.
+pub const SUPPRESSED: &str = "[REDACTED:suppressed]";
+
 static SECRET_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
     vec![
+        // URL userinfo (`scheme://user:pass@host`); runs first so the query rule
+        // below sees the stripped authority.
+        (
+            Regex::new(r"(?i)(\b[a-z][a-z0-9+.\-]*://)[^/\s:@]+(?::[^/\s@]*)?@").unwrap(),
+            "${1}[REDACTED]@",
+        ),
+        // URL query strings and fragments.
+        (
+            Regex::new(r"(?i)(\b[a-z][a-z0-9+.\-]*://[^\s?#]+)[?#]\S*").unwrap(),
+            "${1}?[REDACTED]",
+        ),
+        // `Authorization: Basic/Digest <credentials>`.
+        (
+            Regex::new(r"(?i)(\b(?:basic|digest)\s+)[A-Za-z0-9+/=._\-]{8,}").unwrap(),
+            "${1}[REDACTED]",
+        ),
+        // `Cookie:` / `Set-Cookie:` header lines (whole value).
+        (
+            Regex::new(r"(?i)\b((?:set-)?cookie\s*:\s*)[^\r\n]+").unwrap(),
+            "${1}[REDACTED]",
+        ),
+        // password / secret assignments, quoted or bare.
+        (
+            Regex::new(
+                r#"(?i)\b((?:password|passwd|client[_-]?secret|secret)["']?\s*[=:]\s*["']?)[^\s,;&"']+"#,
+            )
+            .unwrap(),
+            "${1}[REDACTED]",
+        ),
+        // Native home-directory prefixes.
+        (
+            Regex::new(r"(/(?:home|Users)/)[^/\s]+").unwrap(),
+            "${1}[REDACTED]",
+        ),
+        (
+            Regex::new(r"(?i)([A-Za-z]:\\Users\\)[^\\\s]+").unwrap(),
+            "${1}[REDACTED]",
+        ),
         // Matches "Bearer <token>" and redacts the token.
         (Regex::new(r"(?i)(bearer\s+)\S+").unwrap(), "${1}[REDACTED]"),
         // Matches "api-key: <key>" or "api_key=<key>" and redacts the key.
@@ -55,11 +113,77 @@ static SECRET_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
 /// it redacts the secret-looking span in place and leaves the rest of the
 /// diagnostic message intact (unlike a whole-value prefix redaction).
 pub fn scrub_secrets(input: &str) -> String {
+    scrub_with(input, MODULE_SCRUBBER.get().copied())
+}
+
+/// A synchronous view of the TinySecurity `Redact` module. It receives text the
+/// floor already redacted and returns the module's stricter answer, or `None`
+/// when the module cannot answer in time (the floor result then stands).
+pub type ModuleScrubber = fn(&str) -> Option<String>;
+
+static MODULE_SCRUBBER: std::sync::OnceLock<ModuleScrubber> = std::sync::OnceLock::new();
+
+/// Arm the module-backed second pass once the module is ready. Idempotent; the
+/// first installer wins.
+pub fn install_module_scrubber(scrubber: ModuleScrubber) {
+    if MODULE_SCRUBBER.set(scrubber).is_ok() {
+        log::debug!("[security][floor] module scrubber armed");
+    }
+}
+
+/// The floor, then the module pass when one is supplied. The module only ever
+/// sees floor output, and a module that cannot answer leaves the floor result,
+/// never the original text.
+pub(crate) fn scrub_with(input: &str, module: Option<ModuleScrubber>) -> String {
+    let floored = floor_scrub(input);
+    if floored == SUPPRESSED {
+        return floored;
+    }
+    match module.and_then(|scrub| scrub(&floored)) {
+        Some(stronger) => stronger,
+        None => floored,
+    }
+}
+
+fn floor_scrub(input: &str) -> String {
+    if input.len() > FLOOR_MAX_INPUT_BYTES {
+        log::debug!(
+            "[security][floor] suppressed oversized input bytes={}",
+            input.len()
+        );
+        return SUPPRESSED.to_string();
+    }
     let mut result = input.to_string();
     for (re, replacement) in SECRET_PATTERNS.iter() {
         result = re.replace_all(&result, *replacement).into_owned();
     }
     result
+}
+
+/// The floor applied to a body of any size: split at line boundaries into
+/// pieces of at most half [`FLOOR_MAX_INPUT_BYTES`] so a large artifact or
+/// transcript is scrubbed rather than suppressed whole. A single line over the
+/// piece size is still suppressed ([`SUPPRESSED`] for that line only).
+pub(crate) fn floor_scrub_text(input: &str) -> String {
+    const PIECE: usize = FLOOR_MAX_INPUT_BYTES / 2;
+    if input.len() <= PIECE {
+        return floor_scrub(input);
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut piece = String::new();
+    for line in input.split_inclusive('\n') {
+        if line.len() > PIECE {
+            out.push_str(&floor_scrub(&std::mem::take(&mut piece)));
+            out.push_str(SUPPRESSED);
+            continue;
+        }
+        if piece.len() + line.len() > PIECE {
+            out.push_str(&floor_scrub(&std::mem::take(&mut piece)));
+        }
+        piece.push_str(line);
+    }
+    out.push_str(&floor_scrub(&piece));
+    out
 }
 
 #[cfg(test)]

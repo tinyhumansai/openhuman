@@ -131,19 +131,21 @@ async fn mock_client_with_docker_control_delay(
 
 #[test]
 fn host_and_module_contract_versions_must_cover_the_full_host_surface() {
+    let (major, minor) = contract::CONTRACT_VERSION;
     assert_eq!(require_compatible(contract::CONTRACT_VERSION), Ok(()));
+    assert_eq!(require_compatible((major, minor + 1)), Ok(()));
+    if minor > 0 {
+        assert_eq!(
+            require_compatible((major, minor - 1)).expect_err("older member set is refused"),
+            ModuleCallError::IncompatibleContract
+        );
+    }
     assert_eq!(
-        require_compatible((1, contract::CONTRACT_VERSION.1 + 1)),
-        Ok(())
-    );
-    assert_eq!(
-        require_compatible((1, contract::CONTRACT_VERSION.1 - 1))
-            .expect_err("older member set is refused"),
+        require_compatible((major + 1, minor)).expect_err("different major is refused"),
         ModuleCallError::IncompatibleContract
     );
     assert_eq!(
-        require_compatible((2, contract::CONTRACT_VERSION.1))
-            .expect_err("different major is refused"),
+        require_compatible((major - 1, u32::MAX)).expect_err("older major is refused"),
         ModuleCallError::IncompatibleContract
     );
 }
@@ -304,7 +306,7 @@ async fn pinned_loader_serves_the_published_tinybox_release() {
 
     crate::modules::ops::ensure_loaded(&config, MODULE_ID)
         .await
-        .expect("the OpenHuman release registry and TinyBus loader admit v0.1.28");
+        .expect("the OpenHuman release registry and TinyBus loader admit the pinned release");
     let capabilities = super::capabilities(&config)
         .await
         .expect("the loaded release serves TinyBus capabilities");
@@ -339,20 +341,18 @@ async fn pinned_loader_serves_the_published_tinybox_release() {
 }
 
 #[tokio::test]
-#[ignore = "requires the downloaded, checksum-verified TinyBox v0.1.28 archive"]
-async fn pinned_loader_serves_resolve_local_grants_from_tinybox_v0124() {
+#[ignore = "requires the downloaded, checksum-verified TinyBox release archive"]
+async fn pinned_loader_serves_resolve_local_grants_from_tinybox_release() {
     let _environment_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let archive = std::env::var_os("TINYBOX_RELEASE_ARTIFACT")
         .map(std::path::PathBuf::from)
-        .expect("set TINYBOX_RELEASE_ARTIFACT to the verified v0.1.28 archive");
+        .expect("set TINYBOX_RELEASE_ARTIFACT to the verified pinned release archive");
     assert!(
         archive.is_file(),
         "missing verified release archive: {archive:?}"
     );
 
     let record = crate::modules::registry::find(MODULE_ID).expect("TinyBox registry record");
-    assert_eq!(record.version, "0.1.28");
-    assert_eq!(contract::CONTRACT_VERSION, (1, 18));
     let asset = tinybus::module::platform::host_candidates()
         .iter()
         .find_map(|host_key| record.asset_for(host_key))
@@ -409,7 +409,7 @@ async fn pinned_loader_serves_resolve_local_grants_from_tinybox_v0124() {
     config.modules.install_dir = Some(install.path().display().to_string());
     crate::modules::ops::ensure_loaded(&config, MODULE_ID)
         .await
-        .expect("the TinyBus loader admits the published v0.1.28 artifact");
+        .expect("the TinyBus loader admits the published pinned artifact");
 
     let home = tempfile::tempdir().expect("temporary operator home");
     let allowed = home.path().join("workspace");
@@ -445,7 +445,6 @@ fn every_host_operation_is_a_member_of_the_canonical_contract() {
         SPAWN,
         IS_RUNNING,
         CANCEL,
-        ANALYZE_SHELL,
         RESERVE,
         CAPABILITIES,
         SHUTDOWN,
@@ -468,7 +467,9 @@ fn every_host_operation_is_a_member_of_the_canonical_contract() {
         CLEANUP_DOCKER,
         RUN_DOCKER_WITHOUT_WORKSPACE,
     ];
-    assert_eq!(methods, contract::METHODS[..methods.len()]);
+    assert!(methods
+        .iter()
+        .all(|method| contract::METHODS.contains(method)));
     assert!(contract::METHODS.contains(&SELECT_SHELL));
     assert!(contract::METHODS.contains(&START_NATIVE_SHELL_EXEC));
 }
@@ -484,7 +485,6 @@ fn every_member_the_host_calls_is_named_in_the_pinned_contract() {
         SPAWN,
         IS_RUNNING,
         CANCEL,
-        ANALYZE_SHELL,
         RESERVE,
         CAPABILITIES,
         SHUTDOWN,
@@ -556,6 +556,20 @@ async fn native_shell_and_policy_validation_use_their_contract_members() {
     let _: () = call_with_client(&client, START_NATIVE_SHELL_EXEC, (shell.clone(),), false)
         .await
         .expect("native shell start call");
+    let shell_resources = contract::NativeJailResourceRequest {
+        cpu_millis: Some(500),
+        memory_bytes: Some(64 << 20),
+        pids_max: Some(32),
+        disk_bytes: None,
+    };
+    let _: () = call_with_client(
+        &client,
+        START_NATIVE_SHELL_EXEC_WITH_RESOURCES,
+        (shell.clone(), shell_resources),
+        false,
+    )
+    .await
+    .expect("resource-aware native shell start call");
     let _: () = call_with_client(&client, VALIDATE_DOCKER_POLICY, (policy.clone(),), false)
         .await
         .expect("policy validation call");
@@ -563,6 +577,18 @@ async fn native_shell_and_policy_validation_use_their_contract_members() {
     let called: Vec<_> = log.iter().filter(|(n, _)| n != CAPABILITIES).collect();
     let expected = [
         ("StartNativeShellExec".to_owned(), json!([shell])),
+        (
+            "StartNativeShellExecWithResources".to_owned(),
+            json!([
+                shell,
+                contract::NativeJailResourceRequest {
+                    cpu_millis: Some(500),
+                    memory_bytes: Some(64 << 20),
+                    pids_max: Some(32),
+                    disk_bytes: None,
+                }
+            ]),
+        ),
         ("ValidateDockerPolicy".to_owned(), json!([policy])),
     ];
     assert_eq!(called, expected.iter().collect::<Vec<_>>());
@@ -693,52 +719,5 @@ async fn docker_controls_use_typed_calls_with_validated_contract_capability(
     Ok(())
 }
 
-#[test]
-fn docker_control_transport_deadline_tracks_the_bounded_module_operation() {
-    assert_eq!(
-        docker_control_deadline(10_000, DOCKER_CALL_GRACE),
-        std::time::Duration::from_secs(15)
-    );
-    assert_eq!(
-        docker_control_deadline(1, DOCKER_CALL_GRACE),
-        std::time::Duration::from_millis(5_001)
-    );
-    assert_eq!(
-        docker_control_deadline(u64::MAX, DOCKER_CALL_GRACE),
-        std::time::Duration::from_secs(65),
-        "an invalid oversized request must not create an effectively unbounded bus wait"
-    );
-}
-
-#[tokio::test]
-async fn docker_status_transport_uses_its_bounded_deadline() {
-    let (_service, client, _) =
-        mock_client_with_docker_control_delay(std::time::Duration::from_millis(100)).await;
-    let error = call_docker_status_with_grace(
-        &client,
-        contract::DockerStatusRequest { timeout_ms: 5 },
-        std::time::Duration::from_millis(5),
-    )
-    .await
-    .expect_err("transport must stop waiting at operation deadline plus grace");
-
-    assert!(error.contains("MODULE_CALL_REPORTED"), "{error}");
-
-    let error = call_cleanup_docker_with_grace(
-        &client,
-        contract::CleanupDockerRequest {
-            label: "openhuman.sandbox=true".to_owned(),
-            timeout_ms: 5,
-        },
-        std::time::Duration::from_millis(5),
-    )
-    .await
-    .expect_err("cleanup transport must also stop at its bounded deadline plus grace");
-    assert!(error.contains("MODULE_CALL_REPORTED"), "{error}");
-}
-
-#[test]
-fn resolve_local_grants_is_a_member_of_the_canonical_contract() {
-    assert_eq!(RESOLVE_LOCAL_GRANTS, "ResolveLocalGrants");
-    assert!(contract::METHODS.contains(&RESOLVE_LOCAL_GRANTS));
-}
+#[path = "operations_deadline_tests.rs"]
+mod deadline_tests;

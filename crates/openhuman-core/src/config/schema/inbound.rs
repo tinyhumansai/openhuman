@@ -79,7 +79,10 @@ impl std::fmt::Debug for InboundConfig {
             .field("pipeline_path", &self.pipeline_path)
             .field(
                 "queue_url",
-                &self.queue_url.as_deref().map(super::storage::redact_url),
+                &self
+                    .queue_url
+                    .as_deref()
+                    .map(crate::security::redact::endpoint_origin),
             )
             .field("triage_timeout_ms", &self.triage_timeout_ms)
             .field("sources", &self.sources)

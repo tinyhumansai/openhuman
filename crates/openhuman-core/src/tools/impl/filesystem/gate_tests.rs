@@ -13,20 +13,26 @@ use serde_json::json;
 use tinytools::{Tool, ToolCallOptions, ToolRunContext, WorkspaceDescriptor};
 use tinytools_std::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, FsGate,
-    GitOperationsTool, GlobTool, GrepTool, ListFilesTool,
+    GitOperationsTool,
 };
 
+use crate::security::policy::native_commands_stub::StubGateway;
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 fn policy(dir: &Path, autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
-    Arc::new(SecurityPolicy {
-        autonomy,
-        workspace_dir: dir.to_path_buf(),
-        action_dir: dir.to_path_buf(),
-        max_actions_per_hour,
-        ..SecurityPolicy::default()
-    })
+    // Class questions are answered with the tier table, so these tests need not
+    // load the security module.
+    Arc::new(
+        SecurityPolicy {
+            autonomy,
+            workspace_dir: dir.to_path_buf(),
+            action_dir: dir.to_path_buf(),
+            max_actions_per_hour,
+            ..SecurityPolicy::default()
+        }
+        .with_gateway(StubGateway::tiered()),
+    )
 }
 
 fn supervised(dir: &Path) -> Arc<SecurityPolicy> {
@@ -48,11 +54,26 @@ impl ToolRunContext for Workspace {
     }
 }
 
+#[cfg(feature = "security-module")]
+use crate::modules::security::gap::stub::{Asked, StubPort};
+#[cfg(feature = "security-module")]
+use crate::modules::security::gap::{install_port, BudgetOp};
+#[cfg(feature = "security-module")]
+use tinysecurity_bus::{BudgetDecision2, PathCheckKind};
+
+#[cfg(feature = "security-module")]
 #[test]
 fn adapter_reports_the_autonomy_tier() {
     let dir = tempfile::tempdir().unwrap();
     let read_only = policy(dir.path(), AutonomyLevel::ReadOnly, 10);
-    assert!(!FsGate::can_act(read_only.as_ref()));
+    {
+        // The tier is the module's: read-only refuses, and a spent hourly budget
+        // is not a tier refusal.
+        let stub = Arc::new(StubPort::allowing().budget(|_, _| BudgetDecision2::ReadOnlyMode));
+        let _module = install_port(stub.clone());
+        assert!(!FsGate::can_act(read_only.as_ref()));
+        assert_eq!(stub.asked(), vec![Asked::Budget(BudgetOp::Peek)]);
+    }
     assert!(read_only.is_read_only());
     assert!(
         !read_only.write_needs_approval(),
@@ -60,6 +81,7 @@ fn adapter_reports_the_autonomy_tier() {
     );
 
     let supervised = policy(dir.path(), AutonomyLevel::Supervised, 10);
+    let _module = install_port(Arc::new(StubPort::allowing()));
     assert!(FsGate::can_act(supervised.as_ref()));
     assert!(!supervised.is_read_only());
     assert!(supervised.write_needs_approval());
@@ -67,26 +89,61 @@ fn adapter_reports_the_autonomy_tier() {
     let full = policy(dir.path(), AutonomyLevel::Full, 10);
     assert!(FsGate::can_act(full.as_ref()));
     assert!(!full.write_needs_approval(), "Full runs writes unprompted");
+
+    let _module = install_port(Arc::new(StubPort::unavailable()));
+    assert!(
+        !FsGate::can_act(full.as_ref()),
+        "an unanswered tier refuses"
+    );
 }
 
+#[cfg(feature = "security-module")]
 #[test]
-fn adapter_counts_the_action_budget() {
+fn the_budget_is_reserved_by_the_tool_gate_not_counted_again_in_the_tool() {
     let dir = tempfile::tempdir().unwrap();
+    let stub = Arc::new(
+        StubPort::allowing().budget(|_, _| BudgetDecision2::RateLimited { max_per_hour: 2 }),
+    );
+    let _module = install_port(stub.clone());
     let gate = policy(dir.path(), AutonomyLevel::Supervised, 2);
     assert!(!FsGate::is_rate_limited(gate.as_ref()));
     assert!(FsGate::record_action(gate.as_ref()));
     assert!(FsGate::record_action(gate.as_ref()));
-    assert!(FsGate::is_rate_limited(gate.as_ref()));
-    assert!(!FsGate::record_action(gate.as_ref()));
+    assert!(FsGate::record_action(gate.as_ref()));
+    assert!(stub.asked().is_empty(), "no in-tool budget question");
 }
 
+#[cfg(feature = "security-module")]
 #[test]
-fn adapter_exposes_the_action_dir_and_string_checks() {
+fn adapter_exposes_the_action_dir_and_asks_the_module_for_string_checks() {
     let dir = tempfile::tempdir().unwrap();
+    let stub =
+        Arc::new(StubPort::allowing().paths(|_, _, path| !path.to_string_lossy().contains("..")));
+    let _module = install_port(stub.clone());
     let gate = supervised(dir.path());
     assert_eq!(FsGate::action_dir(gate.as_ref()), dir.path());
     assert!(!FsGate::is_path_string_allowed(gate.as_ref(), "../escape"));
     assert!(FsGate::is_path_string_allowed(gate.as_ref(), "inside.txt"));
+
+    // A walk's hits are one module call, in order, not one per hit.
+    let hits: Vec<String> = ["a.rs", "../b.rs", "c.rs"].map(String::from).to_vec();
+    assert_eq!(
+        FsGate::paths_string_allowed(gate.as_ref(), &hits),
+        vec![true, false, true]
+    );
+    let asked = stub.asked();
+    assert_eq!(asked.len(), 3);
+    assert!(matches!(
+        &asked[2],
+        Asked::Paths(PathCheckKind::StringAllowed, paths) if paths.len() == 3
+    ));
+
+    let _module = install_port(Arc::new(StubPort::unavailable()));
+    assert_eq!(
+        FsGate::paths_string_allowed(gate.as_ref(), &hits),
+        vec![false; 3],
+        "an unanswered batch refuses every hit"
+    );
 }
 
 #[tokio::test]
@@ -138,38 +195,6 @@ async fn file_read_is_allowed_in_read_only_mode() {
     let result = tool.execute(json!({"path": "a.txt"})).await.unwrap();
     assert!(!result.is_error);
     assert_eq!(result.output(), "readonly ok");
-}
-
-#[tokio::test]
-async fn an_exhausted_budget_refuses_reads_and_searches() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.txt"), "x").unwrap();
-    let gate = policy(dir.path(), AutonomyLevel::Supervised, 0);
-
-    let read = FileReadTool::new(gate.clone())
-        .execute(json!({"path": "a.txt"}))
-        .await
-        .unwrap();
-    let list = ListFilesTool::new(gate.clone())
-        .execute(json!({}))
-        .await
-        .unwrap();
-    let grep = GrepTool::new(gate.clone())
-        .execute(json!({"pattern": "x"}))
-        .await
-        .unwrap();
-    let glob = GlobTool::new(gate)
-        .execute(json!({"pattern": "*.txt"}))
-        .await
-        .unwrap();
-    for result in [read, list, grep, glob] {
-        assert!(result.is_error);
-        assert!(
-            result.output().contains("Rate limit exceeded"),
-            "{}",
-            result.output()
-        );
-    }
 }
 
 #[tokio::test]
@@ -356,4 +381,21 @@ async fn git_write_operations_are_policy_blocked_in_read_only_mode() {
         "{}",
         result.output()
     );
+}
+
+/// The filesystem write gate on the released module, with no gateway stub.
+#[cfg(feature = "security-module")]
+#[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "native-security-tests")]
+async fn the_write_gate_is_answered_by_the_released_module() {
+    use crate::modules::security::released_support::Released;
+
+    let released = Released::new();
+    let read_only = released.policy(AutonomyLevel::ReadOnly, 100);
+    let supervised = released.policy(AutonomyLevel::Supervised, 100);
+    let full = released.policy(AutonomyLevel::Full, 100);
+
+    assert!(!FsGate::write_needs_approval(&read_only));
+    assert!(FsGate::write_needs_approval(&supervised));
+    assert!(!FsGate::write_needs_approval(&full));
 }

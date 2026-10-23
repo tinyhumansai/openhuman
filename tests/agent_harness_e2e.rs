@@ -784,7 +784,7 @@ async fn boot_stack() -> Stack {
 }
 
 /// The approval gate is inert while the autonomy policy is off (the default:
-/// `SecurityPolicy::gate_decision` answers `Allow` for every class, so
+/// the module's class gate answers `Allow` for every class, so
 /// `file_write::external_effect_with_args` is `false` and nothing parks).
 /// Approval tests opt the policy back in, at the supervised level, where a
 /// write to an existing file prompts.

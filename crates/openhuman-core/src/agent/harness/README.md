@@ -83,7 +83,7 @@ turn lifecycle are in `../session_host/`; `run_subagent`,
   into `artifact_offload::new_artifact_offload`.
 - `tinymemory-api`: provenance classification and untrusted-context wrapping.
 - `crate::memory`: text
-  sanitization (`artifact_offload::SanitizingRedactor` wraps `memory::safety::sanitize_text` for both artifact stores).
+  sanitization (`artifact_offload::SanitizingRedactor` wraps the module-backed `security::redact::text` for both artifact stores).
 - `crate::config::AgentConfig`, `crate::skills::Workflow`,
   `crate::tools::{Tool, ToolSpec}`: runtime context carried through
   `fork_context::ParentExecutionContext`.

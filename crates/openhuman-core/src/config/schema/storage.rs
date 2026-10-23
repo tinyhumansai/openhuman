@@ -68,29 +68,17 @@ impl std::fmt::Debug for StorageConfig {
     /// Redacts credentials: a MongoDB URL carries the database password.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StorageConfig")
-            .field("url", &self.url.as_deref().map(redact_url))
+            .field(
+                "url",
+                &self
+                    .url
+                    .as_deref()
+                    .map(crate::security::redact::endpoint_origin),
+            )
             .field("journal_retention_days", &self.journal_retention_days)
             .field("auto_migrate_layout", &self.auto_migrate_layout)
             .finish()
     }
-}
-
-/// `url` with any `user:password@` userinfo replaced by `***@`, and the
-/// query string and fragment dropped (they can carry tokens, such as MongoDB's
-/// `authMechanismProperties`).
-pub fn redact_url(url: &str) -> String {
-    let end = url.find(['?', '#']).unwrap_or(url.len());
-    let (base, trimmed) = (&url[..end], end < url.len());
-    let mut out = match (base.find("://"), base.rfind('@')) {
-        (Some(scheme), Some(at)) if at > scheme => {
-            format!("{}://***@{}", &base[..scheme], &base[at + 1..])
-        }
-        _ => base.to_string(),
-    };
-    if trimmed {
-        out.push_str("?***");
-    }
-    out
 }
 
 #[cfg(test)]

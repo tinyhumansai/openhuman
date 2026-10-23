@@ -131,4 +131,32 @@ describe('ApprovalHistoryPanel', () => {
     await screen.findByText('new-tool');
     expect(screen.queryByText('old-tool')).not.toBeInTheDocument();
   });
+
+  it('shows the auto:jev badge, scores and expiry for a judged approval only', async () => {
+    mockFetch.mockResolvedValueOnce([
+      auditRow({
+        request_id: 'j',
+        decided_by: 'auto:jev',
+        expires_at: '2026-05-29T10:10:00Z',
+        judge: {
+          outcome: 'qualified',
+          intent_millis: 950,
+          reversible_millis: 920,
+          exfiltrate_millis: 15,
+          cached: false,
+        },
+      }),
+      auditRow({ request_id: 'h', decision: 'deny' }),
+    ]);
+
+    renderWithProviders(<ApprovalHistoryPanel />, {
+      initialEntries: ['/settings/approval-history'],
+    });
+
+    await screen.findByTestId('approval-history-list');
+    expect(screen.getAllByTestId('approval-history-auto')).toHaveLength(1);
+    expect(screen.getByTestId('approval-history-judge-scores').textContent).toContain('95%');
+    expect(screen.getByTestId('approval-history-judge-scores').textContent).toContain('1.5%');
+    expect(screen.getByTestId('approval-history-expiry')).toBeInTheDocument();
+  });
 });

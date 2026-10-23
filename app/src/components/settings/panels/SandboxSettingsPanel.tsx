@@ -36,8 +36,6 @@ const BACKEND_OPTIONS: BackendOption[] = [
   { id: 'auto', icon: Sparkles },
   { id: 'docker', icon: Container },
   { id: 'landlock', icon: Box, linuxOnly: true },
-  { id: 'firejail', icon: Box, linuxOnly: true },
-  { id: 'bubblewrap', icon: Box, linuxOnly: true },
   { id: 'none', icon: ShieldOff },
 ];
 

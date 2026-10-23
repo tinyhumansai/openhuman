@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::core::Outcome;
-use crate::security::{SecurityPolicy, ToolOperation};
+use crate::security::SecurityPolicy;
 
 use super::cache;
 use super::port::UiServerPort;
@@ -145,12 +145,13 @@ pub async fn tool_call(
             )],
         ));
     }
-    let operation = if read_only {
-        ToolOperation::Read
-    } else {
-        ToolOperation::Act
-    };
-    security.enforce_tool_operation(operation, &format!("mcp_ui:{server_id}/{tool_name}"))?;
+    // Reading spends nothing; an acting call reserves one action of the hourly
+    // budget (and meets the autonomy tier) through TinySecurity.
+    if !read_only {
+        security
+            .spend_action(&format!("mcp_ui:{server_id}/{tool_name}"))
+            .await?;
+    }
 
     let start = Instant::now();
     let result = port.call_tool(&server_id, &tool_name, arguments).await;

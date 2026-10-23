@@ -83,6 +83,20 @@ impl EncryptedFileBackend {
     pub fn new(_workspace_dir: &Path) -> Self {
         Self
     }
+
+    /// Read a profile secret without initializing storage. This build cannot
+    /// decrypt encrypted-file data, so report it as unavailable.
+    pub fn get_profile_read_only(
+        &self,
+        _namespaced_key: &str,
+    ) -> Result<Option<String>, SecretStorageError> {
+        Err(unavailable())
+    }
+}
+
+/// The disabled backend must never read or create a master key.
+fn read_master_key_file(_path: &Path) -> Result<String, String> {
+    Err("encrypted file secret backend is disabled; enable the secret-file feature".into())
 }
 
 impl SecretBackend for EncryptedFileBackend {

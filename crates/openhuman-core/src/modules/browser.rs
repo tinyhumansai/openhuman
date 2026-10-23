@@ -17,6 +17,7 @@ use tinycomputer_bus::browser::{
 use tinycomputer_bus::DesktopResponse;
 
 use crate::config::Config;
+use tinytools_std::url_guard::is_private_or_local_host;
 
 pub const MODULE_ID: &str = super::desktop::MODULE_ID;
 
@@ -151,7 +152,7 @@ impl BrowserClient {
     /// The module's contract version, from `Describe` (which answers raw
     /// [`Capabilities`], not an envelope).
     pub async fn contract_version(&self) -> Result<(u32, u32), BrowserCallError> {
-        let proxy = super::desktop::proxy(&self.config)
+        let proxy = super::desktop::browser_proxy(&self.config)
             .await
             .map_err(BrowserCallError::Unavailable)?;
         let capabilities: Capabilities = proxy
@@ -230,6 +231,7 @@ impl BrowserClient {
     /// Open a session bound to the host tree of an explicit destination.
     pub async fn open_session_for_url(&self, url: &str) -> Result<SessionInfo, BrowserCallError> {
         let origin = self.explicit_origin(url)?;
+        self.authorize_navigation(url).await?;
         self.open_session_with_origin(SessionOptions::default(), origin)
             .await
     }
@@ -261,6 +263,7 @@ impl BrowserClient {
         request: NavigateRequest,
     ) -> Result<PageState, BrowserCallError> {
         self.check_url(&request.url)?;
+        self.authorize_navigation(&request.url).await?;
         let page: PageState = self
             .call(
                 names::methods::NAVIGATE,
@@ -343,6 +346,33 @@ impl BrowserClient {
         Ok(())
     }
 
+    /// The module's verdict on a navigation, then the egress disclosure.
+    ///
+    /// The browser module opens the connection itself, so the host cannot pin
+    /// its sockets: the security module's answer (the address floor on every
+    /// resolved address, the privacy mode, the open-public policy) is a
+    /// preflight verdict for the `Browser` transport, not a grant. A module that
+    /// is missing, untrusted, faulted or slow refuses the navigation.
+    async fn authorize_navigation(&self, raw: &str) -> Result<(), BrowserCallError> {
+        #[cfg(feature = "security-module")]
+        crate::modules::security::egress::authorize_browser_navigation(
+            &self.config.workspace_dir,
+            raw,
+        )
+        .await
+        .map_err(BrowserCallError::Policy)?;
+        if let Some(host) = parsed_browser_url(raw)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+        {
+            crate::security::egress::emit_external_transfer(
+                None,
+                crate::security::egress::EgressDescriptor::network_fetch(&host),
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn check_url(&self, raw: &str) -> Result<(), BrowserCallError> {
         self.check_url_for_mode(raw, browser_allow_all())
     }
@@ -365,10 +395,17 @@ impl BrowserClient {
         let host = url
             .host_str()
             .ok_or_else(|| BrowserCallError::Policy("URL has no host".into()))?;
+        // The shared lexical classifier (`tinytools_std::url_guard`) is the one
+        // synchronous host check; the browser's own copy was deleted. It is a
+        // pre-filter: `authorize_navigation` adds the TinySecurity module's
+        // verdict (resolved-address floor, privacy mode) before a navigation.
+        // The browser module performs the connection and the host cannot pin its
+        // sockets, so a redirect or subresource the page causes later is the
+        // browser module's to enforce.
         let is_private = match url.host() {
-            Some(url::Host::Ipv4(ip)) => private_or_local(&ip.to_string()),
-            Some(url::Host::Ipv6(ip)) => private_or_local(&ip.to_string()),
-            _ => private_or_local(host),
+            Some(url::Host::Ipv4(ip)) => is_private_or_local_host(&ip.to_string()),
+            Some(url::Host::Ipv6(ip)) => is_private_or_local_host(&ip.to_string()),
+            _ => is_private_or_local_host(host),
         };
         if is_private {
             return Err(BrowserCallError::Policy(format!(
@@ -497,7 +534,7 @@ impl BrowserClient {
         member: &str,
         request: A,
     ) -> Result<R, BrowserCallError> {
-        let proxy = super::desktop::proxy(&self.config)
+        let proxy = super::desktop::browser_proxy(&self.config)
             .await
             .map_err(BrowserCallError::Unavailable)?;
         tracing::debug!(member, "[browser] tinycomputer call");
@@ -560,24 +597,6 @@ fn browser_allow_all() -> bool {
         std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok().as_deref(),
         Some("1" | "true" | "TRUE" | "yes" | "YES")
     )
-}
-
-fn private_or_local(host: &str) -> bool {
-    let host = host.trim_end_matches('.').to_ascii_lowercase();
-    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
-        return true;
-    }
-    // The network tools' full non-global list, so the browser blocks the same
-    // reserved, benchmarking and documentation ranges they do.
-    match host.parse::<std::net::IpAddr>() {
-        // `is_non_global_v4` already covers 0.0.0.0/8; the explicit octet check
-        // keeps that local-host range visibly blocked at this call site too.
-        Ok(std::net::IpAddr::V4(ip)) => {
-            tinytools_std::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
-        }
-        Ok(std::net::IpAddr::V6(ip)) => tinytools_std::url_guard::is_non_global_v6(ip),
-        Err(_) => false,
-    }
 }
 
 #[cfg(test)]

@@ -320,6 +320,25 @@ test("the session starts when all three ports are free", async () => {
   }
 });
 
+test("the core home used by the web E2E session is private under a group-writable umask", async () => {
+  const tree = makeTree();
+  try {
+    const base = await freeBase();
+    markBundle(tree, { mockPort: base, corePort: base + 1 });
+    const workspace = path.join(tree.root, "workspace");
+    fs.mkdirSync(workspace, { recursive: true, mode: 0o775 });
+    fs.chmodSync(workspace, 0o775);
+
+    const res = run(tree, "e2e-web-session.sh", { E2E_PORT_BASE: String(base) });
+
+    assert.match(res.output, /standalone core binary is missing/);
+    const homeMode = fs.statSync(path.join(workspace, "home")).mode & 0o777;
+    assert.equal(homeMode, 0o700, `module home must not be group/world writable (mode ${homeMode.toString(8)})`);
+  } finally {
+    tree.cleanup();
+  }
+});
+
 test("a taken port is reported even when another server answers its probe", async () => {
   // Why an HTTP probe cannot be the check: the occupant answers it. This is the
   // whole mechanism of the bug, so assert on it directly.

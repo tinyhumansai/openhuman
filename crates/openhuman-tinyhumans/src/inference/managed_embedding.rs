@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use openhuman_embed::__host::egress::{emit_external_transfer, enforce_egress, EgressDescriptor};
+use openhuman_embed::__host::egress::{
+    emit_external_transfer, enforce_egress_blocking, EgressDescriptor,
+};
 use openhuman_embed::__host::inference_registry::{EmbeddingRequest, ProviderContext};
 use openhuman_embed::__host::security::approval::ApprovalChatContext;
 use tinyinference_embeddings::{BearerResolver, CloudEmbeddingModel, EmbeddingEgressGuard};
@@ -115,7 +117,7 @@ fn build_cloud_model(
     let guarded_chat = chat;
     let egress_guard: EmbeddingEgressGuard = Arc::new(move |_, _| {
         let egress = EgressDescriptor::embedding("cloud", &guarded_model);
-        enforce_egress(&egress)
+        enforce_egress_blocking(&egress)
             .map_err(|error| tinyinference_embeddings::Error::Embedding(error.to_string()))?;
         emit_external_transfer(guarded_chat.as_ref(), egress);
         Ok(())

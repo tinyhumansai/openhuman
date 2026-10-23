@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use tinyagents_harness::artifacts::{ArtifactPathPolicy, ArtifactRedactor, Redacted};
 
-use crate::security::scrub::sanitize_text;
 use crate::security::SecurityPolicy;
 
 /// Refuses artifact writes that reach the core's internal `workspace_dir`.
@@ -24,13 +23,13 @@ use crate::security::SecurityPolicy;
 /// both are wired rather than collapsing them into one check:
 ///
 /// * [`is_internal_state`](ArtifactPathPolicy::is_internal_state) →
-///   `SecurityPolicy::is_workspace_internal_path`, the specific state locations,
+///   the module's internal-state reservation, the specific state locations,
 ///   which are refused wherever they sit.
 /// * [`internal_root`](ArtifactPathPolicy::internal_root) → `workspace_dir`
 ///   itself, refused wholesale.
 ///
 /// Offload targets resolve under `action_dir`, never `workspace_dir` — the
-/// invariant `is_workspace_internal_path` enforces fail-closed regardless of
+/// invariant the module's internal-state reservation enforces fail-closed regardless of
 /// autonomy tier or `trusted_roots`.
 #[derive(Debug)]
 pub struct WorkspaceGuard {
@@ -46,7 +45,7 @@ impl WorkspaceGuard {
 
 impl ArtifactPathPolicy for WorkspaceGuard {
     fn is_internal_state(&self, path: &Path) -> bool {
-        self.policy.is_workspace_internal_path(path)
+        self.policy.is_internal_blocking(path)
     }
 
     fn internal_root(&self) -> Option<&Path> {
@@ -55,9 +54,10 @@ impl ArtifactPathPolicy for WorkspaceGuard {
 }
 
 /// Scrubs credentials and PII out of an artifact body before it is stored,
-/// using the same `sanitize_text` pass that persists oversized tool results.
+/// through the TinySecurity module's `Text` redaction (`security::redact::text`),
+/// the same pass that persists oversized tool results.
 ///
-/// Sharing that function is the point: an artifact on disk is exactly as
+/// Sharing that pass is the point: an artifact on disk is exactly as
 /// readable as a persisted tool result, so a second, weaker redaction path here
 /// would be a hole in the same wall.
 #[derive(Debug)]
@@ -65,11 +65,11 @@ pub struct SanitizingRedactor;
 
 impl ArtifactRedactor for SanitizingRedactor {
     fn redact(&self, content: &str) -> Redacted {
-        let sanitized = sanitize_text(content);
-        if sanitized.report.changed() {
-            Redacted::rewritten(sanitized.value)
+        let sanitized = crate::security::redact::text(content);
+        if sanitized != content {
+            Redacted::rewritten(sanitized)
         } else {
-            Redacted::unchanged(sanitized.value)
+            Redacted::unchanged(sanitized)
         }
     }
 }

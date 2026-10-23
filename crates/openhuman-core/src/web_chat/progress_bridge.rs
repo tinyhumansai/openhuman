@@ -97,8 +97,6 @@ pub fn unix_epoch_ms() -> u64 {
 
 #[path = "progress_bridge_wire_caps.rs"]
 mod wire_caps;
-#[cfg(test)]
-use wire_caps::MAX_WIRE_SUBAGENT_OUTPUT;
 use wire_caps::{cap_wire_args, cap_wire_output};
 
 #[path = "progress_bridge_ledger.rs"]

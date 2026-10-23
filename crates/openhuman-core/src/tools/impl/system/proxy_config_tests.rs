@@ -321,22 +321,6 @@ async fn parameters_schema_is_valid() {
 // ── require_write_access ─────────────────────────────────────────
 
 #[tokio::test]
-async fn blocks_set_in_readonly_mode() {
-    let tmp = TempDir::new().unwrap();
-    let readonly = Arc::new(SecurityPolicy {
-        autonomy: AutonomyLevel::ReadOnly,
-        ..SecurityPolicy::default()
-    });
-    let tool = ProxyConfigTool::new(test_config(&tmp).await, readonly);
-    let result = tool
-        .execute(json!({"action": "set", "enabled": true}))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.output().contains("read-only"));
-}
-
-#[tokio::test]
 async fn missing_action_returns_error() {
     let tmp = TempDir::new().unwrap();
     let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());

@@ -28,10 +28,10 @@ impl ConfigKnobs {
     }
     pub fn apply(&self, config: &mut Config) {
         if let Some(v) = &self.autonomy {
-            config.autonomy = v.clone();
+            config.security.autonomy = v.clone();
         }
         if let Some(v) = &self.privacy {
-            config.privacy = *v;
+            config.security.privacy = *v;
         }
         if let Some(v) = &self.secrets {
             config.secrets = v.clone();
@@ -308,8 +308,8 @@ fn make_info(
             templates: defaults.templates.keys().cloned().collect(),
         },
         configuration: ConfigurationInfo {
-            autonomy_enabled: config.autonomy.enabled,
-            privacy: format!("{:?}", config.privacy.mode),
+            autonomy_enabled: config.security.autonomy.enabled,
+            privacy: format!("{:?}", config.security.privacy.mode),
             secrets_encrypted: config.secrets.encrypt,
             cron_enabled: config.cron.enabled,
             learning: LearningSettings {

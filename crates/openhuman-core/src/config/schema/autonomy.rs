@@ -20,12 +20,12 @@ pub struct AutonomyConfig {
     /// allowlist, the approval gate, the hourly action budget, `workspace_only`,
     /// `forbidden_paths` and the workspace-internal boundary are all skipped.
     ///
-    /// `SecurityPolicy::is_always_forbidden` still applies either way —
+    /// the TinySecurity protected-path floor still applies either way —
     /// credential stores (`~/.ssh`, `~/.gnupg`, `~/.aws`) and system roots stay
     /// unreachable. Deliberate floor, documented on
     /// [`crate::security::SecurityPolicy::enabled`].
     ///
-    /// Set `[autonomy] enabled = true` to restore the full policy; `level`,
+    /// Set `[security.autonomy] enabled = true` to restore the full policy; `level`,
     /// `workspace_only` and the rest then behave exactly as they always have.
     #[serde(default)]
     pub enabled: bool,
@@ -40,8 +40,6 @@ pub struct AutonomyConfig {
     pub forbidden_paths: Vec<String>,
     #[serde(default = "default_max_actions_per_hour")]
     pub max_actions_per_hour: u32,
-    #[serde(default = "default_max_cost_per_day_cents")]
-    pub max_cost_per_day_cents: u32,
     #[serde(default = "default_true")]
     pub require_approval_for_medium_risk: bool,
     #[serde(default = "default_true")]
@@ -56,8 +54,8 @@ pub struct AutonomyConfig {
     /// prompting the user — a blanket bypass of the interactive approval
     /// flow, not just the per-tool `auto_approve` allowlist above. An
     /// unlabelled call site is still hard-denied regardless of this flag (see `ApprovalGate::intercept_audited_inner`).
-    /// Hard security blocks (`is_always_forbidden`, `is_workspace_internal_path`,
-    /// `ToolPolicyMiddleware`) live on independent code paths inside the tool
+    /// Hard security blocks (the protected-path floor, the internal-state reservation,
+    /// the TinySecurity tool gate) live on independent code paths inside the tool
     /// implementations themselves and are unaffected by this setting.
     ///
     /// It also bypasses **parking**, which is worth knowing before enabling it.
@@ -79,8 +77,8 @@ pub struct AutonomyConfig {
     /// which stay blocked regardless.
     #[serde(default)]
     pub trusted_roots: Vec<TrustedRoot>,
-    /// Whether the agent may install OS packages via the `install_tool` tool.
-    /// Intended to be enabled only in Full access mode.
+    /// Legacy compatibility field. Host package installation remains disabled
+    /// until package-manager scripts can run in an approved isolated environment.
     #[serde(default)]
     pub allow_tool_install: bool,
 }
@@ -94,10 +92,6 @@ fn default_max_actions_per_hour() -> u32 {
     // ceiling above realistic per-hour traffic is functionally infinite;
     // u32::MAX lets the field stay a plain `u32` without a sentinel option.
     u32::MAX
-}
-
-fn default_max_cost_per_day_cents() -> u32 {
-    500
 }
 
 fn default_allowed_commands() -> Vec<String> {
@@ -153,6 +147,21 @@ fn default_allowed_commands() -> Vec<String> {
 }
 
 fn default_forbidden_paths() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        // Unix system roots are not valid absolute Windows paths. TinySecurity
+        // rejects rooted paths without a drive during policy registration, so
+        // keep the portable home-directory protections here and rely on its
+        // unconditional Windows system-root floor for OS directories.
+        return vec![
+            "~/.ssh".into(),
+            "~/.gnupg".into(),
+            "~/.aws".into(),
+            "~/.config".into(),
+        ];
+    }
+
+    #[cfg(not(windows))]
     vec![
         "/etc".into(),
         "/root".into(),
@@ -198,7 +207,6 @@ impl Default for AutonomyConfig {
             allowed_commands: default_allowed_commands(),
             forbidden_paths: default_forbidden_paths(),
             max_actions_per_hour: default_max_actions_per_hour(),
-            max_cost_per_day_cents: default_max_cost_per_day_cents(),
             require_approval_for_medium_risk: default_true(),
             block_high_risk_commands: default_true(),
             auto_approve: default_auto_approve(),
@@ -208,3 +216,7 @@ impl Default for AutonomyConfig {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "autonomy_tests.rs"]
+mod tests;

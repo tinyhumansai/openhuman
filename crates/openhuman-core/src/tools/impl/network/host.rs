@@ -109,10 +109,10 @@ pub fn routed_http_request_tool(
     max_response_size: usize,
     timeout_secs: u64,
 ) -> PerCallTool<HttpRequestTool> {
-    PerCallTool::new(move |chat, ctx| {
+    PerCallTool::new(move |chat, ctx, args| {
         http_request_tool_for(
             ctx,
-            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            Arc::new(RoutedGate::new(Arc::clone(&policy), chat, args)),
             chat,
             allowed_domains.clone(),
             max_response_size,
@@ -131,8 +131,8 @@ pub(crate) fn x402_request_tool(
     max_response_size: usize,
     timeout_secs: u64,
 ) -> PerCallTool<impl Tool> {
-    PerCallTool::new(move |chat, ctx| {
-        let gate: Arc<dyn NetGate> = Arc::new(RoutedGate::new(Arc::clone(&policy), chat));
+    PerCallTool::new(move |chat, ctx, args| {
+        let gate: Arc<dyn NetGate> = Arc::new(RoutedGate::new(Arc::clone(&policy), chat, args));
         X402RequestTool {
             gate: Arc::clone(&gate),
             inner: http_request_tool_for(
@@ -194,9 +194,9 @@ pub fn routed_curl_tool(
     max_download_bytes: u64,
     timeout_secs: u64,
 ) -> PerCallTool<CurlTool> {
-    PerCallTool::new(move |chat, _ctx| {
+    PerCallTool::new(move |chat, _ctx, args| {
         CurlTool::new(
-            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            Arc::new(RoutedGate::new(Arc::clone(&policy), chat, args)),
             allowed_domains.clone(),
             action_dir.clone(),
             dest_subdir.clone(),
@@ -214,10 +214,10 @@ pub fn routed_web_fetch_tool(
     max_bytes: Option<usize>,
     timeout_secs: Option<u64>,
 ) -> PerCallTool<WebFetchTool> {
-    PerCallTool::new(move |chat, ctx| {
+    PerCallTool::new(move |chat, ctx, args| {
         web_fetch_tool(
             ctx,
-            Arc::new(RoutedGate::new(Arc::clone(&policy), chat)),
+            Arc::new(RoutedGate::new(Arc::clone(&policy), chat, args)),
             allowed_domains.clone(),
             max_bytes,
             timeout_secs,

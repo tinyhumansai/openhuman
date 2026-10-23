@@ -51,7 +51,7 @@ async fn run_role_tool_with(
     }
     // JSON-RPC, MCP, and agent callers share this dispatcher; enforce egress
     // policy here so non-agent routes cannot bypass LocalOnly mode.
-    if let Some(message) = crate::search::tools::local_only_search_block(tool) {
+    if let Some(message) = crate::search::tools::local_only_search_block(tool).await {
         return Err(message);
     }
     ensure_servable(config, tool, &arguments)?;

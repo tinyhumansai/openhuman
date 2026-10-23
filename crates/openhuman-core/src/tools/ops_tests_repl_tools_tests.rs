@@ -15,7 +15,6 @@ fn registry_for(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool>> {
     all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &crate::config::HttpRequestConfig::default(),
         tmp.path(),

@@ -37,15 +37,6 @@ use super::types::{
     ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, PendingApproval,
 };
 
-// Flow pre-authorization + per-flow tool trust persistence, split out to keep
-// this file under the repo's per-file line budget — see that module's doc.
-#[path = "store_flow_trust.rs"]
-mod store_flow_trust;
-pub use store_flow_trust::{
-    delete_flow_trust, insert_flow_trust, is_flow_tool_trusted, list_flow_trust,
-    record_flow_preauthorization,
-};
-
 #[cfg(feature = "legacy-import")]
 pub use super::store_import::PRE_MIGRATION_SESSION_ID;
 
@@ -210,11 +201,3 @@ fn publish_expired(expired: &[PendingApproval]) {
         });
     }
 }
-
-#[path = "store_agent.rs"]
-mod agent_rows;
-pub use agent_rows::{exists, list_pending_for_agent, pending_agent};
-
-#[cfg(test)]
-#[path = "store_tests.rs"]
-mod tests;

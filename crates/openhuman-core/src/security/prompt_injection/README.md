@@ -1,81 +1,39 @@
 # prompt_injection
 
-Centralized, deterministic prompt-injection screening. Given a user-provided prompt and a small enforcement context, it normalizes the text, scores it against a set of regex rules plus a couple of heuristics, and returns a verdict (`Allow` / `Review` / `Block`) and a corresponding enforcement action. Callers run this before any model or tool execution path, so adversarial prompts (instruction overrides, role hijacks, system-prompt or credential exfiltration, tool-abuse coercion) are caught up front. There is no persisted state, no RPC surface, and no event subscriber; it is a pure synchronous analysis library exposed via a single function.
+Prompt-injection screening and enforcement. The rules, weights and thresholds are the TinySecurity module's (`ScanPrompt2`: an additive score in thousandths, the `Allow` / `Review` / `Block` tier it falls in, and the content-free rule codes that fired; `ScanToolDefinition` for remote tool definitions). The host asks through the [`PromptScanner`](./scanner.rs) port and enforces the answer: callers run `enforce_prompt_input` before any model or tool execution path, and `Review` and `Block` both stop the input.
 
 ## Responsibilities
 
-- Normalize incoming prompts to defeat common obfuscation: lowercasing, leet-speak (`0` to `o`, `1` to `i`, `@` to `a`, and similar), Cyrillic homoglyph folding, fullwidth-ASCII folding, zero-width, bidi, and formatting-character stripping, and whitespace collapse (plus a whitespace-stripped `compact` variant).
-- Score the prompt against deterministic `DETECTION_RULES` (compiled once into a single `RegexSet` DFA, matched across the `lowered` / `collapsed` / `compact` variants) and two inline heuristics (`has_instruction_override`, `has_exfiltration_intent`).
-- Optionally apply an env-gated `HeuristicClassifier` that adds a small bounded score for suspicious trait combinations.
-- Map the summed score to a verdict via fixed thresholds: `Block` at 0.70 or above, `Review` at 0.55 or above, else `Allow`.
-- Produce a `PromptEnforcementDecision` carrying the verdict, score, reason codes and messages, action, a SHA-256 prompt hash, and prompt char count, and emit a structured `tracing::info!` audit line that is PII-safe: it logs the hash, not the prompt text.
+- Hold the **scanner port** (`scanner.rs`): production asks the module (`module_scanner.rs`); a build without the module asks nothing and every text is held; a test installs a stub with `with_scanner` (task scope) or `install` (process). No production path branches on `cfg(test)`.
+- Bound the hot path. Every tool output and every web, channel and stored piece of content is screened (`agent/tinyagents/host/security_gate.rs::screen_input`), so each module call has a deadline (`CALL_DEADLINE`, 2 s), the whole screen of one text has one (`TOTAL_DEADLINE`, 10 s), and long text is scanned in overlapping windows (`WINDOW_BYTES` 48 000, `OVERLAP_BYTES` 4 096) because the module accepts 64 KiB per call. Text past `MAX_SCANNED_BYTES` (8 MiB) is held, never scanned in part.
+- **Fail closed to Review.** A scanner that is absent, errors, times out or is handed too much answers `Review` with `screen.unavailable`, `screen.timeout` or `screen.too_large`. It never answers `Allow`. The screens are enforcing, not advisory, so a held text is refused.
+- Map the tier to the host's action (`enforce.rs`): `Allow` to `Allow`, `Review` to `ReviewBlocked`, `Block` to `Blocked`, and describe each rule code in words a person is shown. A structured `tracing::info!` audit line carries the hash, never the prompt text.
+- Screen remote MCP tool definitions through the same port (`screen_tool_definition`): `mcp::registry::tools_safe_for_agent` is async and drops a tool the module flags (`Suspicious` or `Blocked`) or that it could not scan.
 
 ## Key files
 
 | File | Role |
 | --- | --- |
-| `crates/openhuman-core/src/security/prompt_injection/mod.rs` | Module docstring and re-exports of the public surface. No logic. |
-| `crates/openhuman-core/src/security/prompt_injection/detector.rs` | All logic: types, normalization, detection rules plus `RegexSet`, heuristics, optional classifier, scoring and thresholds, and the `enforce_prompt_input` entry point. |
-| `crates/openhuman-core/src/security/prompt_injection/prompt_injection_tests.rs` | `#[cfg(test)]` suite (around 24 cases) covering allow/review/block verdicts, obfuscation handling, and known false-positive regressions (TAURI-140, issue #1940). |
+| `mod.rs` | Docstring and re-exports. |
+| `types.rs` | `PromptEnforcementDecision`, `PromptEnforcementAction`, `PromptInjectionVerdict`, `PromptInjectionReason`, `PromptEnforcementContext`. |
+| `scanner.rs` | The `PromptScanner` port, `screen`, `screen_tool_definition`, windowing, deadlines, the fail-closed merge. |
+| `module_scanner.rs` | The production scanner over `ScanPrompt2` / `ScanToolDefinition`. |
+| `enforce.rs` | `enforce_prompt_input`. |
+| `scanner_stub.rs` | The test stub (`#[cfg(test)]` module, as `approval/engine_stub.rs`). |
+
+The detector, its rule table and its test corpus moved into the module (`tinysecurity-redact`, `score.rs` and `score_tests.rs`), which is where what is an injection is decided and pinned.
 
 ## Public surface
 
-Re-exported from [`mod.rs`](./mod.rs) (all defined in [`detector.rs`](./detector.rs)):
-
-- `enforce_prompt_input(input: &str, context: PromptEnforcementContext) -> PromptEnforcementDecision`: the entry point for user-facing prompts.
-- `scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinitionScanHit>`: same rules applied to remote MCP tool descriptions and titles; any non-`Allow` verdict is a hit and the registry rejects the tool.
-- `PromptEnforcementContext<'a>`: borrowed `source` plus optional `request_id` / `user_id` / `session_id` for the audit log.
-- `PromptEnforcementDecision`: `{ verdict, score: f32, reasons, action, prompt_hash: String, prompt_chars: usize }`.
-- `PromptEnforcementAction`: `Allow` / `Blocked` / `ReviewBlocked`.
-- `PromptInjectionVerdict`: `Allow` / `Block` / `Review` (serde `lowercase`).
-- `PromptInjectionReason`: `{ code: String, message: String }`.
-
-Internal-only (not exported): `DetectionRule`, `NormalizedPrompt`, `HeuristicClassifier`, `OptionalClassifier`, `analyze_prompt`, `normalize_prompt`, `prompt_hash`.
+- `enforce_prompt_input(input, context).await -> PromptEnforcementDecision`
+- `screen(text).await -> PromptScan`, `screen_tool_definition(name, definition).await -> Result<DefinitionScan, String>`
+- `PromptScanner`, `install`, `with_scanner`, `windows`, `Tier`, `PromptScan`, `DefinitionScan`, `DefinitionVerdict`
+- the decision types above
 
 ## Configuration
 
-- `OPENHUMAN_PROMPT_INJECTION_CLASSIFIER` (env): resolved once via `Lazy`. `"heuristic"` enables `HeuristicClassifier`; anything else (default `"off"`) disables the optional classifier. The active choice is logged at `debug`.
+None. The host's former `OPENHUMAN_PROMPT_INJECTION_CLASSIFIER` environment classifier is not part of the module.
 
 ## Persistence
 
-None. The module is stateless aside from `Lazy` statics (compiled regexes, the classifier selection).
-
-## Dependencies
-
-No `crate::*` or `crate::core::*` dependencies; the module is self-contained. External crates only:
-
-- `regex` (`Regex`, `RegexSet`) for pattern matching and batched DFA matching.
-- `once_cell::sync::Lazy` for compile-once statics.
-- `serde` for deriving on the verdict/reason types.
-- `sha2` and `hex` for SHA-256 prompt hashing for audit logs.
-- `tracing` for structured audit and debug logging.
-- `std::env` for classifier selection.
-
-## Used by
-
-Consumers call `enforce_prompt_input` and treat any non-`Allow` action as a rejection (returning a user-facing guard message):
-
-- `crates/openhuman-core/src/agent/session_host/runtime.rs`: gates agent session turns; emits `prompt_injection_blocked`.
-- `crates/openhuman-core/src/agent/bus.rs`: screens inbound prompts on the agent event path.
-- `crates/openhuman-core/src/agent/tinyagents/host/security_gate.rs`: `screen_input` stage of the tinyagents security gate.
-- `crates/openhuman-core/src/mcp/registry/mod.rs`: `scan_tool_definition` on remote tool metadata at registration.
-- `crates/openhuman-core/src/web_chat/`: screens chat payloads at the web channel ingress (`start_chat`).
-- `crates/openhuman-core/src/inference/local/ops.rs`: rejects injected prompts before local-AI runtime execution.
-- `crates/openhuman-core/src/platform/about_app/catalog.rs`: surfaces the `conversation.prompt_injection_guard` capability entry.
-- `crates/openhuman-core/src/core/observability.rs`: classifies `prompt_injection_blocked` error messages for telemetry (string-based, not a code dependency).
-
-## Notes and gotchas
-
-- Three-variant matching is load-bearing: rules are matched against `lowered`, `collapsed`, and the whitespace-stripped `compact` strings, so spacing-obfuscated attacks (`j a i l b r e a k`, `j w t`) still contribute to score and reasons.
-- Threshold history is encoded in comments: `Review` was tuned from 0.45 to 0.50 to 0.55, and the obfuscated-instruction signal was bumped to 0.56 to eliminate a false-positive band while keeping spaced-out overrides at Review level (TAURI-140).
-- The verb list for exfiltration intent is deliberately conservative: `exfiltrate.credentials_with_intent` excludes high-false-positive verbs (`show`, `give`, `tell`, `fetch`, `return`, `output`) and requires a determiner within a bounded window, so benign technical questions ("show me the password reset flow", "reveal how to set my api key") do not trip it (issue #1940).
-- `is_obfuscation_char` is the single source of truth shared between the `had_zwsp` flag and the stripping step, to prevent drift.
-- `Review` and `Block` both yield non-`Allow` actions. Every current caller treats them identically as a rejection, so the distinction is informational and audit-only at the call sites.
-
-## Further reading
-
-- [Parent module (`security`)](../README.md)
-- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
-- [Privacy and security](../../../../../docs/gitbooks/en/features/privacy-and-security.md)
-- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
-- [OS keyring and secret storage](../../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)
+None.

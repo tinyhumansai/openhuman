@@ -13,8 +13,8 @@
 //! application, and [`run_core_from_args`] dispatches straight into the
 //! core CLI for the `core`/`mcp` subcommands `main.rs` routes here.
 //!
-//! The Cargo features `gateways`, `custom-protocol`, `e2e-test-support`, and
-//! `sandbox-bubblewrap` are shell-local and not part of the product feature
+//! The Cargo features `gateways`, `custom-protocol`, and `e2e-test-support`
+//! are shell-local and not part of the product feature
 //! list; the product gates are forwarded explicitly on `openhuman-rpc` in
 //! `Cargo.toml` and guarded by the `VOICE_COMPILED_IN` /
 //! `HTTP_SERVER_COMPILED_IN` compile-time asserts below.

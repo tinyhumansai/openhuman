@@ -85,7 +85,7 @@ type CallFuture =
 fn call(call: LeafCall, budget: ModelBudget, leaf: bool) -> CallFuture {
     match call {
         LeafCall::Completion { completer, request } => Box::pin(async move {
-            Box::pin(completer.budget(budget).complete(*request))
+            Box::pin((*completer).budget(budget).complete(*request))
                 .await
                 .map(CallOutcome::Completion)
         }),

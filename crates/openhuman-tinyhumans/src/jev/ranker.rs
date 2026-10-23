@@ -197,7 +197,7 @@ impl TinyHumansJevRanker {
         );
         log::info!(
             "[tool-search] jev ranker bound to route={route_label} backend {} ({})",
-            openhuman_embed::__host::util::redact::redact_url_for_log(&base_url),
+            openhuman_embed::__host::util::log_redaction::scrub_secrets(&base_url),
             if fingerprint_changed(cached.as_ref(), fingerprint) {
                 "credential or backend changed"
             } else {

@@ -284,10 +284,10 @@ fn a_harness_runs_a_turn_against_the_provider_it_was_given() {
             // The first session's transcript landed in the harness agent's
             // own store under the workspace (the path-based transcript files
             // are gone). A harness session id is its thread id.
-            let transcripts =
-                tinyagents_session::port::WorkspaceStores::open(&workspace_dir, "harness")
-                    .expect("the harness agent's workspace store")
-                    .transcripts();
+            let transcripts = openhuman_embed::__host::agent::session_store::installed()
+                .expect("the runtime's session store")
+                .for_agent("harness")
+                .transcripts;
             assert!(
                 transcripts.root_for_thread(&first.session_id).is_some(),
                 "the first session's transcript was not persisted"

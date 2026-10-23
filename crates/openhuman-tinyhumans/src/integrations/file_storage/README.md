@@ -18,7 +18,7 @@ and TTL enforcement.
   integration billing flow (S3 rates plus margin), charged upfront for the
   whole TTL on upload and as egress on download/link generation.
 - Block the five mutating/transfer tools (everything except `storage_list_files`)
-  when autonomy is read-only (`SecurityPolicy::can_act`).
+  when autonomy is read-only (the tool gate asks the module for the tier before the call runs).
 
 ## Key Files
 
@@ -27,7 +27,7 @@ and TTL enforcement.
 | [`mod.rs`](./mod.rs) | Export-only module root; re-exports `build_file_storage_tools` and the six `Storage*Tool` structs. |
 | [`types.rs`](./types.rs) | Serde types for backend responses (`UploadResponse`, `ListFilesResponse`, `FileMeta`, `LinkResponse`, `DeleteResponse`). |
 | [`tools/mod.rs`](./tools/mod.rs) | Module doc listing the backend endpoints and billing model; declares and re-exports the tool submodules. |
-| [`tools/helpers.rs`](./tools/helpers.rs) | Shared helpers: `resolve_upload_path`, `validate_file_id`, `validate_visibility`, `sanitize_filename`, `action_dir_for_context`, `readonly_autonomy_block`. |
+| [`tools/helpers.rs`](./tools/helpers.rs) | Shared helpers: `resolve_upload_path`, `validate_file_id`, `validate_visibility`, `sanitize_filename`, `action_dir_for_context`. |
 | [`tools/upload.rs`](./tools/upload.rs), [`tools/download.rs`](./tools/download.rs), [`tools/list.rs`](./tools/list.rs), [`tools/link.rs`](./tools/link.rs), [`tools/visibility.rs`](./tools/visibility.rs), [`tools/delete.rs`](./tools/delete.rs) | `StorageUploadFileTool`, `StorageDownloadFileTool`, `StorageListFilesTool`, `StorageGetLinkTool`, `StorageSetVisibilityTool`, `StorageDeleteFileTool` respectively, one `Tool` impl per file. |
 | [`tools/registry.rs`](./tools/registry.rs) | The `build_file_storage_tools` builder. |
 | [`tools_tests.rs`](./tools_tests.rs) | Tool metadata/schema tests and path-resolution/sanitization unit tests. |
@@ -64,9 +64,10 @@ alphanumeric/`-`/`_` charset before it is interpolated into the URL path
   (`action_dir_for_context`), mirroring the pattern used by media generation
   tools.
 - `StorageUploadFileTool`, `StorageDownloadFileTool`, `StorageGetLinkTool`,
-  `StorageSetVisibilityTool`, and `StorageDeleteFileTool` all check
-  `SecurityPolicy::can_act()` up front and return a
-  `[policy-blocked]` `ToolResult::error` under read-only autonomy;
+  `StorageSetVisibilityTool`, and `StorageDeleteFileTool` do no policy check of
+  their own: the tool gate (`ToolPolicyGateMiddleware`) refuses them with a
+  `[policy-blocked]` result under read-only autonomy and spends the hourly
+  action once per call;
   `StorageListFilesTool` is read-only and unguarded.
 
 ## Wiring
@@ -74,8 +75,8 @@ alphanumeric/`-`/`_` charset before it is interpolated into the URL path
 `build_file_storage_tools(root_config, action_dir)` (`tools/registry.rs`) is
 the sole construction entry point. It returns an empty tool list when
 `crate::integrations::build_client` yields no client (no backend URL
-configured, or the user is not signed in), otherwise builds a
-`SecurityPolicy` from `root_config.autonomy` and returns all six tools.
+configured, or the user is not signed in), otherwise returns all six tools.
+The agent's tool-policy middleware applies autonomy checks at execution time.
 
 Called from [`crates/openhuman-core/src/tools/ops.rs`](../../tools/ops.rs) (around line 905):
 
@@ -93,8 +94,7 @@ outside `build_file_storage_tools`.
 
 - `crate::integrations::IntegrationClient` (and `build_client`), the shared
   backend-proxied HTTP client; see the [parent README](../README.md).
-- `crate::security::SecurityPolicy`: gates the mutating tools under
-  read-only autonomy.
+- OpenHuman's tool-policy middleware: applies the read-only refusal at execution time.
 - `tinytools`: `Tool`, `ToolResult`, `PermissionLevel`,
   `ToolCategory`.
 - `tinytools::ToolRunContext`: supplies the TinyAgents workspace root when

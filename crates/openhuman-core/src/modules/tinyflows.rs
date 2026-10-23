@@ -93,9 +93,9 @@ mod imp {
     }
 
     async fn ensure_workflow_ready(config: &Config) -> Result<(), String> {
-        #[cfg(feature = "flows")]
+        #[cfg(all(feature = "flows", feature = "legacy-import"))]
         crate::storage::import::tinyflows::ensure_flow_scope_ready(config).await?;
-        #[cfg(not(feature = "flows"))]
+        #[cfg(not(all(feature = "flows", feature = "legacy-import")))]
         let _ = config;
         Ok(())
     }
@@ -396,14 +396,25 @@ mod imp {
 #[path = "tinyflows_fixture.rs"]
 mod fixture;
 
+#[cfg(all(feature = "modules", any(feature = "flows", feature = "skills")))]
+pub(crate) use imp::copilot_proxy;
+#[cfg(all(
+    test,
+    feature = "modules",
+    not(any(feature = "flows", feature = "skills"))
+))]
+pub(crate) use imp::copilot_proxy;
 #[cfg(all(test, feature = "modules"))]
 pub(crate) use imp::serve_pair_after_first;
-#[cfg(feature = "modules")]
+#[cfg(all(test, feature = "modules", not(feature = "flows")))]
+pub(crate) use imp::serve_registered;
+#[cfg(all(feature = "modules", feature = "flows"))]
 pub(crate) use imp::{
     authoring_proxy, catalog_proxy, catalog_proxy_for_migration, copilot_invoke_proxy,
-    copilot_proxy, portability_proxy, proxy, run_proxy, runs_proxy, serve, serve_pair,
-    serve_registered, unserve,
+    portability_proxy, runs_proxy, serve_pair, serve_registered,
 };
+#[cfg(feature = "modules")]
+pub(crate) use imp::{proxy, run_proxy, serve, unserve};
 
 #[cfg(not(feature = "modules"))]
 mod imp {

@@ -6,8 +6,8 @@
 //! that wraps a model call or a tool call lives here, in the intended order:
 //! usage and route capture, time awareness and the repeat/failure breakers,
 //! tool exposure, the prompt-cache guard, tool-outcome capture, the context
-//! ladder, plan mode, budgets, the tool-boundary gates (approval, CLI/RPC
-//! scope, session tool policy, credential scrub) and the final request shaping
+//! ladder, plan mode, budgets, the tool-boundary gates (TinySecurity policy and
+//! approvals, CLI/RPC scope, session tool policy, credential scrub) and the final request shaping
 //! (argument recovery, embedder hooks, nudges, the memory pack).
 
 use std::collections::HashSet;
@@ -19,9 +19,9 @@ use tinyagents_harness::middleware::{
     ShellTurnBudget, TurnClockMiddleware, DIRECT_WEB_READ_LIMIT,
 };
 use tinyagents_harness::middleware::{
-    plan_mode_middleware, ApprovalGateMiddleware, ArgRecoveryMiddleware, BudgetLimits,
-    BudgetMiddleware, ContextCompressionMiddleware, PromptCacheGuardMiddleware,
-    RepeatProgressMiddleware, RunModeHandle, ToolPolicyMiddleware as TaToolPolicyMiddleware,
+    plan_mode_middleware, ArgRecoveryMiddleware, BudgetLimits, BudgetMiddleware,
+    ContextCompressionMiddleware, PromptCacheGuardMiddleware, RepeatProgressMiddleware,
+    RunModeHandle,
 };
 use tinyagents_harness::runtime::AgentHarness;
 use tinyagents_harness::steering::SteeringHandle;
@@ -154,7 +154,7 @@ pub(super) fn install_turn_middleware(
         deterministic_cacheable,
         has_route_fallback,
         dispatch,
-        hosted_security_gate,
+        hosted_security_gate: _hosted_security_gate,
         pause_at_cap,
         run_mode,
         memory_turn,
@@ -545,30 +545,18 @@ pub(super) fn install_turn_middleware(
             DIRECT_WEB_READ_LIMIT,
         )));
     }
-    // SDK-owned tool-policy projection (issue #4249 / tinyagents-full-migration
-    // 01.1). Keep this narrow for now: enforce sandbox requirements declared by
-    // adapter policies without enabling classification/approval/result-byte
-    // gates yet. `require_classification(true)` would currently reject an
-    // unregistered hallucinated tool in `before_tool` before
-    // `RunPolicy::unknown_tool` can return a recoverable tool error, while
-    // OpenHuman's existing wrappers still own HITL approval and output caps.
-    harness.push_middleware(Arc::new(
-        TaToolPolicyMiddleware::new(harness.tools().policies()).require_sandbox(true),
-    ));
-
-    // Human-in-the-loop approval as a named tool middleware (issue #4249,
-    // Phase 1): an external-effect tool intercepts through the global
-    // `ApprovalGate`, a denial short-circuits with a model-consumable result, and
-    // an approved call records a terminal audit row. Replaces the inline approval
-    // block that used to live in the legacy tool adapter.
-    if !hosted_security_gate {
-        harness.push_tool_middleware(Arc::new(ApprovalGateMiddleware::new(
-            "approval_security",
-            Arc::new(middleware::approval::ApprovalSecurityMiddleware::new(
-                tool_sets.clone(),
-            )),
-        )));
-    }
+    // TinySecurity owns the policy decision and approval route on every harness
+    // path. Keep it first so a refusal cannot reach another middleware.
+    // Hosted channel policy contributes a declarative verdict to the same gate;
+    // it never opens a second prompt path.
+    middleware::security_gate::install(
+        harness,
+        tool_sets.clone(),
+        tool_policy
+            .as_ref()
+            .map(|enforcement| enforcement.session.clone()),
+        tool_policy.clone(),
+    );
 
     // CLI/RPC-only scope gate — a tool restricted to explicit CLI/RPC invocation
     // must not run from the model loop. Intrinsic to the tool, so installed on
@@ -577,26 +565,12 @@ pub(super) fn install_turn_middleware(
         tinyagents_harness::middleware::CliRpcOnlyMiddleware::new(tool_sets.clone()),
     ));
 
-    // Builder-configured tool policy (`.tool_policy()`), enforced at the tool
-    // boundary. The in-house engine ran this in `agent_tool_exec`; the tinyagents
-    // path bypassed it, so a deny/require-approval silently no-opped (security
-    // regression). Installed only when the caller threads an enforcement context
-    // (the session chat path); channel/CLI + sub-agent paths pass `None`.
-    // The packed-tool router below gates on the same session, and `None`
-    // disables it, so take a copy before the enforcement is moved.
+    // The declarative tool-policy session is already fed to TinySecurity above.
+    // Keep the same snapshot for packed/deferred tool projection so discovery
+    // cannot reintroduce a name hidden by the session policy.
     let route_session = tool_policy
         .as_ref()
         .map(|enforcement| enforcement.session.clone());
-    if let Some(enforcement) = tool_policy {
-        harness.push_tool_middleware(Arc::new(
-            middleware::tool_policy::ToolPolicyMiddleware::new(
-                enforcement.policy,
-                enforcement.session,
-                tool_sets.clone(),
-                enforcement.channel,
-            ),
-        ));
-    }
 
     // Credential scrubbing (issue #4453): redact credential-shaped secrets out of
     // every tool result. The legacy engine ran `scrub_credentials` over every

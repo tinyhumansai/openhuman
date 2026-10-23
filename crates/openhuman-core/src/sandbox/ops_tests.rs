@@ -1,79 +1,8 @@
 use super::*;
-use crate::config::RuntimeConfig;
+use crate::config::{RuntimeConfig, SandboxConfig};
 use crate::core::runtime::DispatchCtx;
-
-#[test]
-fn resolve_sandbox_policy_none_mode() {
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::None,
-        Path::new("/tmp/action"),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        false,
-    );
-    assert_eq!(policy.backend, SandboxBackendKind::None);
-}
-
-#[test]
-fn resolve_sandbox_policy_read_only_mode() {
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::ReadOnly,
-        Path::new("/tmp/action"),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        false,
-    );
-    assert_eq!(policy.backend, SandboxBackendKind::None);
-}
-
-#[test]
-fn resolve_sandbox_policy_sandboxed_local() {
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::Sandboxed,
-        Path::new("/tmp/action"),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        false,
-    );
-    assert_eq!(policy.backend, SandboxBackendKind::Local);
-    assert!(policy.allow_network);
-}
-
-#[test]
-fn resolve_sandbox_policy_sandboxed_remote_uses_docker() {
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::Sandboxed,
-        Path::new("/tmp/action"),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        true,
-    );
-    assert_eq!(policy.backend, SandboxBackendKind::Docker);
-    assert!(!policy.allow_network);
-    assert!(policy.docker_overrides.is_some());
-}
-
-#[test]
-fn resolve_sandbox_policy_docker_runtime_forces_docker() {
-    let config = RuntimeConfig {
-        kind: "docker".into(),
-        ..RuntimeConfig::default()
-    };
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::Sandboxed,
-        Path::new("/tmp/action"),
-        Path::new("/tmp/state"),
-        &config,
-        false,
-    );
-    assert_eq!(policy.backend, SandboxBackendKind::Docker);
-    assert!(policy.allow_network);
-}
+use crate::sandbox::operator::SANDBOX_OFF_ENV;
+use crate::sandbox::spawn_policy;
 
 #[test]
 fn is_elevated_op_known_tools() {
@@ -93,26 +22,19 @@ fn build_elevated_op_creates_record() {
 
 #[tokio::test]
 async fn create_sandbox_backend_none() {
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::None,
-        Path::new("/tmp"),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        false,
-    );
+    let policy = unsandboxed_policy(Path::new("/tmp"), Path::new("/tmp/state"));
+    assert_eq!(policy.backend, SandboxBackendKind::None);
     let handle = create_sandbox_backend(&DispatchCtx::process_default(), &policy).await;
     assert_eq!(handle.kind, SandboxBackendKind::None);
     assert_eq!(handle.status, SandboxStatus::Ready);
 }
 
-/// A `None`-backend policy whose state dir is a throwaway directory.
+/// A policy naming no executor whose state dir is a throwaway directory.
 fn unsandboxed_policy(workspace: &Path, state: &Path) -> SandboxPolicy {
-    resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::None,
+    spawn_policy(
         workspace,
         state,
+        &SandboxConfig::default(),
         &RuntimeConfig::default(),
         false,
     )
@@ -126,32 +48,25 @@ async fn run_unsandboxed(
 ) -> anyhow::Result<SandboxExecResult> {
     let state = tempfile::tempdir()?;
     let policy = unsandboxed_policy(workspace, state.path());
-    let outcome = execute_unsandboxed(
+    execute_in_sandbox(
         &crate::core::runtime::DispatchCtx::host_default(),
-        &crate::config::Config::default(),
         &policy,
         command,
         workspace,
-        env,
+        env.clone(),
         timeout,
-        None,
-        None,
     )
-    .await?;
-    match outcome {
-        ShellRunOutcome::Finished(result) => Ok(result),
-        ShellRunOutcome::Running(_) => anyhow::bail!("a run without a yield point kept running"),
-    }
+    .await
 }
 
 // The `/tmp` path and Unix builtins (`false`) are Unix-only, so these
 // integration-style tests are gated to Unix. A cross-platform
-// `execute_unsandboxed_echo_runs_on_every_os` below exercises the same
+// `run_on_host_echo_runs_on_every_os` below exercises the same
 // code path on Windows CI (#4705) — that is the primary regression
 // guard for the `sh` → platform-aware shell fix.
 #[cfg(unix)]
 #[tokio::test]
-async fn execute_unsandboxed_echo() {
+async fn run_on_host_echo() {
     let result = run_unsandboxed(
         "echo hello",
         Path::new("/tmp"),
@@ -167,7 +82,7 @@ async fn execute_unsandboxed_echo() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn execute_unsandboxed_failure() {
+async fn run_on_host_failure() {
     let result = run_unsandboxed(
         "false",
         Path::new("/tmp"),
@@ -179,13 +94,13 @@ async fn execute_unsandboxed_failure() {
     assert_ne!(result.exit_code, 0);
 }
 
-/// #4705 regression — every OS. `execute_unsandboxed` used to
+/// #4705 regression — every OS. `run_on_host` used to
 /// `Command::new("sh")`, which fails at `CreateProcessW` on Windows
 /// in ~30ms because `sh` is not in PATH. `echo hello` and `exit 1`
 /// are shell builtins on both `cmd.exe` and `sh`/`bash`, so this
 /// exercises the real code path on Windows CI as well as Unix.
 #[tokio::test]
-async fn execute_unsandboxed_echo_runs_on_every_os() {
+async fn run_on_host_echo_runs_on_every_os() {
     let tempdir = tempfile::tempdir().unwrap();
     let result = run_unsandboxed(
         "echo hello",
@@ -210,36 +125,11 @@ async fn execute_unsandboxed_echo_runs_on_every_os() {
     assert_ne!(failing.exit_code, 0);
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn execute_in_sandbox_none_backend() {
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::None,
-        Path::new("/tmp"),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        false,
-    );
-    let result = execute_in_sandbox(
-        &DispatchCtx::process_default(),
-        &policy,
-        "echo sandbox-test",
-        Path::new("/tmp"),
-        HashMap::new(),
-        Duration::from_secs(5),
-    )
-    .await
-    .unwrap();
-    assert!(result.success());
-    assert!(result.stdout.contains("sandbox-test"));
-}
-
 /// Environment overrides cross the module bus as JSON strings, so a value that
 /// is not UTF-8 is refused outright rather than altered on the way.
 #[cfg(unix)]
 #[tokio::test]
-async fn execute_unsandboxed_refuses_non_utf8_environment_instead_of_altering_it() {
+async fn run_on_host_refuses_non_utf8_environment_instead_of_altering_it() {
     use std::os::unix::ffi::OsStringExt;
 
     let tempdir = tempfile::tempdir().unwrap();
@@ -266,7 +156,7 @@ async fn execute_unsandboxed_refuses_non_utf8_environment_instead_of_altering_it
 /// Caller-approved overrides reach the command on top of the safe snapshot.
 #[cfg(unix)]
 #[tokio::test]
-async fn execute_unsandboxed_applies_environment_overrides() {
+async fn run_on_host_applies_environment_overrides() {
     let tempdir = tempfile::tempdir().unwrap();
     let env = HashMap::from([(
         OsString::from("OPENHUMAN_OVERRIDE_TEST"),
@@ -283,35 +173,6 @@ async fn execute_unsandboxed_applies_environment_overrides() {
     assert_eq!(result.stdout, "applied");
 }
 
-/// #4705 regression — `execute_in_sandbox` with the `None` backend
-/// now delegates to `execute_unsandboxed`, which used to fail on
-/// Windows with a ~30ms `sh`-not-found spawn error. Cross-platform
-/// so both Unix and Windows CI catch a shell-selection regression.
-#[tokio::test]
-async fn execute_in_sandbox_none_backend_runs_on_every_os() {
-    let tempdir = tempfile::tempdir().unwrap();
-    let policy = resolve_sandbox_policy(
-        &DispatchCtx::unbound(),
-        SandboxMode::None,
-        tempdir.path(),
-        Path::new("/tmp/state"),
-        &RuntimeConfig::default(),
-        false,
-    );
-    let result = execute_in_sandbox(
-        &DispatchCtx::process_default(),
-        &policy,
-        "echo sandbox-test",
-        tempdir.path(),
-        HashMap::new(),
-        Duration::from_secs(10),
-    )
-    .await
-    .unwrap();
-    assert!(result.success(), "stderr: {}", result.stderr);
-    assert!(result.stdout.contains("sandbox-test"));
-}
-
 #[test]
 fn env_passthrough_includes_safe_vars() {
     assert!(SANDBOX_ENV_PASSTHROUGH.contains(&"PATH"));
@@ -323,7 +184,7 @@ fn env_passthrough_includes_safe_vars() {
 
 // ── Windows child environment ────────────────────────────────────────────────
 //
-// `execute_unsandboxed` and the TinyBox native jail adapter both start from the module's safe
+// `run_on_host` and the TinyBox native jail adapter both start from the module's safe
 // environment snapshot (`SANDBOX_ENV_PASSTHROUGH` plus the Windows bootstrap names). On Windows that list has to carry
 // the process-bootstrap variables or the child cannot initialise the OS crypto
 // provider — `node` dies with `Assertion failed: ncrypto::CSPRNG(nullptr, 0)`
@@ -338,43 +199,19 @@ fn env_passthrough_includes_safe_vars() {
 // has to be a Rust `CreateProcess` spawn: `node`'s own `child_process.spawn`
 // silently injects `SystemRoot`, so a JavaScript probe reports a stripped
 // environment as healthy.
-#[test]
-fn sandbox_off_value_accepts_off_spellings() {
-    for v in ["off", "OFF", " none ", "0", "false", "Disabled"] {
-        assert!(
-            sandbox_off_value(Some(v)),
-            "{v:?} should disable the sandbox"
-        );
-    }
-}
+// ── The operator's switch is not a host decision ────────────────────
 
-#[test]
-fn sandbox_off_value_keeps_sandbox_on_otherwise() {
-    for v in [
-        None,
-        Some(""),
-        Some("on"),
-        Some("1"),
-        Some("true"),
-        Some("local"),
-    ] {
-        assert!(!sandbox_off_value(v), "{v:?} must leave the sandbox on");
-    }
-}
-
-// ── [components] sandbox = false ──────────────────────────────────────
-
+/// `[components] sandbox = false` no longer short-circuits the routing: a sandboxed
+/// command still reaches the module, which alone decides whether the jail is skipped.
 #[tokio::test]
-async fn sandbox_off_component_forces_the_unsandboxed_fallback_and_no_module_load() {
+async fn the_sandbox_component_switch_does_not_route_a_sandboxed_command_around_the_module() {
     let mut set = crate::core::runtime::ComponentSet::all();
     set.sandbox = false;
     let ctx = crate::core::runtime::context::CoreContext::for_test_with_components(set);
     let dispatch = DispatchCtx::new(ctx.clone());
     crate::core::runtime::context::CoreContext::scope(ctx, async {
-        assert!(sandbox_component_off(&dispatch));
-        assert!(sandbox_disabled_by_host(&dispatch));
         assert!(
-            !command_requires_sandbox(&dispatch, Some(SandboxMode::Sandboxed))
+            command_requires_sandbox(&dispatch, Some(SandboxMode::Sandboxed))
                 .await
                 .unwrap()
         );
@@ -382,26 +219,114 @@ async fn sandbox_off_component_forces_the_unsandboxed_fallback_and_no_module_loa
     .await;
 }
 
-#[tokio::test]
-async fn sandbox_component_is_on_without_a_context_or_when_enabled() {
-    assert!(!sandbox_component_off(&DispatchCtx::ambient()));
-    let ctx = crate::core::runtime::context::CoreContext::for_test_with_components(
-        crate::core::runtime::ComponentSet::all(),
-    );
-    {
-        let scope_ctx = crate::core::runtime::DispatchCtx::new(ctx);
+// ── SaaS routing (issue #7328 phase-0 characterization) ──────────────
 
-        assert!(!sandbox_component_off(&scope_ctx));
-    };
+const SAAS_CHILD: &str = "OPENHUMAN_SANDBOX_SAAS_TEST_CHILD";
+
+/// Mode is process-owned and irreversible, so the SaaS assertion runs in a
+/// fresh libtest process instead of locking the whole suite into SaaS.
+#[tokio::test]
+async fn saas_requires_the_sandbox_even_when_the_host_turns_it_off() {
+    let module = module_path!().split_once("::").expect("crate module").1;
+    let test = format!("{module}::saas_requires_the_sandbox_even_when_the_host_turns_it_off");
+    if std::env::var(SAAS_CHILD).as_deref() == Ok(test.as_str()) {
+        crate::core::runtime::mode::lock_mode(crate::core::runtime::Mode::Saas).unwrap();
+        assert!(crate::core::runtime::is_saas());
+        // `OPENHUMAN_SANDBOX=off` is set by the parent. The SaaS rule is checked
+        // before the host switch and before any config is read, for every agent mode.
+        for mode in [
+            None,
+            Some(SandboxMode::None),
+            Some(SandboxMode::ReadOnly),
+            Some(SandboxMode::Sandboxed),
+        ] {
+            assert!(
+                command_requires_sandbox(&DispatchCtx::process_default(), mode)
+                    .await
+                    .unwrap(),
+                "SaaS must sandbox every command, mode {mode:?}"
+            );
+        }
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", &test, "--nocapture", "--test-threads=1"])
+        .env(SAAS_CHILD, &test)
+        .env(SANDBOX_OFF_ENV, "off")
+        .output()
+        .expect("run isolated SaaS test");
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "isolated test {test} failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The parent process stays single-user: the off switch still wins here.
+    assert!(!crate::core::runtime::is_saas());
 }
 
-#[test]
-fn config_disables_sandbox_for_legacy_flag_or_component() {
+#[cfg(feature = "security-module")]
+fn local_policy(workspace: &Path) -> SandboxPolicy {
+    SandboxPolicy {
+        backend: SandboxBackendKind::Local,
+        workspace_root: workspace.to_path_buf(),
+        state_dir: workspace.join("state"),
+        read_only_mounts: Vec::new(),
+        read_write_mounts: Vec::new(),
+        allow_network: false,
+        env_passthrough: Vec::new(),
+        docker_overrides: None,
+        mount_workspace: true,
+    }
+}
+
+/// A sandboxed spawn the module cannot plan is refused with a typed plan error,
+/// never run on a host-side decision.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn a_sandboxed_spawn_the_module_cannot_plan_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
     let mut config = crate::config::Config::default();
-    assert!(!config_disables_sandbox(&config));
-    config.sandbox.enabled = Some(false);
-    assert!(config_disables_sandbox(&config));
-    config.sandbox.enabled = None;
-    config.components.sandbox = false;
-    assert!(config_disables_sandbox(&config));
+    config.modules.enabled = false;
+    let error = admit_spawn(
+        &config,
+        &local_policy(dir.path()),
+        "echo hi",
+        dir.path(),
+        &HashMap::new(),
+        false,
+    )
+    .await
+    .expect_err("no module, no plan");
+    // A fault is not a deterministic refusal: it must not be mistaken for the floor.
+    assert!(
+        error.downcast_ref::<IsolationFloor>().is_none(),
+        "{error:#}"
+    );
+}
+
+/// The operation a plan binds must cross the bus as text, so an environment that
+/// is not UTF-8 is refused before the module is asked.
+#[cfg(all(feature = "security-module", unix))]
+#[tokio::test]
+async fn a_sandboxed_spawn_with_a_non_text_environment_is_refused_before_planning() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let config = crate::config::Config::default();
+    let mut env = HashMap::new();
+    env.insert(
+        OsString::from("NAME"),
+        OsString::from(std::ffi::OsStr::from_bytes(b"\xff")),
+    );
+    let error = admit_spawn(
+        &config,
+        &local_policy(dir.path()),
+        "echo hi",
+        dir.path(),
+        &env,
+        false,
+    )
+    .await
+    .expect_err("a non-text environment cannot be planned");
+    assert!(error.to_string().contains("UTF-8"), "{error:#}");
 }

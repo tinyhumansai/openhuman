@@ -47,6 +47,7 @@ fn sandbox_policy_serializes_roundtrip() {
             memory_limit_mb: Some(256),
             ..DockerOverrides::default()
         }),
+        mount_workspace: true,
     };
     let json = serde_json::to_string(&policy).unwrap();
     let back: SandboxPolicy = serde_json::from_str(&json).unwrap();
@@ -66,4 +67,50 @@ fn sandbox_status_variants() {
     assert_ne!(SandboxStatus::Inactive, SandboxStatus::Ready);
     assert_ne!(SandboxStatus::Ready, SandboxStatus::Busy);
     assert_ne!(SandboxStatus::Busy, SandboxStatus::Error);
+}
+
+fn handle(
+    kind: SandboxBackendKind,
+    status: SandboxStatus,
+    isolation: Option<SandboxIsolation>,
+) -> SandboxBackendHandle {
+    SandboxBackendHandle {
+        kind,
+        status,
+        backend_id: None,
+        isolation,
+    }
+}
+
+/// Only a ready backend that really isolates meets the untrusted-code floor;
+/// the unsandboxed backend, an inactive or erroring one, and a folder-confined
+/// (Seatbelt) jail never do.
+#[test]
+fn untrusted_floor_requires_a_ready_isolating_backend() {
+    use SandboxBackendKind::{Docker, Local, None as Unsandboxed};
+    use SandboxIsolation::{FolderConfined, Isolated};
+    use SandboxStatus::{Error, Inactive, Ready};
+
+    assert!(handle(Local, Ready, Some(Isolated)).suitable_for_untrusted_code());
+    assert!(handle(Docker, Ready, None).suitable_for_untrusted_code());
+
+    assert!(!handle(Local, Ready, Some(FolderConfined)).suitable_for_untrusted_code());
+    assert!(!handle(Local, Inactive, None).suitable_for_untrusted_code());
+    assert!(!handle(Local, Error, Some(Isolated)).suitable_for_untrusted_code());
+    assert!(!handle(Docker, Error, None).suitable_for_untrusted_code());
+    assert!(!handle(Unsandboxed, Ready, None).suitable_for_untrusted_code());
+}
+
+#[test]
+fn status_report_names_the_untrusted_floor_beside_the_handle() {
+    let report = SandboxStatusReport::new(handle(
+        SandboxBackendKind::Local,
+        SandboxStatus::Ready,
+        Some(SandboxIsolation::FolderConfined),
+    ));
+    let value = serde_json::to_value(&report).unwrap();
+    assert_eq!(value["kind"], "local");
+    assert_eq!(value["status"], "ready");
+    assert_eq!(value["isolation"], "folder_confined");
+    assert_eq!(value["suitable_for_untrusted_code"], false);
 }

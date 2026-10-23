@@ -58,19 +58,20 @@ pub const MANAGED_HOSTS: [&str; 5] = [
     "openhuman",
 ];
 
-/// Classify a control-plane origin into the deployment bucket the core's
-/// tracing push gate understands: `production` (the canonical API host),
-/// `staging` (a `staging`-labelled host under the deployment domain) or
-/// `external` (anything else, including unparseable input and non-HTTPS).
-///
-/// Loopback and private hosts are classified `development` by the core before
-/// it consults this value. The host is parsed, never substring-matched:
+/// Classify the resolved control-plane origin into deployment metadata for
+/// the core: `production`, `staging`, `development` for HTTP loopback, or
+/// `external`. This classification describes the endpoint; TinySecurity still
+/// decides whether a particular payload may be sent there. The host is parsed,
+/// never substring-matched:
 /// `https://staging-attacker.invalid` is external, so the fail-closed gate
 /// never pushes a session token to a host this tree does not own.
 pub fn deployment_environment(base: &str) -> &'static str {
     let Ok(parsed) = url::Url::parse(base) else {
         return "external";
     };
+    if parsed.scheme() == "http" && super::endpoint::is_loopback_host(&parsed) {
+        return "development";
+    }
     if parsed.scheme() != "https" {
         return "external";
     }

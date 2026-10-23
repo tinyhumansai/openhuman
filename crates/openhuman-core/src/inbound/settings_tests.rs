@@ -169,7 +169,7 @@ fn configured_sources_lead_the_pipeline_sources() {
             "ack": "after_ingest",
             "weight": 50,
             "cadence": "instant",
-            "coalesce": {"debounce_ms": 30_000, "max_wait_ms": 300_000, "max_events": 20},
+            "coalesce": {"debounce_ms": 30000, "max_wait_ms": 300000, "max_events": 20},
         })
     );
     assert_eq!(sources.len(), shipped().pipeline.sources.len() + 1);

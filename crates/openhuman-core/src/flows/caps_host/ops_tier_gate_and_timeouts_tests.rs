@@ -15,7 +15,7 @@ use tinytools::status::POLICY_BLOCKED_MARKER;
 fn http_request_node_tier_gate_blocks_readonly_allows_higher() {
     use crate::security::AutonomyLevel;
 
-    let err = enforce_node_tier_gate(
+    let err = super::enforce_node_tier_gate(
         &policy(AutonomyLevel::ReadOnly),
         CommandClass::Network,
         "http_request",
@@ -29,13 +29,13 @@ fn http_request_node_tier_gate_blocks_readonly_allows_higher() {
 
     // Supervised/full do not hard-block — they fall through to the
     // ApprovalGate (which performs the Prompt round-trip).
-    assert!(enforce_node_tier_gate(
+    assert!(super::enforce_node_tier_gate(
         &policy(AutonomyLevel::Supervised),
         CommandClass::Network,
         "http_request"
     )
     .is_ok());
-    assert!(enforce_node_tier_gate(
+    assert!(super::enforce_node_tier_gate(
         &policy(AutonomyLevel::Full),
         CommandClass::Network,
         "http_request"
@@ -49,21 +49,24 @@ fn http_request_node_tier_gate_blocks_readonly_allows_higher() {
 fn code_node_tier_gate_blocks_readonly_allows_full() {
     use crate::security::AutonomyLevel;
 
-    assert!(enforce_node_tier_gate(
+    assert!(super::enforce_node_tier_gate(
         &policy(AutonomyLevel::ReadOnly),
         CommandClass::Write,
         "code"
     )
     .is_err());
-    assert!(enforce_node_tier_gate(
+    assert!(super::enforce_node_tier_gate(
         &policy(AutonomyLevel::Supervised),
         CommandClass::Write,
         "code"
     )
     .is_ok());
-    assert!(
-        enforce_node_tier_gate(&policy(AutonomyLevel::Full), CommandClass::Write, "code").is_ok()
-    );
+    assert!(super::enforce_node_tier_gate(
+        &policy(AutonomyLevel::Full),
+        CommandClass::Write,
+        "code"
+    )
+    .is_ok());
 }
 
 /// A long-lived code capability must observe a tier downgrade at the same
@@ -77,8 +80,8 @@ async fn http_adapter_blocks_under_readonly_tier() {
 
     let (_dir, creds) = http_cred_store();
     let mut config = Config::default();
-    config.autonomy.enabled = true;
-    config.autonomy.level = AutonomyLevel::ReadOnly;
+    config.security.autonomy.enabled = true;
+    config.security.autonomy.level = AutonomyLevel::ReadOnly;
     let http = OpenHumanHttp {
         ctx: crate::core::runtime::DispatchCtx::unbound(),
         config: Arc::new(config),
@@ -152,7 +155,7 @@ async fn composio_read_action_allowed_under_readonly_tier() {
     let class = classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await;
     assert_eq!(class, CommandClass::Read);
     assert_eq!(
-        enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call")
+        super::enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call")
             .expect("a curated Read action must not be blocked under ReadOnly"),
         GateDecision::Allow
     );
@@ -192,7 +195,7 @@ async fn composio_read_action_does_not_prompt_under_supervised_tier() {
     let class = classify_composio_action_for_tier("TWITTER_RECENT_SEARCH").await;
     assert_eq!(class, CommandClass::Read);
     assert_eq!(
-        enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+        super::enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
             .expect("a curated Read action must not be blocked under Supervised"),
         GateDecision::Allow,
         "a curated read must resolve to Allow, never Prompt, under Supervised"
@@ -231,7 +234,7 @@ async fn composio_write_action_still_prompts_under_supervised_tier() {
             "slug {slug} must classify as Network"
         );
         assert_eq!(
-            enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+            super::enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
                 .expect("a Network-class action is not blocked (only prompted) under Supervised"),
             GateDecision::Prompt,
             "slug {slug} must still require a Supervised-tier approval prompt"
@@ -250,11 +253,14 @@ async fn composio_unknown_slug_prompts_under_supervised_tier() {
     let class = classify_composio_action_for_tier("UNKNOWN_SERVICE_DO_THING").await;
     assert_eq!(class, CommandClass::Network);
     assert_eq!(
-        enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
+        super::enforce_node_tier_gate(&policy(AutonomyLevel::Supervised), class, "tool_call")
             .expect("Network-class is prompted, not blocked, under Supervised"),
         GateDecision::Prompt
     );
-    assert!(enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call").is_err());
+    assert!(
+        super::enforce_node_tier_gate(&policy(AutonomyLevel::ReadOnly), class, "tool_call")
+            .is_err()
+    );
 }
 
 /// A `Prompt` tier decision on a default (`require_approval: false`)

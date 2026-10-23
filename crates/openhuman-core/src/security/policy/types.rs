@@ -54,24 +54,8 @@ pub enum CommandRiskLevel {
     High,
 }
 
-/// OpenHuman's fail-closed classification for an acting command.
-///
-/// This is host policy vocabulary. Module contracts report structural facts;
-/// they do not classify commands or decide which autonomy tier may run them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandClass {
-    /// No side effects are expected.
-    Read,
-    /// Changes local or remote state.
-    Write,
-    /// Performs a network operation.
-    Network,
-    /// Installs or updates software.
-    Install,
-    /// Performs a destructive or privilege-sensitive operation.
-    Destructive,
-}
+/// The TinySecurity command classification used by host policy adapters.
+pub use tinysecurity_bus::CommandClass;
 
 /// What the harness should do with an acting tool call of a given
 /// [`CommandClass`] under the session's [`AutonomyLevel`]. Computed by
@@ -225,6 +209,11 @@ pub fn tool_result_artifacts_dir(workspace_dir: &std::path::Path) -> PathBuf {
 
 /// Files directly under `workspace_dir` that hold secrets or persona config
 /// and must not be writable by agent tools.
+///
+/// Workspace-relative prefixes reserved for core-managed state.
+pub(super) const WORKSPACE_INTERNAL_PREFIXES: &[&str] =
+    &["memory-", "memory_tree-", "session_raw-"];
+
 pub(super) const WORKSPACE_INTERNAL_FILES: &[&str] = &[
     "core.token",
     "dev-keychain.json",
@@ -255,7 +244,7 @@ pub struct SecurityPolicy {
     /// blocked legitimate agent work, and removing it is a one-line change if
     /// a host genuinely wants no path policy at all.
     ///
-    /// Set `[autonomy] enabled = true` to restore the full policy.
+    /// Set `[security.autonomy] enabled = true` to restore the full policy.
     ///
     /// Note the asymmetry with [`Default`]: a policy built from config defaults
     /// to disabled, a policy built with no config at all defaults to enabled.
@@ -266,7 +255,7 @@ pub struct SecurityPolicy {
     /// governs act-power. `LocalOnly` blocks external model calls at the
     /// inference chokepoint (see
     /// [`create_chat_provider_from_string`](crate::inference::provider::factory)).
-    /// Sourced from `config.privacy.mode` at policy-build time and hot-swapped
+    /// Sourced from `config.security.privacy.mode` at policy-build time and hot-swapped
     /// via [`live_policy::reload_privacy`](crate::security::live_policy::reload_privacy).
     ///
     /// HOOK (later slices): `Sensitive` mode enforcement (approval / redaction /
@@ -284,7 +273,6 @@ pub struct SecurityPolicy {
     pub allowed_commands: Vec<String>,
     pub forbidden_paths: Vec<String>,
     pub max_actions_per_hour: u32,
-    pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
     /// Directories outside the workspace the agent may access (read or read-write).
@@ -298,7 +286,8 @@ pub struct SecurityPolicy {
     /// session is rebuilt.
     #[doc(hidden)]
     pub media_files_roots: Arc<std::sync::Mutex<Option<crate::artifacts::FileRoots>>>,
-    /// Whether the agent may install OS packages via the `install_tool` tool.
+    /// Legacy compatibility setting. `install_tool` refuses execution until
+    /// package-manager scripts can be run in an approved isolated environment.
     pub allow_tool_install: bool,
     /// Tool names the user has pre-approved ("Always allow"). The `ApprovalGate`
     /// skips the interactive prompt for any tool in this set. Sourced from
@@ -313,10 +302,13 @@ pub struct SecurityPolicy {
     /// without a `pending_approvals` audit row (openhuman#5634, accepted).
     /// Sourced from `autonomy.auto_approve_all`;
     /// observed live via `live_policy`. Does not affect
-    /// `is_always_forbidden`, `is_workspace_internal_path`, or
-    /// `ToolPolicyMiddleware`, which are independent code paths.
+    /// `is_always_forbidden`, `is_workspace_internal_path`, or the TinySecurity
+    /// tool gate, which are independent code paths.
     pub auto_approve_all: bool,
     pub tracker: ActionTracker,
+    /// Gateway used by the module-owned command adapter. Production leaves
+    /// this unset; the sealed interface admits only fail-closed test doubles.
+    pub command_gateway: Option<super::native_commands::SharedCommandGateway>,
     /// Lazily-cached canonical form of [`workspace_dir`].
     ///
     /// `validate_path` / `validate_parent_path` use the canonical workspace
@@ -444,7 +436,6 @@ impl Default for SecurityPolicy {
             // The rate-limiter check is `count <= max`, so u32::MAX is functionally
             // infinite without requiring an Option sentinel on the field type.
             max_actions_per_hour: u32::MAX,
-            max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
             trusted_roots: Vec::new(),
@@ -453,6 +444,7 @@ impl Default for SecurityPolicy {
             allow_tool_install: false,
             auto_approve: Vec::new(),
             auto_approve_all: false,
+            command_gateway: None,
             tracker: ActionTracker::new(),
             canonical_workspace: Arc::new(OnceCell::new()),
         }

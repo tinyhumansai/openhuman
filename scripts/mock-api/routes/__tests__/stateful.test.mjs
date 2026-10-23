@@ -67,37 +67,32 @@ test("does not reseed conversations after deleting everything until reset", asyn
   assert.deepEqual(afterDeleteBody?.data, []);
 });
 
-test("keeps server-controlled ids on create and patch routes", async () => {
+test("keeps server-controlled conversation ids on create and patch routes", async () => {
   const started = await startMockServer(0);
   const baseUrl = `http://127.0.0.1:${started.port}`;
 
-  const createdConversation = await fetch(`${baseUrl}/conversations`, {
+  const createdConversationResponse = await fetch(`${baseUrl}/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id: "client-conv", title: "Client title" }),
   }).then((response) => response.json());
-  assert.notEqual(createdConversation?.data?.id, "client-conv");
+  const conversationId = createdConversationResponse?.data?.id;
+  assert.notEqual(conversationId, "client-conv");
 
-  const createdCron = await fetch(`${baseUrl}/settings/cron-jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: "client-cron", name: "Client cron" }),
-  }).then((response) => response.json());
-  const cronId = createdCron?.data?.id;
-  assert.notEqual(cronId, "client-cron");
-
-  await fetch(`${baseUrl}/settings/cron-jobs/${cronId}`, {
+  await fetch(`${baseUrl}/conversations/${conversationId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: "mutated-cron", enabled: false }),
+    body: JSON.stringify({ id: "mutated-conv", title: "Updated conversation" }),
   });
 
-  const cronList = await fetch(`${baseUrl}/settings/cron-jobs`).then(
+  const conversationList = await fetch(`${baseUrl}/conversations`).then(
     (response) => response.json(),
   );
-  const patchedCron = cronList.data.find((entry) => entry.id === cronId);
-  assert.equal(patchedCron.id, cronId);
-  assert.equal(patchedCron.enabled, false);
+  const patchedConversation = conversationList.data.find(
+    (entry) => entry.id === conversationId,
+  );
+  assert.equal(patchedConversation.id, conversationId);
+  assert.equal(patchedConversation.title, "Updated conversation");
 });
 
 test("serves deterministic Parallel search proxy results", async () => {

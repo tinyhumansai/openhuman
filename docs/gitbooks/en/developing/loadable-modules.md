@@ -33,7 +33,10 @@ in [the module-boundary inventory](../../../module-boundary-inventory.md).
 
 ## The registry
 
-`crates/openhuman-core/src/modules/registry/` compiles eleven records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.
+`crates/openhuman-core/src/modules/registry/` compiles in eleven released
+records, plus the TinySecurity admission record when `security-module` is
+enabled. Only this registry may select an artifact. Nothing reads a module name
+from config and goes looking for it.
 
 | Module | Provides |
 | --- | --- |
@@ -53,6 +56,46 @@ in [the module-boundary inventory](../../../module-boundary-inventory.md).
 Each record carries a version, the release it came from, and one `PlatformAsset` per supported build. Seven records publish eleven builds: `ubuntu-24.04` and `ubuntu-22.04` on `x86_64` and `arm64`, `macos-26` and `macos-15` on `arm64` and `x86_64`, `windows-2025-x86_64`, `windows-2022-x86_64` and `windows-11-arm64`. TinyComputer publishes sixteen assets; TinyBox, TinyMCP and TinyWallet each publish seventeen, adding Arch Linux and Fedora builds. Asset availability is module-specific, so a release's count should not be inferred from another module's matrix.
 
 Every asset carries a SHA-256 copied verbatim from the published release's own checksum file. Do not compute a replacement pin from a local build. The digest must describe the artifact the release workflow signed, not the one on your machine.
+
+### TinySecurity migration
+
+`vendor/tinysecurity` owns the native security engine. The `security-module`
+feature links its transport-free `tinysecurity-bus` contract and forwards through
+the host library chain. Asynchronous filesystem checks use immutable scopes
+containing host-authorized roots and internal-state reservations. The client
+requires artifact attestation and fails closed if loading or validation fails.
+
+The production registry pins TinySecurity v0.17.1 (contract 1.28) and its 11
+supported host archives using digests copied from the published checksum
+manifest. Native CI loads these released archives through digest admission.
+Explicit local fixtures remain available for module development and never
+replace production pins. The module now owns:
+
+- asynchronous filesystem authorization and shell command classification and
+  gating (`modules/security_command.rs`);
+- the tool policy gate: host-tool admission (`Check::HostAction` and
+  `Check::HostShell`) for every tool call, with the typed denials
+  `read_only_mode`, `rate_limited`, `scheduled_read_only` and `high_risk`;
+- the approval engine, behind `security/approval/native/`;
+- sandbox planning for every sandboxed command (`Plan2` with a single-use plan);
+- password crypt (`modules/security_crypto.rs`).
+
+The host links only `tinysecurity-bus`. It registers immutable scopes derived
+from trusted configuration and authenticated host context, then maps the
+module's answers. Missing, untrusted, faulted or slow module calls fail closed.
+The host still owns product callbacks, execution and UI. The module also
+publishes device-pairing and frame-crypto contracts, but OpenHuman's device
+pairing path has not yet migrated to them; keyring and device crypto migration
+remain tracked by issue #7328.
+Redaction and egress are module calls and fail closed: text and endpoint
+redaction (`Redact`), tool-result credential removal (`CredentialsOnly`, in
+chunks the module accepts), a tenant's exact provider keys for one call
+(`RedactWith`), prompt and tool-definition scans (`ScanPrompt`,
+`ScanToolDefinition`), the Sensitive-mode check of what a chat request or tool call
+carries, and the destination of every agent network tool (`ScopedUrlGuard`: the
+tool connects only to the addresses the module approves). Browser navigation gets a
+module verdict for the `Browser` transport. Tracker issue
+#7328 lists the remaining phases; this page describes only what has landed.
 
 ## Resolution order
 

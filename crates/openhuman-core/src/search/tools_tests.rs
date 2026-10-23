@@ -81,22 +81,42 @@ fn recorded_tools_keep_their_declaration() {
     assert_eq!(tool.exposure(), ToolExposure::Direct);
 }
 
-#[test]
-fn local_only_blocks_external_search_tool_dispatch() {
+#[tokio::test]
+#[cfg(feature = "security-module")]
+async fn local_only_blocks_external_search_tool_dispatch() {
+    use crate::modules::security::gap::install_port;
+    use crate::modules::security::gap::stub::{Asked, StubPort};
+    use tinysecurity_bus::{DenialReason, PrivacyDataClass2, Verdict};
+    let stub = std::sync::Arc::new(StubPort::allowing().privacy(|_| Verdict::Deny {
+        reason: DenialReason::Privacy,
+    }));
+    let _port = install_port(stub.clone());
     let _privacy =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::LocalOnly);
 
     let message = local_only_search_block("web_search_tool")
+        .await
         .expect("search requests must be blocked in LocalOnly mode");
     assert!(message.contains(tinytools::status::POLICY_BLOCKED_MARKER));
+    let asked = stub.asked();
+    let [Asked::Privacy(request)] = asked.as_slice() else {
+        panic!("one privacy question, got {asked:?}");
+    };
+    assert!(request.external);
+    assert_eq!(request.class, PrivacyDataClass2::UserContent);
+    assert_eq!(request.destination_label, "tinysearch");
+    // The synchronous caller (memes) gets the same answer.
+    assert!(local_only_search_block_blocking("web_search_tool").is_some());
 }
 
-#[test]
-fn standard_privacy_mode_allows_search_tool_dispatch() {
+#[tokio::test]
+#[cfg(feature = "security-module")]
+async fn standard_privacy_mode_allows_search_tool_dispatch() {
     let _privacy =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::Standard);
 
-    assert!(local_only_search_block("web_search_tool").is_none());
+    assert!(local_only_search_block("web_search_tool").await.is_none());
+    assert!(local_only_search_block_blocking("web_search_tool").is_none());
 }
 
 // ---------------------------------------------------------------------------

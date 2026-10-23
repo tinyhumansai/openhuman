@@ -51,10 +51,10 @@ async fn a_guard_discloses_to_the_chat_it_was_built_for() {
         request_id: None,
     };
     let (a, b, none) = (guard(Some(chat_a)), guard(Some(chat_b)), guard(None));
-    a.admit("videos/probe-a").unwrap();
+    a.admit("videos/probe-a").await.unwrap();
     tokio::task::yield_now().await;
-    b.admit("videos/probe-b").unwrap();
-    none.admit("videos/probe-none").unwrap();
+    b.admit("videos/probe-b").await.unwrap();
+    none.admit("videos/probe-none").await.unwrap();
 
     let service = |route: &str| format!("{OPENROUTER_PROXY_PATH}/{route}");
     assert_eq!(

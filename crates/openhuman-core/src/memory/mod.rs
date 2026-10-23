@@ -47,6 +47,7 @@ pub mod tools;
 pub mod types;
 
 #[cfg(test)]
+#[path = "test_fixtures_tests.rs"]
 pub(crate) mod test_fixtures;
 
 #[cfg(test)]

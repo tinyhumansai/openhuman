@@ -1,13 +1,17 @@
 use super::*;
+use crate::security::turn_origin;
 use crate::security::AutonomyLevel;
 use tempfile::TempDir;
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 fn security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
-    Arc::new(SecurityPolicy {
-        autonomy,
-        ..SecurityPolicy::default()
-    })
+    Arc::new(
+        SecurityPolicy {
+            autonomy,
+            ..SecurityPolicy::default()
+        }
+        .with_gateway(crate::security::policy::native_commands_stub::StubGateway::tiered()),
+    )
 }
 
 /// A `Config` rooted at a fresh tempdir with an in-memory reference engine

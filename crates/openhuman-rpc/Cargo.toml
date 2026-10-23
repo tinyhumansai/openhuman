@@ -56,6 +56,7 @@ hosting = ["openhuman-tinyhumans/hosting"]
 tinymemes = ["openhuman-tinyhumans/tinymemes"]
 inbound-queues = ["openhuman-tinyhumans/inbound-queues"]
 modules = ["openhuman-tinyhumans/modules"]
+security-module = ["openhuman-tinyhumans/security-module"]
 voice = ["openhuman-tinyhumans/voice"]
 web3 = ["openhuman-tinyhumans/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain and

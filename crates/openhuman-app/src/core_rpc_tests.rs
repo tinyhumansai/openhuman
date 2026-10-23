@@ -22,19 +22,16 @@ fn bearer_header_absent_for_missing_or_blank_token() {
 }
 
 #[test]
-fn redact_strips_credentials_query_and_path() {
-    // Userinfo, query, fragment, and path must not survive into logs; only
-    // the scheme://host[:port] surface is kept for transport diagnostics.
-    assert_eq!(
-        redact_url_for_log("http://user:pass@192.168.1.74:7788/rpc/secret?token=t0k#frag"),
-        "http://192.168.1.74:7788/"
-    );
-    assert_eq!(
-        redact_url_for_log("https://core.example.com/rpc"),
-        "https://core.example.com/"
-    );
-    // An unparseable URL degrades to the coarse sentinel.
-    assert_eq!(redact_url_for_log("not a url"), "<invalid relay url>");
+fn redact_never_lets_credentials_query_or_path_into_logs() {
+    // Userinfo, query, fragment and path must not survive into logs. The one URL
+    // redactor is the security module's (origin only); with no module serving it
+    // answers the suppression marker instead, which carries none of them either.
+    let logged = redact_url_for_log("http://user:pass@192.168.1.74:7788/rpc/secret?token=t0k#frag");
+    for leaked in ["user", "pass", "secret", "t0k", "frag"] {
+        assert!(!logged.contains(leaked), "{leaked} leaked into {logged}");
+    }
+    // An unparseable URL is never echoed.
+    assert!(!redact_url_for_log("not a url").contains("not a url"));
 }
 
 /// A non-loopback `http` URL carrying a bearer must be refused, and the
@@ -66,7 +63,7 @@ async fn insecure_transport_refusal_redacts_url() {
         "raw path leaked into refusal error: {err}"
     );
     assert!(
-        err.contains("http://192.168.1.74:7788/"),
-        "redacted host should remain for diagnostics: {err}"
+        !err.contains("192.168.1.74"),
+        "module-unavailable redaction must suppress the host too: {err}"
     );
 }

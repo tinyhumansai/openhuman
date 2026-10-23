@@ -6,7 +6,7 @@
 //! `tinytools_std::filesystem` and are registered by `tools/ops.rs`. What stays
 //! here is the policy they consult: [`gate`] implements
 //! `tinytools_std::filesystem::FsGate` for [`crate::security::SecurityPolicy`],
-//! so the autonomy flag, the `is_always_forbidden` floor, `workspace_only`,
+//! so the autonomy flag, the the protected-path floor floor, `workspace_only`,
 //! trusted roots and the approval gate remain host decisions. The tools only
 //! ask.
 

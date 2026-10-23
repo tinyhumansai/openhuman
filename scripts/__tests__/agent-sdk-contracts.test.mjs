@@ -4,12 +4,29 @@ import { sanctionedSdkReexportLines } from "../lib/agent-sdk-contracts.mjs";
 
 const budgetPath = "crates/openhuman-core/src/agent/tinyagents/budget.rs";
 const observerPath = "crates/openhuman-core/src/agent/tinyagents/turn_observer.rs";
+const hostInternalsPath = "crates/openhuman-embed/src/host_internals.rs";
 const budget = "pub use tinyinference_llm::model::budget::{\n Budget, BudgetExceeded, BudgetSnapshot, CallBudget, Spend, SpendLimits,\n};";
 const transport = "pub use tinyagents_harness::observability::{\n trace_export::{otlp::otlp_requests, ExportBrand, SpanKind, SpanStatus, TraceSpan},\n LangfuseAuth, LangfuseClient, LangfuseScore, LangfuseScoreValue, LangfuseTraceConfig,\n};";
 
 test("native ledger and existing telemetry transport have exact host contracts", () => {
   assert.deepEqual([...sanctionedSdkReexportLines(budgetPath, `\n${budget}`)], [2]);
   assert.deepEqual([...sanctionedSdkReexportLines(observerPath, transport)], [1]);
+});
+
+test("the downstream backend URL guard is an exact host contract", () => {
+  const statement =
+    "pub use tinytools_std::url_guard::is_private_or_local_host;";
+  assert.deepEqual(
+    [...sanctionedSdkReexportLines(hostInternalsPath, statement)],
+    [1],
+  );
+  assert.equal(
+    sanctionedSdkReexportLines(
+      hostInternalsPath,
+      "pub use tinytools_std::url_guard::*;",
+    ).size,
+    0,
+  );
 });
 
 test("inventory refuses runtime types, wildcard, aliases and physically moved contracts", () => {

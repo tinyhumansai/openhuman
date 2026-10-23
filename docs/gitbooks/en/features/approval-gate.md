@@ -10,20 +10,21 @@ icon: shield-check
 The approval gate sits between the agent and the outside world. When the agent wants to do something your autonomy tier says needs a check, the gate stops the call, shows you what is about to happen, and waits for your decision. Actions your tier already allows run without a prompt. On the `full` tier, for example, a write is never prompted.
 
 {% hint style="warning" %}
-The autonomy policy is off by default, and the gate is part of it. With `[autonomy] enabled = false`, command classification, the tier table, the allowlist, the hourly action budget, `workspace_only` and `forbidden_paths` do nothing, and acting tool calls run without a prompt. The exceptions are the forced approvals below.
+The autonomy policy is off by default, and the gate is part of it. With `[security.autonomy] enabled = false`, command classification, the tier table, the allowlist, the hourly action budget, `workspace_only` and `forbidden_paths` do nothing, and acting tool calls run without a prompt. The exceptions are the forced approvals below.
 
-This is deliberate. Agents are expected to run inside a container, a platform jail or a Docker sandbox that already provides isolation, and a shell that refuses ordinary shell syntax is not a usable shell. To turn the policy on, set `[autonomy] enabled = true` in `config.toml`.
+This is deliberate. Agents are expected to run inside a container, a platform jail or a Docker sandbox that already provides isolation, and a shell that refuses ordinary shell syntax is not a usable shell. To turn the policy on, set `[security.autonomy] enabled = true` in `config.toml`.
 {% endhint %}
 
 ## What still holds with the policy off
 
-Three protections do not depend on `[autonomy] enabled`:
+Three protections do not depend on `[security.autonomy] enabled`:
 
 - Credential stores and system roots stay unreachable. `~/.ssh`, `~/.gnupg`, `~/.aws` and system roots are always refused, as are `..` traversal and null bytes in a path.
 - Hard blocks inside the tools themselves, including the tool-policy middleware, always run.
+- Path checks that gate file access are answered by the TinySecurity module and fail closed if it is unavailable. Command classification, the tier table, the network and write gates and host-tool admission are also answered by the module (a missing, untrusted or slow module refuses the call). Approvals are backed by the module too. The prompt surface, the allow-list and the optional Jev auto-approve judge described here run in the core.
 - Sandboxing is separate. The platform jail and the Docker backend are chosen by `[runtime]` and the session's origin, not by the autonomy tier. See [Privacy and security](privacy-and-security.md).
 
-Everything below describes the policy with `[autonomy] enabled = true`.
+Everything below describes the policy with `[security.autonomy] enabled = true`.
 
 ## What triggers a prompt
 
@@ -37,7 +38,7 @@ The agent classifies every acting tool call into a command class. Your autonomy 
 | Install       | Installs an OS or global language package                         |
 | Destructive   | Catastrophic, irreversible or privilege-escalating                |
 
-You pick the tier in **Settings > Permissions** (`[autonomy].level`):
+You pick the tier in **Settings > Permissions** (`[security.autonomy].level`):
 
 | Tier                                           | Read  | Write  | Network, Install, Destructive |
 | ---------------------------------------------- | ----- | ------ | ----------------------------- |
@@ -48,6 +49,15 @@ You pick the tier in **Settings > Permissions** (`[autonomy].level`):
 A call that lands on Prompt waits at the gate. A call that lands on Block is refused, and no approval can override it.
 
 Classification fails closed. A command that is not provably read-only counts as at least a write. In a piped command the highest class wins, so `ls | curl ...` is Network. A quoted heredoc body (`<< 'EOF' ... EOF`) is treated as data and not scanned. An unquoted one (`<< EOF`) is expanded and scanned.
+
+## Where the gate sits
+
+Every tool call passes one policy gate before it runs, `ToolPolicyGateMiddleware`, installed ahead of all other tool middleware. It asks the module for a verdict. If several sources answer, a denial beats a required approval, and a required approval beats an allow. A module that cannot answer denies the call. Besides the tier table, the module applies these checks to host tools, and each refusal has its own reason:
+
+- `read_only_mode`: the tier is `readonly` and the call would act.
+- `rate_limited`: the hourly action budget is spent.
+- `scheduled_read_only`: a scheduled (cron) turn may use read-only tools only.
+- `high_risk`: the command class is prohibited by the high-risk setting.
 
 ## How a request flows
 
@@ -85,13 +95,13 @@ You can also type "yes" or "no" in chat, and the reply goes to the parked reques
 
 ## Always allow
 
-Choosing **Always allow** saves the tool name to `[autonomy].auto_approve` and reloads the policy. The gate then lets that tool through on later turns. To be prompted again, remove the entry in **Settings > Agent access**.
+Choosing **Always allow** saves the tool name to `[security.autonomy].auto_approve` and reloads the policy. The gate then lets that tool through on later turns. To be prompted again, remove the entry in **Settings > Agent access**.
 
 The default list is `file_read`, `memory_search`, `memory_list`, `get_time`, `list_dir`, `glob` and `grep`. Four of those names no longer match a registered tool. Memory is now one tool called `memory`, the clock is `current_time`, and directory listing is `list`. So only `file_read`, `glob` and `grep` have any effect.
 
 ## auto_approve_all
 
-`[autonomy].auto_approve_all` approves every call without asking. Before you enable it, know three things:
+`[security.autonomy].auto_approve_all` approves every call without asking. Before you enable it, know three things:
 
 - A call from an unlabelled call site is still denied, and the hard blocks inside the tools still apply.
 - It skips parking, not just the prompt. A triage dispatch from a connector or webhook payload normally parks and writes an audit row. With this flag it runs at once and writes no audit row, so those dispatches leave no approval trail.
@@ -101,7 +111,7 @@ The default list is `file_read`, `memory_search`, `memory_list`, `get_time`, `li
 
 Browser page interactions cannot be pre-authorized. Every `click`, `double_click`, `fill`, `type`, `press`, `select` and `check` goes through a forced approval, which works differently:
 
-- Every shortcut is skipped. `auto_approve_all`, the `auto_approve` list and per-flow tool trust are ignored. The call parks even with `[autonomy] enabled = false`.
+- Every shortcut is skipped. `auto_approve_all`, the `auto_approve` list and per-flow tool trust are ignored. The call parks even with `[security.autonomy] enabled = false`.
 - The decision is one-time. **Always allow** is refused, so you can only approve once or deny.
 - It needs a live chat. A turn that is not a web-chat turn is denied instead of parked, so a cron job, channel message or flow cannot drive your browser.
 
@@ -111,11 +121,13 @@ The card names the action, the page origin and a SHA-256 digest that ties the ac
 
 Every path that is not an approval ends in a denial:
 
-- A parked request lives for 10 minutes. If you have not decided by then, it is denied.
-- If saving the request fails or the channel drops, the call is denied.
-- On timeout the gate re-reads the stored decision first, so an approval that landed at the last moment still wins.
+- A parked request lives for 10 minutes (3 for a copilot or sub-agent). If you have not decided by then, it is denied. The window is the security module's: it only ever shortens a request's window, so a longer configured value does not lengthen it.
+- If the security module cannot answer, if saving the request fails, or if the channel drops, the call is denied.
+- On timeout the gate asks the module to expire the request first, so an approval that landed at the last moment still wins.
 
-Pending requests are stored in SQLite (`{workspace_dir}/approval/approval.db`) and survive a core restart. After an approved tool finishes, the gate records the outcome (success or error) as an audit trail. Error text is sanitized and capped. Everything stored or broadcast is redacted first: personal data and chat content are scrubbed and home paths are stripped.
+The approval itself is the security module's. It stores each request exactly as it was shown to you, tied to the exact action, so a decision cannot be replayed on a different one. Your tool and workflow grants, and the auto-approve setting, reach it as the posture of each call: a call they cover is approved without a prompt and is still recorded and audited, with who approved it (`auto:tool-grant`, `auto:flow-grant` or `auto:host-policy`). A decision counts only if the module verifies that it came from you through the approval surface.
+
+Requests are stored in your workspace's storage and the history survives a core restart. A request left pending by an earlier launch has no waiting call and cannot be resumed, so it is not listed or decided again: it expires on its own and stays in the history as denied. After an approved tool finishes, the gate records the outcome (success or error) as an audit trail, and each approval is reserved for execution exactly once. Everything stored or broadcast is redacted first: personal data and chat content are scrubbed and home paths are stripped.
 
 ## What the turn's origin decides
 
@@ -123,13 +135,15 @@ The gate is interactive, so a parked call needs a surface that can answer it. Th
 
 | Turn origin | At the gate |
 | --- | --- |
-| Cron and internal background jobs | Allowed, no row, no event |
+| Cron | External effects denied, no row, no event |
+| Internal background jobs | Allowed, no row, no event |
 | A saved flow's pre-declared action | Allowed, no row, no event |
 | CLI, a delegated sub-agent, and a triage dispatch started on your own machine | Allowed, no row, no event |
 | Web chat | Parks for your decision |
-| A triage dispatch from a connector or webhook payload | Parks and writes a pending-approval row |
-| An external channel turn (Telegram, Slack and so on) | Parks and writes a row |
-| An unlabelled call site | Denied |
+| A triage dispatch from a connector or webhook payload | Parks; the module records the request |
+| An external channel turn (Telegram, Slack and so on) | Parks; the module records the request |
+| A SaaS tenant | Never parks, because there is no per-user approval surface. What the deployment's tool groups allow is recorded as an automatic approval under that tenant's own audit stream; anything else is denied |
+| An unlabelled call site | Denied, unless you put that exact tool on your Always-allow list |
 
 A triage dispatch that your own machine started keeps the authority its caller already had. One steered by an outside payload parks and leaves an audit row. No surface can decide a background park yet, so it expires at the timeout. You get the audit trail, not a working escalation, and `auto_approve_all` gives up even that.
 
@@ -139,9 +153,9 @@ An external channel turn parks because remote input is untrusted. The row is wri
 
 ## Configuration and RPC
 
-- `[autonomy].enabled` is the master switch for the policy. It is `false` by default. Forced approvals and the always-forbidden floor work without it.
+- `[security.autonomy].enabled` is the master switch for the policy. It is `false` by default. Forced approvals and the always-forbidden floor work without it.
 - `OPENHUMAN_APPROVAL_GATE` set to `0` or `false` skips installing the gate even with the policy on. With no gate, Prompt-class calls run unprompted.
-- `[autonomy].level` and `[autonomy].auto_approve` set the tier and the allowlist. Change them with the `config.update_autonomy_settings` RPC or in the settings panels.
+- `[security.autonomy].level` and `[security.autonomy].auto_approve` set the tier and the allowlist. Change them with the `config.update_autonomy_settings` RPC or in the settings panels.
 
 The `approval` controller exposes three JSON-RPC methods:
 

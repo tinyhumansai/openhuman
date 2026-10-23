@@ -25,9 +25,10 @@ use crate::agent::tinyagents::host::run_context::{approval_for_tool, dispatch_ct
 use crate::core::runtime::DispatchCtx;
 use crate::security::approval::ApprovalChatContext;
 
-/// Builds the tool one call runs, from that call's chat routing and the
-/// dispatch context of the run it executes in.
-type Build<T> = Arc<dyn Fn(Option<&ApprovalChatContext>, &DispatchCtx) -> T + Send + Sync>;
+/// Builds the tool one call runs, from that call's chat routing, the dispatch
+/// context of the run it executes in and the call's own arguments (what is about
+/// to leave the device, for a tool that assesses its payload).
+type Build<T> = Arc<dyn Fn(Option<&ApprovalChatContext>, &DispatchCtx, &Value) -> T + Send + Sync>;
 
 /// A tool whose executing instance is built for each call.
 pub struct PerCallTool<T: Tool> {
@@ -36,12 +37,13 @@ pub struct PerCallTool<T: Tool> {
 }
 
 impl<T: Tool> PerCallTool<T> {
-    /// `build` makes the tool for one call; the prototype is built with no chat
-    /// and an unbound context and answers every question that does not execute.
+    /// `build` makes the tool for one call; the prototype is built with no chat,
+    /// an unbound context and null arguments and answers every question that does
+    /// not execute.
     pub fn new(
-        build: impl Fn(Option<&ApprovalChatContext>, &DispatchCtx) -> T + Send + Sync + 'static,
+        build: impl Fn(Option<&ApprovalChatContext>, &DispatchCtx, &Value) -> T + Send + Sync + 'static,
     ) -> Self {
-        let prototype = build(None, &DispatchCtx::unbound());
+        let prototype = build(None, &DispatchCtx::unbound(), &Value::Null);
         Self {
             prototype,
             build: Arc::new(build),
@@ -72,7 +74,7 @@ impl<T: Tool> Tool for PerCallTool<T> {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        (self.build)(None, &dispatch_ctx_for_tool(None))
+        (self.build)(None, &dispatch_ctx_for_tool(None), &args)
             .execute(args)
             .await
     }
@@ -86,7 +88,7 @@ impl<T: Tool> Tool for PerCallTool<T> {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        (self.build)(None, &dispatch_ctx_for_tool(None))
+        (self.build)(None, &dispatch_ctx_for_tool(None), &args)
             .execute_with_options(args, options)
             .await
     }
@@ -98,9 +100,13 @@ impl<T: Tool> Tool for PerCallTool<T> {
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let approval = approval_for_tool(context);
-        (self.build)(approval.chat.as_ref(), &dispatch_ctx_for_tool(context))
-            .execute_with_context(args, options, context)
-            .await
+        (self.build)(
+            approval.chat.as_ref(),
+            &dispatch_ctx_for_tool(context),
+            &args,
+        )
+        .execute_with_context(args, options, context)
+        .await
     }
 
     fn policy(&self) -> ToolPolicy {

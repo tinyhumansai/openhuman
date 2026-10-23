@@ -204,9 +204,6 @@ pub struct Config {
     #[serde(default)]
     pub observability: ObservabilityConfig,
 
-    #[serde(default)]
-    pub autonomy: AutonomyConfig,
-
     /// Operator tool rules (`[tool_rules]`): allow / deny / hide / approval
     /// patterns over tool names, families and tags, applied to every agent's
     /// catalogue, `tool_search` and calls. See `tinytools::ToolRules` and
@@ -228,14 +225,10 @@ pub struct Config {
     #[serde(default)]
     pub hooks: HooksConfig,
 
-    /// Data-egress posture (Privacy Mode). Distinct from `autonomy` (which
-    /// governs agent *act* power). Missing `[privacy]` block → `Standard`
-    /// (#4435, epic #4256).
+    /// The single `[security]` table for autonomy, sandboxing, privacy,
+    /// approvals and automatic approval settings.
     #[serde(default)]
-    pub privacy: PrivacyConfig,
-
-    #[serde(default)]
-    pub sandbox: SandboxConfig,
+    pub security: SecurityConfig,
 
     #[serde(default)]
     pub runtime: RuntimeConfig,

@@ -112,6 +112,7 @@ pub(crate) async fn installed_tool(
         .ok()?;
     let candidate = listed.into_iter().find(|listed| listed.name == tool)?;
     crate::mcp::registry::tools_safe_for_agent(server_id, vec![candidate])
+        .await
         .into_iter()
         .next()
 }

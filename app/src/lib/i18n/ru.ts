@@ -3479,6 +3479,18 @@ const messages: TranslationMap = {
     'Выберите способ хранения секретов, когда связка ключей ОС недоступна.',
   'keyring.settings.grantConsent': 'Разрешить локальное зашифрованное хранилище',
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
+  'keyring.settings.toolTrustTitle': 'Доверенные инструменты',
+  'keyring.settings.toolTrustDescription':
+    'Инструменты, которым вы разрешили работать всегда, могут запускаться без повторного запроса. Отзовите разрешение, чтобы снова получать запросы на подтверждение.',
+  'keyring.settings.toolTrustLoading': 'Загрузка доверенных инструментов…',
+  'keyring.settings.toolTrustEmpty': 'Нет доверенных инструментов',
+  'keyring.settings.toolTrustRevoke': 'Отозвать',
+  'keyring.settings.toolTrustRevoking': 'Отзывается…',
+  'keyring.settings.toolTrustRetry': 'Повторить',
+  'keyring.settings.toolTrustLoadFailed':
+    'Не удалось загрузить доверенные инструменты. Попробуйте ещё раз.',
+  'keyring.settings.toolTrustRevokeFailed':
+    'Не удалось отозвать разрешение для инструмента. Попробуйте ещё раз.',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
   // Chat: agent-generated artifacts (#2779)
@@ -3844,6 +3856,12 @@ const messages: TranslationMap = {
   'settings.approvalHistory.tableTitle': 'Решения',
   'settings.approvalHistory.tableDesc':
     'Каждый одобряет или отрицает с помощью инструмента и того, что ему было предложено сделать.',
+  'settings.approvalHistory.autoJev': 'Автоматически одобрено Jev',
+  'settings.approvalHistory.autoPolicy': 'Автоматически одобрено политикой',
+  'settings.approvalHistory.judgeScores':
+    'Намерение {intent} · Обратимость {reversible} · Утечка {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'Вердикт из кэша',
+  'settings.approvalHistory.judgeExpires': 'Разрешение истекает {time}',
   'settings.approvalHistory.column.time': 'Время',
   'settings.approvalHistory.column.tool': 'Инструмент / действие',
   'settings.approvalHistory.column.decision': 'Решение',
@@ -4656,13 +4674,9 @@ const messages: TranslationMap = {
   'settings.sandbox.backendName.none': 'Нет',
   'settings.sandbox.backendName.docker': 'Docker',
   'settings.sandbox.backendName.landlock': 'Landlock',
-  'settings.sandbox.backendName.firejail': 'Firejail',
-  'settings.sandbox.backendName.bubblewrap': 'Bubblewrap',
   'settings.sandbox.backendHint.auto': 'Используйте лучший backend',
   'settings.sandbox.backendHint.docker': 'Запуск инструментов в контейнере',
   'settings.sandbox.backendHint.landlock': 'Правила доступа к файлам Kernel',
-  'settings.sandbox.backendHint.firejail': 'Обсуждение Namespaced Process Prison',
-  'settings.sandbox.backendHint.bubblewrap': 'Легкие пространства имен пользователей',
   'settings.sandbox.backendHint.none': 'Запуск инструментов напрямую, без изоляции',
   'devOptions.toolPolicyDiagnostics.inventory.title': 'Список инструментов',
   'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Всего инструментов',

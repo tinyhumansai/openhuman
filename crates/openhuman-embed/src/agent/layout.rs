@@ -50,7 +50,7 @@ impl AgentLayout {
     /// The default `action_dir` for agent `id`.
     ///
     /// Runtime-owned roots get `<root>/agents/<id>/action` — a sibling of the
-    /// workspace, never inside it, because `is_workspace_internal_path`
+    /// workspace, never inside it, because the internal-state reservation
     /// blocks agent writes beneath the workspace fail-closed. An inherited
     /// workspace gets `<action_dir>/agents/<id>`.
     pub(crate) fn default_action_dir(

@@ -62,6 +62,9 @@ jobs:
         id: link-check
         continue-on-error: true
         uses: lycheeverse/lychee-action@v2
+        env:
+          # Use authenticated API checks instead of anonymous GitHub page requests.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           output: target/link-check/report.md
           # Product Hunt denies GitHub-hosted runners (403) for the translated

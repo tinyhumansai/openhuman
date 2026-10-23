@@ -252,6 +252,6 @@ async fn remove_stale_partials(files_dir: &Path) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "security-module"))]
 #[path = "migrate_tests.rs"]
 mod tests;

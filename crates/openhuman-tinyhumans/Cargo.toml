@@ -26,6 +26,7 @@ hosting = ["openhuman-embed/hosting"]
 tinymemes = ["openhuman-embed/tinymemes"]
 inbound-queues = ["openhuman-embed/inbound-queues"]
 modules = ["openhuman-embed/modules"]
+security-module = ["openhuman-embed/security-module"]
 voice = ["openhuman-embed/voice", "dep:tinyagents-live"]
 web3 = ["openhuman-embed/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -117,6 +118,7 @@ url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "native-tls"] }
 
 [dev-dependencies]
+openhuman-embed = { path = "../openhuman-embed", default-features = false, features = ["testkit"] }
 # The core's own axum feature set: axum's defaults would switch on extra axum,
 # tower and tracing features and force a separate core build (see below).
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }

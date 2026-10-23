@@ -1,7 +1,8 @@
 //! Background skill run spawning and outcome polling.
 //!
-//! `spawn_workflow_run_background` is re-used by both the `skills_run`
-//! JSON-RPC controller and the `run_workflow` agent tool (skill chaining).
+//! `spawn_workflow_run_background` is reached through the `run_workflow` tool.
+//! The `skills_run` JSON-RPC controllers dispatch that tool through the same
+//! native security middleware before a workflow can start.
 //! `await_run_outcome` lets the model poll a spawned run's log file for a
 //! terminal result without busy-waiting.
 
@@ -28,10 +29,10 @@ pub struct WorkflowRunStarted {
 }
 
 /// Spawn a single autonomous workflow_run as a detached `tokio::spawn`. Used by
-/// both the `openhuman.skills_run` JSON-RPC controller and the `run_workflow`
-/// agent tool (which lets the orchestrator chain one skill into another —
-/// e.g. `github-issue-crusher` → `pr-review-shepherd` once the draft PR is
-/// open).
+/// the `run_workflow` agent tool (which lets the orchestrator chain one skill
+/// into another — e.g. `github-issue-crusher` → `pr-review-shepherd` once the
+/// draft PR is open). Direct skills controllers invoke that tool through the
+/// native security gate instead of calling this function directly.
 ///
 /// Returns immediately with the run handle; the actual work runs in the
 /// background until DONE / STOPPED / DEGENERATE / FAILED. Errors (unknown skill,
@@ -42,9 +43,10 @@ pub async fn spawn_workflow_run_background(
     skill_id_param: String,
     inputs_param: Option<Value>,
     parent_origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+    approved_scan_digest: Option<String>,
 ) -> Result<WorkflowRunStarted, String> {
     let workspace = resolve_workspace_dir().await;
-    let skill = registry::get_workflow(&workspace, &skill_id_param)
+    let (skill, scan_source) = registry::get_workflow_with_source(&workspace, &skill_id_param)
         .ok_or_else(|| format!("workflow_run: unknown skill '{skill_id_param}'"))?;
     let inputs = inputs_param.unwrap_or(Value::Null);
     let missing = registry::missing_required_inputs(&skill.inputs, &inputs);
@@ -53,6 +55,14 @@ pub async fn spawn_workflow_run_background(
             "workflow_run: missing required inputs: {}",
             missing.join(", ")
         ));
+    }
+
+    // Scan before any workflow instructions or resources reach the orchestrator.
+    let scan = super::skill_scan::scan_workflow(&skill, scan_source.as_ref())?;
+    if let Some(reason) =
+        super::skill_scan::scan_approval_refusal(&scan, approved_scan_digest.as_deref())
+    {
+        return Err(format!("workflow_run: {reason}"));
     }
 
     // ── Preflight gates ─────────────────────────────────────────────
@@ -124,6 +134,16 @@ pub async fn spawn_workflow_run_background(
             workflow_id = %skill.definition.id,
             "[skills] spawn_workflow_run_background: github preflight passed"
         );
+    }
+
+    // Preflight may await external probes. Re-read the bounded bundle directly
+    // before its prompt is exposed to the spawned agent so a changed resource
+    // cannot ride an earlier approval.
+    let exposure_scan = super::skill_scan::scan_workflow(&skill, scan_source.as_ref())?;
+    if let Some(reason) =
+        super::skill_scan::scan_approval_refusal(&exposure_scan, approved_scan_digest.as_deref())
+    {
+        return Err(format!("workflow_run: {reason}"));
     }
 
     // Focus the orchestrator on this single skill: its SKILL.md rides in

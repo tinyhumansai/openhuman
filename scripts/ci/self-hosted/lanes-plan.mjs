@@ -274,10 +274,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       checks: [
         {
           name: "pnpm-install",
-          // ex63: also for a core change, so rust-core-coverage's mock backend
-          // (scripts/mock-api-server.mjs imports `ws`) can start when no
-          // frontend file changed. One install per VM: lanes share a checkout.
-          when: areas.frontend || areas.i18n || areas.scripts || (ex63 && core),
+          // All Rust changes run the bus-only dependency guard, whose TOML
+          // parser is a root package dependency. ex63 shares this install
+          // with rust-core-coverage's mock backend; hosted lanes are separate.
+          when: areas.frontend || areas.i18n || areas.scripts || rust,
           run: "pnpm install --frozen-lockfile",
         },
         {
@@ -353,6 +353,12 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
               }
             : {}),
           run: "pnpm docs:check",
+        },
+        {
+          name: "security-module-dependencies",
+          when: areas.scripts || rust,
+          needs: ["pnpm-install"],
+          run: "node scripts/ci/check-security-module-dependencies.mjs",
         },
         {
           name: "scripts-self-tests",
@@ -511,6 +517,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features --lib --" +
             " core::all:: core::cli:: core::invoke:: core::session_expiry:: core::legacy_aliases:: core::runtime::" +
             " agent_registry::agents::loader:: commands::ops::tests:: memory::people::contacts_gate_tests::" +
+            " integrations::composio::builder_tools::tests:: integrations::composio::flow_gate::tests::" +
             " memory::layout_migration::" +
             " doctor::checks::" +
             " core::schema_test_support::" +
@@ -533,7 +540,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " modules::storage_grant_tinyconnectors:: modules::tinyflows::" +
             " doctor::checks::" +
             " cron::bus_host::tests:: cron::documents_port::tests::" +
-            " mcp::server::resources:: test_support::introspect:: --test-threads=1",
+            " mcp::server::resources:: mcp::registry::tests:: test_support::introspect:: --test-threads=1",
         },
         {
           name: "kernel-floor",

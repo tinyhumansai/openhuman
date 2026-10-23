@@ -4,10 +4,10 @@
 //! Stdio mode writes newline-delimited JSON-RPC to stdout; HTTP mode speaks
 //! Streamable HTTP + SSE on a local bind address. Diagnostics go through stderr logging.
 //!
-//! Most tools (memory reads, core/agent introspection) are read-only and
-//! gated through `SecurityPolicy` with `ToolOperation::Read`. The one
-//! exception is `agent.run_subagent`, which runs through `ToolOperation::Act`
-//! and is advertised to clients via MCP tool annotations
+//! Most tools (memory reads, core/agent introspection) are read-only and spend
+//! nothing. The acting ones (`agent.run_subagent`, the write tools) reserve one
+//! action of the TinySecurity hourly budget (`SecurityPolicy::spend_action`)
+//! and are advertised to clients via MCP tool annotations
 //! (`readOnlyHint: false`, `destructiveHint: true`).
 
 //! ## Compile-time gate (`mcp` feature)

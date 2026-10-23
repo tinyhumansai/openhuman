@@ -35,13 +35,6 @@ use serde::{Deserialize, Serialize};
 
 use super::cloud_providers::{AuthStyle, CloudProviderCreds};
 
-/// Select only the endpoint origin for diagnostics, then apply TinyInference's
-/// canonical URL sanitizer so paths, credentials, and query values stay out of logs.
-fn redacted_endpoint_origin_for_log(endpoint: &str) -> String {
-    let origin = url::Url::parse(endpoint.trim()).map(|url| url.origin().ascii_serialization());
-    tinyinference_core::sanitize::redact_url(origin.as_deref().unwrap_or(endpoint))
-}
-
 /// The `cloud_providers` slug [`apply`] registers the route under.
 ///
 /// Hyphenated and prefixed so it cannot collide with a provider slug a user
@@ -84,7 +77,7 @@ impl std::fmt::Debug for EphemeralRoute {
         f.debug_struct("EphemeralRoute")
             .field(
                 "endpoint",
-                &redacted_endpoint_origin_for_log(&self.endpoint),
+                &crate::security::redact::endpoint_origin(&self.endpoint),
             )
             .field("api_key", &"[redacted]")
             .field("header_count", &self.headers.len())
@@ -155,7 +148,7 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
     let Some(model) = model else {
         log::warn!(
             "[config][ephemeral-route] ignoring route to {} — no model resolved for this call",
-            redacted_endpoint_origin_for_log(&route.endpoint)
+            crate::security::redact::endpoint_origin(&route.endpoint)
         );
         return;
     };
@@ -180,7 +173,7 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
     if route_is_unchanged && roles_match {
         tracing::debug!(
             "[config][ephemeral-route] route already applied to {} model={}",
-            redacted_endpoint_origin_for_log(&route.endpoint),
+            crate::security::redact::endpoint_origin(&route.endpoint),
             model
         );
         return;
@@ -212,13 +205,13 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
     if route_is_unchanged {
         tracing::debug!(
             "[config][ephemeral-route] this call routed to {} model={}",
-            redacted_endpoint_origin_for_log(&route.endpoint),
+            crate::security::redact::endpoint_origin(&route.endpoint),
             model
         );
     } else {
         tracing::info!(
             "[config][ephemeral-route] this call routed to {} model={}",
-            redacted_endpoint_origin_for_log(&route.endpoint),
+            crate::security::redact::endpoint_origin(&route.endpoint),
             model
         );
     }

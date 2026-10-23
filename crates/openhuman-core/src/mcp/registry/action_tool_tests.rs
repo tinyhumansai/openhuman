@@ -306,27 +306,33 @@ async fn call_installed_tool(port: RecoveringModulePort) -> tinytools::ToolResul
 
 #[tokio::test]
 async fn a_descriptor_ui_uri_yields_an_mcp_ui_presentation() {
-    let port = RecoveringModulePort::default();
-    *port.listed.lock().unwrap() = Some(vec![listed_tool(
-        "Returns the saved delivery addresses.",
-        Some(json!({"ui":{"resourceUri":"ui://widget/im-addresses.html"}})),
-    )]);
-    let calls = Arc::clone(&port.calls);
-    let result = call_installed_tool(port).await;
+    crate::security::prompt_injection::with_scanner(
+        crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+        async {
+            let port = RecoveringModulePort::default();
+            *port.listed.lock().unwrap() = Some(vec![listed_tool(
+                "Returns the saved delivery addresses.",
+                Some(json!({"ui":{"resourceUri":"ui://widget/im-addresses.html"}})),
+            )]);
+            let calls = Arc::clone(&port.calls);
+            let result = call_installed_tool(port).await;
 
-    assert!(!result.is_error, "{}", result.text());
-    assert_eq!(result.text(), "lazy-loaded forecast");
-    let metadata = result.metadata.expect("widget presentation");
-    assert_eq!(metadata["kind"], "mcp_ui");
-    assert_eq!(metadata["resource_uri"], "ui://widget/im-addresses.html");
-    assert_eq!(metadata["server_id"], "server-1");
-    assert_eq!(metadata["tool"], "readGoals");
-    assert_eq!(metadata["structured_content"], json!({"addresses": 2}));
-    assert!(calls
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|member| member == tinymcp_bus::names::methods::LIST_TOOLS));
+            assert!(!result.is_error, "{}", result.text());
+            assert_eq!(result.text(), "lazy-loaded forecast");
+            let metadata = result.metadata.expect("widget presentation");
+            assert_eq!(metadata["kind"], "mcp_ui");
+            assert_eq!(metadata["resource_uri"], "ui://widget/im-addresses.html");
+            assert_eq!(metadata["server_id"], "server-1");
+            assert_eq!(metadata["tool"], "readGoals");
+            assert_eq!(metadata["structured_content"], json!({"addresses": 2}));
+            assert!(calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|member| member == tinymcp_bus::names::methods::LIST_TOOLS));
+        },
+    )
+    .await;
 }
 
 #[tokio::test]

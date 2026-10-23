@@ -43,7 +43,7 @@ function autonomyMissingOptionals(overrides: Partial<AutonomySettings> = {}): Au
     workspace_only: false,
     allowed_commands: [],
     forbidden_paths: [],
-    allow_tool_install: true,
+    allow_tool_install: false,
     max_actions_per_hour: 0,
     ...overrides,
   } as AutonomySettings;
@@ -55,7 +55,7 @@ const autonomy = (overrides: Partial<AutonomySettings> = {}): AutonomySettings =
   allowed_commands: [],
   forbidden_paths: [],
   trusted_roots: [],
-  allow_tool_install: true,
+  allow_tool_install: false,
   max_actions_per_hour: 0,
   auto_approve: [],
   auto_approve_all: false,

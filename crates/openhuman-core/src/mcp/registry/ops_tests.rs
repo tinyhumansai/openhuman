@@ -283,21 +283,27 @@ async fn an_uninstalled_id_is_not_reported_as_not_connected() {
 /// qualified-name lookup with the connected install's tools.
 #[tokio::test]
 async fn a_qualified_name_lists_the_tools_of_its_connected_install() {
-    let workspace = tempfile::tempdir().unwrap();
-    let config = temp_config(&workspace);
-    let server_id = "fixture-install";
-    install_port(&config, vec![status(server_id, QUALIFIED)]);
-    mcp_clients_connect(&config, server_id.to_owned())
-        .await
-        .unwrap();
+    crate::security::prompt_injection::with_scanner(
+        crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+        async {
+            let workspace = tempfile::tempdir().unwrap();
+            let config = temp_config(&workspace);
+            let server_id = "fixture-install";
+            install_port(&config, vec![status(server_id, QUALIFIED)]);
+            mcp_clients_connect(&config, server_id.to_owned())
+                .await
+                .unwrap();
 
-    let listed = mcp_clients_list_tools(&config, QUALIFIED.to_string(), Caller::Agent)
-        .await
-        .expect("a connected server's registry name lists its tools");
-    assert_eq!(listed.value["server_id"], json!(server_id));
-    assert!(
-        !listed.value["tools"].as_array().unwrap().is_empty(),
-        "{}",
-        listed.value
-    );
+            let listed = mcp_clients_list_tools(&config, QUALIFIED.to_string(), Caller::Agent)
+                .await
+                .expect("a connected server's registry name lists its tools");
+            assert_eq!(listed.value["server_id"], json!(server_id));
+            assert!(
+                !listed.value["tools"].as_array().unwrap().is_empty(),
+                "{}",
+                listed.value
+            );
+        },
+    )
+    .await;
 }

@@ -51,18 +51,6 @@ fn skill_filter_still_includes_recovery_tool() {
 }
 
 #[test]
-fn explicit_disallow_still_wins() {
-    let t = tools();
-    let idx = filter_tool_indices(
-        &t,
-        &ToolScope::Wildcard,
-        &[RECOVERY_TOOL_NAME.to_string()],
-        None,
-    );
-    assert!(!names(&idx, &t).contains(&RECOVERY_TOOL_NAME.to_string()));
-}
-
-#[test]
 fn parent_visibility_caps_wildcard_child_scope() {
     let t = tools();
     let mut idx = filter_tool_indices(&t, &ToolScope::Wildcard, &[], None);

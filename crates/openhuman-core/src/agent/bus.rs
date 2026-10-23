@@ -238,7 +238,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
                 user_id: Some(channel_name.as_str()),
                 session_id: target_agent_id.as_deref(),
             },
-        );
+        )
+        .await;
         if !matches!(decision.action, PromptEnforcementAction::Allow) {
             tracing::warn!(
                 channel = %channel_name,

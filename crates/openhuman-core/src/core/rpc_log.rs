@@ -1,10 +1,8 @@
 //! Parameter redaction for RPC log lines.
 //!
 //! [`redact_params_for_log`] is what `core::dispatch` calls for its
-//! `[rpc:dispatch] enter` trace line. It strips a set of sensitive keys —
-//! `api_key`, `apikey`, `token`, `access_token`, `refresh_token`,
-//! `authorization`, `password`, `secret`, `client_secret` — from JSON objects
-//! (recursing into nested objects/arrays) before a log line is emitted, since
+//! `[rpc:dispatch] enter` trace line. It delegates structured argument
+//! redaction to TinySecurity before any JSON params are logged, since
 //! `serde_json::Value` params routinely embed provider credentials.
 //!
 //! This is the log-side counterpart of `core::log_redaction::scrub_secrets`,
@@ -13,48 +11,42 @@
 
 use serde_json::Value;
 
-/// Redacts sensitive keys from a JSON parameters object before logging.
+/// Redacts JSON params with TinySecurity's structured-argument policy.
 ///
-/// This is used to prevent accidental leakage of API keys, tokens, and passwords
-/// in debug logs.
-pub fn redact_params_for_log(params: &Value) -> Value {
-    redact_value(params)
+/// If the module is unavailable or returns malformed JSON, suppress the whole
+/// value rather than risk logging credentials. The module is armed by scoped
+/// security policy activation.
+fn redact_params_with(params: &Value, redact: impl FnOnce(&str) -> String) -> Value {
+    let Ok(encoded) = serde_json::to_string(params) else {
+        return Value::String(crate::core::log_redaction::SUPPRESSED.to_owned());
+    };
+    let redacted = redact(&encoded);
+    if redacted == crate::core::log_redaction::SUPPRESSED {
+        return Value::String(redacted);
+    }
+    serde_json::from_str(&redacted)
+        .unwrap_or_else(|_| Value::String(crate::core::log_redaction::SUPPRESSED.to_owned()))
 }
 
-/// Recursively redacts sensitive information from a JSON value.
-///
-/// It traverses objects and arrays, replacing values of keys that match
-/// [`is_sensitive_key`] with `[REDACTED]`.
-fn redact_value(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut out = serde_json::Map::new();
-            for (k, v) in map {
-                if is_sensitive_key(k) {
-                    out.insert(k.clone(), Value::String("[REDACTED]".to_string()));
-                } else {
-                    out.insert(k.clone(), redact_value(v));
-                }
-            }
-            Value::Object(out)
-        }
-        Value::Array(items) => Value::Array(items.iter().map(redact_value).collect()),
-        other => other.clone(),
+/// The synchronously bounded shared module redactor used by dispatch logs.
+pub fn redact_params_for_log(params: &Value) -> Value {
+    #[cfg(feature = "security-module")]
+    {
+        redact_params_with(params, |text| {
+            crate::modules::security::text::redact_for_log(
+                crate::modules::security::text::RedactMode::StructuredLogArguments,
+                text,
+                None,
+            )
+        })
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = params;
+        Value::String(crate::core::log_redaction::SUPPRESSED.to_owned())
     }
 }
 
-/// Returns true if a key name is considered sensitive (e.g., "api_key", "password").
-fn is_sensitive_key(key: &str) -> bool {
-    matches!(
-        key,
-        "api_key"
-            | "apikey"
-            | "token"
-            | "access_token"
-            | "refresh_token"
-            | "authorization"
-            | "password"
-            | "secret"
-            | "client_secret"
-    )
-}
+#[cfg(test)]
+#[path = "rpc_log_tests.rs"]
+mod tests;

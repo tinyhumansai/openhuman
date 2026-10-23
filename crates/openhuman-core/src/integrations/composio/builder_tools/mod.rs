@@ -14,10 +14,9 @@ mod tool_contract;
 
 pub(crate) use catalog_search::search_live_catalog;
 pub use catalog_search::SearchToolCatalogTool;
-pub use connection_reads::{
-    ConnectableToolkitProvider, FlowConnectionProvider, ListConnectableToolkitsTool,
-    ListFlowConnectionsTool,
-};
+pub use connection_reads::{ConnectableToolkitProvider, ListConnectableToolkitsTool};
+#[cfg(feature = "flows")]
+pub use connection_reads::{FlowConnectionProvider, ListFlowConnectionsTool};
 pub use tool_contract::{GetToolContractTool, GetToolOutputSampleTool};
 
 #[cfg(test)]

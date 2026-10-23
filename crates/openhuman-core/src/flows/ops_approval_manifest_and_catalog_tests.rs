@@ -117,7 +117,7 @@ async fn approval_manifest_lists_gated_nodes_and_skips_curated_reads() {
 async fn approval_manifest_marks_blocked_classes_under_readonly_tier() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
-    config.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
+    config.security.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
     let entries = compute_approval_manifest(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,

@@ -232,15 +232,43 @@ async fn composio_key_never_reaches_tool_output_or_errors() {
 
     assert_eq!(*seen.lock().unwrap(), vec![LEAKY_KEY.to_string()]);
     assert!(!rendered.contains(LEAKY_KEY), "{rendered}");
-    assert!(rendered.contains("[REDACTED]"), "{rendered}");
+    // Either the module served and removed the key, or none serves in this
+    // process and the result was withheld whole. Which one depends on whether
+    // an earlier test armed the process-wide module, so both are accepted; what
+    // a serving module removes is pinned natively in
+    // `modules/security_text_tests.rs`.
+    assert!(
+        rendered.contains("withheld") || rendered.contains("[REDACTED]"),
+        "{rendered}"
+    );
 }
 
-#[test]
-fn redaction_covers_every_result_channel() {
-    use crate::integrations::composio::tools::redact_composio_outcome;
+#[tokio::test]
+async fn redaction_covers_every_result_channel() {
+    use crate::integrations::composio::tools::redact::{composio_secrets, redact_outcome_with};
     let tmp = tempfile::tempdir().unwrap();
     let base = shared_runtime_config(&tmp);
     let agent = pinned(&base, KEY_A, "tenant-a", None);
+    // The host resolves this agent to its own key, and only that one.
+    let secrets = composio_secrets(&agent);
+    assert!(secrets.iter().any(|secret| secret == KEY_A));
+    assert!(!secrets.iter().any(|secret| secret == KEY_B));
+
+    // A stand-in for the module: removes the call's exact keys.
+    let redactor = |strings: Vec<String>| {
+        let secrets = secrets.clone();
+        async move {
+            Ok(strings
+                .into_iter()
+                .map(|text| {
+                    let redacted = secrets.iter().fold(text.clone(), |acc, key| {
+                        acc.replace(key.as_str(), "[REDACTED]")
+                    });
+                    (text, redacted)
+                })
+                .collect())
+        }
+    };
 
     let mut result = tinytools::ToolResult::json(json!({"nested": [format!("key={KEY_A}")]}))
         .with_markdown(format!("md {KEY_A}"))
@@ -248,11 +276,18 @@ fn redaction_covers_every_result_channel() {
     result
         .content
         .push(tinytools::ToolContent::Text { text: KEY_A.into() });
-    let redacted = redact_composio_outcome(&agent, Ok(result)).unwrap();
+    result.follow_up.push(tinytools::ToolContent::Text {
+        text: format!("follow {KEY_A}"),
+    });
+    let redacted = redact_outcome_with(Ok(result), &secrets, &redactor)
+        .await
+        .unwrap();
     let serialized = serde_json::to_string(&redacted).unwrap();
     assert!(!serialized.contains(KEY_A), "{serialized}");
 
-    let err = redact_composio_outcome(&agent, Err(anyhow::anyhow!("bad key {KEY_A}"))).unwrap_err();
+    let err = redact_outcome_with(Err(anyhow::anyhow!("bad key {KEY_A}")), &secrets, &redactor)
+        .await
+        .unwrap_err();
     assert!(!format!("{err:#}").contains(KEY_A));
 
     let debug = format!("{:?}", agent.composio);

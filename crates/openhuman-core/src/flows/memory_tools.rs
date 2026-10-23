@@ -32,10 +32,11 @@ use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use crate::config::Config;
 use crate::memory::types::{ForgetParams, ItemsListParams, LearnParams, RecallParams, MAX_LIMIT};
-use crate::security::policy::ToolOperation;
+use crate::security::policy::GateDecision;
 use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use crate::security::SecurityPolicy;
 use tinymemory_api::{Error, Result};
+use tinysecurity_bus::CommandClass;
 
 /// Prefix of a flow's own tag (see [`flow_tag`]).
 pub const FLOW_TAG_PREFIX: &str = "flow:";
@@ -481,11 +482,14 @@ impl Tool for FlowMemoryRememberTool {
         };
         let kind = learning_kind_for(args.get("category").and_then(|v| v.as_str()));
 
-        if let Err(error) = self
-            .security
-            .enforce_tool_operation(ToolOperation::Act, "flow_memory_remember")
-        {
-            return Ok(ToolResult::error(error));
+        match self.security.command_class_gate(CommandClass::Write).await {
+            Ok(GateDecision::Block) => {
+                return Ok(ToolResult::error(
+                    "Flow memory writes are blocked by the active security policy".to_owned(),
+                ));
+            }
+            Ok(GateDecision::Allow | GateDecision::Prompt) => {}
+            Err(error) => return Ok(ToolResult::error(error.to_string())),
         }
 
         // SECURITY (T-M2): the flow comes from the trusted run origin only;
@@ -504,7 +508,30 @@ impl Tool for FlowMemoryRememberTool {
         if key.is_empty() {
             return Ok(ToolResult::error("key cannot be empty".to_string()));
         }
-        if tinyredact::has_likely_secret(content) {
+        let config =
+            match crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
+                .load_config()
+                .await
+            {
+                Ok(config) => config,
+                Err(_) => {
+                    return Ok(ToolResult::error(
+                        "Secure flow memory content check is unavailable; refusing to store."
+                            .to_string(),
+                    ))
+                }
+            };
+        let contains_credentials =
+            match super::memory_guard::contains_credentials(&config, content).await {
+                Ok(contains_credentials) => contains_credentials,
+                Err(_) => {
+                    return Ok(ToolResult::error(
+                        "Secure flow memory content check is unavailable; refusing to store."
+                            .to_string(),
+                    ))
+                }
+            };
+        if contains_credentials {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),
@@ -516,18 +543,6 @@ impl Tool for FlowMemoryRememberTool {
             ));
         }
 
-        let config =
-            match crate::agent::tinyagents::host::run_context::dispatch_ctx_for_tool(tool_context)
-                .load_config()
-                .await
-            {
-                Ok(config) => config,
-                Err(error) => {
-                    return Ok(ToolResult::error(format!(
-                        "Failed to store flow memory: {error}"
-                    )))
-                }
-            };
         match remember_keyed(&config, &flow_id, key, content, kind).await {
             Ok(_) => Ok(ToolResult::success(format!("Stored flow memory: {key}"))),
             Err(error) => {

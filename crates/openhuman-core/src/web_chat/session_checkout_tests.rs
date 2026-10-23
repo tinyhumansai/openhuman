@@ -499,7 +499,7 @@ fn fingerprint_diff_names_the_field_the_old_log_could_not_show() {
 
 #[test]
 fn fingerprint_diff_summarises_signatures_without_printing_them() {
-    // `config.autonomy` carries the user's filesystem paths, so the miss log
+    // `config.security.autonomy` carries the user's filesystem paths, so the miss log
     // must not echo the subtree onto the chat hot path. The summary has to be
     // useful *and* quiet: it names where the two diverge, not what they say.
     let base = sample_fingerprint();

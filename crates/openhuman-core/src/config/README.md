@@ -6,7 +6,7 @@ and CLI launch flags on top of it, runs startup data migrations, and writes it b
 exposes the `config.*` RPC namespace the settings UI uses to read and change those settings.
 
 Nearly every other domain reads its slice of settings from here (`config.agent`, `config.memory`,
-`config.channels`, `config.autonomy`, and so on), usually through `config::load_config_with_timeout()`.
+`config.channels`, `config.security.autonomy`, and so on), usually through `config::load_config_with_timeout()`.
 
 ## How it works
 
@@ -208,7 +208,7 @@ The `workspace` namespace (`file_read`, `file_write`, `file_reset`) is registere
 
 - Secret encryption is done by `security::secret_storage::SecretStore`; this folder only decides which fields
   are secrets and when to encrypt or decrypt them.
-- The autonomy policy is defined here as data (`AutonomyConfig`, `[autonomy] enabled = false` by
+- The autonomy policy is defined here as data (`AutonomyConfig`, `[security.autonomy] enabled = false` by
   default) but enforced by [`crates/openhuman-core/src/security/`](../security/) (`SecurityPolicy::from_config`).
 - Hosted backend URLs and their environment overrides belong to the host crate that registers the config enricher
   ([`crates/openhuman-tinyhumans/src/backend/url.rs`](../../../openhuman-tinyhumans/src/backend/url.rs)). `config.api_url` is only the user's stored value.

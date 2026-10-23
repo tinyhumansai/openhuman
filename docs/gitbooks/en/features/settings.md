@@ -49,12 +49,12 @@ It is not in Agent access, which is where most people look first.
 The tier (`readonly`, `supervised` or `full`) has no control in the normal settings navigation. The panel with the radios is developer-only and reachable only as a hidden deep link, so it does not appear in the sidebar. Set the tier in `config.toml`:
 
 ```toml
-[autonomy]
+[security.autonomy]
 enabled = true          # off by default; nothing below applies until this is true
 level = "supervised"
 ```
 
-`[autonomy] enabled` is `false` out of the box. Until you turn the policy on, the trusted roots, the always-allow list and the workspace-only switch in Agent access do nothing. [Approval gate](approval-gate.md) explains the whole model, including what stays enforced either way.
+`[security.autonomy] enabled` is `false` out of the box. Until you turn the policy on, the trusted roots, the always-allow list and the workspace-only switch in Agent access do nothing. [Approval gate](approval-gate.md) explains the whole model, including what stays enforced either way.
 
 ## Redirects
 

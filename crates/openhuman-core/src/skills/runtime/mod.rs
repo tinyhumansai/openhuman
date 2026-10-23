@@ -40,3 +40,9 @@ pub use schemas::{
 mod stub;
 #[cfg(not(feature = "skills"))]
 pub use stub::*;
+#[cfg(feature = "skills")]
+pub(crate) mod skill_scan;
+
+#[cfg(all(feature = "skills", test))]
+#[path = "skill_scan_tests.rs"]
+mod skill_scan_tests;

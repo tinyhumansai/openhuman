@@ -24,7 +24,7 @@ fn config(tmp: &TempDir) -> Config {
 
 fn dispatcher(config: &Config) -> scheduler::JobDispatcher {
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

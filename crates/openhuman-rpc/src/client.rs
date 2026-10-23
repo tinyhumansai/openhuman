@@ -19,18 +19,12 @@ pub fn bearer_header(token: Option<&str>) -> Option<String> {
         .map(|token| format!("Bearer {token}"))
 }
 
-/// Redact credentials and request-specific URL components before logging.
+/// `scheme://host[:port]` of `url` for logging: credentials, path, query and
+/// fragment never survive. Answered by the TinySecurity module's
+/// `EndpointOrigin` redaction (the one URL redactor); until the module serves, or
+/// when it cannot answer, the fixed suppression marker is returned instead.
 pub fn redact_url_for_log(url: &str) -> String {
-    url.parse::<url::Url>()
-        .map(|mut parsed| {
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            parsed.set_path("");
-            let _ = parsed.set_username("");
-            let _ = parsed.set_password(None);
-            parsed.to_string()
-        })
-        .unwrap_or_else(|_| "<invalid relay url>".to_string())
+    crate::core_host::util::log_redaction::endpoint_origin(url)
 }
 
 /// POST a JSON-RPC body and preserve the endpoint's status and body verbatim.

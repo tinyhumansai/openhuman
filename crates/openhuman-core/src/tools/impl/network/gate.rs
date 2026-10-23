@@ -5,13 +5,16 @@
 //! directly, with the same argument and the same answer. No policy is decided
 //! here; the adapter only names the questions.
 
-use tinytools_std::network::NetGate;
+use tinytools_std::network::{Destination, DestinationFuture, NetGate};
 
+use crate::config::PrivacyMode;
+use crate::security::egress::assess::{assess_payload, Assessment};
 use crate::security::egress::{
-    emit_external_transfer, local_only_tool_block, DataKind, EgressDescriptor,
+    emit_external_transfer, local_only_tool_block_blocking, DataKind, EgressDescriptor,
+    IdentificationRisk,
 };
-use crate::security::policy::CommandClass;
 use crate::security::{GateDecision, SecurityPolicy};
+use tinysecurity_bus::CommandClass;
 
 /// Build the egress descriptor for an outbound HTTP request (privacy epic S2,
 /// #4436). The host is the destination; a request body carries tool arguments
@@ -45,16 +48,38 @@ pub(super) fn network_egress_descriptor(
 pub(crate) struct RoutedGate {
     policy: std::sync::Arc<SecurityPolicy>,
     chat: Option<crate::security::approval::ApprovalChatContext>,
+    /// What the call's own arguments (URL, headers, body) were assessed to
+    /// carry, when the live privacy mode needs the answer (Sensitive).
+    payload: Option<Assessment>,
 }
 
 impl RoutedGate {
+    /// A gate for the call with arguments `args`. Under Sensitive the arguments
+    /// are the payload that leaves the device, so the module assesses them once
+    /// here and every descriptor this gate builds carries the answer; under any
+    /// other mode nothing is sent to the module.
     pub(crate) fn new(
         policy: std::sync::Arc<SecurityPolicy>,
         chat: Option<&crate::security::approval::ApprovalChatContext>,
+        args: &serde_json::Value,
     ) -> Self {
+        let payload = (!args.is_null()
+            && crate::security::live_policy::current_privacy_mode() == PrivacyMode::Sensitive)
+            .then(|| assess_payload(&args.to_string()));
         Self {
             policy,
             chat: chat.cloned(),
+            payload,
+        }
+    }
+
+    /// `descriptor` with this call's payload assessment, if there is one.
+    fn assessed(&self, descriptor: EgressDescriptor) -> EgressDescriptor {
+        match &self.payload {
+            Some(a) if a.level != IdentificationRisk::Unknown => {
+                descriptor.with_risk(a.level, a.categories.clone())
+            }
+            _ => descriptor,
         }
     }
 }
@@ -77,14 +102,21 @@ impl NetGate for RoutedGate {
     }
 
     fn local_only_block(&self, host: &str) -> Option<String> {
-        NetGate::local_only_block(&*self.policy, host)
+        local_only_tool_block_blocking(&self.assessed(EgressDescriptor::network_fetch(host)))
     }
 
     fn disclose(&self, host: &str, has_body: bool, has_headers: bool) {
         emit_external_transfer(
             self.chat.as_ref(),
-            network_egress_descriptor(host, has_body, has_headers),
+            self.assessed(network_egress_descriptor(host, has_body, has_headers)),
         );
+    }
+
+    fn authorize_destination<'a>(
+        &'a self,
+        destination: &'a Destination<'a>,
+    ) -> DestinationFuture<'a> {
+        NetGate::authorize_destination(&*self.policy, destination)
     }
 
     fn prepare_client(
@@ -105,25 +137,86 @@ impl NetGate for RoutedGate {
     }
 }
 
+/// The module's authorization for a tool destination, in the gate's terms.
+///
+/// Every destination is judged by the module, and a module that is absent,
+/// untrusted, faulted or slow is a refusal carrying the tool-facing message.
+async fn module_destination(
+    policy: &SecurityPolicy,
+    destination: &Destination<'_>,
+) -> Option<Result<Vec<std::net::SocketAddr>, String>> {
+    #[cfg(feature = "security-module")]
+    {
+        use crate::modules::security::egress::{authorize_tool_destination, ToolDestination};
+        Some(
+            authorize_tool_destination(
+                &policy.workspace_dir,
+                &ToolDestination {
+                    url: destination.url,
+                    method: destination.method,
+                    headers: destination.headers,
+                    body: destination.body,
+                },
+            )
+            .await,
+        )
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = (policy, destination);
+        Some(Err(format!(
+            "{}TinySecurity egress module is unavailable",
+            tinytools::status::POLICY_BLOCKED_MARKER
+        )))
+    }
+}
+
+/// The module's tier gate for a network-class action, or `None` when it cannot
+/// answer.
+fn network_gate(policy: &SecurityPolicy) -> Option<GateDecision> {
+    match policy.command_class_gate_blocking(CommandClass::Network) {
+        Ok(gate) => Some(gate),
+        Err(refusal) => {
+            log::warn!("[network][gate] tier gate unavailable; refusing: {refusal:?}");
+            None
+        }
+    }
+}
+
 impl NetGate for SecurityPolicy {
     fn can_act(&self) -> bool {
-        SecurityPolicy::can_act(self)
+        // The module's gate for network-class actions: a tier that blocks them
+        // (read-only), or a module that cannot answer, refuses the call.
+        self.tier_allows_acting_blocking()
+            && network_gate(self).is_some_and(|gate| gate != GateDecision::Block)
     }
 
     fn is_rate_limited(&self) -> bool {
-        SecurityPolicy::is_rate_limited(self)
+        // The hourly budget is spent once per call by the tool gate before the
+        // tool runs; counting again here would charge two actions for one call.
+        false
     }
 
     fn record_action(&self) -> bool {
-        SecurityPolicy::record_action(self)
+        // See `is_rate_limited`: the call's action is already reserved.
+        true
     }
 
     fn network_needs_approval(&self) -> bool {
-        self.gate_decision(CommandClass::Network) == GateDecision::Prompt
+        // An unanswered question is a prompt, never a silent allow; `can_act`
+        // refuses the call itself when the module cannot answer.
+        network_gate(self).is_none_or(|gate| gate == GateDecision::Prompt)
     }
 
     fn local_only_block(&self, host: &str) -> Option<String> {
-        local_only_tool_block(&EgressDescriptor::network_fetch(host))
+        local_only_tool_block_blocking(&EgressDescriptor::network_fetch(host))
+    }
+
+    fn authorize_destination<'a>(
+        &'a self,
+        destination: &'a Destination<'a>,
+    ) -> DestinationFuture<'a> {
+        Box::pin(module_destination(self, destination))
     }
 
     fn disclose(&self, host: &str, has_body: bool, has_headers: bool) {

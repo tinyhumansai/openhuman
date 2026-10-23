@@ -1,7 +1,5 @@
 use super::*;
-use crate::security::approval::store as live;
-use crate::security::approval::types::{ApprovalDecision, ApprovalSourceContext};
-use crate::storage::import::{run_with, Outcome};
+use crate::security::approval::types::ApprovalSourceContext;
 use crate::storage::rusqlite;
 use chrono::{Duration, Utc};
 use tempfile::TempDir;
@@ -68,16 +66,8 @@ fn seed_trust(config: &Config, flow: &str, tool: &str) {
     .unwrap();
 }
 
-fn import(config: &Config) -> Outcome {
-    let backend = crate::storage::local::backend_for(&config.workspace_dir).unwrap();
-    run_with(&backend, config, &[super::super::import_source()])
-        .remove(0)
-        .outcome
-        .unwrap()
-}
-
 #[test]
-fn legacy_rows_are_imported_once_and_the_file_is_left_alone() {
+fn legacy_rows_are_read_in_order_from_a_scratch_copy_and_the_file_is_left_alone() {
     let (_dir, config) = workspace();
     seed_request(&config, "pending-1", 10, None, false);
     seed_request(&config, "approved-1", 10, Some("approve_once"), true);
@@ -88,66 +78,47 @@ fn legacy_rows_are_imported_once_and_the_file_is_left_alone() {
     let db = db_path(&config);
     let before = std::fs::read(&db).unwrap();
 
-    assert!(matches!(
-        import(&config),
-        Outcome::Imported {
-            found: 6,
-            written: 6
-        }
-    ));
+    let history = read_legacy(&config).unwrap().expect("a legacy file");
 
-    let pending = live::list_pending(&config).unwrap();
-    let mut ids: Vec<_> = pending.iter().map(|p| p.request_id.as_str()).collect();
-    ids.sort_unstable();
-    // Listing expires the stale request, as it always did.
-    assert_eq!(ids, ["pending-1"]);
-    let first = &pending[0];
-    assert_eq!(first.tool_name, "composio");
-    assert_eq!(first.action_summary, "summary pending-1");
-    assert_eq!(first.args_redacted["id"], "pending-1");
-    assert_eq!(first.tool_call_id.as_deref(), Some("call-pending-1"));
-    assert_eq!(first.agent_id.as_deref(), Some("agent-7"));
-    assert!(matches!(
-        first.source_context,
-        Some(ApprovalSourceContext::Flow { ref flow_id, .. }) if flow_id == "flow-1"
-    ));
+    let ids: Vec<&str> = history
+        .approvals
+        .iter()
+        .map(|row| row.request_id.as_str())
+        .collect();
+    assert_eq!(ids, ["pending-1", "approved-1", "denied-1", "stale-1"]);
+    let approved = &history.approvals[1];
+    assert_eq!(approved.tool_name, "composio");
+    assert_eq!(approved.agent_id.as_deref(), Some("agent-7"));
+    assert_eq!(approved.decision.as_deref(), Some("approve_once"));
+    assert!(approved.executed && approved.decided_at.is_some());
+    let pending = &history.approvals[0];
+    assert!(pending.decision.is_none() && !pending.executed && pending.expires_at.is_some());
+    assert!(history.approvals[3].expires_at.unwrap() < Utc::now());
     assert_eq!(
-        live::get_decision(&config, "approved-1").unwrap(),
-        Some(ApprovalDecision::ApproveOnce)
-    );
-    assert_eq!(
-        live::get_decision(&config, "denied-1").unwrap(),
-        Some(ApprovalDecision::Deny)
-    );
-    assert!(live::is_flow_tool_trusted(&config, "flow-1", "shell").unwrap());
-    assert!(live::is_flow_tool_trusted(&config, "flow-1", "http").unwrap());
-    assert!(!live::is_flow_tool_trusted(&config, "flow-2", "http").unwrap());
-    // The expiry key was imported: the stale request was expired.
-    assert_eq!(
-        live::get_decision(&config, "stale-1").unwrap(),
-        Some(ApprovalDecision::Deny)
+        history.trust,
+        [
+            LegacyTrust {
+                flow_id: "flow-1".into(),
+                tool_name: "shell".into()
+            },
+            LegacyTrust {
+                flow_id: "flow-1".into(),
+                tool_name: "http".into()
+            }
+        ]
     );
     assert_eq!(std::fs::read(&db).unwrap(), before, "approval.db untouched");
-
-    // A second run does not import again: a change made since stays made.
-    live::decide(&config, "pending-1", ApprovalDecision::Deny).unwrap();
-    assert!(matches!(import(&config), Outcome::AlreadyDone));
-    assert_eq!(
-        live::get_decision(&config, "pending-1").unwrap(),
-        Some(ApprovalDecision::Deny)
-    );
-    assert!(live::list_pending(&config).unwrap().is_empty());
 }
 
 #[test]
-fn a_workspace_with_no_legacy_file_starts_empty() {
+fn a_workspace_with_no_legacy_file_reads_as_none_and_creates_nothing() {
     let (_dir, config) = workspace();
-    assert!(matches!(import(&config), Outcome::NoSource));
-    assert!(live::list_pending(&config).unwrap().is_empty());
+    assert!(read_legacy(&config).unwrap().is_none());
+    assert!(!db_path(&config).exists());
 }
 
 #[test]
-fn an_old_schema_is_brought_forward_and_its_session_ids_scrubbed() {
+fn an_old_schema_is_brought_forward_on_the_copy_only() {
     let (_dir, config) = workspace();
     let db = db_path(&config);
     std::fs::create_dir_all(db.parent().unwrap()).unwrap();
@@ -172,25 +143,13 @@ fn an_old_schema_is_brought_forward_and_its_session_ids_scrubbed() {
     }
     let before = std::fs::read(&db).unwrap();
 
-    assert!(matches!(import(&config), Outcome::Imported { .. }));
-    let pending = live::list_pending(&config).unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].request_id, "old");
+    let history = read_legacy(&config).unwrap().expect("a legacy file");
+    assert_eq!(history.approvals.len(), 1);
     assert!(
-        pending[0].agent_id.is_none(),
+        history.approvals[0].agent_id.is_none(),
         "an old row is the process's own"
     );
-    // The credential-shaped session id was scrubbed before it was read.
-    let docs = crate::storage::local::open("test", &config.workspace_dir)
-        .unwrap()
-        .scoped()
-        .unwrap();
-    let docs = std::sync::Arc::clone(docs.documents());
-    let stored =
-        crate::storage::block_on(async move { docs.get("approvals.requests", "old").await })
-            .unwrap()
-            .unwrap();
-    assert_eq!(stored.doc["session_id"], PRE_MIGRATION_SESSION_ID);
+    assert!(history.trust.is_empty());
     assert_eq!(std::fs::read(&db).unwrap(), before, "approval.db untouched");
 }
 

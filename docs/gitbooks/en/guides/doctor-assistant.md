@@ -30,7 +30,7 @@ OpenHuman is a general-purpose assistant. It is not a medical device and not a s
 
 In **Settings → Agents → Agent access**:
 
-- Turn the autonomy policy on and set its tier. In `config.toml`, set `[autonomy] enabled = true` with `level = "readonly"` (questions and drafting only) or `level = "supervised"` (drafting plus approved actions). Avoid `full` for clinical use. The policy is off until you set `enabled = true`.
+- Turn the autonomy policy on and set its tier. In `config.toml`, set `[security.autonomy] enabled = true` with `level = "readonly"` (questions and drafting only) or `level = "supervised"` (drafting plus approved actions). Avoid `full` for clinical use. The policy is off until you set `enabled = true`.
 - Keep `workspace_only` on so the agent cannot wander your disk.
 - With the policy on, the [Approval Gate](../features/approval-gate.md) sits between the assistant and any acting call. At `readonly` the call is refused. At `supervised` the gate holds it for your yes, unless its tool is on the always-allow list. Clear that list in **Settings → Agent access** if you want every call reviewed. The gate covers actions, not network transport, so prompts and attachments can still be sent upstream for inference.
 
@@ -57,7 +57,7 @@ Test with made-up cases, never real patient data, until you are satisfied with t
 
 ## Success checks
 
-- [ ] `[autonomy] enabled = true`, `level` is `readonly` or `supervised`, and `workspace_only` is on.
+- [ ] `[security.autonomy] enabled = true`, `level` is `readonly` or `supervised`, and `workspace_only` is on.
 - [ ] If you keep inference on-device, your local runtime is running, the models are pulled, and a turn routed to it answers.
 - [ ] The persona reliably adds uncertainty flags and "verify clinically" language to replies on synthetic prompts.
 - [ ] Only the intended sources are connected.

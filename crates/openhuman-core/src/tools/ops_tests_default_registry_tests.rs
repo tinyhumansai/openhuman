@@ -10,7 +10,6 @@ fn all_tools_registers_the_memory_tool_while_memory_is_on() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -54,7 +53,6 @@ fn whatsapp_data_tools_are_gone_in_every_build() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -101,7 +99,6 @@ fn every_packed_tool_name_resolves_to_a_registered_tool() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -216,7 +213,6 @@ fn document_tools_registered_when_feature_on() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -248,7 +244,6 @@ fn document_tools_absent_when_feature_off() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -276,7 +271,6 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -365,7 +359,6 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -397,7 +390,6 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -463,7 +455,6 @@ fn all_tools_default_registry_has_no_duplicate_tool_names() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -495,7 +486,6 @@ fn all_tools_excludes_browser_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -529,7 +519,6 @@ async fn document_tool_writes_into_the_configured_files_folder() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),

@@ -43,9 +43,9 @@ fn every_agent_answers_policy_from_its_own_tier() {
         tokio::spawn(async move {
             let backend = stub_backend().await;
             let mut config = offline_config();
-            config.autonomy.enabled = true;
-            config.autonomy.level = AutonomyLevel::Full;
-            config.autonomy.auto_approve_all = true;
+            config.security.autonomy.enabled = true;
+            config.security.autonomy.level = AutonomyLevel::Full;
+            config.security.autonomy.auto_approve_all = true;
             let runtime = Runtime::builder()
                 .config(config)
                 .workspace(Workspace::Ephemeral)
@@ -70,7 +70,7 @@ fn every_agent_answers_policy_from_its_own_tier() {
                         .definition(shell_only()),
                 )
                 .expect("a instantiates");
-            assert_eq!(a.config().autonomy.level, AutonomyLevel::ReadOnly);
+            assert_eq!(a.config().security.autonomy.level, AutonomyLevel::ReadOnly);
             let a_out = a.run("write the marker").await.expect("a's turn returns");
             assert!(!a_file.exists(), "a read-only agent must not write");
             // The scripted final reply is advisory; the tool result sent back
@@ -176,7 +176,7 @@ fn every_agent_answers_policy_from_its_own_tier() {
                             openhuman_embed::TrustedAccess::ReadWrite,
                         ))
                         .definition(shell_only())
-                        .config(|config| config.autonomy.max_actions_per_hour = 1),
+                        .config(|config| config.security.autonomy.max_actions_per_hour = 1),
                 )
                 .expect("d instantiates");
             d.run("write twice").await.expect("d's turn returns");

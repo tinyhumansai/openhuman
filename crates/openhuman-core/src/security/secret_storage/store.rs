@@ -61,16 +61,10 @@ pub(super) fn backend() -> Arc<dyn SecretBackend> {
 /// guard), every other test's secrets were written into a directory that
 /// vanished at the end of that test — silently resetting the store to empty and
 /// making unrelated tests read back `None`. See `store_tests.rs`.
-///
-/// [`super::ops::force_backend_for_test`] still pins [`BACKEND`] process-wide
-/// and is honoured first.
 #[cfg(test)]
 pub(super) fn backend() -> Arc<dyn SecretBackend> {
     if let Some(installed) = super::installed_secret_backend() {
         return installed;
-    }
-    if let Some(existing) = BACKEND.get() {
-        return existing.clone();
     }
     test_scope::backend_for(&workspace_dir_for_file_backend())
 }

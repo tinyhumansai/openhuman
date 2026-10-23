@@ -10,7 +10,7 @@
 //! turn can follow a process with `shell_process`) and the turn has room for
 //! another process.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tinytools::{ToolResult, ToolRunContext};
@@ -248,17 +248,6 @@ pub(super) async fn run_in_policy(
     };
     let result = finish(outcome, slot, command, started, timeout, audit);
     (true, result)
-}
-
-/// The call's audit entry, to be written once by whoever learns the outcome.
-pub(super) fn audit_once(
-    audit: Arc<crate::security::AuditLogger>,
-    command: String,
-    approved: bool,
-) -> AuditOnce {
-    Mutex::new(Some(Box::new(move |allowed, success, duration_ms| {
-        super::shell::record_audit(&audit, &command, approved, allowed, success, duration_ms);
-    })))
 }
 
 #[cfg(test)]

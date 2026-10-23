@@ -11,7 +11,7 @@ icon: lock
 
 Most assistants' privacy story is a paragraph in a system prompt. OpenHuman's is an enforcement point in the Rust core.
 
-The `[privacy]` config block defines three modes:
+The `[security.privacy]` config block defines three modes:
 
 | Mode | What it means |
 | --- | --- |

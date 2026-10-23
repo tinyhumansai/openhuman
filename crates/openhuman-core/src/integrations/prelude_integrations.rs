@@ -214,18 +214,20 @@ impl OpenHumanTurnPrelude {
             }
         };
         let servers = crate::mcp::registry::connections::cached_overview_for_config(config).await;
-        let sources = servers
-            .into_iter()
-            .map(|server| tinymcp_bus::McpToolSourceSpec {
+        let mut sources = Vec::new();
+        for server in servers {
+            let tools =
+                crate::mcp::registry::tools_safe_for_agent(&server.server_id, server.tools).await;
+            sources.push(tinymcp_bus::McpToolSourceSpec {
                 server_id: server.server_id.clone(),
                 label: server.qualified_name.clone(),
                 family: server.qualified_name,
                 display_name: server.display_name,
-                tools: crate::mcp::registry::tools_safe_for_agent(&server.server_id, server.tools),
+                tools,
                 default_exposure: tinymcp_bus::McpToolExposure::Deferred,
                 direct_tools: Vec::new(),
-            })
-            .collect::<Vec<_>>();
+            });
+        }
         let prepared = match crate::mcp::module_client::McpConfiguredClient::for_config(config) {
             Ok(client) => client
                 .call(
@@ -337,11 +339,7 @@ impl OpenHumanTurnPrelude {
             .mcp_tools
             .configured
             .clone();
-        let security = Arc::new(crate::security::SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        ));
+        let security = Arc::new(crate::security::SecurityPolicy::from_full_config(config));
         crate::tools::implementations::network::configured_server_tools_from_presentations(
             config,
             presentations,

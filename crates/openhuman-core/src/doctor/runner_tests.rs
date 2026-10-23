@@ -687,7 +687,7 @@ async fn malformed_skill_discovery_reports_a_warning_with_its_path() {
 async fn sandbox_backend_check_is_registered_without_running_above_static_tier() {
     let workspace = tempfile::tempdir().expect("create isolated doctor fixture");
     let mut config = isolated_config(workspace.path());
-    config.sandbox.backend = crate::config::SandboxBackend::Docker;
+    config.security.sandbox.backend = crate::config::SandboxBackend::Docker;
     let mut components = ComponentSet::all();
     components.sandbox = false;
     let report = runner::run(

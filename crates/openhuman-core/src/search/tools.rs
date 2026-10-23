@@ -285,7 +285,7 @@ impl Tool for TinySearchTool {
             name: self.spec.name.clone(),
             arguments: args,
         };
-        if let Some(message) = local_only_search_block(&request.name) {
+        if let Some(message) = local_only_search_block(&request.name).await {
             return Ok(ToolResult::error(message));
         }
         match crate::modules::search::execute_tool(&ctx, &config, request).await {
@@ -334,14 +334,23 @@ impl Tool for TinySearchTool {
     }
 }
 
-pub(crate) fn local_only_search_block(tool_name: &str) -> Option<String> {
-    crate::security::egress::local_only_tool_block(&crate::security::egress::EgressDescriptor::new(
+fn search_egress(tool_name: &str) -> crate::security::egress::EgressDescriptor {
+    crate::security::egress::EgressDescriptor::new(
         "tinysearch",
         tool_name,
         true,
         crate::security::egress::EgressReason::ToolCall,
         vec![crate::security::egress::DataKind::ToolArguments],
-    ))
+    )
+}
+
+pub(crate) async fn local_only_search_block(tool_name: &str) -> Option<String> {
+    crate::security::egress::local_only_tool_block(&search_egress(tool_name)).await
+}
+
+/// [`local_only_search_block`] for a synchronous caller.
+pub(crate) fn local_only_search_block_blocking(tool_name: &str) -> Option<String> {
+    crate::security::egress::local_only_tool_block_blocking(&search_egress(tool_name))
 }
 
 /// Build the agent's search tools from config. Empty when search is off or no

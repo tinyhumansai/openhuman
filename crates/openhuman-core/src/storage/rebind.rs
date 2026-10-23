@@ -28,9 +28,9 @@ use crate::config::Config;
 /// What a rebind did.
 #[derive(Debug)]
 pub struct Rebound {
-    /// The URL that was installed before (credentials redacted).
+    /// The endpoint origin that was installed before, or the suppressed marker.
     pub from: String,
-    /// The URL installed now (credentials redacted).
+    /// The new endpoint origin, or the suppressed marker.
     pub to: String,
     /// How the legacy importers fared over the new workspace.
     pub imports: Vec<import::Report>,
@@ -75,8 +75,8 @@ pub(crate) fn rebind_with(
     if next == current {
         return Ok(None);
     }
-    let redacted_from = crate::config::schema::storage::redact_url(&current);
-    let redacted_to = crate::config::schema::storage::redact_url(&next);
+    let redacted_from = crate::security::redact::endpoint_origin(&current);
+    let redacted_to = crate::security::redact::endpoint_origin(&next);
     tracing::info!(
         target: "openhuman::storage",
         from = %redacted_from,

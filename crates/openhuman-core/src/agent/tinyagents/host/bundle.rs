@@ -14,9 +14,7 @@ use tinyagents_harness::host::{
 
 use crate::agent_registry::host_definition::AgentDefinitionRegistry;
 use crate::config::Config;
-use crate::security::policy::SecurityPolicy;
 use tinytools::Tool;
-use tinytools::ToolPolicySession;
 
 use super::{
     OpenHumanBudgetGate, OpenHumanDefinitionRegistry, OpenHumanRunContext, OpenHumanSecurityGate,
@@ -31,9 +29,7 @@ use super::{
 pub struct OpenHumanHostBundleInputs {
     pub config: Arc<Config>,
     pub definitions: Arc<AgentDefinitionRegistry>,
-    pub security_policy: Arc<SecurityPolicy>,
     pub tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
-    pub tool_policy: Option<Arc<ToolPolicySession>>,
     /// The current turn's already-selected model route set.
     pub model_resolver: Arc<dyn ModelResolver<()>>,
     /// See [`OpenHumanHostBase::session_definition`].
@@ -49,7 +45,6 @@ pub struct OpenHumanHostBundleInputs {
 pub struct OpenHumanHostBase {
     pub config: Arc<Config>,
     pub definitions: Arc<AgentDefinitionRegistry>,
-    pub security_policy: Arc<SecurityPolicy>,
     /// The session's own caller-supplied definition, when it was built from one
     /// rather than from a registry id — see
     /// [`OpenHumanDefinitionRegistry::with_session_definition`]. Lives here, beside
@@ -63,7 +58,6 @@ pub struct OpenHumanHostBase {
 pub struct OpenHumanHostInvocationInputs {
     pub base: Arc<OpenHumanHostBase>,
     pub tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
-    pub tool_policy: Option<Arc<ToolPolicySession>>,
     /// The current turn's already-selected model route set.
     pub model_resolver: Arc<dyn ModelResolver<()>>,
 }
@@ -100,9 +94,7 @@ impl OpenHumanHostBundleFactory {
             OpenHumanHostBundleInputs {
                 config: inputs.base.config.clone(),
                 definitions: inputs.base.definitions.clone(),
-                security_policy: inputs.base.security_policy.clone(),
                 tool_sets: inputs.tool_sets,
-                tool_policy: inputs.tool_policy,
                 model_resolver: inputs.model_resolver,
                 session_definition: inputs.base.session_definition.clone(),
             },
@@ -158,14 +150,8 @@ impl OpenHumanHostBundleFactory {
         let definitions = Arc::new(definitions_adapter);
         // An untrusted-input turn is read from its own explicit run context:
         // a screen may run on another task, so no ambient scope is consulted.
-        let mut security = OpenHumanSecurityGate::new(inputs.security_policy, inputs.tool_sets)
-            .with_input_screening(!turn.untrusted_input_turn)
-            .with_approval(turn.approval.clone())
-            .with_dispatch(turn.dispatch_ctx());
-        if let Some(policy) = inputs.tool_policy {
-            security = security.with_tool_policy(policy);
-        }
-        let security = Arc::new(security);
+        let security =
+            Arc::new(OpenHumanSecurityGate::new().with_input_screening(!turn.untrusted_input_turn));
         let models = inputs.model_resolver;
         let budget = Arc::new(
             OpenHumanBudgetGate::new(Arc::clone(&inputs.config)).with_dispatch(turn.dispatch_ctx()),

@@ -127,6 +127,20 @@ export function handleConversations(ctx) {
       });
       return true;
     }
+    if (method === "PATCH" && conversation) {
+      const updated = {
+        ...conversation,
+        ...(parsedBody || {}),
+        id: conversationItemMatch[1],
+        updatedAt: new Date().toISOString(),
+      };
+      const index = conversations.findIndex(
+        (entry) => entry.id === conversationItemMatch[1],
+      );
+      conversations[index] = updated;
+      json(res, 200, { success: true, data: updated });
+      return true;
+    }
     if (method === "DELETE") {
       const index = conversations.findIndex(
         (entry) => entry.id === conversationItemMatch[1],

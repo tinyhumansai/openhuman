@@ -358,9 +358,13 @@ fn snapshot_config_json_redacts_the_storage_url_credentials() {
     cfg.storage.url = Some("mongodb://app:hunter2@db.internal/openhuman".into());
     let snapshot = snapshot_config_json(&cfg).unwrap();
     assert!(!snapshot.to_string().contains("hunter2"));
-    assert_eq!(
-        snapshot["config"]["storage"]["url"],
-        "mongodb://***@db.internal/openhuman"
+    // The module returns only the safe origin. Before it is available, the
+    // endpoint is suppressed; neither path may retain userinfo or a database
+    // name from a potentially sensitive URL.
+    let url = snapshot["config"]["storage"]["url"].as_str().unwrap();
+    assert!(
+        url == crate::core::log_redaction::SUPPRESSED || url == "mongodb://db.internal",
+        "{url}"
     );
 }
 
@@ -372,7 +376,8 @@ fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
     assert!(!snapshot.to_string().contains("hunter2"));
     assert_eq!(
         snapshot["config"]["inbound"]["queue_url"],
-        "amqp://***@broker.internal/vhost"
+        crate::core::log_redaction::SUPPRESSED,
+        "unsupported endpoint schemes are suppressed instead of logged"
     );
 }
 

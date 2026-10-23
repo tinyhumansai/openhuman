@@ -55,6 +55,11 @@ tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-std = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 tinytools-agent = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 
+[patch."https://github.com/tinyhumansai/tinybox"]
+# tinymcp names the TinyBox contract crate by git tag for its jailed stdio
+# launcher; resolve it to the in-tree copy so the graph holds one `tinybox-bus`.
+tinybox-bus = { path = "vendor/tinybox/crates/tinybox-bus" }
+
 [patch."https://github.com/tinyhumansai/tinybus"]
 # tinystoragedrivers-bus (and tinywallet, which names tinybus by git rev) name
 # tinybus by git. Redirect them to the in-tree copy so the graph holds exactly

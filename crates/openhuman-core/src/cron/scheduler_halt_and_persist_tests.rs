@@ -363,7 +363,7 @@ async fn run_through_scheduler(config: &Config, job_id: &str) {
     )
     .unwrap();
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));
@@ -427,7 +427,7 @@ async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
     let job = cron::get_job(&config, &job.id).unwrap();
 
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.workspace_dir,
     ));

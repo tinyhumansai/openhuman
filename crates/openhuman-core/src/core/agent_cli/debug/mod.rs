@@ -244,6 +244,6 @@ fn session_dump(agent: &OpenHumanSessionHost, agent_id: &str, text: String) -> D
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "flows"))]
 #[path = "mod_tests.rs"]
 mod tests;

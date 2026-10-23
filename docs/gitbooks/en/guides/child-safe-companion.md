@@ -43,7 +43,7 @@ None of these filter the model's language or subject matter. An adult in the roo
 
 Go to **Settings → Agents → Agent access**:
 
-- Set `[autonomy] enabled = true` with `level = "readonly"` in `config.toml`. The assistant can then talk and answer, but cannot act, write files or reach the network on its own. The policy is off by default, so this is the first thing to set.
+- Set `[security.autonomy] enabled = true` with `level = "readonly"` in `config.toml`. The assistant can then talk and answer, but cannot act, write files or reach the network on its own. The policy is off by default, so this is the first thing to set.
 - Keep `workspace_only` on.
 - Leave the [Approval Gate](../features/approval-gate.md) installed as a second layer. At `readonly`, acting is blocked anyway.
 - Review the auto-approve list and remove anything you do not want running without a prompt.
@@ -64,7 +64,7 @@ Edit the behavior prompt (`SOUL.md`, on the **Brain** page at `/brain`) to set a
 
 ## Success checks
 
-- [ ] `[autonomy] enabled = true`, `level = "readonly"`, and `workspace_only` is on.
+- [ ] `[security.autonomy] enabled = true`, `level = "readonly"`, and `workspace_only` is on.
 - [ ] No integrations are connected.
 - [ ] Inference is local (`ready`), so conversations do not go to a cloud provider.
 - [ ] In your own testing, the persona refuses and redirects unsafe prompts.

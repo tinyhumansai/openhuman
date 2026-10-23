@@ -159,10 +159,10 @@ if (args[0] === 'metadata') {
 
 test("storage coverage fails when one expected target is absent despite another running", () => {
   const xml =
-    '<testsuites><testsuite name="openhuman-cli::storage_approvals_e2e" tests="3"/></testsuites>';
-  assert.equal(report(xml, ["storage_approvals_e2e"]).status, 0);
+    '<testsuites><testsuite name="openhuman-cli::storage_default_import_e2e" tests="2"/></testsuites>';
+  assert.equal(report(xml, ["storage_default_import_e2e"]).status, 0);
   assert.equal(
-    report(xml, ["storage_approvals_e2e", "storage_domains_e2e"]).status,
+    report(xml, ["storage_default_import_e2e", "storage_domains_e2e"]).status,
     1,
   );
 });

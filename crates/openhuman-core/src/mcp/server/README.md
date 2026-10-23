@@ -9,7 +9,7 @@ TinyMCP owns MCP framing, protocol state, callbacks, and HTTP admission through 
 - Compose TinyMCP's protocol lifecycle for `initialize`, `ping`, tools, resources, prompts, and notifications with OpenHuman's host callbacks.
 - Advertise a fixed catalog of MCP tools (`tool_specs`) with input JSON-schemas and MCP `ToolAnnotations` (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`).
 - Map validated module callbacks to registered core RPC params and dispatch via `all::try_invoke_registered_rpc`.
-- Enforce `SecurityPolicy` per call: read tools require `ToolOperation::Read`; `agent.run_subagent` and the two write tools (`memory.learn`, `memory.forget`) require `ToolOperation::Act`.
+- Enforce `SecurityPolicy` per call: read tools spend nothing; `agent.run_subagent` and the two write tools (`memory.learn`, `memory.forget`) reserve one action of the TinySecurity hourly budget through `SecurityPolicy::spend_action` (autonomy tier plus the module's ledger).
 - Run write tools (`memory.learn`, `memory.forget`) through a dedicated write-dispatch + audit pipeline that records every attempt (success and rejection) to the MCP write-audit log.
 - Serve bundled prompt assets and TinyFlows' two bus-owned agent archetypes as MCP resources under the `openhuman://prompts/...` URI scheme. Static markdown is embedded; flow prompts are fetched with the request's scoped config.
 - Provide two transports: newline-delimited JSON-RPC over stdio, and Axum-based Streamable HTTP + SSE with session-id and protocol-version handshakes and optional bearer auth.
@@ -76,8 +76,8 @@ This module exposes **no** registered core RPC methods (no `schemas.rs`, no cont
 
 It does **not** own any agent tools in the `tools.rs`/[`crates/openhuman-core/src/tools`](../../tools/) sense. The "tools" here are **MCP-protocol tools** advertised to external clients:
 
-- Read-only (`ToolOperation::Read`): `core.list_tools`, `core.tool_instructions`, `agent.list_subagents`, `memory.recall`, `memory.fetch`, `memory.list`, `web_search`, `web_answer`, `searxng_search` (listed only when a search provider can serve them; `crate::search::providers`).
-- Act-policy (`ToolOperation::Act`): `agent.run_subagent` (annotated destructive/open-world), and `memory.learn` (annotated non-destructive, non-idempotent, local-only) and `memory.forget` (annotated destructive/idempotent, local-only).
+- Read-only (spend nothing): `core.list_tools`, `core.tool_instructions`, `agent.list_subagents`, `memory.recall`, `memory.fetch`, `memory.list`, `web_search`, `web_answer`, `searxng_search` (listed only when a search provider can serve them; `crate::search::providers`).
+- Act-policy (`spend_action`): `agent.run_subagent` (annotated destructive/open-world), and `memory.learn` (annotated non-destructive, non-idempotent, local-only) and `memory.forget` (annotated destructive/idempotent, local-only).
 
 Argument bounds enforced in-layer: memory `limit` capped at `MEMORY_MAX_LIMIT` (100; rejected, not clamped); `memory.forget` capped at 100 ids; `filter` is validated field by field (MetaFilter of [`docs/specs/memory-v2.md`](../../../../../docs/specs/memory-v2.md)); `memory.fetch` `mode` is one of keyword/vector/hybrid but must be supported by the active engine (both launch engines: `hybrid` only); `web_search` and `web_answer` `max_results` capped at `SEARCH_MAX_RESULTS` (20).
 
@@ -94,7 +94,7 @@ No `store.rs`. The only durable side effect is the **MCP write-audit log**, writ
 - `crate::core::all`: `try_invoke_registered_rpc`, `schema_for_rpc_method`, `validate_params`: dispatch MCP tool calls into the registered core RPC layer and validate params against controller schemas.
 - `crate::core::logging` (`CliLogDefault`, `init_for_cli_run`): installs the stderr tracing subscriber for the MCP subprocess.
 - `crate::config` (`Config`, `rpc::load_config_with_timeout`, `McpAuthConfig`/`McpClientIdentityConfig` in tests): loads config for policy/searxng gating and per-call config.
-- `crate::security` (`SecurityPolicy`, `ToolOperation`): enforces read/act autonomy policy per tool call.
+- `crate::security` (`SecurityPolicy`): `spend_action` enforces the act autonomy tier and the hourly budget per acting tool call; the decision is the TinySecurity module's.
 - `crate::agent` (`Agent`, `registry::agents::BUILTINS`, `harness::AgentDefinitionRegistry`): builds the orchestrator agent for `core.list_tools`/`core.tool_instructions`, lists/runs subagents, and cross-checks the resource catalog.
 - `tinyinference_llm::tool::ToolSchema`: directly materialize model-visible tool declarations for `core.tool_instructions`.
 - `tinyagents_harness::tool::prompt_tool_instructions`: render the markdown tool-use instructions block for `core.tool_instructions`.

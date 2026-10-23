@@ -10,7 +10,6 @@
 use super::support::{counts, envelope, thread_to_summary, workspace_dir};
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
-use crate::security::SecurityPolicy;
 use crate::threads::store as conversations;
 use crate::threads::ThreadsError;
 use crate::threads::{
@@ -41,7 +40,7 @@ pub(crate) fn validate_working_dir(raw: Option<&str>) -> Result<Option<String>, 
     if !canonical.is_dir() {
         return Err("working folder is not a directory".to_string());
     }
-    if SecurityPolicy::is_always_forbidden(&canonical) {
+    if crate::security::floor::is_protected_blocking(&canonical) {
         return Err("working folder is in a protected location".to_string());
     }
     Ok(Some(canonical.to_string_lossy().into_owned()))

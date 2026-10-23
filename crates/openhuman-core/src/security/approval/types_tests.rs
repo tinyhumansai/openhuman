@@ -164,6 +164,8 @@ fn pending_approval_debug_and_serialize_do_not_carry_session_id() {
         expires_at: None,
         decided_at: Utc::now(),
         decision: ApprovalDecision::ApproveOnce,
+        decided_by: None,
+        judge: None,
     };
     let audit_dbg = format!("{audit:?}");
     assert!(
@@ -175,4 +177,28 @@ fn pending_approval_debug_and_serialize_do_not_carry_session_id() {
         audit_json.get("session_id").is_none(),
         "ApprovalAuditEntry JSON must not surface session_id: {audit_json}"
     );
+}
+
+#[test]
+fn audit_entry_omits_judge_fields_for_human_decisions_and_roundtrips_verdicts() {
+    let human = serde_json::json!({
+        "request_id": "r", "tool_name": "t", "action_summary": "a",
+        "args_redacted": {}, "created_at": "2026-01-01T00:00:00Z",
+        "expires_at": null, "decided_at": "2026-01-01T00:00:01Z",
+        "decision": "approve_once"
+    });
+    let entry: ApprovalAuditEntry = serde_json::from_value(human).unwrap();
+    assert!(entry.decided_by.is_none() && entry.judge.is_none());
+    let out = serde_json::to_value(&entry).unwrap();
+    assert!(out.get("decided_by").is_none() && out.get("judge").is_none());
+
+    let mut auto = serde_json::to_value(&entry).unwrap();
+    auto["decided_by"] = "auto:jev".into();
+    auto["judge"] = serde_json::json!({
+        "outcome": "qualified", "intent_millis": 950, "reversible_millis": 920,
+        "exfiltrate_millis": 10, "cached": false
+    });
+    let entry: ApprovalAuditEntry = serde_json::from_value(auto).unwrap();
+    assert_eq!(entry.decided_by.as_deref(), Some("auto:jev"));
+    assert_eq!(entry.judge.unwrap().intent_millis, Some(950));
 }

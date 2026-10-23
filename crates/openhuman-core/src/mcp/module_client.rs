@@ -289,7 +289,8 @@ impl McpConfiguredClient {
                         meta: None,
                     })
                     .collect(),
-            );
+            )
+            .await;
             sources.push(tinymcp_bus::McpToolSourceSpec {
                 server_id: server.name.clone(),
                 label: server.name.clone(),

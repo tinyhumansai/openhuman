@@ -124,7 +124,7 @@ and a fingerprint, never the title text.
 A thread can be bound to an `action_dir` before its first message
 (`threads.update_working_dir`). `validate_working_dir` requires an absolute,
 existing directory with no null byte and refuses anything
-`SecurityPolicy::is_always_forbidden` covers. After the first message the
+the protected-path floor covers (`security::floor::is_protected_blocking`, answered by the TinySecurity module). After the first message the
 folder is fixed: a resumed session keeps its first system prompt and tool list
 verbatim, so moving it would leave the model describing one directory while
 its tools act in another. `web_chat::run_task` reads the binding through

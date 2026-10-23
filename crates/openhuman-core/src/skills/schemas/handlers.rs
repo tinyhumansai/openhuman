@@ -18,7 +18,6 @@ use crate::skills::ops::{
     UninstallWorkflowParams,
 };
 use crate::skills::ops_install::ScanAcknowledgement;
-use crate::skills::runtime::spawn_workflow_run_background;
 use crate::skills::{registry, run_log};
 
 use super::helpers::{deserialize_params, resolve_config, resolve_workspace_dir, to_json};
@@ -168,24 +167,27 @@ pub(super) fn handle_skills_run(ctx: DispatchCtx, params: Map<String, Value>) ->
         let origin = ctx
             .turn_origin_or_scoped()
             .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Cli);
-        let started = match crate::security::turn_origin::with_origin(
-            origin.clone(),
-            spawn_workflow_run_background(&ctx, payload.workflow_id, payload.inputs, Some(origin)),
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(e) => return Err(e),
-        };
-        to_json(Outcome::new(
+        let config = crate::config::Config::load_or_init()
+            .await
+            .map_err(|error| format!("skills_run: failed to load config: {error:#}"))?;
+        let outcome = crate::tools::native_ops::execute_tool_in_context(
+            &config,
+            ctx,
+            origin,
+            crate::skills::run_workflow::RUN_WORKFLOW_TOOL_NAME,
             serde_json::json!({
-                "run_id": started.run_id,
-                "status": "started",
-                "workflow_id": started.workflow_id,
-                "log": started.log_path.display().to_string(),
+                "workflow_id": payload.workflow_id,
+                "inputs": payload.inputs,
+                "wait_seconds": 0,
             }),
-            Vec::new(),
-        ))
+        )
+        .await?;
+        if outcome.result.is_error {
+            return Err(outcome.result.output());
+        }
+        let result: Value = serde_json::from_str(&outcome.result.output())
+            .map_err(|error| format!("skills_run: invalid tool result: {error}"))?;
+        to_json(Outcome::new(result, Vec::new()))
     })
 }
 

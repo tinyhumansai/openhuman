@@ -9,8 +9,12 @@ fn patch(files_dir: &str) -> AgentPathsPatch {
     }
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn setting_the_files_folder_persists_it_and_creates_it() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let chosen = tmp.path().join("Deliverables");
@@ -34,8 +38,12 @@ async fn setting_the_files_folder_persists_it_and_creates_it() {
     assert!(saved.contains("files_dir_override"), "{saved}");
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn an_empty_value_reverts_to_the_default_folder() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     cfg.files_dir_override = Some(tmp.path().join("Old"));
@@ -68,16 +76,24 @@ async fn rejected(cfg: &mut Config, value: &str) -> String {
     err
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_relative_path_is_rejected() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let err = rejected(&mut cfg, "relative/Files").await;
     assert!(err.contains("absolute"), "{err}");
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_file_is_rejected() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let file = tmp.path().join("not-a-folder.txt");
@@ -86,8 +102,12 @@ async fn a_file_is_rejected() {
     assert!(err.contains("not a file"), "{err}");
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_folder_inside_the_openhuman_data_folder_is_rejected() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let inside = cfg.workspace_dir.join("Files");
@@ -96,8 +116,12 @@ async fn a_folder_inside_the_openhuman_data_folder_is_rejected() {
     assert!(!inside.exists(), "nothing is created for a rejected value");
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_credential_folder_is_rejected() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let ssh = tmp.path().join(".ssh").join("Files");
@@ -114,10 +138,14 @@ fn a_relative_override_on_disk_falls_back_to_the_default() {
     assert_eq!(cfg.files_dir(), crate::config::default_files_dir());
 }
 
+#[cfg(feature = "security-module")]
 /// The boot migration moves legacy files into the folder the user chose, not
 /// the default one.
 #[tokio::test]
 async fn boot_migrates_legacy_files_into_the_chosen_folder() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::save_artifact_meta;
     use crate::artifacts::{ArtifactKind, ArtifactMeta, ArtifactStatus};
 
@@ -167,11 +195,15 @@ async fn boot_migrates_legacy_files_into_the_chosen_folder() {
     assert_eq!(std::fs::read(chosen.join("plan.docx")).unwrap(), b"plan");
 }
 
+#[cfg(feature = "security-module")]
 /// A symlinked spelling of the data folder is still the data folder: the
 /// check compares canonical paths, not text.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_symlinked_route_into_the_data_folder_is_rejected() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let alias = tmp.path().join("alias");
@@ -181,10 +213,14 @@ async fn a_symlinked_route_into_the_data_folder_is_rejected() {
     assert!(err.contains("OpenHuman data folder"), "{err}");
 }
 
+#[cfg(feature = "security-module")]
 /// Changing the folder affects new files only: a file made in the previous
 /// folder keeps resolving, because that folder is recorded as trusted.
 #[tokio::test]
 async fn files_made_before_a_folder_change_keep_resolving() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::{create_artifact, finalize_artifact};
     use crate::artifacts::{ArtifactKind, FileRoots};
 

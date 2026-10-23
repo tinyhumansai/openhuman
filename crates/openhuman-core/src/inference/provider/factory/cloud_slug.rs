@@ -4,7 +4,7 @@
 use super::{
     access_gates::enforce_local_only_inference, cloud_spec, credentials::CredentialAccess,
     local_runtime::OptionalChatModelResult, managed_backend::managed_chat_model_for,
-    openai_bearer_is_oauth, provider_for_role, redact_endpoint_origin, resolve_codex_routing,
+    openai_bearer_is_oauth, provider_for_role, resolve_codex_routing,
     InspectionOutputBudgetCapability, BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PREFIX,
     CLAUDE_AGENT_SDK_PROVIDER, PROVIDER_OPENHUMAN,
 };
@@ -690,4 +690,8 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         ));
     }
     Some(chat.map(|chat| (chat, effective_model)))
+}
+
+fn redact_endpoint_origin(url: &str) -> String {
+    crate::security::redact::endpoint_origin(url)
 }

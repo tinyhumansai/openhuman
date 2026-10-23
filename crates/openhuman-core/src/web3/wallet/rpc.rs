@@ -24,16 +24,6 @@ static SHARED_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("wallet RPC client builder must succeed with default settings")
 });
 
-pub(crate) fn redact_rpc_url(raw: &str) -> String {
-    match reqwest::Url::parse(raw) {
-        Ok(url) => match url.host_str() {
-            Some(host) => format!("{}://{}", url.scheme(), host),
-            None => format!("{}://<unknown-host>", url.scheme()),
-        },
-        Err(_) => "<invalid-url>".to_string(),
-    }
-}
-
 fn client() -> reqwest::Client {
     SHARED_CLIENT.clone()
 }
@@ -74,7 +64,7 @@ async fn rpc_call_to_inner<T: DeserializeOwned>(
     log::debug!(
         "{LOG_PREFIX} jsonrpc method={} url={}",
         method,
-        redact_rpc_url(url)
+        crate::security::redact::endpoint_origin(url)
     );
     let client = client();
     let response = client.post(url).json(&payload).send().await.map_err(|e| {
@@ -113,7 +103,10 @@ async fn rpc_call_to_inner<T: DeserializeOwned>(
 
 /// Plain REST GET returning JSON or text.
 pub async fn rest_get_text(url: &str) -> Result<String, String> {
-    log::debug!("{LOG_PREFIX} rest_get url={}", redact_rpc_url(url));
+    log::debug!(
+        "{LOG_PREFIX} rest_get url={}",
+        crate::security::redact::endpoint_origin(url)
+    );
     let response = client()
         .get(url)
         .send()
@@ -136,7 +129,7 @@ pub async fn rest_get_text(url: &str) -> Result<String, String> {
 pub async fn rest_post_text(url: &str, body: &str, content_type: &str) -> Result<String, String> {
     log::debug!(
         "{LOG_PREFIX} rest_post url={} body_len={}",
-        redact_rpc_url(url),
+        crate::security::redact::endpoint_origin(url),
         body.len()
     );
     let response = client()
@@ -158,7 +151,3 @@ pub async fn rest_post_text(url: &str, body: &str, content_type: &str) -> Result
     }
     Ok(text)
 }
-
-#[cfg(test)]
-#[path = "rpc_tests.rs"]
-mod tests;

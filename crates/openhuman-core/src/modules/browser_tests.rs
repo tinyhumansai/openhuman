@@ -25,11 +25,35 @@ fn non_global_ip_literals_stay_blocked() {
         "[2001:db8::1]",
     ] {
         assert!(
-            private_or_local(host.trim_matches(['[', ']'])),
+            is_private_or_local_host(host.trim_matches(['[', ']'])),
             "{host} must be blocked"
         );
     }
-    assert!(!private_or_local("93.184.216.34"));
+    assert!(!is_private_or_local_host("93.184.216.34"));
+}
+
+/// The cases the removed `host_is_local` and the browser's own copy missed or
+/// duplicated: cloud metadata, CGNAT, IPv6 private/link-local and local names.
+#[test]
+fn check_url_blocks_metadata_cgnat_and_private_ipv6_hosts() {
+    let client = BrowserClient::new(Arc::new(Config::default()));
+    for url in [
+        "https://169.254.169.254/latest/meta-data",
+        "https://100.64.0.1/",
+        "https://[fd00::1]/",
+        "https://[fe80::1]/",
+        "https://printer.local/",
+        "https://localhost/",
+        "https://app.localhost/",
+    ] {
+        assert!(
+            client.check_url_for_mode(url, true).is_err(),
+            "{url} must be blocked even when every site is allowed"
+        );
+    }
+    assert!(client
+        .check_url_for_mode("https://example.com/", true)
+        .is_ok());
 }
 
 #[test]

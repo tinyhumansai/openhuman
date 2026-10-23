@@ -51,6 +51,12 @@ fn contract_names() -> Vec<(&'static str, &'static str, &'static str)> {
     ];
     #[cfg(feature = "modules")]
     names.push(("tinybox", tinybox_bus::INTERFACE, tinybox_bus::OBJECT_PATH));
+    #[cfg(feature = "security-module")]
+    names.push((
+        "tinysecurity",
+        tinysecurity_bus::names::INTERFACE,
+        tinysecurity_bus::names::OBJECT_PATH,
+    ));
     #[cfg(feature = "documents")]
     names.push((
         "tinydocs",
@@ -125,10 +131,11 @@ fn a_drifted_contract_constant_is_reported_as_a_mismatch() {
     feature = "inbound-queues"
 ))]
 #[test]
-fn a_product_feature_build_carries_all_fourteen_records() {
-    assert_eq!(ALL.len(), 14);
+fn a_product_feature_build_carries_all_fifteen_records() {
+    assert_eq!(ALL.len(), 15);
     for id in [
         "tinycomputer",
+        "tinysecurity",
         "tinysearch",
         "tinydocs",
         "tinywallet",
@@ -150,6 +157,13 @@ fn a_product_feature_build_carries_all_fourteen_records() {
 #[test]
 fn every_record_maps_to_a_real_component() {
     for record in ALL {
+        if record.id == "tinysecurity" {
+            assert!(
+                component_for(record.id).is_none(),
+                "security enforcement must not be gated by a product component"
+            );
+            continue;
+        }
         let component = component_for(record.id)
             .unwrap_or_else(|| panic!("module '{}' has no component mapping", record.id));
         assert!(

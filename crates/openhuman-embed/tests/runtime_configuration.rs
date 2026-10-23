@@ -92,11 +92,11 @@ async fn assert_runtime_configuration() {
         .unwrap();
     assert_eq!(first.config().default_model.as_deref(), Some("gpt-4o-mini"));
     assert_eq!(second.config().default_temperature, 0.3);
-    assert_eq!(first.config().autonomy.max_actions_per_hour, 7);
+    assert_eq!(first.config().security.autonomy.max_actions_per_hour, 7);
     assert_eq!(first.config().tool_rules, rules);
     assert!(runtime.capabilities().configuration.has_tool_rules);
     assert_eq!(
-        first.config().privacy.mode,
+        first.config().security.privacy.mode,
         openhuman_embed::config::PrivacyMode::Sensitive
     );
     assert!(!first.config().cron.enabled);

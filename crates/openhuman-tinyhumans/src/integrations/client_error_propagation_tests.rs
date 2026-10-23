@@ -100,6 +100,36 @@ fn backend_egress_descriptor_strips_query_and_targets_backend() {
     assert!(desc.is_external);
 }
 
+#[test]
+fn backend_egress_classifies_control_plane_and_payload_for_module_privacy_checks() {
+    use openhuman_embed::__host::egress::{DataKind, IdentificationRisk};
+
+    let body = json!({ "query": "weekly plan" });
+    let user_data = backend_egress_for(
+        "/agent-integrations/composio/execute?trace=private",
+        BackendPayload::Json(&body),
+    );
+    assert!(!user_data.control_plane);
+    assert_eq!(user_data.service, "/agent-integrations/composio/execute");
+    assert!(user_data.data_kinds.contains(&DataKind::ToolArguments));
+    assert_eq!(user_data.risk_level, IdentificationRisk::Unknown);
+
+    let opaque_upload = backend_egress_for(
+        "/agent-integrations/file-storage/files",
+        BackendPayload::Opaque,
+    );
+    assert!(!opaque_upload.control_plane);
+    assert!(opaque_upload.data_kinds.contains(&DataKind::FileContent));
+    assert_eq!(opaque_upload.risk_level, IdentificationRisk::Unknown);
+
+    let control_plane = backend_egress_for(
+        "/agent-integrations/composio/connections",
+        BackendPayload::None,
+    );
+    assert!(control_plane.control_plane);
+    assert_eq!(control_plane.data_kinds, vec![DataKind::Metadata]);
+}
+
 /// The OpenHuman compatibility wrapper must retain the SDK's privileged-route
 /// denylist on every public verb, including the temporary reqwest download
 /// exception. An unreachable base URL makes a transport error the failure

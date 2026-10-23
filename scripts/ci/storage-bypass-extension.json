@@ -351,26 +351,6 @@
   },
   {
     "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/audit.rs",
-    "line": 330,
-    "text": "let _ = std::fs::rename(&old_name, &new_name);",
-    "occurrence": 1,
-    "classification": "unmigrated",
-    "reason": "Canonical security audit file rotation; native scoped stream migration must retain captured producer authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
-  },
-  {
-    "rule": "file-mutation",
-    "path": "crates/openhuman-core/src/security/audit.rs",
-    "line": 334,
-    "text": "std::fs::rename(&self.log_path, &rotated)?;",
-    "occurrence": 1,
-    "classification": "unmigrated",
-    "reason": "Canonical security audit file rotation; native scoped stream migration must retain captured producer authority.",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7431"
-  },
-  {
-    "rule": "file-mutation",
     "path": "crates/openhuman-core/src/security/credentials/http_creds.rs",
     "line": 426,
     "text": "if let Err(e) = fs::rename(&tmp_path, &self.path) {",

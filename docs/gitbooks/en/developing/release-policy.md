@@ -126,7 +126,7 @@ There is no separate `staging` branch. Staging cuts and production releases both
 
 ## Release App token: approval gate and rotation
 
-`release-production.yml` bumps the version, commits to `release` and back-merges into `main`, pushing those commits and the tag with a GitHub App token (`secrets.XGITHUB_APP_ID` / `secrets.XGITHUB_APP_PRIVATE_KEY`) that bypasses branch protection. The same App pushes staging bumps to the selected `main` or `release` source (`release-staging.yml`) and promotion merge commits (`promote-main-to-release.yml`). A leaked private key (through a log, a compromised action or a misconfigured runner) would let an attacker push arbitrary commits to protected branches ([CWE-250](https://cwe.mitre.org/data/definitions/250.html)). Two controls limit the damage.
+`release-production.yml` bumps the version, commits to `release` and back-merges into `main`, pushing those commits and the tag with a GitHub App token (`secrets.XGITHUB_APP_ID` / `secrets.XGITHUB_APP_PRIVATE_KEY`) that bypasses branch protection. The same App pushes staging bumps to the selected `main` or `release` source (`release-staging.yml`) and promotion merge commits (`promote-main-to-release.yml`). A leaked private key (through a log, a compromised action or a misconfigured runner) would let an attacker push arbitrary commits to protected branches ([CWE-250](https://cwe.mitre.org/data/definitions/250)). Two controls limit the damage.
 
 ### Manual approval gate
 

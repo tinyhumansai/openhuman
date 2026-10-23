@@ -33,7 +33,7 @@ fn config(root: &Path, backend: SandboxBackend) -> crate::config::Config {
     config.workspace_dir = root.join("workspace");
     config.action_dir = root.join("actions");
     config.config_path = root.join("config.toml");
-    config.sandbox.backend = backend;
+    config.security.sandbox.backend = backend;
     config
 }
 
@@ -74,7 +74,7 @@ async fn no_probe_runs_when_sandboxing_is_disabled_in_config() {
     let scratch = tempfile::tempdir().expect("create isolated config fixture");
     let check = SandboxBackendCheck::with_probe(Arc::new(DockerAvailability(false)));
     let mut config = config(scratch.path(), SandboxBackend::Docker);
-    config.sandbox.enabled = Some(false);
+    config.security.sandbox.enabled = Some(false);
     let finding = check
         .detect(&DoctorCtx::from_config(config))
         .await

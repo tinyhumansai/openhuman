@@ -78,11 +78,7 @@ mod action_dir_tests;
 mod allowlist_tests;
 #[path = "policy_config_and_action_tests.rs"]
 mod config_and_action_tests;
-#[path = "policy_injection_tests.rs"]
-mod injection_tests;
 #[path = "policy_paths_and_risk_tests.rs"]
 mod paths_and_risk_tests;
 #[path = "policy_trusted_roots_tests.rs"]
 mod trusted_roots_tests;
-#[path = "policy_workspace_internal_tests.rs"]
-mod workspace_internal_tests;

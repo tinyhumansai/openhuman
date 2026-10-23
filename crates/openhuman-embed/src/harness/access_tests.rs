@@ -12,7 +12,7 @@ fn full_sets_both_the_tier_and_the_origin() {
 
     let mut config = Config::default();
     access.apply(&mut config);
-    assert_eq!(config.autonomy.level, AutonomyLevel::Full);
+    assert_eq!(config.security.autonomy.level, AutonomyLevel::Full);
 
     let origin = access.turn_origin().expect(
         "Access::full must label its turns; without an origin the approval gate \
@@ -49,7 +49,7 @@ fn each_preset_applies_its_tier() {
     ] {
         let mut config = Config::default();
         access.apply(&mut config);
-        assert_eq!(config.autonomy.level, expected);
+        assert_eq!(config.security.autonomy.level, expected);
     }
 }
 
@@ -57,7 +57,7 @@ fn each_preset_applies_its_tier() {
 fn the_default_is_supervised() {
     let mut config = Config::default();
     Access::default().apply(&mut config);
-    assert_eq!(config.autonomy.level, AutonomyLevel::Supervised);
+    assert_eq!(config.security.autonomy.level, AutonomyLevel::Supervised);
 }
 
 #[test]
@@ -66,11 +66,11 @@ fn tool_install_is_opt_in_even_at_full() {
     // otherwise bounds the blast radius, so no tier implies it.
     let mut config = Config::default();
     Access::full().apply(&mut config);
-    assert!(!config.autonomy.allow_tool_install);
+    assert!(!config.security.autonomy.allow_tool_install);
 
     let mut config = Config::default();
     Access::full().allow_tool_install(true).apply(&mut config);
-    assert!(config.autonomy.allow_tool_install);
+    assert!(config.security.autonomy.allow_tool_install);
 }
 
 #[test]
@@ -79,20 +79,20 @@ fn full_does_not_set_auto_approve_all() {
     // this harness never vouched for. The origin is the scoped instrument.
     let mut config = Config::default();
     Access::full().apply(&mut config);
-    assert!(!config.autonomy.auto_approve_all);
+    assert!(!config.security.autonomy.auto_approve_all);
 }
 
 #[test]
 fn trusted_roots_accumulate_and_keep_their_access_level() {
     let mut config = Config::default();
-    let before = config.autonomy.trusted_roots.len();
+    let before = config.security.autonomy.trusted_roots.len();
 
     Access::supervised()
         .trust("/srv/data", TrustedAccess::Read)
         .trust("/srv/out", TrustedAccess::ReadWrite)
         .apply(&mut config);
 
-    let added = &config.autonomy.trusted_roots[before..];
+    let added = &config.security.autonomy.trusted_roots[before..];
     assert_eq!(added.len(), 2);
     assert_eq!(added[0].path, "/srv/data");
     assert_eq!(added[0].access, TrustedAccess::Read);
@@ -112,17 +112,17 @@ fn apply_replaces_trusted_roots_rather_than_extending_them() {
     Access::full()
         .trust("/srv/wide", TrustedAccess::ReadWrite)
         .apply(&mut config);
-    assert_eq!(config.autonomy.trusted_roots.len(), 1);
+    assert_eq!(config.security.autonomy.trusted_roots.len(), 1);
 
     // A second, narrower `Access` applied to the same config (as happens when
     // an agent overrides the runtime's default) must not keep the first
     // access's trusted roots around.
     Access::readonly().apply(&mut config);
     assert!(
-        config.autonomy.trusted_roots.is_empty(),
+        config.security.autonomy.trusted_roots.is_empty(),
         "a readonly access must not inherit an earlier access's trusted roots, \
          got {:?}",
-        config.autonomy.trusted_roots
+        config.security.autonomy.trusted_roots
     );
 }
 
@@ -144,19 +144,22 @@ fn an_explicit_origin_overrides_the_preset() {
 #[test]
 fn approval_lists_are_inherited_until_the_agent_sets_them() {
     let mut config = Config::default();
-    config.autonomy.auto_approve = vec!["boot_tool".into()];
-    config.autonomy.auto_approve_all = true;
+    config.security.autonomy.auto_approve = vec!["boot_tool".into()];
+    config.security.autonomy.auto_approve_all = true;
 
     Access::supervised().apply(&mut config);
-    assert_eq!(config.autonomy.auto_approve, ["boot_tool"]);
-    assert!(config.autonomy.auto_approve_all);
+    assert_eq!(config.security.autonomy.auto_approve, ["boot_tool"]);
+    assert!(config.security.autonomy.auto_approve_all);
 
     Access::supervised()
         .auto_approve(["shell", "file_write"])
         .auto_approve_all(false)
         .apply(&mut config);
-    assert_eq!(config.autonomy.auto_approve, ["shell", "file_write"]);
-    assert!(!config.autonomy.auto_approve_all);
+    assert_eq!(
+        config.security.autonomy.auto_approve,
+        ["shell", "file_write"]
+    );
+    assert!(!config.security.autonomy.auto_approve_all);
 }
 
 #[test]
@@ -165,7 +168,7 @@ fn the_approval_gate_switch_is_independent_of_the_tier() {
     assert!(!access.approval_gate_enabled());
     let mut config = Config::default();
     access.apply(&mut config);
-    assert_eq!(config.autonomy.level, AutonomyLevel::Supervised);
+    assert_eq!(config.security.autonomy.level, AutonomyLevel::Supervised);
     assert!(access.turn_origin().is_none());
 
     assert!(Access::full().approval_gate(true).approval_gate_enabled());
@@ -178,9 +181,12 @@ fn the_approval_gate_switch_is_independent_of_the_tier() {
 fn restrictive_tiers_switch_the_policy_on() {
     for access in [Access::readonly(), Access::supervised()] {
         let mut config = openhuman_core::config::Config::default();
-        config.autonomy.enabled = false;
+        config.security.autonomy.enabled = false;
         access.apply(&mut config);
-        assert!(config.autonomy.enabled, "{access:?} must enable the policy");
+        assert!(
+            config.security.autonomy.enabled,
+            "{access:?} must enable the policy"
+        );
     }
 }
 
@@ -189,8 +195,8 @@ fn restrictive_tiers_switch_the_policy_on() {
 fn full_access_keeps_the_configured_policy_switch() {
     for enabled in [false, true] {
         let mut config = openhuman_core::config::Config::default();
-        config.autonomy.enabled = enabled;
+        config.security.autonomy.enabled = enabled;
         Access::full().apply(&mut config);
-        assert_eq!(config.autonomy.enabled, enabled);
+        assert_eq!(config.security.autonomy.enabled, enabled);
     }
 }

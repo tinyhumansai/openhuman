@@ -54,6 +54,7 @@ documents
 # this build trusts, and the `modules` RPC namespace. Required by `documents` —
 # without it the document tools have nothing to call.
 modules
+security-module
 
 # Saved automation graphs: create/run/schedule + the workflow_builder and
 # flow_discovery agents.

@@ -1,6 +1,6 @@
 # Socket.IO client ownership design
 
-Status: design for review, 2026-10-19  
+Status: design for review, 2026-10-19
 Scope: `tinyhumansai/openhuman#8089`, design leaf `senamakel/openhuman#242`
 
 ## Decision

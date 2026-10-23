@@ -39,18 +39,32 @@ fn summarize_rejected_write_args_includes_param_keys_only() {
     assert!(summary.get("text").is_none());
 }
 
-#[test]
-fn write_policy_logs_and_returns_denial() {
+#[tokio::test]
+async fn write_policy_logs_and_returns_denial() {
+    use crate::modules::security::gap::stub::{Asked, StubPort};
+    use crate::modules::security::gap::{install_port, BudgetOp};
     let tmp = tempfile::TempDir::new().unwrap();
     let mut config = Config::default();
     config.workspace_dir = tmp.path().join("workspace");
-    // The tier only binds with the policy on; the shipped config default is off.
-    config.autonomy.enabled = true;
-    config.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
+    config.security.autonomy.enabled = true;
+    config.security.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
 
+    // The tier and the budget are the module's; here it answers read-only.
+    let stub = std::sync::Arc::new(
+        StubPort::allowing().budget(|_, _| tinysecurity_bus::BudgetDecision2::ReadOnlyMode),
+    );
+    let _port = install_port(stub.clone());
     let err = enforce_write_policy_for_config("memory.forget", &config)
+        .await
         .expect_err("read-only mode should deny writes");
     assert!(err.message().contains("read-only mode"));
+    assert!(err.message().contains("memory.forget"));
+    assert_eq!(stub.asked(), vec![Asked::Budget(BudgetOp::Spend)]);
+
+    let _port = install_port(std::sync::Arc::new(StubPort::allowing()));
+    enforce_write_policy_for_config("memory.forget", &config)
+        .await
+        .expect("an allowed write reserves its action");
 }
 
 #[tokio::test]

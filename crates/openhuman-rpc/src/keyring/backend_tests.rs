@@ -12,6 +12,11 @@ use crate::core_host::security::secret_storage::SecretBackend;
 
 type Shared = Arc<Mutex<HashMap<(String, String), Vec<u8>>>>;
 
+fn availability_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
 /// A credential store shared by every credential the builder makes, so a set
 /// through one `Entry` is visible through the next, as on a real keychain.
 #[derive(Debug, Default)]
@@ -202,6 +207,7 @@ fn availability_probe_handles_a_leftover_os_entry_and_caches_success() {
     use crate::core_host::security::secret_storage::{
         clear_secret_backend, install_secret_backend, is_available,
     };
+    let _lock = availability_test_lock();
     let b = Arc::new(fake_os_backend());
     let probe_key = "__probe__:__openhuman_keyring_probe__";
     b.set(probe_key, "__probe_value__").unwrap();
@@ -213,6 +219,28 @@ fn availability_probe_handles_a_leftover_os_entry_and_caches_success() {
         "probe must remove its entry"
     );
     assert!(is_available());
+    clear_secret_backend();
+}
+
+#[test]
+fn a_denied_availability_probe_fails_closed_and_retries_after_backend_change() {
+    use crate::core_host::security::secret_storage::{
+        clear_secret_backend, install_secret_backend, is_available,
+    };
+    let _lock = availability_test_lock();
+
+    install_secret_backend(Arc::new(locked_os_backend()));
+    assert!(
+        !is_available(),
+        "a denied write must fail the OS-store probe"
+    );
+
+    install_secret_backend(Arc::new(fake_os_backend()));
+    assert!(
+        is_available(),
+        "installing an available backend resets the probe"
+    );
+
     clear_secret_backend();
 }
 

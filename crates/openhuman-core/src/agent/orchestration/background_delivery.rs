@@ -141,7 +141,8 @@ fn schedule_delivery(ctx: &DispatchCtx, thread_id: String, delay: Duration) {
 }
 
 /// `wait_idle`: after the delay, keep waiting while the thread's user turn is in
-/// flight instead of giving up (see [`run_drain`]). `fence` drops the drain
+/// flight instead of giving up (see [`super::delivery_drain::run_drain`]).
+/// `fence` drops the drain
 /// once this node loses the owning profile's lease.
 fn schedule_delivery_inner(
     ctx: DispatchCtx,

@@ -176,7 +176,7 @@ pub async fn migrate(
 fn live_conflict(target: &Target, installed_url: Option<String>) -> Option<String> {
     installed_url
         .filter(|url| *url == legacy::v1_url(target))
-        .map(|url| crate::config::schema::storage::redact_url(&url))
+        .map(|url| crate::security::redact::endpoint_origin(&url))
 }
 
 fn plan_of(state: &LayoutState) -> Result<&Plan, LayoutError> {

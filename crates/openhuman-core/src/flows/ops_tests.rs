@@ -14,7 +14,7 @@ fn test_config(tmp: &TempDir) -> Config {
     // with the policy on; the shipped config default is off. Without this the
     // manifest tests pass vacuously — a disabled policy answers `Allow` for
     // every class, so nothing is ever `blocked`.
-    config.autonomy.enabled = true;
+    config.security.autonomy.enabled = true;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     config
 }

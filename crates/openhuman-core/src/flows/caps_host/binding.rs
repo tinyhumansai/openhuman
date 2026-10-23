@@ -183,7 +183,7 @@ pub(crate) async fn serve(
     };
     let ctx = ctx.with_turn_origin(origin);
     let security = Arc::new(crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

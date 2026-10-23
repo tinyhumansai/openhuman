@@ -536,7 +536,7 @@ export async function openhumanUpdateAutonomySettings(
 
 // ── Sandbox execution backend settings ───────────────────────────────────────
 
-export type SandboxBackendId = 'auto' | 'docker' | 'landlock' | 'firejail' | 'bubblewrap' | 'none';
+export type SandboxBackendId = 'auto' | 'docker' | 'landlock' | 'none';
 
 /** Current sandbox settings returned by config_get_sandbox_settings. */
 export interface SandboxSettings {

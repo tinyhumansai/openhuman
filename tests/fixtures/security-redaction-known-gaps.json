@@ -1,0 +1,34 @@
+[
+ [
+  "aws_access_key_id",
+  "denials"
+ ],
+ [
+  "aws_access_key_id",
+  "log"
+ ],
+ [
+  "jwt",
+  "denials"
+ ],
+ [
+  "jwt",
+  "log"
+ ],
+ [
+  "password_in_connection_string",
+  "denials"
+ ],
+ [
+  "private_key_block",
+  "log"
+ ],
+ [
+  "slack_bot_token",
+  "denials"
+ ],
+ [
+  "slack_bot_token",
+  "log"
+ ]
+]

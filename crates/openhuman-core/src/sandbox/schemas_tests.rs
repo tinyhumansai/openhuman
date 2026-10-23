@@ -181,6 +181,7 @@ fn docker_policy_params(workspace: &str) -> Map<String, Value> {
         allow_network: false,
         env_passthrough: vec![],
         docker_overrides: None,
+        mount_workspace: true,
     };
     let mut params = Map::new();
     params.insert("policy".into(), serde_json::to_value(&policy).unwrap());

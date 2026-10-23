@@ -7,7 +7,7 @@ use crate::security::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
 
-fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
+pub(super) fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     match action {
         PromptEnforcementAction::Allow => "Message accepted.",
         PromptEnforcementAction::Blocked => {
@@ -42,7 +42,7 @@ pub(crate) fn normalize_model_override(opt: Option<String>) -> Option<String> {
     })
 }
 
-pub(crate) fn enforce_user_prompt_or_reject(
+pub(crate) async fn enforce_user_prompt_or_reject(
     prompt: &str,
     source: &'static str,
 ) -> Result<(), String> {
@@ -54,7 +54,8 @@ pub(crate) fn enforce_user_prompt_or_reject(
             user_id: None,
             session_id: Some("local_ai"),
         },
-    );
+    )
+    .await;
     match decision.action {
         PromptEnforcementAction::Allow => Ok(()),
         PromptEnforcementAction::Blocked | PromptEnforcementAction::ReviewBlocked => {
@@ -100,10 +101,17 @@ pub(super) fn resolve_turn_cwd(cwd: Option<String>) -> Result<Option<std::path::
 /// the no-`cwd` path is untouched, and nothing process-global is mutated.
 pub(super) fn grant_turn_cwd(config: &mut Config, root: &std::path::Path) {
     let path = root.to_string_lossy().to_string();
-    if config.autonomy.trusted_roots.iter().any(|r| r.path == path) {
+    if config
+        .security
+        .autonomy
+        .trusted_roots
+        .iter()
+        .any(|r| r.path == path)
+    {
         return;
     }
     config
+        .security
         .autonomy
         .trusted_roots
         .push(crate::security::TrustedRoot {
@@ -136,7 +144,3 @@ pub(super) fn effective_agent_chat_origin(
     ctx.turn_origin_or_scoped()
         .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::DirectChat)
 }
-
-#[cfg(test)]
-#[path = "guards_tests.rs"]
-mod tests;

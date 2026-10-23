@@ -16,10 +16,11 @@ use std::sync::Arc;
 
 use super::*;
 use crate::security::{AutonomyLevel, SecurityPolicy, TrustedAccess, TrustedRoot};
+#[cfg(feature = "security-module")]
 use tinyagents_harness::artifacts::{
-    extract_artifact_paths, ArtifactKind, ArtifactPathPolicy, ARTIFACT_POINTER_PREFIX,
-    DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+    extract_artifact_paths, ArtifactKind, ARTIFACT_POINTER_PREFIX,
 };
+use tinyagents_harness::artifacts::{ArtifactPathPolicy, DEFAULT_OFFLOAD_THRESHOLD_BYTES};
 
 /// Policy with disjoint action/workspace roots, the shipped default layout
 /// (`~/OpenHuman/projects` vs `~/.openhuman/users/<id>/workspace`).
@@ -83,25 +84,41 @@ fn workspace_guard_reports_workspace_dir_as_the_internal_root() {
     );
 }
 
+#[cfg(feature = "security-module")]
 #[test]
-fn workspace_guard_defers_to_the_security_policy_for_internal_state() {
-    // The adapter must not re-implement the rule, only forward it — a
-    // divergent copy here would drift from the policy the rest of the core
-    // enforces, and the two would disagree about the same path.
+fn workspace_guard_forwards_internal_state_to_the_module_and_fails_closed() {
+    use crate::modules::security::gap::install_port;
+    use crate::modules::security::gap::stub::{Asked, StubPort};
+    use tinysecurity_bus::PathCheckKind;
+    // The adapter must not re-implement the rule, only forward it: the module is
+    // the one authority on which locations are internal state.
     let policy = policy_with(PathBuf::from("/action"), PathBuf::from("/state/workspace"));
     let guard = WorkspaceGuard::new(Arc::clone(&policy));
-    for candidate in [
-        "/state/workspace/session_raw/a.jsonl",
-        "/action/outputs/report.md",
-        "/tmp/unrelated",
+    let stub = Arc::new(StubPort::allowing().paths(|_, kind, path| {
+        assert_eq!(kind, PathCheckKind::Internal);
+        path.starts_with("/state/workspace/session_raw")
+    }));
+    let _port = install_port(stub.clone());
+    for (candidate, internal) in [
+        ("/state/workspace/session_raw/a.jsonl", true),
+        ("/action/outputs/report.md", false),
+        ("/tmp/unrelated", false),
     ] {
-        let path = std::path::Path::new(candidate);
         assert_eq!(
-            guard.is_internal_state(path),
-            policy.is_workspace_internal_path(path),
-            "adapter disagreed with SecurityPolicy about {candidate}"
+            guard.is_internal_state(std::path::Path::new(candidate)),
+            internal,
+            "the module's answer for {candidate}"
         );
     }
+    assert_eq!(stub.asked().len(), 3);
+    assert!(matches!(
+        stub.asked()[0],
+        Asked::Paths(PathCheckKind::Internal, _)
+    ));
+
+    // A module that cannot answer makes everything internal: nothing is offloaded.
+    let _port = install_port(Arc::new(StubPort::unavailable()));
+    assert!(guard.is_internal_state(std::path::Path::new("/action/outputs/report.md")));
 }
 
 fn memory_blobs() -> Arc<dyn tinystoragedrivers_api::BlobStore> {
@@ -145,6 +162,16 @@ async fn an_action_dir_inside_workspace_dir_is_never_materialized() {
     );
 }
 
+#[cfg(feature = "security-module")]
+/// The module's answer for an ordinary workspace: nothing here is internal state.
+fn nothing_is_internal() -> crate::modules::security::gap::PortGuard {
+    use crate::modules::security::gap::stub::StubPort;
+    crate::modules::security::gap::install_port(Arc::new(
+        StubPort::allowing().paths(|_, kind, _| kind != tinysecurity_bus::PathCheckKind::Internal),
+    ))
+}
+
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn explicit_workspace_policy_blocks_unguarded_offload_before_writing() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -175,7 +202,9 @@ async fn explicit_workspace_policy_blocks_unguarded_offload_before_writing() {
 }
 
 #[tokio::test]
+#[cfg(feature = "security-module")]
 async fn a_wired_writer_redacts_before_the_bytes_reach_disk() {
+    let _module = nothing_is_internal();
     // `new_artifact_offload` always installs the redactor, so no call site can
     // produce an unredacted writer by omission.
     let dir = tempfile::tempdir().expect("tempdir");
@@ -202,7 +231,7 @@ async fn a_wired_writer_redacts_before_the_bytes_reach_disk() {
         .await
         .expect("read back")
         .expect("stored");
-    // Whether this particular shape trips `sanitize_text` is that function's
+    // Whether this particular shape trips the `security::redact::text` pass is that function's
     // business; what this pins is that the two agree. A redactor reported as
     // having fired must have actually rewritten the stored bytes.
     assert_eq!(
@@ -212,8 +241,10 @@ async fn a_wired_writer_redacts_before_the_bytes_reach_disk() {
     );
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn oversized_result_is_offloaded_and_the_parent_gets_a_readable_pointer() {
+    let _module = nothing_is_internal();
     let dir = tempfile::tempdir().expect("tempdir");
     let action_dir = dir.path().join("action");
     let workspace_dir = dir.path().join("state");

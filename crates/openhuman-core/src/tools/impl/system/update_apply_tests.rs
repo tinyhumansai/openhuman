@@ -66,25 +66,6 @@ async fn rejects_when_user_confirmed_false() {
 }
 
 #[tokio::test]
-async fn rejects_in_read_only_mode_even_with_consent() {
-    let tool = UpdateApplyTool::new(read_only());
-    let result = tool
-        .execute(json!({ "user_confirmed": true }))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    // The autonomy gate now delegates to `SecurityPolicy::enforce_tool_operation`,
-    // whose canonical read-only message is `"Security policy: read-only
-    // mode, cannot perform '<op_name>'"` — assert against that phrasing
-    // and the operation name rather than the old hand-rolled string.
-    let body = result.output();
-    assert!(
-        body.contains("read-only mode") && body.contains("update_apply"),
-        "expected shared enforcer's read-only message, got: {body}"
-    );
-}
-
-#[tokio::test]
 async fn consent_check_runs_before_autonomy_check() {
     // A read-only session that also forgot to confirm should see the
     // consent error first — this keeps the LLM-facing failure mode

@@ -6,7 +6,7 @@
 //! obvious one produces an agent that looks configured and silently refuses to
 //! act:
 //!
-//! 1. **The autonomy tier** (`config.autonomy.level`) drives `SecurityPolicy` —
+//! 1. **The autonomy tier** (`config.security.autonomy.level`) drives `SecurityPolicy` —
 //!    which command classes are allowed, prompted, or blocked.
 //! 2. **The turn origin** (a task-local, [`AgentTurnOrigin`]) is the caller's
 //!    statement of authority, and the approval gate is *fail-closed* on it. An
@@ -191,22 +191,22 @@ impl Access {
     /// root the runtime default trusted, silently widening a supposedly
     /// scoped-down agent.
     pub(crate) fn apply(&self, config: &mut openhuman_core::config::Config) {
-        config.autonomy.level = self.level;
+        config.security.autonomy.level = self.level;
         // The tier only binds while the policy is on, and the core ships it
-        // off (`[autonomy] enabled = false`). Without this, `readonly()` and
+        // off (`[security.autonomy] enabled = false`). Without this, `readonly()` and
         // `supervised()` would leave shell and file writes wide open. `full()`
         // keeps whatever the base config says, so existing automation hosts
         // see no change.
         if self.level != AutonomyLevel::Full {
-            config.autonomy.enabled = true;
+            config.security.autonomy.enabled = true;
         }
-        config.autonomy.allow_tool_install = self.allow_tool_install;
-        config.autonomy.trusted_roots = self.trusted_roots.clone();
+        config.security.autonomy.allow_tool_install = self.allow_tool_install;
+        config.security.autonomy.trusted_roots = self.trusted_roots.clone();
         if let Some(tools) = &self.auto_approve {
-            config.autonomy.auto_approve = tools.clone();
+            config.security.autonomy.auto_approve = tools.clone();
         }
         if let Some(enabled) = self.auto_approve_all {
-            config.autonomy.auto_approve_all = enabled;
+            config.security.autonomy.auto_approve_all = enabled;
         }
         // `auto_approve_all` is deliberately NOT set for `full()`. The origin
         // is the correct instrument — it says *who is calling*, which the gate

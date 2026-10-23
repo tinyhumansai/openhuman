@@ -1,7 +1,7 @@
 //! Sub-agent approval parks: an async-delegated sub-agent's card is routed to
 //! the parent chat thread and marked `detached` (so the client keeps it across
 //! the parent turn's end), every sub-agent park uses the shorter
-//! [`SUBAGENT_APPROVAL_TTL`], and an expiry tells the model nobody answered.
+//! the module's short window, and an expiry tells the model nobody answered.
 //!
 //! Production evidence: every failed `media_generate_image` /
 //! `media_generate_video` / `skill_registry_install` in `image_agent`,
@@ -49,17 +49,6 @@ async fn wait_parked(gate: &ApprovalGate) -> PendingApproval {
 
 fn window(row: &PendingApproval, before: chrono::DateTime<chrono::Utc>) -> chrono::Duration {
     row.expires_at.expect("a parked approval sets expires_at") - before
-}
-
-#[test]
-fn the_subagent_clamp_shortens_a_default_park_and_never_extends_a_shorter_one() {
-    assert_eq!(
-        ApprovalGate::resolve_park_ttl(DEFAULT_APPROVAL_TTL, false, true),
-        SUBAGENT_APPROVAL_TTL
-    );
-    assert!(SUBAGENT_APPROVAL_TTL < DEFAULT_APPROVAL_TTL);
-    let short = Duration::from_secs(30);
-    assert_eq!(ApprovalGate::resolve_park_ttl(short, false, true), short);
 }
 
 #[tokio::test]
@@ -115,9 +104,9 @@ async fn an_async_subagent_park_reaches_the_parent_thread_detached_with_a_short_
     let row = wait_parked(&gate).await;
     assert!(
         window(&row, before)
-            <= chrono::Duration::from_std(SUBAGENT_APPROVAL_TTL).unwrap()
+            <= chrono::Duration::from_std(MODULE_SHORT_WINDOW).unwrap()
                 + chrono::Duration::seconds(5),
-        "a sub-agent park uses SUBAGENT_APPROVAL_TTL, got {}",
+        "a sub-agent park uses MODULE_SHORT_WINDOW, got {}",
         window(&row, before)
     );
 
@@ -163,7 +152,7 @@ async fn an_inline_chat_park_is_not_detached_and_keeps_the_full_window() {
     );
     let row = wait_parked(&gate).await;
     assert!(
-        window(&row, before) > chrono::Duration::from_std(SUBAGENT_APPROVAL_TTL).unwrap(),
+        window(&row, before) > chrono::Duration::from_std(MODULE_SHORT_WINDOW).unwrap(),
         "the main chat keeps its full window, got {}",
         window(&row, before)
     );
@@ -205,7 +194,7 @@ async fn an_inline_subagent_park_uses_the_short_window_without_being_detached() 
     assert!(!gate.request_is_detached(&row.request_id));
     assert!(
         window(&row, before)
-            <= chrono::Duration::from_std(SUBAGENT_APPROVAL_TTL).unwrap()
+            <= chrono::Duration::from_std(MODULE_SHORT_WINDOW).unwrap()
                 + chrono::Duration::seconds(5),
         "got {}",
         window(&row, before)

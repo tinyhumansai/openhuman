@@ -217,7 +217,7 @@ async fn apply_autonomy_settings_persists_max_actions_per_hour() {
     )
     .await
     .expect("apply");
-    assert_eq!(cfg.autonomy.max_actions_per_hour, 200);
+    assert_eq!(cfg.security.autonomy.max_actions_per_hour, 200);
     // Snapshot returned so the caller can echo the saved state.
     assert!(outcome.value.get("config").is_some());
     // Round-trip from disk: reload the saved TOML and confirm.
@@ -233,7 +233,7 @@ async fn apply_autonomy_settings_no_op_when_patch_empty() {
     let _g = ENV_LOCK.lock().await;
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
-    let prior = cfg.autonomy.max_actions_per_hour;
+    let prior = cfg.security.autonomy.max_actions_per_hour;
     let _ = apply_autonomy_settings(
         &mut cfg,
         AutonomySettingsPatch {
@@ -243,7 +243,7 @@ async fn apply_autonomy_settings_no_op_when_patch_empty() {
     )
     .await
     .expect("apply noop");
-    assert_eq!(cfg.autonomy.max_actions_per_hour, prior);
+    assert_eq!(cfg.security.autonomy.max_actions_per_hour, prior);
 }
 
 #[tokio::test]
@@ -284,7 +284,7 @@ async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
     )
     .await
     .expect("u32::MAX (unlimited) should round-trip");
-    assert_eq!(cfg.autonomy.max_actions_per_hour, u32::MAX);
+    assert_eq!(cfg.security.autonomy.max_actions_per_hour, u32::MAX);
 }
 
 #[tokio::test]
@@ -306,7 +306,7 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
 
     // Reload from scratch and confirm the saved value sticks.
     let reloaded = load_config_with_timeout().await.expect("reload");
-    assert_eq!(reloaded.autonomy.max_actions_per_hour, 500);
+    assert_eq!(reloaded.security.autonomy.max_actions_per_hour, 500);
 
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");
@@ -329,7 +329,7 @@ async fn apply_autonomy_settings_replaces_auto_approve() {
     )
     .await
     .expect("apply auto_approve");
-    assert_eq!(cfg.autonomy.auto_approve, vec!["shell", "curl"]);
+    assert_eq!(cfg.security.autonomy.auto_approve, vec!["shell", "curl"]);
     // Persisted to the TOML, not just held in memory.
     let on_disk = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
     assert!(
@@ -344,7 +344,7 @@ async fn autonomy_auto_approve_all_defaults_false() {
     let tmp = tempdir().unwrap();
     let cfg = tmp_config(&tmp);
     assert!(
-        !cfg.autonomy.auto_approve_all,
+        !cfg.security.autonomy.auto_approve_all,
         "fresh AutonomyConfig must default auto_approve_all to false"
     );
 }
@@ -366,7 +366,7 @@ async fn autonomy_auto_approve_all_persists() {
     )
     .await
     .expect("apply auto_approve_all=true");
-    assert!(cfg.autonomy.auto_approve_all);
+    assert!(cfg.security.autonomy.auto_approve_all);
     let on_disk = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
     assert!(
         on_disk.contains("auto_approve_all = true"),
@@ -379,7 +379,7 @@ async fn autonomy_auto_approve_all_persists() {
     // a fresh deserialize, then flip it back off and confirm that round-trips
     // too.
     let on_disk_cfg: crate::config::Config = toml::from_str(&on_disk).expect("parse saved TOML");
-    assert!(on_disk_cfg.autonomy.auto_approve_all);
+    assert!(on_disk_cfg.security.autonomy.auto_approve_all);
 
     apply_autonomy_settings(
         &mut cfg,
@@ -390,7 +390,7 @@ async fn autonomy_auto_approve_all_persists() {
     )
     .await
     .expect("apply auto_approve_all=false");
-    assert!(!cfg.autonomy.auto_approve_all);
+    assert!(!cfg.security.autonomy.auto_approve_all);
     let on_disk_after = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
     assert!(
         on_disk_after.contains("auto_approve_all = false"),
@@ -416,6 +416,7 @@ async fn add_auto_approve_tool_appends_then_dedupes() {
 
     let reloaded = load_config_with_timeout().await.expect("reload");
     let hits = reloaded
+        .security
         .autonomy
         .auto_approve
         .iter()

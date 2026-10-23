@@ -28,8 +28,8 @@ async fn profile_context_conflict_refresh_keeps_host_owned_restrictions() {
             .unwrap()
     })
     .await;
-    assert!(initial.autonomy.enabled);
-    assert!(initial.autonomy.workspace_only);
+    assert!(initial.security.autonomy.enabled);
+    assert!(initial.security.autonomy.workspace_only);
     assert_eq!(initial.memory.agent_id.as_deref(), Some(id.as_str()));
     assert_eq!(
         initial.memory.layout,
@@ -51,8 +51,8 @@ async fn profile_context_conflict_refresh_keeps_host_owned_restrictions() {
         .await
         .unwrap();
     external.default_model = Some("external-winner".into());
-    external.autonomy.enabled = false;
-    external.autonomy.workspace_only = false;
+    external.security.autonomy.enabled = false;
+    external.security.autonomy.workspace_only = false;
     external.memory.agent_id = Some("external-agent".into());
     external.memory.root = Some("team:external".into());
     external.memory.layout = crate::config::schema::MemoryLayoutMode::V3;
@@ -78,8 +78,8 @@ async fn profile_context_conflict_refresh_keeps_host_owned_restrictions() {
     })
     .await;
     assert_eq!(refreshed.default_model.as_deref(), Some("external-winner"));
-    assert!(refreshed.autonomy.enabled);
-    assert!(refreshed.autonomy.workspace_only);
+    assert!(refreshed.security.autonomy.enabled);
+    assert!(refreshed.security.autonomy.workspace_only);
     assert_eq!(refreshed.memory.agent_id.as_deref(), Some(id.as_str()));
     assert_eq!(
         refreshed.memory.layout,
@@ -104,7 +104,7 @@ async fn profile_context_conflict_refresh_keeps_host_owned_restrictions() {
             .await
             .unwrap();
     later_external.default_model = Some("external-after-nested".into());
-    later_external.autonomy.enabled = false;
+    later_external.security.autonomy.enabled = false;
     later_external.memory.agent_id = Some("later-external-agent".into());
     later_external.agent.channel_permissions.clear();
     later_external.save().await.unwrap();
@@ -124,7 +124,7 @@ async fn profile_context_conflict_refresh_keeps_host_owned_restrictions() {
         nested_refreshed.default_model.as_deref(),
         Some("external-after-nested")
     );
-    assert!(nested_refreshed.autonomy.enabled);
+    assert!(nested_refreshed.security.autonomy.enabled);
     assert_eq!(
         nested_refreshed.memory.agent_id.as_deref(),
         Some(id.as_str())

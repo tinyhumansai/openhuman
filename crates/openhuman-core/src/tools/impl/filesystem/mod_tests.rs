@@ -117,7 +117,7 @@ async fn always_forbidden_paths_under_a_granted_root_still_fail() {
     let home = tempfile::tempdir().expect("home");
     let project = tempfile::tempdir().expect("project");
     // `.ssh` is an unconditional credential store: a grant on its parent must
-    // never expose it (`SecurityPolicy::is_always_forbidden`).
+    // never expose it (the TinySecurity protected-path floor).
     let creds = project.path().join(".ssh");
     std::fs::create_dir(&creds).expect("creds dir");
     let key = creds.join("id_rsa");

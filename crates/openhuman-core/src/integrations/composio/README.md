@@ -160,7 +160,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
   from the typed tool execution context for per-action and dispatcher gating.
 - Task recency window: carried as `OpenHumanRunExt::task_recency_window` (`agent/tinyagents/host/run_context.rs`); `tools/execute.rs` reads it from the tool execution context and forwards it through the connector bus.
 - `tinytools`: `Tool`, `ToolResult`, `ToolCategory`, `PermissionLevel`, `ToolCallOptions`.
-- `crate::security`: `SecurityPolicy` / `ToolOperation` for direct-tool gating.
+- `crate::security`: `SecurityPolicy` for direct-tool gating (the tool gate asks the module).
 - `crate::security::credentials`: encrypted store for the direct-mode API key.
 - `crate::agent::prompts`, `agent::prompts`: prompt/profile injection of connected identities.
 - `crate::core::all`: `ControllerFuture` / `RegisteredController` registry types.

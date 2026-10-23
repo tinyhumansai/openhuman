@@ -1,6 +1,5 @@
 use super::*;
-use crate::agent::tinyagents::middleware::tool_policy::AllowAllToolPolicy;
-use crate::agent::tinyagents::middleware::tool_policy::ToolPolicyMiddleware;
+use crate::agent::tinyagents::middleware::tool_policy::{session_policy_host, ToolPolicyHostState};
 
 // ── the listing must agree with the gate (#workflow-routing) ────────────────
 //
@@ -56,14 +55,14 @@ fn allow(name: &str) -> (String, ToolPolicyDecision) {
 /// a `build_workflow` delegate, but may only call the delegate and the pack
 /// tool — exactly the orchestrator's shape. Anything not named here is denied,
 /// because `decision_for` defaults to `Deny`.
-fn non_owner_middleware() -> ToolPolicyMiddleware {
+fn non_owner_middleware() -> Arc<ToolPolicyHostState> {
     non_owner_middleware_at(PermissionLevel::Dangerous)
 }
 
 /// The same session at a chosen ceiling, so a test can sit a channel BELOW the
 /// pack's permission ceiling — where `use_skill` reports the pack-wide maximum
 /// for an inner name it cannot resolve (#6302).
-fn non_owner_middleware_at(allowed: PermissionLevel) -> ToolPolicyMiddleware {
+fn non_owner_middleware_at(allowed: PermissionLevel) -> Arc<ToolPolicyHostState> {
     let mut tools: Vec<Box<dyn tinytools::Tool>> = vec![
         Box::new(RoutingFakeTool("build_workflow")),
         Box::new(RoutingFakeTool("propose_workflow")),
@@ -103,17 +102,12 @@ fn non_owner_middleware_at(allowed: PermissionLevel) -> ToolPolicyMiddleware {
             .collect(),
     };
 
-    ToolPolicyMiddleware::new(
-        Arc::new(AllowAllToolPolicy),
-        session,
-        vec![tools],
-        "web_chat".to_string(),
-    )
+    session_policy_host(session, vec![tools], "web_chat".to_string())
 }
 
 #[test]
 fn desktop_approval_bypass_skips_only_require_approval_channel_verdict() {
-    fn middleware(action: ToolPolicyAction) -> ToolPolicyMiddleware {
+    fn middleware(action: ToolPolicyAction) -> Arc<ToolPolicyHostState> {
         let name = "desktop_goal";
         let session = ToolPolicySession {
             profile: TaskProfile {
@@ -139,8 +133,7 @@ fn desktop_approval_bypass_skips_only_require_approval_channel_verdict() {
             .into_iter()
             .collect(),
         };
-        ToolPolicyMiddleware::new(
-            Arc::new(AllowAllToolPolicy),
+        session_policy_host(
             session,
             vec![Arc::new(vec![Box::new(RoutingFakeTool(name))])],
             "web_chat".to_owned(),
@@ -285,12 +278,7 @@ async fn a_session_without_the_delegate_is_not_told_to_call_it() {
         hidden_tool_names: Default::default(),
         decisions: [allow(USE_SKILL)].into_iter().collect(),
     };
-    let mw = ToolPolicyMiddleware::new(
-        Arc::new(AllowAllToolPolicy),
-        session,
-        vec![tools],
-        "web_chat".to_string(),
-    );
+    let mw = session_policy_host(session, vec![tools], "web_chat".to_string());
 
     let message = mw
         .channel_permission_block(
@@ -344,12 +332,7 @@ async fn use_skill_reaches_a_withheld_packed_tool() {
         &visible,
     );
 
-    let mw = ToolPolicyMiddleware::new(
-        Arc::new(AllowAllToolPolicy),
-        session,
-        vec![tools],
-        "web_chat".to_string(),
-    );
+    let mw = session_policy_host(session, vec![tools], "web_chat".to_string());
 
     assert!(
         mw.channel_permission_block(
@@ -404,12 +387,7 @@ async fn a_prompt_hidden_delegate_is_not_offered_as_a_direct_route() {
         &tools,
         &visible,
     );
-    let mw = ToolPolicyMiddleware::new(
-        Arc::new(AllowAllToolPolicy),
-        session,
-        vec![tools],
-        "web_chat".to_string(),
-    );
+    let mw = session_policy_host(session, vec![tools], "web_chat".to_string());
 
     let pack = crate::tools::toolpacks::pack("workflows").expect("workflows pack");
     let route = mw.route_for_pack(pack);

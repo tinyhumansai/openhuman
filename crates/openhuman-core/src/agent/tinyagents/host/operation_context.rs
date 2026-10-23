@@ -6,6 +6,9 @@ use tinyagents_definition::SandboxMode;
 
 use std::{sync::Arc, time::Duration};
 
+type WorkflowScanPermit = (String, String, String, String);
+pub(crate) type WorkflowScanPermits = Arc<std::sync::Mutex<Vec<WorkflowScanPermit>>>;
+
 /// OpenHuman product values that tools read from the run through
 /// `ToolExecutionContext::host::<OpenHumanRunExt>()`, installed by
 /// [`OpenHumanRunContext::into_tinyagents`] with `RunContext::with_host`.
@@ -92,6 +95,7 @@ pub(crate) fn task_recency_window_for_tool(
 /// harness's typed state-view seam.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HostOperationContext {
+    pub(crate) workflow_scan_permits: WorkflowScanPermits,
     pub(crate) origin: Option<AgentTurnOrigin>,
     /// Where this run's approvals are surfaced; see
     /// [`OpenHumanRunContext::approval`](super::OpenHumanRunContext::approval).
@@ -111,6 +115,29 @@ pub(crate) struct HostOperationContext {
     /// The context the run acts under; see
     /// [`OpenHumanRunContext::core`](super::OpenHumanRunContext::core).
     pub(crate) core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
+}
+
+/// Consume the scan snapshot admitted for one workflow invocation. Direct
+/// controller calls have no agent run and therefore no approval permit.
+pub(crate) fn take_workflow_scan_permit_for_tool(
+    context: Option<&dyn tinytools::ToolRunContext>,
+    workflow_id: &str,
+    inputs: &serde_json::Value,
+) -> Option<String> {
+    let execution = context?
+        .host_extension()?
+        .downcast_ref::<tinyagents_harness::tool::ToolExecutionContext>()?;
+    let host = execution.state::<HostOperationContext>()?;
+    let call_id = execution.call_id.to_string();
+    let inputs = serde_json::to_string(inputs).ok()?;
+    let mut permits = host
+        .workflow_scan_permits
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let index = permits.iter().rposition(|(id, args, call, _)| {
+        id == workflow_id && args == &inputs && call == &call_id
+    })?;
+    Some(permits.remove(index).3)
 }
 
 /// The dispatch context of the run a tool executes in, from the explicit tool

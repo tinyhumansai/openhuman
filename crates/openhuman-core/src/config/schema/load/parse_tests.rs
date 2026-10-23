@@ -150,9 +150,9 @@ default_model = "claude-sonnet-4"
     let loaded = Config::load_from_config_path(&config_path, &workspace)
         .await
         .unwrap();
-    assert_eq!(loaded.schema_version, 14);
+    assert_eq!(loaded.schema_version, 15);
     let once = std::fs::read_to_string(&config_path).unwrap();
-    assert!(once.contains("schema_version = 14"));
+    assert!(once.contains("schema_version = 15"));
     assert!(!once.contains("type = \"anthropic\""));
     let reloaded = Config::load_from_config_path(&config_path, &workspace)
         .await

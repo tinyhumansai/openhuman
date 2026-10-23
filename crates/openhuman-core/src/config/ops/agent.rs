@@ -8,7 +8,7 @@ use crate::core::Outcome;
 use super::loader::snapshot_config_json;
 use super::tool_dispatcher as td;
 
-/// Partial update for the `[autonomy]` block — the agent's filesystem access
+/// Partial update for the `[security.autonomy]` block — the agent's filesystem access
 /// mode. Each `None` field is left unchanged. `trusted_roots`, `allowed_commands`,
 /// `forbidden_paths`, and `auto_approve`, when `Some`, REPLACE the corresponding
 /// array wholesale.
@@ -74,7 +74,7 @@ pub struct AgentPathsPatch {
     pub files_dir: Option<String>,
 }
 
-/// Updates the `[autonomy]` (agent access mode) settings in the configuration.
+/// Updates the `[security.autonomy]` (agent access mode) settings in the configuration.
 ///
 /// After saving, publishes a `DomainEvent::System(AutonomyConfigChanged)` so that
 /// live agent sessions can rebuild their `SecurityPolicy` without a core restart
@@ -86,10 +86,10 @@ pub async fn apply_autonomy_settings(
     use crate::security::AutonomyLevel;
 
     if let Some(enabled) = update.enabled {
-        config.autonomy.enabled = enabled;
+        config.security.autonomy.enabled = enabled;
     }
     if let Some(level) = update.level {
-        config.autonomy.level = match level.trim().to_ascii_lowercase().as_str() {
+        config.security.autonomy.level = match level.trim().to_ascii_lowercase().as_str() {
             "readonly" | "read_only" | "read-only" => AutonomyLevel::ReadOnly,
             "supervised" => AutonomyLevel::Supervised,
             "full" => AutonomyLevel::Full,
@@ -101,19 +101,19 @@ pub async fn apply_autonomy_settings(
         };
     }
     if let Some(workspace_only) = update.workspace_only {
-        config.autonomy.workspace_only = workspace_only;
+        config.security.autonomy.workspace_only = workspace_only;
     }
     if let Some(allowed_commands) = update.allowed_commands {
-        config.autonomy.allowed_commands = allowed_commands;
+        config.security.autonomy.allowed_commands = allowed_commands;
     }
     if let Some(forbidden_paths) = update.forbidden_paths {
-        config.autonomy.forbidden_paths = forbidden_paths;
+        config.security.autonomy.forbidden_paths = forbidden_paths;
     }
     if let Some(trusted_roots) = update.trusted_roots {
-        config.autonomy.trusted_roots = trusted_roots;
+        config.security.autonomy.trusted_roots = trusted_roots;
     }
     if let Some(allow_tool_install) = update.allow_tool_install {
-        config.autonomy.allow_tool_install = allow_tool_install;
+        config.security.autonomy.allow_tool_install = allow_tool_install;
     }
     if let Some(max_actions_per_hour) = update.max_actions_per_hour {
         if max_actions_per_hour == 0 {
@@ -121,18 +121,18 @@ pub async fn apply_autonomy_settings(
                 "max_actions_per_hour must be at least 1 (got {max_actions_per_hour})"
             ));
         }
-        config.autonomy.max_actions_per_hour = max_actions_per_hour;
+        config.security.autonomy.max_actions_per_hour = max_actions_per_hour;
     }
     if let Some(auto_approve) = update.auto_approve {
-        config.autonomy.auto_approve = auto_approve;
+        config.security.autonomy.auto_approve = auto_approve;
     }
     if let Some(auto_approve_all) = update.auto_approve_all {
-        config.autonomy.auto_approve_all = auto_approve_all;
+        config.security.autonomy.auto_approve_all = auto_approve_all;
     }
 
     config.save().await.map_err(super::config_save_error)?;
 
-    crate::security::live_policy::reload_from(&config.autonomy);
+    crate::security::live_policy::reload_from(&config.security.autonomy);
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::AutonomyConfigChanged);
 
     let snapshot = snapshot_config_json(config)?;
@@ -154,12 +154,12 @@ pub async fn load_and_apply_autonomy_settings(
     apply_autonomy_settings(&mut config, update).await
 }
 
-/// Returns the current `[autonomy]` settings block as JSON (no secrets).
+/// Returns the current `[security.autonomy]` settings block as JSON (no secrets).
 pub async fn get_autonomy_settings(
     ctx: &DispatchCtx,
 ) -> Result<Outcome<serde_json::Value>, String> {
     let config = ctx.load_config().await?;
-    let value = serde_json::to_value(&config.autonomy).map_err(|e| e.to_string())?;
+    let value = serde_json::to_value(&config.security.autonomy).map_err(|e| e.to_string())?;
     Ok(Outcome::single_log(value, "autonomy settings read"))
 }
 
@@ -174,14 +174,20 @@ fn auto_approve_write_lock() -> &'static tokio::sync::Mutex<()> {
 pub async fn add_auto_approve_tool(ctx: &DispatchCtx, tool_name: &str) -> Result<(), String> {
     let _guard = auto_approve_write_lock().lock().await;
     let mut config = ctx.load_config().await?;
-    if config.autonomy.auto_approve.iter().any(|t| t == tool_name) {
+    if config
+        .security
+        .autonomy
+        .auto_approve
+        .iter()
+        .any(|t| t == tool_name)
+    {
         tracing::debug!(
             tool = tool_name,
             "[config:auto_approve] tool already allow-listed; nothing to persist"
         );
         return Ok(());
     }
-    let mut next = config.autonomy.auto_approve.clone();
+    let mut next = config.security.autonomy.auto_approve.clone();
     next.push(tool_name.to_string());
     let patch = AutonomySettingsPatch {
         auto_approve: Some(next),

@@ -19,7 +19,7 @@ pub(super) fn binding(ctx: DispatchCtx, temp: &TempDir) -> CapsHostBinding {
         flow_id: "flow-1".into(),
         run_id: "run-1".into(),
         security: Arc::new(crate::security::SecurityPolicy::from_config(
-            &config.autonomy,
+            &config.security.autonomy,
             &config.workspace_dir,
             &config.action_dir,
         )),

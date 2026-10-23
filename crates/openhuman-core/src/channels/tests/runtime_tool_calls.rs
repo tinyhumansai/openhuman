@@ -11,7 +11,6 @@ use super::common::{
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tinychannels_bus as traits;
 use tinyinference_llm::model::ChatModel;
 
 #[tokio::test]

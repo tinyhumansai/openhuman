@@ -58,7 +58,7 @@ Memory is not local, so scrubbing and scoping matter. Items are scrubbed before 
 You have real controls. These run from most to least private:
 
 1. **Route inference on-device.** Run a local runtime such as Ollama yourself, pull the models, and [add it as a provider](local-model.md). Embeddings, summaries and, optionally, chat and reasoning then happen on your machine. OpenHuman does not install the runtime or download models for you. Speech and web search still use the backend proxy.
-2. **Tighten what the assistant can do.** Set `[autonomy] enabled = true` and `level = "readonly"` in `config.toml`. The assistant can then observe and answer but never act or reach the network on its own. The policy is off by default, so you have to turn this on. See the [Approval Gate](../features/approval-gate.md).
+2. **Tighten what the assistant can do.** Set `[security.autonomy] enabled = true` and `level = "readonly"` in `config.toml`. The assistant can then observe and answer but never act or reach the network on its own. The policy is off by default, so you have to turn this on. See the [Approval Gate](../features/approval-gate.md).
 3. **Keep it in one folder.** The filesystem boundary needs two things: the policy enabled and `workspace_only` on. With both, the agent is confined to its working folder and cannot read the rest of your disk. If either is off, the boundary is not enforced. A trusted root is the deliberate exception. Each one you add grants its subtree outside the working folder and takes precedence over `workspace_only`. System and credential folders (`~/.ssh`, `~/.gnupg`, `~/.aws` and OS directories) are always blocked.
 4. **Connect only what you need.** Each integration is a separate OAuth approval that you grant and can revoke. Revoking stops the next sync. Memory already collected stays in your memory engine until you forget it.
 
@@ -72,7 +72,7 @@ You have real controls. These run from most to least private:
 
 You know your privacy posture when you can answer these:
 
-- [ ] Is the autonomy policy on, and do you know its tier? Check `[autonomy]` in `config.toml`.
+- [ ] Is the autonomy policy on, and do you know its tier? Check `[security.autonomy]` in `config.toml`.
 - [ ] If you rely on the filesystem boundary, is `workspace_only` on too, and do you know which trusted roots grant access outside the working folder?
 - [ ] Do you know which integrations are connected? Check **Settings** and disconnect any you do not need.
 - [ ] If a workload must stay local, is it routed to a [local provider](local-model.md) that is running and answering?

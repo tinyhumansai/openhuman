@@ -44,6 +44,9 @@ fn debug_redacts_the_broker_credentials() {
         ..InboundConfig::default()
     };
     let shown = format!("{c:?}");
-    assert!(!shown.contains("hunter2"), "{shown}");
-    assert!(shown.contains("broker.internal"), "{shown}");
+    assert_eq!(
+        shown,
+        format!("InboundConfig {{ enabled: true, queues_path: None, pipeline_path: None, queue_url: Some(\"{}\"), triage_timeout_ms: 25000, sources: {{}} }}", crate::core::log_redaction::SUPPRESSED),
+        "unsupported endpoint schemes are suppressed instead of logged"
+    );
 }

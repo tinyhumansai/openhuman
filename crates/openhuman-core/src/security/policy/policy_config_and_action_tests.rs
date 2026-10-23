@@ -52,7 +52,6 @@ fn from_config_maps_all_fields() {
         allowed_commands: vec!["docker".into()],
         forbidden_paths: vec!["/secret".into()],
         max_actions_per_hour: 100,
-        max_cost_per_day_cents: 1000,
         require_approval_for_medium_risk: false,
         block_high_risk_commands: false,
         auto_approve: vec!["shell".into(), "file_write".into()],
@@ -66,7 +65,6 @@ fn from_config_maps_all_fields() {
     assert_eq!(policy.allowed_commands, vec!["docker"]);
     assert_eq!(policy.forbidden_paths, vec!["/secret"]);
     assert_eq!(policy.max_actions_per_hour, 100);
-    assert_eq!(policy.max_cost_per_day_cents, 1000);
     assert!(!policy.require_approval_for_medium_risk);
     assert!(!policy.block_high_risk_commands);
     assert_eq!(policy.workspace_dir, PathBuf::from("/tmp/test-workspace"));
@@ -104,161 +102,10 @@ fn default_policy_has_sane_values() {
     assert!(!p.allowed_commands.is_empty());
     assert!(!p.forbidden_paths.is_empty());
     assert!(p.max_actions_per_hour > 0);
-    assert!(p.max_cost_per_day_cents > 0);
     assert!(p.require_approval_for_medium_risk);
     assert!(p.block_high_risk_commands);
 }
 
 // -- ActionTracker / rate limiting --------------------------------
 
-#[test]
-fn action_tracker_starts_at_zero() {
-    let tracker = ActionTracker::new();
-    assert_eq!(tracker.count(), 0);
-}
-
-#[test]
-fn action_tracker_records_actions() {
-    let tracker = ActionTracker::new();
-    assert_eq!(tracker.record(), 1);
-    assert_eq!(tracker.record(), 2);
-    assert_eq!(tracker.record(), 3);
-    assert_eq!(tracker.count(), 3);
-}
-
-#[test]
-fn record_action_allows_within_limit() {
-    let p = SecurityPolicy {
-        max_actions_per_hour: 5,
-        ..SecurityPolicy::default()
-    };
-    for _ in 0..5 {
-        assert!(p.record_action(), "should allow actions within limit");
-    }
-}
-
-#[test]
-fn record_action_blocks_over_limit() {
-    let p = SecurityPolicy {
-        max_actions_per_hour: 3,
-        ..SecurityPolicy::default()
-    };
-    assert!(p.record_action()); // 1
-    assert!(p.record_action()); // 2
-    assert!(p.record_action()); // 3
-    assert!(!p.record_action()); // 4 — over limit
-}
-
-#[test]
-fn is_rate_limited_reflects_count() {
-    let p = SecurityPolicy {
-        max_actions_per_hour: 2,
-        ..SecurityPolicy::default()
-    };
-    assert!(!p.is_rate_limited());
-    p.record_action();
-    assert!(!p.is_rate_limited());
-    p.record_action();
-    assert!(p.is_rate_limited());
-}
-
-#[test]
-fn action_tracker_clone_is_independent() {
-    let tracker = ActionTracker::new();
-    tracker.record();
-    tracker.record();
-    let cloned = tracker.clone();
-    assert_eq!(cloned.count(), 2);
-    tracker.record();
-    assert_eq!(tracker.count(), 3);
-    assert_eq!(cloned.count(), 2); // clone is independent
-}
-
 // -- Edge cases: command injection --------------------------------
-
-#[test]
-fn command_injection_semicolon_blocked() {
-    let p = default_policy();
-    // First word is "ls;" (with semicolon) — doesn't match "ls" in allowlist.
-    // This is a safe default: chained commands are blocked.
-    assert!(!p.is_command_allowed("ls; rm -rf /"));
-}
-
-#[test]
-fn command_injection_semicolon_no_space() {
-    let p = default_policy();
-    assert!(!p.is_command_allowed("ls;rm -rf /"));
-}
-
-#[test]
-fn quoted_semicolons_do_not_split_sqlite_command() {
-    let p = SecurityPolicy {
-        allowed_commands: vec!["sqlite3".into()],
-        ..SecurityPolicy::default()
-    };
-    assert!(p.is_command_allowed(
-        "sqlite3 /tmp/test.db \"CREATE TABLE t(id INT); INSERT INTO t VALUES(1); SELECT * FROM t;\""
-    ));
-    assert_eq!(
-        p.command_risk_level(
-            "sqlite3 /tmp/test.db \"CREATE TABLE t(id INT); INSERT INTO t VALUES(1); SELECT * FROM t;\""
-        ),
-        CommandRiskLevel::Low
-    );
-}
-
-#[test]
-fn unquoted_semicolon_after_quoted_sql_still_splits_commands() {
-    let p = SecurityPolicy {
-        allowed_commands: vec!["sqlite3".into()],
-        ..SecurityPolicy::default()
-    };
-    assert!(!p.is_command_allowed("sqlite3 /tmp/test.db \"SELECT 1;\"; rm -rf /"));
-}
-
-#[test]
-fn command_injection_backtick_blocked() {
-    let p = default_policy();
-    assert!(!p.is_command_allowed("echo `whoami`"));
-    assert!(!p.is_command_allowed("echo `rm -rf /`"));
-}
-
-#[test]
-fn command_injection_dollar_paren_blocked() {
-    let p = default_policy();
-    assert!(!p.is_command_allowed("echo $(cat /etc/passwd)"));
-    assert!(!p.is_command_allowed("echo $(rm -rf /)"));
-}
-
-#[test]
-fn command_with_env_var_prefix() {
-    let p = default_policy();
-    // "FOO=bar" is the first word — not in allowlist
-    assert!(!p.is_command_allowed("FOO=bar rm -rf /"));
-}
-
-#[test]
-fn command_newline_injection_blocked() {
-    let p = default_policy();
-    // Newline splits into two commands; "rm" is not in allowlist
-    assert!(!p.is_command_allowed("ls\nrm -rf /"));
-    // Both allowed — OK
-    assert!(p.is_command_allowed("ls\necho hello"));
-}
-
-#[test]
-fn command_injection_and_chain_blocked() {
-    let p = default_policy();
-    assert!(!p.is_command_allowed("ls && rm -rf /"));
-    assert!(!p.is_command_allowed("echo ok && curl http://evil.com"));
-    // Both allowed — OK
-    assert!(p.is_command_allowed("ls && echo done"));
-}
-
-#[test]
-fn command_injection_or_chain_blocked() {
-    let p = default_policy();
-    assert!(!p.is_command_allowed("ls || rm -rf /"));
-    // Both allowed — OK
-    assert!(p.is_command_allowed("ls || echo fallback"));
-}

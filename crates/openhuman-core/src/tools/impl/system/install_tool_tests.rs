@@ -47,34 +47,20 @@ async fn blocked_when_install_disabled() {
 }
 
 #[tokio::test]
-async fn blocked_when_readonly() {
-    let tool = InstallToolTool::new(policy(true, AutonomyLevel::ReadOnly));
-    let result = tool
-        .execute_with_context(
-            json!({ "package": "jq" }),
-            tinytools::ToolCallOptions::default(),
-            Some(&chat_tool_context(chat_ctx())),
-        )
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.output().contains("read-only"), "{}", result.output());
-}
-
-#[tokio::test]
-async fn rejects_injection_in_package_name() {
+async fn refuses_host_package_manager_execution_until_an_isolated_installer_exists() {
     let tool = InstallToolTool::new(policy(true, AutonomyLevel::Full));
     let result = tool
         .execute_with_context(
-            json!({ "package": "jq; rm -rf /" }),
+            json!({ "package": "jq", "manager": "apt" }),
             tinytools::ToolCallOptions::default(),
             Some(&chat_tool_context(chat_ctx())),
         )
         .await
         .unwrap();
+
     assert!(result.is_error);
     assert!(
-        result.output().contains("Invalid package name"),
+        result.output().contains("isolated package installer"),
         "{}",
         result.output()
     );
@@ -94,22 +80,10 @@ async fn refuses_in_autonomous_turn_without_chat_context() {
     );
 }
 
-#[tokio::test]
-async fn rejects_unknown_manager() {
-    let tool = InstallToolTool::new(policy(true, AutonomyLevel::Full));
-    let result = tool
-        .execute(json!({ "package": "jq", "manager": "notamanager" }))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-}
-
 #[test]
-fn package_name_validation() {
-    assert!(is_valid_package_name("ripgrep"));
-    assert!(is_valid_package_name("@scope/cli"));
-    assert!(is_valid_package_name("python3.11"));
-    assert!(!is_valid_package_name("jq; rm -rf /"));
-    assert!(!is_valid_package_name("a b"));
-    assert!(!is_valid_package_name(""));
+fn saas_refuses_installs_and_single_user_hosts_do_not() {
+    let refusal = refuse_under_saas(true).expect("SaaS must refuse");
+    assert!(refusal.is_error);
+    assert!(refusal.output().contains("SaaS"), "{}", refusal.output());
+    assert!(refuse_under_saas(false).is_none());
 }

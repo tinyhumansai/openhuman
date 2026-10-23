@@ -53,7 +53,7 @@ impl Tool for ComposioListToolkitsTool {
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
 }
 

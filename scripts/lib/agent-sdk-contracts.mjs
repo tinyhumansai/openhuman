@@ -7,6 +7,9 @@ const contracts = new Map([
   ["crates/openhuman-core/src/agent/tinyagents/turn_observer.rs", compact(
     "pub use tinyagents_harness::observability::{trace_export::{otlp::otlp_requests, ExportBrand, SpanKind, SpanStatus, TraceSpan}, LangfuseAuth, LangfuseClient, LangfuseScore, LangfuseScoreValue, LangfuseTraceConfig};",
   )],
+  ["crates/openhuman-embed/src/host_internals.rs", compact(
+    "pub use tinytools_std::url_guard::is_private_or_local_host;",
+  )],
 ]);
 
 // Callers pass Rust with comments/literals masked. Full-statement matching

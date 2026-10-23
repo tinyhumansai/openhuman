@@ -94,7 +94,7 @@ fn removal_invalidates_approval_handles_and_reserves_ids_until_cleanup() {
             let provider = common::provider("no tools").await;
             let scratch = tempfile::tempdir().unwrap();
             let mut config = common::offline_config();
-            config.autonomy.enabled = true;
+            config.security.autonomy.enabled = true;
             let runtime = Arc::new(Runtime::builder()
                 .config(config)
                 .backend_url(backend.uri())

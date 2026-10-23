@@ -7,14 +7,12 @@
 //! harness's middleware stack, in the same order as
 //! [`install_turn_middleware`](super::turn_middleware):
 //!
-//! 1. the SDK tool-policy projection (`require_sandbox`),
-//! 2. human-in-the-loop approval (`ApprovalSecurityMiddleware` through the
-//!    global `ApprovalGate`),
-//! 3. the CLI/RPC-only scope gate,
-//! 4. the session's `ToolPolicyMiddleware` (deny / require-approval rules),
-//! 5. credential scrubbing of every tool result,
-//! 6. malformed-argument recovery,
-//! 7. bare packed-tool routing and embedder tool hooks.
+//! 1. TinySecurity policy, including declared sandbox requirements, human
+//!    approval and the builder/session tool-policy ceiling,
+//! 2. the CLI/RPC-only scope gate,
+//! 3. credential scrubbing of every tool result,
+//! 4. malformed-argument recovery,
+//! 5. bare packed-tool routing and embedder tool hooks.
 //!
 //! Model-loop middleware (context ladder, compaction, prompt-cache guard,
 //! budgets, repeat breakers, memory packs) is deliberately absent: nothing in
@@ -23,9 +21,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use tinyagents_harness::middleware::{
-    ApprovalGateMiddleware, ArgRecoveryMiddleware, ToolPolicyMiddleware as TaToolPolicyMiddleware,
-};
+use tinyagents_harness::middleware::ArgRecoveryMiddleware;
 use tinyagents_harness::runtime::AgentHarness;
 
 use super::host::OpenHumanRunContext;
@@ -89,31 +85,20 @@ pub(crate) fn assemble_live_tool_harness(
     }
     tracing::debug!(tool_count, tools = ?names, "[voice-live] assembled live tool harness");
 
-    harness.push_middleware(Arc::new(
-        TaToolPolicyMiddleware::new(harness.tools().policies()).require_sandbox(true),
-    ));
-    harness.push_tool_middleware(Arc::new(ApprovalGateMiddleware::new(
-        "approval_security",
-        Arc::new(middleware::approval::ApprovalSecurityMiddleware::new(
-            tool_sets.clone(),
-        )),
-    )));
+    middleware::security_gate::install(
+        &mut harness,
+        tool_sets.clone(),
+        tool_policy
+            .as_ref()
+            .map(|enforcement| enforcement.session.clone()),
+        tool_policy.clone(),
+    );
     harness.push_tool_middleware(Arc::new(
         tinyagents_harness::middleware::CliRpcOnlyMiddleware::new(tool_sets.clone()),
     ));
     let route_session = tool_policy
         .as_ref()
         .map(|enforcement| enforcement.session.clone());
-    if let Some(enforcement) = tool_policy {
-        harness.push_tool_middleware(Arc::new(
-            middleware::tool_policy::ToolPolicyMiddleware::new(
-                enforcement.policy,
-                enforcement.session,
-                tool_sets.clone(),
-                enforcement.channel,
-            ),
-        ));
-    }
     harness.push_tool_middleware(Arc::new(
         middleware::credential_scrub::credential_scrub_middleware(),
     ));

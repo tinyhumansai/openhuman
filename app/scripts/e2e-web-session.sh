@@ -132,6 +132,9 @@ mkdir -p "$OPENHUMAN_WORKSPACE"
 # (and retains services for) the runner's global ~/.openhuman state.
 E2E_WEB_CORE_HOME="$OPENHUMAN_WORKSPACE/home"
 mkdir -p "$E2E_WEB_CORE_HOME"
+# `mkdir` inherits the caller's umask. Keep the module cache under the core's
+# HOME private even when the E2E runner uses a group-writable umask.
+chmod 700 "$E2E_WEB_CORE_HOME"
 # Keep the acting-tool sandbox inside the shard as well. Besides isolating
 # browser runs from the host's projects directory, this gives tool-call specs
 # a deterministic, readable fixture without touching the checkout.

@@ -51,7 +51,7 @@ pub struct ComposioActionTool {
     /// the backend-bound handle at sub-agent spawn time. Toggling
     /// `composio.mode = "direct"` mid-session invalidated other caches
     /// but left these per-action tools still routing through
-    /// the managed backend's composio execute route
+    /// `staging-api.tinyhumans.ai/agent-integrations/composio/execute`
     /// — silently bypassing the direct-mode user's personal Composio
     /// tenant. Resolving the client per call via
     /// [`resolve_composio_route`] keeps dispatch in lockstep with the
@@ -60,7 +60,7 @@ pub struct ComposioActionTool {
     ///
     /// `None` for a deferred instance synthesised for a parent session,
     /// which has no spawn-time config: it resolves the live config through
-    /// [`DispatchCtx::load_config`] on every call — the
+    /// [`config_rpc::load_config_with_timeout`] on every call — the
     /// embedder's config when one is bound, else the process-global one.
     config: Option<Arc<Config>>,
     /// Action slug as-shipped to Composio, e.g. `"GMAIL_SEND_EMAIL"`.
@@ -240,8 +240,8 @@ impl Tool for ComposioActionTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) =
-            Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None)).await;
-        super::tools::redact_composio_outcome(&config, outcome)
+            Box::pin(self.execute_unredacted(&DispatchCtx::ambient(), args, None)).await;
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
     async fn execute_with_context(
         &self,
@@ -255,7 +255,7 @@ impl Tool for ComposioActionTool {
             sandbox_mode_for_tool(context),
         ))
         .await;
-        super::tools::redact_composio_outcome(&config, outcome)
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
 }
 

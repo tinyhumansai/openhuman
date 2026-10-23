@@ -30,10 +30,11 @@ pub struct ResolvedEndpoints {
     /// Where OTLP trace exports are pushed (the OTLP/HTTP traces endpoint of
     /// the same tracing backend), when the host exposes one.
     pub tracing_otlp_url: Option<String>,
-    /// The deployment bucket the host places its control plane in
-    /// (`"production"`, `"staging"`, `"development"` or `"external"`). The core
-    /// classifies loopback hosts itself and treats anything unrecognised as
-    /// `"external"`, which does not push traces.
+    /// The deployment bucket the host resolves for its control plane
+    /// (`"production"`, `"staging"`, `"development"` or `"external"`). This is
+    /// host-provided endpoint metadata, not a security grant: the core's
+    /// TinySecurity egress decision still controls whether trace data may be
+    /// sent. An absent or unrecognised bucket fails closed for hosted tracing.
     pub deployment_environment: Option<String>,
     /// Host patterns the installed host treats as its own managed backend:
     /// an exact host (`api.example.com`) or a `.suffix` that matches any

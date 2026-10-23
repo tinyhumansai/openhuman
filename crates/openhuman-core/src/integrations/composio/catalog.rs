@@ -76,8 +76,10 @@ pub(crate) fn has_curated_catalog(toolkit: &str) -> bool {
 #[cfg(test)]
 #[path = "catalog_seed.rs"]
 mod seed;
+#[cfg(all(test, feature = "flows"))]
+pub(crate) use seed::seed_live_catalog_cache_expired;
 #[cfg(test)]
-pub(crate) use seed::{seed_live_catalog_cache, seed_live_catalog_cache_expired, seed_probe_cache};
+pub(crate) use seed::{seed_live_catalog_cache, seed_probe_cache};
 
 #[cfg(test)]
 #[path = "catalog_tests.rs"]

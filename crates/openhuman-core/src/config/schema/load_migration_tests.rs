@@ -303,29 +303,6 @@ backend = "sqlite"
 }
 
 #[test]
-fn redact_url_strips_basic_auth_and_query() {
-    let out = redact_url_for_log(
-        "https://user:token@api.example.com/v1/chat/completions?api_key=sk-x&debug=1",
-    );
-    assert!(!out.contains("token"), "got: {out}");
-    assert!(!out.contains("sk-x"), "got: {out}");
-    assert!(out.starts_with("https://api.example.com"), "got: {out}");
-}
-
-#[test]
-fn redact_url_handles_plain_url() {
-    let out = redact_url_for_log("https://api.openai.com/v1/chat/completions");
-    assert_eq!(out, "https://api.openai.com/v1/chat/completions");
-}
-
-#[test]
-fn redact_url_fallback_masks_userinfo_when_unparseable() {
-    let out = redact_url_for_log("not-a-scheme://user:secret@host/path?token=1");
-    assert!(!out.contains("secret"), "got: {out}");
-    assert!(!out.contains("token=1"), "got: {out}");
-}
-
-#[test]
 fn migrate_legacy_inference_url_moves_external_chat_completions() {
     let mut cfg = Config::default();
     cfg.api_url = Some("https://api.openai.com/v1/chat/completions".to_string());
@@ -337,6 +314,9 @@ fn migrate_legacy_inference_url_moves_external_chat_completions() {
         Some("https://api.openai.com/v1/chat/completions")
     );
 }
+
+#[path = "load_migration_redaction_tests.rs"]
+mod redaction_tests;
 
 #[test]
 fn migrate_legacy_inference_url_clears_managed_backend_form() {

@@ -163,46 +163,6 @@
       "scope": "tinyflows-bus",
       "package": "chrono",
       "reason": "tinyflows-bus schedule contract v3 carries the job, run and schedule records (CronJob, CronRun, Schedule, DeliveryConfig, ...) with their DateTime<Utc> fields so hosts redeclare none of them. chrono is time arithmetic and RFC3339 serde only, with no I/O or runtime; the schedule maths themselves (cron expressions, time zones) run in the module. Recorded for contract-boundary review (tinyflows#143, openhuman cron cutover #7397)."
-    },
-    {
-      "scope": "tinyjuice-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "The TinyJuice bus storage schema uses tinystoragedrivers-types for data-only schema records; this crate has no I/O or runtime behavior. The bus no longer depends on tinystoragedrivers-core."
-    },
-    {
-      "scope": "tinyconnectors-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
-    },
-    {
-      "scope": "tinymcp-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
-    },
-    {
-      "scope": "tinychannels-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
-    },
-    {
-      "scope": "tinywallet-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
-    },
-    {
-      "scope": "tinymemes-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
-    },
-    {
-      "scope": "tinyeventqueues-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
-    },
-    {
-      "scope": "tinybox-bus",
-      "package": "tinystoragedrivers-types",
-      "reason": "Storage schema contract (docs/gitbooks/en/developing/architecture/storage.md, epic #7973): every module owner exports `storage_schema()` from its bus crate, behind an opt-in `storage` feature, so the host composes `storage::schema` from the contracts instead of linking implementation crates. The edge is the tinystoragedrivers ports crate only, never an implementation crate. tinystoragedrivers-types is data-only and contains no engine or runtime behavior."
     }
   ],
   "excludedSubsystems": [

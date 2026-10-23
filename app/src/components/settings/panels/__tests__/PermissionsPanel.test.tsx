@@ -19,7 +19,7 @@ const autonomy = (overrides: Partial<AutonomySettings> = {}): AutonomySettings =
   allowed_commands: [],
   forbidden_paths: [],
   trusted_roots: [],
-  allow_tool_install: true,
+  allow_tool_install: false,
   max_actions_per_hour: 0,
   auto_approve: [],
   ...overrides,
@@ -95,7 +95,7 @@ describe('PermissionsPanel', () => {
     fireEvent.click(await screen.findByText("Look, don't touch"));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ level: 'readonly', allow_tool_install: true })
+        expect.objectContaining({ level: 'readonly', allow_tool_install: false })
       )
     );
   });
@@ -105,7 +105,7 @@ describe('PermissionsPanel', () => {
     fireEvent.click(await screen.findByText('Full control'));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ level: 'full', allow_tool_install: true })
+        expect.objectContaining({ level: 'full', allow_tool_install: false })
       )
     );
   });

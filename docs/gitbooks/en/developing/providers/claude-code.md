@@ -96,7 +96,7 @@ The CLI sees these tools as `mcp__openhuman__<name>`, served over the loopback H
 - `agent.list_subagents`, `agent.run_subagent` (write, flagged `destructiveHint` as the MCP spec requires)
 - `searxng_search`
 
-The MCP server enforces `SecurityPolicy::ToolOperation` checks. `agent.run_subagent`, `memory.learn` and `memory.forget` write. The rest are read-only. The CLI's own `tool_use` blocks (its internal Read, Bash and similar calls) never reach OpenHuman as harness tool calls, because the CLI has already run them by the time they appear in the stream. `event_mapper.rs` only strips their argument JSON from the visible text.
+The MCP server enforces the security policy per call: `agent.run_subagent`, `memory.learn` and `memory.forget` write, so each reserves one action of the hourly budget and is refused under a read-only autonomy tier (`SecurityPolicy::spend_action`, answered by the security module). The rest are read-only. The CLI's own `tool_use` blocks (its internal Read, Bash and similar calls) never reach OpenHuman as harness tool calls, because the CLI has already run them by the time they appear in the stream. `event_mapper.rs` only strips their argument JSON from the visible text.
 
 ## Limitations
 

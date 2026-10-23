@@ -5,7 +5,7 @@
 use crate::BackendTransportError;
 
 use super::construct::IntegrationClient;
-use super::requests::{emit_backend_egress, enforce_backend_egress};
+use super::requests::{admit_backend_egress, BackendPayload};
 
 /// Extract the `filename` (or RFC 5987 `filename*`) parameter from a
 /// `Content-Disposition` header value, e.g.
@@ -52,8 +52,7 @@ impl IntegrationClient {
         path: &str,
     ) -> anyhow::Result<(bytes::Bytes, Option<String>, Option<String>)> {
         self.validate_credential_endpoint()?;
-        enforce_backend_egress(path)?;
-        emit_backend_egress(approval, path);
+        admit_backend_egress(approval, path, BackendPayload::None).await?;
         self.ensure_budget_available(path).await?;
         let route = path.split('?').next().unwrap_or(path);
         let segments = route.trim_matches('/').split('/').collect::<Vec<_>>();

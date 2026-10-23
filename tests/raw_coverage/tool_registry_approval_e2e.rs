@@ -548,6 +548,8 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         vec![
             "list_pending",
             "list_recent_decisions",
+            "list_tool_trust",
+            "revoke_tool_trust",
             "decide",
             "get_gate_state",
             "preauthorize_flow"
@@ -560,6 +562,31 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
 
     let controllers = all_approval_registered_controllers();
     assert_eq!(controllers.len(), schemas.len());
+
+    let list_grants_handler = controllers
+        .iter()
+        .find(|controller| controller.schema.function == "list_tool_trust")
+        .expect("list tool trust controller")
+        .handler;
+    let list_grants = list_grants_handler(DispatchCtx::process_default(), Map::new())
+        .await
+        .expect("list grants without a gate returns empty");
+    assert!(list_grants
+        .get("result")
+        .or(Some(&list_grants))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| rows.is_empty()));
+
+    let revoke_grant_handler = controllers
+        .iter()
+        .find(|controller| controller.schema.function == "revoke_tool_trust")
+        .expect("revoke tool trust controller")
+        .handler;
+    let mut empty_request_id = Map::new();
+    empty_request_id.insert("request_id".to_string(), json!("  "));
+    assert!(revoke_grant_handler(DispatchCtx::process_default(), empty_request_id)
+        .await
+        .is_err());
 
     let list_handler = controllers
         .iter()
@@ -862,7 +889,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         .expect("reload config after always allow");
     assert!(
         config_after
-            .autonomy
+            .security.autonomy
             .auto_approve
             .iter()
             .any(|tool| tool == "tools.composio_execute"),
@@ -1131,4 +1158,19 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         .is_none());
 
     harness.rpc_join.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn approval_revoke_tool_trust_rpc_rejects_blank_id() {
+    let _lock = env_lock_async().await;
+    let harness = setup("").await;
+    let response = rpc(
+        &harness.rpc_base,
+        1,
+        "openhuman.approval_revoke_tool_trust",
+        json!({ "request_id": "  " }),
+    )
+    .await;
+    assert!(error_message(&response, "blank grant id")
+        .contains("request_id must not be empty"));
 }

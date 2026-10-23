@@ -4,14 +4,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Which sandbox backend to use for a session.
+/// The executor an operator or a deployment asks the security module to plan onto.
+///
+/// This is a request, never a decision: the module picks the executor from the ones
+/// the host verified and may refuse (`sandbox/spawn_plan/`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxBackendKind {
-    /// No sandbox — commands execute directly on the host.
+    /// No preference: the module plans onto the first verified executor that meets
+    /// the spawn's isolation floor.
     #[default]
     None,
-    /// Module-owned native process jail selected by TinyBox.
+    /// The module-owned native process jail selected by TinyBox.
     Local,
     /// Docker container isolation.
     Docker,
@@ -21,7 +25,8 @@ pub enum SandboxBackendKind {
 /// origin, and global config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxPolicy {
-    /// Which backend to use.
+    /// The executor the module is required to plan onto, or none for the module's own
+    /// choice.
     pub backend: SandboxBackendKind,
     /// Workspace root mounted into the sandbox (read/write).
     pub workspace_root: PathBuf,
@@ -41,6 +46,14 @@ pub struct SandboxPolicy {
     pub env_passthrough: Vec<String>,
     /// Docker-specific overrides (image, resource limits).
     pub docker_overrides: Option<DockerOverrides>,
+    /// Whether a container mounts `workspace_root`. `false` asks the module for a plan
+    /// with no workspace grant (`[runtime.docker] mount_workspace = false`).
+    #[serde(default = "mount_workspace_default")]
+    pub mount_workspace: bool,
+}
+
+fn mount_workspace_default() -> bool {
+    true
 }
 
 /// Docker-specific sandbox overrides layered on top of the global
@@ -96,6 +109,43 @@ pub struct SandboxBackendHandle {
     /// How strongly a ready local jail confines commands; `None` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub isolation: Option<SandboxIsolation>,
+}
+
+impl SandboxBackendHandle {
+    /// Whether this backend meets the isolation floor for untrusted code: a
+    /// ready container, or a ready local jail with kernel-level isolation.
+    /// The unsandboxed backend, a folder-confined (Seatbelt) jail and anything
+    /// not ready never do, so callers refuse instead of running unconfined.
+    pub fn suitable_for_untrusted_code(&self) -> bool {
+        if self.status != SandboxStatus::Ready {
+            return false;
+        }
+        match self.kind {
+            SandboxBackendKind::Docker => true,
+            SandboxBackendKind::Local => self.isolation == Some(SandboxIsolation::Isolated),
+            SandboxBackendKind::None => false,
+        }
+    }
+}
+
+/// `sandbox.status` payload: the backend handle plus the untrusted-code floor,
+/// so a UI can tell "ready" from "ready for untrusted code".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxStatusReport {
+    #[serde(flatten)]
+    pub handle: SandboxBackendHandle,
+    /// See [`SandboxBackendHandle::suitable_for_untrusted_code`].
+    pub suitable_for_untrusted_code: bool,
+}
+
+impl SandboxStatusReport {
+    pub fn new(handle: SandboxBackendHandle) -> Self {
+        let suitable_for_untrusted_code = handle.suitable_for_untrusted_code();
+        Self {
+            handle,
+            suitable_for_untrusted_code,
+        }
+    }
 }
 
 /// The confinement a local native jail actually provides.

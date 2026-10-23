@@ -137,6 +137,40 @@ fn deployment_environment_buckets_the_canonical_hosts() {
     );
 }
 
+#[test]
+fn loopback_control_plane_is_resolved_as_development() {
+    for endpoint in [
+        "http://127.0.0.1:7788",
+        "http://localhost:7788",
+        "http://[::1]:7788",
+    ] {
+        let resolved = resolve(&config_with(Some(endpoint)));
+        assert_eq!(resolved.control_plane_url.as_deref(), Some(endpoint));
+        assert_eq!(
+            resolved.deployment_environment.as_deref(),
+            Some("development")
+        );
+        assert_eq!(
+            resolved.tracing_otlp_url.as_deref(),
+            Some(format!("{endpoint}/telemetry/langfuse/otel/v1/traces").as_str())
+        );
+    }
+
+    for endpoint in [
+        "http://192.168.1.20:7788",
+        "http://localhost.evil.example:7788",
+        "http://127.0.0.1.evil.example:7788",
+    ] {
+        assert_eq!(
+            resolve(&config_with(Some(endpoint)))
+                .deployment_environment
+                .as_deref(),
+            Some("external"),
+            "{endpoint} must remain outside the local-development bucket"
+        );
+    }
+}
+
 /// A hostname that merely *contains* `staging` is not ours. The classifier
 /// gates whether a live session token leaves the process, so anything it
 /// cannot positively recognise has to land on `external`.

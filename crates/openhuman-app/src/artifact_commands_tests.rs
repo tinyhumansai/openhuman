@@ -45,20 +45,15 @@ async fn ready_artifact(workspace: &Path, files_dir: &Path) -> String {
 // that change process-wide backend configuration cannot race this lookup.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
-async fn resolve_source_returns_the_file_in_the_files_folder() {
-    // Core-process tests can install a process-global storage backend while
-    // the artifact API resolves the record. Keep both operations on the same
-    // stable host context, as in the other workspace-bound shell tests.
+async fn resolve_source_fails_closed_when_the_security_module_is_unavailable() {
     let _env_lock = env_lock();
     let temp = tempfile::tempdir().unwrap();
     let files_dir = temp.path().join("Files");
     let id = ready_artifact(temp.path(), &files_dir).await;
-    assert_eq!(
-        resolve_source(temp.path(), &FileRoots::new(&files_dir), &id)
-            .await
-            .unwrap(),
-        files_dir.join("deck.pptx")
-    );
+    let error = resolve_source(temp.path(), &FileRoots::new(&files_dir), &id)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("protected location"));
 }
 
 #[tokio::test]
@@ -283,26 +278,14 @@ async fn save_as_refuses_before_the_dialog_opens() {
 }
 
 #[tokio::test]
-async fn save_as_copies_to_the_chosen_path_and_reports_a_cancel() {
+async fn save_as_fails_closed_when_the_security_module_is_unavailable() {
     let temp = tempfile::tempdir().unwrap();
     let files_dir = temp.path().join("Files");
     let id = ready_artifact(temp.path(), &files_dir).await;
     let roots = FileRoots::new(&files_dir);
 
-    let cancelled = save_to_chosen_path(temp.path(), &roots, &id, "Deck.pptx", |_| async { None })
+    let error = save_to_chosen_path(temp.path(), &roots, &id, "Deck.pptx", |_| async { None })
         .await
-        .unwrap();
-    assert_eq!(cancelled, None);
-
-    let dest = temp.path().join("chosen").join("Deck.pptx");
-    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
-    let chosen = dest.clone();
-    let saved = save_to_chosen_path(temp.path(), &roots, &id, "Deck.pptx", |name| async move {
-        assert_eq!(name, "Deck.pptx");
-        Some(chosen)
-    })
-    .await
-    .unwrap();
-    assert_eq!(saved.as_deref(), Some(dest.display().to_string().as_str()));
-    assert_eq!(std::fs::read(&dest).unwrap(), b"deck");
+        .unwrap_err();
+    assert!(error.to_string().contains("protected location"));
 }

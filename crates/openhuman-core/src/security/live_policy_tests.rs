@@ -261,3 +261,32 @@ async fn an_explicit_context_policy_wins_over_the_ambient_one() {
 
     assert!(Arc::ptr_eq(&seen.expect("explicit policy"), &explicit));
 }
+
+#[test]
+fn reload_from_config_keeps_privacy_and_bumps_generation() {
+    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let workspace = std::env::temp_dir().join("openhuman_reload_from_config_test");
+    install(
+        Arc::new(SecurityPolicy::default()),
+        workspace.clone(),
+        workspace.clone(),
+    );
+    let before = generation();
+    let mut config = crate::config::Config {
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
+        ..Default::default()
+    };
+    config.security.autonomy.enabled = true;
+    config.security.privacy.mode = PrivacyMode::LocalOnly;
+    let after = reload_from_config(&config);
+    assert!(after > before);
+    let policy = current().expect("policy installed");
+    assert!(policy.enabled);
+    assert_eq!(policy.privacy_mode, PrivacyMode::LocalOnly);
+    assert_eq!(current_privacy_mode(), PrivacyMode::LocalOnly);
+    // An autonomy-only reload afterwards must not drop the stored mode.
+    reload_from(&config.security.autonomy);
+    assert_eq!(current_privacy_mode(), PrivacyMode::LocalOnly);
+    let _ = reload_privacy(PrivacyMode::Standard);
+}

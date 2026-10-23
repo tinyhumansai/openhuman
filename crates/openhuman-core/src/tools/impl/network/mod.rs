@@ -3,8 +3,10 @@
 //! tools that live in `tinytools_std::network` (`http_request`, `web_fetch`,
 //! `curl`, `pushover`). [`gate`] implements `NetGate` for `SecurityPolicy` and
 //! [`host`] supplies the limits, HTML engine and x402 payment hook those tools
-//! are handed. `url_guard` (in `tinytools_std`) is the shared SSRF/allowlist
-//! validator. Registration gates are documented in `tools/impl/README.md`.
+//! are handed. `url_guard` (in `tinytools_std`) is the shared lexical
+//! SSRF/allowlist validator; the gate's `authorize_destination` then asks the
+//! TinySecurity module for the destination and the addresses the tool may
+//! connect to. Registration gates are documented in `tools/impl/README.md`.
 
 mod gate;
 mod gitbooks;

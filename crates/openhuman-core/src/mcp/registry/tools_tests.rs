@@ -442,27 +442,36 @@ async fn tool_call_preserves_missing_arguments_as_distinct_from_json_null() {
 
 #[tokio::test]
 async fn registry_tool_call_attaches_the_descriptor_widget() {
-    let dir = tempfile::tempdir().expect("temp workspace");
-    let config = workspace_config(dir.path());
-    let port = ToolCallPort {
-        connected: true,
-        tool_meta: Some(json!({"ui":{"resourceUri":"ui://widget/forecast.html"}})),
-        ..ToolCallPort::default()
-    };
-    crate::mcp::module_client::McpConfiguredClient::install_test_port(&config, Box::new(port))
-        .expect("test module port");
+    crate::security::prompt_injection::with_scanner(
+        crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+        async {
+            let dir = tempfile::tempdir().expect("temp workspace");
+            let config = workspace_config(dir.path());
+            let port = ToolCallPort {
+                connected: true,
+                tool_meta: Some(json!({"ui":{"resourceUri":"ui://widget/forecast.html"}})),
+                ..ToolCallPort::default()
+            };
+            crate::mcp::module_client::McpConfiguredClient::install_test_port(
+                &config,
+                Box::new(port),
+            )
+            .expect("test module port");
 
-    let result = McpRegistryToolCallTool::new(Arc::clone(&config))
-        .execute(json!({"server_id":"srv-1", "tool_name":"forecast", "arguments":{}}))
-        .await
-        .expect("call");
+            let result = McpRegistryToolCallTool::new(Arc::clone(&config))
+                .execute(json!({"server_id":"srv-1", "tool_name":"forecast", "arguments":{}}))
+                .await
+                .expect("call");
 
-    assert!(!result.is_error, "{}", result.text());
-    let metadata = result.metadata.expect("widget presentation");
-    assert_eq!(metadata["kind"], "mcp_ui");
-    assert_eq!(metadata["resource_uri"], "ui://widget/forecast.html");
-    assert_eq!(metadata["server_id"], "srv-1");
-    assert_eq!(metadata["tool"], "forecast");
+            assert!(!result.is_error, "{}", result.text());
+            let metadata = result.metadata.expect("widget presentation");
+            assert_eq!(metadata["kind"], "mcp_ui");
+            assert_eq!(metadata["resource_uri"], "ui://widget/forecast.html");
+            assert_eq!(metadata["server_id"], "srv-1");
+            assert_eq!(metadata["tool"], "forecast");
+        },
+    )
+    .await;
 }
 
 #[tokio::test]

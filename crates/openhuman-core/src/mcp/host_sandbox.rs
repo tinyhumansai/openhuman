@@ -24,7 +24,6 @@ use std::path::{Path, PathBuf};
 use tinymcp_bus::{StdioSandboxConfig, StdioSandboxEnforcement};
 
 use crate::config::Config;
-use crate::security::SecurityPolicy;
 
 /// Directory under `workspace_dir` that is the stdio servers' writable root.
 const WORKSPACE_DIR: &str = "mcp_stdio";
@@ -84,6 +83,7 @@ pub(super) async fn with_toolchain_grants(config: &Config, sandbox: &mut StdioSa
         allow_network: sandbox.allow_net,
         env_passthrough: Vec::new(),
         docker_overrides: None,
+        mount_workspace: true,
     };
     match crate::sandbox::local_grants::with_resolved_grants(config, &seed).await {
         Ok(resolved) => {
@@ -160,8 +160,8 @@ fn admit_all(raw: &[String], home: Option<&Path>) -> Vec<String> {
         // Check the spelled path as well as the resolved one: on macOS `/etc`
         // resolves to `/private/etc`, which the prefix floor does not name.
         let path = expanded.canonicalize().unwrap_or_else(|_| expanded.clone());
-        if SecurityPolicy::is_always_forbidden(&expanded)
-            || SecurityPolicy::is_always_forbidden(&path)
+        if is_protected_path(&expanded)
+            || is_protected_path(&path)
             || exposes_credentials(&expanded, home)
             || exposes_credentials(&path, home)
         {
@@ -174,6 +174,20 @@ fn admit_all(raw: &[String], home: Option<&Path>) -> Vec<String> {
         }
     }
     out
+}
+
+/// Consult TinySecurity's unconditional floor for both the spelled and
+/// resolved path. Without the module, refusing the grant keeps the jail closed.
+fn is_protected_path(path: &Path) -> bool {
+    #[cfg(feature = "security-module")]
+    {
+        crate::modules::security::gap::is_protected_blocking(path)
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = path;
+        true
+    }
 }
 
 /// Whether granting `path` would expose a credential store under `home`.

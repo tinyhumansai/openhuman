@@ -42,10 +42,13 @@ fn config_fn_final_autonomy_is_captured_on_the_built_agent_context() {
             config_path: dir.path().join("config.toml"),
             workspace_dir: dir.path().join("workspace"),
             action_dir: dir.path().join("action"),
-            autonomy: AutonomyConfig {
-                enabled: true,
-                level: AutonomyLevel::ReadOnly,
-                ..AutonomyConfig::default()
+            security: openhuman_core::config::SecurityConfig {
+                autonomy: AutonomyConfig {
+                    enabled: true,
+                    level: AutonomyLevel::ReadOnly,
+                    ..AutonomyConfig::default()
+                },
+                ..openhuman_core::config::SecurityConfig::default()
             },
             ..Config::default()
         };
@@ -64,12 +67,15 @@ fn config_fn_final_autonomy_is_captured_on_the_built_agent_context() {
         );
         let agent = runtime
             .agent(crate::AgentSpec::new("config-fn-tier").config(|effective| {
-                effective.autonomy.enabled = true;
-                effective.autonomy.level = AutonomyLevel::Full;
+                effective.security.autonomy.enabled = true;
+                effective.security.autonomy.level = AutonomyLevel::Full;
             }))
             .expect("AgentSpec config_fn builds");
 
-        assert_eq!(agent.inner.config.autonomy.level, AutonomyLevel::Full);
+        assert_eq!(
+            agent.inner.config.security.autonomy.level,
+            AutonomyLevel::Full
+        );
         assert_eq!(
             agent.inner.ctx.autonomy_tier_source(),
             AutonomyTierSource::Captured

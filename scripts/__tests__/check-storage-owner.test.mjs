@@ -19,15 +19,51 @@ const pkg = (name, deps = [], source = null, manifest_path) => ({
       : `/repo/vendor/${name}/Cargo.toml`),
   dependencies: deps.map(d => ({ name: d, kind: null, optional: false })),
 });
-const checkMetadata = (m, root = '/repo') => checkMetadataAt(m, ALLOWLIST, root);
+const cargoMetadata = packages => {
+  const allPackages = [...packages];
+  const packageId = (pkg, index) => pkg.id ?? `${pkg.source ?? 'path+'}#${pkg.name}@${index}`;
+  const ids = new Map(allPackages.map((p, i) => [p.name, packageId(p, i)]));
+
+  // Cargo metadata resolves each dependency edge to a package ID. Fill in
+  // omitted dependency packages as registry crates so fixtures can describe
+  // the package under test without reproducing unrelated workspace members.
+  for (const pkg of [...allPackages]) {
+    for (const dependency of pkg.dependencies ?? []) {
+      const name = typeof dependency === 'string' ? dependency : dependency.name;
+      if (ids.has(name)) continue;
+      const isTsd = name.startsWith('tinystoragedrivers');
+      const dep = {
+        name,
+        source: isTsd ? null : registry,
+        manifest_path: isTsd
+          ? `/repo/vendor/tinystoragedrivers/crates/${name}/Cargo.toml`
+          : `/cargo/registry/${name}/Cargo.toml`,
+        dependencies: [],
+      };
+      ids.set(name, packageId(dep, allPackages.length));
+      allPackages.push(dep);
+    }
+  }
+
+  const nodes = allPackages.map((pkg, i) => ({
+    id: packageId(pkg, i),
+    deps: (pkg.dependencies ?? []).map(dependency => {
+      const name = typeof dependency === 'string' ? dependency : dependency.name;
+      return { pkg: ids.get(name), dep_kinds: [{ kind: 'normal' }] };
+    }),
+  }));
+
+  return { packages: allPackages.map((pkg, i) => ({ ...pkg, id: packageId(pkg, i) })), resolve: { nodes } };
+};
+const checkMetadata = (m, root = '/repo') => checkMetadataAt(cargoMetadata(m.packages ?? []), root);
 const registry = 'registry+https://github.com/rust-lang/crates.io-index';
 
 test('a clean workspace passes', () => {
   assert.deepEqual(checkMetadata({ packages: [pkg('openhuman', ['serde']), pkg('tinyflows', ['tinystoragedrivers-core'])] }), []);
 });
 
-test('every forbidden backend dependency is rejected', () => {
-  for (const dep of ['rusqlite', 'libsqlite3-sys', 'mongodb', 'object_store', 'sqlx', 'redb', 'sled', 'rocksdb']) {
+test('backend dependencies recognized by the checker are rejected', () => {
+  for (const dep of ['rusqlite', 'libsqlite3-sys', 'mongodb', 'aws-sdk-s3', 'object_store', 'sqlx', 'redb', 'sled', 'rocksdb']) {
     const v = checkMetadata({ packages: [pkg('tinymcp', [dep])] });
     assert.equal(v.length, 1, dep);
     assert.equal(v[0].package, 'tinymcp');
@@ -63,7 +99,7 @@ test('allowlisted read-only readers may depend on rusqlite, with a reason', () =
 });
 
 test('the report names the offender', () => {
-  assert.match(formatReport(checkMetadata({ packages: [pkg('tinymcp', ['rusqlite'])] })), /tinymcp: depends on rusqlite/);
+  assert.match(formatReport(checkMetadata({ packages: [pkg('tinymcp', ['rusqlite'])] })), /tinymcp: reaches rusqlite via/);
   assert.match(formatReport([]), /ok/);
 });
 
@@ -72,8 +108,8 @@ test('CLI exits 1 on a violation, 0 when clean, 2 on unreadable input', () => {
   try {
     const bad = join(dir, 'bad.json');
     const good = join(dir, 'good.json');
-    writeFileSync(bad, JSON.stringify({ packages: [pkg('tinymcp', ['rusqlite'])] }));
-    writeFileSync(good, JSON.stringify({ packages: [pkg('tinymcp')] }));
+    writeFileSync(bad, JSON.stringify(cargoMetadata([pkg('tinymcp', ['rusqlite'])])));
+    writeFileSync(good, JSON.stringify(cargoMetadata([pkg('tinymcp')])));
     assert.equal(spawnSync('node', [CHECKER, '--metadata', bad]).status, 1);
     assert.equal(spawnSync('node', [CHECKER, '--metadata', good]).status, 0);
     assert.equal(spawnSync('node', [CHECKER, '--metadata', join(dir, 'missing.json')]).status, 2);
@@ -104,7 +140,7 @@ test('a git or registry tinystoragedrivers package fails and names its dependent
   assert.equal(reg[0].kind, 'tsd-not-vendored');
 });
 
-test('the standalone storage types contract may come from a pinned git revision', () => {
+test('the standalone storage types contract must be vendored with the rest of the driver family', () => {
   const rev = 'git+https://github.com/tinyhumansai/tinystoragedrivers?rev=05eaada962decbab33bafa4763d2bd1a67f6b456#05eaada';
   const v = checkMetadata({
     packages: [
@@ -112,7 +148,9 @@ test('the standalone storage types contract may come from a pinned git revision'
       pkg('tinystoragedrivers-types', [], rev, '/home/u/.cargo/git/checkouts/tsd/abc/crates/tinystoragedrivers-types/Cargo.toml'),
     ],
   });
-  assert.deepEqual(v, []);
+  assert.equal(v.length, 1);
+  assert.equal(v[0].kind, 'tsd-not-vendored');
+  assert.match(v[0].detail, /required by tinyjuice-bus/);
 });
 
 test('a path tinystoragedrivers package outside the vendored checkout fails', () => {

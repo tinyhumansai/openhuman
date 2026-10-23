@@ -201,20 +201,31 @@ async fn validated_tts_output_path(
     let candidate_string = candidate
         .to_str()
         .ok_or_else(|| "invalid output_path".to_string())?;
-    let mut policy = crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    );
-    policy.trusted_roots.push(crate::security::TrustedRoot {
-        path: config.workspace_dir.display().to_string(),
-        access: crate::security::TrustedAccess::ReadWrite,
-    });
-    policy.trusted_roots.push(crate::security::TrustedRoot {
-        path: model_root.display().to_string(),
-        access: crate::security::TrustedAccess::ReadWrite,
-    });
-    if !policy.is_path_string_allowed(candidate_string) {
+    let mut scoped_config = config.clone();
+    for root in [&config.workspace_dir, &model_root] {
+        let root_path = root.to_string_lossy().into_owned();
+        if !scoped_config
+            .security
+            .autonomy
+            .trusted_roots
+            .iter()
+            .any(|trusted| trusted.path == root_path)
+        {
+            scoped_config
+                .security
+                .autonomy
+                .trusted_roots
+                .push(crate::security::TrustedRoot {
+                    path: root_path,
+                    access: crate::security::TrustedAccess::ReadWrite,
+                });
+        }
+    }
+    let policy = crate::security::SecurityPolicy::from_full_config(&scoped_config);
+    if !policy
+        .path_allowed(crate::security::policy::PathKind::StringAllowed, &candidate)
+        .await
+    {
         return Err(format!("invalid output_path: {candidate_string}"));
     }
     let allowed_root = if candidate.starts_with(&config.workspace_dir) {
@@ -228,10 +239,12 @@ async fn validated_tts_output_path(
         );
     };
     let canonical_root = canonicalize_path_with_missing_suffix(allowed_root).await?;
-    if crate::security::SecurityPolicy::is_always_forbidden(&canonical_root) {
-        return Err("invalid output_path: allowed root resolves to a protected path".into());
-    }
-    tokio::fs::create_dir_all(allowed_root)
+    let canonical_root = canonical_root.to_string_lossy().into_owned();
+    policy
+        .validate_parent_path(&canonical_root)
+        .await
+        .map_err(|_| "invalid output_path: allowed root is outside the security policy")?;
+    tokio::fs::create_dir_all(&canonical_root)
         .await
         .map_err(|error| format!("could not prepare allowed TTS output root: {error}"))?;
     let resolved = match tokio::fs::symlink_metadata(&candidate).await {
@@ -246,7 +259,7 @@ async fn validated_tts_output_path(
     }
     .map_err(|error| format!("invalid output_path: {error}"))?;
 
-    let resolved_root = tokio::fs::canonicalize(allowed_root)
+    let resolved_root = tokio::fs::canonicalize(&canonical_root)
         .await
         .map_err(|error| format!("could not resolve allowed TTS output root: {error}"))?;
     if resolved.starts_with(&resolved_root) {

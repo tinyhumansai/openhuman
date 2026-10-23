@@ -59,6 +59,9 @@ fn names_in(dir: &Path) -> Vec<String> {
 
 #[tokio::test]
 async fn new_artifact_is_written_to_the_files_folder_not_the_workspace() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -88,6 +91,9 @@ async fn new_artifact_is_written_to_the_files_folder_not_the_workspace() {
 
 #[tokio::test]
 async fn files_folder_is_created_on_first_use() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("not").join("yet").join("Files");
     create_artifact(
@@ -105,6 +111,9 @@ async fn files_folder_is_created_on_first_use() {
 
 #[tokio::test]
 async fn a_repeated_title_gets_a_numbered_name_instead_of_overwriting() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let first = create_ready(tmp.path(), &files_dir, "Report", b"one").await;
@@ -131,6 +140,9 @@ async fn a_repeated_title_gets_a_numbered_name_instead_of_overwriting() {
 /// account's listing must show only its own records.
 #[tokio::test]
 async fn two_accounts_share_the_files_folder_without_clobbering_or_leaking() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let ws_a = tmp.path().join("users").join("a").join("workspace");
@@ -160,6 +172,9 @@ async fn two_accounts_share_the_files_folder_without_clobbering_or_leaking() {
 
 #[tokio::test]
 async fn regenerate_overwrites_the_file_it_owns() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let original = create_ready(tmp.path(), &files_dir, "Deck", b"v1").await;
@@ -185,6 +200,9 @@ async fn regenerate_overwrites_the_file_it_owns() {
 
 #[tokio::test]
 async fn a_failed_generation_leaves_no_empty_file_behind() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let (meta, path) = create_artifact(
@@ -208,6 +226,9 @@ async fn a_failed_generation_leaves_no_empty_file_behind() {
 
 #[tokio::test]
 async fn delete_removes_the_file_and_the_record() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let meta = create_ready(tmp.path(), &files_dir, "Gone", b"bye").await;
@@ -223,6 +244,9 @@ async fn delete_removes_the_file_and_the_record() {
 
 #[tokio::test]
 async fn a_file_removed_outside_openhuman_is_reported_missing() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let meta = create_ready(tmp.path(), &files_dir, "Moved", b"abc").await;
@@ -253,6 +277,9 @@ async fn tampered(workspace: &Path, file: &Path, file_root: &Path) -> String {
 
 #[tokio::test]
 async fn the_escape_guard_rejects_a_file_outside_its_folder() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -269,6 +296,9 @@ async fn the_escape_guard_rejects_a_file_outside_its_folder() {
 
 #[tokio::test]
 async fn the_escape_guard_keeps_the_credential_store_floor() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ssh = tmp.path().join(".ssh");
     std::fs::create_dir_all(&ssh).unwrap();
@@ -283,6 +313,9 @@ async fn the_escape_guard_keeps_the_credential_store_floor() {
 #[cfg(unix)]
 #[tokio::test]
 async fn the_escape_guard_rejects_a_symlink_out_of_the_folder() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -297,6 +330,9 @@ async fn the_escape_guard_rejects_a_symlink_out_of_the_folder() {
 
 #[tokio::test]
 async fn a_legacy_record_still_resolves_under_the_workspace() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let meta = legacy_meta("legacy-1", "legacy-1/old.txt");
     save_artifact_meta(tmp.path(), &meta).await.unwrap();
@@ -315,6 +351,9 @@ async fn a_legacy_record_still_resolves_under_the_workspace() {
 /// guard must reject `..` components rather than rely on `starts_with`.
 #[tokio::test]
 async fn a_legacy_path_with_parent_components_is_rejected() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::write(tmp.path().join("secret.txt"), b"private").unwrap();
@@ -332,6 +371,9 @@ async fn a_legacy_path_with_parent_components_is_rejected() {
 #[cfg(unix)]
 #[tokio::test]
 async fn the_escape_guard_rejects_a_dangling_symlink() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -345,6 +387,9 @@ async fn the_escape_guard_rejects_a_dangling_symlink() {
 #[cfg(unix)]
 #[tokio::test]
 async fn the_escape_guard_rejects_a_symlink_loop() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -362,6 +407,9 @@ async fn the_escape_guard_rejects_a_symlink_loop() {
 #[cfg(unix)]
 #[tokio::test]
 async fn the_escape_guard_rejects_an_unresolvable_folder() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let other = tmp.path().join("Other");
@@ -375,6 +423,9 @@ async fn the_escape_guard_rejects_an_unresolvable_folder() {
 /// A path with nothing at it passes the guard and is reported as missing.
 #[tokio::test]
 async fn a_recorded_file_that_does_not_exist_reads_as_missing() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -389,6 +440,9 @@ async fn a_recorded_file_that_does_not_exist_reads_as_missing() {
 /// of the folders the core vouches for.
 #[tokio::test]
 async fn a_record_pointing_outside_the_files_folders_is_refused() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -415,6 +469,9 @@ async fn a_record_pointing_outside_the_files_folders_is_refused() {
 /// A folder the user moved away from stays trusted for the records made there.
 #[tokio::test]
 async fn a_previously_trusted_folder_still_resolves() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let old = tmp.path().join("Old");
     let meta = create_ready(tmp.path(), &old, "Kept", b"kept").await;

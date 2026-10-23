@@ -51,7 +51,7 @@ An assistant with no memory is a chatbot. Connect at least one source so it has 
 Open `config.toml` in your data folder (`~/.openhuman/config.toml`, or `%USERPROFILE%\.openhuman\config.toml` on Windows) and turn the policy on:
 
 ```toml
-[autonomy]
+[security.autonomy]
 enabled = true
 level = "supervised"   # "readonly" | "supervised" | "full"
 ```
@@ -104,7 +104,7 @@ You have a working assistant when all of these are true:
 | Sign-in returns to the welcome screen            | The OAuth callback did not reach the app                                | Follow [Troubleshooting sign-in](../overview/troubleshooting-sign-in.md)                          |
 | Connected a source but memory stays empty        | Source not added or not synced yet, or the OAuth scope is too narrow    | Press sync on the source; re-check the connection in Settings                                     |
 | Assistant answers generically, ignores your data | It answered without recalling memory                                   | Ask again and name the source ("from my email"). Confirm the source is connected |
-| It did something you did not expect         | The autonomy policy is off, or `level` is `full`                       | Set `[autonomy] enabled = true` and `level = "supervised"` in `config.toml`                       |
+| It did something you did not expect         | The autonomy policy is off, or `level` is `full`                       | Set `[security.autonomy] enabled = true` and `level = "supervised"` in `config.toml`                       |
 
 ## Recovery
 

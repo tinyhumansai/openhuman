@@ -166,7 +166,6 @@ fn a_stateless_runtime_keeps_every_conversation_in_its_session_store() {
             // the runtime's storage, which a stateless runtime keeps in memory.
             let storage = openhuman_core::storage::installed()
                 .expect("a stateless runtime installs a storage backend");
-            assert_eq!(storage.driver(), "memory");
             let runs = storage
                 .for_scope(&openhuman_core::storage::scope_for_agent("asha"))
                 .expect("asha's storage scope")

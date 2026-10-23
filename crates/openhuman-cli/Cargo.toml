@@ -124,14 +124,7 @@ name = "cost_report_e2e"
 path = "../../tests/cost_report_e2e.rs"
 
 [[test]]
-# Installs a backend into the process-wide storage slot, so it needs its own
-# process: in a shared one it would reroute other suites' approvals.
-name = "storage_approvals_e2e"
-path = "../../tests/storage_approvals_e2e.rs"
-
-[[test]]
-# Its own binary for the same reason as storage_approvals_e2e: it installs a
-# storage backend into the process-wide slot.
+# Its own binary: it installs a storage backend into the process-wide slot.
 name = "storage_domains_e2e"
 path = "../../tests/storage_domains_e2e.rs"
 
@@ -220,6 +213,30 @@ path = "../../tests/memory_cortexdb_live.rs"
 # Memory v2 through the real `openhuman-core` binary against a live CortexDB.
 # Explicitly ignored; run it with scripts/test-memory-cortexdb-live.sh, which
 # boots the server in Docker and sets OPENHUMAN_LIVE_CORTEXDB_URL.
+
+[[test]]
+name = "security_characterization_e2e"
+path = "../../tests/security_characterization_e2e.rs"
+
+[[test]]
+name = "security_policy_characterization"
+path = "../../tests/security_policy_characterization.rs"
+
+[[test]]
+name = "security_approval_characterization"
+path = "../../tests/security_approval_characterization.rs"
+
+[[test]]
+name = "security_redaction_characterization"
+path = "../../tests/security_redaction_characterization.rs"
+
+[[test]]
+name = "security_sandbox_characterization"
+path = "../../tests/security_sandbox_characterization.rs"
+
+[[test]]
+name = "security_crypto_characterization"
+path = "../../tests/security_crypto_characterization.rs"
 
 [[test]]
 name = "json_rpc_threads_e2e"
@@ -444,10 +461,14 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
+# The owning PII safety contract, for the shared security redaction corpus.
+tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["local-safety"] }
 # The document-port contract for failure injection in cron storage regressions.
 tinystoragedrivers-api = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
 tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", default-features = false, features = ["sqlite"] }
 zeroize = "1"
+# The shell command-class vocabulary, for the security policy characterization.
+tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus" }
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 # The completion log a detached sub-agent leaves, for the SaaS delivery-recovery e2e.
@@ -510,6 +531,7 @@ default = [
     "scheduler-gate",
     "file-logging",
     "modules",
+    "security-module",
     "jev",
     "tinymemes",
     "inbound-queues",
@@ -529,6 +551,7 @@ hosting = ["openhuman-rpc/hosting"]
 tinymemes = ["openhuman-rpc/tinymemes"]
 inbound-queues = ["openhuman-rpc/inbound-queues"]
 modules = ["openhuman-rpc/modules"]
+security-module = ["openhuman-rpc/security-module"]
 voice = ["openhuman-rpc/voice"]
 web3 = ["openhuman-rpc/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -574,3 +597,7 @@ path = "../../tests/embeddings_opt_out.rs"
 name = "storage_backend_capabilities"
 path = "../../tests/storage_backend_capabilities.rs"
 required-features = ["storage-sqlite"]
+
+[[test]]
+name = "storage_approvals_e2e"
+path = "../../tests/storage_approvals_e2e.rs"

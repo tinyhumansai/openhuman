@@ -64,7 +64,7 @@ OpenHuman backend. Three detectors feed that decision:
 
 The first fallback logs one `warn!` (guarded by `std::sync::Once`) so the
 redirect is visible without repeating on every request. URLs in logs go
-through `redact_url_for_log`.
+through `scrub_secrets` (the core log floor plus the module pass).
 
 ### Attribution headers and clients (`headers.rs`)
 
@@ -107,7 +107,7 @@ process.
 | Path | What it does |
 | --- | --- |
 | [`mod.rs`](mod.rs) | Declares the three modules and re-exports the common names (`ProductIdentity`, `set_product_identity`, `effective_backend_api_url`, `DEFAULT_API_BASE_URL`, and so on). |
-| [`url.rs`](url.rs) | Base-URL resolution, environment overrides, staging default, and the inference-endpoint guard for control-plane calls. Re-exports a few URL helpers from the core (`join_url`, `normalize_api_base_url`, `host_is_local`). |
+| [`url.rs`](url.rs) | Base-URL resolution, environment overrides, staging default, and the inference-endpoint guard for control-plane calls. Re-exports a few URL helpers from the core (`join_url`, `normalize_api_base_url`, `normalize_backend_api_base_url`). |
 | [`headers.rs`](headers.rs) | `attribution_headers`, `backend_client_builder`, `build_backend_client`, `TAURI_VERSION_ENV_VAR`. |
 | [`product.rs`](product.rs) | `ProductIdentity`, `set_product_identity`, `product_identity`, `product_identity_header(s)`, `PRODUCT_IDENTITY_HEADER`, `DEFAULT_PRODUCT_IDENTITY`. |
 

@@ -42,7 +42,6 @@ fn assemble(tmp: &TempDir) -> Vec<String> {
         Arc::new(cfg.clone()),
         &security,
         Arc::new(NativeRuntime::new()),
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),

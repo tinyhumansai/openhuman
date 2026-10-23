@@ -256,18 +256,24 @@ The autonomy policy is **off by default** (`[autonomy] enabled = false`,
 `config/schema/autonomy.rs`). Agents here run inside containers, platform jails
 and Docker sandboxes that already provide the isolation this in-process policy
 was approximating, and a shell tool that refuses ordinary shell syntax is not a
-usable shell. `SecurityPolicy::from_config` carries the flag; every enforcement
-entry point short-circuits on it.
+usable shell. `SecurityPolicy::from_config` carries the flag and hands it to the
+TinySecurity module, which makes the decisions. Command classification, path
+authorization, approvals, sandbox planning, host-tool admission and redaction run
+in that native module (`vendor/tinysecurity`, linked only through
+`tinysecurity-bus`); the host translates settings into the module's scopes and
+maps its answers. A module that is missing, untrusted, faulted or slow denies.
 
 With the policy **disabled** (the default):
 
-- Command classification, the approval gate, the command allowlist and the
-  hourly action budget are all inert.
+- Command classification gating, the approval prompt, the command allowlist and
+  the hourly action budget are all inert (the module answers `Allow`).
 - `workspace_only`, `forbidden_paths` and the workspace-internal boundary are
   not enforced.
-- `is_always_forbidden` still is: credential stores (`~/.ssh`, `~/.gnupg`,
-  `~/.aws`) and system roots stay unreachable. So do `..` traversal and null
-  bytes in a path. Keep that floor.
+- The always-forbidden floor still is: credential stores (`~/.ssh`, `~/.gnupg`,
+  `~/.aws`) and system roots stay unreachable, as do `..` traversal and null
+  bytes in a path. The floor is the module's (`DenialReason::Floor`, and the
+  unconditional `ProtectedPath2` check); the host asks it through
+  `security/floor.rs` and has no floor of its own. Keep that floor.
 
 With `[autonomy] enabled = true`:
 
@@ -276,15 +282,22 @@ With `[autonomy] enabled = true`:
   does not cost the agent write access to it.
 - `workspace_dir` stores internal state and is never an acting-tool target.
 - Unknown commands classify as writes.
-- The approval gate prompts on non-read classes. Interactive requests expire as
-  denied after ten minutes.
+- Every tool call passes `ToolPolicyGateMiddleware`, installed first by
+  `agent/tinyagents/middleware/security_gate.rs::install`. Verdicts combine as
+  deny > require-approval > allow, and a module fault denies. Approvals live in
+  `security/approval/native/`, are backed by the module, and expire as denied
+  after ten minutes.
 
-Either way, sandboxed agents use the platform jail or Docker backend, and the
-Rust path checks still apply if the sandbox falls back.
+Either way, sandboxed agents use the platform jail or Docker backend. Every
+sandboxed command is planned by the module first (`sandbox/spawn_plan/`) and does
+not run when the module denies or faults. The module picks the executor from the ones the host verified (the configured backend is only a
+preference it is sent). The operator's `OPENHUMAN_SANDBOX=off` is declared to the module, which
+plans a run on the host only for the trusted operator outside SaaS; there is no host-side unjailed
+branch, Local never degrades to host execution, and SaaS ignores the switch.
 
-A quoted heredoc body (`<< 'EOF' … EOF`) is **data**, not shell:
-`strip_quoted_heredoc_bodies` blanks it before any structural scan. An unquoted
-delimiter (`<< EOF`) is still expanded and still scanned.
+A quoted heredoc body (`<< 'EOF' … EOF`) is **data**, not shell: the module blanks
+it before any structural scan. An unquoted delimiter (`<< EOF`) is still expanded
+and still scanned.
 
 ## Frontend
 
@@ -586,6 +599,7 @@ Direct rendered submodules under `vendor/`:
 | `tiny-artifacts` | Versioned artifacts as a plain library (no bus contract): the record and version model, the `Artifacts` service and its rules (content fits the kind, file paths stay inside the host's `FileRoots` and pass its guard, revisions append, kept version files, publishing), the agent artifact tools, and the file-system store. OpenHuman owns the ports: the document-backed store, the card UI bridge, the protected-path guard and the cloud-storage publisher (`artifacts/`). |
 | `tinyagents` | Provider-neutral agent harness and durable typed state graph: model/tool loop, tool-call dialects and parsing, middleware, retries, caching, sessions/transcripts, and graph execution. |
 | `tinybox` | Isolated execution environments for code the host does not trust; box lifecycle and isolation backends. |
+| `tinysecurity` | Native security policy engines and their transport-free bus contract. OpenHuman owns trusted configuration translation, product RPCs, and host execution adapters. Hosts link `tinysecurity-bus` only. |
 | `tinybus` | TinyBus runtime and module contracts: discovery/loading, ABI and manifest admission, transport, proxies, lifecycle, and module bus behavior. |
 | `tinychannels` | Portable channel/message contracts, configuration/schema, routing metadata, and channel backend abstractions. OpenHuman owns its concrete product/backend adapters. |
 | `tinyconnectors` | OAuth connector module behavior: account linking, available actions, action execution, and connector webhooks. |
@@ -635,6 +649,7 @@ method constants, request and response types, and its contract version.
 | `tinymcp-bus` | `mcp` |
 | `tinychannels-bus` | channel vocabulary |
 | `tinyconnectors-bus` | OAuth connector (Composio) wire contract; called through `integrations/composio/module_client.rs` |
+| `tinysecurity-bus` | `security-module` (filesystem path authorization, shell command gating, the network and write tier gates, the approval engine, password crypt, and sandbox plans for every sandboxed spawn); called through `modules/security.rs`, `modules/security_command.rs`, `modules/security_crypto.rs`, `modules/security_sandbox.rs` (driven by `sandbox/spawn_plan/`) and `security/approval/native/`, which also serves the module's approval store, audit sink and prompt callbacks from `modules/security_host.rs` |
 
 Rules:
 

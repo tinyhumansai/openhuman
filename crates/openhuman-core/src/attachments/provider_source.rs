@@ -181,7 +181,7 @@ impl AttachmentModel {
             .join(super::super::filename(name));
         let root = super::super::action_root(&self.config, scope);
         let preliminary = crate::security::SecurityPolicy::from_config(
-            &self.config.autonomy,
+            &self.config.security.autonomy,
             &self.config.workspace_dir,
             &root,
         );
@@ -196,7 +196,7 @@ impl AttachmentModel {
             .await
             .map_err(|e| tinyinference_llm::Error::Model(e.to_string()))?;
         let policy = crate::security::SecurityPolicy::from_config(
-            &self.config.autonomy,
+            &self.config.security.autonomy,
             &self.config.workspace_dir,
             &root,
         );

@@ -6,6 +6,7 @@
 
 #![cfg(target_os = "windows")]
 
+use openhuman_rpc::redact_url_for_log;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -107,16 +108,6 @@ fn pending_queue() -> &'static Arc<Mutex<Vec<String>>> {
 
 fn live_handler() -> &'static Mutex<Option<LiveHandler>> {
     LIVE_HANDLER.get_or_init(|| Mutex::new(None))
-}
-
-pub(crate) fn redact_url_for_log(url: &str) -> String {
-    url.parse::<url::Url>()
-        .map(|mut parsed| {
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            parsed.to_string()
-        })
-        .unwrap_or_else(|_| "<invalid deep link>".to_string())
 }
 
 fn dispatch_url(url: String) {

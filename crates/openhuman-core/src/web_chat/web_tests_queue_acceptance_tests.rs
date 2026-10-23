@@ -1,19 +1,23 @@
 use super::*;
 use crate::core::runtime::DispatchCtx;
+use crate::security::prompt_injection::{scanner_stub::StubScanner, with_scanner};
 
 use serde_json::json;
 
 async fn start_parked_turn(thread_id: &str, block: &TestRunChatTaskBlock) -> String {
-    let request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "queue-test-client",
-        thread_id,
-        "primary turn",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
+    let request_id = with_scanner(
+        StubScanner::phrases(),
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "queue-test-client",
+            thread_id,
+            "primary turn",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        ),
     )
     .await
     .expect("primary turn should start");
@@ -23,16 +27,19 @@ async fn start_parked_turn(thread_id: &str, block: &TestRunChatTaskBlock) -> Str
 }
 
 async fn queue_message(thread_id: &str, text: &str, mode: &str) -> serde_json::Value {
-    let response = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "queue-test-client",
-        thread_id,
-        text,
-        Some("model-override".to_string()),
-        Some(0.7),
-        Some("ar".to_string()),
-        Some(mode.to_string()),
-        ChatRequestMetadata::default(),
+    let response = with_scanner(
+        StubScanner::phrases(),
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "queue-test-client",
+            thread_id,
+            text,
+            Some("model-override".to_string()),
+            Some(0.7),
+            Some("ar".to_string()),
+            Some(mode.to_string()),
+            ChatRequestMetadata::default(),
+        ),
     )
     .await
     .expect("queued message should be accepted");
@@ -94,16 +101,19 @@ async fn interrupt_and_parallel_bypass_the_active_turn_queue() {
     let thread_id = "queue-disposition-bypass";
     let initial_request_id = start_parked_turn(thread_id, &block).await;
 
-    let replacement_request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "queue-test-client",
-        thread_id,
-        "replace the active turn",
-        None,
-        None,
-        None,
-        Some("interrupt".to_string()),
-        ChatRequestMetadata::default(),
+    let replacement_request_id = with_scanner(
+        StubScanner::phrases(),
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "queue-test-client",
+            thread_id,
+            "replace the active turn",
+            None,
+            None,
+            None,
+            Some("interrupt".to_string()),
+            ChatRequestMetadata::default(),
+        ),
     )
     .await
     .expect("interrupt should start a replacement turn");
@@ -115,16 +125,19 @@ async fn interrupt_and_parallel_bypass_the_active_turn_queue() {
     })
     .await;
 
-    start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "queue-test-client",
-        thread_id,
-        "run alongside the replacement",
-        None,
-        None,
-        None,
-        Some("parallel".to_string()),
-        ChatRequestMetadata::default(),
+    with_scanner(
+        StubScanner::phrases(),
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "queue-test-client",
+            thread_id,
+            "run alongside the replacement",
+            None,
+            None,
+            None,
+            Some("parallel".to_string()),
+            ChatRequestMetadata::default(),
+        ),
     )
     .await
     .expect("parallel should start a forked turn");

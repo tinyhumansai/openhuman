@@ -51,7 +51,7 @@ impl Tool for ComposioListConnectionsTool {
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
 }
 
@@ -101,9 +101,9 @@ impl ComposioListConnectionsTool {
             }
             Ok(ComposioRoute::Direct(direct)) => {
                 tracing::debug!("[composio-direct] list_connections.execute: direct variant");
-                match direct_list_connections(&live_config, &direct)
-                    .await
-                    .map_err(|e| {
+                match direct_list_connections(&live_config, &direct).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
                         // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
                         // routing with `ops.rs::composio_list_connections`.
                         // The agent-tool path can also fire 401s when a
@@ -117,11 +117,9 @@ impl ComposioListConnectionsTool {
                             "[composio-direct] composio_list_connections (direct) failed: {e:#}"
                         );
                         let rendered =
-                            redact_and_report(&live_config, "list_connections", &rendered);
-                        anyhow::anyhow!("{rendered}")
-                    }) {
-                    Ok(resp) => resp,
-                    Err(e) => return (live_config, Err(e)),
+                            redact_and_report(&live_config, "list_connections", &rendered).await;
+                        return (live_config, Err(anyhow::anyhow!("{rendered}")));
+                    }
                 }
             }
             Err(e) => {

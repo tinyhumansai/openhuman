@@ -82,7 +82,7 @@ async fn own_manual_run(
     // retains only a Weak reference. The task is the acyclic lifetime owner.
     let _context_pin = ctx.core().cloned();
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

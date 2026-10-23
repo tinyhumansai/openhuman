@@ -189,6 +189,25 @@ fn a_child_inherits_operator_layers_but_not_its_parents_agent_layer() {
 }
 
 #[test]
+fn a_sub_agents_disallowed_tool_is_refused_on_every_surface_without_a_belt_filter() {
+    // The sub-agent belt no longer filters `disallowed_tools`; this rule policy
+    // is what refuses the tool, so it must refuse it on the catalogue, search
+    // and the call itself, for a tool that is otherwise in the child's scope.
+    let mut worker = definition("code_executor");
+    worker.disallowed_tools = vec!["shell".into()];
+    let child = child_rule_policy(None, None, &worker).expect("child rules");
+    let subject = ToolSubject::named("shell");
+    for surface in [Surface::Catalog, Surface::Search] {
+        assert!(!child.rules.visible(&subject, &child.context, surface));
+    }
+    let call = child
+        .rules
+        .evaluate(&subject, &child.context, Surface::Call, None);
+    assert!(!call.callable);
+    assert!(visible(&child.rules, "file_read", &child.context));
+}
+
+#[test]
 fn a_child_without_parent_rules_takes_the_operator_layer() {
     let mut config = Config::default();
     config.tool_rules = tinytools::ToolRules::from_allow_deny(Vec::<String>::new(), ["shell"]);

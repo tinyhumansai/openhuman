@@ -86,6 +86,7 @@ pub(crate) fn config_from_toml_str(contents: &str) -> anyhow::Result<Config> {
             .unwrap_or(0)
             < 14;
     crate::config::migrations::retire_cloud_provider_type::rewrite_document(&mut document)?;
+    crate::config::migrations::security_policy::rewrite_document(&mut document);
     reject_non_finite_floats(&document, &mut String::new())?;
     let json = serde_json::to_string(&document)?;
     let mut unknown_keys = Vec::new();

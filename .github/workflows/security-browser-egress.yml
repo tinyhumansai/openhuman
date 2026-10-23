@@ -1,0 +1,47 @@
+name: Security Browser Egress (Epic)
+
+on:
+  pull_request:
+    branches: [epic/7328-security-bus]
+    paths:
+      - .github/workflows/security-browser-egress.yml
+      - .gitmodules
+      - vendor/tinysecurity
+      - vendor/tinycomputer
+      - crates/openhuman-core/src/modules/browser_egress_host.rs
+      - crates/openhuman-core/src/modules/browser_egress_host_tests.rs
+      - crates/openhuman-core/src/modules/security_egress.rs
+      - scripts/ci/security-browser-egress-fixture.sh
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-browser-egress-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-callback-fixture:
+    name: TinySecurity browser callbacks (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            vendor/tinysecurity -> vendor/tinysecurity/target
+          key: security-browser-egress-${{ runner.os }}
+      - name: Exercise authenticated host callbacks against TinySecurity
+        shell: bash
+        run: bash scripts/ci/security-browser-egress-fixture.sh

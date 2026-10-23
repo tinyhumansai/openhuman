@@ -1,7 +1,6 @@
 use super::*;
 use crate::config::{BrowserConfig, Config};
 use crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
-use crate::security::AuditLogger;
 use crate::tools::ops::{all_tools, tool_group};
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -66,7 +65,6 @@ fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool
     all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -106,7 +104,6 @@ fn expansion_tools_for(tmp: &TempDir) -> Vec<Box<dyn Tool>> {
     all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
         &browser,
         &http,
         tmp.path(),
@@ -358,8 +355,6 @@ mod catalog_fixture_tests;
 mod composio_registration_tests;
 #[path = "ops_tests_default_registry_tests.rs"]
 mod default_registry_tests;
-#[path = "ops_tests_domain_family_tests.rs"]
-mod domain_family_tests;
 #[path = "ops_tests_execution_and_serde_tests.rs"]
 mod execution_and_serde_tests;
 #[path = "ops_tests_repl_tools_tests.rs"]

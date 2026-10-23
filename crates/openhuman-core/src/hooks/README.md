@@ -16,3 +16,9 @@ The `hooks.*` RPC namespace and its model-facing command names remain stable.
 Configuration parsing and command execution are supplied by
 `tinyagents_hooks::command`; this module retains the OpenHuman controllers and
 their lifecycle integration.
+
+OpenHuman installs command hooks through `SandboxedHookSpawner`, which sends
+them through the untrusted TinyBox jail and fails closed when the isolation
+floor is unavailable. The sandbox adapter owns shell selection and process
+launch; the hook engine's legacy synchronous shell fallback is not installed
+by the host.

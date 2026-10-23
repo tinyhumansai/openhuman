@@ -85,8 +85,6 @@ const INTENTIONAL_ENGLISH = new Set([
   "settings.billing.inferenceBudget.dailySpendPoint",
   "settings.gateway.identityPlaceholder", // "~/.ssh/id_ed25519" — a file-path example; the leading ~ makes it fail the single-token technical test, but it is not prose
   "settings.mcpServer.clientClaudeDesktop",
-  "settings.sandbox.backend.bubblewrap",
-  "settings.sandbox.backend.firejail",
   "settings.sandbox.backend.landlock",
   "settings.search.allowedSitesPlaceholder",
   "settings.search.engineBraveLabel",

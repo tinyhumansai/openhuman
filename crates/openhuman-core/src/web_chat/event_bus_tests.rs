@@ -5,6 +5,7 @@ use tokio::sync::broadcast;
 /// been initialised and `None` otherwise (bus not started).  It must never return `None`
 /// after `init_global` has been called — the production path always initialises the bus
 /// before the web channel starts handling requests.
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn fresh_approval_surface_subscription_returns_some_when_bus_is_ready() {
     crate::core::bus::init().await.expect("bus init");
@@ -20,6 +21,7 @@ async fn fresh_approval_surface_subscription_returns_some_when_bus_is_ready() {
 /// handles.  Each is backed by its own background task so multiple callers can bridge
 /// independently (e.g. multiple integration tests running sequentially in the same
 /// process, each on their own tokio runtime).
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn fresh_approval_surface_subscription_is_not_a_singleton() {
     crate::core::bus::init().await.expect("bus init");

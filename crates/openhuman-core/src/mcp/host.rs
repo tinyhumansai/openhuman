@@ -116,9 +116,19 @@ pub fn client_config(config: &Config) -> tinymcp_bus::McpClientConfig {
             .servers
             .iter()
             .filter(|server| credentialed_endpoint_transport_allowed(server))
-            .map(|server| server.server.clone())
+            .map(|server| {
+                let mut server = server.server.clone();
+                // The operator's own config file is the operator's statement
+                // of trust, so its stdio servers keep starting as ordinary
+                // child processes. A SaaS tenant's servers are not the
+                // operator's: they, like every registry-installed server, run
+                // in the jail or are refused.
+                server.operator_trusted = !crate::core::runtime::is_saas();
+                server
+            })
             .collect(),
         proxy: proxy_for_mcp(),
+        stdio_sandbox: stdio_sandbox_for(config),
         ..tinymcp_bus::McpClientConfig::default()
     };
 
@@ -136,6 +146,20 @@ pub fn client_config(config: &Config) -> tinymcp_bus::McpClientConfig {
     // GitBooks uses dedicated deferred tools and is not part of the configured
     // server set, so first-turn tool assembly never dials it for a catalog.
     client
+}
+
+/// The jail for stdio servers that are not operator-trusted. `None` when the
+/// `mcp` feature is off, which also means such servers are refused.
+fn stdio_sandbox_for(config: &Config) -> Option<tinymcp_bus::StdioSandboxConfig> {
+    #[cfg(feature = "mcp")]
+    {
+        crate::mcp::stdio_sandbox::for_config(config)
+    }
+    #[cfg(not(feature = "mcp"))]
+    {
+        let _ = config;
+        None
+    }
 }
 
 /// Whether a configured credential may be sent to its endpoint. Credentials

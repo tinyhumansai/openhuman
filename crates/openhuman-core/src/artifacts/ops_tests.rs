@@ -15,6 +15,9 @@ fn test_config(tmp: &TempDir) -> Config {
 
 #[tokio::test]
 async fn list_empty() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let outcome = ai_list_artifacts(&config, None, None, None).await.unwrap();
@@ -29,6 +32,9 @@ async fn list_empty() {
 /// artifacts from every thread (and the legacy ones without a thread).
 #[tokio::test]
 async fn list_without_thread_filter_returns_all_threads() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::save_artifact_meta;
     use crate::artifacts::types::{ArtifactKind, ArtifactMeta, ArtifactStatus};
     let tmp = TempDir::new().unwrap();
@@ -70,6 +76,9 @@ async fn list_without_thread_filter_returns_all_threads() {
 /// deliberately excluded — they have no addressable owning thread.
 #[tokio::test]
 async fn list_with_thread_filter_returns_only_matching_thread() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::save_artifact_meta;
     use crate::artifacts::types::{ArtifactKind, ArtifactMeta, ArtifactStatus};
     let tmp = TempDir::new().unwrap();
@@ -130,6 +139,9 @@ async fn list_with_thread_filter_returns_only_matching_thread() {
 /// stays meaningful.
 #[tokio::test]
 async fn list_with_thread_filter_unknown_thread_returns_zero() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::save_artifact_meta;
     use crate::artifacts::types::{ArtifactKind, ArtifactMeta, ArtifactStatus};
     let tmp = TempDir::new().unwrap();
@@ -165,6 +177,9 @@ async fn list_with_thread_filter_unknown_thread_returns_zero() {
 
 #[tokio::test]
 async fn get_missing_id_error() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let err = ai_get_artifact(&config, "").await.unwrap_err();
@@ -175,6 +190,9 @@ async fn get_missing_id_error() {
 
 #[tokio::test]
 async fn delete_missing_id_error() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let err = ai_delete_artifact(&config, "").await.unwrap_err();
@@ -185,6 +203,9 @@ async fn delete_missing_id_error() {
 
 #[tokio::test]
 async fn regenerate_rejects_empty_id() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     assert!(ai_regenerate(
@@ -200,6 +221,9 @@ async fn regenerate_rejects_empty_id() {
 
 #[tokio::test]
 async fn regenerate_requires_thread_and_client() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     assert!(ai_regenerate(
@@ -224,6 +248,9 @@ async fn regenerate_requires_thread_and_client() {
 
 #[tokio::test]
 async fn regenerate_rejects_non_presentation_kind() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::{save_artifact_args, save_artifact_meta};
     use crate::artifacts::types::{ArtifactKind, ArtifactMeta, ArtifactStatus};
     let tmp = TempDir::new().unwrap();
@@ -274,6 +301,9 @@ async fn regenerate_rejects_non_presentation_kind() {
 #[cfg(feature = "documents")]
 #[tokio::test]
 async fn regenerate_errors_when_args_missing() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::create_artifact;
     use crate::artifacts::types::ArtifactKind;
     let tmp = TempDir::new().unwrap();
@@ -306,6 +336,9 @@ async fn regenerate_errors_when_args_missing() {
 #[cfg(feature = "documents")]
 #[tokio::test]
 async fn regenerate_reruns_producer_and_reuses_id() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     if crate::util::module_test_process::run(
         module_path!(),
         "regenerate_reruns_producer_and_reuses_id",
@@ -401,6 +434,9 @@ impl Drop for DefaultFilesDir {
 
 #[tokio::test]
 async fn get_returns_the_files_folder_path() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::{create_artifact, finalize_artifact};
     use crate::artifacts::types::ArtifactKind;
     let tmp = TempDir::new().unwrap();
@@ -436,6 +472,9 @@ async fn get_returns_the_files_folder_path() {
 
 #[tokio::test]
 async fn get_reports_a_ready_file_removed_outside_openhuman() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::{create_artifact, finalize_artifact};
     use crate::artifacts::types::ArtifactKind;
     let tmp = TempDir::new().unwrap();
@@ -465,6 +504,9 @@ async fn get_reports_a_ready_file_removed_outside_openhuman() {
 /// refused by get, and delete leaves the file it names alone.
 #[tokio::test]
 async fn get_and_delete_refuse_a_record_rooted_outside_the_files_folder() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     use crate::artifacts::store::save_artifact_meta;
     use crate::artifacts::types::{ArtifactKind, ArtifactMeta, ArtifactStatus};
     let tmp = TempDir::new().unwrap();

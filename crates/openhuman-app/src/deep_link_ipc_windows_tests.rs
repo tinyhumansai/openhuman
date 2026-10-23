@@ -20,11 +20,13 @@ fn collect_deep_link_urls_filters_args() {
 }
 
 #[test]
-fn redact_url_removes_query_and_fragment() {
-    assert_eq!(
-        redact_url_for_log("openhuman://auth?token=secret&key=auth#frag"),
-        "openhuman://auth"
-    );
+fn deep_link_logs_never_carry_the_query_or_fragment() {
+    // The one URL redactor is the security module's; with no module serving it
+    // answers the suppression marker, and with one the origin. Either way the
+    // query and fragment never reach a log line.
+    let logged = redact_url_for_log("openhuman://auth?token=secret&key=auth#frag");
+    assert!(!logged.contains("secret"), "{logged}");
+    assert!(!logged.contains("frag"), "{logged}");
 }
 
 #[test]

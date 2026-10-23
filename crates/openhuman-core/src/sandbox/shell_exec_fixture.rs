@@ -8,7 +8,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use super::{NativeShellRun, SandboxExecResult, ShellRunOutcome};
 use crate::sandbox::shell_live::{LiveHandle, LiveRead, LiveShell, LiveState};
@@ -61,7 +61,11 @@ pub(crate) async fn run(run: NativeShellRun) -> anyhow::Result<ShellRunOutcome> 
     command.envs(&run.env);
     command
         .current_dir(&run.cwd)
-        .stdin(Stdio::null())
+        .stdin(if run.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -70,6 +74,8 @@ pub(crate) async fn run(run: NativeShellRun) -> anyhow::Result<ShellRunOutcome> 
         .spawn()
         .map_err(|error| anyhow::anyhow!("Failed to execute command: {error}"))?;
     let pid = child.id();
+    let input = run.stdin;
+    let mut stdin_pipe = child.stdin.take();
     // Read both streams as the command runs, like the module does, so a
     // command stopped at its deadline keeps what it printed before.
     let (mut stdout_pipe, mut stderr_pipe) = (child.stdout.take(), child.stderr.take());
@@ -79,10 +85,16 @@ pub(crate) async fn run(run: NativeShellRun) -> anyhow::Result<ShellRunOutcome> 
     // over running, with what it printed so far.
     let yield_after = run.yield_after.filter(|after| *after < run.timeout);
     let finished = tokio::time::timeout(yield_after.unwrap_or(run.timeout), async {
-        let (status, (), ()) = tokio::join!(
+        let send_input = async {
+            if let (Some(input), Some(mut stdin)) = (input, stdin_pipe.take()) {
+                let _ = stdin.write_all(&input).await;
+            }
+        };
+        let (status, (), (), ()) = tokio::join!(
             child.wait(),
             drain(&mut stdout_pipe, &mut stdout),
             drain(&mut stderr_pipe, &mut stderr),
+            send_input,
         );
         status
     })

@@ -18,7 +18,33 @@ use tokio::task::JoinHandle;
 
 use super::{CoreContext, DispatchCtx};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlockOnError {
+    Runtime,
+    Panicked,
+}
+
 impl DispatchCtx {
+    /// Run a future on a dedicated current-thread runtime while preserving
+    /// this dispatch context. This is for synchronous APIs that must bridge to
+    /// async module calls and may be called outside a Tokio runtime.
+    pub(crate) fn block_on<F, T>(&self, future: F) -> Result<T, BlockOnError>
+    where
+        F: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let dispatch = self.clone();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| BlockOnError::Runtime)?;
+            Ok(runtime.block_on(dispatch.enter(future)))
+        })
+        .join()
+        .map_err(|_| BlockOnError::Panicked)?
+    }
+
     /// `fut`, wrapped to run under this context wherever it is polled. An
     /// unbound context runs it bare, which in SaaS fails closed.
     pub fn enter<F>(&self, fut: F) -> impl Future<Output = F::Output> + Send
@@ -27,15 +53,30 @@ impl DispatchCtx {
         F::Output: Send,
     {
         let ctx = self.core().cloned();
+        #[cfg(test)]
+        let prompt_scanner = crate::security::prompt_injection::current_scoped();
         // Box before the task-local wrapper. Its branching async state otherwise
         // multiplies a large task's inline size before Tokio can box it,
         // overflowing the spawning thread (including the CLI's main stack).
         let fut = Box::pin(fut);
-        async move {
+        let entered = async move {
             match ctx {
                 Some(ctx) => CoreContext::scope(ctx, fut).await,
                 None => fut.await,
             }
+        };
+        #[cfg(test)]
+        {
+            async move {
+                if let Some(scanner) = prompt_scanner {
+                    return crate::security::prompt_injection::with_scanner(scanner, entered).await;
+                }
+                entered.await
+            }
+        }
+        #[cfg(not(test))]
+        {
+            entered
         }
     }
 
@@ -84,11 +125,20 @@ fn captured() -> Option<std::sync::Arc<CoreContext>> {
 /// requiring the future to be `Send`.
 pub(crate) fn carry<F: Future>(fut: F) -> impl Future<Output = F::Output> {
     let ctx = captured();
+    #[cfg(test)]
+    let prompt_scanner = crate::security::prompt_injection::current_scoped();
     async move {
-        match ctx {
-            Some(ctx) => CoreContext::scope(ctx, fut).await,
-            None => fut.await,
+        let carried = async move {
+            match ctx {
+                Some(ctx) => CoreContext::scope(ctx, fut).await,
+                None => fut.await,
+            }
+        };
+        #[cfg(test)]
+        if let Some(scanner) = prompt_scanner {
+            return crate::security::prompt_injection::with_scanner(scanner, carried).await;
         }
+        carried.await
     }
 }
 

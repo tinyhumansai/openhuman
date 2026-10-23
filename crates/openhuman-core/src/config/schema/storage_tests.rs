@@ -20,27 +20,40 @@ fn debug_never_prints_credentials() {
         ..StorageConfig::default()
     };
     let shown = format!("{config:?}");
-    assert!(!shown.contains("hunter2"), "{shown}");
     assert!(
-        shown.contains("mongodb://***@db.internal/openhuman"),
+        shown.contains("[REDACTED:suppressed]") || shown.contains("mongodb://db.internal"),
         "{shown}"
     );
-    assert_eq!(redact_url("sqlite:/tmp/x"), "sqlite:/tmp/x");
-    assert_eq!(redact_url("mongodb://h/db"), "mongodb://h/db");
+    assert!(!shown.contains("hunter2"), "{shown}");
+    assert!(
+        !shown.contains("/openhuman"),
+        "database names are not logged: {shown}"
+    );
 }
 
 #[test]
-fn redact_drops_query_and_fragment_tokens() {
-    assert_eq!(
-        redact_url(
+fn debug_drops_query_and_fragment_tokens() {
+    let config = StorageConfig {
+        url: Some(
             "mongodb://db.internal/openhuman?authMechanismProperties=AWS_SESSION_TOKEN%3Asecret"
+                .into(),
         ),
-        "mongodb://db.internal/openhuman?***"
-    );
-    assert_eq!(
-        redact_url("mongodb://app:pw@db/x?token=secret#frag"),
-        "mongodb://***@db/x?***"
-    );
+        ..StorageConfig::default()
+    };
+    let shown = format!("{config:?}");
+    assert!(!shown.contains("AWS_SESSION_TOKEN"), "{shown}");
+    assert!(!shown.contains("secret"), "{shown}");
+}
+
+#[test]
+fn debug_suppresses_unsupported_storage_schemes() {
+    let config = StorageConfig {
+        url: Some("sqlite:/tmp/x".into()),
+        ..StorageConfig::default()
+    };
+    let shown = format!("{config:?}");
+    assert!(shown.contains("[REDACTED:suppressed]"), "{shown}");
+    assert!(!shown.contains("/tmp/x"), "{shown}");
 }
 
 #[test]

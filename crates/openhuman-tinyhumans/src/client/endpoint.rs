@@ -12,7 +12,7 @@
 /// The managed hosts an API key may be sent to over HTTPS.
 pub const MANAGED_API_KEY_HOSTS: [&str; 2] = ["api.tinyhumans.ai", "staging-api.tinyhumans.ai"];
 
-fn is_loopback_host(url: &url::Url) -> bool {
+pub(super) fn is_loopback_host(url: &url::Url) -> bool {
     match url.host() {
         Some(url::Host::Domain("localhost")) => true,
         Some(url::Host::Ipv4(address)) => address.is_loopback(),

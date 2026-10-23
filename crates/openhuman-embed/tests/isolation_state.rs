@@ -33,9 +33,10 @@ fn transcript_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 /// Whether `agent` has a root transcript for the test thread in its own store
 /// under the workspace.
 fn has_transcript(agent: &Agent) -> bool {
-    tinyagents_session::port::WorkspaceStores::open(agent.workspace_dir(), agent.id())
-        .expect("the agent's workspace store")
-        .transcripts()
+    openhuman_embed::__host::agent::session_store::installed()
+        .expect("the runtime's session store")
+        .for_agent(agent.id())
+        .transcripts
         .root_for_thread(SESSION)
         .is_some()
 }

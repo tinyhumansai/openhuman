@@ -1,5 +1,5 @@
 //! Docker sandbox request mapping. TinyBox owns daemon status and cleanup.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "modules"))]
 
 use super::*;
 #[cfg(feature = "modules")]
@@ -21,6 +21,7 @@ fn policy(workspace: &Path) -> SandboxPolicy {
         allow_network: false,
         env_passthrough: vec![],
         docker_overrides: None,
+        mount_workspace: true,
     }
 }
 

@@ -144,7 +144,7 @@ async fn raw_security_policy_block_is_enriched_with_workaround_and_relay() {
 
 #[tokio::test]
 async fn already_structured_denial_is_not_double_wrapped() {
-    // A ToolPolicyMiddleware-style denial already has "Workaround:"; the capture
+    // A policy-gate denial already has "Workaround:"; the capture
     // middleware must leave it untouched (no second Workaround block).
     let mw = outcome_capture_mw();
     let structured =

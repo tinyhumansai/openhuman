@@ -19,7 +19,7 @@ async fn agent_only_host(config: &Config) -> (HostRegistration, tinybus::Proxy) 
         .await
         .expect("module attaches");
     let security = Arc::new(crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

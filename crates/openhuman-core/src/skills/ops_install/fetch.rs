@@ -8,14 +8,15 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use tinyskills::{
-    fetch_skill_document, redact_url, write_installed_document, DocumentWrite, FetchPolicy,
-    FetchedDocument, RegistryError, RegistryLimits, SystemResolver, MAX_INSTALL_DOCUMENT_BYTES,
+    fetch_skill_document, write_installed_document, DocumentWrite, FetchPolicy, FetchedDocument,
+    RegistryError, RegistryLimits, SystemResolver, MAX_INSTALL_DOCUMENT_BYTES,
 };
 
 use super::super::ops_discover::{discover_workflows_inner, is_workspace_trusted};
 use super::scan_gate::{fetch_scanned, gate_install, ScanAcknowledgement, SkillInstallOutcome};
 use super::url_validation::read_allow_local_http_env;
 use super::url_validation::{normalize_install_url, validate_install_url_with_config};
+use crate::security::redact::endpoint;
 use crate::skills::catalog::ReqwestTransport;
 
 /// Default wall-clock budget for the SKILL.md fetch.
@@ -175,7 +176,7 @@ pub(crate) fn install_fetch_error(
     fetch_url: &str,
     timeout_secs: u64,
 ) -> String {
-    report_install_fetch_failure(error, Some(&redact_url(fetch_url)));
+    report_install_fetch_failure(error, Some(&endpoint(fetch_url)));
     match error {
         _ if error.is_timeout() => format!("fetch timed out after {timeout_secs}s"),
         RegistryError::Transport(transport) => format!("fetch failed: {transport}"),
@@ -214,8 +215,8 @@ pub(crate) async fn install_workflow_from_url_with_home(
     let fetch_url = normalize_install_url(&raw_url)?;
 
     tracing::debug!(
-        raw_url = %redact_url(&raw_url),
-        fetch_url = %redact_url(&fetch_url),
+        raw_url = %endpoint(&raw_url),
+        fetch_url = %endpoint(&fetch_url),
         workspace = %workspace_dir.display(),
         timeout_secs = timeout_secs,
         "[skills] install_workflow_from_url: entry"
@@ -258,8 +259,8 @@ pub(crate) fn install_validated_document(
     fetched_from: &str,
     document: FetchedDocument,
 ) -> Result<InstallWorkflowFromUrlOutcome, String> {
-    let redacted_source = redact_url(source_url);
-    let redacted_fetched = redact_url(fetched_from);
+    let redacted_source = endpoint(source_url);
+    let redacted_fetched = endpoint(fetched_from);
     let slug = document.slug;
     let content = document.content;
     let parse_warnings = document.warnings;

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tinytools_std::filesystem::FsGate;
 
 use crate::security::policy::CommandClass;
-use crate::security::policy::{TrustedAccess, TrustedRoot};
+use crate::security::policy::{PathKind, TrustedAccess, TrustedRoot};
 use crate::security::{AutonomyLevel, GateDecision, SecurityPolicy};
 
 /// Clone `security` and scope it to `root`, a run's workspace descriptor root.
@@ -20,16 +20,16 @@ use crate::security::{AutonomyLevel, GateDecision, SecurityPolicy};
 /// **and** a `ReadWrite` trusted root. The grant is the load-bearing half:
 /// `action_dir` only decides where a relative path lands, while the allow/deny
 /// decision reads `workspace_dir` + `trusted_roots`
-/// (`SecurityPolicy::is_resolved_path_allowed_for`). Without the grant a
+/// (the module's resolved-path check over `trusted_roots`). Without the grant a
 /// descriptor rooted outside `workspace_dir` moved the cwd but refused every
 /// read and write in it.
 ///
 /// The grant is *additive and per-call*: it is pushed onto a clone, so nothing
 /// process-global is mutated and concurrent turns cannot race each other. It
-/// also cannot widen the hard invariants: `is_always_forbidden` (credential
-/// stores, core OS dirs) and `is_workspace_internal_path` (core-managed state
-/// under `workspace_dir`) are both evaluated *before* any trusted-root
-/// shortcut, so a granted root can never expose them.
+/// also cannot widen the hard invariants: the module's protected-path floor
+/// (credential stores, core OS dirs) and its internal-state reservations
+/// (core-managed state under `workspace_dir`) are both evaluated *before* any
+/// trusted-root shortcut, so a granted root can never expose them.
 ///
 /// The root always originates from trusted in-process code (the session
 /// builder, the sub-agent runner, or the `cwd` RPC parameter), never from
@@ -47,7 +47,9 @@ pub(super) fn security_scoped_to_root(security: &SecurityPolicy, root: &Path) ->
 #[async_trait]
 impl FsGate for SecurityPolicy {
     fn can_act(&self) -> bool {
-        SecurityPolicy::can_act(self)
+        // The module's tier: a read-only autonomy level, or a module that cannot
+        // answer, refuses every mutating tool.
+        self.tier_allows_acting_blocking()
     }
 
     fn is_read_only(&self) -> bool {
@@ -57,15 +59,28 @@ impl FsGate for SecurityPolicy {
     }
 
     fn is_rate_limited(&self) -> bool {
-        SecurityPolicy::is_rate_limited(self)
+        // The hourly budget is the module's, and it is spent once per call by the
+        // tool gate (`Check::HostAction { spend }`) before the tool runs, in the
+        // harness and in a direct run alike. Counting again here would charge two
+        // actions for one call.
+        false
     }
 
     fn record_action(&self) -> bool {
-        SecurityPolicy::record_action(self)
+        // See `is_rate_limited`: the call's action is already reserved.
+        true
     }
 
     fn write_needs_approval(&self) -> bool {
-        self.gate_decision(CommandClass::Write) == GateDecision::Prompt
+        // The module's gate for write-class actions. An unanswered question is a
+        // prompt, never a silent allow.
+        match self.command_class_gate_blocking(CommandClass::Write) {
+            Ok(gate) => gate == GateDecision::Prompt,
+            Err(refusal) => {
+                log::warn!("[fs][gate] tier gate unavailable; asking for approval: {refusal:?}");
+                true
+            }
+        }
     }
 
     fn action_dir(&self) -> &Path {
@@ -73,7 +88,14 @@ impl FsGate for SecurityPolicy {
     }
 
     fn is_path_string_allowed(&self, path: &str) -> bool {
-        SecurityPolicy::is_path_string_allowed(self, path)
+        self.path_allowed_blocking(PathKind::StringAllowed, Path::new(path))
+    }
+
+    fn paths_string_allowed(&self, paths: &[String]) -> Vec<bool> {
+        // One module call for the whole batch (a directory walk's hits), not one per
+        // path. A module that cannot answer refuses every path.
+        let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        self.check_paths_blocking(PathKind::StringAllowed, &paths)
     }
 
     async fn validate_path(&self, path: &str) -> Result<PathBuf, String> {

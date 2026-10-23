@@ -1,4 +1,4 @@
-//! `[autonomy] enabled = false` — the shipped default.
+//! `[security.autonomy] enabled = false` — the shipped default.
 //!
 //! Two halves, and both matter: with the policy disabled a shell is a shell and
 //! a working directory is writable, **but** credential stores and system roots
@@ -6,8 +6,6 @@
 //! likely to break, so it is asserted here beside the first.
 
 use super::*;
-use crate::security::policy::CommandClass;
-use std::path::PathBuf;
 
 fn disabled_policy() -> SecurityPolicy {
     SecurityPolicy {
@@ -31,110 +29,5 @@ fn from_config_carries_the_disabled_flag() {
     assert!(!policy.enabled);
 }
 
-#[test]
-fn disabled_policy_runs_ordinary_shell_syntax() {
-    let policy = disabled_policy();
-    for command in [
-        "echo $(whoami)",
-        "echo `date`",
-        "cat <(ls)",
-        "sleep 1 & echo done",
-        "python3 -c 'print(1)' > out.txt",
-        "curl https://example.com | tee /tmp/x",
-    ] {
-        assert!(
-            policy.check_gated_command(command).is_ok(),
-            "disabled policy should not block: {command}"
-        );
-        assert!(
-            policy.is_command_allowed(command),
-            "disabled policy should allow: {command}"
-        );
-    }
-}
-
-#[test]
-fn disabled_policy_blocks_literal_credential_paths_in_commands() {
-    let policy = disabled_policy();
-    for command in [
-        "cat ~/.ssh/id_rsa",
-        "cat $HOME/.aws/credentials",
-        "cat ${HOME}/.gnupg/private-keys-v1.d/key",
-        "cat %USERPROFILE%/.git-credentials",
-        "node -e 'require(\"fs\").readFileSync(\"~/.netrc\")'",
-    ] {
-        assert!(
-            policy.check_gated_command(command).is_err(),
-            "protected literal should be refused: {command}"
-        );
-    }
-}
-
-#[test]
-fn disabled_policy_allows_unrelated_literal_paths_in_commands() {
-    let policy = disabled_policy();
-    for command in ["cat ./notes.txt", "echo ~/.config/app/theme.json"] {
-        assert!(
-            policy.check_gated_command(command).is_ok(),
-            "ordinary literal should remain allowed: {command}"
-        );
-    }
-}
-
-#[test]
-fn disabled_policy_never_prompts_or_blocks_on_class() {
-    let policy = disabled_policy();
-    for class in [
-        CommandClass::Read,
-        CommandClass::Write,
-        CommandClass::Network,
-        CommandClass::Install,
-        CommandClass::Destructive,
-    ] {
-        assert_eq!(policy.gate_decision(class), GateDecision::Allow);
-    }
-    assert!(policy.can_act());
-    assert!(!policy.is_rate_limited());
-}
-
-#[test]
-fn disabled_policy_allows_paths_outside_the_workspace() {
-    let policy = SecurityPolicy {
-        enabled: false,
-        workspace_only: true,
-        workspace_dir: PathBuf::from("/ws"),
-        action_dir: PathBuf::from("/act"),
-        ..SecurityPolicy::default()
-    };
-    assert!(policy.is_path_string_allowed("/somewhere/else/notes.md"));
-    assert!(policy.is_resolved_path_allowed_for(Path::new("/somewhere/else/notes.md"), true));
-}
-
-#[test]
-fn disabled_policy_still_refuses_credential_stores_and_system_roots() {
-    let policy = disabled_policy();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/nobody".into());
-    for path in [
-        format!("{home}/.ssh/id_rsa"),
-        format!("{home}/.gnupg/secring.gpg"),
-        format!("{home}/.aws/credentials"),
-        "/etc/shadow".to_string(),
-        "/root/.bashrc".to_string(),
-    ] {
-        assert!(
-            !policy.is_path_string_allowed(&path),
-            "is_always_forbidden must hold with the policy disabled: {path}"
-        );
-        assert!(
-            !policy.is_resolved_path_allowed_for(Path::new(&path), false),
-            "is_always_forbidden must hold on resolved paths too: {path}"
-        );
-    }
-}
-
-#[test]
-fn disabled_policy_still_refuses_path_traversal_and_null_bytes() {
-    let policy = disabled_policy();
-    assert!(!policy.is_path_string_allowed("../../etc/passwd"));
-    assert!(!policy.is_path_string_allowed("out/note\0.md"));
-}
+// A disabled policy allows every command class; that table is the module's
+// and is pinned on the real module by `released_module_tier_gate_matches_the_inlined_table`.

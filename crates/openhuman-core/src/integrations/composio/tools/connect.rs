@@ -238,7 +238,7 @@ impl Tool for ComposioConnectTool {
     ) -> anyhow::Result<ToolResult> {
         let approval = crate::agent::tinyagents::host::run_context::approval_for_tool(context);
         let outcome = Box::pin(self.execute_unredacted(args, &approval)).await;
-        redact_composio_outcome(&self.config, outcome)
+        redact_composio_outcome(&self.config, outcome).await
     }
 }
 

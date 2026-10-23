@@ -152,8 +152,7 @@ pub(crate) async fn run_relay_turn(
         };
 
     let security = Arc::new(
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir)
-            .with_privacy_mode(config.privacy.mode),
+        SecurityPolicy::from_full_config(&config).with_privacy_mode(config.security.privacy.mode),
     );
     let parts = match build_channel_turn_parts(
         &dispatch_ctx,

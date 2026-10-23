@@ -10,7 +10,7 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 /// Refuse with the typed `COMPONENT_DISABLED:sandbox` error while `[components]
 /// sandbox` is off for the context the call runs under; with none, it is on.
 fn gate(ctx: &DispatchCtx) -> Result<(), String> {
-    if super::ops::sandbox_component_off(ctx) {
+    if super::operator::component_off(ctx) {
         return Err(crate::core::runtime::components::component_disabled("sandbox").encode());
     }
     Ok(())
@@ -77,7 +77,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "status",
                 ty: TypeSchema::Json,
-                comment: "Backend handle with kind, status, backend_id, and (local) isolation.",
+                comment: "Backend handle with kind, status, backend_id, (local) isolation, and suitable_for_untrusted_code (true only for a ready container or kernel-isolated jail).",
                 required: true,
             }],
         },
@@ -167,6 +167,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
 /// requested name — so `backend:"docker"` on a native-config host reports Local,
 /// matching what a real session on that host would run. Reporting the requested
 /// backend instead was the conflation fixed in #6081.
+/// The policy the status and policy reports describe. Only a sandboxed mode names an
+/// executor, and a configuration that names none reports the native jail, which is the
+/// one a status probe asks about; the module still picks the executor of a real spawn.
+fn reported_policy(
+    mode: tinyagents_definition::SandboxMode,
+    action_dir: &std::path::Path,
+    state_dir: &std::path::Path,
+    config: &crate::config::Config,
+    remote: bool,
+) -> super::types::SandboxPolicy {
+    let mut policy = super::policy::spawn_policy(
+        action_dir,
+        state_dir,
+        &config.security.sandbox,
+        &config.runtime,
+        remote,
+    );
+    if mode == tinyagents_definition::SandboxMode::Sandboxed {
+        if policy.backend == super::types::SandboxBackendKind::None {
+            policy.backend = super::types::SandboxBackendKind::Local;
+        }
+    } else {
+        policy.backend = super::types::SandboxBackendKind::None;
+        policy.docker_overrides = None;
+        policy.allow_network = true;
+    }
+    policy
+}
+
 fn handle_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         gate(&ctx)?;
@@ -202,26 +231,18 @@ fn handle_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFutu
             }
         };
 
-        let mut policy = super::ops::resolve_sandbox_policy(
-            &ctx,
+        let policy = reported_policy(
             mode,
             &config.workspace_dir,
             &config.workspace_dir,
-            &config.runtime,
+            &config,
             is_remote,
         );
-        if !crate::core::runtime::is_saas() {
-            super::ops::apply_requested_backend(
-                &mut policy,
-                &config.sandbox,
-                &config.runtime,
-                &config,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
         let handle = super::ops::create_sandbox_backend_with_config(&policy, &config).await?;
-        to_json(Outcome::new(handle, vec![]))
+        to_json(Outcome::new(
+            super::types::SandboxStatusReport::new(handle),
+            vec![],
+        ))
     })
 }
 
@@ -263,24 +284,13 @@ fn handle_resolve_policy(ctx: DispatchCtx, params: Map<String, Value>) -> Contro
         // embedder-supplied config carries whatever `CoreBuilder::action_dir(..)`
         // set directly. Re-deriving it here from `action_dir_override` alone
         // would silently ignore an embedder's programmatic `action_dir` (#6081).
-        let mut policy = super::ops::resolve_sandbox_policy(
-            &ctx,
+        let policy = reported_policy(
             mode,
             &config.action_dir,
             &config.workspace_dir,
-            &config.runtime,
+            &config,
             is_remote,
         );
-        if !crate::core::runtime::is_saas() {
-            super::ops::apply_requested_backend(
-                &mut policy,
-                &config.sandbox,
-                &config.runtime,
-                &config,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
         to_json(Outcome::new(policy, vec![]))
     })
 }

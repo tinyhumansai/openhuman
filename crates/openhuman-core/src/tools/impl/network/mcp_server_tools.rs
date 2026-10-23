@@ -23,7 +23,7 @@ use serde_json::Value;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolExposure, ToolResult};
 
 use crate::config::Config;
-use crate::security::{SecurityPolicy, ToolOperation};
+use crate::security::SecurityPolicy;
 
 /// Builds host adapters from TinyMCP-prepared declarations. Catalog retrieval,
 /// naming, schema normalization, and execution remain module-owned.
@@ -96,9 +96,6 @@ impl Tool for ModuleConfiguredMcpServerTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        self.security
-            .enforce_tool_operation(ToolOperation::Act, self.name())
-            .map_err(|error| anyhow::anyhow!(error))?;
         let current = crate::config::ops::reload_config_from_paths(
             &self.config.config_path,
             &self.config.workspace_dir,
@@ -145,7 +142,8 @@ impl Tool for ModuleConfiguredMcpServerTool {
                     meta: None,
                 })
                 .collect(),
-        );
+        )
+        .await;
         if !safe
             .iter()
             .any(|tool| tool.name == self.presentation.remote_name)

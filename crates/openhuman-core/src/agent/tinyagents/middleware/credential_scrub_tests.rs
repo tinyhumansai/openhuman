@@ -1,8 +1,53 @@
-//! The browser confirmation-token exemption: the one piece of credential
-//! scrubbing policy the host owns. The scrubber, its notice and their tests
-//! live in `tinyagents-harness` (`middleware::library::credential_scrub`).
+//! The host's part of tool-result credential scrubbing: the browser
+//! confirmation-token exemption, the fail-closed withhold, redaction counting,
+//! and the chunking that keeps large results inside the module's request bound.
+//! What the module actually removes is pinned against the released native
+//! module in `modules/security_text_tests.rs`.
 
 use super::*;
+
+/// A stand-in for the module that replaces `secret-*` words, so the host logic
+/// is tested without a module.
+fn fake_module(text: &str) -> Option<String> {
+    Some(
+        text.split(' ')
+            .map(|w| {
+                if w.starts_with("secret-") {
+                    "[REDACTED]"
+                } else {
+                    w
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+#[test]
+fn unchanged_result_is_left_alone() {
+    assert!(scrub_for_tool(&fake_module, "read_file", "plain text").is_none());
+}
+
+#[test]
+fn changed_result_carries_the_model_facing_notice_and_count() {
+    let (text, count) = scrub_for_tool(&fake_module, "read_file", "a secret-1 b secret-2").unwrap();
+    assert_eq!(count, 2);
+    assert!(text.starts_with("a [REDACTED] b [REDACTED]\n\n[credential_scrub] 2 value(s)"));
+}
+
+#[test]
+fn placeholders_already_in_the_result_are_not_counted() {
+    let (_, count) = scrub_for_tool(&fake_module, "read_file", "[REDACTED] secret-1").unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn a_module_that_cannot_answer_withholds_the_result_instead_of_passing_it_on() {
+    let (text, count) = scrub_for_tool(&|_| None, "read_file", "password=hunter2secret").unwrap();
+    assert_eq!(text, WITHHELD_NOTICE);
+    assert_eq!(count, 1);
+    assert!(!text.contains("hunter2"));
+}
 
 #[test]
 fn browser_confirmation_token_survives_without_exempting_page_credentials() {
@@ -12,53 +57,44 @@ fn browser_confirmation_token_survives_without_exempting_page_credentials() {
             "action": {"action": "click", "target": {"kind": "ref", "value": "e33"}},
             "token": "00000000-0000-4000-8000-000000000123"
         },
-        "page": {
-            "api_key": "sk-abcdefghijklmnopqrstuvwxyz123456",
-            "text": "token=page-secret-value"
-        }
+        "page": {"text": "secret-pagecredential"}
     });
-    let content = pending.to_string();
-    let (scrubbed, count) =
-        scrub_with_notice_for_tool("browser", &content).expect("page credential is still redacted");
-    assert_eq!(count, 2);
-    assert!(scrubbed.contains("00000000-0000-4000-8000-000000000123"));
-    assert!(!scrubbed.contains("abcdefghijklmnopqrstuvwxyz123456"));
-    assert!(!scrubbed.contains("page-secret-value"));
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(scrubbed.split("\n\n").next().unwrap()).unwrap()
-            ["pending"]["token"],
-        pending["pending"]["token"]
-    );
+    // The fake module removes a whole word, so the page value must be a word.
+    let redact = |text: &str| Some(text.replace("secret-pagecredential", "[REDACTED]"));
+    let (scrubbed, count) = scrub_for_tool(&redact, "browser", &pending.to_string())
+        .expect("page credential is still redacted");
+    assert_eq!(count, 1);
+    assert!(!scrubbed.contains("secret-pagecredential"));
+    let body: serde_json::Value =
+        serde_json::from_str(scrubbed.split("\n\n").next().unwrap()).unwrap();
+    assert_eq!(body["pending"]["token"], pending["pending"]["token"]);
+}
 
+#[test]
+fn browser_token_is_never_shown_to_the_module() {
+    let seen = std::sync::Mutex::new(Vec::<String>::new());
+    let redact = |text: &str| {
+        seen.lock().unwrap().push(text.to_string());
+        Some(text.to_string())
+    };
     let token_only = serde_json::json!({
         "status": "NeedsConfirmation",
         "pending": {"token": "00000000-0000-4000-8000-000000000123"}
     });
-    assert!(scrub_with_notice_for_tool("browser", &token_only.to_string()).is_none());
+    assert!(scrub_for_tool(&redact, "browser", &token_only.to_string()).is_none());
+    assert!(seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|text| !text.contains("00000000-0000-4000-8000-000000000123")));
 }
 
-/// #6954: reading a source file that talks about tokens must reach the model
-/// verbatim; only secret-looking values are redacted.
 #[test]
-fn source_code_about_tokens_passes_through_the_host_scrubber() {
-    let source = r#"class Tokenizer:
-    def __init__(self):
-        self.eos_token = "<eos>"
-        previous_token: Optional[int] = None
-
-    def decode(self, token_id):
-        token = self.vocab[int(token_id)]
-        if token == self.unk_token:
-            return score / max(token_count, 1)
-        return {"mean_logprob_per_token": -4.73}
-"#;
-    assert!(
-        scrub_with_notice_for_tool("read_file", source).is_none(),
-        "source code was redacted"
-    );
-
-    let (scrubbed, count) = scrub_with_notice_for_tool("read_file", "password=hunter2secret")
-        .expect("a real credential is still redacted");
-    assert_eq!(count, 1);
-    assert!(!scrubbed.contains("hunter2secret"));
+fn browser_result_is_withheld_when_the_module_cannot_answer() {
+    let pending = serde_json::json!({
+        "status": "NeedsConfirmation",
+        "pending": {"token": "00000000-0000-4000-8000-000000000123"}
+    });
+    let (text, _) = scrub_for_tool(&|_| None, "browser", &pending.to_string()).unwrap();
+    assert_eq!(text, WITHHELD_NOTICE);
 }

@@ -12,11 +12,16 @@ fn http_cred_store() -> (tempfile::TempDir, HttpCredentialsStore) {
 
 // ── Phase 2: autonomy-tier gating of acting nodes ──────────────────────
 
+/// A policy whose class questions are answered with the tier table, so these
+/// tests need not load the security module (the module's own table is pinned by
+/// `released_module_tier_gate_matches_the_inlined_table`).
 fn policy(level: crate::security::AutonomyLevel) -> SecurityPolicy {
+    use crate::security::policy::native_commands_stub::StubGateway;
     SecurityPolicy {
         autonomy: level,
         ..SecurityPolicy::default()
     }
+    .with_gateway(StubGateway::tiered())
 }
 
 // ── Codex P1: Prompt-tier decisions must escalate past a workflow's own
@@ -48,3 +53,12 @@ mod schema_and_structured_output_tests;
 mod tier_gate_and_timeouts_tests;
 #[path = "ops_tool_results_and_credentials_tests.rs"]
 mod tool_results_and_credentials_tests;
+
+#[cfg(test)]
+fn enforce_node_tier_gate(
+    security: &SecurityPolicy,
+    class: tinysecurity_bus::CommandClass,
+    node: &str,
+) -> Result<crate::security::GateDecision> {
+    futures::executor::block_on(super::enforce_node_tier_gate(security, class, node))
+}

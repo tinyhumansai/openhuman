@@ -4588,8 +4588,8 @@ dependencies = [
  "tinymemory-api",
  "tinymemory-integrations",
  "tinymemory-tools",
- "tinyredact",
  "tinysearch-bus",
+ "tinysecurity-bus",
  "tinyskills",
  "tinyskills-drivers",
  "tinystoragedrivers",
@@ -4597,6 +4597,7 @@ dependencies = [
  "tinystoragedrivers-bus",
  "tinystoragedrivers-busproxy",
  "tinystoragedrivers-connect",
+ "tinystoragedrivers-core",
  "tinystoragedrivers-secrets",
  "tinystoragedrivers-types",
  "tinytools",
@@ -7837,6 +7838,7 @@ dependencies = [
 name = "tinycomputer-bus"
 version = "0.15.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -7852,7 +7854,7 @@ dependencies = [
 
 [[package]]
 name = "tinydocs-bus"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -8203,6 +8205,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinysecurity-bus"
+version = "0.17.1"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "tinyskills"
 version = "0.5.1"
 dependencies = [
@@ -8319,6 +8329,22 @@ dependencies = [
  "tinystoragedrivers-types",
  "tokio",
  "url",
+ "zstd",
+]
+
+[[package]]
+name = "tinystoragedrivers-core"
+version = "1.0.0"
+source = "git+https://github.com/tinyhumansai/tinystoragedrivers?tag=v1.0.0#141fd9ed0ad5d14a8fb5a1b3e837a719e81ac08d"
+dependencies = [
+ "async-trait",
+ "data-encoding",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "ulid",
  "zstd",
 ]
 
@@ -8488,12 +8514,12 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tinystoragedrivers-types",
+ "tinystoragedrivers-bus",
 ]
 
 [[package]]

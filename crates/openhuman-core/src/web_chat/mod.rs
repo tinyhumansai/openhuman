@@ -80,8 +80,9 @@ pub use event_bus::fresh_approval_surface_subscription;
 // Public API — operations
 #[cfg(test)]
 pub use ops::drain_queued_turns_for_test;
+#[cfg(feature = "channels")]
 pub(crate) use ops::invalidate_thread_sessions_for_tenant;
-#[cfg(test)]
+#[cfg(all(test, feature = "channels"))]
 pub(crate) use ops::lock_thread_sessions_for_test;
 #[cfg(any(test, debug_assertions))]
 pub use ops::parallel_in_flight_entries_for_test;

@@ -37,7 +37,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use tinyskills::Skill as Workflow;
-use tinytools::{Tool, ToolResult};
+use tinytools::{sanitize::sanitize_for_llm, Tool, ToolResult};
 
 /// How many matches a search returns when the caller does not say.
 const DEFAULT_LIMIT: usize = 5;
@@ -49,7 +49,7 @@ pub const SKILL_SEARCH_NAME: &str = "skill_search";
 /// Compact per-result projection, via the module's capped projection with the
 /// host's `sanitize_for_llm` supplied as the sanitiser.
 fn project(workflow: &Workflow) -> tinyskills::SkillHit {
-    tinyskills::project(workflow, tinytools::sanitize::sanitize_for_llm)
+    tinyskills::project(workflow, sanitize_for_llm)
 }
 
 /// Search installed skills by capability.

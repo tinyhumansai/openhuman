@@ -51,7 +51,10 @@ fn a_different_workspace_reopens_the_default_backend_there() {
         installed.urls(),
         [super::super::config::default_url(second.path())]
     );
-    assert!(rebound.to.ends_with("/storage"), "{}", rebound.to);
+    assert!(!rebound.to.contains(first.path().to_string_lossy().as_ref()));
+    assert!(!rebound
+        .to
+        .contains(second.path().to_string_lossy().as_ref()));
     assert!(
         second.path().join("storage").is_dir(),
         "the new workspace got its storage directory"
@@ -219,7 +222,8 @@ fn rebinding_to_a_fresh_v2_profile_opens_its_storage_db_and_leaves_a_v1_one_alon
         installed.urls(),
         [format!("sqlite:{}", layout.storage_db.display())]
     );
-    assert!(rebound.to.ends_with("/storage.db"), "{}", rebound.to);
+    assert!(!rebound.to.contains(v1.path().to_string_lossy().as_ref()));
+    assert!(!rebound.to.contains(root.path().to_string_lossy().as_ref()));
     assert!(layout.storage_db.is_file(), "the profile got its database");
     assert!(
         !layout.workspace_dir.join("storage").exists(),

@@ -31,8 +31,11 @@ fn security_policy_info_returns_all_documented_fields() {
 fn security_policy_info_matches_default_config_policy_values() {
     let outcome = security_policy_info_for_config(&Config::default());
     let config = Config::default();
-    let default =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let default = SecurityPolicy::from_config(
+        &config.security.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    );
     assert_eq!(outcome.value["autonomy"], json!(default.autonomy));
     assert_eq!(
         outcome.value["allowed_commands"],
@@ -59,7 +62,7 @@ fn security_policy_info_matches_default_config_policy_values() {
 #[test]
 fn security_policy_info_reflects_configured_action_budget() {
     let mut config = crate::config::Config::default();
-    config.autonomy.max_actions_per_hour = 77;
+    config.security.autonomy.max_actions_per_hour = 77;
 
     let outcome = security_policy_info_for_config(&config);
 
@@ -100,4 +103,13 @@ async fn load_and_get_security_policy_info_reflects_env_overlay() {
              load_config_with_timeout into the policy payload"
         );
     }
+}
+
+#[test]
+fn security_policy_info_reports_the_privacy_mode_and_enabled_flag() {
+    let mut config = Config::default();
+    config.security.privacy.mode = crate::config::PrivacyMode::LocalOnly;
+    let outcome = security_policy_info_for_config(&config);
+    assert_eq!(outcome.value["privacy_mode"], json!("local_only"));
+    assert_eq!(outcome.value["enabled"], json!(false));
 }

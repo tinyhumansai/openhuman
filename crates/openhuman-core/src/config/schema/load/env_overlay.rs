@@ -267,7 +267,7 @@ impl Config {
             if !trimmed.is_empty() {
                 match trimmed.parse::<u32>() {
                     Ok(limit) => {
-                        self.autonomy.max_actions_per_hour = limit;
+                        self.security.autonomy.max_actions_per_hour = limit;
                         self.record_env_override(
                             env,
                             "autonomy.max_actions_per_hour",

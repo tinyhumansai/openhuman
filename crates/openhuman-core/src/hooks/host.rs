@@ -3,8 +3,8 @@
 //! The engine, `hooks.json` contract and process runner live in
 //! `tinyagents_hooks::command`. This module supplies what is specific
 //! to this host: the product name that decides discovery paths and the
-//! `OPENHUMAN_*` hook environment, the user's home directory, the platform
-//! shell, and the model behind `prompt` hooks.
+//! `OPENHUMAN_*` hook environment, the user's home directory, the
+//! sandboxed command spawner, and the model behind `prompt` hooks.
 
 use crate::core::runtime::DispatchCtx;
 use std::sync::{Arc, LazyLock};
@@ -28,7 +28,7 @@ impl PromptEvaluator for HostPromptEvaluator {
 
 fn environment() -> HookEnvironment {
     HookEnvironment::new(PRODUCT_NAME, dirs::home_dir())
-        .with_shell(super::shell::command)
+        .with_command_spawner(Arc::new(super::spawner::SandboxedHookSpawner))
         .with_prompt_evaluator(Arc::new(HostPromptEvaluator))
 }
 
@@ -47,13 +47,9 @@ pub fn engine() -> &'static Arc<HookEngine> {
 /// user layer against the home directory **now**, as it did before the engine
 /// moved upstream, so a reload after `HOME` changes reads the right file.
 pub async fn reload(
-    ctx: &DispatchCtx,
     project_dir: Option<std::path::PathBuf>,
     workspace_dir: Option<std::path::PathBuf>,
 ) -> Arc<HookConfig> {
-    // Hook commands run under the shell TinyBox selects; ask it here, where the
-    // caller is async, so the engine's synchronous shell factory can use it.
-    super::shell::resolve(ctx).await;
     let current = environment();
     let loaded = tokio::task::spawn_blocking(move || {
         config::load(&current, project_dir.as_deref(), workspace_dir.as_deref())
@@ -71,3 +67,7 @@ pub async fn reload(
     ENGINE.install(loaded).await;
     ENGINE.snapshot().await
 }
+
+#[cfg(test)]
+#[path = "host_tests.rs"]
+mod tests;

@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use crate::core::runtime::DispatchCtx;
-
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
@@ -16,8 +15,8 @@ use parking_lot::Mutex;
 #[cfg(test)]
 use tinychannels::host::{
     AllowlistStore, ApprovalDecision, ApprovalGate, ConversationMessage, ConversationStore,
-    EventSink, LifecycleRegistry, ShutdownHook, SpeechRequest, SpeechResult, SpeechSynthesizer,
-    Transcriber, TranscriptionRequest, TranscriptionResult,
+    EventSink, LifecycleRegistry, ShutdownHook, Transcriber, TranscriptionRequest,
+    TranscriptionResult,
 };
 
 use crate::config::Config;
@@ -120,51 +119,6 @@ impl Transcriber for VoiceTranscriber {
 }
 
 // ---------------------------------------------------------------------------
-// SpeechSynthesizer → the registered `cloud` TTS provider
-// ---------------------------------------------------------------------------
-
-/// Text-to-speech backed by the registered hosted TTS provider.
-#[cfg(test)]
-pub struct VoiceSynthesizer {
-    pub config: Arc<Config>,
-}
-
-#[cfg(test)]
-#[async_trait]
-impl SpeechSynthesizer for VoiceSynthesizer {
-    async fn synthesize(&self, request: SpeechRequest) -> anyhow::Result<SpeechResult> {
-        tracing::debug!(
-            "{LOG_PREFIX} synthesize chars={} voice={:?}",
-            request.text.len(),
-            request.voice
-        );
-        // The hosted speech provider is registered by the hosted-backend layer
-        // under the `cloud` slug; with none registered this is an error.
-        #[cfg(feature = "voice")]
-        {
-            let voice = request.voice.as_deref().unwrap_or_default();
-            let provider = crate::voice::create_tts_provider("cloud", voice, &self.config)?;
-            let outcome = provider
-                .synthesize(&self.config, &request.text, request.voice.as_deref())
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
-            let value = outcome.value;
-            let visemes = serde_json::to_value(&value.visemes).ok();
-            Ok(SpeechResult {
-                audio_base64: value.audio_base64,
-                mime_type: value.audio_mime,
-                visemes,
-            })
-        }
-        #[cfg(not(feature = "voice"))]
-        {
-            let _ = request;
-            Err(anyhow::anyhow!("voice feature disabled at compile time"))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // ApprovalGate → approval reply parsing
 // ---------------------------------------------------------------------------
 
@@ -217,7 +171,7 @@ impl ConversationStore for ConversationHistoryStore {
         session_key: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<ConversationMessage>> {
-        let ctx = DispatchCtx::host_default();
+        let ctx = DispatchCtx::ambient();
         let messages =
             crate::threads::store::get_messages(&ctx, self.workspace_dir.clone(), session_key)
                 .map_err(|e| anyhow::anyhow!(e))?;
@@ -233,7 +187,7 @@ impl ConversationStore for ConversationHistoryStore {
     }
 
     async fn append(&self, session_key: &str, message: ConversationMessage) -> anyhow::Result<()> {
-        let ctx = DispatchCtx::host_default();
+        let ctx = DispatchCtx::ambient();
         let now = chrono::Utc::now().to_rfc3339();
         // `append_message` requires the thread to exist; create-or-noop first.
         crate::threads::store::ensure_thread(

@@ -207,7 +207,7 @@ pub(crate) fn reference_policy(
                 path.display()
             ));
         }
-        if crate::security::SecurityPolicy::is_always_forbidden(path) {
+        if crate::security::floor::is_protected_blocking(path) {
             return Err(format!(
                 "reference path {} is in a protected location",
                 path.display()

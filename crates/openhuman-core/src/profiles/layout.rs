@@ -74,7 +74,7 @@ pub fn profile_config(layout: &ProfileLayout, id: &ProfileId) -> Config {
     config.agent.channel_permissions =
         std::collections::HashMap::from([("profile".into(), "readonly".into())]);
 
-    let autonomy = &mut config.autonomy;
+    let autonomy = &mut config.security.autonomy;
     autonomy.enabled = true;
     autonomy.level = AutonomyLevel::Supervised;
     autonomy.workspace_only = true;

@@ -5,9 +5,6 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tinytools::ToolRunContext;
 
-use openhuman_embed::__host::security::SecurityPolicy;
-use tinytools::ToolResult;
-
 pub(crate) const FILES_PATH: &str = "/agent-integrations/file-storage/files";
 
 /// Subdirectory (under `action_dir`) where downloaded files are stored.
@@ -189,14 +186,4 @@ pub(super) fn action_dir_for_context(
 
 pub(crate) fn file_path(file_id: &str, suffix: &str) -> String {
     format!("{FILES_PATH}/{file_id}{suffix}")
-}
-
-pub(super) fn readonly_autonomy_block(security: &SecurityPolicy) -> Option<ToolResult> {
-    if security.can_act() {
-        None
-    } else {
-        Some(ToolResult::error(
-            "[policy-blocked] Action blocked: autonomy is read-only",
-        ))
-    }
 }

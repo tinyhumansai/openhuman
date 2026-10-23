@@ -291,18 +291,25 @@ pub mod security {
 
 /// tinyhumans: TLS, URL and redaction helpers for the backend client.
 pub mod util {
-    pub use openhuman_core::util::{redact_url_for_log, truncate_at_byte_boundary};
+    pub mod log_redaction {
+        pub use openhuman_core::core::log_redaction::scrub_secrets;
+        pub use openhuman_core::security::redact::endpoint_origin;
+    }
+
+    pub use openhuman_core::security::redact::endpoint_origin as redact_url_for_log;
+    pub use openhuman_core::util::truncate_at_byte_boundary;
 
     pub mod redact {
-        pub use openhuman_core::util::redact::redact_url_for_log;
+        pub use openhuman_core::security::redact::endpoint_origin as redact_url_for_log;
     }
     pub mod tls {
         pub use openhuman_core::util::tls::tls_client_builder;
     }
     pub mod url {
         pub use openhuman_core::util::url::{
-            host_is_local, join_url, normalize_api_base_url, normalize_backend_api_base_url,
+            join_url, normalize_api_base_url, normalize_backend_api_base_url,
         };
+        pub use tinytools_std::url_guard::is_private_or_local_host;
     }
 }
 
@@ -338,8 +345,9 @@ pub mod artifact_publisher {
 /// Egress disclosure, for hosted calls that leave the machine.
 pub mod egress {
     pub use openhuman_core::security::egress::{
-        emit_external_transfer, emit_external_transfer_in, enforce_egress, local_only_blocks,
-        DataKind, EgressDescriptor, EgressLedger, EgressReason, IdentificationRisk,
+        emit_external_transfer, emit_external_transfer_in, enforce_egress, enforce_egress_blocking,
+        local_only_tool_block, DataKind, EgressDescriptor, EgressLedger, EgressReason,
+        IdentificationRisk,
     };
 }
 

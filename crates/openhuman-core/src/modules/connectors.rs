@@ -71,7 +71,9 @@ static MODULE_PROXY_TARGETS: HookSlot<ProxyTargetResolver> =
 #[path = "connectors/inspection.rs"]
 mod inspection;
 
-pub(crate) use inspection::{call_existing_readonly, ExistingCallError};
+pub(crate) use inspection::call_existing_readonly;
+#[cfg(all(feature = "modules", feature = "skills"))]
+pub(crate) use inspection::ExistingCallError;
 
 pub(crate) fn note_module_config_for_load(config: &Config, module_config: &serde_json::Value) {
     inspection::note_module_config_for_load(config, module_config);

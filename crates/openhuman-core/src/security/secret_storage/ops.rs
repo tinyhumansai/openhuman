@@ -444,24 +444,6 @@ pub(crate) fn hex_encode(data: &[u8]) -> String {
     super::crypto::hex_encode(data)
 }
 
-// ── Test helpers ──────────────────────────────────────────────────────────────
-
-/// Force-reset the backend to a custom implementation.
-///
-/// Only available in `#[cfg(test)]`.  Call this at the top of each test that
-/// needs keyring isolation.  Panics if the backend was already initialized —
-/// tests using this must run before any keyring call in the same process
-/// (i.e. in a dedicated test binary or at the very start of a test).
-#[cfg(test)]
-pub(crate) fn force_backend_for_test(
-    b: Box<dyn crate::security::secret_storage::backend::SecretBackend>,
-) {
-    use crate::security::secret_storage::store::BACKEND;
-    if BACKEND.set(std::sync::Arc::from(b)).is_err() {
-        panic!("force_backend_for_test must be called before BACKEND initialization");
-    }
-}
-
 #[cfg(test)]
 #[path = "ops_adoption_tests.rs"]
 mod adoption_tests;

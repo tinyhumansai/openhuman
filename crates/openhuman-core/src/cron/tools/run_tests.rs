@@ -4,12 +4,16 @@ use tempfile::TempDir;
 
 async fn test_config(tmp: &TempDir) -> Arc<Config> {
     let ws = tmp.path().join("workspace");
-    let config = Config {
+    let mut config = Config {
         workspace_dir: ws.clone(),
         action_dir: ws.clone(),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    // Shell jobs run under the untrusted-spawn gate (the TinyBox jail). A unit
+    // test that loads no jail takes the operator's explicit opt-out, as the
+    // scheduler tests do; the gate itself is pinned in `shell_job_jail_tests`.
+    config.security.sandbox.enabled = Some(false);
     tokio::fs::create_dir_all(&config.workspace_dir)
         .await
         .unwrap();

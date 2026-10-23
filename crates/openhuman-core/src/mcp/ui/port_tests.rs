@@ -226,6 +226,28 @@ mod module_backed {
     }
 
     #[tokio::test]
+    async fn an_installed_tool_descriptor_carries_the_tools_meta() {
+        crate::security::prompt_injection::with_scanner(
+            crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+            async {
+                let fake = Arc::new(ModulePort {
+                    installed: vec!["srv-1"],
+                    ..ModulePort::default()
+                });
+                let descriptor = port_over(&fake)
+                    .tool_descriptor("srv-1", "show")
+                    .await
+                    .expect("descriptor");
+                assert_eq!(
+                    descriptor.meta,
+                    Some(json!({"ui": {"resourceUri": "ui://card"}}))
+                );
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
     async fn a_static_tool_descriptor_carries_the_tools_meta_and_annotations() {
         let fake = Arc::new(ModulePort {
             statics: vec!["srv-1"],

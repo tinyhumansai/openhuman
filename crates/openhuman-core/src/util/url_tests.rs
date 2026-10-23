@@ -34,21 +34,3 @@ fn normalize_backend_api_base_url_keeps_only_the_origin() {
         "https://h.example"
     );
 }
-
-#[test]
-fn host_is_local_classifies_loopback_private_and_localhost() {
-    let local = [
-        "http://127.0.0.1:1",
-        "http://[::1]:1",
-        "http://0.0.0.0",
-        "http://10.0.0.2",
-        "http://localhost",
-        "http://app.localhost",
-    ];
-    for raw in local {
-        assert!(host_is_local(&::url::Url::parse(raw).unwrap()), "{raw}");
-    }
-    for raw in ["https://h.example", "http://8.8.8.8"] {
-        assert!(!host_is_local(&::url::Url::parse(raw).unwrap()), "{raw}");
-    }
-}

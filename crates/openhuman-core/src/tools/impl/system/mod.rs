@@ -47,8 +47,8 @@ pub use update_check::UpdateCheckTool;
 ///
 /// The grant is *additive and per-call*: it is pushed onto a clone, so nothing
 /// process-global is mutated and concurrent turns cannot race each other. It
-/// cannot widen the hard invariants either — `is_always_forbidden` and
-/// `is_workspace_internal_path` are both evaluated *before* any trusted-root
+/// cannot widen the hard invariants either — the protected-path floor and
+/// the internal-state reservation are both evaluated *before* any trusted-root
 /// shortcut.
 ///
 /// The root always originates from trusted in-process code (the session

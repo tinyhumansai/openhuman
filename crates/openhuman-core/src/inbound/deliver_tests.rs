@@ -367,10 +367,21 @@ fn pinned_deliverer(
 ) -> Deliverer {
     deliverer(triage)
         .with_inbound(mentions_inbound(10, 25))
-        .with_pinned(Pinned::new(
-            agent.clone() as Arc<dyn PinnedAgent>,
-            results.clone(),
-        ))
+        .with_pinned(
+            Pinned::new(agent.clone() as Arc<dyn PinnedAgent>, results.clone())
+                .with_test_prompt_scanner(
+                    crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+                ),
+        )
+}
+
+async fn deliver_with_prompt_scanner(
+    deliverer: Deliverer,
+    request: DeliverRequest,
+) -> DeliverResponse {
+    use crate::security::prompt_injection::{scanner_stub::StubScanner, with_scanner};
+
+    with_scanner(StubScanner::phrases(), deliverer.deliver(request)).await
 }
 
 #[tokio::test]
@@ -378,13 +389,11 @@ async fn a_pinned_source_runs_its_agent_without_triage_and_keeps_the_text() {
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::Text("draft")]);
     let results = memory_results();
-    let response = pinned_deliverer(&triage, &agent, &results)
-        .deliver(turn(
-            vec![mention("t1"), mention("t2")],
-            Lane::Interactive,
-            1,
-        ))
-        .await;
+    let response = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results),
+        turn(vec![mention("t1"), mention("t2")], Lane::Interactive, 1),
+    )
+    .await;
     assert_eq!(response.status, DeliverStatus::Accepted);
     assert_eq!(triage.runs(), 0, "a pinned source was triaged");
     let runs = agent.runs();
@@ -407,9 +416,9 @@ async fn a_slow_pinned_run_is_acknowledged_at_the_budget_and_stored_when_it_ends
     let deliverer =
         pinned_deliverer(&triage, &agent, &results).with_budget(Duration::from_millis(50));
     let started = std::time::Instant::now();
-    let response = deliverer
-        .deliver(turn(vec![mention("t1")], Lane::Interactive, 1))
-        .await;
+    let response =
+        deliver_with_prompt_scanner(deliverer, turn(vec![mention("t1")], Lane::Interactive, 1))
+            .await;
     assert_eq!(response.status, DeliverStatus::Accepted);
     assert!(started.elapsed() < Duration::from_millis(300));
     assert_eq!(
@@ -427,10 +436,11 @@ async fn a_slow_pinned_run_that_fails_after_the_budget_is_stored_as_failed() {
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::SlowFail(Duration::from_millis(200), "late boom")]);
     let results = memory_results();
-    let response = pinned_deliverer(&triage, &agent, &results)
-        .with_budget(Duration::from_millis(30))
-        .deliver(turn(vec![mention("t1")], Lane::Interactive, 1))
-        .await;
+    let response = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results).with_budget(Duration::from_millis(30)),
+        turn(vec![mention("t1")], Lane::Interactive, 1),
+    )
+    .await;
     assert_eq!(response.status, DeliverStatus::Accepted);
     let done = until_finished(&results, "turn-1", Duration::from_secs(5))
         .await
@@ -444,18 +454,21 @@ async fn a_failed_pinned_run_is_retried_and_stored_as_failed_on_its_last_attempt
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::Fail("down"), Reply::Fail("still down")]);
     let results = memory_results();
-    let deliverer = pinned_deliverer(&triage, &agent, &results);
-    let first = deliverer
-        .deliver(turn(vec![mention("t1")], Lane::Interactive, 1))
-        .await;
+    let first = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results),
+        turn(vec![mention("t1")], Lane::Interactive, 1),
+    )
+    .await;
     assert_eq!(first.status, DeliverStatus::Retry { after_ms: None });
     assert_eq!(
         results.get("turn-1").unwrap().unwrap().result.status,
         ResultStatus::Running
     );
-    let last = deliverer
-        .deliver(turn(vec![mention("t1")], Lane::Interactive, 3))
-        .await;
+    let last = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results),
+        turn(vec![mention("t1")], Lane::Interactive, 3),
+    )
+    .await;
     assert_eq!(last.status, DeliverStatus::Retry { after_ms: None });
     let stored = results.get("turn-1").unwrap().unwrap();
     assert_eq!(stored.result.status, ResultStatus::Failed);
@@ -468,14 +481,18 @@ async fn a_finished_pinned_turn_is_not_run_again() {
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::Text("once")]);
     let results = memory_results();
-    let first = pinned_deliverer(&triage, &agent, &results)
-        .deliver(turn(vec![mention("t1")], Lane::Interactive, 1))
-        .await;
+    let first = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results),
+        turn(vec![mention("t1")], Lane::Interactive, 1),
+    )
+    .await;
     assert_eq!(first.status, DeliverStatus::Accepted);
     // A new process (nothing remembered) is handed the same turn again.
-    let again = pinned_deliverer(&triage, &agent, &results)
-        .deliver(turn(vec![mention("t1")], Lane::Interactive, 2))
-        .await;
+    let again = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results),
+        turn(vec![mention("t1")], Lane::Interactive, 2),
+    )
+    .await;
     assert_eq!(again.status, DeliverStatus::Accepted);
     assert_eq!(agent.runs().len(), 1, "a finished turn ran again");
 }
@@ -530,16 +547,18 @@ async fn an_injected_event_is_left_out_of_the_prompt_and_listed_as_blocked() {
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::Text("two drafts")]);
     let results = memory_results();
-    let response = pinned_deliverer(&triage, &agent, &results)
-        .deliver(pinned_turn(
+    let response = deliver_with_prompt_scanner(
+        pinned_deliverer(&triage, &agent, &results),
+        pinned_turn(
             "turn-screened",
             vec![
                 mention_saying("t1", "loving the new release, great work"),
                 mention_saying("t2", INJECTION),
                 mention_saying("t3", "when is the next meetup happening"),
             ],
-        ))
-        .await;
+        ),
+    )
+    .await;
     assert_eq!(response.status, DeliverStatus::Accepted);
     let runs = agent.runs();
     assert_eq!(runs.len(), 1, "one model call for the batch");
@@ -613,10 +632,11 @@ async fn an_all_injection_batch_completes_without_calling_the_model() {
     );
 }
 
-#[test]
-fn a_benign_batch_passes_the_whole_turn_guard() {
+#[tokio::test]
+async fn a_benign_batch_passes_the_whole_turn_guard() {
+    use crate::security::prompt_injection::scanner_stub::StubScanner;
     use crate::security::prompt_injection::{
-        enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+        enforce_prompt_input, with_scanner, PromptEnforcementAction, PromptEnforcementContext,
     };
     let items: Vec<_> = ["loving the new release", "when is the next meetup"]
         .iter()
@@ -629,14 +649,18 @@ fn a_benign_batch_passes_the_whole_turn_guard() {
         &crate::config::schema::InboundSourceConfig::default(),
         &items,
     );
-    let decision = enforce_prompt_input(
-        &prompt,
-        PromptEnforcementContext {
-            source: "test",
-            request_id: None,
-            user_id: None,
-            session_id: None,
-        },
-    );
+    let decision = with_scanner(
+        StubScanner::phrases(),
+        enforce_prompt_input(
+            &prompt,
+            PromptEnforcementContext {
+                source: "test",
+                request_id: None,
+                user_id: None,
+                session_id: None,
+            },
+        ),
+    )
+    .await;
     assert_eq!(decision.action, PromptEnforcementAction::Allow, "{prompt}");
 }

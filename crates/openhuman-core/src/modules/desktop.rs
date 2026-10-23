@@ -35,6 +35,16 @@ fn fingerprint(value: &serde_json::Value) -> u64 {
 /// Load the module, refresh its private configuration when it changed, and
 /// return a proxy for its one interface (desktop, browser and task members).
 pub(crate) async fn proxy(config: &Config) -> Result<Proxy, String> {
+    proxy_with_browser_egress(config, false).await
+}
+
+/// Browser calls opt into a policy scope captured by TinyComputer's private
+/// module configuration. Desktop-only calls do not need that network grant.
+pub(crate) async fn browser_proxy(config: &Config) -> Result<Proxy, String> {
+    proxy_with_browser_egress(config, true).await
+}
+
+async fn proxy_with_browser_egress(config: &Config, browser_egress: bool) -> Result<Proxy, String> {
     crate::modules::ops::ensure_loaded_within(
         config,
         MODULE_ID,
@@ -50,7 +60,29 @@ pub(crate) async fn proxy(config: &Config) -> Result<Proxy, String> {
 
     // Reinitialization is private and retains no plaintext secret in this host.
     // The lock makes credential rotation atomic across concurrent tool calls.
-    let configuration = module_config(config);
+    let mut configuration = module_config(config);
+    #[cfg(feature = "security-module")]
+    if browser_egress {
+        if config.browser.chrome_path.is_some() {
+            return Err(
+                "TinyComputer browser egress cannot be combined with a configured executable"
+                    .into(),
+            );
+        }
+        let (policy_id, generation) = super::security::egress::browser_dial_config(config).await?;
+        let browser = configuration
+            .as_object_mut()
+            .expect("TinyComputer module configuration is an object")
+            .entry("browser")
+            .or_insert_with(|| serde_json::json!({}));
+        let browser = browser
+            .as_object_mut()
+            .ok_or("TinyComputer browser configuration is invalid")?;
+        browser.insert(
+            "egress".into(),
+            serde_json::json!({ "policy_id": policy_id, "generation": generation }),
+        );
+    }
     let current = fingerprint(&configuration);
     let mut previous = last_config().lock().await;
     if *previous != Some(current) {

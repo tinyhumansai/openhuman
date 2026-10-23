@@ -469,19 +469,40 @@ async fn manual_runs_use_each_invocations_config_and_security_snapshot() {
     crate::core::bus::init().await.unwrap();
     let tmp = TempDir::new().unwrap();
     let mut first_config = tests::test_config(&tmp);
-    first_config.autonomy.enabled = true;
-    first_config.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
+    first_config.security.autonomy.enabled = true;
+    first_config.security.autonomy.level = crate::security::AutonomyLevel::ReadOnly;
     let mut second_config = first_config.clone();
-    second_config.autonomy.enabled = false;
+    second_config.security.autonomy.enabled = false;
     second_config.action_dir = tmp.path().join("second-action-root");
 
     struct ConfigSecurityProbe;
     #[async_trait]
     impl JobKindHandler for ConfigSecurityProbe {
         async fn run(&self, cx: &JobRunContext, _job: &CronJob, _run_id: &str) -> JobOutcome {
+            use crate::security::policy::native_commands_stub::StubGateway;
+            use crate::security::policy::{CommandFlow, CommandQuery, CommandStage};
+            use tinysecurity_bus::CommandClass;
+
+            // Exercise the same module command gate used by scheduled shell
+            // jobs, with the scripted module answer derived from this run's
+            // policy snapshot. An empty command asks only for the tier's gate.
+            let policy = cx
+                .security()
+                .as_ref()
+                .clone()
+                .with_gateway(StubGateway::tiered());
+            let can_act = policy
+                .check_command(CommandQuery {
+                    command: "",
+                    declared: Some(CommandClass::Write),
+                    flow: CommandFlow::Scheduled,
+                    stage: CommandStage::Authorize,
+                })
+                .await
+                .is_ok_and(|verdict| verdict.gate != crate::security::GateDecision::Block);
             JobOutcome::ok(
                 serde_json::json!({
-                    "can_act": cx.security().can_act(),
+                    "can_act": can_act,
                     "action_dir": cx.config().action_dir,
                 })
                 .to_string(),

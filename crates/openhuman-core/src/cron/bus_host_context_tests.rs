@@ -24,7 +24,7 @@ async fn an_expired_bound_callback_fails_closed_under_another_ambient_context() 
     let expired_weak = Arc::downgrade(&expired);
     let dispatch = DispatchCtx::new(Arc::clone(&expired));
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

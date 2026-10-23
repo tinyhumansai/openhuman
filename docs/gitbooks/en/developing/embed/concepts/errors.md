@@ -39,7 +39,10 @@ A structured `CoreError::Domain` carries a stable kind and `expected_user_state`
             ),
     )?;
     let full = runtime.agent(AgentSpec::new("full").access(openhuman_embed::Access::full()))?;
-    assert_ne!(read.config().autonomy.level, full.config().autonomy.level);
+    assert_ne!(
+        read.config().security.autonomy.level,
+        full.config().security.autonomy.level
+    );
     assert!(!read.run("Write a marker").await?.reply.is_empty());
     assert!(
         !marker.exists(),

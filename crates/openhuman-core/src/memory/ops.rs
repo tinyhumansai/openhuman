@@ -13,10 +13,12 @@ use std::path::Path;
 
 use chrono::Utc;
 #[cfg(feature = "channels")]
+use tinymemory_api::ForgetTarget;
+#[cfg(feature = "channels")]
 use tinymemory_api::ItemKind;
 use tinymemory_api::{
-    ForgetTarget, MemoryMeta, MetaFilter, Namespace, Reach, RecallMode, StoreItem, StoreReceipt,
-    ThreadWindow, TimeHint, WriteOptions,
+    MemoryMeta, MetaFilter, Namespace, Reach, RecallMode, StoreItem, StoreReceipt, ThreadWindow,
+    TimeHint, WriteOptions,
 };
 use tinymemory_tools::confine::{Confinement, Policy};
 use tinymemory_tools::ops::{FetchOptions, LearningOptions, ListOptions, MemoryOps, RecallOptions};

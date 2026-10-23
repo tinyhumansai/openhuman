@@ -34,7 +34,7 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     };
     let logged = match moved.as_deref() {
         None => "<derived>".to_string(),
-        Some(u) => super::redact_url_for_log(u),
+        Some(u) => crate::security::redact::endpoint_origin(u),
     };
     tracing::info!(
         "[config][migrate] splitting legacy api_url -> inference_url (api_url cleared, inference_url={})",
@@ -43,32 +43,6 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     config.inference_url = moved;
     config.api_url = None;
     config.load_diagnostics_mut().record_migrated_key("api_url");
-}
-
-/// Strip userinfo (basic-auth) and query string from a URL string for log
-/// emission. Falls back to a coarse `<host>/...` form when parsing fails so
-/// we never leak the raw input. Public only so the migration's unit test
-/// can assert the behaviour.
-pub fn redact_url_for_log(raw: &str) -> String {
-    if let Ok(mut url) = url::Url::parse(raw) {
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
-        url.set_query(None);
-        url.set_fragment(None);
-        return url.to_string();
-    }
-    let truncated = raw
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(raw)
-        .trim_end_matches('/');
-    if let Some((scheme, rest)) = truncated.split_once("://") {
-        if let Some((_, host_path)) = rest.split_once('@') {
-            return format!("{scheme}://***@{host_path}");
-        }
-        return format!("{scheme}://{rest}");
-    }
-    "<unparseable url>".to_string()
 }
 
 /// Migrate `cloud_providers` entries to the new slug-keyed shape and rewrite

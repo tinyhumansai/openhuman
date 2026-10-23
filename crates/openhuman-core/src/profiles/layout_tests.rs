@@ -92,7 +92,7 @@ fn the_memory_binding_wins_over_pins_and_teams() {
 #[test]
 fn the_policy_is_on_and_closed() {
     let layout = profile_layout(Path::new("/srv/oh"), &id());
-    let autonomy = profile_config(&layout, &id()).autonomy;
+    let autonomy = profile_config(&layout, &id()).security.autonomy;
     assert!(autonomy.enabled);
     assert_eq!(autonomy.level, AutonomyLevel::Supervised);
     assert!(autonomy.workspace_only);

@@ -162,6 +162,8 @@ pub use dispatch_control::{decide_dispatch, DispatchDecision, DispatchInputs, Tu
 /// the provider route or cost roll-up subsequently read by its parent.
 #[derive(Clone)]
 pub struct OpenHumanRunContext {
+    /// Single-use authorization snapshots for workflows admitted in this run.
+    pub(crate) workflow_scan_permits: super::operation_context::WorkflowScanPermits,
     /// Explicit shared model-call budget inherited by synchronous children.
     pub model_budget: Option<super::super::budget::ModelBudget>,
     /// Host admission policy shared by this run and its synchronous descendants.
@@ -340,6 +342,7 @@ impl OpenHumanRunContext {
     /// actually owns; `None` is an explicit absence, not an ambient fallback.
     pub fn new() -> Self {
         Self {
+            workflow_scan_permits: Arc::new(Mutex::new(Vec::new())),
             model_budget: None,
             dispatch_admission: None,
             response_shape: None,
@@ -390,6 +393,67 @@ impl OpenHumanRunContext {
         }
     }
 
+    pub(crate) fn record_workflow_scan_permit(
+        &self,
+        workflow_id: &str,
+        inputs: &serde_json::Value,
+        call_id: &str,
+        digest: &str,
+    ) {
+        let Ok(inputs) = serde_json::to_string(inputs) else {
+            return;
+        };
+        self.workflow_scan_permits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push((
+                workflow_id.to_owned(),
+                inputs,
+                call_id.to_owned(),
+                digest.to_owned(),
+            ));
+    }
+
+    pub(crate) fn take_workflow_scan_permit(
+        &self,
+        workflow_id: &str,
+        inputs: &serde_json::Value,
+        call_id: &str,
+        digest: &str,
+    ) -> bool {
+        let Ok(inputs) = serde_json::to_string(inputs) else {
+            return false;
+        };
+        let mut permits = self
+            .workflow_scan_permits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let Some(index) = permits.iter().position(|(id, args, call, hash)| {
+            id == workflow_id && args == &inputs && call == call_id && hash == digest
+        }) else {
+            return false;
+        };
+        permits.remove(index);
+        true
+    }
+
+    pub(crate) fn take_workflow_scan_permit_digest(
+        &self,
+        workflow_id: &str,
+        inputs: &serde_json::Value,
+        call_id: &str,
+    ) -> Option<String> {
+        let inputs = serde_json::to_string(inputs).ok()?;
+        let mut permits = self
+            .workflow_scan_permits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let index = permits.iter().rposition(|(id, args, call, _)| {
+            id == workflow_id && args == &inputs && call == call_id
+        })?;
+        Some(permits.remove(index).3)
+    }
+
     /// Pins the harness tool dialect to the one the session prompt speaks.
     #[must_use]
     pub(crate) fn with_tool_dialect(
@@ -404,6 +468,13 @@ impl OpenHumanRunContext {
     #[must_use]
     pub fn with_core(mut self, core: Option<Arc<crate::core::runtime::CoreContext>>) -> Self {
         self.core = core.as_ref().map(Arc::downgrade);
+        self
+    }
+
+    /// Binds the trusted source of this run's actions.
+    #[must_use]
+    pub fn with_origin(mut self, origin: AgentTurnOrigin) -> Self {
+        self.origin = Some(origin);
         self
     }
 
@@ -583,6 +654,7 @@ impl OpenHumanRunContext {
         let workspace = self.workspace.clone();
         let run_ext = OpenHumanRunExt::from_run_context(&self);
         let host_operations = Arc::new(HostOperationContext {
+            workflow_scan_permits: self.workflow_scan_permits.clone(),
             origin: self.origin.clone(),
             approval: self.approval.clone(),
             sandbox_mode: self.sandbox_mode,
@@ -657,3 +729,7 @@ impl OpenHumanRunContext {
 #[cfg(test)]
 #[path = "run_context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "run_context_workflow_scan_tests.rs"]
+mod workflow_scan_tests;

@@ -60,6 +60,10 @@ Concatenation is safe because the strictest verdict wins. Across every hook that
 | `model` | Model override for a `prompt` hook. |
 | `enabled` | Set `false` to park a hook without deleting it. |
 
+## Where hook commands run
+
+Hook commands are text from `hooks.json` files, including a repository's own, so they are untrusted. Each `command` hook runs through `sandbox::untrusted::run` (`hooks/spawner.rs`), which uses the TinyBox native jail or the configured Docker container, and the TinySecurity module plans the spawn first. If the jail is missing or does not meet the untrusted-code floor, or the module denies or faults, the hook does not run. That is an error to the engine: a `failClosed` hook denies the action, and any other hook is logged and skipped. The operator's own sandbox opt-out (`OPENHUMAN_SANDBOX=off`) is never honored for hooks or under SaaS: the module plans a run on the host only for the trusted operator's own commands.
+
 ## The protocol
 
 The event arrives on stdin as one JSON object. The decision goes to stdout. The exit code decides how stdout is read:

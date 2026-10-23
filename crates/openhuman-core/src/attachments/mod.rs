@@ -177,7 +177,8 @@ pub(crate) async fn thread_action_dir(
 }
 
 fn policy(config: &Config, root: &Path) -> SecurityPolicy {
-    let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, root);
+    let policy =
+        SecurityPolicy::from_config(&config.security.autonomy, &config.workspace_dir, root);
     *policy
         .media_files_roots
         .lock()
@@ -195,7 +196,13 @@ pub(crate) async fn resolve_path(
 ) -> anyhow::Result<PathBuf> {
     let root = action_root(config, scope);
     let policy = policy(config, &root);
-    if !policy.is_path_string_allowed(reference) {
+    if !policy
+        .path_allowed(
+            crate::security::PathKind::StringAllowed,
+            Path::new(reference),
+        )
+        .await
+    {
         anyhow::bail!("attachment path is not permitted");
     }
     let path = if Path::new(reference).is_absolute() {
@@ -216,7 +223,13 @@ pub(super) async fn is_missing_local_reference(
 ) -> bool {
     let root = action_root(config, scope);
     let path_policy = policy(config, &root);
-    if !path_policy.is_path_string_allowed(reference) {
+    if !path_policy
+        .path_allowed(
+            crate::security::PathKind::StringAllowed,
+            Path::new(reference),
+        )
+        .await
+    {
         return false;
     }
     let requested = Path::new(reference);

@@ -17,9 +17,7 @@ fn inputs() -> (OpenHumanHostBundleInputs, OpenHumanRunContext) {
         OpenHumanHostBundleInputs {
             config: Arc::new(Config::default()),
             definitions: Arc::new(AgentDefinitionRegistry::builtins_only()),
-            security_policy: Arc::new(SecurityPolicy::default()),
             tool_sets: Vec::new(),
-            tool_policy: None,
             model_resolver: Arc::new(FixedModelResolver::new(Arc::new(
                 tinyagents_harness::testkit::ScriptedModel::new(Vec::new()),
             ))),

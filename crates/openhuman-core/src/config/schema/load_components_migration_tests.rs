@@ -192,7 +192,7 @@ fn composio_backend_mode_or_explicit_components_key_keeps_connectors_on() {
 fn sandbox_enabled_false_maps_to_components_sandbox() {
     let c = migrated("[sandbox]\nenabled = false\n", None);
     assert!(!c.components.sandbox);
-    assert_eq!(c.sandbox.enabled, Some(false), "old key kept");
+    assert_eq!(c.security.sandbox.enabled, Some(false), "old key kept");
     let c = migrated("[security.sandbox]\nenabled = false\n", None);
     assert!(!c.components.sandbox);
 }

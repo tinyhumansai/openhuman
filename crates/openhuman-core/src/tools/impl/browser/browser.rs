@@ -580,15 +580,9 @@ impl BrowserTool {
         args: Value,
         origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
     ) -> anyhow::Result<ToolResult> {
-        if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "[policy-blocked] Action blocked: autonomy is read-only",
-            ));
-        }
-        // A task counts once here; its own steps are bounded by max_actions.
-        if !self.security.record_action() {
-            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
-        }
+        // The tier and the hourly budget are TinySecurity's, enforced once per call by
+        // the tool gate before this runs (a task counts once there; its own steps are
+        // bounded by max_actions).
         match self.run(&args, origin.as_ref()).await {
             Ok(v) => Ok(ToolResult::success(serde_json::to_string_pretty(&v)?)),
             Err(e) => Ok(ToolResult::error(e.to_string())),

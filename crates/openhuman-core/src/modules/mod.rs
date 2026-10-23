@@ -50,6 +50,8 @@ pub mod accessibility;
 pub mod boot;
 #[cfg(feature = "modules")]
 pub mod browser;
+#[cfg(feature = "security-module")]
+mod browser_egress_host;
 #[cfg(feature = "modules")]
 pub mod browser_task;
 #[cfg(feature = "modules")]
@@ -90,6 +92,12 @@ pub mod schemas;
 pub mod search;
 #[cfg(feature = "modules")]
 mod search_path;
+#[cfg(feature = "security-module")]
+pub mod security;
+#[cfg(feature = "security-module")]
+mod security_host;
+#[cfg(feature = "security-module")]
+mod security_watch;
 #[cfg(feature = "modules")]
 pub(crate) mod site_memory_host;
 mod source;
@@ -216,7 +224,7 @@ trait Settled {
     fn settled(&self) -> bool;
 }
 
-#[cfg(feature = "modules")]
+#[cfg(all(feature = "modules", feature = "legacy-import"))]
 macro_rules! settled_outcome {
     ($($module:ident),*) => {$(
         impl Settled for $module::Outcome {
@@ -227,19 +235,19 @@ macro_rules! settled_outcome {
     )*};
 }
 
-#[cfg(feature = "modules")]
+#[cfg(all(feature = "modules", feature = "legacy-import"))]
 settled_outcome!(
     storage_import_tinyconnectors,
     storage_import_tinybox,
     storage_import_tinyjuice
 );
-#[cfg(feature = "modules")]
+#[cfg(all(feature = "modules", feature = "legacy-import"))]
 impl Settled for storage_import_tinyjuice_savings::Outcome {
     fn settled(&self) -> bool {
         matches!(self, Self::AlreadyDone | Self::Imported { .. })
     }
 }
-#[cfg(all(feature = "modules", feature = "web3"))]
+#[cfg(all(feature = "modules", feature = "web3", feature = "legacy-import"))]
 settled_outcome!(storage_import_tinywallet);
 
 /// The (importer, module scope, directory) triples this process already

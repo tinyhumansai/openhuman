@@ -157,7 +157,7 @@ pub struct BrainIngestView {
 /// [`SecurityPolicy::validate_path`]: crate::security::SecurityPolicy::validate_path
 async fn ingest_path(config: &Config, path: &str) -> Result<std::path::PathBuf> {
     let policy = crate::security::SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     );

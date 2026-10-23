@@ -13,6 +13,7 @@
 
 #![cfg(target_os = "linux")]
 
+use openhuman_rpc::redact_url_for_log;
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::{UnixListener, UnixStream},
@@ -149,19 +150,6 @@ fn pending_queue() -> &'static Arc<Mutex<Vec<String>>> {
 
 fn live_handler() -> &'static LiveHandlerSlot {
     LIVE_HANDLER.get_or_init(|| Mutex::new(None))
-}
-
-/// Strip query string and fragment from a deep-link URL before logging.
-/// OAuth callbacks carry tokens in the query string; logging the raw URL
-/// would persist secrets in log files and crash reports.
-fn redact_url_for_log(url: &str) -> String {
-    url.parse::<url::Url>()
-        .map(|mut parsed| {
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            parsed.to_string()
-        })
-        .unwrap_or_else(|_| "<invalid deep link>".to_string())
 }
 
 fn dispatch_url(url: String) {

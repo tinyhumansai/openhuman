@@ -31,8 +31,9 @@ pub use system_turn::{run_system_turn_on_thread, SESSION_CHECKOUT_FAILURE, SYSTE
 pub use state::drain_queued_turns_for_test;
 #[cfg(test)]
 pub(crate) use state::in_flight;
+#[cfg(feature = "channels")]
 pub(crate) use state::invalidate_thread_sessions_for_tenant;
-#[cfg(test)]
+#[cfg(all(test, feature = "channels"))]
 pub(crate) use state::lock_thread_sessions_for_test;
 #[cfg(any(test, debug_assertions))]
 pub use state::parallel_in_flight_entries_for_test;

@@ -110,7 +110,7 @@ fn handle_tool_call(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerF
         let config = ctx.load_config().await?;
         let security = crate::security::live_policy::current().unwrap_or_else(|| {
             Arc::new(SecurityPolicy::from_config(
-                &config.autonomy,
+                &config.security.autonomy,
                 &config.workspace_dir,
                 &config.action_dir,
             ))

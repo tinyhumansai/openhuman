@@ -49,6 +49,8 @@ mod records_mcp_connectors;
 mod records_memes;
 mod records_memory_juice;
 mod records_search;
+#[cfg(feature = "security-module")]
+mod records_security;
 mod records_voice;
 
 use crate::modules::types::ModuleRecord;
@@ -70,12 +72,14 @@ use records_mcp_connectors::{TINYCONNECTORS, TINYMCP};
 use records_memes::TINYMEMES;
 use records_memory_juice::TINYJUICE;
 use records_search::TINYSEARCH;
+#[cfg(feature = "security-module")]
+use records_security::TINYSECURITY;
 #[cfg(feature = "voice")]
 use records_voice::TINYVOICE;
 
 /// Every module this build can load. The records whose contract crate is an
 /// optional dependency (`documents`, `web3`, `voice`, `hosting`, `tinymemes`, `inbound-queues`) exist
-/// only when that gate is on; a product-feature build carries all fourteen.
+/// only when that gate is on; a product-feature build carries all fifteen.
 pub const ALL: &[ModuleRecord] = &[
     TINYCOMPUTER,
     TINYSEARCH,
@@ -98,6 +102,8 @@ pub const ALL: &[ModuleRecord] = &[
     TINYMEMES,
     #[cfg(feature = "inbound-queues")]
     TINYEVENTQUEUES,
+    #[cfg(feature = "security-module")]
+    TINYSECURITY,
 ];
 
 /// The record for `id`, if this build knows it.
@@ -121,8 +127,10 @@ pub fn release_records() -> Vec<&'static tinybus::module::ReleaseRecord> {
 
 /// Which `[components]` switch owns each module id.
 ///
-/// Every record in [`ALL`] has an entry (`registry_tests` enforces it), so a
-/// module is never exempt from a disabled component by omission.
+/// Every component-gated record in [`ALL`] has an entry (`registry_tests`
+/// enforces it), so no product module can bypass a disabled component by
+/// omission. `tinysecurity` is deliberately absent: security enforcement has
+/// no `[components]` switch, so configuration cannot turn it off.
 pub const COMPONENT_OF: &[(&str, &str)] = &[
     ("tinycomputer", "computer"),
     ("tinysearch", "search"),
@@ -137,6 +145,7 @@ pub const COMPONENT_OF: &[(&str, &str)] = &[
     ("tinyflows", "tinyflows"),
     ("tinyhosts", "hosting"),
     ("tinymemes", "memes"),
+    ("tinyeventqueues", "eventqueues"),
     ("tinyeventqueues", "eventqueues"),
 ];
 

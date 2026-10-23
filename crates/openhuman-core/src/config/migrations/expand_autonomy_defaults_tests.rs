@@ -6,7 +6,7 @@ use crate::config::Config;
 fn old_v3_config() -> Config {
     let mut config = Config::default();
     // Reset to the narrow v3 allowed_commands.
-    config.autonomy.allowed_commands = vec![
+    config.security.autonomy.allowed_commands = vec![
         "git".into(),
         "npm".into(),
         "cargo".into(),
@@ -21,7 +21,7 @@ fn old_v3_config() -> Config {
         "tail".into(),
     ];
     // Reset to the narrow v3 auto_approve list.
-    config.autonomy.auto_approve = vec![
+    config.security.autonomy.auto_approve = vec![
         "file_read".into(),
         "memory_search".into(),
         "memory_list".into(),
@@ -29,7 +29,7 @@ fn old_v3_config() -> Config {
         "list_dir".into(),
     ];
     // Reset to the old numeric default.
-    config.autonomy.max_actions_per_hour = OLD_DEFAULT_MAX_ACTIONS_PER_HOUR;
+    config.security.autonomy.max_actions_per_hour = OLD_DEFAULT_MAX_ACTIONS_PER_HOUR;
     config
 }
 
@@ -41,7 +41,12 @@ fn adds_new_commands_to_narrow_list() {
     // Every new command must now be present.
     for cmd in NEW_COMMANDS {
         assert!(
-            config.autonomy.allowed_commands.iter().any(|c| c == cmd),
+            config
+                .security
+                .autonomy
+                .allowed_commands
+                .iter()
+                .any(|c| c == cmd),
             "expected {:?} in allowed_commands after migration",
             cmd
         );
@@ -49,7 +54,12 @@ fn adds_new_commands_to_narrow_list() {
     // Existing commands must be preserved.
     for cmd in &["git", "npm", "cargo", "ls", "cat", "grep"] {
         assert!(
-            config.autonomy.allowed_commands.iter().any(|c| c == *cmd),
+            config
+                .security
+                .autonomy
+                .allowed_commands
+                .iter()
+                .any(|c| c == *cmd),
             "expected existing command {:?} preserved",
             cmd
         );
@@ -67,7 +77,12 @@ fn adds_new_auto_approve_tools_to_narrow_list() {
 
     for tool in NEW_AUTO_APPROVE_TOOLS {
         assert!(
-            config.autonomy.auto_approve.iter().any(|t| t == tool),
+            config
+                .security
+                .autonomy
+                .auto_approve
+                .iter()
+                .any(|t| t == tool),
             "expected {:?} in auto_approve after migration",
             tool
         );
@@ -75,7 +90,12 @@ fn adds_new_auto_approve_tools_to_narrow_list() {
     // Write tools must keep Supervised mode's ask-before-edit contract.
     for tool in &["file_write", "edit_file"] {
         assert!(
-            !config.autonomy.auto_approve.iter().any(|t| t == *tool),
+            !config
+                .security
+                .autonomy
+                .auto_approve
+                .iter()
+                .any(|t| t == *tool),
             "expected {:?} to require approval after migration",
             tool
         );
@@ -83,7 +103,12 @@ fn adds_new_auto_approve_tools_to_narrow_list() {
     // Existing tools must be preserved.
     for tool in &["file_read", "memory_search", "memory_list"] {
         assert!(
-            config.autonomy.auto_approve.iter().any(|t| t == *tool),
+            config
+                .security
+                .autonomy
+                .auto_approve
+                .iter()
+                .any(|t| t == *tool),
             "expected existing tool {:?} preserved",
             tool
         );
@@ -98,26 +123,26 @@ fn adds_new_auto_approve_tools_to_narrow_list() {
 fn bumps_max_actions_when_old_default() {
     let mut config = old_v3_config();
     assert_eq!(
-        config.autonomy.max_actions_per_hour,
+        config.security.autonomy.max_actions_per_hour,
         OLD_DEFAULT_MAX_ACTIONS_PER_HOUR
     );
 
     let stats = run(&mut config).expect("migration should succeed");
 
     assert!(stats.max_actions_bumped);
-    assert_eq!(config.autonomy.max_actions_per_hour, u32::MAX);
+    assert_eq!(config.security.autonomy.max_actions_per_hour, u32::MAX);
 }
 
 #[test]
 fn does_not_bump_max_actions_when_user_customised() {
     let mut config = old_v3_config();
-    config.autonomy.max_actions_per_hour = 100;
+    config.security.autonomy.max_actions_per_hour = 100;
 
     let stats = run(&mut config).expect("migration should succeed");
 
     assert!(!stats.max_actions_bumped);
     assert_eq!(
-        config.autonomy.max_actions_per_hour, 100,
+        config.security.autonomy.max_actions_per_hour, 100,
         "user-customised ceiling must be preserved"
     );
 }
@@ -131,9 +156,9 @@ fn idempotent_on_already_expanded_config() {
     assert!(stats1.commands_added > 0 || stats1.tools_added > 0 || stats1.max_actions_bumped);
 
     // Second run — nothing changes.
-    let snapshot_commands = config.autonomy.allowed_commands.clone();
-    let snapshot_tools = config.autonomy.auto_approve.clone();
-    let snapshot_max = config.autonomy.max_actions_per_hour;
+    let snapshot_commands = config.security.autonomy.allowed_commands.clone();
+    let snapshot_tools = config.security.autonomy.auto_approve.clone();
+    let snapshot_max = config.security.autonomy.max_actions_per_hour;
 
     let stats2 = run(&mut config).expect("second run should succeed");
 
@@ -143,15 +168,16 @@ fn idempotent_on_already_expanded_config() {
         !stats2.max_actions_bumped,
         "max_actions not bumped on second run"
     );
-    assert_eq!(config.autonomy.allowed_commands, snapshot_commands);
-    assert_eq!(config.autonomy.auto_approve, snapshot_tools);
-    assert_eq!(config.autonomy.max_actions_per_hour, snapshot_max);
+    assert_eq!(config.security.autonomy.allowed_commands, snapshot_commands);
+    assert_eq!(config.security.autonomy.auto_approve, snapshot_tools);
+    assert_eq!(config.security.autonomy.max_actions_per_hour, snapshot_max);
 }
 
 #[test]
 fn preserves_user_custom_commands_not_in_new_set() {
     let mut config = old_v3_config();
     config
+        .security
         .autonomy
         .allowed_commands
         .push("my_custom_tool".to_string());
@@ -160,6 +186,7 @@ fn preserves_user_custom_commands_not_in_new_set() {
 
     assert!(
         config
+            .security
             .autonomy
             .allowed_commands
             .iter()
@@ -172,18 +199,28 @@ fn preserves_user_custom_commands_not_in_new_set() {
 fn no_duplicate_commands_when_some_already_present() {
     let mut config = old_v3_config();
     // Pre-seed a subset of new commands so we can check no duplicates appear.
-    config.autonomy.allowed_commands.push("pnpm".to_string());
-    config.autonomy.allowed_commands.push("yarn".to_string());
+    config
+        .security
+        .autonomy
+        .allowed_commands
+        .push("pnpm".to_string());
+    config
+        .security
+        .autonomy
+        .allowed_commands
+        .push("yarn".to_string());
 
     run(&mut config).expect("migration should succeed");
 
     let pnpm_count = config
+        .security
         .autonomy
         .allowed_commands
         .iter()
         .filter(|c| *c == "pnpm")
         .count();
     let yarn_count = config
+        .security
         .autonomy
         .allowed_commands
         .iter()

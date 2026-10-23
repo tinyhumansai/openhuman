@@ -16,7 +16,6 @@ use crate::skills::run_log;
 use crate::skills::schemas::resolve_workspace_dir;
 
 use super::ops::{resolve_runtimes, RuntimeRequirement};
-use super::spawn_workflow_run_background;
 
 #[derive(Debug, Deserialize)]
 struct RunParams {
@@ -271,20 +270,33 @@ fn handle_run(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture 
         let origin = ctx
             .turn_origin_or_scoped()
             .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Cli);
-        let started = crate::security::turn_origin::with_origin(
-            origin.clone(),
-            spawn_workflow_run_background(&ctx, payload.skill_id, payload.inputs, Some(origin)),
+        let config = crate::config::Config::load_or_init()
+            .await
+            .map_err(|error| format!("skill_runtime_run: failed to load config: {error:#}"))?;
+        let outcome = crate::tools::native_ops::execute_tool_in_context(
+            &config,
+            ctx,
+            origin,
+            crate::skills::run_workflow::RUN_WORKFLOW_TOOL_NAME,
+            serde_json::json!({
+                "workflow_id": payload.skill_id,
+                "inputs": payload.inputs,
+                "wait_seconds": 0,
+            }),
         )
         .await?;
-        to_json(Outcome::new(
-            serde_json::json!({
-                "run_id": started.run_id,
-                "status": "started",
-                "skill_id": started.workflow_id,
-                "log": started.log_path.display().to_string(),
-            }),
-            Vec::new(),
-        ))
+        if outcome.result.is_error {
+            return Err(outcome.result.output());
+        }
+        let mut result: Value = serde_json::from_str(&outcome.result.output())
+            .map_err(|error| format!("skill_runtime_run: invalid tool result: {error}"))?;
+        if let Some(workflow_id) = result.get("workflow_id").cloned() {
+            result["skill_id"] = workflow_id;
+            if let Some(object) = result.as_object_mut() {
+                object.remove("workflow_id");
+            }
+        }
+        to_json(Outcome::new(result, Vec::new()))
     })
 }
 

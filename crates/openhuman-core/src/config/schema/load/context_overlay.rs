@@ -136,7 +136,7 @@ const PROFILE_OWNED_PATHS: &[&[&str]] = &[
     &["memory", "layout"],
     &["agent", "channel_permissions"],
     &["agent", "max_tool_iterations_override"],
-    &["autonomy"],
+    &["security", "autonomy"],
     &["cron", "agent_jobs_only"],
     &["cron", "min_interval_secs"],
     &["cron", "max_active_jobs"],

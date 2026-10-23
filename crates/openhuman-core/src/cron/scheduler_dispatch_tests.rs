@@ -25,7 +25,7 @@ fn set_policy(config: &Config, job_id: &str, policy: JobPolicy) -> anyhow::Resul
 
 fn security(config: &Config) -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ))

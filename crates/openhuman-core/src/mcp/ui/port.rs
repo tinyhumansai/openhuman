@@ -153,7 +153,8 @@ impl UiServerPort for HostUiPort {
                     meta: None,
                 })
                 .collect(),
-        );
+        )
+        .await;
         safe.iter().find(|candidate| candidate.name == tool)?;
         Some(UiToolDescriptor { meta, annotations })
     }

@@ -24,10 +24,17 @@ import SecurityPanel from '../SecurityPanel';
 
 const mockRetryKeyringProbe = vi.fn();
 const mockDecideKeyringConsent = vi.fn();
+const mockFetchToolTrust = vi.fn();
+const mockRevokeToolTrust = vi.fn();
 
 vi.mock('../../../../services/keyringApi', () => ({
   retryKeyringProbe: (...args: unknown[]) => mockRetryKeyringProbe(...args),
   decideKeyringConsent: (...args: unknown[]) => mockDecideKeyringConsent(...args),
+}));
+
+vi.mock('../../../../services/api/approvalApi', () => ({
+  fetchToolTrust: (...args: unknown[]) => mockFetchToolTrust(...args),
+  revokeToolTrust: (...args: unknown[]) => mockRevokeToolTrust(...args),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -57,6 +64,11 @@ function setupState(keyringStatus: ReturnType<typeof makeKeyringStatus>) {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+beforeEach(() => {
+  mockFetchToolTrust.mockResolvedValue([]);
+  mockRevokeToolTrust.mockResolvedValue(true);
+});
 
 describe('SecurityPanel — storage mode badge (lines 11, 27)', () => {
   beforeEach(() => {
@@ -245,5 +257,69 @@ describe('SecurityPanel — consent management (lines 118, 123, 128, 133)', () =
       // en.ts: 'keyring.consent.error': 'Failed to save preference. Please try again.'
       expect(screen.getByText('Failed to save preference. Please try again.')).toBeInTheDocument();
     });
+  });
+});
+
+describe('SecurityPanel — whole-tool trust grants', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRetryKeyringProbe.mockResolvedValue(undefined);
+    mockDecideKeyringConsent.mockResolvedValue(undefined);
+    mockFetchToolTrust.mockResolvedValue([]);
+    mockRevokeToolTrust.mockResolvedValue(true);
+    setupState(makeKeyringStatus());
+  });
+
+  it('loads and displays redacted grant labels without exposing revocation IDs', async () => {
+    mockFetchToolTrust.mockResolvedValue([
+      { tool: 'Browser search', request_id: 'opaque-grant-7', granted_at_ms: 1_800_000_000_000 },
+    ]);
+
+    renderWithProviders(<SecurityPanel />);
+
+    expect(await screen.findByText('Browser search')).toBeInTheDocument();
+    expect(mockFetchToolTrust).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('opaque-grant-7')).not.toBeInTheDocument();
+  });
+
+  it('shows an empty state when no grants exist', async () => {
+    renderWithProviders(<SecurityPanel />);
+
+    expect(await screen.findByText('No trusted tools')).toBeInTheDocument();
+  });
+
+  it('revokes a grant by its opaque request ID and removes it from the list', async () => {
+    mockFetchToolTrust.mockResolvedValue([
+      { tool: 'Browser search', request_id: 'opaque-grant-7', granted_at_ms: 1_800_000_000_000 },
+    ]);
+
+    renderWithProviders(<SecurityPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
+
+    await waitFor(() => expect(mockRevokeToolTrust).toHaveBeenCalledWith('opaque-grant-7'));
+    await waitFor(() => expect(screen.queryByText('Browser search')).not.toBeInTheDocument());
+  });
+
+  it('keeps the grant and allows retry after a revoke failure', async () => {
+    mockFetchToolTrust.mockResolvedValue([
+      { tool: 'Browser search', request_id: 'opaque-grant-7', granted_at_ms: 1_800_000_000_000 },
+    ]);
+    mockRevokeToolTrust
+      .mockRejectedValueOnce(new Error('private failure detail'))
+      .mockResolvedValue(true);
+
+    renderWithProviders(<SecurityPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
+
+    expect(
+      await screen.findByText('Could not revoke trusted tool. Try again.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Browser search')).toBeInTheDocument();
+    expect(screen.queryByText('private failure detail')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+
+    await waitFor(() => expect(mockRevokeToolTrust).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Browser search')).not.toBeInTheDocument());
   });
 });

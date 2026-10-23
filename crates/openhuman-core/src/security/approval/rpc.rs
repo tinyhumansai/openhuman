@@ -8,10 +8,11 @@ use anyhow::anyhow;
 
 use crate::core::Outcome;
 
+use super::engine::Variant;
 use super::gate::{try_boot_state, ApprovalGate, ApprovalGateBootState, DecideMiss};
 use super::types::{
     ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, FlowPreauthorizationResult,
-    PendingApproval,
+    PendingApproval, ToolTrustEntry,
 };
 
 /// Upper bound on `tool_names` per pre-authorization call — far above any
@@ -108,6 +109,46 @@ pub async fn approval_list_recent_decisions(
     Ok(Outcome::single_log(rows, log))
 }
 
+/// List durable whole-tool grants for the authenticated dispatch tenant.
+pub async fn approval_list_tool_trust(
+    ctx: &DispatchCtx,
+) -> anyhow::Result<Outcome<Vec<ToolTrustEntry>>> {
+    ctx.tenant()
+        .map_err(|error| anyhow!("tool grant listing has no tenant: {error}"))?;
+    let Some(gate) = ApprovalGate::try_global() else {
+        return Ok(Outcome::new(Vec::new(), vec![]));
+    };
+    let grants = gate.list_tool_trust(ctx)?;
+    let log = format!(
+        "[approval] list_tool_trust returned {} grant(s)",
+        grants.len()
+    );
+    Ok(Outcome::single_log(grants, log))
+}
+
+/// Revoke one durable whole-tool grant by its opaque ID in the authenticated
+/// dispatch tenant's approval scope.
+pub async fn approval_revoke_tool_trust(
+    ctx: &DispatchCtx,
+    request_id: &str,
+) -> anyhow::Result<Outcome<bool>> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Err(anyhow!("request_id must not be empty"));
+    }
+    ctx.tenant()
+        .map_err(|error| anyhow!("tool grant revocation has no tenant: {error}"))?;
+    let gate = ApprovalGate::try_global()
+        .ok_or_else(|| anyhow!("approval gate is not installed; supervised mode disabled"))?;
+    let revoked = gate.revoke_tool_trust_by_id(ctx, request_id)?;
+    let log = if revoked {
+        "[approval] whole-tool grant revoked".to_string()
+    } else {
+        "[approval] whole-tool grant was already absent".to_string()
+    };
+    Ok(Outcome::single_log(revoked, log))
+}
+
 /// Batch-grant "approve always for this flow" trust at save+enable time
 /// (consolidated pre-authorization card). Loops the idempotent
 /// `INSERT OR IGNORE` per tool and writes one born-decided audit row per
@@ -164,17 +205,7 @@ pub async fn approval_preauthorize_flow(
             continue;
         }
         gate.insert_flow_trust(flow_id, &tool_name)?;
-        // Audit row is best-effort: the grant above is what changes behavior,
-        // and failing the whole batch over a bookkeeping row would leave the
-        // user with a half-approved card for no security benefit.
-        if let Err(err) = gate.record_flow_preauthorization(flow_id, &tool_name) {
-            tracing::warn!(
-                flow_id = flow_id,
-                tool = tool_name.as_str(),
-                error = %err,
-                "[rpc:approval_preauthorize_flow] failed to write audit row for grant"
-            );
-        }
+        // The module audits the grant itself (an approval row on the flow's subject).
         granted.push(tool_name);
     }
 
@@ -222,6 +253,11 @@ pub async fn approval_decide(
         );
         anyhow!("approval gate is not installed; supervised mode disabled")
     })?;
+    let dispatch_tenant = ctx
+        .tenant()
+        .map_err(|error| anyhow!("approval decision has no tenant: {error}"))?;
+    let tool_grant_scope =
+        gate.validate_decision_context(request_id, &dispatch_tenant, agent_id)?;
     let decided = match agent_id {
         Some(agent) => gate.decide_for_agent(agent, request_id, decision),
         None => gate.decide(request_id, decision),
@@ -278,51 +314,23 @@ pub async fn approval_decide(
         decision.as_str()
     )];
 
-    // "Always allow": persist the tool onto the user's `autonomy.auto_approve`
-    // allowlist (config save + live-policy reload) so the gate skips prompting
-    // for it on future turns — this session and across restarts. Best-effort:
-    // `gate.decide` already resolved the current call, so a persistence failure
-    // must not fail the RPC. It degrades safely — the tool simply prompts again
-    // next time rather than being silently auto-approved.
-    if decision == ApprovalDecision::ApproveAlwaysForTool && row.agent_id.is_some() {
-        tracing::info!(
-            tool = row.tool_name.as_str(),
-            agent_id = row.agent_id.as_deref().unwrap_or(""),
-            "[rpc:approval_decide] agent request approved once; the process allowlist is not widened"
-        );
-        logs.push(format!(
-            "[approval] '{}' approved; an agent's 'Always allow' comes from its own access",
-            row.tool_name
-        ));
-    } else if decision == ApprovalDecision::ApproveAlwaysForTool {
-        match crate::config::ops::add_auto_approve_tool(ctx, &row.tool_name).await {
-            Ok(()) => {
-                tracing::info!(
-                    tool = row.tool_name.as_str(),
-                    "[rpc:approval_decide] tool persisted to auto_approve allowlist"
-                );
-                logs.push(format!(
-                    "[approval] '{}' added to the Always-allow list",
-                    row.tool_name
-                ));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    tool = row.tool_name.as_str(),
-                    error = %err,
-                    "[rpc:approval_decide] failed to persist auto_approve; tool will prompt again next time"
-                );
-                logs.push(format!(
-                    "[approval] WARNING: could not save 'Always allow' for '{}': {err}",
-                    row.tool_name
-                ));
-            }
-        }
+    // The current call is already released before this best-effort durable
+    // grant. A failed grant leaves later calls gated, and an agent request is
+    // stored under the agent's exact TinySecurity subject rather than widening
+    // the process scope. Strict-flow scopes never accept whole-tool grants.
+    if let Some(log) = persist_tool_grant_after_decision(
+        &gate,
+        decision,
+        tool_grant_scope,
+        &row.request_id,
+        &row.tool_name,
+    ) {
+        logs.push(log);
     }
 
     // "Approve always for this flow" (flow-approval-surface, PR2): unlike
     // `ApproveAlwaysForTool` above, this grant is scoped to one workflow —
-    // persisted into `flow_tool_trust`, NOT the global `autonomy.auto_approve`
+    // persisted into TinySecurity's durable flow trust,
     // allowlist, so it cannot leak into a different flow that happens to call
     // the same tool. Only meaningful on a row whose `source_context` names a
     // flow; a row without one (decision picked on a non-flow park, which the
@@ -382,3 +390,59 @@ pub async fn approval_decide(
     );
     Ok(Outcome::new(row, logs))
 }
+
+/// Persist an "always allow this tool" choice only after the caller has
+/// resolved the current parked request. Failure is best effort: the current
+/// call remains approved, while later calls continue to require a decision.
+fn persist_tool_grant_after_decision(
+    gate: &ApprovalGate,
+    decision: ApprovalDecision,
+    scope: (crate::core::runtime::Tenant, Variant),
+    request_id: &str,
+    tool: &str,
+) -> Option<String> {
+    if decision != ApprovalDecision::ApproveAlwaysForTool {
+        return None;
+    }
+    match scope {
+        (tenant, Variant::Standard) => {
+            match gate.grant_tool_trust(&tenant, Variant::Standard, tool) {
+                Ok(()) => {
+                    tracing::info!(
+                        tool = tool,
+                        agent_id = tenant.agent.as_deref().unwrap_or("<process>"),
+                        "[rpc:approval_decide] durable whole-tool grant recorded"
+                    );
+                    Some(format!(
+                        "[approval] '{tool}' added to the Always-allow list"
+                    ))
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        tool = tool,
+                        error = %err,
+                        "[rpc:approval_decide] failed to persist whole-tool grant; later calls will prompt"
+                    );
+                    Some(format!(
+                        "[approval] WARNING: could not save 'Always allow' for '{tool}': {err}"
+                    ))
+                }
+            }
+        }
+        (_tenant, Variant::FlowStrict) => {
+            tracing::warn!(
+                request_id,
+                tool = tool,
+                "[rpc:approval_decide] strict-flow request cannot create a whole-tool grant"
+            );
+            Some(format!(
+                "[approval] WARNING: '{tool}' was approved for this call; strict workflow approvals are not granted globally"
+            ))
+        }
+        (_, Variant::Forced) => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "rpc_tests.rs"]
+mod tests;

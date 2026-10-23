@@ -188,7 +188,7 @@ fn first_error_line(text: &str) -> String {
 }
 
 fn sanitized_failure(text: &str) -> String {
-    crate::security::scrub::sanitize_text(text).value
+    crate::security::redact::text(text)
 }
 
 /// A stable, bounded fingerprint of a tool call's arguments for the identical-

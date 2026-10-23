@@ -28,6 +28,7 @@ impl FlowCallPolicy for FlowPolicy {
             super::super::tier::tier_policy_from_config(dispatch, captured, Some(live), security)
                 .map_err(capability_payload)?;
         super::super::enforce_node_tier_gate(&policy, class, "tool_call")
+            .await
             .map_err(capability_payload)
     }
     async fn approve(
@@ -39,7 +40,7 @@ impl FlowCallPolicy for FlowPolicy {
         args: &Value,
     ) -> std::result::Result<Option<String>, String> {
         let summary = crate::security::approval::summarize_action(slug, args);
-        let redacted = crate::security::approval::redact_args(args);
+        let redacted = crate::security::redact::arguments(args);
         let (outcome, audit_id) = super::super::gate_call_for_tier(
             dispatch, approval, decision, slug, &summary, redacted,
         )

@@ -23,5 +23,7 @@ fn is_true_when_the_http_server_feature_is_on() {
 #[test]
 #[cfg(not(feature = "http-server"))]
 fn is_false_when_the_http_server_feature_is_off() {
-    assert!(!HTTP_SERVER_COMPILED_IN);
+    const {
+        assert!(!HTTP_SERVER_COMPILED_IN);
+    }
 }

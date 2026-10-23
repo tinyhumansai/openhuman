@@ -94,12 +94,11 @@ impl PinnedAgent for AgentChatPinned {
             None,
             AgentChatEnv::default(),
         );
-        let outcome = crate::security::turn_origin::with_origin(
-            external_inbound_origin(&run.source, &run.turn_id),
-            turn,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
+        let outcome = ctx
+            .with_turn_origin(external_inbound_origin(&run.source, &run.turn_id))
+            .enter(turn)
+            .await
+            .map_err(anyhow::Error::msg)?;
         Ok(outcome.value)
     }
 }
@@ -133,7 +132,7 @@ pub fn render_prompt(
 /// `inference.agent_chat` applies to the whole message, so one injected
 /// event is left out instead of failing its batch; the reason is the guard's
 /// verdict and rule codes, never the text.
-fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
+async fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
     use crate::security::prompt_injection::{
         enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
     };
@@ -148,7 +147,8 @@ fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
                 user_id: None,
                 session_id: Some("inbound"),
             },
-        );
+        )
+        .await;
         let verdict = match decision.action {
             PromptEnforcementAction::Allow => {
                 kept.push(item);
@@ -222,6 +222,8 @@ pub struct Pinned {
     agent: Arc<dyn PinnedAgent>,
     results: Results,
     in_flight: InFlight,
+    #[cfg(test)]
+    prompt_scanner: Option<Arc<dyn crate::security::prompt_injection::PromptScanner>>,
 }
 
 impl std::fmt::Debug for Pinned {
@@ -238,7 +240,20 @@ impl Pinned {
             agent,
             results,
             in_flight: InFlight::default(),
+            #[cfg(test)]
+            prompt_scanner: None,
         }
+    }
+
+    /// Use a deterministic scanner for pinned-delivery tests that run without
+    /// the TinySecurity module loaded.
+    #[cfg(test)]
+    pub(crate) fn with_test_prompt_scanner(
+        mut self,
+        scanner: Arc<dyn crate::security::prompt_injection::PromptScanner>,
+    ) -> Self {
+        self.prompt_scanner = Some(scanner);
+        self
     }
 
     /// The production runner: `inference.agent_chat`'s agent turn, sharing
@@ -250,6 +265,8 @@ impl Pinned {
             agent: Arc::new(AgentChatPinned),
             results,
             in_flight: Arc::clone(&IN_FLIGHT),
+            #[cfg(test)]
+            prompt_scanner: None,
         }
     }
 
@@ -277,7 +294,14 @@ impl Pinned {
         };
         let items: Vec<ExternalItem> = turn.events.iter().filter_map(external_of).collect();
         let event_ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
-        let (items, blocked) = screen(items);
+        #[cfg(test)]
+        let (items, blocked) = if let Some(scanner) = self.prompt_scanner.clone() {
+            crate::security::prompt_injection::with_scanner(scanner, screen(items)).await
+        } else {
+            screen(items).await
+        };
+        #[cfg(not(test))]
+        let (items, blocked) = screen(items).await;
         let key = turn.events.first().map_or_else(
             || turn.conversation_key.clone(),
             |e| e.conversation_key.clone(),

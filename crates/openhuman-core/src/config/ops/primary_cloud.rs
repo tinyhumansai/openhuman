@@ -4,13 +4,6 @@ use crate::config::schema::cloud_providers::CloudProviderCreds;
 use crate::config::Config;
 use crate::inference::provider::factory::{BYOK_INCOMPLETE_SENTINEL, PROVIDER_OPENHUMAN};
 
-/// Keep endpoint paths out of config diagnostics while using TinyInference's
-/// shared sanitizer for URL credentials, query values and invalid inputs.
-fn redact_inference_origin_for_log(endpoint: &str) -> String {
-    let origin = url::Url::parse(endpoint.trim()).map(|url| url.origin().ascii_serialization());
-    tinyinference_core::sanitize::redact_url(origin.as_deref().unwrap_or(endpoint))
-}
-
 pub(crate) fn resolve_primary_cloud_provider_string(config: &Config) -> String {
     let primary = config
         .primary_cloud
@@ -29,7 +22,7 @@ pub(crate) fn resolve_primary_cloud_provider_string(config: &Config) -> String {
             log::debug!(
                 "[providers][chat-factory] BYOK intent detected (endpoint={}) \
                  but no matching cloud_providers entry found; returning fail-closed sentinel",
-                redact_inference_origin_for_log(
+                crate::security::redact::endpoint_origin(
                     config.inference_url.as_deref().unwrap_or_default()
                 )
             );
@@ -49,7 +42,7 @@ pub(crate) fn resolve_primary_cloud_provider_string(config: &Config) -> String {
             log::debug!(
                 "[providers][chat-factory] BYOK intent detected (endpoint={}) \
                  with no primary_cloud and no matching provider entry; returning fail-closed sentinel",
-                redact_inference_origin_for_log(config.inference_url.as_deref().unwrap_or_default())
+                crate::security::redact::endpoint_origin(config.inference_url.as_deref().unwrap_or_default())
             );
             BYOK_INCOMPLETE_SENTINEL.to_string()
         } else {

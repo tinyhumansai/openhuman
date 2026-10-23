@@ -105,7 +105,7 @@ const normalisedName = name => name.replace(/_/g, '-');
 
 const isForbiddenDep = name => {
   const n = normalisedName(name);
-  if (FORBIDDEN_DEPS.includes(n)) return true;
+  if (FORBIDDEN_DEPS.some(dep => normalisedName(dep) === n)) return true;
   if (FORBIDDEN_PREFIXES.some(p => n.startsWith(p))) return true;
   return false;
 };

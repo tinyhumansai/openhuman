@@ -6,34 +6,7 @@ use tinyagents_harness::context::{current_run_depth, with_run_depth, RunDepth};
 fn filter_named_scope_keeps_only_named() {
     let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
     let def = make_def_named_tools(&["alpha", "gamma"]);
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
-    let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-    assert_eq!(names, vec!["alpha", "gamma"]);
-}
-
-#[test]
-fn filter_wildcard_includes_all_minus_disallowed() {
-    let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
-    let mut def = make_def_named_tools(&[]);
-    def.tools = ToolScope::Wildcard;
-    def.disallowed_tools = vec!["beta".into()];
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
-    let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
-    assert_eq!(names, vec!["alpha", "gamma"]);
-}
-
-#[test]
-fn filter_wildcard_honours_disallowed_prefix_entries() {
-    let parent: Vec<Box<dyn Tool>> = vec![
-        stub("alpha"),
-        stub("vendor_registry_register"),
-        stub("vendor_marketplace_buy_identity"),
-        stub("gamma"),
-    ];
-    let mut def = make_def_named_tools(&[]);
-    def.tools = ToolScope::Wildcard;
-    def.disallowed_tools = vec!["vendor_*".into()];
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+    let idx = filter_tool_indices(&parent, &def.tools, &[], None);
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["alpha", "gamma"]);
 }
@@ -48,7 +21,7 @@ fn filter_skill_filter_restricts_to_prefix() {
     ];
     let mut def = make_def_named_tools(&[]);
     def.tools = ToolScope::Wildcard;
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
+    let idx = filter_tool_indices(&parent, &def.tools, &[], Some("notion"));
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["notion__search", "notion__read"]);
 }
@@ -63,7 +36,7 @@ fn filter_skill_filter_combined_with_named_scope() {
         stub("gmail__send"),
     ];
     let def = make_def_named_tools(&["notion__search", "gmail__send"]);
-    let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
+    let idx = filter_tool_indices(&parent, &def.tools, &[], Some("notion"));
     let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
     assert_eq!(names, vec!["notion__search"]);
 }

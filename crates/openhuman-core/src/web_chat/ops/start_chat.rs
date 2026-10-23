@@ -231,7 +231,8 @@ async fn start_chat_inner(
             user_id: Some(&client_id),
             session_id: Some(&thread_id),
         },
-    );
+    )
+    .await;
     if !matches!(prompt_decision.action, PromptEnforcementAction::Allow) {
         log::warn!(
             "[web-channel] prompt rejected client_id={} thread_id={} request_id={} action={} score={:.2} reasons={} hash={} chars={}",

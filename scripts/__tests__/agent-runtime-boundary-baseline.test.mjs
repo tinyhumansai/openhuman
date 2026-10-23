@@ -15,26 +15,26 @@ const sourceUrl = new URL(
 const identity = ({ rule, path, text, occurrence }) =>
   `${rule}\0${path}\0${text}\0${occurrence}`;
 
-test("inbound turn-origin scope is the only pinned task-local exemption", async () => {
+test("inbound pinned agents enter through the context-owned turn origin", async () => {
   const baseline = JSON.parse(await readFile(baselineUrl, "utf8"));
   const source = await readFile(sourceUrl, "utf8");
   const finding = {
     rule: "openhuman-task-local",
     path: "crates/openhuman-core/src/inbound/pinned.rs",
     line: 97,
-    text: "let outcome = crate::security::turn_origin::with_origin(",
+    text: "let outcome = ctx",
     occurrence: 1,
   };
 
   assert.equal(source.split("\n")[96].trim(), finding.text);
   assert.equal(
     baseline.filter((entry) => identity(entry) === identity(finding)).length,
-    1,
+    0,
   );
 
   for (const unreviewed of [
     { ...finding, path: "crates/openhuman-core/src/inbound/other.rs" },
-    { ...finding, text: "crate::security::turn_origin::with_origin(" },
+    { ...finding, text: "let outcome = crate::security::turn_origin::with_origin(" },
     { ...finding, text: "crate::security::turn_origin::capture()" },
   ]) {
     assert.equal(

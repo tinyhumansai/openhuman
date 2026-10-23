@@ -105,7 +105,7 @@ pub async fn sweep(host: &ProfileHost, now: DateTime<Utc>) -> SweepReport {
         let profile_ctx = Arc::clone(profile.context());
         let outcome = CoreContext::scope(Arc::clone(&profile_ctx), async move {
             let security = Arc::new(crate::security::SecurityPolicy::from_config(
-                &profile_config.autonomy,
+                &profile_config.security.autonomy,
                 &profile_config.workspace_dir,
                 &profile_config.action_dir,
             ));

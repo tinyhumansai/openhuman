@@ -19,7 +19,7 @@ pub struct SandboxSettingsPatch {
 
 pub async fn get_sandbox_settings(ctx: &DispatchCtx) -> Result<Outcome<serde_json::Value>, String> {
     let config = ctx.load_config().await?;
-    let sandbox = &config.sandbox;
+    let sandbox = &config.security.sandbox;
     let docker = &config.runtime.docker;
 
     // The daemon probe has no timeout of its own; bound it so a wedged
@@ -34,13 +34,17 @@ pub async fn get_sandbox_settings(ctx: &DispatchCtx) -> Result<Outcome<serde_jso
     let backend_str = match sandbox.backend {
         crate::config::SandboxBackend::Auto => "auto",
         crate::config::SandboxBackend::Landlock => "landlock",
-        crate::config::SandboxBackend::Firejail => "firejail",
-        crate::config::SandboxBackend::Bubblewrap => "bubblewrap",
         crate::config::SandboxBackend::Docker => "docker",
         crate::config::SandboxBackend::None => "none",
     };
 
-    let detected_backend = detect_os_sandbox_backend();
+    // The jail TinyBox would actually use here, or `none` when it reports none
+    // (or cannot be asked). Naming a backend this build cannot run would invite
+    // a selection that fails closed at the first command.
+    let detected_backend = match crate::sandbox::native_jail::status(&config).await {
+        Ok((backend, _, _)) if !backend.is_empty() => backend,
+        Ok(_) | Err(_) => "none".to_owned(),
+    };
 
     let value = serde_json::json!({
         "enabled": sandbox.enabled.unwrap_or(true)
@@ -64,23 +68,21 @@ pub async fn apply_sandbox_settings(
     update: SandboxSettingsPatch,
 ) -> Result<Outcome<serde_json::Value>, String> {
     if let Some(ref backend) = update.backend {
-        config.sandbox.backend = match backend.as_str() {
+        config.security.sandbox.backend = match backend.as_str() {
             "auto" => crate::config::SandboxBackend::Auto,
             "landlock" => crate::config::SandboxBackend::Landlock,
-            "firejail" => crate::config::SandboxBackend::Firejail,
-            "bubblewrap" => crate::config::SandboxBackend::Bubblewrap,
             "docker" => crate::config::SandboxBackend::Docker,
             "none" => crate::config::SandboxBackend::None,
             other => {
                 log::warn!("[config][sandbox] rejected unknown backend: {other}");
                 return Err(format!(
-                    "unknown sandbox backend '{other}'; valid: auto, landlock, firejail, bubblewrap, docker, none"
+                    "unknown sandbox backend '{other}'; valid: auto, landlock, docker, none"
                 ));
             }
         };
     }
     if let Some(enabled) = update.enabled {
-        config.sandbox.enabled = Some(enabled);
+        config.security.sandbox.enabled = Some(enabled);
     }
     if let Some(ref image) = update.docker_image {
         let trimmed = image.trim();
@@ -127,44 +129,4 @@ pub async fn load_and_apply_sandbox_settings(
 ) -> Result<Outcome<serde_json::Value>, String> {
     let mut config = ctx.load_config().await?;
     apply_sandbox_settings(&mut config, update).await
-}
-
-fn detect_os_sandbox_backend() -> &'static str {
-    #[cfg(target_os = "linux")]
-    {
-        if std::path::Path::new("/sys/kernel/security/landlock").exists() {
-            return "landlock";
-        }
-        if std::process::Command::new("firejail")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return "firejail";
-        }
-        if std::process::Command::new("bwrap")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return "bubblewrap";
-        }
-        "none"
-    }
-    #[cfg(target_os = "macos")]
-    {
-        "seatbelt"
-    }
-    #[cfg(target_os = "windows")]
-    {
-        "appcontainer"
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        "none"
-    }
 }

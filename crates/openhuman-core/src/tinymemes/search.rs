@@ -22,7 +22,7 @@ impl OpenHumanSearch {
         if !crate::search::is_active(config) {
             return None;
         }
-        if crate::search::tools::local_only_search_block(TOOL).is_some() {
+        if crate::search::tools::local_only_search_block_blocking(TOOL).is_some() {
             return None;
         }
         let role = tinysearch_bus::role_for_tool(TOOL)?;

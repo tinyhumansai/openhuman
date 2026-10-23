@@ -123,11 +123,7 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
     .await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config(&tmp);
-    let security = Arc::new(crate::security::policy::SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(crate::security::SecurityPolicy::from_full_config(&config));
     crate::channels::runtime::build_channel_turn_parts(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,

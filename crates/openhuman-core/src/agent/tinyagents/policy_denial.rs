@@ -183,7 +183,7 @@ impl PolicyDenial<'_> {
 /// Enrich a raw security-policy / autonomy tool result (issue #4094).
 ///
 /// The pluggable-`ToolPolicy` and channel-permission denials are already rendered
-/// with a `Blocked / Reason / Workaround / relay` shape by [`ToolPolicyMiddleware`]
+/// with a `Blocked / Reason / Workaround / relay` shape by the security gate
 /// (PR #4443). But the ~20 `[policy-blocked]` denials emitted deep in
 /// `SecurityPolicy` / the tools themselves still return a bare marker line with no
 /// workaround and no relay directive, so the agent dead-ends. This wraps such a
@@ -192,7 +192,7 @@ impl PolicyDenial<'_> {
 ///
 /// Returns `None` — leaving the content untouched — when the result is not a raw
 /// policy block, i.e. it lacks the marker, or it already carries a `Workaround:`
-/// suffix (an already-structured `ToolPolicyMiddleware` denial that must not be
+/// suffix (an already-structured policy-gate denial that must not be
 /// double-wrapped).
 pub(super) fn maybe_enrich_policy_block(tool: &str, content: &str) -> Option<String> {
     if !content.contains(POLICY_BLOCKED_MARKER) || content.contains("Workaround:") {

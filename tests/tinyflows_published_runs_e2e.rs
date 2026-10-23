@@ -147,11 +147,11 @@ async fn published_runs_use_scoped_host_capabilities_and_persist_lifecycle() {
         .await
         .expect("load the isolated ReadOnly module configuration");
     assert!(
-        config.autonomy.enabled,
+        config.security.autonomy.enabled,
         "the host autonomy policy is enabled"
     );
     assert_eq!(
-        config.autonomy.level,
+        config.security.autonomy.level,
         openhuman_core::security::AutonomyLevel::ReadOnly,
         "the exact ReadOnly tier must be captured by the RPC context"
     );

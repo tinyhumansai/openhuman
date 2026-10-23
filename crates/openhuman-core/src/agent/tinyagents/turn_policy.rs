@@ -17,7 +17,7 @@ use crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 
 /// The builder-configured [`ToolCallPolicy`](tinyagents_harness::middleware::ToolCallPolicy)
 /// plus the session context a policy check needs, handed to the shared turn seam
-/// so it can install the [`ToolPolicyMiddleware`](super::middleware::tool_policy::ToolPolicyMiddleware).
+/// so it can install the TinySecurity gate.
 /// `None` means "no policy enforcement on this turn" (the channel/CLI + sub-agent
 /// paths, which carry their own gating).
 #[derive(Clone)]
@@ -58,7 +58,12 @@ pub(crate) fn provider_is_self_hosted(provider: &str, endpoint: Option<&str>) ->
     match kind {
         LocalProviderKind::LocalOpenai => endpoint
             .and_then(|url| url::Url::parse(url).ok())
-            .is_some_and(|parsed| crate::util::url::host_is_local(&parsed)),
+            .and_then(|parsed| {
+                parsed
+                    .host_str()
+                    .map(tinytools_std::url_guard::is_private_or_local_host)
+            })
+            .unwrap_or(false),
         _ => true,
     }
 }

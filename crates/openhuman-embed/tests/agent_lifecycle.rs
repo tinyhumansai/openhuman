@@ -110,9 +110,9 @@ fn removing_an_agent_releases_everything_it_held() {
         tokio::spawn(async move {
             let backend = stub_backend().await;
             let mut config = offline_config();
-            config.autonomy.enabled = true;
-            config.autonomy.level = AutonomyLevel::Full;
-            config.autonomy.auto_approve_all = true;
+            config.security.autonomy.enabled = true;
+            config.security.autonomy.level = AutonomyLevel::Full;
+            config.security.autonomy.auto_approve_all = true;
             let runtime = Runtime::builder()
                 .config(config)
                 .workspace(Workspace::Ephemeral)

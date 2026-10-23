@@ -10,7 +10,7 @@ use serde_json::json;
 use super::types::{SessionCacheFingerprint, SessionEntry};
 
 pub(super) fn autonomy_signature(config: &Config) -> String {
-    serde_json::to_string(&config.autonomy).unwrap_or_default()
+    serde_json::to_string(&config.security.autonomy).unwrap_or_default()
 }
 
 /// Signature of `config.model_registry` for the session-cache fingerprint.
@@ -239,7 +239,7 @@ fn first_difference_at(prior: &str, next: &str) -> Option<usize> {
 /// Summarise a differing signature field without printing it.
 ///
 /// `autonomy_signature` and `model_registry_signature` are whole JSON subtrees
-/// of `Config` — `config.autonomy` carries the user's `action_dir` and other
+/// of `Config` — `config.security.autonomy` carries the user's `action_dir` and other
 /// filesystem paths, and the registry is long. Logging either raw would be both
 /// a log bomb on the chat hot path and a needless disclosure, so the log names
 /// the field and gives the reader enough to find the change in their own config:

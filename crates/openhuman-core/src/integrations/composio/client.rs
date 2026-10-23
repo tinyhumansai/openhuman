@@ -28,6 +28,7 @@ pub use factory::{
     register_composio_route_builder, resolve_composio_route, unregister_composio_route_builder,
     ComposioRoute, ComposioRouteBuilder,
 };
+#[cfg(feature = "modules")]
 pub(crate) use network::module_transport_with_proxy;
 
 // Brought into this module's own namespace (private `use`, not `pub use`)

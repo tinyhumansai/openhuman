@@ -65,7 +65,7 @@ fn one_runtime_hosts_independently_configured_agents() {
 
     let rt = runtime();
     rt.block_on(async {
-        tokio::spawn(async move {
+        let workspace_dir = tokio::spawn(async move {
             let backend = wiremock::MockServer::start().await;
             // Managed inference for an agent with no route of its own: the
             // runtime's API key must arrive as a bearer, and nothing else.
@@ -376,11 +376,11 @@ fn one_runtime_hosts_independently_configured_agents() {
                 assert!(beta.config().mcp_client.servers.is_empty());
             }
             assert_eq!(
-                alpha.config().autonomy.level,
+                alpha.config().security.autonomy.level,
                 openhuman_core::security::AutonomyLevel::ReadOnly
             );
             assert_eq!(
-                beta.config().autonomy.level,
+                beta.config().security.autonomy.level,
                 openhuman_core::security::AutonomyLevel::Full
             );
             assert!(alpha.access().turn_origin().is_none());
@@ -411,9 +411,10 @@ fn one_runtime_hosts_independently_configured_agents() {
             // Transcripts are keyed by agent and live in the agent's own store
             // under the workspace, and a thread resumes its own history.
             let listing = |agent_id: &str, session_id: &str| -> Vec<String> {
-                tinyagents_session::port::WorkspaceStores::open(&workspace_dir, agent_id)
-                    .expect("the agent's workspace store")
-                    .transcripts()
+                openhuman_embed::__host::agent::session_store::installed()
+                    .expect("the runtime's session store")
+                    .for_agent(agent_id)
+                    .transcripts
                     .thread_transcripts(session_id, None)
                     .map(|found| found.roots.into_iter().map(|root| root.stem).collect())
                     .unwrap_or_default()
@@ -592,12 +593,13 @@ fn one_runtime_hosts_independently_configured_agents() {
                 panic!("the test is the runtime's sole owner once every agent is dropped");
             };
             drop(runtime);
-            assert!(
-                !workspace_dir.exists(),
-                "an ephemeral workspace must be removed with its runtime"
-            );
+            workspace_dir
         })
         .await
         .expect("library host task did not panic");
+        common::eventually("the ephemeral workspace to be removed", || {
+            (!workspace_dir.exists()).then_some(())
+        })
+        .await;
     });
 }

@@ -68,7 +68,7 @@ custom_definitions = false
 # lease_ttl_secs = 30
 # operator_dir = "/var/lib/openhuman/node-a"        # default <root>/operator
 
-[sandbox]                            # policy for host_shell supplied by an embedding host
+[security.sandbox]                            # policy for host_shell supplied by an embedding host
 image = "alpine:3.20"
 network = "none"
 memory_limit_mb = 512

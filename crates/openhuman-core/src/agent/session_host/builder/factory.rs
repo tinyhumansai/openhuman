@@ -1,6 +1,6 @@
 //! `OpenHumanSessionHost::from_config` factory methods and internal `build_session_agent_inner` constructor.
 
-use super::{factory_resolution::provider_role_for_definition, should_synthesize_delegation_tools};
+use super::should_synthesize_delegation_tools;
 use crate::agent::prompts::SystemPromptBuilder;
 use crate::agent::session_host::types::OpenHumanSessionHost;
 use crate::agent_registry::host_definition::{
@@ -148,17 +148,7 @@ impl OpenHumanSessionHost {
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> = Arc::from(
             host_runtime::create_runtime(&config.runtime, config.shell.hide_window)?,
         );
-        let security = Arc::new(SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        ));
-        // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
-        let audit = crate::security::get_or_create_workspace_audit_logger(
-            crate::config::AuditConfig::default(),
-            config.workspace_dir.clone(),
-        )?;
-
+        let security = Arc::new(SecurityPolicy::from_full_config(config));
         // Load the user's persisted tool preferences once. They drive two
         // things below: granting the App UI Control / App Automation mutation
         // opt-in (#3762) and filtering the tool set to the enabled snapshot.
@@ -196,7 +186,6 @@ impl OpenHumanSessionHost {
                     Arc::clone(&tool_config),
                     &security,
                     runtime,
-                    audit,
                     &tool_config.browser,
                     &tool_config.http_request,
                     &tool_config.action_dir,
@@ -581,37 +570,11 @@ impl OpenHumanSessionHost {
             super::ensure_tinyjuice_tools_visible(&mut visible, agent_id, config);
         }
 
-        if let Some(def) = target_def {
-            if !def.disallowed_tools.is_empty() {
-                match &def.tools {
-                    ToolScope::Wildcard => {
-                        visible = tools
-                            .iter()
-                            .map(|t| t.name().to_string())
-                            .chain(
-                                delegation_tools
-                                    .iter()
-                                    .filter(|t| t.exposure() != tinytools::ToolExposure::Hidden)
-                                    .map(|t| t.name().to_string()),
-                            )
-                            .filter(|name| {
-                                !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
-                            })
-                            .collect();
-                    }
-                    ToolScope::Named(_) => {
-                        visible.retain(|name| {
-                            !crate::tools::rules::glob_list_matches(&def.disallowed_tools, name)
-                        });
-                    }
-                }
-                // Disallowing every tool must remain a zero-tool scope. An
-                // empty visible set means "no filter" to the harness.
-                if visible.is_empty() {
-                    visible.insert(NO_TOOLS_SENTINEL.to_string());
-                }
-            }
-        }
+        // `disallowed_tools` is not applied here. It is a deny rule in the
+        // definition's rule layer (`tools::rules::agent_rule_layer`), which the
+        // harness gate applies to the catalogue, `tool_search` and every call;
+        // trimming the belt as well would be a second, drifting copy of that
+        // check.
 
         // The delegation tools stay beside the durable registry rather than
         // inside it: the builder holds them in `OpenHumanSessionHost::synthesized_tools`,
@@ -824,7 +787,6 @@ impl OpenHumanSessionHost {
             Arc::new(crate::agent::tinyagents::host::OpenHumanHostBase {
                 config: Arc::clone(&base_config),
                 definitions,
-                security_policy: security,
                 session_definition: session_definition.clone().map(|definition| {
                     Arc::new(super::host_tools::add_permanent_tools(
                         definition,
@@ -919,3 +881,5 @@ pub(super) fn resolve_target_definition(
         agent_id
     ))
 }
+
+use super::factory_resolution::provider_role_for_definition;

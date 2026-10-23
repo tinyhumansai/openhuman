@@ -198,13 +198,13 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
         .unwrap();
     let parent = CoreContext::for_test_with_config(DomainSet::full(), runtime_config.clone());
     assert!(runtime_config.mcp_client.enabled);
-    assert!(!runtime_config.autonomy.enabled);
+    assert!(!runtime_config.security.autonomy.enabled);
     assert!(runtime_config.memory.agent_id.is_none());
     assert!(runtime_config.composio.host_credential.is_none());
     runtime_config.memory.agent_id = Some("runtime-memory-agent".into());
     runtime_config.memory.root = Some("team:runtime".into());
     runtime_config.mcp_client.enabled = false;
-    runtime_config.autonomy.enabled = true;
+    runtime_config.security.autonomy.enabled = true;
     runtime_config.output_language = None;
     runtime_config.composio.pin_host_credential(
         crate::config::schema::ComposioHostCredential::direct("overlay-only-test-secret"),
@@ -254,7 +254,7 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
     );
     assert_eq!(refreshed.memory.root.as_deref(), Some("team:runtime"));
     assert!(!refreshed.mcp_client.enabled);
-    assert!(refreshed.autonomy.enabled);
+    assert!(refreshed.security.autonomy.enabled);
     assert!(refreshed.composio.host_credential.is_some());
 
     CoreContext::scope(ctx.clone(), async {
@@ -288,7 +288,7 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
     later_external.memory.agent_id = Some("external-agent".into());
     later_external.memory.root = Some("team:external".into());
     later_external.mcp_client.enabled = true;
-    later_external.autonomy.enabled = false;
+    later_external.security.autonomy.enabled = false;
     later_external.save().await.unwrap();
     let later_conflict = CoreContext::scope(grandchild.clone(), async {
         controller
@@ -325,7 +325,7 @@ async fn external_config_conflict_refresh_keeps_derived_runtime_overrides() {
         Some("team:runtime")
     );
     assert!(!after_later_conflict.mcp_client.enabled);
-    assert!(after_later_conflict.autonomy.enabled);
+    assert!(after_later_conflict.security.autonomy.enabled);
     assert!(after_later_conflict.composio.host_credential.is_some());
 }
 

@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::SecurityPolicy;
 use tinytools::Tool;
 
 use super::delete::StorageDeleteFileTool;
@@ -24,35 +23,19 @@ pub fn build_file_storage_tools(root_config: &Config, action_dir: &Path) -> Vec<
     };
 
     let action_dir = action_dir.to_path_buf();
-    let security = Arc::new(SecurityPolicy::from_config(
-        &root_config.autonomy,
-        &root_config.workspace_dir,
-        &root_config.action_dir,
-    ));
     let tools: Vec<Box<dyn Tool>> = vec![
-        Box::new(StorageUploadFileTool::new_with_security(
+        Box::new(StorageUploadFileTool::new(
             Arc::clone(&client),
             action_dir.clone(),
-            Arc::clone(&security),
         )),
-        Box::new(StorageDownloadFileTool::new_with_security(
+        Box::new(StorageDownloadFileTool::new(
             Arc::clone(&client),
             action_dir,
-            Arc::clone(&security),
         )),
         Box::new(StorageListFilesTool::new(Arc::clone(&client))),
-        Box::new(StorageGetLinkTool::new_with_security(
-            Arc::clone(&client),
-            Arc::clone(&security),
-        )),
-        Box::new(StorageSetVisibilityTool::new_with_security(
-            Arc::clone(&client),
-            Arc::clone(&security),
-        )),
-        Box::new(StorageDeleteFileTool::new_with_security(
-            Arc::clone(&client),
-            Arc::clone(&security),
-        )),
+        Box::new(StorageGetLinkTool::new(Arc::clone(&client))),
+        Box::new(StorageSetVisibilityTool::new(Arc::clone(&client))),
+        Box::new(StorageDeleteFileTool::new(Arc::clone(&client))),
     ];
     tracing::debug!(
         "[file_storage] registered {} file-storage tools",

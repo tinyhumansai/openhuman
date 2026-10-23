@@ -110,7 +110,7 @@ fn maybe_enrich_only_touches_raw_marker_results() {
     assert!(enriched.contains("Relay this to the user"));
     assert!(enriched.contains(POLICY_BLOCKED_MARKER));
 
-    // An already-structured ToolPolicyMiddleware denial (has "Workaround:") is
+    // An already-structured policy-gate denial (has "Workaround:") is
     // left alone — no double-wrapping.
     let already = PolicyDenial::PolicyDenied {
         tool: "run_script",

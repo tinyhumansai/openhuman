@@ -3,7 +3,7 @@ use super::implementations::network::{McpListServersTool, McpListToolsTool};
 use super::*;
 use crate::config::{Config, DelegateAgentConfig};
 use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
-use crate::security::{AuditLogger, SecurityPolicy};
+use crate::security::SecurityPolicy;
 use crate::tools::delegate::DelegateTool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,22 +24,14 @@ pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
 /// Create the default tool registry with explicit runtime adapter.
 ///
 /// Convenience entry point used by tests and the lightweight CLI surface.
-/// Production assembly sites use [`all_tools_with_runtime`] and pass a real
-/// [`AuditLogger`]; this wrapper substitutes [`AuditLogger::disabled`] so
-/// existing test callers do not need to plumb one through.
+/// Production assembly sites use [`all_tools_with_runtime`].
 pub fn default_tools_with_runtime(
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
 ) -> Vec<Box<dyn Tool>> {
-    let audit = AuditLogger::disabled();
     let config = Arc::new(Config::default());
     vec![
-        Box::new(ShellTool::with_config(
-            security.clone(),
-            runtime,
-            audit,
-            config,
-        )),
+        Box::new(ShellTool::with_config(security.clone(), runtime, config)),
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security)),
     ]
@@ -50,7 +42,6 @@ pub fn default_tools_with_runtime(
 pub fn all_tools(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
-    audit: Arc<AuditLogger>,
     browser_config: &crate::config::BrowserConfig,
     http_config: &crate::config::HttpRequestConfig,
     action_dir: &std::path::Path,
@@ -61,7 +52,6 @@ pub fn all_tools(
         config,
         security,
         Arc::new(NativeRuntime::new()),
-        audit,
         browser_config,
         http_config,
         action_dir,
@@ -78,7 +68,6 @@ pub fn all_tools_with_runtime(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
-    audit: Arc<AuditLogger>,
     browser_config: &crate::config::BrowserConfig,
     http_config: &crate::config::HttpRequestConfig,
     action_dir: &std::path::Path,
@@ -90,7 +79,6 @@ pub fn all_tools_with_runtime(
         config,
         security,
         runtime,
-        audit,
         browser_config,
         http_config,
         action_dir,
@@ -111,7 +99,6 @@ pub fn all_tools_with_runtime_and_pack_handle(
     config: Arc<Config>,
     security: &Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
-    audit: Arc<AuditLogger>,
     browser_config: &crate::config::BrowserConfig,
     http_config: &crate::config::HttpRequestConfig,
     action_dir: &std::path::Path,
@@ -122,10 +109,11 @@ pub fn all_tools_with_runtime_and_pack_handle(
     Vec<Box<dyn Tool>>,
     tinyagents_harness_tools::skills::PackRegistryHandle,
 ) {
+    #[cfg(not(feature = "modules"))]
+    let _ = browser_config;
     let shell: Box<dyn Tool> = Box::new(ShellTool::with_config(
         security.clone(),
         Arc::clone(&runtime),
-        Arc::clone(&audit),
         Arc::clone(&config),
     ));
 
@@ -462,7 +450,6 @@ pub fn all_tools_with_runtime_and_pack_handle(
         root_config,
         security,
         runtime: &runtime,
-        audit: &audit,
         browser_config,
         http_config,
         action_dir,

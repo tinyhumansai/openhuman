@@ -155,7 +155,10 @@ pub fn prune_legacy_default_workflows(workspace_dir: &Path) {
 /// Without `skill.toml`, a synthesized SKILL.md-only definition means a bare workflow is
 /// still runnable. A bad `skill.toml` falls back to the SKILL.md-only form.
 pub fn load_workflows(workspace_dir: &Path) -> Vec<WorkflowDefinition> {
-    load_workflows_and_discovered(workspace_dir).0
+    load_workflows_and_discovered(workspace_dir)
+        .into_iter()
+        .map(|(definition, _)| definition)
+        .collect()
 }
 
 /// [`load_workflows`] plus the discovered bundles the definitions
@@ -165,20 +168,25 @@ pub fn load_workflows(workspace_dir: &Path) -> Vec<WorkflowDefinition> {
 /// that needs both the runnable definitions and the discovered metadata (scope
 /// and frontmatter `name`, which `WorkflowDefinition` does not carry) takes
 /// them from this one pass instead of running discovery a second time (#6166).
-fn load_workflows_and_discovered(workspace_dir: &Path) -> (Vec<WorkflowDefinition>, Vec<Workflow>) {
+fn load_workflows_and_discovered(
+    workspace_dir: &Path,
+) -> Vec<(WorkflowDefinition, Option<Workflow>)> {
     // Prune any legacy bundled skills an older build left behind so discover's
     // legacy scan no longer surfaces them (idempotent).
     prune_legacy_default_workflows(workspace_dir);
 
-    let mut workflows: Vec<WorkflowDefinition> = Vec::new();
+    let mut workflows: Vec<(WorkflowDefinition, Option<Workflow>)> = Vec::new();
 
     if let Ok(builtins) = crate::agent_registry::agents::load_builtins() {
         for definition in builtins {
-            workflows.push(WorkflowDefinition {
-                definition,
-                inputs: Vec::new(),
-                github: None,
-            });
+            workflows.push((
+                WorkflowDefinition {
+                    definition,
+                    inputs: Vec::new(),
+                    github: None,
+                },
+                None,
+            ));
         }
     }
 
@@ -206,10 +214,10 @@ fn load_workflows_and_discovered(workspace_dir: &Path) -> (Vec<WorkflowDefinitio
         // that predate `dir_name`. (#3987 codex review.)
         let slug = wf.id();
         if let Some(def) = load_workflow_definition(dir, slug, &wf.description) {
-            workflows.push(def);
+            workflows.push((def, Some(wf.clone())));
         }
     }
-    (workflows, discovered)
+    workflows
 }
 
 /// Build a runnable [`WorkflowDefinition`] from a single workflow directory.
@@ -262,11 +270,20 @@ fn load_workflow_definition(
 
 /// Look up one skill by id across the registry.
 pub fn get_workflow(workspace_dir: &Path, id: &str) -> Option<WorkflowDefinition> {
-    let (workflows, _) = load_workflows_and_discovered(workspace_dir);
+    get_workflow_with_source(workspace_dir, id).map(|(definition, _)| definition)
+}
+
+/// Look up a workflow together with the discovered bundle it came from.
+/// Built-in workflows have no filesystem bundle.
+pub(crate) fn get_workflow_with_source(
+    workspace_dir: &Path,
+    id: &str,
+) -> Option<(WorkflowDefinition, Option<Workflow>)> {
+    let workflows = load_workflows_and_discovered(workspace_dir);
     workflows
         .into_iter()
         .rev()
-        .find(|workflow| workflow.definition.id == id)
+        .find(|(workflow, _)| workflow.definition.id == id)
 }
 
 #[cfg(test)]

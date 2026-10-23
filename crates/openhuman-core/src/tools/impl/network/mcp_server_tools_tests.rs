@@ -35,7 +35,7 @@ fn config() -> Config {
 fn module_prepared_static_tool_keeps_its_contract_and_exposure() {
     let config = config();
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));
@@ -60,7 +60,7 @@ fn module_prepared_static_tool_keeps_its_contract_and_exposure() {
 fn module_presentation_for_an_unconfigured_server_is_not_executable() {
     let config = config();
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));

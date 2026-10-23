@@ -123,6 +123,7 @@ tinyagents-storage-kit = { path = "../../vendor/tinyagents/crates/tinyagents-sto
 # The storage ports and the URL-to-backend facade (`storage` domain). No driver
 # by default: the `storage-*` features below add them.
 tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", default-features = false }
+tinystoragedrivers-core = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0" }
 tinystoragedrivers-api = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
 # Legacy source readers use the shared SQLite binding only while the host
 # migration feature is enabled; production storage opens through the facade.
@@ -185,7 +186,6 @@ tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinyto
 # `memory::` is the only module that names the engine side.
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["local-safety"] }
 tinymemory-tools = { path = "../../vendor/tinymemory/crates/tinymemory-tools", features = ["schema", "fs-claim"] }
-tinyredact = { path = "../../vendor/tinymemory/crates/tinyredact" }
 tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-integrations", default-features = false, features = ["cortex", "brain", "sources-network", "safety", "legacy-import", "schema"] }
 # tinyconnectors-bus — the OAuth connector wire contract
 # (https://github.com/tinyhumansai/tinyconnectors). Payload types and member
@@ -229,6 +229,10 @@ tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/t
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus", features = ["schemars"] }
+# The contract types (notably `CommandClass`) are part of the core's public
+# policy vocabulary even when the loadable module is disabled. The bus crate is
+# transport-free; only the module-loading integration is feature-gated.
+tinysecurity-bus = { path = "../../vendor/tinysecurity/crates/tinysecurity-bus" }
 # Registry vocabulary is available even when the loader is disabled, so the
 # pre-core client can identify and report an unavailable module safely.
 tinycomputer-bus = { path = "../../vendor/tinycomputer/crates/tinycomputer-bus" }
@@ -456,7 +460,7 @@ tinyhosts-bus = { path = "../../vendor/tinyhosts/crates/tinyhosts-bus", optional
 # The root crate is still taken under [dev-dependencies], where test fixtures
 # derive a known account. Dev-dependency features are not linked into the
 # shipped binary, so that does not undo the shed.
-tinywallet-bus = { path = "../../vendor/tinywallet/crates/tinywallet-bus", default-features = false, features = ["wire"], optional = true }
+tinywallet-bus = { path = "../../vendor/tinywallet/crates/tinywallet-bus", default-features = false, features = ["wire", "storage"], optional = true }
 
 
 [target.'cfg(windows)'.dependencies]
@@ -603,7 +607,7 @@ secret-file = ["tinystoragedrivers-secrets/file"]
 # costs no new native builds. It matches `scripts/ci/product-features.txt`. This
 # does NOT move the kernel floor: that profile is
 # `--no-default-features --features flows` and never reads this list.
-default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "tinymemes", "inbound-queues", "secret-file", "legacy-import"]
+default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "security-module", "tinymemes", "inbound-queues", "storage-sqlite", "secret-file", "legacy-import"]
 # The core's domain-owned HTTP surfaces (#5048): the `/v1` OpenAI-compatible
 # router (`inference::http`), the `openhuman text-input run` dev server, and the MCP
 # Streamable-HTTP transport (`mcp::server::http`, additionally gated by `mcp`).
@@ -698,6 +702,10 @@ modules = [
     "dep:tinystoragedrivers-busproxy",
     "dep:tinybus-module",
 ]
+security-module = ["modules"]
+# Tests that exercise the released TinySecurity artifact are opt-in because
+# they need the platform-specific module archive staged by the native fixture CI.
+native-security-tests = ["security-module"]
 # Voice domain: STT/TTS providers, reply speech, and live voice.
 # The desktop product enables voice explicitly; contributor defaults leave it
 # off. WAV framing moved to the `tinyvoice` module, removing the former `hound`

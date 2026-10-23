@@ -1,5 +1,5 @@
 use super::*;
-use crate::security::{AutonomyLevel, SecurityPolicy};
+use crate::security::SecurityPolicy;
 
 fn test_security() -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy::default())
@@ -126,36 +126,6 @@ async fn whitespace_agent_name_trimmed_and_found() {
     // Should find "researcher" after trim — will fail at provider level
     // since ollama isn't running, but must NOT get "Unknown agent".
     assert!(!result.output().contains("Unknown agent"));
-}
-
-#[tokio::test]
-async fn delegation_blocked_in_readonly_mode() {
-    let readonly = Arc::new(SecurityPolicy {
-        autonomy: AutonomyLevel::ReadOnly,
-        ..SecurityPolicy::default()
-    });
-    let tool = DelegateTool::new(sample_agents(), readonly);
-    let result = tool
-        .execute(json!({"agent": "researcher", "prompt": "test"}))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.output().contains("read-only mode"));
-}
-
-#[tokio::test]
-async fn delegation_blocked_when_rate_limited() {
-    let limited = Arc::new(SecurityPolicy {
-        max_actions_per_hour: 0,
-        ..SecurityPolicy::default()
-    });
-    let tool = DelegateTool::new(sample_agents(), limited);
-    let result = tool
-        .execute(json!({"agent": "researcher", "prompt": "test"}))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.output().contains("Rate limit exceeded"));
 }
 
 #[tokio::test]

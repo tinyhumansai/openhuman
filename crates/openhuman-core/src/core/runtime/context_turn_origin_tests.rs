@@ -152,7 +152,7 @@ async fn concurrent_channel_turns_keep_tenant_agent_thread_and_policy_isolated()
             ..Default::default()
         };
         let policy = Arc::new(crate::security::SecurityPolicy::from_config(
-            &config.autonomy,
+            &config.security.autonomy,
             &workspace,
             &workspace,
         ));

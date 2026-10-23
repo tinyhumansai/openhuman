@@ -269,7 +269,7 @@ pub(crate) fn short_error_line(content: &str) -> String {
         Some(err) => format!("{first} — {err}"),
         None => first.to_owned(),
     };
-    let line = crate::security::scrub::sanitize_text(&line).value;
+    let line = crate::security::redact::text(&line);
     let line = tinymemory_api::safety::redact_identifiers(&line);
     let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= ERROR_LINE_CHARS {

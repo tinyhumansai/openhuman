@@ -329,7 +329,7 @@ async fn apply_memory_settings_updates_all_provided_fields() {
 async fn apply_autonomy_settings_updates_action_budget() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
-    cfg.autonomy.max_actions_per_hour = 20;
+    cfg.security.autonomy.max_actions_per_hour = 20;
 
     let outcome = apply_autonomy_settings(
         &mut cfg,
@@ -341,9 +341,9 @@ async fn apply_autonomy_settings_updates_action_budget() {
     .await
     .expect("apply autonomy settings");
 
-    assert_eq!(cfg.autonomy.max_actions_per_hour, 64);
+    assert_eq!(cfg.security.autonomy.max_actions_per_hour, 64);
     assert_eq!(
-        outcome.value["config"]["autonomy"]["max_actions_per_hour"],
+        outcome.value["config"]["security"]["autonomy"]["max_actions_per_hour"],
         serde_json::json!(64)
     );
     assert!(outcome

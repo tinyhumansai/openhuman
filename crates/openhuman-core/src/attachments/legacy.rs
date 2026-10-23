@@ -64,9 +64,7 @@ pub(super) async fn migrate_from(
     let root = tokio::fs::canonicalize(stash).await?;
     let canonical = tokio::fs::canonicalize(source).await?;
     if canonical.parent() != Some(root.as_path())
-        || SecurityPolicy::is_always_forbidden(stash)
-        || SecurityPolicy::is_always_forbidden(source)
-        || SecurityPolicy::is_always_forbidden(&canonical)
+        || crate::security::floor::any_protected(&[stash, source, canonical.as_path()]).await
     {
         anyhow::bail!("legacy sidecar escapes the permitted image store");
     }

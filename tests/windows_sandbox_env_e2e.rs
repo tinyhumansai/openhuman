@@ -32,9 +32,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 #[cfg(windows)]
-use openhuman_core::config::RuntimeConfig;
+use openhuman_core::config::{RuntimeConfig, SandboxConfig};
 #[cfg(windows)]
-use openhuman_core::sandbox::ops::{execute_in_sandbox, resolve_sandbox_policy};
+use openhuman_core::sandbox::{ops::execute_in_sandbox, spawn_policy};
 #[cfg(windows)]
 use tinyagents_definition::SandboxMode;
 
@@ -61,10 +61,10 @@ async fn run_in_sandbox_with_env(
 ) {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let root = tempdir.path().to_path_buf();
-    let policy = resolve_sandbox_policy(
-        mode,
+    let policy = spawn_policy(
         tempdir.path(),
         tempdir.path(),
+        &SandboxConfig::default(),
         &RuntimeConfig::default(),
         false,
     );

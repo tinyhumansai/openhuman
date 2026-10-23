@@ -20,6 +20,7 @@ use std::fmt::Write;
 use tinyagents_definition::SubagentEntry;
 use tinyagents_harness::prompt::{PROMPT_TIER_CONTEXT_MARKER, PROMPT_TIER_VOLATILE_MARKER};
 use tinyskills::Skill as Workflow;
+use tinytools::sanitize::sanitize_for_llm;
 use tinytools_agent::dialect::ToolCallFormat;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
@@ -418,7 +419,7 @@ fn render_installed_skills(
             // chars / instruction fences) and cap so a single installed
             // skill can't bloat the prompt or smuggle routing instructions;
             // full details stay one `describe_workflow` call away.
-            tinytools::sanitize::sanitize_for_llm(&skill.description, SKILL_DESCRIPTION_CHARS)
+            sanitize_for_llm(&skill.description, SKILL_DESCRIPTION_CHARS)
                 .replace(['\n', '\t'], " ")
                 .trim()
                 .to_string()
@@ -505,7 +506,7 @@ fn format_connected_mcp_block(
         let capability = if capability_raw.is_empty() {
             String::new()
         } else {
-            tinytools::sanitize::sanitize_for_llm(capability_raw, 120)
+            sanitize_for_llm(capability_raw, 120)
                 .replace(['\n', '\t'], " ")
                 .trim()
                 .to_string()

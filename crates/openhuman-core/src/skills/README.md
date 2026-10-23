@@ -220,7 +220,7 @@ rather than re-implementing it:
 | `resolve_skill`, `read_resource` (traversal, symlink, size, UTF-8 guards) | The `read_workflow_resource` wrapper and the empty `skill_id` check |
 | `slugify`, `validate_*`, `scaffold_bundle` (containment, body preservation, `SKILL.md` to `WORKFLOW.md` migration) | Scope-to-root choice, the `workflow.toml` sidecar, `[[inputs]]` validation, re-discovery |
 | `remove_bundle` | Root search order, error wording, the `WorkflowsChanged` publish |
-| Install URL normalization, the guarded `fetch_skill_document` (HTTPS only, non-public addresses refused, pinned connections, re-validated redirects, size cap, timeout), document validation, `write_installed_document`, `redact_url` | `Retry-After` and rate-limit messages, Sentry reporting |
+| Install URL normalization, the guarded `fetch_skill_document` (HTTPS only, non-public addresses refused, pinned connections, re-validated redirects, size cap, timeout), document validation, `write_installed_document` | `Retry-After` and rate-limit messages, Sentry reporting |
 | `TriggerPattern` grammar and matching | `TriggeredWorkflowIndex` and the bus subscriber |
 | Bundled-skill validate, digest, install, `is_current_materialization` | The static `BUNDLED` table and its builtin root |
 | TinyFlows Copilot `ListResources` | The scoped flow-authoring snapshot, separate materialization root, and cache/read verification |

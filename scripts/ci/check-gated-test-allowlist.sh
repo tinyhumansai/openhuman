@@ -19,6 +19,8 @@ EXPECTED=$(cat <<'EOF'
 agent_registry/host_definition_tests.rs
 agent/session_host/mod.rs
 integrations/prelude_integrations.rs
+integrations/composio/builder_tools/mod.rs
+integrations/composio/flow_gate_tests.rs
 agent/session_host/runtime_session.rs
 agent/session_host/runtime_session_tool_surface.rs
 agent/session_host/runtime_session_tests.rs
@@ -42,6 +44,7 @@ core/runtime/services.rs
 core/schema_test_support_tests.rs
 core/runtime/subscribers.rs
 mcp/server/resources.rs
+mcp/registry/mod.rs
 mcp/ui/tools.rs
 mcp/server/tools/mod.rs
 modules/mod.rs

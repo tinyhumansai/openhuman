@@ -1,5 +1,5 @@
 use super::shell_description::{command_param_description, shell_description};
-use super::shell_run::{audit_once, run_in_policy, run_native, AuditOnce, YieldRequest};
+use super::shell_run::{run_in_policy, run_native, AuditOnce, YieldRequest};
 #[cfg(feature = "modules")]
 use super::shell_support::container_environment;
 use super::shell_support::{command_failure, tool_timeout_message};
@@ -9,7 +9,9 @@ use crate::agent::tinyagents::host::run_context::{
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use crate::modules::tinybox::host_runtime::RuntimeAdapter;
-use crate::security::{AuditLogger, CommandExecutionLog, SecurityPolicy};
+use crate::security::audit_record::HostAuditEvent;
+use crate::security::policy::{CommandFlow, CommandQuery, CommandStage};
+use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult, ToolTimeout}
 
 /// Maximum output size in bytes (1MB).
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
+
 #[cfg(feature = "modules")]
 fn docker_module_result(
     output: crate::modules::tinybox::contract::DockerRunOutput,
@@ -65,37 +68,62 @@ fn docker_module_result(
 pub struct ShellTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
-    audit: Arc<AuditLogger>,
-    analysis_config: Option<Arc<Config>>,
+    module_config: Option<Arc<Config>>,
 }
 
 impl ShellTool {
-    pub fn new(
-        security: Arc<SecurityPolicy>,
-        runtime: Arc<dyn RuntimeAdapter>,
-        audit: Arc<AuditLogger>,
-    ) -> Self {
+    pub fn new(security: Arc<SecurityPolicy>, runtime: Arc<dyn RuntimeAdapter>) -> Self {
         Self {
             security,
             runtime,
-            audit,
-            analysis_config: None,
+            module_config: None,
         }
     }
 
-    /// Builds a shell tool whose command facts come from the configured
-    /// TinyBox module before host authorization and execution.
+    /// Builds a shell tool bound to the module configuration it runs commands
+    /// under (TinyBox execution, Docker, sandbox). Whether a command may run is
+    /// the security module's answer, asked through the policy either way.
     pub fn with_config(
         security: Arc<SecurityPolicy>,
         runtime: Arc<dyn RuntimeAdapter>,
-        audit: Arc<AuditLogger>,
         config: Arc<Config>,
     ) -> Self {
         Self {
             security,
             runtime,
-            audit,
-            analysis_config: Some(config),
+            module_config: Some(config),
+        }
+    }
+
+    /// Record the command's execution result on the security module's audit stream
+    /// (the one stream every security row goes to). A row the module cannot record is
+    /// logged at warn level and never turns a finished command into a failure, but it
+    /// is neither dropped silently nor written anywhere else.
+    async fn record_execution(
+        &self,
+        ctx: &DispatchCtx,
+        command: &str,
+        approved: bool,
+        allowed: bool,
+        success: bool,
+        duration_ms: u64,
+    ) {
+        let event = HostAuditEvent::command_execution(
+            "tool:shell",
+            command,
+            approved,
+            allowed,
+            success,
+            duration_ms,
+        );
+        if let Err(error) =
+            crate::security::audit_record::record(ctx, self.module_config.as_deref(), event).await
+        {
+            tracing::warn!(
+                error = %error,
+                channel = "tool:shell",
+                "[shell] the command execution audit row was not recorded"
+            );
         }
     }
 
@@ -204,38 +232,10 @@ impl Tool for ShellTool {
     /// and the structural guard are enforced in `run_with_security`.
     fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
         let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        // This synchronous declaration cannot consult TinyBox. Be
-        // conservative here; the host authorization gate uses the exact
-        // per-call TinyBox analysis and applies the configured tier.
+        // This synchronous declaration cannot know the command's class. Be
+        // conservative here; the host authorization gate asks the security
+        // module about the exact per-call command and applies its tier.
         !command.is_empty()
-    }
-
-    async fn prepare_authorization(
-        &self,
-        args: &serde_json::Value,
-    ) -> anyhow::Result<Option<serde_json::Value>> {
-        #[cfg(feature = "modules")]
-        {
-            let config = self
-                .analysis_config
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("command analysis is unavailable"))?;
-            let command = args
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("command analysis is unavailable"))?;
-            let analysis = crate::modules::tinybox::analyze_command(config, command.to_owned())
-                .await
-                .map_err(|_| anyhow::anyhow!("command analysis is unavailable"))?;
-            let analysis = serde_json::to_value(analysis)
-                .map_err(|_| anyhow::anyhow!("command analysis is unavailable"))?;
-            return Ok(Some(json!({ "analysis": analysis })));
-        }
-        #[cfg(not(feature = "modules"))]
-        {
-            let _ = args;
-            Err(anyhow::anyhow!("command analysis is unavailable"))
-        }
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -280,7 +280,32 @@ impl ShellTool {
         // "required approval" proxy.) A command left running is audited when it
         // ends, with its real outcome.
         let approved = self.external_effect_with_args(&args);
-        let audit = audit_once(self.audit.clone(), command.to_owned(), approved);
+        let audit_command = command.to_owned();
+        let ctx_for_audit = ctx.clone();
+        let module_config = self.module_config.clone();
+        let audit: AuditOnce = std::sync::Mutex::new(Some(Box::new(
+            move |allowed, success, duration_ms| {
+                let event = HostAuditEvent::command_execution(
+                    "tool:shell",
+                    &audit_command,
+                    approved,
+                    allowed,
+                    success,
+                    duration_ms,
+                );
+                tokio::spawn(async move {
+                    if let Err(error) = crate::security::audit_record::record(
+                        &ctx_for_audit,
+                        module_config.as_deref(),
+                        event,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %error, channel = "tool:shell", "[shell] the command execution audit row was not recorded");
+                    }
+                });
+            },
+        )));
         let start = Instant::now();
         let (allowed, result) = crate::sandbox::shell_progress::with_shell_progress(
             context,
@@ -299,6 +324,23 @@ impl ShellTool {
         )
         .await;
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        // `allowed` = passed the in-tool security checks. `approved` = the command
+        // is Prompt-class (required human approval) and thus went through the
+        // harness ApprovalGate to reach here — distinct from `allowed`. Reads and
+        // Full-mode writes run without a prompt, so they audit as approved=false
+        // rather than over-claiming a human approval that never happened. (The
+        // gate's exact yes/no isn't threaded into tools; this is the accurate
+        // "required approval" proxy.)
+        let approved = self.external_effect_with_args(&args);
+        self.record_execution(
+            ctx,
+            command,
+            approved,
+            allowed,
+            !result.is_error,
+            duration_ms,
+        )
+        .await;
         // `allowed` = passed the in-tool security checks.
         let hook = audit.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(hook) = hook {
@@ -348,60 +390,35 @@ impl ShellTool {
         audit: &AuditOnce,
     ) -> (bool, ToolResult) {
         let command_environment = command_environment_for_tool(context);
-        // Revalidate facts immediately before execution. The authorization
-        // hook supplies the same module-owned parser to the harness gate; this
-        // second call keeps direct/workflow execution on the same contract and
-        // fails closed if the module disappeared after approval.
-        #[cfg(feature = "modules")]
-        if let Some(config) = self.analysis_config.as_deref() {
-            let analysis =
-                match crate::modules::tinybox::analyze_command(config, command.to_owned()).await {
-                    Ok(analysis) => analysis,
-                    Err(_) => {
-                        return (false, ToolResult::error("Command analysis is unavailable."));
-                    }
-                };
-            if let Err(reason) = self.security.check_gated_command_analysis(&analysis) {
-                return (false, ToolResult::error(reason));
+        // Ask the security module again immediately before execution. The
+        // harness gate asked before the approval prompt, without spending
+        // budget; this is the call that admits the run (and spends one action
+        // of the hourly budget), and it keeps direct and workflow execution on
+        // the same contract. A module that disappeared after approval denies.
+        let execution_verdict = self
+            .security
+            .check_command(CommandQuery {
+                command,
+                declared: None,
+                flow: CommandFlow::Harness,
+                stage: CommandStage::Execute,
+            })
+            .await;
+        match execution_verdict {
+            Ok(verdict) if verdict.gate == crate::security::GateDecision::Allow => {}
+            Ok(_) => {
+                return (
+                    false,
+                    ToolResult::error(format!(
+                        "{} command blocked by security policy: the TinySecurity execution gate did not Allow",
+                        tinytools::status::POLICY_BLOCKED_MARKER
+                    )),
+                );
             }
-        } else {
-            #[cfg(test)]
-            if let Err(reason) = self.security.check_gated_command(command) {
-                // Unit tests exercise the standalone policy helper without
-                // booting TinyBus. Production constructors always carry the
-                // module config and never use this compatibility path.
-                return (false, ToolResult::error(reason));
-            }
-            #[cfg(not(test))]
-            return (false, ToolResult::error("Command analysis is unavailable."));
-        }
-        #[cfg(not(feature = "modules"))]
-        {
-            let _ = &self.analysis_config;
-            let _ = command;
-            #[cfg(test)]
-            if let Err(reason) = self.security.check_gated_command(command) {
-                return (false, ToolResult::error(reason));
-            }
-            #[cfg(not(test))]
-            return (false, ToolResult::error("Command analysis is unavailable."));
+            Err(reason) => return (false, ToolResult::error(reason.to_string())),
         }
 
         let _cwd = self.effective_action_dir_for_context(context);
-
-        if self.security.is_rate_limited() {
-            return (
-                false,
-                ToolResult::error("Rate limit exceeded: too many actions in the last hour"),
-            );
-        }
-
-        if !self.security.record_action() {
-            return (
-                false,
-                ToolResult::error("Rate limit exceeded: action budget exhausted"),
-            );
-        }
 
         // SaaS: every command runs in the user's container, whatever the
         // agent's sandbox mode says, and never on the host.
@@ -444,7 +461,7 @@ impl ShellTool {
                 return (
                     false,
                     ToolResult::error(format!("Cannot read sandbox configuration: {err}")),
-                );
+                )
             }
         };
         if sandbox_required {
@@ -471,7 +488,7 @@ impl ShellTool {
         if let Some((mut request, mount_workspace)) =
             self.runtime.build_docker_request(command, &action_dir)
         {
-            let Some(config) = self.analysis_config.as_deref() else {
+            let Some(config) = self.module_config.as_deref() else {
                 return (
                     false,
                     ToolResult::error("Docker module execution is unavailable."),
@@ -545,7 +562,6 @@ impl ShellTool {
             };
             return (true, result);
         }
-
         // The module spawns the shell: it selects cmd or bash, starts from its
         // own safe environment (no API keys or other secrets, CWE-200) and owns
         // the per-call scratch directory. The host adds only what it approves.
@@ -609,7 +625,7 @@ impl ShellTool {
             unbounded = explicit_timeout.is_none(),
             "[shell] starting command through TinyBox"
         );
-        let config = match self.analysis_config.as_deref() {
+        let config = match self.module_config.as_deref() {
             Some(config) => config.clone(),
             None => match ctx.load_config().await {
                 Ok(config) => config,
@@ -617,7 +633,7 @@ impl ShellTool {
                     return (
                         true,
                         ToolResult::error(format!("Cannot read module configuration: {e}")),
-                    );
+                    )
                 }
             },
         };
@@ -650,13 +666,12 @@ impl ShellTool {
         meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
         audit: &AuditOnce,
     ) -> (bool, ToolResult) {
-        let config = crate::config::RuntimeConfig::default();
-        let policy = crate::sandbox::resolve_sandbox_policy(
-            ctx,
-            tinyagents_definition::SandboxMode::Sandboxed,
+        // The operator's configured backend is filled in at the spawn boundary.
+        let policy = crate::sandbox::spawn_policy(
             action_dir,
             &self.security.workspace_dir,
-            &config,
+            &crate::config::SandboxConfig::default(),
+            &crate::config::RuntimeConfig::default(),
             false,
         );
         let timeout = requested_timeout;
@@ -664,34 +679,6 @@ impl ShellTool {
             ctx, policy, command, timeout, come_back, action_dir, context, meter, audit,
         )
         .await
-    }
-}
-
-/// Emit a single `CommandExecution` audit event. A write failure is logged as
-/// a structured warning but not propagated — audit must never block or fail a
-/// tool call, yet a silently broken audit trail must not go unnoticed.
-pub(super) fn record_audit(
-    audit: &AuditLogger,
-    command: &str,
-    approved: bool,
-    allowed: bool,
-    success: bool,
-    duration_ms: u64,
-) {
-    if let Err(error) = audit.log_command_event(CommandExecutionLog {
-        channel: "tool:shell",
-        command,
-        risk_level: "unknown",
-        approved,
-        allowed,
-        success,
-        duration_ms,
-    }) {
-        tracing::warn!(
-            error = %error,
-            channel = "tool:shell",
-            "[shell] failed to persist command execution audit event"
-        );
     }
 }
 

@@ -106,12 +106,8 @@ async fn start_channels_inner(mut config: Config, session: CancellationToken) ->
     // and picked up by the next session.
     let security = crate::security::live_policy::install(
         Arc::new(
-            SecurityPolicy::from_config(
-                &config.autonomy,
-                &config.workspace_dir,
-                &config.action_dir,
-            )
-            .with_privacy_mode(config.privacy.mode),
+            SecurityPolicy::from_full_config(&config)
+                .with_privacy_mode(config.security.privacy.mode),
         ),
         config.workspace_dir.clone(),
         config.action_dir.clone(),

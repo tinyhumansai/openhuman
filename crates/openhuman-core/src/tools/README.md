@@ -24,7 +24,7 @@ assembled. It is called by the session builder
 (`channels/runtime/startup/start_channels.rs`). The order of work:
 
 ```text
- Config, SecurityPolicy, AuditLogger, RuntimeAdapter, action_dir
+ Config, SecurityPolicy, RuntimeAdapter, action_dir
         |
         v
  host `node` / `python3` commands used through shell
@@ -70,7 +70,7 @@ to its `DomainGroup`, by prefix for families that have one (`wallet_`,
 track the registrations.
 
 `default_tools` and `default_tools_with_runtime` build a minimal registry
-(`shell`, `file_read`, `file_write`) with a disabled audit logger. They are
+(`shell`, `file_read`, `file_write`). They are
 for tests and the lightweight CLI surface.
 
 ### Orchestrator tools
@@ -107,8 +107,10 @@ Several layers narrow the registry before a schema is sent:
 
 The `Tool` trait and its vocabulary come from `tinytools`. The tinyagents
 harness runs the loop; OpenHuman's host adapters decide policy. Before a tool
-runs, the security gate (`agent/tinyagents/host/security_gate.rs`) checks the
-tier, the command class and the approval gate; the tool itself then checks
+runs, the security gate (`agent/tinyagents/middleware/security_gate.rs`, the
+one gate every path installs) asks the TinySecurity module about the tier, the
+origin, the hourly budget and the shell command class, and settles a required
+approval through the approval gate; the tool itself then checks
 `SecurityPolicy` for paths, commands and the action budget. The autonomy
 policy is off by default (see [`../security/README.md`](../security/README.md)),
 so on a default install the path floor and the sandbox do the bounding.

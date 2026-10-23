@@ -45,6 +45,9 @@ pub(crate) struct NativeShellRun {
     pub(crate) isolate_network: bool,
     /// Receives the command's output as it streams, for progress reporting.
     pub(crate) meter: Option<super::shell_progress::ShellOutputMeter>,
+    /// Bytes written to the command's stdin, which is then closed. `None` gives
+    /// the command no input.
+    pub(crate) stdin: Option<Vec<u8>>,
     /// Return with the process still running once it has run this long,
     /// instead of waiting for it (the shell tool's yield point). `None`
     /// waits for the command to end or its runtime budget to stop it.
@@ -74,6 +77,7 @@ impl NativeShellRun {
             hide_window: false,
             isolate_network: false,
             meter: None,
+            stdin: None,
             yield_after: None,
             #[cfg(feature = "modules")]
             jail: None,
@@ -120,19 +124,46 @@ pub(crate) enum ShellRunOutcome {
     Running(LiveShell),
 }
 
-/// Run `run` through the module and collect its output, waiting for the
-/// command to end (any yield point is ignored).
+/// Run `run` through the module and collect its output, waiting for the command
+/// to end. This entry point also serves callers without a turn context, such as
+/// cron and input-fed native operations.
 pub(crate) async fn run(
-    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     mut run: NativeShellRun,
 ) -> anyhow::Result<SandboxExecResult> {
     run.yield_after = None;
-    match run_yielding(ctx, config, run).await? {
-        ShellRunOutcome::Finished(result) => Ok(result),
-        ShellRunOutcome::Running(_) => {
-            anyhow::bail!("a shell run without a yield point returned while running")
+    #[cfg(test)]
+    if !run.is_jailed() && USE_FIXTURE.load(std::sync::atomic::Ordering::SeqCst) {
+        return match fixture::run(run).await? {
+            ShellRunOutcome::Finished(result) => Ok(result),
+            ShellRunOutcome::Running(_) => {
+                anyhow::bail!("a shell run without a yield point returned while running")
+            }
+        };
+    }
+    #[cfg(feature = "modules")]
+    {
+        let config = config.clone();
+        let meter = run.meter.take();
+        let hold = tinytools_std::timeout::ProcessCleanup::hold();
+        let (_caller, abandoned) = tokio::sync::oneshot::channel::<std::convert::Infallible>();
+        let outcome = tokio::spawn(async move {
+            let _hold = hold;
+            run_owned(&config, run, abandoned, meter).await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("TinyBox shell worker did not finish"))??;
+        match outcome {
+            ShellRunOutcome::Finished(result) => Ok(result),
+            ShellRunOutcome::Running(_) => {
+                anyhow::bail!("a shell run without a yield point returned while running")
+            }
         }
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (config, run);
+        anyhow::bail!("TinyBox module support is disabled; command execution is unavailable")
     }
 }
 
@@ -141,17 +172,18 @@ pub(crate) async fn run(
 ///
 /// A worker owns cancellation and resource cleanup if the caller drops its wait.
 pub(crate) async fn run_yielding(
-    ctx: &crate::core::runtime::DispatchCtx,
+    _ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
-    mut run: NativeShellRun,
+    run: NativeShellRun,
 ) -> anyhow::Result<ShellRunOutcome> {
     #[cfg(test)]
     if !run.is_jailed() && USE_FIXTURE.load(std::sync::atomic::Ordering::SeqCst) {
-        let _ = (ctx, config);
+        let _ = config;
         return fixture::run(run).await;
     }
     #[cfg(feature = "modules")]
     {
+        let mut run = run;
         let config = config.clone();
         // Taken before the spawn: the worker task owns the meter.
         let meter = run.meter.take();
@@ -167,16 +199,17 @@ pub(crate) async fn run_yielding(
         // cancellation is acknowledged only after the command is gone.
         let hold = tinytools_std::timeout::ProcessCleanup::hold();
         let (_caller, abandoned) = tokio::sync::oneshot::channel::<std::convert::Infallible>();
-        ctx.spawn(async move {
-            let _hold = hold;
-            run_owned(&config, run, abandoned, meter).await
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("TinyBox shell worker did not finish"))?
+        crate::core::runtime::DispatchCtx::ambient_turn()
+            .spawn(async move {
+                let _hold = hold;
+                run_owned(&config, run, abandoned, meter).await
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("TinyBox shell worker did not finish"))?
     }
     #[cfg(not(feature = "modules"))]
     {
-        let _ = (ctx, config, run);
+        let _ = (config, run);
         anyhow::bail!("TinyBox module support is disabled; command execution is unavailable")
     }
 }
@@ -287,7 +320,7 @@ pub(crate) fn shell_exec_request(
         timeout_ms: u64::try_from(run.timeout.as_millis())
             .unwrap_or(u64::MAX)
             .clamp(1, 86_400_000),
-        stdin: None,
+        stdin: run.stdin,
         jail: run.jail,
         hide_window: run.hide_window,
     })
@@ -439,7 +472,6 @@ pub(crate) fn path_string(path: &std::path::Path, label: &str) -> anyhow::Result
 /// `preserve_pipeline_status` keeps a pipeline's default exit status for
 /// callers whose retry or settlement behavior depends on it (cron).
 pub(crate) async fn run_host(
-    ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     command: &str,
     cwd: &std::path::Path,
@@ -449,11 +481,38 @@ pub(crate) async fn run_host(
     preserve_pipeline_status: bool,
     meter: Option<super::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<SandboxExecResult> {
+    run_host_with_stdin(
+        config,
+        command,
+        cwd,
+        state_dir,
+        env,
+        timeout,
+        preserve_pipeline_status,
+        meter,
+        None,
+    )
+    .await
+}
+
+/// [`run_host`] with bytes written to the command's stdin (then closed).
+pub(crate) async fn run_host_with_stdin(
+    config: &Config,
+    command: &str,
+    cwd: &std::path::Path,
+    state_dir: &std::path::Path,
+    env: BTreeMap<String, String>,
+    timeout: Duration,
+    preserve_pipeline_status: bool,
+    meter: Option<super::shell_progress::ShellOutputMeter>,
+    stdin: Option<Vec<u8>>,
+) -> anyhow::Result<SandboxExecResult> {
     let mut shell = NativeShellRun::new(command, cwd, state_dir, timeout);
     shell.meter = meter;
     shell.env = env;
     shell.preserve_pipeline_status = preserve_pipeline_status;
-    run(ctx, config, shell).await
+    shell.stdin = stdin;
+    run(config, shell).await
 }
 
 #[cfg(test)]

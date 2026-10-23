@@ -2,6 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn call_tool_records_write_argument_rejection() {
+    let _module = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::allowing(),
+    ));
     let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     unsafe {
@@ -72,6 +75,9 @@ async fn call_tool_rejects_v1_memory_tools_as_unknown() {
 
 #[tokio::test]
 async fn call_tool_validates_memory_arguments_before_dispatch() {
+    let _module = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::allowing(),
+    ));
     // A rejected write is audited against the ambient workspace. Without its
     // own workspace under the env lock this test wrote its `memory.forget` row
     // into whichever workspace a concurrent audit test had just pointed
@@ -118,14 +124,25 @@ async fn call_tool_judges_the_policy_of_the_explicit_context_across_scopes() {
     let mut denying = crate::config::Config::default();
     denying.workspace_dir = tmp_deny.path().to_path_buf();
     denying.action_dir = tmp_deny.path().to_path_buf();
-    denying.autonomy.enabled = true;
-    denying.autonomy.level = AutonomyLevel::ReadOnly;
+    denying.security.autonomy.enabled = true;
+    denying.security.autonomy.level = AutonomyLevel::ReadOnly;
     let mut allowing = crate::config::Config::default();
     allowing.workspace_dir = tmp_allow.path().to_path_buf();
     allowing.action_dir = tmp_allow.path().to_path_buf();
     let deny_core = CoreContext::for_test_with_config(DomainSet::full(), denying);
     let allow_core = CoreContext::for_test_with_config(DomainSet::full(), allowing);
 
+    // The tier is the module's, answered for the policy each call registers: a
+    // read-only scope refuses, every other one has room.
+    let _module = crate::modules::security::gap::install_port(Arc::new(
+        crate::modules::security::gap::stub::StubPort::allowing().budget(|_, policy| {
+            if policy.enabled && policy.autonomy == tinysecurity_bus::CommandAutonomy::ReadOnly {
+                tinysecurity_bus::BudgetDecision2::ReadOnlyMode
+            } else {
+                tinysecurity_bus::BudgetDecision2::Allow
+            }
+        }),
+    ));
     let args = json!({ "agent_id": "no-such-agent", "prompt": "hello" });
     // Each call runs scoped to the *other* context, so an ambient read would
     // answer the wrong policy.

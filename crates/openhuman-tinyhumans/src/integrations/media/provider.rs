@@ -111,14 +111,16 @@ struct Guard {
 impl Guard {
     /// Local-only enforcement, then the egress disclosure. A blocked call is
     /// neither disclosed nor sent.
-    fn admit(&self, route: &str) -> ti_image::Result<()> {
+    async fn admit(&self, route: &str) -> ti_image::Result<()> {
         let descriptor = crate::integrations::client::requests::backend_egress_descriptor(
             &format!("{OPENROUTER_PROXY_PATH}/{route}"),
         );
-        openhuman_embed::__host::egress::enforce_egress(&descriptor).map_err(|error| {
-            tracing::info!(route, %error, "[media_generation] blocked by privacy policy");
-            ti_image::Error::Validation(format!("blocked by the privacy policy: {error}"))
-        })?;
+        openhuman_embed::__host::egress::enforce_egress(&descriptor)
+            .await
+            .map_err(|error| {
+                tracing::info!(route, %error, "[media_generation] blocked by privacy policy");
+                ti_image::Error::Validation(format!("blocked by the privacy policy: {error}"))
+            })?;
         openhuman_embed::__host::egress::emit_external_transfer(self.chat.as_ref(), descriptor);
         Ok(())
     }
@@ -155,13 +157,13 @@ impl ImageGenerator for GuardedImage {
     }
 
     async fn generate(&self, request: ImageRequest) -> ti_image::Result<ImageResponse> {
-        self.guard.admit("images")?;
+        self.guard.admit("images").await?;
         self.guard.budget().await?;
         self.inner.generate(request).await
     }
 
     async fn list_models(&self) -> ti_image::Result<Vec<MediaModel>> {
-        self.guard.admit("images/models")?;
+        self.guard.admit("images/models").await?;
         self.inner.list_models().await
     }
 }
@@ -182,23 +184,23 @@ impl VideoGenerator for GuardedVideo {
     }
 
     async fn submit(&self, request: VideoRequest) -> ti_video::Result<VideoJob> {
-        self.guard.admit("videos")?;
+        self.guard.admit("videos").await?;
         self.guard.budget().await?;
         self.inner.submit(request).await
     }
 
     async fn poll(&self, job_id: &str) -> ti_video::Result<VideoJobStatus> {
-        self.guard.admit("videos/{jobId}")?;
+        self.guard.admit("videos/{jobId}").await?;
         self.inner.poll(job_id).await
     }
 
     async fn content(&self, job_id: &str, index: usize) -> ti_video::Result<GeneratedMedia> {
-        self.guard.admit("videos/{jobId}/content")?;
+        self.guard.admit("videos/{jobId}/content").await?;
         self.inner.content(job_id, index).await
     }
 
     async fn list_models(&self) -> ti_video::Result<Vec<MediaModel>> {
-        self.guard.admit("videos/models")?;
+        self.guard.admit("videos/models").await?;
         self.inner.list_models().await
     }
 }

@@ -10,7 +10,7 @@ use serde_json::{json, Map, Value};
 use crate::config::Config;
 use crate::core::all;
 use crate::mcp::audit::{self, NewMcpWriteRecord};
-use crate::security::{SecurityPolicy, ToolOperation};
+use crate::security::SecurityPolicy;
 
 use super::tools::{tool_error, tool_success, ToolCallError};
 
@@ -31,13 +31,12 @@ pub(super) async fn load_write_config(
     }
 }
 
-pub(super) fn enforce_write_policy_for_config(
+pub(super) async fn enforce_write_policy_for_config(
     tool_name: &str,
     config: &Config,
 ) -> Result<(), ToolCallError> {
-    let policy =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
-    match policy.enforce_tool_operation(ToolOperation::Act, tool_name) {
+    let policy = SecurityPolicy::from_full_config(config);
+    match policy.spend_action(tool_name).await {
         Ok(()) => Ok(()),
         Err(message) => {
             log::debug!(

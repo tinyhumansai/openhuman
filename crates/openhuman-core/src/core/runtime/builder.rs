@@ -332,7 +332,7 @@ impl CoreBuilder {
     ///
     /// Sugar over [`config`](Self::config), like [`workspace`](Self::workspace).
     /// Distinct from the workspace on purpose: the workspace holds internal
-    /// state the agent must never write to, and `is_workspace_internal_path`
+    /// state the agent must never write to, and the internal-state reservation
     /// enforces that separation fail-closed.
     pub fn action_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
         let mut config = self.config.take().unwrap_or_default();

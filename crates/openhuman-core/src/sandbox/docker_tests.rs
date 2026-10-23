@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(feature = "modules")]
 use crate::sandbox::types::DockerOverrides;
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ fn test_policy() -> SandboxPolicy {
         allow_network: false,
         env_passthrough: vec!["PATH".into(), "HOME".into()],
         docker_overrides: None,
+        mount_workspace: true,
     }
 }
 

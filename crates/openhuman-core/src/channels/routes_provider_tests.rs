@@ -50,6 +50,8 @@ async fn handle_runtime_command_routes_configured_provider_slug_and_alias() {
             timestamp: 0,
             thread_ts: None,
             sender_name: None,
+            reply_to_id: None,
+            topic_id: None,
         };
         assert!(
             handle_runtime_command_if_needed(

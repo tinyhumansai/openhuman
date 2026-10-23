@@ -69,6 +69,9 @@ fn partials(files_dir: &Path) -> usize {
 
 #[tokio::test]
 async fn moves_a_legacy_file_into_the_files_folder() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -117,6 +120,9 @@ async fn moves_a_legacy_file_into_the_files_folder() {
 
 #[tokio::test]
 async fn running_twice_changes_nothing() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -135,6 +141,9 @@ async fn running_twice_changes_nothing() {
 
 #[tokio::test]
 async fn leaves_pending_and_failed_records_alone() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -151,6 +160,9 @@ async fn leaves_pending_and_failed_records_alone() {
 
 #[tokio::test]
 async fn a_name_already_in_the_folder_is_never_overwritten() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -185,6 +197,9 @@ async fn a_name_already_in_the_folder_is_never_overwritten() {
 /// survive under distinct names, and each account still lists only its own.
 #[tokio::test]
 async fn two_accounts_migrate_into_the_shared_folder_without_clobbering() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     let ws_a = tmp.path().join("users/a/workspace");
@@ -226,6 +241,9 @@ async fn two_accounts_migrate_into_the_shared_folder_without_clobbering() {
 
 #[tokio::test]
 async fn a_crash_after_the_copy_leaves_the_record_intact_and_is_redone() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -251,6 +269,9 @@ async fn a_crash_after_the_copy_leaves_the_record_intact_and_is_redone() {
 
 #[tokio::test]
 async fn a_crash_after_the_rename_loses_nothing_and_leaves_at_most_one_duplicate() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -276,6 +297,9 @@ async fn a_crash_after_the_rename_loses_nothing_and_leaves_at_most_one_duplicate
 
 #[tokio::test]
 async fn a_crash_after_the_meta_write_is_finished_by_the_next_run() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");
@@ -313,6 +337,9 @@ async fn a_crash_after_the_meta_write_is_finished_by_the_next_run() {
 /// between runs) is not overwritten by any later copy; the sweep removes it.
 #[tokio::test]
 async fn an_orphaned_partial_from_an_earlier_run_is_removed() {
+    let _floor = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::with_credential_floor(),
+    ));
     let tmp = TempDir::new().unwrap();
     let ws = tmp.path().join("ws");
     let files_dir = tmp.path().join("Files");

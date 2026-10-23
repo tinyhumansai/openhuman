@@ -159,11 +159,12 @@ test("a core-only change still installs the node deps rust-core-coverage's mock 
       `${plan.profile}: rust-core-coverage needs a pnpm install`,
     );
     assert.equal(install.when, true, `${plan.profile}: that install runs`);
-    // Exactly one install per profile: ex63 lanes share one checkout.
+    // ex63 lanes share a checkout; hosted scripts and Rust coverage run
+    // separately, and each needs the TOML parser/mock backend dependencies.
     const installs = [...checks.values()].filter(
       (c) => c.when && c.run === "pnpm install --frozen-lockfile",
     );
-    assert.equal(installs.length, 1, plan.profile);
+    assert.equal(installs.length, plan.profile === "ex63" ? 1 : 2, plan.profile);
   }
   const hosted = buildPlan({ profile: "hosted", areas: coreOnly });
   const sub = selectLanes(hosted, ["rust-cov"]);
@@ -452,6 +453,14 @@ test("private gates-off and Tauri execute equivalent coverage suites with nextes
     /--features modules,mcp,e2e-test-support/,
   );
   assert.match(checks["gate-contract-tests-features"].run, /--test-threads=1/);
+  assert.match(
+    checks["gate-contract-tests"].run,
+    /test\(integrations::composio::builder_tools::tests::\).*test\(integrations::composio::flow_gate::tests::\)/,
+  );
+  assert.match(
+    checks["gate-contract-tests-features"].run,
+    /test\(mcp::registry::tests::\)/,
+  );
   assert.equal(
     checks["tauri-coverage"].env.CARGO_BUILD_TARGET_DIR,
     "target/ci-private-coverage",
@@ -816,6 +825,21 @@ test("the rust-core path filter arms the lane for every crate the tui depends on
   const block = filter.split(/^rust-tauri:/m)[0].split(/^rust-core:/m)[1];
   for (const crate of ["core", "embed", "tinyhumans", "rpc", "cli", "tui"]) {
     assert.ok(block.includes(`'crates/openhuman-${crate}/**'`), crate);
+  }
+});
+
+
+test("an app-only manifest change runs the security guard with its parser prerequisite", () => {
+  const areas = { ...NONE, rustTauri: true };
+  for (const profile of ["hosted", "ex63"]) {
+    const plan = buildPlan({ profile, areas, env: EX63_ENV });
+    const frontend = plan.lanes.find((lane) => lane.name === "frontend");
+    const guard = frontend.checks.find((check) => check.name === "security-module-dependencies");
+    const install = frontend.checks.find((check) => check.name === "pnpm-install");
+    assert.equal(guard.when, true, profile);
+    assert.equal(install.when, true, profile);
+    assert.ok(guard.needs.includes("pnpm-install"));
+    assert.deepEqual(validatePlan(plan), []);
   }
 });
 

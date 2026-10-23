@@ -233,3 +233,16 @@ fn memory_status_never_claims_disk_storage_or_pending_consent() {
     assert_eq!(serde_json::to_value(mode).unwrap(), "in_memory");
     assert_eq!(mode.to_string(), "in_memory");
 }
+
+#[test]
+fn recorded_consent_decision_follows_only_the_recorded_answer() {
+    let _lock = cache_test_lock();
+    *CONSENT_CACHE.write() = None;
+    initialize(Some(build_consent_preference("declined")));
+    assert_eq!(recorded_consent_decision(), PolicyDecision::Declined);
+    initialize(Some(build_consent_preference("local_encrypted")));
+    assert_eq!(recorded_consent_decision(), PolicyDecision::Proceed);
+    *CONSENT_CACHE.write() = None;
+    assert_eq!(recorded_consent_decision(), PolicyDecision::ConsentRequired);
+    *CONSENT_CACHE.write() = None;
+}

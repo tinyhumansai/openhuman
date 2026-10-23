@@ -8,11 +8,7 @@ use tinyagents_harness::ids::CallId;
 use tinyagents_harness::tool::ToolExecutionContext;
 
 fn shell() -> ShellTool {
-    ShellTool::new(
-        test_security(AutonomyLevel::Full),
-        test_runtime(),
-        test_audit(),
-    )
+    ShellTool::new(test_security(AutonomyLevel::Full), test_runtime())
 }
 
 #[cfg(not(windows))]

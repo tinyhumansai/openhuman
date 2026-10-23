@@ -1,7 +1,6 @@
 use crate::config::DelegateAgentConfig;
 use crate::inference::provider::factory::make_openhuman_backend_model_for_options;
 use crate::inference::provider::factory::INFERENCE_BACKEND_ID;
-use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
 use crate::tools::timeout::tool_execution_timeout_secs;
 use async_trait::async_trait;
@@ -42,7 +41,6 @@ impl Default for ProviderRuntimeOptions {
 /// summarization) to purpose-built sub-agents.
 pub struct DelegateTool {
     agents: Arc<HashMap<String, DelegateAgentConfig>>,
-    security: Arc<SecurityPolicy>,
     /// Provider runtime options inherited from root config.
     provider_runtime_options: ProviderRuntimeOptions,
     /// Depth at which this tool instance lives in the delegation chain.
@@ -98,19 +96,18 @@ impl ToolDispatch<(), crate::agent::tinyagents::host::OpenHumanRunContext>
 impl DelegateTool {
     pub fn new(
         agents: HashMap<String, DelegateAgentConfig>,
-        security: Arc<SecurityPolicy>,
+        _security: Arc<SecurityPolicy>,
     ) -> Self {
-        Self::new_with_options(agents, security, ProviderRuntimeOptions::default())
+        Self::new_with_options(agents, _security, ProviderRuntimeOptions::default())
     }
 
     pub fn new_with_options(
         agents: HashMap<String, DelegateAgentConfig>,
-        security: Arc<SecurityPolicy>,
+        _security: Arc<SecurityPolicy>,
         provider_runtime_options: ProviderRuntimeOptions,
     ) -> Self {
         Self {
             agents: Arc::new(agents),
-            security,
             provider_runtime_options,
             depth: 0,
         }
@@ -121,21 +118,20 @@ impl DelegateTool {
     /// their DelegateTool via this method with `depth: parent.depth + 1`.
     pub fn with_depth(
         agents: HashMap<String, DelegateAgentConfig>,
-        security: Arc<SecurityPolicy>,
+        _security: Arc<SecurityPolicy>,
         depth: u32,
     ) -> Self {
-        Self::with_depth_and_options(agents, security, depth, ProviderRuntimeOptions::default())
+        Self::with_depth_and_options(agents, _security, depth, ProviderRuntimeOptions::default())
     }
 
     pub fn with_depth_and_options(
         agents: HashMap<String, DelegateAgentConfig>,
-        security: Arc<SecurityPolicy>,
+        _security: Arc<SecurityPolicy>,
         depth: u32,
         provider_runtime_options: ProviderRuntimeOptions,
     ) -> Self {
         Self {
             agents: Arc::new(agents),
-            security,
             provider_runtime_options,
             depth,
         }
@@ -257,13 +253,6 @@ impl DelegateTool {
                 depth = self.depth,
                 max = agent_config.max_depth
             )));
-        }
-
-        if let Err(error) = self
-            .security
-            .enforce_tool_operation(ToolOperation::Act, "delegate")
-        {
-            return Ok(ToolResult::error(error));
         }
 
         // `metadata` below is diagnostic only; the managed model owns the

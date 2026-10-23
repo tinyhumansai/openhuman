@@ -5,7 +5,9 @@ import {
   decideApproval,
   fetchPendingApprovals,
   fetchRecentApprovalDecisions,
+  fetchToolTrust,
   preauthorizeFlow,
+  revokeToolTrust,
   unwrapRows,
 } from './approvalApi';
 
@@ -119,6 +121,28 @@ describe('decideApproval', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.approval_decide',
       params: { request_id: 'req-1', decision: 'approve_always_for_flow' },
+    });
+  });
+});
+
+describe('whole-tool trust grants', () => {
+  beforeEach(() => mockCallCoreRpc.mockReset());
+
+  it('lists grants and unwraps the core outcome envelope', async () => {
+    const grants = [{ tool: 'Browser search', request_id: 'opaque-1', granted_at_ms: 12 }];
+    mockCallCoreRpc.mockResolvedValueOnce({ result: grants, logs: ['listed'] });
+
+    await expect(fetchToolTrust()).resolves.toEqual(grants);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.approval_list_tool_trust' });
+  });
+
+  it('revokes by opaque request ID and unwraps the outcome value', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ result: true, logs: [] });
+
+    await expect(revokeToolTrust('opaque-1')).resolves.toBe(true);
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.approval_revoke_tool_trust',
+      params: { request_id: 'opaque-1' },
     });
   });
 });

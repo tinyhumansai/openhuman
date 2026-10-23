@@ -5,28 +5,19 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::helpers::{file_path, readonly_autonomy_block, validate_file_id};
+use super::helpers::{file_path, validate_file_id};
 use crate::integrations::IntegrationClient;
-use openhuman_embed::__host::security::SecurityPolicy;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use crate::integrations::file_storage::types::DeleteResponse;
 
 pub struct StorageDeleteFileTool {
     client: Arc<IntegrationClient>,
-    security: Arc<SecurityPolicy>,
 }
 
 impl StorageDeleteFileTool {
     pub fn new(client: Arc<IntegrationClient>) -> Self {
-        Self::new_with_security(client, Arc::new(SecurityPolicy::default()))
-    }
-
-    pub fn new_with_security(
-        client: Arc<IntegrationClient>,
-        security: Arc<SecurityPolicy>,
-    ) -> Self {
-        Self { client, security }
+        Self { client }
     }
 }
 
@@ -88,10 +79,6 @@ impl StorageDeleteFileTool {
         args: Value,
         approval: &openhuman_embed::__host::security::approval::ApprovalTurnContext,
     ) -> anyhow::Result<ToolResult> {
-        if let Some(blocked) = readonly_autonomy_block(&self.security) {
-            return Ok(blocked);
-        }
-
         let file_id = match validate_file_id(&args) {
             Ok(id) => id,
             Err(e) => return Ok(ToolResult::error(e)),

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// The data-egress posture the agent operates under.
 ///
 /// Serializes as snake_case (`local_only` / `standard` / `sensitive`) to match
-/// the repo convention. A config.toml missing the `[privacy]` block, or the
+/// the repo convention. A config.toml missing the `[security.privacy]` block, or the
 /// `mode` key, deserializes to [`PrivacyMode::Standard`] (the `#[default]`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -36,13 +36,13 @@ pub enum PrivacyMode {
     Sensitive,
 }
 
-/// The `[privacy]` config block. Kept a struct (rather than a bare enum field on
+/// The `[security.privacy]` config block. Kept a struct (rather than a bare enum field on
 /// [`Config`](crate::config::Config)) so later slices can add
 /// per-mode knobs (redaction toggles, destination allow-lists, PII thresholds)
 /// without another schema migration.
 /// `Default` derives to `mode: PrivacyMode::default()` (= `Standard`), which is
 /// exactly the back-compat behavior required for a config missing the
-/// `[privacy]` block or its `mode` key.
+/// `[security.privacy]` block or its `mode` key.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct PrivacyConfig {

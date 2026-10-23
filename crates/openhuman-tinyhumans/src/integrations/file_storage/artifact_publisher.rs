@@ -71,7 +71,7 @@ impl StorageArtifactPublisher {
 pub fn artifact_publisher(config: &Config) -> Option<Arc<dyn ArtifactPublisher>> {
     let client = crate::integrations::build_client(config)?;
     let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
+        &config.security.autonomy,
         &config.workspace_dir,
         &config.action_dir,
     ));
@@ -232,7 +232,7 @@ impl ArtifactPublisher for StorageArtifactPublisher {
         version: &ArtifactVersion,
         options: &PublishOptions,
     ) -> anyhow::Result<PublishedLink> {
-        if !self.security.can_act() {
+        if !self.security.tier_allows_acting_blocking() {
             anyhow::bail!("[policy-blocked] Action blocked: autonomy is read-only");
         }
         let (bytes, filename, mime) =

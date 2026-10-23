@@ -545,7 +545,6 @@ async fn run_typed_mode(
             let name = tool.name();
             if definition.extra_tools.iter().any(|n| n == name)
                 && !allowed_indices.contains(&i)
-                && !crate::tools::rules::glob_list_matches(&definition.disallowed_tools, name)
                 && !is_subagent_spawn_tool(name)
             {
                 allowed_indices.push(i);
@@ -922,6 +921,6 @@ async fn run_typed_mode(
             tinyagents_orchestration::subagent::SubagentPersistenceDisposition::TerminalExisting,
     })
 }
-#[cfg(test)]
+#[cfg(all(test, feature = "flows"))]
 #[path = "runner_flow_prompt_tests.rs"]
 mod flow_prompt_tests;

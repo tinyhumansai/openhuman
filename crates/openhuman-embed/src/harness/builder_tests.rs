@@ -142,7 +142,7 @@ async fn an_inherited_workspace_still_applies_the_builder_knobs() {
 
     assert_eq!(config.api_url.as_deref(), Some("https://harness.example"));
     assert_eq!(
-        config.autonomy.level,
+        config.security.autonomy.level,
         openhuman_core::security::AutonomyLevel::Full
     );
     // `Provider::inherit()` states no model, so the operator's survives.

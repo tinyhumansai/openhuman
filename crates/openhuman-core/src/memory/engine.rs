@@ -139,7 +139,10 @@ pub use tinymemory_integrations::HOST_ENGINE_ENDPOINT;
 pub fn install_host_engine(engine: Arc<dyn MemoryEngine>) {
     let id = engine.descriptor().id.to_string();
     tracing::info!(engine = %id, "[memory:engine] host engine installed");
-    ENGINE_BINDER.install_host_engine(engine, crate::security::scrub::host_policy());
+    ENGINE_BINDER.install_host_engine(
+        engine,
+        tinymemory_integrations::safety::Policy::corroborated(),
+    );
 }
 
 /// Removes a host-installed engine; the configured engine applies again.
@@ -177,7 +180,7 @@ pub fn resolve(config: &Config) -> Binding {
             return Binding::On(ENGINE_BINDER.bind_external(
                 Arc::clone(engine),
                 HOST_ENGINE_ENDPOINT,
-                crate::security::scrub::host_policy(),
+                tinymemory_integrations::safety::Policy::corroborated(),
             ));
         }
     }
@@ -192,7 +195,7 @@ pub fn resolve(config: &Config) -> Binding {
             return Binding::On(ENGINE_BINDER.bind_external(
                 engine,
                 "test://engine",
-                crate::security::scrub::host_policy(),
+                tinymemory_integrations::safety::Policy::corroborated(),
             ));
         }
     }
@@ -270,7 +273,7 @@ fn guard_read_only_engine(engine: Arc<dyn MemoryEngine>) -> Arc<dyn MemoryEngine
         .bind_external(
             engine,
             "doctor://inspection",
-            crate::security::scrub::host_policy(),
+            tinymemory_integrations::safety::Policy::corroborated(),
         )
         .engine
 }
@@ -313,7 +316,7 @@ pub fn bind_with_root(config: &Config, root: Option<&str>) -> MemoryResult<Bound
             return Ok(ENGINE_BINDER.bind_external(
                 engine,
                 "test://engine",
-                crate::security::scrub::host_policy(),
+                tinymemory_integrations::safety::Policy::corroborated(),
             ));
         }
         let one_engine = TEST_ENGINES
@@ -497,7 +500,7 @@ pub fn build_cached(
         settings,
         &fingerprint,
         credential,
-        crate::security::scrub::host_policy(),
+        tinymemory_integrations::safety::Policy::corroborated(),
     );
     match &binding {
         Binding::On(_) => tracing::info!(engine = %id, "[memory:engine] engine bound"),
@@ -522,7 +525,11 @@ pub fn rooted(
 /// Wraps a host-supplied engine with OpenHuman's scrubber and TinyMemory's
 /// operation timing decorator.
 pub fn bind_external(engine: Arc<dyn MemoryEngine>, endpoint: impl Into<String>) -> BoundEngine {
-    ENGINE_BINDER.bind_external(engine, endpoint, crate::security::scrub::host_policy())
+    ENGINE_BINDER.bind_external(
+        engine,
+        endpoint,
+        tinymemory_integrations::safety::Policy::corroborated(),
+    )
 }
 
 /// A short, non-reversible identity of a key for the cache fingerprint.

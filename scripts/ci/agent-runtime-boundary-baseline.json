@@ -1,13 +1,6 @@
 [
   {
     "rule": "openhuman-task-local",
-    "path": "crates/openhuman-core/src/inbound/pinned.rs",
-    "line": 97,
-    "text": "let outcome = crate::security::turn_origin::with_origin(",
-    "occurrence": 1
-  },
-  {
-    "rule": "openhuman-task-local",
     "path": "crates/openhuman-core/src/agent_runs/schemas.rs",
     "line": 436,
     "text": "crate::security::turn_origin::with_origin(",

@@ -392,11 +392,6 @@ impl SessionHostBuilder {
         });
         let hosted_base = definitions.map(|definitions| {
             Arc::new(crate::agent::tinyagents::host::OpenHumanHostBase {
-                security_policy: Arc::new(crate::security::SecurityPolicy::from_config(
-                    &hosted_config.autonomy,
-                    &workspace_dir,
-                    &action_dir,
-                )),
                 config: Arc::clone(&hosted_config),
                 definitions,
                 // Usually this path names a registry id, and carries no

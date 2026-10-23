@@ -22,7 +22,9 @@ use crate::client::sanitize_backend_url;
 #[cfg(test)]
 use errors::is_composio_soft_auth_path;
 #[cfg(test)]
-use requests::{backend_egress_descriptor, managed_budget_applies_to_path};
+use requests::{
+    backend_egress_descriptor, backend_egress_for, managed_budget_applies_to_path, BackendPayload,
+};
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

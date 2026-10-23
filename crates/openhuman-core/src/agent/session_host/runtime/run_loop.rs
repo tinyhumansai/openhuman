@@ -56,7 +56,8 @@ impl OpenHumanSessionHost {
                 user_id: Some(self.event_channel()),
                 session_id: Some(self.event_session_id()),
             },
-        );
+        )
+        .await;
         // A host-only session reading untrusted data has opted out; see
         // `set_untrusted_input`, which refuses any other session.
         if !self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow) {

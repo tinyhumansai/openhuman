@@ -50,6 +50,18 @@ prompt-injection scan applied before remote tools are offered to an agent. The
 module prepares stable tool names, schemas, and metadata; execution and
 protocol handling stay inside the module.
 
+## Stdio server sandboxing
+
+A stdio server is third-party code. The TinyMCP module starts it, so it does not go through the host's shell gate. TinyMCP's `JailedSpawner` drives the TinyBox native jail over the bus instead (`mcp/stdio_sandbox.rs`). The host decides per server in `mcp/host.rs`:
+
+| Server | Started |
+| --- | --- |
+| Declared in the operator's own `[mcp_client.servers]` | As an ordinary child process; `client_config` sets `operator_trusted`. |
+| Installed from the registry | In the native jail. |
+| Any server under SaaS, including `[mcp_client.servers]` | In the native jail. No tenant server is `operator_trusted`. |
+
+The jail denies reads of the credential stores and requires process isolation. A backend that cannot meet that, such as macOS Seatbelt, refuses and the server does not start. TinyMCP has no unconfined fallback: a server that is neither `operator_trusted` nor given a sandbox is refused.
+
 ## Server transports
 
 An installed server's typed `Transport` is either a local subprocess speaking

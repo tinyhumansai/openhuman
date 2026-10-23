@@ -67,7 +67,14 @@ pub async fn docker_exec(
 
     tracing::debug!("[sandbox:docker] launching container");
 
-    match crate::modules::tinybox::run_docker(config, run).await {
+    // A plan with no workspace grant (`mount_workspace = false`) runs the container with
+    // nothing of the host mounted, through the module's workspace-less member.
+    let output = if policy.mount_workspace {
+        crate::modules::tinybox::run_docker(config, run).await
+    } else {
+        crate::modules::tinybox::run_docker_without_workspace(config, run).await
+    };
+    match output {
         Ok(out) if out.timed_out => {
             tracing::warn!(
                 timeout_secs = request.timeout.as_secs(),
@@ -115,7 +122,12 @@ fn build_docker_request(
     use crate::modules::tinybox::contract::{DockerRunRequest, MAX_DOCKER_RUN_TIMEOUT_MS};
     use std::collections::BTreeMap;
 
-    let workspace = path_string(&policy.workspace_root, "workspace")?;
+    // The workspace-less member requires the workspace to be empty.
+    let workspace = if policy.mount_workspace {
+        path_string(&policy.workspace_root, "workspace")?
+    } else {
+        String::new()
+    };
     let read_only_mounts = policy
         .read_only_mounts
         .iter()
@@ -224,7 +236,9 @@ pub(crate) fn policy_request(policy: &SandboxPolicy) -> contract::DockerPolicyRe
             .docker_overrides
             .as_ref()
             .and_then(|overrides| overrides.network.clone()),
-        workspace: Some(policy.workspace_root.to_string_lossy().into_owned()),
+        workspace: policy
+            .mount_workspace
+            .then(|| policy.workspace_root.to_string_lossy().into_owned()),
         read_only_mounts: policy
             .read_only_mounts
             .iter()

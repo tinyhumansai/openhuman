@@ -356,11 +356,8 @@ if should_run_suite "settings"; then
   echo ""
   echo "## Running suite: settings"
   run "test/e2e/specs/settings-data-management.spec.ts"       "settings-data"             "settings"
+  run "test/e2e/specs/security-approval.spec.ts"              "security-approval"         "settings"
   run "test/e2e/specs/memory-plan-required.spec.ts"           "memory-plan-required"      "settings"
-  run "test/e2e/specs/settings-ai-skills.spec.ts"             "settings-ai-skills"        "settings"
-  run "test/e2e/specs/settings-account-preferences.spec.ts"   "settings-account"          "settings"
-  run "test/e2e/specs/settings-advanced-config.spec.ts"       "settings-advanced"         "settings"
-  run "test/e2e/specs/settings-feature-preferences.spec.ts"   "settings-features"         "settings"
   run "test/e2e/specs/settings-search.spec.ts"                "settings-search"           "settings"
   _mini_summary "settings"
 fi

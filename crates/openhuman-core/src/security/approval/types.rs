@@ -130,6 +130,35 @@ pub struct ApprovalAuditEntry {
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: DateTime<Utc>,
     pub decision: ApprovalDecision,
+    /// Who decided: `auto:jev`, `auto:host-policy`, or absent for a human.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    /// The judge's verdict when `decided_by` is `auto:jev`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeVerdict>,
+}
+
+/// A live durable whole-tool approval grant in one approval scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ToolTrustEntry {
+    /// Redacted display label returned by TinySecurity.
+    pub tool: String,
+    /// Opaque identity to pass back when revoking this grant.
+    pub request_id: String,
+    /// When the grant was recorded, in epoch milliseconds.
+    pub granted_at_ms: u64,
+}
+
+/// Nonsensitive judge evidence shown in approval history: the fixed outcome
+/// and scores in thousandths, never provider text or credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JudgeVerdict {
+    pub outcome: String,
+    pub intent_millis: Option<u16>,
+    pub reversible_millis: Option<u16>,
+    pub exfiltrate_millis: Option<u16>,
+    pub cached: bool,
 }
 
 /// Result of `approval_preauthorize_flow`: which trust grants were newly
@@ -166,7 +195,8 @@ pub enum ApprovalDecision {
     /// workflow: subsequent runs of *that* flow (including scheduled/
     /// triggered ones) auto-allow *that* tool without prompting, but a new
     /// tool the flow starts calling still parks. Persisted via
-    /// `approval::store::insert_flow_trust`, not `autonomy.auto_approve`.
+    /// `ApprovalGate::insert_flow_trust` (the security module's durable flow trust),
+    /// not `autonomy.auto_approve`.
     /// Only meaningful when `source_context` is `Some(Flow { .. })` — the
     /// `approval_decide` RPC handler logs and no-ops the persistence step
     /// otherwise (the decision itself still resolves the parked call).

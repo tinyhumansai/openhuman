@@ -46,13 +46,47 @@ fn module_collections_are_limited_to_the_named_owner() {
     assert!(module_collections("no-such-owner").is_empty());
 }
 
+#[cfg(feature = "modules")]
 #[test]
-fn tinyjuice_ccr_blobs_stay_inside_the_juice_owner_namespace() {
+fn tinyjuice_module_collections_come_from_the_owner_contract() {
     assert_eq!(
         module_collections("juice")
             .iter()
             .map(|collection| collection.name.as_str())
             .collect::<Vec<_>>(),
         [tinyjuice_bus::storage::SAVINGS_COLLECTION]
+    );
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn tinybox_collection_contract_is_exposed_as_host_and_module_collections() {
+    let expected = [
+        tinybox_bus::storage::BOX_COLLECTION,
+        tinybox_bus::storage::JAIL_INDEX_COLLECTION,
+        tinybox_bus::storage::TEMPLATE_COLLECTION,
+        tinybox_bus::storage::MIGRATIONS_COLLECTION,
+        tinybox_bus::storage::CLI_IMPORTS_COLLECTION,
+    ];
+
+    let owners = collection_owners().expect("owner collection declarations are valid");
+    let box_owner = owners
+        .iter()
+        .find(|owner| owner.crate_name == "tinybox-bus")
+        .expect("TinyBox owner is registered");
+    assert_eq!(
+        box_owner
+            .collections
+            .iter()
+            .map(|collection| collection.name.as_str())
+            .collect::<Vec<_>>(),
+        expected,
+    );
+    assert_eq!(
+        module_collections("box")
+            .iter()
+            .map(|collection| collection.name.as_str())
+            .collect::<Vec<_>>(),
+        expected,
     );
 }

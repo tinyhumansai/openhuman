@@ -147,7 +147,6 @@ fn registered_tools() -> Vec<Box<dyn tinytools::Tool>> {
     let tools = crate::tools::ops::all_tools(
         Arc::new(config.clone()),
         &Arc::new(crate::security::SecurityPolicy::default()),
-        crate::security::AuditLogger::disabled(),
         &crate::config::BrowserConfig::default(),
         &crate::config::HttpRequestConfig::default(),
         tmp.path(),

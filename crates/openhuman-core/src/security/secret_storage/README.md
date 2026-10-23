@@ -19,7 +19,7 @@ Host-installable secret storage with an in-memory default, plus a ChaCha20-Poly1
 | File | Role |
 | --- | --- |
 | `crates/openhuman-core/src/security/secret_storage/mod.rs` | Module docstring and exports only. Documents backend-selection priority and the Linux-headless availability note. Re-exports the public surface. |
-| `crates/openhuman-core/src/security/secret_storage/ops.rs` | Core operations: `get`/`set`/`delete`/`is_available`/`get_or_create_random`/`migrate_from_file`, the `MigrationOutcome` enum, the `namespaced_key` helper, the cached availability probe, and `force_backend_for_test`. |
+| `crates/openhuman-core/src/security/secret_storage/ops.rs` | Core operations: `get`/`set`/`delete`/`is_available`/`get_or_create_random`/`migrate_from_file`, the `MigrationOutcome` enum, the `namespaced_key` helper, and the cached availability probe. |
 | `crates/openhuman-core/src/security/secret_storage/store.rs` | Backend selection and global state. Owns the `WORKSPACE_DIR` and `BACKEND` `OnceLock`s, `init_workspace`, `backend()`, `build_backend()`/`build_backend_at()`, and `workspace_dir_for_file_backend()` path derivation. Also the `cfg(test)`-only `test_scope` module (thread-scoped test workspaces). |
 | `crates/openhuman-core/src/security/secret_storage/memory_backend.rs` | Basic in-memory backend, default for core and embed; no key initialization or secret files. |
 | `crates/openhuman-core/src/security/secret_storage/backend.rs` | `SecretBackend` trait plus `FileBackend` (plaintext `dev-keychain.json`, test/debug only), and test-only `MockBackend`. |
@@ -28,7 +28,7 @@ Host-installable secret storage with an in-memory default, plus a ChaCha20-Poly1
 | `crates/openhuman-core/src/security/secret_storage/file_store.rs` | Shared secrets-file primitives for both file backends: the cross-process advisory write lock (`lock_for_write`, on a sidecar `<path>.lock`), the `0600` unique-temp-then-rename `write_atomic`, and `quarantine_corrupt`. |
 | `crates/openhuman-core/src/security/secret_storage/crypto.rs` | Shared ChaCha20-Poly1305 helpers (`chacha20_encrypt`/`chacha20_decrypt`), random-byte generation, hex encode/decode. Used by both `encrypted_store` and `encrypted_file_backend`. |
 | `crates/openhuman-core/src/security/secret_storage/error.rs` | `SecretStorageError` (thiserror) with variants `InvalidUtf8`/`MigrationReadFailed`/`VerifyFailed`/`MigrationDeleteFailed`/`RandomGeneration`/`Crypto`/`Backend`, plus a log-safe `diagnostic()`; native errors arrive as opaque `Backend` detail. |
-| `crates/openhuman-core/src/security/secret_storage/mod_tests.rs` | Module tests (backend isolation via `force_backend_for_test`). |
+| `crates/openhuman-core/src/security/secret_storage/mod_tests.rs` | Module tests. |
 | `crates/openhuman-core/src/security/secret_storage/store_tests.rs`, [`store_tests_2_tests.rs`](./store_tests_2_tests.rs), [`store_test_scope_tests.rs`](./store_test_scope_tests.rs) | Test-isolation regressions: test builds ignore `OPENHUMAN_WORKSPACE`, production resolution still honours it, scoped workspaces do not share secrets, and a deleted scoped workspace cannot reset the default store. |
 | `crates/openhuman-core/src/security/secret_storage/encrypted_store_tests.rs`, [`encrypted_store_crypto_migration_tests.rs`](./encrypted_store_crypto_migration_tests.rs), [`encrypted_store_key_management_tests.rs`](./encrypted_store_key_management_tests.rs) | `SecretStore` tests (wired via `#[path]` from [`encrypted_store.rs`](./encrypted_store.rs)). |
 
@@ -44,7 +44,6 @@ Re-exported from [`mod.rs`](./mod.rs):
 - `init_master_key`: load the app master key at startup for encrypted storage, from the environment (`OPENHUMAN_KEYRING_MASTER_KEY` inline, or `OPENHUMAN_KEYRING_MASTER_KEY_FILE` naming a file; 64 hex characters, exactly one of the two) when set, otherwise from the host source or `keyring/master.key`. A set-but-malformed variable is a boot error, not a fall-through; the source is logged at `info`, the value never. Key files must not be group- or world-writable; read-only group/world access is supported for secret mounts, but any principal able to read the file can decrypt the keyring.
 - `init_workspace`: register the workspace dir for file and encrypted-file backends.
 - `get`, `set`, `delete`, `get_or_create_random`, `is_available`, `migrate_from_file`, `MigrationOutcome`.
-- `force_backend_for_test`: `pub(crate)`, test-only.
 
 ## RPC / controllers
 
@@ -112,7 +111,6 @@ Discovered consumers (`crate::security::secret_storage::*`):
 - Cleaning up historical leakage: `node scripts/prune-dev-keychain.mjs` reports (and with `--apply` removes, after taking a backup) `dev-keychain.json` entries keyed by dead `TempDir` basenames, left behind before the isolation fix. Dry run by default.
 - `is_available()` is cached after the first probe. The probe performs delete/set/get/delete round-trips on the `os` backend; running it per-call triggered repeated macOS permission dialogs and starved frequent pollers. Memory, plaintext and mock backends short-circuit to `true`; encrypted storage requires an available master key. A failed probe is logged at `warn` because it silently flips `use_keychain` off.
 - `is_available()` answers "is the active backend usable", never "are secrets in the OS keychain". Because the file backends short-circuit to `true`, availability says nothing about where secrets are, which is why `keyring_consent::policy::active_mode_for` derives `active_mode` from `backend_name()` and consults availability only for the `os` backend. Deriving it from `is_available()` alone was issue #6076: the shipped staging/production app told users their secrets were in the OS keychain while they were in `{workspace}/secrets.enc`. Consumers that genuinely want the usability answer (wallet guards, snapshot loops) read `available` and are unaffected.
-- `force_backend_for_test` panics if `BACKEND` is already initialized. It must run before any keyring call in the same process (dedicated test binary or very top of a test).
 - `migrate_from_file` never deletes the source unless the verified write succeeds, so failures are retryable.
 - `encrypted_file` corrupt or undecryptable files are quarantined (renamed `secrets.enc.corrupt.<ts>`) and treated as empty rather than crashing.
 - A corrupt file is never overwritten. `file` reads degrade to an empty map (so a missing token means "sign in again"), but a `set`/`delete` over an unparseable file quarantines it and returns an error. Returning empty on the write path is what turned a corrupt file into a wipe: the write that followed persisted a map holding nothing but the key being set.

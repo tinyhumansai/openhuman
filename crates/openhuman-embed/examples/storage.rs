@@ -27,7 +27,10 @@ async fn run() -> anyhow::Result<()> {
         .build()
         .await?;
     let storage = runtime.storage().expect("configured SQLite backend");
-    assert_eq!(storage.driver(), "sqlite");
+    assert_eq!(
+        runtime.capabilities().storage.driver.as_deref(),
+        Some("sqlite")
+    );
     let scoped = storage.for_scope(&Scope::local())?;
     let documents = scoped.documents();
     documents
@@ -73,7 +76,10 @@ async fn run() -> anyhow::Result<()> {
     // An explicit environment variable is the only path to a live database.
     if let Ok(url) = std::env::var("OPENHUMAN_EXAMPLE_MONGODB_URL") {
         let live = RuntimeBuilder::library().storage(url).build().await?;
-        assert_eq!(live.storage().expect("MongoDB backend").driver(), "mongodb");
+        assert_eq!(
+            live.capabilities().storage.driver.as_deref(),
+            Some("mongodb")
+        );
     }
     // ANCHOR_END: storage_mongodb
     println!("SQLite put/get/delete and credential-safe MongoDB configuration verified");

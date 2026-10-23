@@ -113,6 +113,9 @@ async fn inline_read_checks_owner() {
 
 #[tokio::test]
 async fn tool_call_requires_confirmation_unless_read_only() {
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::allowing(),
+    ));
     let port = FakePort::default();
     let policy = SecurityPolicy::default();
     let out = tool_call(
@@ -218,6 +221,11 @@ async fn tool_call_rejects_unknown_hidden_and_cross_server() {
 
 #[tokio::test]
 async fn tool_call_honours_policy_denial() {
+    // The tier is the module's; here it answers read-only.
+    let _port = crate::modules::security::gap::install_port(std::sync::Arc::new(
+        crate::modules::security::gap::stub::StubPort::allowing()
+            .budget(|_, _| tinysecurity_bus::BudgetDecision2::ReadOnlyMode),
+    ));
     let port = FakePort::default();
     let policy = SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,

@@ -672,7 +672,3 @@ pub(crate) fn capability_diagnostics(
 #[cfg(test)]
 #[path = "tool_registration_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "use_skill_dispatch_tests.rs"]
-mod use_skill_dispatch_tests;

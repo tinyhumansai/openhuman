@@ -1,21 +1,18 @@
-//! One-shot import of the legacy `approval.db` tables into the document
-//! layout (`store_documents.rs`).
+//! Reader of the legacy `approval.db`, which the startup history importer
+//! (`native/history_import.rs`) feeds to the module.
 //!
-//! `pending_approvals` becomes one `approvals` document per request and
-//! `flow_tool_trust` one `approval_flow_trust` document per grant. Documents
-//! are shaped exactly as `store_documents.rs` writes them: timestamps in its
-//! fixed-width form, `pending` as a boolean, `expires_ts` as the comparable
-//! expiry key, optional columns left out when NULL. The legacy file is only
-//! ever opened here, by the storage importer, on a scratch copy of it.
+//! `pending_approvals` rows become [`LegacyApproval`]s (the module keeps them as
+//! sanitized, inert history through `ImportApprovalHistory2`) and
+//! `flow_tool_trust` rows become [`LegacyTrust`]s (`GrantFlowTool2`). The file is
+//! only ever opened here on a scratch copy of it, which the reader may migrate
+//! and scrub; the real file is never modified.
 
 use crate::storage::rusqlite::{params, Connection};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde_json::{json, Map, Value};
 
-use super::storage_schema::{LEGACY_APPROVALS, LEGACY_FLOW_TRUST};
 use crate::config::Config;
-use crate::storage::import::{table_exists, ImportDoc};
+use crate::storage::import::{table_exists, Snapshot};
 
 /// SQL schema of the legacy database, applied on every `with_connection` call.
 ///
@@ -208,23 +205,51 @@ pub(crate) fn with_connection<T>(
     f(&conn)
 }
 
-/// Reads every legacy row, after bringing an old schema forward (on the
-/// importer's scratch copy of the file).
-pub(crate) fn read(config: &Config) -> Result<Vec<ImportDoc>> {
-    with_connection(config, read_rows)
+/// One legacy request, as the retired store kept it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacyApproval {
+    pub(crate) request_id: String,
+    pub(crate) tool_name: String,
+    /// The agent the request ran for; `None` for the process's own.
+    pub(crate) agent_id: Option<String>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) expires_at: Option<DateTime<Utc>>,
+    pub(crate) decided_at: Option<DateTime<Utc>>,
+    /// The stored decision (`approve_once`, `deny`, ...); `None` while undecided.
+    pub(crate) decision: Option<String>,
+    /// Whether the approved call ran.
+    pub(crate) executed: bool,
 }
 
-/// Fixed-width (nanosecond, `Z`) so the strings sort in time order: the v1
-/// document layout the steps read.
-fn rfc3339(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+/// One legacy "approve always for this flow" grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacyTrust {
+    pub(crate) flow_id: String,
+    pub(crate) tool_name: String,
 }
 
-/// The comparable expiry key v1 stored: nanoseconds since the epoch, falling
-/// back to milliseconds for instants beyond the i64-nanosecond range.
-fn expiry_key(at: DateTime<Utc>) -> i64 {
-    at.timestamp_nanos_opt()
-        .unwrap_or_else(|| at.timestamp_millis().saturating_mul(1_000_000))
+/// Everything the legacy file held.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct LegacyHistory {
+    /// Oldest first.
+    pub(crate) approvals: Vec<LegacyApproval>,
+    pub(crate) trust: Vec<LegacyTrust>,
+}
+
+/// Reads the legacy file of `config`'s workspace from a scratch copy, or `None`
+/// when the workspace has none. The file itself is never opened for writing.
+pub(crate) fn read_legacy(config: &Config) -> Result<Option<LegacyHistory>> {
+    let legacy = db_path(config);
+    if !legacy.is_file() {
+        return Ok(None);
+    }
+    let snapshot = Snapshot::of(&legacy, "approval/approval.db")
+        .context("[approval::import] copy the legacy file for reading")?;
+    let scratch = Config {
+        workspace_dir: snapshot.workspace().to_path_buf(),
+        ..config.clone()
+    };
+    with_connection(&scratch, read_rows).map(Some)
 }
 
 fn instant(raw: &str) -> Option<DateTime<Utc>> {
@@ -233,98 +258,59 @@ fn instant(raw: &str) -> Option<DateTime<Utc>> {
         .map(|at| at.with_timezone(&Utc))
 }
 
-/// `raw` in the document layout's fixed-width form, or unchanged when it is
-/// not a timestamp (kept rather than dropped, so nothing is lost).
-fn normalized(raw: &str) -> String {
-    instant(raw).map_or_else(|| raw.to_string(), rfc3339)
-}
-
-fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {
-    let mut docs = Vec::new();
+fn read_rows(conn: &Connection) -> Result<LegacyHistory> {
+    let mut history = LegacyHistory::default();
     if table_exists(conn, "pending_approvals")? {
         let mut stmt = conn
             .prepare(
-                "SELECT request_id, tool_name, action_summary, args_redacted, session_id,
-                        created_at, expires_at, decided_at, decision, executed_at,
-                        execution_outcome, execution_error, source_context,
-                        tool_call_id, agent_id
+                "SELECT request_id, tool_name, created_at, expires_at, decided_at, decision,
+                        executed_at, agent_id
                  FROM pending_approvals ORDER BY rowid",
             )
             .context("[approval::import] prepare pending_approvals")?;
         let rows = stmt
             .query_map([], |row| {
                 let text = |i: usize| row.get::<_, Option<String>>(i);
-                let mut doc = Map::new();
-                let created = row.get::<_, String>(5)?;
-                let expires = text(6)?;
-                let decided = text(7)?;
-                doc.insert("tool_name".into(), json!(row.get::<_, String>(1)?));
-                doc.insert("action_summary".into(), json!(row.get::<_, String>(2)?));
-                doc.insert("args_redacted".into(), json!(row.get::<_, String>(3)?));
-                doc.insert("session_id".into(), json!(row.get::<_, String>(4)?));
-                doc.insert("created_at".into(), json!(normalized(&created)));
-                if let Some(expires) = &expires {
-                    doc.insert("expires_at".into(), json!(normalized(expires)));
-                    if let Some(at) = instant(expires) {
-                        doc.insert("expires_ts".into(), json!(expiry_key(at)));
-                    }
-                }
-                doc.insert("pending".into(), json!(decided.is_none()));
-                for (field, value) in [
-                    ("decided_at", decided.as_deref().map(normalized)),
-                    ("decision", text(8)?),
-                    ("executed_at", text(9)?.as_deref().map(normalized)),
-                    ("execution_outcome", text(10)?),
-                    ("execution_error", text(11)?),
-                    ("source_context", text(12)?),
-                    ("tool_call_id", text(13)?),
-                    ("agent_id", text(14)?),
-                ] {
-                    if let Some(value) = value {
-                        doc.insert(field.into(), json!(value));
-                    }
-                }
-                Ok(ImportDoc {
-                    collection: LEGACY_APPROVALS,
-                    id: row.get(0)?,
-                    doc: Value::Object(doc),
+                let created: String = row.get(2)?;
+                Ok(LegacyApproval {
+                    request_id: row.get(0)?,
+                    tool_name: row.get(1)?,
+                    created_at: instant(&created).unwrap_or_else(Utc::now),
+                    expires_at: text(3)?.as_deref().and_then(instant),
+                    decided_at: text(4)?.as_deref().and_then(instant),
+                    decision: text(5)?,
+                    executed: text(6)?.is_some(),
+                    agent_id: text(7)?.filter(|agent| !agent.is_empty()),
                 })
             })
             .context("[approval::import] query pending_approvals")?;
         for row in rows {
-            docs.push(row.context("[approval::import] decode a pending_approvals row")?);
+            history
+                .approvals
+                .push(row.context("[approval::import] decode a pending_approvals row")?);
         }
     }
     if table_exists(conn, "flow_tool_trust")? {
         let mut stmt = conn
-            .prepare("SELECT flow_id, tool_name, created_at FROM flow_tool_trust ORDER BY rowid")
+            .prepare("SELECT flow_id, tool_name FROM flow_tool_trust ORDER BY rowid")
             .context("[approval::import] prepare flow_tool_trust")?;
         let rows = stmt
             .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
+                Ok(LegacyTrust {
+                    flow_id: row.get(0)?,
+                    tool_name: row.get(1)?,
+                })
             })
             .context("[approval::import] query flow_tool_trust")?;
         for row in rows {
-            let (flow_id, tool_name, created) =
-                row.context("[approval::import] decode a flow_tool_trust row")?;
-            docs.push(ImportDoc {
-                collection: LEGACY_FLOW_TRUST,
-                id: format!("{}:{flow_id}/{tool_name}", flow_id.len()),
-                doc: json!({
-                    "flow_id": flow_id,
-                    "tool_name": tool_name,
-                    "created_at": normalized(&created),
-                }),
-            });
+            history
+                .trust
+                .push(row.context("[approval::import] decode a flow_tool_trust row")?);
         }
     }
-    Ok(docs)
+    Ok(history)
 }
 
-#[cfg(all(test, feature = "storage-sqlite"))]
+#[cfg(test)]
 #[path = "store_import_tests.rs"]
 mod tests;

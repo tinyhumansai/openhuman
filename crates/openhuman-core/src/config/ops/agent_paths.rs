@@ -28,21 +28,15 @@ pub fn expand_tilde(path: &str) -> String {
     out.to_string_lossy().into_owned()
 }
 
-/// Redact a path for logging by replacing the user's home-directory prefix with
-/// `~`. Keeps the path *shape* (e.g. `~/OpenHuman/projects`) useful for
-/// diagnosis while not leaking the OS username / full home path (PII). Paths
-/// outside the home dir are returned unchanged.
+/// Redact a path for logging through TinySecurity's `Text` mode. Keep the
+/// conventional `~/...` display when the module replaces a home directory, and
+/// suppress the complete path while TinySecurity is unavailable.
 pub fn redact_home(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    if let Some(home) = dirs::home_dir() {
-        let home = home.to_string_lossy();
-        if !home.is_empty() {
-            if let Some(rest) = s.strip_prefix(home.as_ref()) {
-                return format!("~{rest}");
-            }
-        }
-    }
-    s.into_owned()
+    normalize_redacted_path(crate::security::redact::text(&path.to_string_lossy()))
+}
+
+pub(crate) fn normalize_redacted_path(redacted: String) -> String {
+    redacted.replace("<HOME>", "~").replace('\\', "/")
 }
 
 /// Ensure the agent's action sandbox + default projects home exist and the
@@ -68,12 +62,13 @@ pub async fn ensure_agent_dirs(config: &mut Config) {
     }
     let projects_path = projects_dir.to_string_lossy().to_string();
     if !config
+        .security
         .autonomy
         .trusted_roots
         .iter()
         .any(|r| r.path == projects_path)
     {
-        config.autonomy.trusted_roots.push(TrustedRoot {
+        config.security.autonomy.trusted_roots.push(TrustedRoot {
             path: projects_path,
             access: TrustedAccess::ReadWrite,
         });
@@ -98,12 +93,13 @@ pub async fn ensure_agent_dirs(config: &mut Config) {
     if !action_path.is_empty()
         && !config.workspace_dir.starts_with(&action_dir)
         && !config
+            .security
             .autonomy
             .trusted_roots
             .iter()
             .any(|r| r.path == action_path)
     {
-        config.autonomy.trusted_roots.push(TrustedRoot {
+        config.security.autonomy.trusted_roots.push(TrustedRoot {
             path: action_path,
             access: TrustedAccess::ReadWrite,
         });
@@ -205,7 +201,7 @@ async fn validate_files_dir(raw: &str, config: &Config) -> Result<PathBuf, Strin
             "files_dir must be a folder, not a file: {expanded}"
         ));
     }
-    if crate::security::SecurityPolicy::is_always_forbidden(&candidate) {
+    if is_protected_path(&candidate).await {
         return Err(format!(
             "files_dir cannot be a protected system or credential folder: {expanded}"
         ));
@@ -223,6 +219,21 @@ async fn validate_files_dir(raw: &str, config: &Config) -> Result<PathBuf, Strin
         .await
         .map_err(|e| format!("failed to create files_dir {expanded}: {e}"))?;
     Ok(candidate)
+}
+
+/// Ask TinySecurity's unconditional path floor before accepting a user-chosen
+/// output location. A missing module denies the setting rather than bypassing
+/// the credential-store and system-root floor.
+async fn is_protected_path(path: &Path) -> bool {
+    #[cfg(feature = "security-module")]
+    {
+        crate::modules::security::gap::is_protected(path).await
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = path;
+        true
+    }
 }
 
 /// `path` equals or sits under `dir`, comparing canonical forms so a

@@ -113,6 +113,12 @@ async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<(
     } else {
         tracing::debug!("[modules] juice component off; MlHost not served");
     }
+    #[cfg(feature = "security-module")]
+    // Production configures no module keyring (`security::production_crypto_config`),
+    // so the consent callback is bound to none and refuses every request.
+    super::security_host::install(connection, None).await?;
+    #[cfg(feature = "security-module")]
+    super::browser_egress_host::install(connection).await?;
     super::site_memory_host::install(connection).await?;
     super::storage_host::install(connection, runtime.host()).await?;
     #[cfg(feature = "tinymemes")]
@@ -136,6 +142,11 @@ async fn install_callbacks(runtime: &'static ModuleRuntime) -> tinybus::Result<(
         }
     }
     Ok(())
+}
+
+/// The running module runtime, without starting it.
+pub(crate) fn started() -> Option<&'static ModuleRuntime> {
+    RUNTIME.get().and_then(|r| r.as_ref().ok())
 }
 
 /// Whether the module runtime has been stood up.

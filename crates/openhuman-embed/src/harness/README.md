@@ -63,7 +63,7 @@ type.
 ## The shared input types
 
 `Access` closes a trap. Access is governed by two independent mechanisms:
-the autonomy tier (`config.autonomy.level`) drives `SecurityPolicy`, and the
+the autonomy tier (`config.security.autonomy.level`) drives `SecurityPolicy`, and the
 turn origin (a task-local `AgentTurnOrigin`) is what the fail-closed approval
 gate reads. Setting only the tier produces an agent whose `shell`, `edit` and
 `apply_patch` calls refuse while the model narrates around the refusals.

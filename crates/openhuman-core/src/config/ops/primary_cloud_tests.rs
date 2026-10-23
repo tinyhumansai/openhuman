@@ -110,7 +110,7 @@ fn resolved_managed_host_is_not_treated_as_byok_intent() {
 
 #[test]
 fn inference_endpoint_diagnostics_omit_paths_and_credentials() {
-    let safe = redact_inference_origin_for_log(
+    let safe = crate::security::redact::endpoint_origin(
         "https://route-user:route-password@example.test/path-secret?key=query-secret",
     );
 

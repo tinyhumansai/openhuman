@@ -82,7 +82,7 @@ async fn the_registered_handler_decides_the_outcome() {
         &DispatchCtx::ambient(),
         &config,
         Arc::new(SecurityPolicy::from_config(
-            &config.autonomy,
+            &config.security.autonomy,
             &config.workspace_dir,
             &config.action_dir,
         )),

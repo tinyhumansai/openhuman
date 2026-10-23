@@ -117,11 +117,11 @@ pub async fn diagnostics_for_config(config: &Config) -> Outcome<ToolPolicyDiagno
 
 fn posture_from_config(config: &Config) -> ToolPolicyPosture {
     ToolPolicyPosture {
-        autonomy_level: format!("{:?}", config.autonomy.level).to_lowercase(),
-        workspace_only: config.autonomy.workspace_only,
-        max_actions_per_hour: config.autonomy.max_actions_per_hour,
-        require_approval_for_medium_risk: config.autonomy.require_approval_for_medium_risk,
-        block_high_risk_commands: config.autonomy.block_high_risk_commands,
+        autonomy_level: format!("{:?}", config.security.autonomy.level).to_lowercase(),
+        workspace_only: config.security.autonomy.workspace_only,
+        max_actions_per_hour: config.security.autonomy.max_actions_per_hour,
+        require_approval_for_medium_risk: config.security.autonomy.require_approval_for_medium_risk,
+        block_high_risk_commands: config.security.autonomy.block_high_risk_commands,
     }
 }
 

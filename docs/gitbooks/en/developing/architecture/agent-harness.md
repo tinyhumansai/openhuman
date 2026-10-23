@@ -167,7 +167,7 @@ A session is the live conversation an `Agent` instance is running. The `Agent` s
 - The tool registry visible to the model.
 - The `memory` tool (when a memory engine is on), through which the model recalls, fetches, learns and forgets on demand.
 - Per-turn budgets: max tool iterations, max payload size, max USD cost.
-- Local action budget: a rolling hourly cap for side-effecting tool actions, read from `config.autonomy.max_actions_per_hour`.
+- Local action budget: a rolling hourly cap for side-effecting tool actions, read from `config.security.autonomy.max_actions_per_hour` and enforced by the TinySecurity module (`rate_limited` denial).
 
 `Agent::turn(user_message)` is the hot path. In one turn it:
 
@@ -357,7 +357,7 @@ HEADLINE FINDING …
 
 The summarizer is the fallback, not the first resort. Offload catches the common case; the summarizer detour and the `tool_result_budget_bytes` truncation above still handle everything it does not, including every failure mode here. A refused or failed offload is deliberately soft: the caller keeps its inline payload and falls through to those backstops.
 
-Path hardening is fail-closed. `resolve_artifact_path` rejects absolute paths, `..` traversal, and anything that escapes its convention root after lexical normalization. When a `SecurityPolicy` is available it also refuses anything under `workspace_dir`, both by blanket containment and via `is_workspace_internal_path`. Offload targets resolve under `action_dir`, never `workspace_dir`, including the case where someone configures `action_dir` inside the workspace root, where every offload is refused rather than quietly writing to internal state.
+Path hardening is fail-closed. TinyAgents' `resolve_artifact_key` rejects absolute paths, `..` traversal, and names outside its artifact convention after lexical normalization. OpenHuman supplies a `WorkspaceGuard` that also refuses workspace-internal state through `SecurityPolicy::is_internal` and rejects anything under `workspace_dir`. Offload targets resolve under `action_dir`, never `workspace_dir`, including the case where someone configures `action_dir` inside the workspace root, where every offload is refused rather than quietly writing to internal state.
 
 Writes log `[artifact] wrote worker artifact under action_dir`; each path a handoff carries logs `[artifact] handoff carried an artifact path to the parent`, on both the producing and the consuming side, so a run journal shows both ends of every pointer.
 
@@ -378,6 +378,12 @@ Every lossy compression offloads the original to the CCR (Compress-Cache-Retriev
 ### Missing capabilities
 
 There is no self-healing archetype. A missing host command is reported back to the user rather than polyfilled.
+
+### The security gate
+
+The first tool middleware on every harness is `ToolPolicyGateMiddleware`, installed by `agent/tinyagents/middleware/security_gate.rs::install`. A call it refuses never reaches another middleware or the tool. The gate takes a verdict from each source (the TinySecurity module through `tinysecurity-bus`, and the channel's tool policy when the session has one) and combines them as deny > require-approval > allow. A module fault denies, with no retry. A required approval settles through the approval resolver and the module-backed approval engine in `security/approval/native/`, with a 10-minute parking TTL.
+
+For a host tool the module is asked a `Check::HostAction` question (tier, permission level, external effect, hourly budget) built from the tool the host will run, never from model arguments. `shell` is asked as `Check::HostShell` and checked through the per-subject command scope. Denials are typed: `read_only_mode`, `rate_limited`, `scheduled_read_only` and `high_risk`. Cron turns run read-only. Commands that pass the gate are planned again by the module at the spawn boundary; see [Security](security.md#sandboxing).
 
 ## Sub-agents: the orchestrator pattern
 
@@ -514,7 +520,7 @@ Stop hooks fire between iterations of the tool-call loop. They're the policy lev
 
 - Budget stop hook: caps cumulative turn cost in USD using the per-iteration cost accumulator.
 - Max-iterations stop hook: caps iteration count from outside the agent's persistent config.
-- Action budget policy: `SecurityPolicy` enforces `config.autonomy.max_actions_per_hour` for side-effecting tool operations. Users can tune it in Settings, Advanced, Agent autonomy, or operators can override it with `OPENHUMAN_MAX_ACTIONS_PER_HOUR`.
+- Action budget policy: the TinySecurity module enforces `config.security.autonomy.max_actions_per_hour` for side-effecting tool operations, through the policy gate's host-tool admission check. Users can tune it in Settings, Advanced, Agent autonomy, or operators can override it with `OPENHUMAN_MAX_ACTIONS_PER_HOUR`.
 
 A hook returning `Stop` aborts the loop with a clear reason the caller can surface to the user. Stop hooks are distinct from interrupts (next section): they're policy-driven, not user-driven.
 
@@ -622,6 +628,7 @@ The harness shell lives under `crates/openhuman-core/src/agent/`, with the tinya
 | `session_host/runtime_session.rs`        | `Agent::turn`: the lifecycle described above; routes into the tinyagents runner via `tinyagents/turn_exec.rs`. |
 | `tinyagents/mod.rs`                      | `TurnSpec::run`: the shared tinyagents harness assembly (the live loop).                    |
 | `tinyagents/middleware.rs`               | The named OpenHuman middleware stack (approval/security, tool policy, recovery, budgets, circuit breaker).    |
+| `tinyagents/middleware/security_gate.rs` | `install`: puts `ToolPolicyGateMiddleware` first, so every path (turns, sub-agents, flows, live voice) shares one security gate. Verdicts from the TinySecurity module and any channel policy combine as deny > require-approval > allow; a module fault denies. |
 | `harness/graph.rs`                       | The channel/CLI bus turn route into the tinyagents runner.                                                    |
 | `subagent_host/`                         | Direct OpenHuman planner/executor/persistence adapters for `tinyagents-orchestration::subagent`; product prompt/tool/model/security/artifact/progress behavior remains here. |
 | `orchestration/subagent_sessions/`       | Durable reusable sub-agent identity, compatibility matching, persisted status/history.                        |

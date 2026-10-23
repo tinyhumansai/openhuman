@@ -1,8 +1,6 @@
 //! Tauri-focused daemon configuration wrapper for openhuman.
 
-use crate::config::{
-    AuditConfig, AutonomyConfig, ReliabilityConfig, SecretsConfig, SecurityConfig,
-};
+use crate::config::{AutonomyConfig, ReliabilityConfig, SecretsConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -16,18 +14,12 @@ pub struct DaemonConfig {
     /// Autonomy / command-policy settings.
     #[serde(default)]
     pub autonomy: AutonomyConfig,
-    /// Security / sandbox settings.
-    #[serde(default)]
-    pub security: SecurityConfig,
     /// Reliability / backoff settings.
     #[serde(default)]
     pub reliability: ReliabilityConfig,
     /// Encrypted secret store settings.
     #[serde(default)]
     pub secrets: SecretsConfig,
-    /// Audit logging settings.
-    #[serde(default)]
-    pub audit: AuditConfig,
 }
 
 impl DaemonConfig {
@@ -44,10 +36,8 @@ impl DaemonConfig {
             data_dir,
             workspace_dir,
             autonomy: AutonomyConfig::default(),
-            security: SecurityConfig::default(),
             reliability: ReliabilityConfig::default(),
             secrets: SecretsConfig::default(),
-            audit: AuditConfig::default(),
         }
     }
 }

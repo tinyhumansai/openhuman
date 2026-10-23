@@ -438,49 +438,61 @@ pub mod oauth {
 /// Applies this application's prompt-injection policy to remote tool
 /// definitions.
 ///
-/// `tinymcp` returns definitions verbatim: the detector, its rules, and what a
-/// hit means are this application's, and a module dropping tools by criteria of
-/// its own would be making a decision it cannot explain to anyone.
-///
-/// A tool whose description trips a rule is dropped, and the drop is
-/// logged and published with the *rule code* only — the offending text is never
-/// re-emitted, because the payload is the thing that was dangerous.
+/// `tinymcp` returns definitions verbatim: what trips the scan and what a hit
+/// means is this application's policy, and the rules are the security module's
+/// (`ScanToolDefinition`, asked through the prompt scanner port). A tool whose
+/// definition the module flags, `Suspicious` or `Blocked`, is dropped. A tool the
+/// scan could not be run for is dropped too: a remote definition nobody checked is
+/// never admitted. Each drop is logged and published with the *rule code* only,
+/// because the payload is the thing that was dangerous.
 #[cfg(feature = "mcp")]
-pub(crate) fn tools_safe_for_agent(
+pub(crate) async fn tools_safe_for_agent(
     server: &str,
     tools: Vec<tinymcp_bus::McpTool>,
 ) -> Vec<tinymcp_bus::McpTool> {
     use crate::core::bus::BUS;
     use crate::core::events::DomainEvent;
-    use crate::security::prompt_injection::scan_tool_definition;
+    use crate::security::prompt_injection::{screen_tool_definition, DefinitionVerdict};
 
-    tools
-        .into_iter()
-        .filter(|tool| {
-            let hit = tool
-                .description
-                .as_deref()
-                .and_then(|text| scan_tool_definition("description", text));
-
-            match hit {
-                Some(hit) => {
-                    tracing::warn!(
-                        server,
-                        tool = %tool.name,
-                        reason = %hit.code,
-                        "[mcp] dropped a remote tool that tripped the input-validation scan"
-                    );
-                    BUS.publish(DomainEvent::McpToolRejected {
-                        server: server.to_string(),
-                        tool: tool.name.clone(),
-                        reason: hit.code.clone(),
-                    });
-                    false
-                }
-                None => true,
+    let mut kept = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let definition = serde_json::json!({
+            "description": tool.description,
+            "input_schema": tool.input_schema,
+        });
+        let reason = match screen_tool_definition(&tool.name, &definition).await {
+            Ok(scan) if scan.verdict == DefinitionVerdict::Clean => {
+                kept.push(tool);
+                continue;
             }
-        })
-        .collect()
+            Ok(scan) => scan
+                .rule_ids
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "tool_definition.flagged".to_string()),
+            Err(error) => {
+                tracing::warn!(
+                    server,
+                    tool = %tool.name,
+                    error = %error,
+                    "[mcp] the tool definition scan could not run"
+                );
+                "scan.unavailable".to_string()
+            }
+        };
+        tracing::warn!(
+            server,
+            tool = %tool.name,
+            reason = %reason,
+            "[mcp] dropped a remote tool that tripped the input-validation scan"
+        );
+        BUS.publish(DomainEvent::McpToolRejected {
+            server: server.to_string(),
+            tool: tool.name.clone(),
+            reason,
+        });
+    }
+    kept
 }
 
 // ---------------------------------------------------------------------------
@@ -491,3 +503,7 @@ pub(crate) fn tools_safe_for_agent(
 mod stub;
 #[cfg(not(feature = "mcp"))]
 pub use stub::*;
+
+#[cfg(all(test, feature = "mcp"))]
+#[path = "mod_tests.rs"]
+mod tests;

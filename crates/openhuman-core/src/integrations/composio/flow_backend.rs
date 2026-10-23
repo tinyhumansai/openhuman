@@ -147,6 +147,6 @@ fn policy_refresh_error() -> String {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "modules"))]
 #[path = "flow_backend_tests.rs"]
 mod tests;

@@ -14,11 +14,27 @@ fn legacy_handlers_keep_their_identity_and_order() {
         ("preauthorize_flow", handle_preauthorize_flow),
     ];
     let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), expected.len());
-    for ((function, handler), controller) in expected.iter().zip(&controllers) {
+    assert_eq!(controllers.len(), 7);
+    let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
+    assert_eq!(
+        names,
+        vec![
+            "list_pending",
+            "list_recent_decisions",
+            "list_tool_trust",
+            "revoke_tool_trust",
+            "decide",
+            "get_gate_state",
+            "preauthorize_flow",
+        ]
+    );
+    for (function, handler) in expected {
+        let controller = controllers
+            .iter()
+            .find(|controller| controller.schema.function == function)
+            .expect("legacy approval controller");
         assert_eq!(controller.schema.namespace, "approval");
-        assert_eq!(controller.schema.function, *function);
-        assert!(std::ptr::fn_addr_eq(controller.handler, *handler));
+        assert!(std::ptr::fn_addr_eq(controller.handler, handler));
     }
 }
 
@@ -80,6 +96,28 @@ fn approval_schema_catalog_matches_legacy_handler_order() {
         &all_registered_controllers(),
         "list_pending",
     );
+}
+
+#[test]
+fn tool_trust_schemas_list_grants_and_revoke_by_opaque_id() {
+    let list = schemas("list_tool_trust");
+    assert!(list.inputs.is_empty());
+    assert_eq!(list.outputs[0].name, "grants");
+
+    let revoke = schemas("revoke_tool_trust");
+    assert_eq!(revoke.inputs.len(), 1);
+    assert_eq!(revoke.inputs[0].name, "request_id");
+    assert!(revoke.inputs[0].required);
+    assert_eq!(revoke.outputs[0].name, "revoked");
+}
+
+#[test]
+fn schemas_preauthorize_flow_requires_flow_id_and_tool_names() {
+    let s = schemas("preauthorize_flow");
+    assert_eq!(s.namespace, "approval");
+    let names: Vec<_> = s.inputs.iter().map(|f| f.name).collect();
+    assert_eq!(names, vec!["flow_id", "tool_names"]);
+    assert!(s.inputs.iter().all(|f| f.required));
 }
 
 #[test]

@@ -5,21 +5,25 @@
 mod command_analysis;
 mod command_checks;
 mod enforcement;
+mod module_gate;
+pub(crate) mod native_commands;
+#[cfg(test)]
+pub(crate) mod native_commands_stub;
+#[cfg(feature = "security-module")]
+mod native_paths;
 mod path_checks;
+#[cfg(any(feature = "modules", test))]
+pub(crate) use path_checks::home_credential_stores;
 
 mod types;
 
 pub(crate) use command_analysis::CommandAnalysis;
-#[cfg(test)]
-pub(crate) use command_analysis::CommandSegment;
-
 pub use enforcement::validate_path_within_root;
 pub use enforcement::{ensure_openhuman_scratch_dir, openhuman_scratch_dir};
-#[cfg(any(feature = "modules", test))]
-pub(crate) use path_checks::home_credential_stores;
-#[cfg(feature = "modules")]
-pub(crate) use path_checks::{
-    ALWAYS_FORBIDDEN_PREFIXES, SENSITIVE_COMPONENTS, SENSITIVE_FILES, SENSITIVE_PAIRS,
+pub use module_gate::{host_action_class, Budget, PathKind};
+pub use native_commands::{
+    CommandFlow, CommandGateway, CommandQuery, CommandStage, CommandVerdict, Refusal,
+    SharedCommandGateway,
 };
 pub use types::{
     tool_result_artifacts_dir, ActionTracker, AutonomyLevel, CommandClass, CommandRiskLevel,
@@ -38,7 +42,8 @@ mod tests;
 mod policy_disabled_tests;
 
 #[cfg(test)]
-mod proptest_tests;
+#[path = "policy_characterization_tests.rs"]
+mod policy_characterization_tests;
 
 #[cfg(test)]
 #[path = "policy_media_artifact_tests.rs"]

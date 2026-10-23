@@ -1,4 +1,15 @@
 use super::*;
+use tinyagents_harness::cost::TurnCost;
+use tinyinference_llm::usage::BilledUsage;
+
+fn cost_with_tokens(input: u64, output: u64) -> TurnCost {
+    let mut tc = crate::agent::cost::turn_cost();
+    tc.add_priced_call(
+        "agentic-v1",
+        &crate::agent::cost::call_usage(&BilledUsage::from_counts(input, output)),
+    );
+    tc
+}
 #[tokio::test]
 async fn account_turn_charges_active_goal_and_trips_budget() {
     let tmp = tempfile::tempdir().unwrap();

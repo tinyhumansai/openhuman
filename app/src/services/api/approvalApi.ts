@@ -71,6 +71,26 @@ export interface ApprovalAuditEntry {
   /** RFC3339 timestamp the decision was recorded. */
   decided_at: string;
   decision: ApprovalDecision;
+  /** `auto:jev` / `auto:host-policy` for automatic decisions; absent for a human. */
+  decided_by?: string;
+  /** Jev verdict (scores in thousandths) when `decided_by` is `auto:jev`. */
+  judge?: ApprovalJudgeVerdict;
+}
+
+/** Nonsensitive Jev evidence: fixed outcome and scores, never provider text. */
+export interface ApprovalJudgeVerdict {
+  outcome: string;
+  intent_millis: number | null;
+  reversible_millis: number | null;
+  exfiltrate_millis: number | null;
+  cached: boolean;
+}
+
+/** A live whole-tool trust grant with a redacted label and opaque revoke ID. */
+export interface ToolTrustGrant {
+  tool: string;
+  request_id: string;
+  granted_at_ms: number;
 }
 
 /**
@@ -185,6 +205,21 @@ const unwrapValue = <T>(raw: unknown): T => {
     return (raw as { result: T }).result;
   }
   return raw as T;
+};
+
+/** Fetch live whole-tool approval grants in the current tenant scope. */
+export const fetchToolTrust = async (): Promise<ToolTrustGrant[]> => {
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.approval_list_tool_trust' });
+  return unwrapRows<ToolTrustGrant>(raw);
+};
+
+/** Revoke a listed whole-tool grant using its opaque request ID. */
+export const revokeToolTrust = async (requestId: string): Promise<boolean> => {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.approval_revoke_tool_trust',
+    params: { request_id: requestId },
+  });
+  return unwrapValue<boolean>(raw);
 };
 
 /**

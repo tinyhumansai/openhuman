@@ -33,7 +33,7 @@ const autonomy = (overrides: Partial<AutonomySettings> = {}): AutonomySettings =
   allowed_commands: [],
   forbidden_paths: [],
   trusted_roots: [],
-  allow_tool_install: true,
+  allow_tool_install: false,
   max_actions_per_hour: 0,
   auto_approve: [],
   ...overrides,

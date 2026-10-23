@@ -175,7 +175,10 @@ async fn three_offers_within_the_window_run_one_turn_with_one_result_and_one_eve
     let results = memory_results();
     let rig = Rig::pinned(
         config.inbound.clone(),
-        Pinned::new(agent.clone() as Arc<dyn PinnedAgent>, results.clone()),
+        Pinned::new(agent.clone() as Arc<dyn PinnedAgent>, results.clone())
+            .with_test_prompt_scanner(
+                crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+            ),
     )
     .await;
 
@@ -226,7 +229,10 @@ async fn a_burst_over_max_batch_runs_in_turns_of_at_most_max_batch() {
     let results = memory_results();
     let rig = Rig::pinned(
         config.inbound.clone(),
-        Pinned::new(agent.clone() as Arc<dyn PinnedAgent>, results.clone()),
+        Pinned::new(agent.clone() as Arc<dyn PinnedAgent>, results.clone())
+            .with_test_prompt_scanner(
+                crate::security::prompt_injection::scanner_stub::StubScanner::phrases(),
+            ),
     )
     .await;
     for id in ["201", "202", "203", "204", "205"] {
