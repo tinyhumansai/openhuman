@@ -202,7 +202,7 @@ impl DelegateGraphTool {
     ) -> anyhow::Result<ToolResult> {
         let Some(live_parent) = live_parent else {
             return Ok(ToolResult::error(
-                "delegate_graph requires a live harness run context.",
+                "delegate_graph: requires a live harness run context.",
             ));
         };
         let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
@@ -267,7 +267,7 @@ impl DelegateGraphTool {
         {
             Ok(result) => Ok(result),
             Err(e) => Ok(ToolResult::error(format!(
-                "delegate_graph failed for '{agent_id}': {e}"
+                "delegate_graph: failed for '{agent_id}': {e}"
             ))),
         }
     }
