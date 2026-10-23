@@ -217,7 +217,11 @@ pub fn module_config(config: &Config) -> Value {
         "[inbound] configuring the tinyeventqueues module"
     );
     let resolved = remember(resolved);
+    // The module keeps its queues in host storage and refuses to load without
+    // the bus name that serves it; the host still derives the scope and grant
+    // from the authenticated caller, never from this value.
     json!({
+        "storage_callback": tinystoragedrivers_bus::STORAGE_INTERFACE.to_string(),
         "queues": resolved.queues_json,
         "pipeline": resolved.pipeline_json,
     })
