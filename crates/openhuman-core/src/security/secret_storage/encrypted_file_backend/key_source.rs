@@ -144,6 +144,9 @@ pub(super) fn workspace_master_key(
 /// changing key state. Explicit operator key variables retain their normal
 /// precedence; otherwise only an existing key file beneath `workspace` is
 /// considered. Host key sources are excluded because they can prompt or mint.
+/// Only the encrypted-file backend reads profiles; without `secret-file` the
+/// placeholder backend refuses the read instead.
+#[cfg(feature = "secret-file")]
 pub(super) fn profile_master_key_read_only(
     workspace: &Path,
 ) -> Result<Option<Zeroizing<[u8; 32]>>, SecretStorageError> {

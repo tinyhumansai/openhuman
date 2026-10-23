@@ -508,7 +508,9 @@ pub mod storage {
     };
 
     /// The layout v1 -> v2 migration the host runs at boot when
-    /// `[storage] auto_migrate_layout` is set.
+    /// `[storage] auto_migrate_layout` is set. It reads the v1 layout, so it
+    /// exists only with `legacy-import`.
+    #[cfg(feature = "legacy-import")]
     pub mod layout {
         pub use openhuman_core::storage::layout::auto_migrate;
     }

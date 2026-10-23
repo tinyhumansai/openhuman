@@ -85,6 +85,17 @@ impl EncryptedFileBackend {
     }
 }
 
+impl EncryptedFileBackend {
+    /// A profile-scoped read-only lookup, as the enabled backend offers it.
+    /// There is no encrypted file to read, so it fails closed.
+    pub fn get_profile_read_only(
+        &self,
+        _namespaced_key: &str,
+    ) -> Result<Option<String>, SecretStorageError> {
+        Err(unavailable())
+    }
+}
+
 impl SecretBackend for EncryptedFileBackend {
     fn get(&self, _: &str) -> Result<Option<String>, SecretStorageError> {
         Err(unavailable())

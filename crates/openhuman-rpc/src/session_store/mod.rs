@@ -106,13 +106,16 @@ async fn configured_storage_url() -> anyhow::Result<Option<String>> {
                 anyhow::anyhow!("loading the config to resolve the storage url: {error}")
             })
     };
-    let mut config = load().await?;
+    let config = load().await?;
     // `[storage] auto_migrate_layout`: move a layout-v1 profile to v2 before
     // the backend opens, then re-read the config, whose workspace is now the
-    // profile's `files/` directory.
-    if crate::core_host::storage::layout::auto_migrate(&config).await {
-        config = load().await?;
-    }
+    // profile's `files/` directory. Reading v1 needs `legacy-import`.
+    #[cfg(feature = "legacy-import")]
+    let config = if crate::core_host::storage::layout::auto_migrate(&config).await {
+        load().await?
+    } else {
+        config
+    };
     Ok(storage_url_from(env, &config))
 }
 

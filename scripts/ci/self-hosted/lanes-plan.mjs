@@ -463,6 +463,13 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           when: core,
           run: "cargo check -p openhuman-embed --no-default-features",
         },
+        // Hosts such as Chottu run modules with neither legacy storage import
+        // nor the encrypted secrets file; both are gated separately.
+        {
+          name: "embed-check-no-default-modules",
+          when: core,
+          run: "bash scripts/ci-cancel-aware.sh cargo check -p openhuman-embed --no-default-features --features modules",
+        },
         // Consumers such as TinySweeper enable tracing without native modules.
         {
           name: "embed-check-no-default-langfuse",
