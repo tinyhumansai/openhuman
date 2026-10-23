@@ -27,13 +27,32 @@ pub(in crate::agent::orchestration) fn router_scope(workspace_dir: &Path) -> Rou
 }
 
 /// The durable completion queue of `workspace_dir` in the storage backend,
-/// under the calling tenant's scope.
+/// under the calling tenant's profile scope.
+///
+/// The agent is left out, as in [`router_scope_for`]: profile-less embed
+/// agents share the workspace's router, thread keys and boot recovery, so
+/// their records must live in the store those reopen, not in whichever
+/// agent's scope happened to open it first (#7687).
 pub(in crate::agent::orchestration) fn open_driver_store(
     ctx: &DispatchCtx,
     workspace_dir: &Path,
 ) -> anyhow::Result<Arc<dyn CompletionStore>> {
     with_storage_context(ctx, || {
-        let opened = crate::storage::local::open("background_completions", workspace_dir)?;
+        // The scope first: a SaaS call with no profile fails closed without
+        // creating a workspace database as a side effect.
+        let profile = ctx
+            .tenant()
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .profile;
+        let scope =
+            crate::storage::scope_from(profile.as_deref(), None, crate::core::runtime::is_saas())
+                .map_err(|error| {
+                anyhow::anyhow!("[background_completions] resolve the storage scope: {error}")
+            })?;
+        let opened = crate::storage::local::Opened {
+            backend: crate::storage::local::backend_for(workspace_dir)?,
+            scope,
+        };
         let scoped = opened.scoped()?;
         let store = DriverCompletionStore::new(Arc::clone(scoped.documents()))
             .map_err(|error| anyhow::anyhow!("start the completion store bridge: {error}"))?;
