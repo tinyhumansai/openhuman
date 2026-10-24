@@ -123,16 +123,18 @@ test("commands are static: no suite is ever narrowed to the diff", () => {
   }
 });
 
-test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner", () => {
+test("both profiles run the core's unit tests under nextest", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
       .find((l) => l.name === "rust-cov")
       .checks.find((c) => c.name === "rust-core-coverage");
-    assert.equal(
-      cov.env.OH_COV_RUNNER,
-      plan.profile === "ex63" ? "nextest" : undefined,
-    );
+    assert.equal(cov.env.OH_COV_RUNNER, "nextest");
   }
+  // Hosted's container image does not ship nextest; the workflow installs it.
+  assert.match(
+    fs.readFileSync(path.join(repoRoot, ".github/workflows/ci-lanes.yml"), "utf8"),
+    /tool: cargo-nextest@/,
+  );
   assert.match(
     fs.readFileSync(path.join(repoRoot, ".config/nextest.toml"), "utf8"),
     /\[profile\.ci\][\s\S]*fail-fast = false/,

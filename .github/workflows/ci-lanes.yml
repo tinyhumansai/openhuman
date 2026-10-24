@@ -354,6 +354,14 @@ jobs:
         if: matrix.group == 'rust-cov' || matrix.group == 'tauri'
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # rust-coverage.sh runs under nextest on both profiles (lanes-plan.mjs).
+      # The container image does not ship it; match the EX63 guest's version.
+      - name: Install cargo-nextest
+        if: matrix.group == 'rust-cov'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.148
+
       # One step per lane: `Start lanes` launches every lane in the background
       # (they still run in parallel); each `Lane:` step streams its own lane's
       # log live and passes or fails on that lane alone; `Lane summary` waits

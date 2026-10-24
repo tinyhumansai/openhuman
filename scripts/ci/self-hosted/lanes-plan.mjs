@@ -414,13 +414,17 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           ],
           // Doctests run on pushes to main instead (see above); the tui suite
           // runs here (OH_COV_TUI=1).
-          // ex63: the core's unit tests run under cargo-nextest, one process
-          // per test and in parallel (the guest image ships cargo-nextest).
+          // Both profiles run the suites under cargo-nextest, one process per
+          // test and in parallel, with the product packages built once. The
+          // EX63 guest image ships cargo-nextest; hosted installs it
+          // (ci-lanes.yml). cargo's runner ran the core's ~10,500 unit tests
+          // with --test-threads=1 (~12 min on hosted) and rebuilt the core
+          // for every package.
           env: {
             OUT: "ci-out/lcov/lcov-core.info",
             OH_COV_DOCTESTS: "0",
             OH_COV_TUI: "1",
-            ...(ex63 ? { OH_COV_RUNNER: "nextest" } : {}),
+            OH_COV_RUNNER: "nextest",
           },
           run: withModules("bash scripts/ci/rust-coverage.sh"),
         },

@@ -193,10 +193,9 @@ test("private core coverage runs sequentially without a second target directory"
   const source = fs.readFileSync(runner, "utf8");
   assert.doesNotMatch(source, /UNIT_PID|cov-unit|export CARGO_TARGET_DIR/);
   assert.match(source, /suite "openhuman product suites \(nextest\)" llvm_cov/);
-  assert.match(source, /suite "openhuman-embed \(default\)" llvm_cov_package/);
   assert.match(
     source,
-    /suite "openhuman-tinyhumans \(default\)" llvm_cov_package/,
+    /suite "openhuman-embed \+ openhuman-tinyhumans \(default\)" llvm_cov_package/,
   );
 });
 
@@ -294,10 +293,17 @@ test("private coverage executes every package configuration once and reports aft
   const { status, calls } = runMockedCoverage(7);
   assert.equal(status, 1);
   const selections = calls.filter((line) => line.includes("llvm-cov nextest"));
-  // The product suites (core, embed, tinyhumans, cli), rpc, the two default
-  // feature suites and the tui.
-  assert.equal(selections.length, 5);
-  assert.equal(new Set(selections).size, 5);
+  // The product suites (core, embed, tinyhumans, cli), rpc, the default
+  // feature suite (embed and tinyhumans together) and the tui.
+  assert.equal(selections.length, 4);
+  assert.equal(new Set(selections).size, 4);
+  assert.equal(
+    selections.filter((line) =>
+      line.includes("-p openhuman-embed -p openhuman-tinyhumans --all-targets") &&
+      !line.includes("-p openhuman-cli"),
+    ).length,
+    1,
+  );
   assert.ok(selections.every((line) => line.includes("--no-tests=fail")));
   // One build and one run of the product graph, over the union of the old
   // per-package filters, listed first with the same arguments.
@@ -332,7 +338,7 @@ test("private coverage cancels remaining suites but still preserves a report", (
   );
 });
 
-test("private coverage passes when all five selected configurations report tests", () => {
+test("private coverage passes when all four selected configurations report tests", () => {
   const { status } = runMockedCoverage(0);
   assert.equal(status, 0);
 });
@@ -471,7 +477,10 @@ test("nextest product suites are one build and one run over the union of their f
 
   assert.match(source, /suite "openhuman-rpc" llvm_cov_package .*-p openhuman-rpc --all-targets/);
   assert.match(source, /suite "openhuman-tui" llvm_cov_package .*-p openhuman-tui --all-targets/);
-  assert.match(source, /suite "openhuman-embed \(default\)" llvm_cov_package .*-p openhuman-embed --all-targets/);
+  assert.match(
+    source,
+    /suite "openhuman-embed \+ openhuman-tinyhumans \(default\)" llvm_cov_package .*-p openhuman-embed -p openhuman-tinyhumans --all-targets/,
+  );
 });
 
 test("coverage suites record why cargo rebuilt and drop the verbose noise", () => {

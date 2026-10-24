@@ -147,7 +147,9 @@ for any commit without posting it.
       resolved features and those packages resolve the core differently when
       selected separately, so separate `-p` runs would each compile the core
       again. The `rpc`, `tui` and default-feature suites keep their own
-      resolutions on purpose.
+      resolutions on purpose; the default-feature `-embed` and `-tinyhumans`
+      suites share one, so that configuration builds the core once. Hosted
+      runs this runner too (the workflow installs nextest).
     - Auxiliary coverage suites (gates-off, Tauri) pass `--no-report`; each
       `cargo llvm-cov report` re-merges every profile in the shared coverage
       target, so each lane ends with one report check (`gates-off-coverage-report`,

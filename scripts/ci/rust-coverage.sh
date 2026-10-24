@@ -378,8 +378,13 @@ fi
 if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # Contributor/default features are distinct from product features. Keep both
   # configurations instrumented rather than dropping the default-only surface.
-  suite "openhuman-embed (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-embed --all-targets
-  suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
+  # Embed and tinyhumans run as one suite: one build of the default-feature
+  # core instead of two. Embed alone resolves its graph exactly as the pair
+  # does; tinyhumans gains only the two features embed's dev-dependencies turn
+  # on (tinymemory-api `conformance`, tinystoragedrivers-document `sqlite`),
+  # the same unification the product suite above already accepts.
+  suite "openhuman-embed + openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast \
+    -p openhuman-embed -p openhuman-tinyhumans --all-targets
 fi
 # The terminal frontend builds the core a third time (default features, not the
 # product set). It is on by default and on in the PR lane; OH_COV_TUI=0 is an
