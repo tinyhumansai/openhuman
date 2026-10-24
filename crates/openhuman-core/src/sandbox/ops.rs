@@ -2,7 +2,7 @@
 //! routed execution.
 
 use super::docker;
-use super::shell_exec::{ComeBack, ShellRunOutcome};
+use super::shell_exec::ShellRunOutcome;
 use super::types::{
     ElevatedOp, SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest, SandboxExecResult,
     SandboxPolicy, SandboxStatus, ELEVATED_TOOLS,
@@ -322,14 +322,15 @@ pub(crate) async fn execute_in_sandbox_metered(
     timeout: Duration,
     meter: Option<super::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<SandboxExecResult> {
-    let outcome = execute_in_sandbox_yielding(
+    let resolved = resolve_sandbox(ctx, policy).await?;
+    let outcome = execute_resolved(
         ctx,
-        policy,
+        resolved,
         command,
         working_dir,
         extra_env,
         timeout,
-        ComeBack::default(),
+        None,
         meter,
     )
     .await?;
@@ -341,20 +342,38 @@ pub(crate) async fn execute_in_sandbox_metered(
     }
 }
 
-/// [`execute_in_sandbox_metered`] for a call that may come back first: on the
-/// native backends a command still running at `come_back.yield_after` is
-/// handed back as [`ShellRunOutcome::Running`]; Docker cannot leave a command
-/// running, so there `come_back.deadline_instead` bounds it.
-pub(crate) async fn execute_in_sandbox_yielding(
+/// A sandbox policy with the operator's saved backend applied: what a command
+/// actually runs under. A caller resolves it once, decides from it how to run
+/// (the shell reserves a place for a command it may leave running only when
+/// [`Self::can_yield`]), and runs on the same resolution with
+/// [`execute_resolved`], so the decision and the execution cannot disagree.
+pub(crate) struct ResolvedSandbox {
+    policy: SandboxPolicy,
+    module_config: Option<crate::config::Config>,
+    explicitly_requested: bool,
+}
+
+impl ResolvedSandbox {
+    /// The backend the command will run on.
+    pub(crate) fn backend(&self) -> SandboxBackendKind {
+        self.policy.backend
+    }
+
+    /// Whether the backend can leave a command running past its yield point:
+    /// the native ones (no sandbox, native jail) can; Docker runs one-shot.
+    pub(crate) fn can_yield(&self) -> bool {
+        matches!(
+            self.policy.backend,
+            SandboxBackendKind::None | SandboxBackendKind::Local
+        )
+    }
+}
+
+/// Apply the host's and the operator's backend choice to `policy`.
+pub(crate) async fn resolve_sandbox(
     ctx: &DispatchCtx,
     policy: &SandboxPolicy,
-    command: &str,
-    working_dir: &Path,
-    extra_env: HashMap<OsString, OsString>,
-    timeout: Duration,
-    come_back: ComeBack,
-    meter: Option<super::shell_progress::ShellOutputMeter>,
-) -> anyhow::Result<ShellRunOutcome> {
+) -> anyhow::Result<ResolvedSandbox> {
     // The saved backend is an operator's explicit isolation requirement. It
     // must be checked at the spawn boundary, including callers that resolved
     // their policy from an older or default RuntimeConfig.
@@ -383,7 +402,39 @@ pub(crate) async fn execute_in_sandbox_yielding(
             .await?
         }
     };
-    let policy = &effective_policy;
+    tracing::debug!(
+        backend = ?effective_policy.backend,
+        explicitly_requested,
+        "[sandbox] resolved the backend for a command"
+    );
+    Ok(ResolvedSandbox {
+        policy: effective_policy,
+        module_config,
+        explicitly_requested,
+    })
+}
+
+/// Run `command` on a [`resolve_sandbox`] result. On the native backends a
+/// command still running at `yield_after` is handed back as
+/// [`ShellRunOutcome::Running`]; Docker cannot leave a command running and
+/// ignores it, so a caller that may yield checks [`ResolvedSandbox::can_yield`]
+/// first and bounds a Docker run itself.
+pub(crate) async fn execute_resolved(
+    ctx: &DispatchCtx,
+    resolved: ResolvedSandbox,
+    command: &str,
+    working_dir: &Path,
+    extra_env: HashMap<OsString, OsString>,
+    timeout: Duration,
+    yield_after: Option<Duration>,
+    meter: Option<super::shell_progress::ShellOutputMeter>,
+) -> anyhow::Result<ShellRunOutcome> {
+    let ResolvedSandbox {
+        policy,
+        module_config,
+        explicitly_requested,
+    } = resolved;
+    let policy = &policy;
     // Validate the working directory up front so a missing/bad action_dir
     // surfaces an actionable, path-naming error here rather than an opaque OS
     // error 267 (ERROR_DIRECTORY) at spawn time — parity with the unsandboxed
@@ -411,7 +462,7 @@ pub(crate) async fn execute_in_sandbox_yielding(
                 working_dir,
                 &extra_env,
                 timeout,
-                come_back.yield_after,
+                yield_after,
                 meter,
             )
             .await
@@ -434,15 +485,12 @@ pub(crate) async fn execute_in_sandbox_yielding(
                 &extra_env,
                 timeout,
                 explicitly_requested,
-                come_back.yield_after,
+                yield_after,
                 meter,
             )
             .await
         }
         SandboxBackendKind::Docker => {
-            let timeout = come_back
-                .deadline_instead
-                .map_or(timeout, |deadline| timeout.min(deadline));
             crate::config::ensure_usable_cwd(&policy.workspace_root)?;
             let request = SandboxExecRequest {
                 command: command.to_string(),

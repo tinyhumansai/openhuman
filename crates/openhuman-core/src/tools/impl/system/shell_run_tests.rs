@@ -197,3 +197,38 @@ async fn a_command_left_running_is_audited_when_it_ends() {
     let result = lines[0].result.as_ref().expect("result present");
     assert!(!result.success, "exit 3 is audited as a failure");
 }
+
+/// #8317: a backend that cannot leave a command running takes no place in the
+/// turn, so native commands can still use all four; its run is bounded by the
+/// model's time instead.
+#[test]
+fn a_backend_that_cannot_yield_takes_no_place() {
+    use crate::agent::tinyagents::host::run_context::shell_processes_for_tool;
+    use crate::sandbox::shell_processes::MAX_RUNNING;
+
+    let run = test_turn_run();
+    let call = ToolExecutionContext::from_run_context(&run, CallId::new("c1"));
+    let request = YieldRequest {
+        allowed: true,
+        requested: Some(60),
+    };
+    let deadline = Duration::from_secs(600);
+
+    let (slot, after, bound) = come_back(request, Some(&call), "make", deadline, false);
+    assert!(slot.is_none(), "a one-shot backend reserves nothing");
+    assert_eq!(after, None);
+    assert_eq!(bound, Duration::from_secs(60), "the model's time bounds it");
+    let processes = shell_processes_for_tool(Some(&call)).expect("a turn has a registry");
+    let held: Vec<_> = (0..MAX_RUNNING)
+        .map(|_| processes.reserve().expect("all four places are free"))
+        .collect();
+    drop(held);
+
+    let (slot, after, bound) = come_back(request, Some(&call), "make", deadline, true);
+    assert!(slot.is_some(), "a native backend reserves its place");
+    assert_eq!(after, Some(Duration::from_secs(60)));
+    assert_eq!(
+        bound, deadline,
+        "a command it may leave running keeps its deadline"
+    );
+}

@@ -405,3 +405,23 @@ fn config_disables_sandbox_for_legacy_flag_or_component() {
     config.components.sandbox = false;
     assert!(config_disables_sandbox(&config));
 }
+
+/// #8317: a caller learns from the resolution whether the backend can leave a
+/// command running, before it runs anything.
+#[tokio::test]
+async fn a_resolved_docker_sandbox_cannot_yield() {
+    let state = tempfile::tempdir().unwrap();
+    let mut policy = unsandboxed_policy(Path::new("/tmp"), state.path());
+    let native = resolve_sandbox(&DispatchCtx::unbound(), &policy)
+        .await
+        .unwrap();
+    assert_eq!(native.backend(), SandboxBackendKind::None);
+    assert!(native.can_yield());
+
+    policy.backend = SandboxBackendKind::Docker;
+    let docker = resolve_sandbox(&DispatchCtx::unbound(), &policy)
+        .await
+        .unwrap();
+    assert_eq!(docker.backend(), SandboxBackendKind::Docker);
+    assert!(!docker.can_yield(), "Docker runs one-shot");
+}
