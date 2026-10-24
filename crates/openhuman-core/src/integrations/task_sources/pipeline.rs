@@ -142,30 +142,39 @@ async fn run_inner(
     let current_external_ids: HashSet<String> =
         tasks.iter().map(|task| task.external_id.clone()).collect();
 
+    // The dedup ledger for this source, read once. Both checks below come out
+    // of it — `is_ingested` is "an entry exists and its hash matches",
+    // `was_ingested` is "an entry exists" — and each of those costs its own
+    // `docs.get`, so asking per task spent 2N document reads on a fetch of N.
+    let mut ledger = store::ingested_hashes(config, &source.id)
+        .map_err(|e| format!("reading the dedup ledger failed: {e}"))?;
+
     for mut task in tasks {
         // Stamp the originating source before dedup / enrichment.
         task.source_id = source.id.clone();
 
         let hash = store::content_hash(&task);
-        if store::is_ingested(config, &source.id, &task.external_id, &hash)
-            .map_err(|e| format!("dedup check failed: {e}"))?
-        {
-            // Dedup is scoped to THIS source (`WHERE source_id AND external_id`),
-            // so the same external_id under a different source would NOT hit
-            // here — it dedups per-source, never cross-source.
-            tracing::debug!(
-                source_id = %source.id,
-                provider = %source.provider.as_str(),
-                external_id = %task.external_id,
-                content_hash = %hash,
-                "[task_sources:dedup] skip — already ingested under THIS source with same content_hash (per-source, unchanged)"
-            );
-            outcome.skipped_dupe += 1;
-            continue;
-        }
-
-        let edited = store::was_ingested(config, &source.id, &task.external_id)
-            .map_err(|e| format!("was_ingested failed: {e}"))?;
+        // Dedup is scoped to THIS source (the ledger is read by `source_id`),
+        // so the same external_id under a different source would NOT hit
+        // here — it dedups per-source, never cross-source.
+        let edited = match ledger.get(&task.external_id) {
+            Some(Some(stored)) if stored == &hash => {
+                tracing::debug!(
+                    source_id = %source.id,
+                    provider = %source.provider.as_str(),
+                    external_id = %task.external_id,
+                    content_hash = %hash,
+                    "[task_sources:dedup] skip — already ingested under THIS source with same content_hash (per-source, unchanged)"
+                );
+                outcome.skipped_dupe += 1;
+                continue;
+            }
+            // An entry with no stored hash counts as edited, not as new:
+            // that is what the `was_ingested` / `is_ingested` pair returned
+            // for a legacy row the migration carried over without one.
+            Some(_) => true,
+            None => false,
+        };
 
         tracing::debug!(
             source_id = %source.id,
@@ -198,6 +207,12 @@ async fn run_inner(
 
         store::mark_ingested(config, &source.id, &enriched.task)
             .map_err(|e| format!("mark_ingested failed: {e}"))?;
+        // Keep the in-memory ledger in step with the entry just written, so a
+        // second copy of the same external_id inside this one fetch is still
+        // seen as the dupe it is — which is what the per-task read did.
+        // `enrich_task` moves the task through unchanged, so this is the hash
+        // `mark_ingested` persisted.
+        ledger.insert(enriched.task.external_id.clone(), Some(hash));
         BUS.publish(DomainEvent::TaskSourceTaskIngested {
             source_id: source.id.clone(),
             provider: enriched.task.provider.clone(),
