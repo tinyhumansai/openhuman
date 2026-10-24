@@ -274,9 +274,12 @@ impl ConversationStore for ConversationHistoryStore {
 // ---------------------------------------------------------------------------
 
 /// Persists newly-authorized identities into the on-disk channel allowlist,
-/// replicating Telegram's former `persist_allowed_identity` (load
-/// `~/.openhuman/config.toml`, append to the channel's `allowed_users`, save).
-pub struct ConfigAllowlistStore;
+/// appending to the channel's `allowed_users` in the runtime's resolved
+/// config file (the same file the config was loaded from) rather than a
+/// hardcoded legacy path, so pairings survive restarts (#8141).
+pub struct ConfigAllowlistStore {
+    pub(crate) config: Arc<Config>,
+}
 
 impl ConfigAllowlistStore {
     pub(crate) async fn persist_allowed_identity(
@@ -290,22 +293,16 @@ impl ConfigAllowlistStore {
             anyhow::bail!("cannot persist empty identity");
         }
 
-        let home = directories::UserDirs::new()
-            .map(|u| u.home_dir().to_path_buf())
-            .context("could not find home directory")?;
-        let openhuman_dir = home.join(".openhuman");
-        let config_path = openhuman_dir.join("config.toml");
-        let mut config = Config::load_from_config_path_without_env(
-            &config_path,
-            &openhuman_dir.join("workspace"),
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "failed to load config.toml for allowlist: {}",
-                config_path.display()
-            )
-        })?;
+        let config_path = &self.config.config_path;
+        let mut config =
+            Config::load_from_config_path_without_env(config_path, &self.config.workspace_dir)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to load config.toml for allowlist: {}",
+                        config_path.display()
+                    )
+                })?;
 
         match channel {
             "telegram" => {
@@ -420,3 +417,7 @@ impl EventSink for OpenHumanEventSink {
         self.publish_host(domain, kind, payload).await
     }
 }
+
+#[cfg(test)]
+#[path = "adapters_tests.rs"]
+mod tests;

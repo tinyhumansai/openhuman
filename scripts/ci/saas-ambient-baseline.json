@@ -42,13 +42,6 @@
     "occurrence": 1
   },
   {
-    "rule": "home-dir",
-    "path": "crates/openhuman-core/src/channels/host/adapters.rs",
-    "line": 294,
-    "text": ".map(|u| u.home_dir().to_path_buf())",
-    "occurrence": 1
-  },
-  {
     "rule": "bare-spawn",
     "path": "crates/openhuman-core/src/channels/runtime/dispatch/processor/turn.rs",
     "line": 122,

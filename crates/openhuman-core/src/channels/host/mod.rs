@@ -48,7 +48,9 @@ pub fn build_channel_host(config: Arc<Config>) -> Arc<dyn ChannelHost> {
             workspace_dir: config.workspace_dir.clone(),
         }))
         .events(Arc::new(OpenHumanEventSink))
-        .allowlist(Arc::new(ConfigAllowlistStore))
+        .allowlist(Arc::new(ConfigAllowlistStore {
+            config: Arc::clone(&config),
+        }))
         .build()
 }
 

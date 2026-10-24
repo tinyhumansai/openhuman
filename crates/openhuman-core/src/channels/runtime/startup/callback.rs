@@ -119,10 +119,12 @@ impl ChannelHostCallbacks {
     }
 
     async fn persist_allowed_identity(&self, channel: String, identity: String) -> Result<()> {
-        crate::channels::host::ConfigAllowlistStore
-            .persist_allowed_identity(&channel, &identity)
-            .await
-            .map_err(|_| Error::failed("channel identity persistence failed"))
+        crate::channels::host::ConfigAllowlistStore {
+            config: Arc::clone(&self.config),
+        }
+        .persist_allowed_identity(&channel, &identity)
+        .await
+        .map_err(|_| Error::failed("channel identity persistence failed"))
     }
 
     async fn transcribe(
