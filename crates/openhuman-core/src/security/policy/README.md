@@ -88,7 +88,7 @@ Each of these must not be weakened to make a feature work:
   paths for not-yet-existing targets.
 - `is_always_forbidden` (`path_checks.rs`) does a case-insensitive,
   segment-based match against `SENSITIVE_COMPONENTS` (`.ssh`, `.gnupg`,
-  `.aws`, `.azure`, `.kube`, `keychains`, Windows DPAPI dirs) plus a prefix
+  `.aws`, `.azure`, `.oci`, `.kube`, `keychains`, Windows DPAPI dirs) plus a prefix
   match against `SYSTEM_PREFIXES` (`/etc`, `/root`, `/boot`, `/proc`, `/sys`,
   `/system`, `C:\Windows`, `C:\Program Files[  (x86)]`, `C:\ProgramData`).
   It is unconditional; a `trusted_root` grant can never reach these paths.

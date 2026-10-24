@@ -8,8 +8,25 @@ use super::types::{
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 /// Credential-store path segments, matched case-insensitively at any depth.
-pub(crate) const SENSITIVE_COMPONENTS: &[&str] =
-    &[".ssh", ".gnupg", ".aws", ".azure", ".kube", "keychains"];
+pub(crate) const SENSITIVE_COMPONENTS: &[&str] = &[
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".oci",
+    ".kube",
+    "keychains",
+];
+/// The credential-store directories that sit directly under `$HOME`: every
+/// dot-directory in [`SENSITIVE_COMPONENTS`] (the macOS keychain lives under
+/// `~/Library` instead). Grant filters use this so they cannot drift from the
+/// path floor.
+pub(crate) fn home_credential_dirs() -> impl Iterator<Item = &'static str> {
+    SENSITIVE_COMPONENTS
+        .iter()
+        .copied()
+        .filter(|segment| segment.starts_with('.'))
+}
 /// Single-file credential stores have no protected parent directory.
 pub(crate) const SENSITIVE_FILES: &[&str] = &[".netrc", ".git-credentials", ".pgpass", ".npmrc"];
 /// Consecutive segment pairs that mark a credential store. Windows DPAPI
@@ -519,7 +536,7 @@ impl SecurityPolicy {
 
     /// Paths that remain blocked even when a `trusted_root` grant would
     /// otherwise reach them — credential stores and core OS directories. A
-    /// grant on a parent must never expose SSH/GPG/AWS/keychain secrets, nor
+    /// grant on a parent must never expose SSH/GPG/AWS/OCI/keychain secrets, nor
     /// open `/etc`, `C:\Windows`, `/System`, etc. Matching is **case-insensitive**
     /// (Windows/macOS filesystems are), so `.SSH` / `C:\WINDOWS` cannot slip
     /// through. Gray-area dirs (`/usr`, `/opt`, `/var`, `~/Library`) stay in the

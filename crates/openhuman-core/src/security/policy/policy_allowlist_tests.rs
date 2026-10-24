@@ -604,6 +604,9 @@ fn always_forbidden_blocks_credential_stores_case_insensitively() {
         "/home/u/.gnupg/x",
         "/home/u/.aws/credentials",
         "/home/u/.azure/x",
+        "/home/u/.oci/config",
+        "/Users/u/.OCI/keys/api_key.pem", // case-insensitive
+        "C:\\Users\\u\\.oci\\sessions\\token",
         "/home/u/.kube/config",
         "/Users/u/Library/Keychains/login.keychain",
         "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Protect\\x",

@@ -318,6 +318,7 @@ fn every_denied_store_is_one_the_path_floor_forbids() {
     let stores = crate::security::policy::home_credential_stores(home);
 
     assert!(stores.contains(&home.join(".ssh")));
+    assert!(stores.contains(&home.join(".oci")));
     assert!(stores.contains(&home.join("Library/Keychains")));
     assert!(stores.contains(&home.join(".git-credentials")));
     for store in &stores {

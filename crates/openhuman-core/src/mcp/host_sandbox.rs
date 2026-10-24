@@ -179,9 +179,7 @@ fn admit_all(raw: &[String], home: Option<&Path>) -> Vec<String> {
 /// Whether granting `path` would expose a credential store under `home`.
 fn exposes_credentials(path: &Path, home: Option<&Path>) -> bool {
     let Some(home) = home else { return false };
-    [".ssh", ".gnupg", ".aws", ".azure", ".kube"]
-        .iter()
-        .any(|dir| home.join(dir).starts_with(path))
+    crate::security::policy::home_credential_dirs().any(|dir| home.join(dir).starts_with(path))
 }
 
 #[cfg(feature = "modules")]

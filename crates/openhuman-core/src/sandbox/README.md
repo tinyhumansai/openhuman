@@ -101,7 +101,7 @@ remote one), which the jail's `allow_net` enforces.
 **`folder_confined`: credential stores are read-denied.** Seatbelt's profile
 is allow-default for reads, so `jail_request` sends the credential stores that
 `SecurityPolicy::is_always_forbidden` protects (`~/.ssh`, `~/.gnupg`, `~/.aws`,
-`~/.azure`, `~/.kube`, `~/Library/Keychains`, `~/.netrc`, `~/.git-credentials`,
+`~/.azure`, `~/.oci`, `~/.kube`, `~/Library/Keychains`, `~/.netrc`, `~/.git-credentials`,
 `~/.pgpass`, `~/.npmrc`, `~/.docker/config.json`, `~/.cargo/credentials.toml`)
 as `NativeJailConfig.deny_read` (TinyBox contract 1.20), built from the same
 lists by `security::policy::home_credential_stores`. OpenHuman's own credential
@@ -143,7 +143,7 @@ controlled by `[runtime.local_jail]` (`LocalJailConfig`):
 
 The credential floor applies to every grant: any path that
 `SecurityPolicy::is_always_forbidden` rejects, or that is a parent of a
-credential directory (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`),
+credential directory (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.oci`, `~/.kube`),
 is dropped, because Landlock grants are recursive. `/proc` is reachable only
 through `allow_proc`, since `/proc/<pid>/environ` exposes every process's
 environment.
