@@ -313,5 +313,109 @@ async fn captured_profile_sweeps_cannot_follow_a_replacement_epoch() {
     );
 }
 
+/// SQLite, except that a conditioned handle refuses to declare a collection,
+/// as MongoDB's does (`Unsupported(ConditionalWrites)`).
+#[derive(Debug)]
+struct RefusesConditionedDeclarations(Arc<dyn StorageBackend>);
+
+impl StorageBackend for RefusesConditionedDeclarations {
+    fn capabilities(&self) -> tinystoragedrivers_types::Capabilities {
+        self.0.capabilities()
+    }
+    fn for_scope(&self, scope: &Scope) -> Result<Storage, StorageError> {
+        self.0.for_scope(scope)
+    }
+    fn for_scope_conditioned(
+        &self,
+        scope: &Scope,
+        condition: &WriteCondition,
+    ) -> Result<Storage, StorageError> {
+        Ok(super::super::declaring_ports::wrap(
+            self.0.for_scope_conditioned(scope, condition)?,
+            Arc::clone(Storage::unsupported().documents()),
+        ))
+    }
+}
+
+fn mongo_like() -> (
+    crate::storage::test_support::SqliteBackend,
+    Arc<dyn StorageBackend>,
+) {
+    let shared = shared();
+    let backend: Arc<dyn StorageBackend> =
+        Arc::new(RefusesConditionedDeclarations(Arc::clone(&shared.backend)));
+    (shared, backend)
+}
+
+#[tokio::test]
+async fn the_test_driver_refuses_a_conditioned_declaration_like_mongodb() {
+    let (_shared, backend) = mongo_like();
+    let scope = Scope::new("tenant").unwrap();
+    let condition = WriteCondition::new(
+        scope.clone(),
+        "leases",
+        "holder",
+        tinystoragedrivers_types::Filter::eq("epoch", 1),
+    )
+    .unwrap();
+    assert!(backend
+        .for_scope_conditioned(&scope, &condition)
+        .unwrap()
+        .documents()
+        .ensure_collection(&CollectionSpec::new("fresh"))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn a_leased_profile_handle_declares_a_new_collection_and_writes_to_it() {
+    let (_shared, backend) = mongo_like();
+    let node = Node::new("node-a", backend);
+    node.acquire("alice").await;
+    let docs = node.storage().documents().clone();
+    docs.ensure_collection(&CollectionSpec::new("fresh"))
+        .await
+        .unwrap();
+    docs.put("fresh", "one", json!({"n": 1}), Precondition::Absent)
+        .await
+        .unwrap();
+    assert!(docs.get("fresh", "one").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn a_claim_bound_handle_declares_a_new_collection() {
+    let (_shared, backend) = mongo_like();
+    let node = Node::new("node-a", backend);
+    let scope = Scope::new("tenant").unwrap();
+    let condition = WriteCondition::new(
+        scope.clone(),
+        "claims",
+        "import",
+        tinystoragedrivers_types::Filter::eq("epoch", 1),
+    )
+    .unwrap();
+    node.backend
+        .for_scope_conditioned(&scope, &condition)
+        .unwrap()
+        .documents()
+        .ensure_collection(&CollectionSpec::new("storage.import_state"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_fenced_off_handle_still_cannot_declare() {
+    let (_shared, backend) = mongo_like();
+    let node = Node::new("node-a", backend);
+    let (_grant, fence) = node.acquire("alice").await;
+    let storage = node.storage();
+    fence.fence();
+    assert!(storage
+        .documents()
+        .ensure_collection(&CollectionSpec::new("late"))
+        .await
+        .is_err());
+}
+
 #[path = "fenced_backend_upstream_tests.rs"]
 mod upstream_tests;

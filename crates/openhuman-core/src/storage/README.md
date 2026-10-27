@@ -257,6 +257,17 @@ its write cannot land the write after a takeover. The driver answers
 `ErrorKind::Fenced`, and the host re-reads the record, latches the fence
 and returns `FenceError::Superseded`.
 
+Collection declarations (`ensure_collection`) are the exception: every
+conditioned handle a `FencedBackend` returns, for a profile lease or a
+caller's condition such as an import claim, sends them through the scope's
+unconditioned handle (`declaring_ports`). MongoDB refuses a declaration on a
+conditioned handle (`Unsupported(ConditionalWrites)`): it cannot join the
+condition's transaction. A declaration is an idempotent schema merge with
+no owner data for the condition to protect. The host's local fence check
+still runs first, so a node that has lost its lease does not declare.
+Without this, every claimed import on MongoDB failed at its first
+`import_state` call, and was retried and failed again on every boot.
+
 A refusal is a `StorageError` of kind `Backend` (not retryable, so CAS loops
 do not spin) whose source is the typed `FenceError`; `fence::fence_error`
 recovers it. The lookup is per write rather than per bound scope because

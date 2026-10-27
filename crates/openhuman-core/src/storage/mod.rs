@@ -28,6 +28,7 @@ pub mod agents;
 pub mod blob_sweep;
 pub mod boot;
 pub mod config;
+mod declaring_ports;
 pub mod documents;
 pub mod fence;
 pub mod fenced_backend;
