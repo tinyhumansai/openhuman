@@ -138,6 +138,15 @@ mod with_module {
             .protected
             .credential_roots
             .contains(&"/home/op/.ssh".to_owned()));
+        assert!(request
+            .protected
+            .credential_roots
+            .contains(&"/home/op/.oci".to_owned()));
+        assert!(!request
+            .protected
+            .credential_roots
+            .iter()
+            .any(|root| root.ends_with("keychains")));
     }
 
     #[test]

@@ -53,6 +53,10 @@ fn a_grant_that_contains_a_credential_store_is_not_admitted() {
         Path::new("/home/user/.ssh"),
         Some(home)
     ));
+    assert!(exposes_credentials(
+        Path::new("/home/user/.oci"),
+        Some(home)
+    ));
     assert!(!exposes_credentials(
         Path::new("/home/user/tools"),
         Some(home)

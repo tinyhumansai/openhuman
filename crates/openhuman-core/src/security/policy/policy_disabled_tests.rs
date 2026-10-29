@@ -118,6 +118,7 @@ fn disabled_policy_still_refuses_credential_stores_and_system_roots() {
         format!("{home}/.ssh/id_rsa"),
         format!("{home}/.gnupg/secring.gpg"),
         format!("{home}/.aws/credentials"),
+        format!("{home}/.oci/config"),
         "/etc/shadow".to_string(),
         "/root/.bashrc".to_string(),
     ] {

@@ -13,9 +13,6 @@ use super::types::SandboxPolicy;
 use crate::config::{Config, LocalJailConfig};
 use crate::security::SecurityPolicy;
 
-/// Credential directories under `$HOME` that no grant may reach or contain.
-const HOME_CREDENTIAL_DIRS: &[&str] = &[".ssh", ".gnupg", ".aws", ".azure", ".kube"];
-
 /// Paths the jail is granted beyond the workspace root.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct JailGrants {
@@ -116,8 +113,9 @@ pub(crate) fn grant_request(
             prefixes: owned(ALWAYS_FORBIDDEN_PREFIXES),
             credential_roots: home
                 .map(|h| {
-                    HOME_CREDENTIAL_DIRS
-                        .iter()
+                    // Credential directories under `$HOME` that no grant may
+                    // reach or contain.
+                    crate::security::policy::home_credential_dirs()
                         .map(|dir| h.join(dir).display().to_string())
                         .collect()
                 })
