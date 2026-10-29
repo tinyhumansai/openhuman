@@ -100,8 +100,16 @@ fn discovery_request(
     let user_agent = routing
         .using_oauth
         .then(|| openai_codex_user_agent("OpenHuman", env!("CARGO_PKG_VERSION")));
+    // The entry's configured headers (#7865) and the product `User-Agent` ride
+    // the listing like every other request to this provider.
+    let extra_headers =
+        crate::inference::provider::factory::request_identity::catalog_request_headers(
+            entry,
+            user_agent.as_deref(),
+        )?;
     let options = ProviderBuildOptions {
         auth_style: Some(entry.auth_style.into()),
+        extra_headers: &extra_headers,
         extra_query_params: &query_params,
         user_agent: user_agent.as_deref(),
         codex: Some(routing),

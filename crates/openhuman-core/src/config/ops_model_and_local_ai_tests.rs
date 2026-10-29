@@ -213,6 +213,7 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             label: "OpenHuman".into(),
             endpoint: "https://api.tinyhumans.ai".into(),
             auth_style: AuthStyle::OpenhumanJwt,
+            headers: Default::default(),
             default_model: Some("reasoning-v1".into()),
         },
         CloudProviderCreds {
@@ -221,6 +222,7 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             label: "My OpenAI".into(),
             endpoint: "https://api.openai.com".into(),
             auth_style: AuthStyle::Bearer,
+            headers: Default::default(),
             default_model: Some("gpt-4o".into()),
         },
     ];
@@ -236,6 +238,7 @@ async fn apply_model_settings_preserves_existing_reserved_slug_cloud_providers()
             label: "My OpenAI (edited)".into(),
             endpoint: "https://api.openai.com/v1".into(),
             auth_style: AuthStyle::Bearer,
+            headers: Default::default(),
             default_model: Some("gpt-4o-mini".into()),
         }]),
         ..Default::default()
@@ -277,6 +280,7 @@ async fn apply_model_settings_does_not_double_add_reserved_entries() {
         label: "OpenHuman (stored)".into(),
         endpoint: "https://api.tinyhumans.ai".into(),
         auth_style: AuthStyle::OpenhumanJwt,
+        headers: Default::default(),
         default_model: Some("reasoning-v1".into()),
     }];
 
@@ -287,6 +291,7 @@ async fn apply_model_settings_does_not_double_add_reserved_entries() {
             label: "OpenHuman (from patch)".into(),
             endpoint: "https://api.tinyhumans.ai".into(),
             auth_style: AuthStyle::OpenhumanJwt,
+            headers: Default::default(),
             default_model: Some("reasoning-v1".into()),
         }]),
         ..Default::default()

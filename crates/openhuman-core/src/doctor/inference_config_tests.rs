@@ -112,6 +112,7 @@ async fn a_byok_cloud_fallback_without_a_key_reports_construction_failure() {
     config.chat_provider = Some("ollama:qwen2.5".to_owned());
     config.primary_cloud = Some("provider-doctor-test".to_owned());
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "provider-doctor-test".to_owned(),
         slug: "doctor-test".to_owned(),
         label: "Doctor test provider".to_owned(),
@@ -238,6 +239,7 @@ async fn a_fully_configured_managed_default_constructs_cleanly() {
     config.api_key = Some("doctor-test-session-token".to_owned());
     config.primary_cloud = Some("provider-openhuman".to_owned());
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "provider-openhuman".to_owned(),
         slug: "openhuman".to_owned(),
         label: "OpenHuman".to_owned(),

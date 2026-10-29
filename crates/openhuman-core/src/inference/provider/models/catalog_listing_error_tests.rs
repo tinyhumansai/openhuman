@@ -19,6 +19,7 @@ fn list_configured_models_accepts_slug() {
 
     let mut config = Config::default();
     config.cloud_providers.push(CloudProviderCreds {
+        headers: Default::default(),
         id: "p_openai_xyz99".to_string(),
         slug: "openai".to_string(),
         label: "OpenAI".to_string(),

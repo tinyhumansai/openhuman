@@ -62,6 +62,7 @@ fn configured_entries(config: &crate::config::Config) -> Vec<CloudProviderCreds>
         && !entries.iter().any(|entry| entry.slug == "openhuman")
     {
         entries.push(CloudProviderCreds {
+            headers: Default::default(),
             id: "openhuman".into(),
             slug: "openhuman".into(),
             label: "OpenHuman".into(),

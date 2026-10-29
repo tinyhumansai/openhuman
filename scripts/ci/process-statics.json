@@ -210,6 +210,16 @@
     "verification": "inference/provider/factory_egress_fallback_tests.rs: cloud_fallback_roles_match_the_roles_provider_for_role_actually_falls_back"
   },
   {
+    "file": "crates/openhuman-core/src/inference/provider/factory/request_identity.rs",
+    "scope": "",
+    "name": "PROCESS_CONVERSATION_KEY",
+    "type": "LazyLock<String>",
+    "count": 1,
+    "category": "A",
+    "reason": "A random per-process id generated once and never written again; it is only the fallback OpenCode Go session key for turn origins that name no conversation (CLI, direct chat), so it carries no tenant data. Origins with a thread, channel conversation or job derive their key from that origin instead.",
+    "verification": "inference/provider/factory/request_identity_tests.rs: origins_without_a_conversation_share_one_process_session"
+  },
+  {
     "file": "crates/openhuman-core/src/inference/registry.rs",
     "scope": "",
     "name": "BACKEND_ERROR_CLASSIFIER",

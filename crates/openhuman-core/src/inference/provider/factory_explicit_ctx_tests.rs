@@ -254,6 +254,7 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
             .expect("store isolated fixture session");
         config.chat_provider = Some("p_hosted:fixture/model-v1".to_string());
         config.cloud_providers.push(CloudProviderCreds {
+            headers: Default::default(),
             id: "p_hosted_fixture".to_string(),
             slug: "p_hosted".to_string(),
             label: "Hosted fixture".to_string(),

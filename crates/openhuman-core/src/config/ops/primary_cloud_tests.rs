@@ -12,6 +12,7 @@ fn register_test_hosted_policy() {
 
 fn provider(id: &str, slug: &str, endpoint: &str, auth_style: AuthStyle) -> CloudProviderCreds {
     CloudProviderCreds {
+        headers: Default::default(),
         id: id.to_string(),
         slug: slug.to_string(),
         label: slug.to_string(),

@@ -380,3 +380,119 @@ fn builtin_table_is_only_the_upstream_provider_catalog() {
         assert_eq!(mapped.auth_style, expected, "{}", mapped.slug);
     }
 }
+
+#[test]
+fn cloud_provider_headers_table_round_trips_through_toml() {
+    use super::CloudProviderCreds;
+
+    let entry: CloudProviderCreds = toml::from_str(
+        r#"
+id = "p_opencode"
+slug = "opencode-go"
+label = "OpenCode Go"
+endpoint = "https://opencode.ai/zen/go/v1"
+auth_style = "bearer"
+
+[headers]
+x-opencode-session = "ses_fixed"
+X-Title = "openhuman"
+"#,
+    )
+    .expect("headers table parses");
+    assert_eq!(entry.headers.len(), 2);
+    assert_eq!(
+        entry.headers.get("x-opencode-session").map(String::as_str),
+        Some("ses_fixed")
+    );
+    assert_eq!(
+        entry.headers.get("X-Title").map(String::as_str),
+        Some("openhuman")
+    );
+
+    let rendered = toml::to_string(&entry).expect("serializes");
+    assert!(rendered.contains("[headers]"), "{rendered}");
+    let back: CloudProviderCreds = toml::from_str(&rendered).expect("re-parses");
+    assert_eq!(back, entry);
+}
+
+#[test]
+fn cloud_provider_headers_default_to_empty_and_are_omitted_when_empty() {
+    use super::CloudProviderCreds;
+
+    let entry: CloudProviderCreds = toml::from_str(
+        r#"
+id = "p_plain"
+slug = "plain"
+label = "Plain"
+endpoint = "https://api.example/v1"
+auth_style = "bearer"
+"#,
+    )
+    .expect("entry without headers parses");
+    assert!(entry.headers.is_empty());
+    assert!(CloudProviderCreds::default().headers.is_empty());
+
+    let rendered = toml::to_string(&entry).expect("serializes");
+    assert!(
+        !rendered.contains("headers"),
+        "an empty table must not be written: {rendered}"
+    );
+
+    let rejected = toml::from_str::<CloudProviderCreds>(
+        r#"
+slug = "bad"
+endpoint = "https://api.example/v1"
+headers = "not-a-table"
+"#,
+    );
+    assert!(rejected.is_err(), "a non-table `headers` value is rejected");
+}
+
+#[test]
+fn validate_provider_headers_names_the_provider_and_header_but_not_the_value() {
+    use super::validate_provider_headers;
+    use std::collections::BTreeMap;
+
+    let ok: BTreeMap<String, String> = [
+        ("x-tenant".to_string(), "team-a".to_string()),
+        ("User-Agent".to_string(), "my-agent/1.0".to_string()),
+    ]
+    .into();
+    assert_eq!(validate_provider_headers("gw", &ok), Ok(()));
+    assert_eq!(validate_provider_headers("gw", &BTreeMap::new()), Ok(()));
+
+    let bad_name: BTreeMap<String, String> = [("x tenant".to_string(), "v".to_string())].into();
+    assert_eq!(
+        validate_provider_headers("gw", &bad_name),
+        Err("cloud provider 'gw': invalid header name 'x tenant'".to_string())
+    );
+
+    let bad_value: BTreeMap<String, String> =
+        [("x-key".to_string(), "sk-secret\r\nx: y".to_string())].into();
+    let error = validate_provider_headers("gw", &bad_value).expect_err("CRLF in a value");
+    assert_eq!(
+        error,
+        "cloud provider 'gw': invalid value for header 'x-key'"
+    );
+    assert!(!error.contains("sk-secret"));
+}
+
+#[test]
+fn redacted_headers_keep_names_and_hide_every_value() {
+    use super::{redacted_headers, REDACTED_HEADER_VALUE};
+    use std::collections::BTreeMap;
+
+    let headers: BTreeMap<String, String> = [
+        ("x-api-secret".to_string(), "sk-123".to_string()),
+        ("x-tenant".to_string(), "team-a".to_string()),
+    ]
+    .into();
+    let redacted = redacted_headers(&headers);
+    assert_eq!(
+        redacted.keys().collect::<Vec<_>>(),
+        headers.keys().collect::<Vec<_>>()
+    );
+    assert!(redacted
+        .values()
+        .all(|value| value == REDACTED_HEADER_VALUE));
+}

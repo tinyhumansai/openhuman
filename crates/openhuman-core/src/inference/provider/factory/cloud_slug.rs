@@ -1,6 +1,7 @@
 //! `<slug>:<model>` BYOK cloud providers: shared slug resolution (model fallback,
 //! abstract-tier remapping, credentials, codex routing) and the crate-native builders.
 
+use super::request_identity::{apply_request_identity, configured_headers};
 use super::{
     access_gates::enforce_local_only_inference, cloud_spec, credentials::CredentialAccess,
     local_runtime::OptionalChatModelResult, managed_backend::managed_chat_model_for,
@@ -18,6 +19,7 @@ use crate::inference::provider::factory::access_gates::verify_session_active;
 use crate::inference::provider::fallback_diagnostics;
 use crate::inference::provider::openai_codex::resolve_openai_codex_routing_for_inspection;
 use crate::security::egress::EgressLedger;
+use crate::security::turn_origin::AgentTurnOrigin;
 use std::sync::Arc;
 use tinyinference_llm::model::ChatModel;
 use tinyinference_llm::providers::anthropic::endpoint_is_anthropic_messages;
@@ -374,6 +376,7 @@ pub(super) fn try_create_cloud_slug_chat_model_for_inspection_with_identity(
         true,
         &EgressLedger::none(),
         extensions,
+        None,
         CredentialAccess::Inspection,
         Some(&mut identity),
     )?;
@@ -412,6 +415,7 @@ fn try_create_cloud_slug_chat_model_with_native_tools_and_access(
         native_tool_calling,
         egress,
         extensions,
+        crate::core::runtime::CoreContext::current_turn_origin().as_ref(),
         credential_access,
         inspection_identity,
     )
@@ -443,11 +447,15 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         native_tool_calling,
         egress,
         extensions.as_ref(),
+        crate::core::runtime::CoreContext::current_turn_origin().as_ref(),
         CredentialAccess::Runtime,
         None,
     )
 }
 
+/// `turn_origin` is the turn the built client serves: it names the
+/// conversation an OpenCode Go session header is derived from
+/// (`request_identity`).
 pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for(
     role: &str,
     provider: &str,
@@ -455,6 +463,7 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for
     native_tool_calling: bool,
     egress: &EgressLedger,
     extensions: Option<&crate::core::slots::Extensions>,
+    turn_origin: Option<&AgentTurnOrigin>,
 ) -> OptionalChatModelResult {
     try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         role,
@@ -463,11 +472,13 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for
         native_tool_calling,
         egress,
         extensions,
+        turn_origin,
         CredentialAccess::Runtime,
         None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
     role: &str,
     provider: &str,
@@ -475,6 +486,7 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
     native_tool_calling: bool,
     egress: &EgressLedger,
     extensions: Option<&crate::core::slots::Extensions>,
+    turn_origin: Option<&AgentTurnOrigin>,
     credential_access: CredentialAccess,
     mut inspection_identity: Option<
         &mut Option<(String, String, String, InspectionOutputBudgetCapability)>,
@@ -547,6 +559,12 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         })
         .map(|route| route.headers.clone())
         .unwrap_or_default();
+    // The entry's own `headers` table (#7865), sent on every request; a
+    // malformed one fails here, naming the provider and header.
+    match configured_headers(entry) {
+        Ok(headers) => extra_headers.extend(headers),
+        Err(error) => return Some(Err(anyhow::anyhow!(error))),
+    }
     let default_provider_options = config
         .ephemeral_route
         .as_ref()
@@ -651,6 +669,15 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
             )));
         }
     }
+
+    // Product User-Agent and, for OpenCode Go, `x-opencode-session` (#7865);
+    // the Codex user agent above and the entry's own headers win over both.
+    apply_request_identity(
+        &entry.endpoint,
+        turn_origin,
+        &mut extra_headers,
+        &mut user_agent,
+    );
 
     // Egress spine (privacy epic S2, #4436): committed to a BYOK cloud slug here
     // — past the managed/bespoke returns and the access

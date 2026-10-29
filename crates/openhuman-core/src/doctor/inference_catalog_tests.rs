@@ -113,6 +113,7 @@ fn config_for_catalog(
     let (root, mut config) = temporary_config();
     config.secrets.encrypt = false;
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: provider_id.to_owned(),
         slug: slug.to_owned(),
         label: "Doctor catalog fixture".to_owned(),
@@ -410,6 +411,7 @@ async fn prepared_catalog_identity_changes_when_managed_credential_rotates_in_pl
     let (_temp, mut config_a) = temporary_config();
     config_a.api_key = Some("fixture-managed-credential-a".into());
     config_a.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "openhuman".into(),
         slug: "openhuman".into(),
         label: "Managed catalog fixture".into(),
@@ -473,6 +475,7 @@ async fn a_slow_provider_times_out_without_blocking_the_other_catalog() {
     let (_temp, mut config) = temporary_config();
     config.cloud_providers = vec![
         CloudProviderCreds {
+            headers: Default::default(),
             id: "p_doctor_497_slow".into(),
             slug: "doctor-497-slow".into(),
             label: "Slow catalog fixture".into(),
@@ -481,6 +484,7 @@ async fn a_slow_provider_times_out_without_blocking_the_other_catalog() {
             default_model: None,
         },
         CloudProviderCreds {
+            headers: Default::default(),
             id: "p_doctor_497_fast".into(),
             slug: "doctor-497-fast".into(),
             label: "Fast catalog fixture".into(),

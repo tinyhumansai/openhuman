@@ -197,6 +197,7 @@ async fn a_byok_cloud_fallback_without_a_key_reports_construction_failure() {
     config.chat_provider = Some("ollama:qwen2.5".to_owned());
     config.primary_cloud = Some("provider-doctor-test".to_owned());
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "provider-doctor-test".to_owned(),
         slug: "doctor-test".to_owned(),
         label: "Doctor test provider".to_owned(),
@@ -321,6 +322,7 @@ async fn inspection_reports_refresh_required_without_refreshing_or_publishing_se
     config.vision_provider = Some("openai:gpt-4o".to_owned());
     config.primary_cloud = Some("provider-openai".to_owned());
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "provider-openai".to_owned(),
         slug: "openai".to_owned(),
         label: "OpenAI".to_owned(),
@@ -497,6 +499,7 @@ async fn a_fully_configured_managed_default_constructs_cleanly() {
     config.api_key = Some("doctor-test-session-token".to_owned());
     config.primary_cloud = Some("provider-openhuman".to_owned());
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "provider-openhuman".to_owned(),
         slug: "openhuman".to_owned(),
         label: "OpenHuman".to_owned(),
@@ -546,6 +549,7 @@ async fn missing_byok_model_is_reported_by_the_native_construct_check() {
     config.vision_provider = None;
     config.memory_provider = None;
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: "doctor-empty-model-provider".to_owned(),
         slug: "doctor-empty-model".to_owned(),
         label: "Empty model fixture".to_owned(),

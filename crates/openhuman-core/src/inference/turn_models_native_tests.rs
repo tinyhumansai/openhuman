@@ -192,6 +192,7 @@ async fn native_turn_preserves_deepseek_route_metadata_after_cloud_resolution() 
         workspace_dir: tmp.path().join("workspace"),
         chat_provider: Some("deepseek:hint:chat".into()),
         cloud_providers: vec![CloudProviderCreds {
+            headers: Default::default(),
             id: "deepseek-fixture".into(),
             slug: "deepseek".into(),
             label: "DeepSeek fixture".into(),

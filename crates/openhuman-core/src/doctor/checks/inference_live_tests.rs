@@ -63,6 +63,7 @@ fn config_for(server: &MockServer, model: &str) -> Fixture {
 
 fn add_cloud_provider(config: &mut Config, slug: &str, endpoint: &str, model: &str) {
     config.cloud_providers.push(CloudProviderCreds {
+        headers: Default::default(),
         id: format!("provider-id-{slug}"),
         slug: slug.to_string(),
         label: "Doctor test provider".to_string(),

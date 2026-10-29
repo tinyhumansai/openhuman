@@ -15,6 +15,7 @@ async fn a_brand_new_workspace_persists_and_reopens_generic_config() {
             config
                 .cloud_providers
                 .push(crate::config::schema::CloudProviderCreds {
+                    headers: Default::default(),
                     id: "fixture-provider-id".to_string(),
                     slug: "fixture-provider".to_string(),
                     label: "Fixture Provider".to_string(),

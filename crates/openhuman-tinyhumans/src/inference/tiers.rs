@@ -149,6 +149,7 @@ pub(crate) fn normalize_config(config: &mut Config) -> bool {
         );
         config.cloud_providers.push(
             openhuman_embed::__host::config::schema::cloud_providers::CloudProviderCreds {
+                headers: Default::default(),
                 id: id.clone(),
                 slug: preset.slug.to_string(),
                 label: preset.label.to_string(),

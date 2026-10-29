@@ -30,6 +30,7 @@ fn unmanaged_openhuman_jwt_route_never_builds_a_direct_unauthenticated_model() {
         true,
         &EgressLedger::none(),
         Some(&extensions),
+        None,
     )
     .expect("configured slug");
     let error = match error {

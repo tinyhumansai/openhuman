@@ -48,6 +48,7 @@ fn workspace_with_provider(
     };
     config.secrets.encrypt = false;
     config.cloud_providers.push(CloudProviderCreds {
+        headers: Default::default(),
         id: format!("p_{slug}"),
         slug: slug.to_string(),
         label: slug.to_string(),

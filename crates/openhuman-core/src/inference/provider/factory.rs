@@ -19,6 +19,7 @@ mod credentials;
 mod inspection;
 mod local_runtime;
 mod managed_backend;
+pub(crate) mod request_identity;
 mod routing;
 mod subprocess_providers;
 
@@ -67,6 +68,10 @@ pub mod test_provider_override;
 #[cfg(test)]
 #[path = "factory_tests.rs"]
 mod factory_tests;
+
+#[cfg(test)]
+#[path = "factory_request_headers_tests.rs"]
+mod factory_request_headers_tests;
 
 use crate::config::schema::cloud_providers::AuthStyle;
 use crate::config::Config;

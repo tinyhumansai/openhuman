@@ -11,6 +11,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::core::slots::HookSlot;
@@ -246,6 +247,29 @@ pub struct CloudProviderCreds {
     // inference settings RPC depend on this field; replacement needs route migration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+
+    /// Extra HTTP headers sent on every request to this provider (chat,
+    /// completions and model listing), on top of the auth headers
+    /// [`auth_style`](Self::auth_style) adds. The way to satisfy a provider
+    /// that requires a header the auth style does not cover, without waiting
+    /// for a release:
+    ///
+    /// ```toml
+    /// [[cloud_providers]]
+    /// slug = "my-gateway"
+    /// endpoint = "https://gateway.example/v1"
+    /// auth_style = "bearer"
+    ///
+    /// [cloud_providers.headers]
+    /// x-tenant = "team-a"
+    /// ```
+    ///
+    /// Names are matched case-insensitively against the headers OpenHuman adds
+    /// itself (`User-Agent`, `x-opencode-session`), and a configured value
+    /// replaces the built-in one. Values are sent verbatim and may be secrets,
+    /// so they never reach `info`-level logs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
 }
 
 impl Default for CloudProviderCreds {
@@ -257,8 +281,41 @@ impl Default for CloudProviderCreds {
             endpoint: String::new(),
             auth_style: AuthStyle::Bearer,
             default_model: None,
+            headers: BTreeMap::new(),
         }
     }
+}
+
+/// What a client-facing config snapshot shows in place of a configured
+/// header value. Header values may be secrets, so only their names leave the
+/// core; a settings save that echoes this placeholder back keeps the stored
+/// value (see `config::ops::apply_model_settings`).
+pub const REDACTED_HEADER_VALUE: &str = "[REDACTED]";
+
+/// `headers` with every value replaced by [`REDACTED_HEADER_VALUE`].
+pub fn redacted_headers(headers: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    headers
+        .keys()
+        .map(|name| (name.clone(), REDACTED_HEADER_VALUE.to_string()))
+        .collect()
+}
+
+/// Checks that every configured header on the provider `slug` is a valid
+/// HTTP header name and value, so a typo in `config.toml` or a settings save
+/// fails with an error that names the provider and the header instead of an
+/// opaque request-builder error on every call. The value itself is never part
+/// of the error: it may be a secret.
+pub fn validate_provider_headers(
+    slug: &str,
+    headers: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    for (name, value) in headers {
+        reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| format!("cloud provider '{slug}': invalid header name '{name}'"))?;
+        reqwest::header::HeaderValue::from_str(value)
+            .map_err(|_| format!("cloud provider '{slug}': invalid value for header '{name}'"))?;
+    }
+    Ok(())
 }
 
 /// Reserved slugs that may not be used for user-configured providers.

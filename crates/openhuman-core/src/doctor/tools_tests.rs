@@ -196,6 +196,7 @@ async fn models_tool_reports_each_configured_catalog_outcome() {
     config.model_routes.clear();
     config.cloud_providers = vec![
         crate::config::schema::cloud_providers::CloudProviderCreds {
+            headers: Default::default(),
             id: "p_doctor_tool_models_available".into(),
             slug: "doctor-tool-models-available".into(),
             label: "Available test provider".into(),
@@ -204,6 +205,7 @@ async fn models_tool_reports_each_configured_catalog_outcome() {
             default_model: None,
         },
         crate::config::schema::cloud_providers::CloudProviderCreds {
+            headers: Default::default(),
             id: "p_doctor_tool_models_missing".into(),
             slug: "doctor-tool-models-missing".into(),
             label: "Missing test provider".into(),

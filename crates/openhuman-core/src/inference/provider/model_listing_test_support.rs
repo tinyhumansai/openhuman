@@ -121,6 +121,7 @@ pub(crate) async fn configure_openrouter_workspace(
         label: "OpenRouter".to_string(),
         endpoint,
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: None,
     });
     config.save().await.expect("save config");
@@ -186,6 +187,7 @@ pub(crate) async fn configure_generic_workspace(tmp: &TempDir, endpoint: String)
         label: "Generic".to_string(),
         endpoint,
         auth_style: AuthStyle::None,
+        headers: Default::default(),
         default_model: None,
     });
     config.save().await.expect("save config");

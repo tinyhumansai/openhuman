@@ -113,6 +113,7 @@ pub(super) fn config_for_catalog(
     let (root, mut config) = temporary_config();
     config.secrets.encrypt = false;
     config.cloud_providers = vec![CloudProviderCreds {
+        headers: Default::default(),
         id: provider_id.to_owned(),
         slug: slug.to_owned(),
         label: "Doctor catalog fixture".to_owned(),

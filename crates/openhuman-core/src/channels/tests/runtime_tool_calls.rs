@@ -138,6 +138,7 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
         Arc::make_mut(config)
             .cloud_providers
             .push(crate::config::schema::CloudProviderCreds {
+                headers: Default::default(),
                 id: "p_managed_models_test".to_string(),
                 slug: "openhuman".to_string(),
                 label: "Managed Backend".to_string(),

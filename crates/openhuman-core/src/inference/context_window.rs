@@ -286,8 +286,23 @@ pub(crate) fn model_limits_request_for(
         resolution.entry,
         &resolution.effective_model,
     );
+    // The entry's configured headers (#7865) and the product `User-Agent`
+    // ride the `/models` lookup too: a gateway that requires them on chat
+    // usually requires them on the listing as well.
+    let extra_headers =
+        match crate::inference::provider::factory::request_identity::catalog_request_headers(
+            resolution.entry,
+            None,
+        ) {
+            Ok(headers) => headers,
+            Err(error) => {
+                log::warn!("[model_limits] skipping window discovery: {error}");
+                return None;
+            }
+        };
     let options = ProviderBuildOptions {
         auth_style: Some(resolution.entry.auth_style.into()),
+        extra_headers: &extra_headers,
         codex: Some(&resolution.codex),
         ..ProviderBuildOptions::default()
     };

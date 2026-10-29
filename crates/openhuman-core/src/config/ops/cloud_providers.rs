@@ -1,7 +1,8 @@
 //! RPC input conversion for cloud-provider settings.
 
 use crate::config::schema::cloud_providers::{
-    builtin_cloud_provider, generate_provider_id, is_slug_reserved, AuthStyle, CloudProviderCreds,
+    builtin_cloud_provider, generate_provider_id, is_slug_reserved, validate_provider_headers,
+    AuthStyle, CloudProviderCreds, REDACTED_HEADER_VALUE,
 };
 use serde::Deserialize;
 
@@ -16,6 +17,10 @@ pub struct CloudProviderUpdate {
     pub(crate) auth_style: Option<String>,
     #[serde(default)]
     pub(crate) ca_cert_pem: Option<String>,
+    /// Extra request headers for this provider (`{name: value}`). Omitted
+    /// (or empty) keeps the headers already stored for the entry.
+    #[serde(default)]
+    pub(crate) headers: Option<std::collections::BTreeMap<String, String>>,
     // keep until v0.66 (review after 2027-01-11): incoming RPC discriminator
     // remains accepted until shipped-client parameter coverage exists.
     #[serde(rename = "type", default)]
@@ -84,6 +89,8 @@ pub fn build_cloud_provider_creds(
                 .label
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| slug.clone());
+            let headers = entry.headers.unwrap_or_default();
+            validate_provider_headers(&slug, &headers)?;
 
             Ok(CloudProviderCreds {
                 id,
@@ -92,7 +99,50 @@ pub fn build_cloud_provider_creds(
                 endpoint,
                 auth_style,
                 default_model: entry.default_model,
+                headers,
             })
+        })
+        .collect()
+}
+
+/// Settings-save merge for provider `headers` (#7865). An entry arriving
+/// without `headers` keeps the ones stored for it (matched by id, else slug):
+/// the settings panel echoes every entry back on save and has no editor for
+/// headers, so a table set in `config.toml` must survive an unrelated edit.
+/// Sending a non-empty map replaces them. A value equal to the redaction
+/// placeholder the client snapshot shows ([`REDACTED_HEADER_VALUE`]) is an
+/// echo of a stored secret, not a new value, so it keeps the stored one; with
+/// nothing stored behind it the header is dropped rather than sent.
+pub(crate) fn carry_stored_headers(
+    incoming: Vec<CloudProviderCreds>,
+    stored: &[CloudProviderCreds],
+) -> Vec<CloudProviderCreds> {
+    incoming
+        .into_iter()
+        .map(|mut entry| {
+            let previous = stored
+                .iter()
+                .find(|e| e.id == entry.id)
+                .or_else(|| stored.iter().find(|e| e.slug == entry.slug));
+            if entry.headers.is_empty() {
+                if let Some(previous) = previous {
+                    entry.headers = previous.headers.clone();
+                }
+                return entry;
+            }
+            entry.headers.retain(|name, value| {
+                if value != REDACTED_HEADER_VALUE {
+                    return true;
+                }
+                match previous.and_then(|p| p.headers.get(name)) {
+                    Some(stored_value) => {
+                        *value = stored_value.clone();
+                        true
+                    }
+                    None => false,
+                }
+            });
+            entry
         })
         .collect()
 }

@@ -8,6 +8,7 @@ fn update(slug: &str) -> CloudProviderUpdate {
         endpoint: String::new(),
         auth_style: None,
         ca_cert_pem: None,
+        headers: None,
         legacy_type: None,
         default_model: None,
     }
@@ -105,5 +106,36 @@ fn builder_rejects_empty_slug() {
     assert_eq!(
         build_cloud_provider_creds(vec![update("  ")]).unwrap_err(),
         "cloud provider slug must not be empty"
+    );
+}
+
+#[test]
+fn builder_carries_headers_and_rejects_malformed_ones_naming_the_provider() {
+    let mut entry = update("gateway");
+    entry.endpoint = "https://gateway.example/v1".to_string();
+    entry.headers = Some([("x-tenant".to_string(), "team-a".to_string())].into());
+    let providers = build_cloud_provider_creds(vec![entry]).expect("valid headers build");
+    assert_eq!(
+        providers[0].headers.get("x-tenant").map(String::as_str),
+        Some("team-a")
+    );
+
+    let mut bad_name = update("gateway");
+    bad_name.endpoint = "https://gateway.example/v1".to_string();
+    bad_name.headers = Some([("x tenant".to_string(), "team-a".to_string())].into());
+    let error = build_cloud_provider_creds(vec![bad_name]).expect_err("space in a name");
+    assert!(
+        error.contains("'gateway'") && error.contains("'x tenant'"),
+        "{error}"
+    );
+
+    let mut bad_value = update("gateway");
+    bad_value.endpoint = "https://gateway.example/v1".to_string();
+    bad_value.headers = Some([("x-tenant".to_string(), "secret\nInjected: 1".to_string())].into());
+    let error = build_cloud_provider_creds(vec![bad_value]).expect_err("newline in a value");
+    assert!(error.contains("'x-tenant'"), "{error}");
+    assert!(
+        !error.contains("secret"),
+        "the value never reaches the error: {error}"
     );
 }

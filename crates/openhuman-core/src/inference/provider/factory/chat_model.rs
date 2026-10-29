@@ -244,6 +244,15 @@ impl OpenHumanModelFactory<'_> {
             return Ok((model, route));
         }
 
+        let unresolved = || {
+            unresolved_chat_model_error_for(
+                role,
+                &provider,
+                self.config,
+                self.egress,
+                context_extensions,
+            )
+        };
         let (model, route_provider, resolved_model) =
             match parsed_route.as_ref().map(ProviderRoute::kind) {
                 Some(RouteKind::Local(_)) | None
@@ -258,15 +267,7 @@ impl OpenHumanModelFactory<'_> {
                     );
                     let (model, resolved) = match local {
                         Some(result) => result?,
-                        None => {
-                            return Err(unresolved_chat_model_error_for(
-                                role,
-                                &provider,
-                                self.config,
-                                self.egress,
-                                context_extensions,
-                            ));
-                        }
+                        None => return Err(unresolved()),
                     };
                     let provider = model
                         .profile()
@@ -282,18 +283,11 @@ impl OpenHumanModelFactory<'_> {
                         request.opts.native_tools,
                         self.egress,
                         context_extensions,
+                        self.ctx.turn_origin_or_scoped().as_ref(),
                     );
                     let (model, resolved) = match cloud {
                         Some(result) => result?,
-                        None => {
-                            return Err(unresolved_chat_model_error_for(
-                                role,
-                                &provider,
-                                self.config,
-                                self.egress,
-                                context_extensions,
-                            ));
-                        }
+                        None => return Err(unresolved()),
                     };
                     let route_provider = model
                         .profile()
@@ -307,15 +301,7 @@ impl OpenHumanModelFactory<'_> {
                         });
                     (model, route_provider, resolved)
                 }
-                _ => {
-                    return Err(unresolved_chat_model_error_for(
-                        role,
-                        &provider,
-                        self.config,
-                        self.egress,
-                        context_extensions,
-                    ));
-                }
+                _ => return Err(unresolved()),
             };
 
         let route = ResolvedModelRoute::new(

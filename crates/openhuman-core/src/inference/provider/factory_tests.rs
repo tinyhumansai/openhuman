@@ -106,6 +106,7 @@ fn install_test_managed_provider() -> Arc<std::sync::Mutex<Vec<bool>>> {
 
 fn fixture_managed_entry(id: &str) -> CloudProviderCreds {
     CloudProviderCreds {
+        headers: Default::default(),
         id: id.to_string(),
         slug: "fixture-managed".to_string(),
         label: "Managed fixture".to_string(),
@@ -254,6 +255,7 @@ fn openai_entry(id: &str, slug: &str) -> CloudProviderCreds {
         label: "OpenAI".to_string(),
         endpoint: "https://api.openai.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: Some("gpt-4o".to_string()),
     }
 }
@@ -265,6 +267,7 @@ fn anthropic_entry(id: &str, slug: &str) -> CloudProviderCreds {
         label: "Anthropic".to_string(),
         endpoint: "https://api.anthropic.com/v1".to_string(),
         auth_style: AuthStyle::Anthropic,
+        headers: Default::default(),
         default_model: Some("claude-sonnet-4-6".to_string()),
     }
 }
@@ -276,6 +279,7 @@ fn nvidia_nim_entry(id: &str, default_model: Option<&str>) -> CloudProviderCreds
         label: "NVIDIA NIM".to_string(),
         endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: default_model.map(ToString::to_string),
     }
 }
@@ -579,6 +583,7 @@ fn deepseek_entry(id: &str) -> CloudProviderCreds {
         label: "DeepSeek".to_string(),
         endpoint: "https://api.deepseek.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: Some("deepseek-chat".to_string()),
     }
 }

@@ -29,6 +29,11 @@ pub(super) struct CloudProviderUpdate {
     /// Optional PEM CA bundle for this provider. Empty string removes it.
     #[serde(default)]
     pub(super) ca_cert_pem: Option<String>,
+    /// Extra request headers for this provider (`{name: value}`). Omitted
+    /// (or empty) keeps the headers already stored for the entry, so a client
+    /// that does not know the field cannot drop them on save.
+    #[serde(default)]
+    pub(super) headers: Option<std::collections::BTreeMap<String, String>>,
     /// Legacy field — tolerated on read for back-compat but not required.
     // keep until v0.66 (review after 2027-01-11): incoming RPC discriminator
     // remains accepted until shipped-client parameter coverage exists.

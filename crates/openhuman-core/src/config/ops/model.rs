@@ -215,6 +215,7 @@ fn complete_byok_route(config: &mut Config, explicit: &ExplicitRolePins) {
                 label: "Custom inference endpoint".to_string(),
                 endpoint: endpoint.clone(),
                 auth_style: AuthStyle::Bearer,
+                headers: Default::default(),
                 default_model: Some(model.clone()),
             });
             BYOK_INFERENCE_SLUG.to_string()
@@ -342,7 +343,10 @@ pub async fn apply_model_settings(
             "[config] apply_model_settings: preserving {} reserved cloud provider(s) before overwrite",
             preserved.len()
         );
-        config.cloud_providers = providers;
+        // Entries echoed back without `headers` (or with redacted values)
+        // keep the stored ones (#7865).
+        let stored = std::mem::take(&mut config.cloud_providers);
+        config.cloud_providers = super::cloud_providers::carry_stored_headers(providers, &stored);
         let before_reinject = config.cloud_providers.len();
         for entry in preserved {
             let preserved_slug = entry.slug.trim();
