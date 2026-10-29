@@ -2529,6 +2529,8 @@ const messages: TranslationMap = {
     'Wo {label} erreichbar ist. Die Standardeinstellung ist localhost. Richten Sie dies auf einen Remote-Host (z. B. http://10.0.0.4:11434/v1), um eine freigegebene Instanz zu verwenden.',
   'settings.ai.endpointUrlRequired': 'Endpunkt URL ist erforderlich.',
   'settings.ai.endpointProtocolRequired': 'Endpunkt muss mit http:// oder https://. beginnen.',
+  'settings.ai.providerEndpointInvalid': 'Ungültige Anbieter-Endpunkt-URL.',
+  'settings.ai.keyedEndpointInvalid': 'API-Schlüssel erfordern HTTPS oder eine lokale Loopback-HTTP-Adresse.',
   'settings.ai.getProviderApiKey': 'API-Key erhalten',
   'settings.ai.or': 'Oder',
   'settings.ai.codexOauthMissingAuthUrl':

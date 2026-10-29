@@ -2313,6 +2313,8 @@ const messages: TranslationMap = {
     '{label} 可访问的位置。默认是 localhost；如需使用共享实例，可指向远程主机（例如 http://10.0.0.4:11434/v1）。',
   'settings.ai.endpointUrlRequired': '端点 URL 是必需的。',
   'settings.ai.endpointProtocolRequired': '端点必须以 http:// 或 https:// 开头。',
+  'settings.ai.providerEndpointInvalid': '提供商端点 URL 无效。',
+  'settings.ai.keyedEndpointInvalid': 'API 密钥要求 HTTPS 或本地回环 HTTP 端点。',
   'settings.ai.getProviderApiKey': '获取 API Key',
   'settings.ai.or': '或者',
   'settings.ai.codexOauthMissingAuthUrl': 'Codex OAuth 未返回授权 URL。请重试登录。',

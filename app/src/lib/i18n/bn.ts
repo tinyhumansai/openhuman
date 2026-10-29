@@ -2452,6 +2452,8 @@ const messages: TranslationMap = {
     'xqxqx সহযোগে সংযোগ ব্যবস্থা করা হবে। ডিফল্ট স্থানীয় হোস্ট; দূরবর্তী হোস্টটিকে এই অবস্থায় দেখা যাবে (যেমন, xq1xqxqx ব্যবহার করা হচ্ছে)।',
   'settings.ai.endpointUrlRequired': 'এন্ডপয়েন্ট URL প্রয়োজন।',
   'settings.ai.endpointProtocolRequired': 'সমাপ্তির তারিখ / http://wxqxqxkx/x উচিত',
+  'settings.ai.providerEndpointInvalid': 'প্রোভাইডারের এন্ডপয়েন্ট URL বৈধ নয়।',
+  'settings.ai.keyedEndpointInvalid': 'API কী ব্যবহারের জন্য HTTPS বা স্থানীয় লুপব্যাক HTTP এন্ডপয়েন্ট প্রয়োজন।',
   'settings.ai.getProviderApiKey': 'API Key নিন',
   'settings.ai.or': 'অথবা',
   'settings.ai.codexOauthMissingAuthUrl':

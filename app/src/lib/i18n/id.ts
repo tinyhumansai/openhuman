@@ -2475,6 +2475,8 @@ const messages: TranslationMap = {
     'Dimana {label} bisa dihubungi. Baku adalah localhost; arahkan ini ke host jarak jauh (misalnya, http://10.0.0.4:11434/v1) untuk memakai suatu contoh bersama.',
   'settings.ai.endpointUrlRequired': 'Titik akhir URL diperlukan.',
   'settings.ai.endpointProtocolRequired': 'Titik akhir harus dimulai dengan http:// atau https://.',
+  'settings.ai.providerEndpointInvalid': 'URL endpoint penyedia tidak valid.',
+  'settings.ai.keyedEndpointInvalid': 'Kunci API memerlukan HTTPS atau endpoint HTTP loopback lokal.',
   'settings.ai.getProviderApiKey': 'Dapatkan API Key',
   'settings.ai.or': 'Atau',
   'settings.ai.codexOauthMissingAuthUrl':

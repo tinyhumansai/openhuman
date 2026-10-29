@@ -2888,8 +2888,9 @@ const messages: TranslationMap = {
   'settings.ai.localRuntimeHelper':
     '{label} に到達可能な場所です。デフォルトは localhost です。共有インスタンスを使用するには、リモートホスト（例：http://10.0.0.4:11434/v1）を指定してください。',
   'settings.ai.endpointUrlRequired': 'エンドポイント URL は必須です。',
-  'settings.ai.endpointProtocolRequired':
-    'エンドポイントは http:// または https:// で始まる必要があります。',
+  'settings.ai.endpointProtocolRequired': 'エンドポイントは http:// または https:// で始まる必要があります。',
+  'settings.ai.providerEndpointInvalid': 'プロバイダーのエンドポイント URL が無効です。',
+  'settings.ai.keyedEndpointInvalid': 'API キーには HTTPS またはローカルループバック HTTP エンドポイントが必要です。',
   'settings.ai.getProviderApiKey': 'APIキーを取得',
   'settings.ai.or': 'または',
   'settings.ai.codexOauthMissingAuthUrl':

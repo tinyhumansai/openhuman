@@ -2876,6 +2876,8 @@ const en: TranslationMap = {
     'Where {label} is reachable. Default is localhost; point this at a remote host (for example, http://10.0.0.4:11434/v1) to use a shared instance.',
   'settings.ai.endpointUrlRequired': 'Endpoint URL is required.',
   'settings.ai.endpointProtocolRequired': 'Endpoint must start with http:// or https://.',
+  'settings.ai.providerEndpointInvalid': 'Invalid provider endpoint URL.',
+  'settings.ai.keyedEndpointInvalid': 'Provider API keys require HTTPS or a loopback HTTP endpoint.',
   'settings.ai.getProviderApiKey': 'Get API key',
   'settings.ai.or': 'Or',
   'settings.ai.codexOauthMissingAuthUrl':

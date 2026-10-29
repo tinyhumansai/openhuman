@@ -2497,6 +2497,8 @@ const messages: TranslationMap = {
     'Donde {label} es accesible. Por defecto es localhost; apunte esto a un host remoto (por ejemplo, http://10.0.0.4:11434/v1) para usar una instancia compartida.',
   'settings.ai.endpointUrlRequired': 'Se requiere el punto final URL.',
   'settings.ai.endpointProtocolRequired': 'El punto final debe comenzar con http:// o https://.',
+  'settings.ai.providerEndpointInvalid': 'La URL del punto de conexión del proveedor no es válida.',
+  'settings.ai.keyedEndpointInvalid': 'Las claves API requieren HTTPS o HTTP de bucle invertido local.',
   'settings.ai.getProviderApiKey': 'Obtener API Key',
   'settings.ai.or': 'O',
   'settings.ai.codexOauthMissingAuthUrl':

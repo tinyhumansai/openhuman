@@ -430,6 +430,7 @@ pub async fn apply_model_settings(
     }
 
     complete_byok_route(config, &explicit_role_pins);
+    super::model_endpoint_validation::validate_keyed_cloud_destinations(config)?;
 
     config.save().await.map_err(super::config_save_error)?;
     let snapshot = snapshot_config_json(config)?;

@@ -2407,6 +2407,8 @@ const messages: TranslationMap = {
     'حيث يمكن الوصول إلى {label}. الإعداد الافتراضي هو المضيف المحلي؛ وجّه هذا إلى مضيف بعيد (مثلًا http://10.0.0.4:11434/v1) لاستخدام نسخة مشتركة.',
   'settings.ai.endpointUrlRequired': 'نقطة النهاية URL مطلوبة.',
   'settings.ai.endpointProtocolRequired': 'يجب أن تبدأ نقطة النهاية بـ http:// أو https://.',
+  'settings.ai.providerEndpointInvalid': 'عنوان URL لنقطة نهاية المزوّد غير صالح.',
+  'settings.ai.keyedEndpointInvalid': 'تتطلب مفاتيح API اتصال HTTPS أو نقطة نهاية HTTP محلية للحلقة الراجعة.',
   'settings.ai.getProviderApiKey': 'احصل على مفتاح API',
   'settings.ai.or': 'أو',
   'settings.ai.codexOauthMissingAuthUrl':

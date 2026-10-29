@@ -2489,6 +2489,8 @@ const messages: TranslationMap = {
     'Miejsce, w którym dostępny jest {label}. Domyślnie jest to localhost; wskaż zdalny host (na przykład http://10.0.0.4:11434/v1), aby użyć współdzielonej instancji.',
   'settings.ai.endpointUrlRequired': 'URL endpointu jest wymagany.',
   'settings.ai.endpointProtocolRequired': 'Endpoint musi zaczynać się od http:// lub https://.',
+  'settings.ai.providerEndpointInvalid': 'Nieprawidłowy adres URL punktu końcowego dostawcy.',
+  'settings.ai.keyedEndpointInvalid': 'Klucze API wymagają HTTPS lub lokalnego adresu HTTP loopback.',
   'settings.ai.getProviderApiKey': 'Pobierz API Key',
   'settings.ai.or': 'lub',
   'settings.ai.codexOauthMissingAuthUrl':

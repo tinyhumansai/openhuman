@@ -160,4 +160,69 @@ describe('useCloudProviderEditorSubmit', () => {
     expect(api.setCloudProviderKey).not.toHaveBeenCalled();
     expect(api.listProviderModels).not.toHaveBeenCalled();
   });
+
+  it('refuses a keyed remote HTTP edit before flushing settings or writing secrets', async () => {
+    const stored = {
+      id: 'cloud-provider-1',
+      slug: 'private-provider',
+      label: 'Private provider',
+      endpoint: 'https://api.example.com/v1',
+      authStyle: 'bearer' as const,
+      maskedKey: '•••• configured',
+    };
+    const settings = { ...EMPTY_SETTINGS, cloudProviders: [stored] };
+    const persist = vi.fn();
+    const { result } = renderHook(() =>
+      useCloudProviderEditorSubmit({
+        editing: stored,
+        draft: settings,
+        saved: settings,
+        persist,
+        t: (key, fallback) => fallback ?? key,
+        onDone: vi.fn(),
+      })
+    );
+    await act(async () => {
+      await expect(
+        result.current({ ...stored, endpoint: 'http://api.example.com/v1' }, '', {
+          skipProbe: true,
+        })
+      ).rejects.toThrow('HTTPS or a loopback HTTP endpoint');
+    });
+    expect(api.flushCloudProviders).not.toHaveBeenCalled();
+    expect(api.setCloudProviderKey).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('refuses credentials embedded in a new provider URL before saving the key', async () => {
+    const persist = vi.fn();
+    const { result } = renderHook(() =>
+      useCloudProviderEditorSubmit({
+        editing: 'new',
+        draft: EMPTY_SETTINGS,
+        saved: EMPTY_SETTINGS,
+        persist,
+        t: (key, fallback) => fallback ?? key,
+        onDone: vi.fn(),
+      })
+    );
+    await act(async () => {
+      await expect(
+        result.current(
+          {
+            id: '',
+            slug: 'private-provider',
+            label: 'Private provider',
+            endpoint: 'https://user:password@api.example.com/v1',
+            authStyle: 'bearer',
+            maskedKey: '',
+          },
+          'new-secret'
+        )
+      ).rejects.toThrow('Invalid provider endpoint');
+    });
+    expect(api.flushCloudProviders).not.toHaveBeenCalled();
+    expect(api.setCloudProviderKey).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+  });
 });

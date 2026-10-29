@@ -2493,6 +2493,8 @@ const messages: TranslationMap = {
     "Dove {label} è raggiungibile. Il valore predefinito è localhost; punta questo a un host remoto (per esempio, http://10.0.0.4:11434/v1) per utilizzare un'istanza condivisa.",
   'settings.ai.endpointUrlRequired': "È richiesto l'endpoint URL.",
   'settings.ai.endpointProtocolRequired': "L'endpoint deve iniziare con http:// o https://.",
+  'settings.ai.providerEndpointInvalid': 'URL dell’endpoint del provider non valido.',
+  'settings.ai.keyedEndpointInvalid': 'Le chiavi API richiedono HTTPS o un endpoint HTTP di loopback locale.',
   'settings.ai.getProviderApiKey': 'Ottieni API Key',
   'settings.ai.or': 'Oppure',
   'settings.ai.codexOauthMissingAuthUrl':

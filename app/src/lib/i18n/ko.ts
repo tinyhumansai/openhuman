@@ -2432,6 +2432,8 @@ const messages: TranslationMap = {
     '{label}에 연결할 수 있는 위치입니다. 기본값은 localhost입니다. 공유 인스턴스를 사용하려면 원격 호스트(예: http://10.0.0.4:11434/v1)를 가리키세요.',
   'settings.ai.endpointUrlRequired': '엔드포인트 URL이(가) 필요합니다.',
   'settings.ai.endpointProtocolRequired': '엔드포인트는 http:// 또는 https://로 시작해야 합니다.',
+  'settings.ai.providerEndpointInvalid': '공급자 엔드포인트 URL이 올바르지 않습니다.',
+  'settings.ai.keyedEndpointInvalid': 'API 키에는 HTTPS 또는 로컬 루프백 HTTP 엔드포인트가 필요합니다.',
   'settings.ai.getProviderApiKey': 'API Key 받기',
   'settings.ai.or': '또는',
   'settings.ai.codexOauthMissingAuthUrl':

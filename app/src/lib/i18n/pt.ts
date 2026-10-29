@@ -2489,6 +2489,8 @@ const messages: TranslationMap = {
     'Onde {label} é acessível. O padrão é localhost; aponte isso para um host remoto (por exemplo, http://10.0.0.4:11434/v1) para usar uma instância compartilhada.',
   'settings.ai.endpointUrlRequired': 'Endpoint URL é necessário.',
   'settings.ai.endpointProtocolRequired': 'Endpoint deve começar com http:// ou https://.',
+  'settings.ai.providerEndpointInvalid': 'URL do endpoint do provedor inválida.',
+  'settings.ai.keyedEndpointInvalid': 'As chaves de API exigem HTTPS ou HTTP de loopback local.',
   'settings.ai.getProviderApiKey': 'Obter API Key',
   'settings.ai.or': 'Ou',
   'settings.ai.codexOauthMissingAuthUrl':

@@ -2455,6 +2455,8 @@ const messages: TranslationMap = {
     'जहां {label} पहुंच योग्य है। डिफ़ॉल्ट स्थानीयहोस्ट है; इसे रिमोट होस्ट पर इंगित करें (उदाहरण के लिए, http://10.0.0.4:11434/v1) एक साझा उदाहरण का उपयोग करने के लिए)।',
   'settings.ai.endpointUrlRequired': 'समापन बिंदु URL आवश्यक है.',
   'settings.ai.endpointProtocolRequired': 'समापन बिंदु http:// या https://. से शुरू होना चाहिए',
+  'settings.ai.providerEndpointInvalid': 'प्रदाता एंडपॉइंट URL अमान्य है।',
+  'settings.ai.keyedEndpointInvalid': 'API कुंजियों के लिए HTTPS या स्थानीय लूपबैक HTTP एंडपॉइंट आवश्यक है।',
   'settings.ai.getProviderApiKey': 'API Key प्राप्त करें',
   'settings.ai.or': 'या',
   'settings.ai.codexOauthMissingAuthUrl':

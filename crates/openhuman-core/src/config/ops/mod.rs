@@ -6,6 +6,7 @@ pub(crate) use agent_paths::canonical_prefix;
 mod cloud_providers;
 mod loader;
 mod model;
+mod model_endpoint_validation;
 mod primary_cloud;
 mod privacy;
 mod sandbox;

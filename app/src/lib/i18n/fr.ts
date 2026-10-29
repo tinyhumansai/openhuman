@@ -2509,8 +2509,9 @@ const messages: TranslationMap = {
   'settings.ai.localRuntimeHelper':
     "Là où {label} est accessible. Par défaut, c'est localhost; pointez ceci vers un hôte distant (par exemple, http://10.0.0.4:11434/v1) pour utiliser une instance partagée.",
   'settings.ai.endpointUrlRequired': 'Le point de terminaison URL est requis.',
-  'settings.ai.endpointProtocolRequired':
-    'Le point de terminaison doit commencer par http:// ou https://.',
+  'settings.ai.endpointProtocolRequired': 'Le point de terminaison doit commencer par http:// ou https://.',
+  'settings.ai.providerEndpointInvalid': 'L’URL du point de terminaison du fournisseur est invalide.',
+  'settings.ai.keyedEndpointInvalid': 'Les clés API nécessitent HTTPS ou une adresse HTTP de bouclage local.',
   'settings.ai.getProviderApiKey': 'Obtenir une API Key',
   'settings.ai.or': 'Ou',
   'settings.ai.codexOauthMissingAuthUrl':

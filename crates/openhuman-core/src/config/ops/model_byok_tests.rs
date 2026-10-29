@@ -39,6 +39,78 @@ fn entry(slug: &str, endpoint: &str) -> CloudProviderCreds {
     }
 }
 
+#[tokio::test]
+async fn rejects_unsafe_provider_update_with_persisted_key_before_saving_config() {
+    let temp = tempfile::tempdir().expect("temp credential directory");
+    let mut config = Config::default();
+    config.config_path = temp.path().join("config.toml");
+    config.workspace_dir = temp.path().join("workspace");
+    config.action_dir = temp.path().join("action");
+    config.secrets.encrypt = false;
+    crate::security::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            "provider:private",
+            "default",
+            "existing-secret",
+            Default::default(),
+            true,
+        )
+        .expect("store credential");
+
+    let patch = ModelSettingsPatch {
+        cloud_providers: Some(vec![entry("private", "http://api.example.invalid/v1")]),
+        ..Default::default()
+    };
+    let error = apply_model_settings(&mut config, patch)
+        .await
+        .expect_err("a saved key must not be routed to remote HTTP");
+    assert!(error.contains("HTTPS or loopback HTTP"), "{error}");
+    assert!(!error.contains("existing-secret"));
+    assert!(
+        !config.config_path.exists(),
+        "reject before persisting an unsafe endpoint"
+    );
+}
+
+#[tokio::test]
+async fn rejects_direct_inference_http_with_api_key_even_without_default_model() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.config_path = temp.path().join("config.toml");
+    let update = ModelSettingsPatch {
+        inference_url: Some("http://api.example.invalid/v1".into()),
+        api_key: Some("test-secret".into()),
+        ..Default::default()
+    };
+    let error = apply_model_settings(&mut config, update)
+        .await
+        .expect_err("direct credentialed inference must not bypass destination checks");
+    assert!(error.contains("HTTPS or loopback HTTP"), "{error}");
+    assert!(!config.config_path.exists());
+}
+
+#[tokio::test]
+async fn rejects_invalid_provider_url_forms_even_without_stored_credentials() {
+    for endpoint in [
+        "https://user:password@api.example.test/v1",
+        "https://api.example.test/v1?token=secret",
+        "ftp://api.example.test/v1",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.config_path = temp.path().join("config.toml");
+        let update = ModelSettingsPatch {
+            cloud_providers: Some(vec![entry("private", endpoint)]),
+            ..Default::default()
+        };
+        let error = apply_model_settings(&mut config, update)
+            .await
+            .expect_err("invalid provider URL must be rejected natively");
+        assert!(error.contains("Invalid provider endpoint URL"), "{error}");
+        assert!(!config.config_path.exists());
+    }
+}
+
 #[test]
 fn registers_a_provider_and_pins_the_agent_turn_roles() {
     let mut config = config_with(

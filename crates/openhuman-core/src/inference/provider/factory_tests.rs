@@ -611,6 +611,26 @@ fn routed_config(endpoint: &str, api_key: &str, model: &str) -> Config {
 }
 
 #[test]
+fn credentialed_ephemeral_cloud_route_never_builds_with_remote_http() {
+    let _guard = crate::inference::inference_test_guard();
+    let config = routed_config("http://api.example.invalid/v1", "private-api-key", "test-model");
+    let provider = format!(
+        "{}:test-model",
+        crate::config::schema::ephemeral_route::EPHEMERAL_ROUTE_SLUG
+    );
+    let error = with_library_test_context(|| {
+        create_chat_model_from_string_with_model_id("chat", &provider, &config, 0.0)
+            .err()
+            .expect("a credentialed remote HTTP route must not be constructed")
+    });
+    assert!(
+        error.to_string().contains("HTTPS or loopback HTTP"),
+        "blocked endpoint should produce a secret-free transport error"
+    );
+    assert!(!error.to_string().contains("private-api-key"));
+}
+
+#[test]
 fn only_library_hosts_are_exempt_from_app_login() {
     use crate::core::types::HostKind;
 
@@ -638,3 +658,45 @@ mod managed_ledger_tests;
 mod model_gate_tests;
 #[path = "factory_route_resolution_tests.rs"]
 mod route_resolution_tests;
+#[test]
+fn ephemeral_headers_reject_credentials_on_insecure_remote_http() {
+    let cases = ["Authorization", "authorization", "X-API-KEY", "x-api-key"];
+    for header in cases {
+        let headers = vec![(header.to_owned(), "credential-value".to_owned())];
+        assert!(
+            super::cloud_slug::validate_ephemeral_header_transport(
+                &headers,
+                "http://remote.example.invalid/v1"
+            )
+            .is_err(),
+            "{header} must not be forwarded to remote HTTP"
+        );
+        assert!(
+            super::cloud_slug::validate_ephemeral_header_transport(
+                &headers,
+                "http://127.0.0.1:8080/v1"
+            )
+            .is_ok(),
+            "loopback may receive explicit credentials"
+        );
+        assert!(
+            super::cloud_slug::validate_ephemeral_header_transport(
+                &headers,
+                "https://remote.example.invalid/v1"
+            )
+            .is_ok(),
+            "HTTPS may receive explicit credentials"
+        );
+    }
+    for headers in [vec![], vec![("X-Request-ID".to_owned(), "test".to_owned())]] {
+        assert!(
+            super::cloud_slug::validate_ephemeral_header_transport(
+                &headers,
+                "http://remote.example.invalid/v1"
+            )
+            .is_ok(),
+            "ordinary unauthenticated HTTP remains supported"
+        );
+    }
+}
+

@@ -2577,6 +2577,8 @@ const messages: TranslationMap = {
     "{label} çalışma ortamına erişilen adres. Varsayılan localhost'tur; paylaşılan bir örneği kullanmak için uzak bir sunucuyu gösterin (örneğin http://10.0.0.4:11434/v1).",
   'settings.ai.endpointUrlRequired': "Uç nokta URL'si gereklidir.",
   'settings.ai.endpointProtocolRequired': 'Uç nokta http:// veya https:// ile başlamalıdır.',
+  'settings.ai.providerEndpointInvalid': 'Sağlayıcı uç nokta URL’si geçersiz.',
+  'settings.ai.keyedEndpointInvalid': 'API anahtarları için HTTPS veya yerel geri döngü HTTP uç noktası gerekir.',
   'settings.ai.getProviderApiKey': 'API anahtarı al',
   'settings.ai.or': 'Veya',
   'settings.ai.codexOauthMissingAuthUrl':
