@@ -21,7 +21,7 @@ The tree also carries a mobile shell: `AppRoutesIOS.tsx`, `pages/ios/`, the `ser
 | [State management](#state-management)        | Redux Toolkit slices, selectors, persistence                    |
 | [Services layer](#services-layer)            | `apiClient`, `socketService`, `coreRpcClient`                   |
 | [Providers](#providers)                      | `ThemeProvider`, `CoreState`, `Socket`, `ChatRuntime` providers |
-| [Pages and routing](#pages-and-routing)      | `HashRouter`, route guards, main routes                         |
+| [Pages and routing](#pages-and-routing)      | Hash-based data router, route guards, main routes                         |
 | [Components](#components)                    | UI / settings component patterns                                |
 | [Hooks and utilities](#hooks-and-utilities)   | Shared hooks, helpers, config                                   |
 
@@ -37,7 +37,7 @@ The tree also carries a mobile shell: `AppRoutesIOS.tsx`, `pages/ios/`, the `ser
 
 ```text
 app/src/
-├── App.tsx                 # Provider chain + HashRouter shell (desktop + mobile shells)
+├── App.tsx                 # Provider chain + hash data-router shell (desktop + mobile shells)
 ├── AppRoutes.tsx           # Desktop route table (AppRoutesIOS.tsx for mobile)
 ├── main.tsx                # Entry (polyfills, Sentry, store, styles)
 ├── store/                  # Redux slices, selectors, userScopedStorage persistence
@@ -82,7 +82,7 @@ resulting event contract and does not implement provider or agent-runner logic.
 | ----------------------- | -------------------------------------------------------------------------------- |
 | `app/src/main.tsx`      | React root, polyfills, Sentry boundary, store, global styles                     |
 | `app/src/App.tsx`       | Provider chain (see below) + desktop/mobile shells, Settings       |
-| `app/src/AppRoutes.tsx` | `HashRouter` routes, `ProtectedRoute` / `PublicRoute` / `DefaultRedirect` guards |
+| `app/src/AppRoutes.tsx` | Hash-based routes, `ProtectedRoute` / `PublicRoute` / `DefaultRedirect` guards |
 
 ### Provider chain
 
@@ -101,7 +101,7 @@ _Generated from `app/src/App.tsx` by `scripts/generate-architecture-docs.mjs`. D
 | 7 | `CoreStateProvider` | Core app snapshot: auth, session, onboarding state |
 | 8 | `SocketProvider` | Core socket.io events; desktop only (mobile uses the TunnelTransport relay) |
 | 9 | `ChatRuntimeProvider` | Chat runtime events, tool timeline, and approvals |
-| 10 | `Router` | HashRouter navigation for all routes |
+| 10 | `RouterProvider` | Data-enabled hash navigation for all routes and flow blockers |
 | 11 | `CommandProvider` | Command palette context |
 | 12 | `ServiceBlockingGate` | Blocks the shell until required services are configured |
 
@@ -476,7 +476,7 @@ the generic fallback, so a new core tool cannot reach the chat unlabelled.
 
 ## Pages and routing
 
-The application uses HashRouter with protected and public route guards. Desktop routes live in `app/src/AppRoutes.tsx`; on mobile (iOS/Android) `AppRoutesIOS.tsx` renders a reduced Human/Chat/Settings set instead.
+The application uses a hash-based data router (`createHashRouter` and `RouterProvider`) with protected and public route guards. Desktop routes live in `app/src/AppRoutes.tsx`; on mobile (iOS/Android) `AppRoutesIOS.tsx` renders a reduced Human/Chat/Settings set instead.
 
 ### Route map
 
@@ -558,19 +558,19 @@ Settings is a routed `/settings/*` page like every other surface, on desktop and
 - `components/settings/panels/`: leaf panels such as `AccountPanel`, `AppearancePanel`, `ThemeStudioPanel`, `AgentAccessPanel`, `AutonomyPanel`, `McpServerPanel`, `PrivacyPanel` and `DeveloperOptionsPanel`. Adding a panel means adding the component and a registry entry; navigation and breadcrumbs pick it up automatically.
 - `components/settings/controls/`: the shared form primitives every panel composes (`SettingsSwitch`, `SettingsRow`, `SettingsSection`, `SettingsSelect`, and the rest), so a boolean is a switch everywhere.
 
-### HashRouter vs BrowserRouter
+### Hash-based routing vs BrowserRouter
 
-The app uses HashRouter for desktop compatibility:
+The app uses `createHashRouter` with `RouterProvider` for desktop compatibility and data-router navigation blockers:
 
 ```typescript
 // App.tsx
-import { HashRouter } from "react-router-dom";
+import { createHashRouter, RouterProvider } from "react-router-dom";
 
 // URLs look like: app://localhost/#/home
 // Instead of: app://localhost/home
 ```
 
-Why HashRouter:
+Why hash-based routing:
 
 1. Tauri deep links work with hash-based URLs
 2. No server configuration needed

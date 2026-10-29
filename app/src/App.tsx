@@ -1,8 +1,8 @@
 import * as Sentry from '@sentry/react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
 import {
-  HashRouter as Router,
+  RouterProvider,
   useLocation,
   useNavigate,
   useNavigationType,
@@ -34,6 +34,7 @@ import { Toaster } from './components/ui/Toast';
 import AppWalkthrough from './components/walkthrough/AppWalkthrough';
 import { useDevSkipOnboarding } from './hooks/useDevSkipOnboarding';
 import { I18nProvider } from './lib/i18n/I18nContext';
+import { createAppHashRouter } from './lib/navigation/createAppHashRouter';
 import {
   startNativeNotificationsService,
   stopNativeNotificationsService,
@@ -71,6 +72,7 @@ if (import.meta.hot) {
 
 function App() {
   const onMobile = getIsMobile();
+  const [router] = useState(() => createAppHashRouter(<AppRouterContent />));
 
   // The desktop shell is one webview with no back button, so a link that
   // navigates it away strands the user on that page with no route back to the
@@ -110,7 +112,7 @@ function App() {
    * 7. CoreStateProvider — Core app snapshot: auth, session, onboarding state
    * 8. SocketProvider — Core socket.io events; desktop only (mobile uses the TunnelTransport relay)
    * 9. ChatRuntimeProvider — Chat runtime events, tool timeline, and approvals
-   * 10. Router — HashRouter navigation for all routes
+   * 10. RouterProvider — Data-enabled hash navigation for all routes and flow blockers
    * 11. CommandProvider — Command palette context
    * 12. ServiceBlockingGate — Blocks the shell until required services are configured
    * @end-source:provider-chain
@@ -137,18 +139,7 @@ function App() {
                   <CoreStateProvider>
                     {socketWrapped(
                       <ChatRuntimeProvider>
-                        <Router>
-                          <CommandProvider>
-                            <ServiceBlockingGate>
-                              <AnalyticsPageTracker />
-                              <AppShell />
-                              <SecurityBanner />
-                              {!onMobile && <AppUpdatePrompt />}
-                              <KeyringConsentOverlay />
-                              <AnnouncementGate />
-                            </ServiceBlockingGate>
-                          </CommandProvider>
-                        </Router>
+                        <RouterProvider router={router} />
                       </ChatRuntimeProvider>
                     )}
                   </CoreStateProvider>
@@ -159,6 +150,23 @@ function App() {
         </Provider>
       </Sentry.ErrorBoundary>
     </div>
+  );
+}
+
+/** The root route element keeps the existing providers inside navigation context. */
+function AppRouterContent() {
+  const onMobile = getIsMobile();
+  return (
+    <CommandProvider>
+      <ServiceBlockingGate>
+        <AnalyticsPageTracker />
+        <AppShell />
+        <SecurityBanner />
+        {!onMobile && <AppUpdatePrompt />}
+        <KeyringConsentOverlay />
+        <AnnouncementGate />
+      </ServiceBlockingGate>
+    </CommandProvider>
   );
 }
 
