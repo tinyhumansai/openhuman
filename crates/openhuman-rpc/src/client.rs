@@ -33,6 +33,31 @@ pub fn redact_url_for_log(url: &str) -> String {
         .unwrap_or_else(|_| "<invalid relay url>".to_string())
 }
 
+/// Whether a URL points at this machine's loopback interface.
+///
+/// A proxy is not the local core: it forwards a request to wherever its own
+/// rules send it, and a remote hop cannot reach the caller's own loopback
+/// interface — it answers `502` with an empty body instead. Loopback targets
+/// are therefore never proxied, whatever `HTTP_PROXY` / `ALL_PROXY` say and
+/// whatever `NO_PROXY` happens to list.
+fn is_loopback_url(url: &str) -> bool {
+    let Ok(parsed) = url.parse::<url::Url>() else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    if let Ok(address) = host.parse::<std::net::IpAddr>() {
+        // The loopback ranges: `127.0.0.0/8` and `::1`.
+        return address.is_loopback();
+    }
+    host == "localhost" || host.ends_with(".localhost")
+}
+
 /// POST a JSON-RPC body and preserve the endpoint's status and body verbatim.
 pub async fn post_json_rpc(
     url: &str,
@@ -41,6 +66,10 @@ pub async fn post_json_rpc(
 ) -> Result<HttpRpcResponse, String> {
     let bearer = bearer_header(token);
     let mut client_builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
+    if is_loopback_url(url) {
+        // The local core is on this machine; a proxy cannot reach it.
+        client_builder = client_builder.no_proxy();
+    }
     if bearer.is_some() {
         client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
     }
@@ -76,3 +105,7 @@ pub async fn post_json_rpc(
     );
     Ok(HttpRpcResponse { status, body })
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;
