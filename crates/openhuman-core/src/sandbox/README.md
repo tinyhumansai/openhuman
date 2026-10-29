@@ -246,10 +246,13 @@ The settings surface (`get_sandbox_settings`, `[security.sandbox]` and
   `OPENHUMAN_SANDBOX=off`. Local never degrades to host execution when TinyBox
   cannot provide the requested jail; check the handle status and surface the
   refusal.
-- `ShellTool::run_sandboxed` (`tools/impl/system/shell.rs`) passes
-  `RuntimeConfig::default()` rather than the loaded config, while the flows
-  code runner passes the loaded `runtime` block. So `[runtime] kind = "docker"` and
-  `[runtime.local_jail]` do not reach the shell tool's sandbox today.
+- `ShellTool::run_sandboxed` (`tools/impl/system/shell.rs`) resolves its
+  policy from the loaded `[runtime]` block, as the flows code runner does, so
+  `[runtime] kind = "docker"` and its `[runtime.docker]` overrides reach the
+  shell tool's sandbox. `local_jail` grants are merged at spawn either way.
+- The sandbox Docker backend (`sandbox/docker.rs`) always mounts
+  `workspace_root` at `/workspace`; `[runtime.docker] mount_workspace = false`
+  is honoured only by the runtime adapter's Docker path, not by this backend.
 - Every current caller passes `is_remote_session = false`, so in practice
   Docker is chosen only by `[runtime] kind = "docker"`.
 - The Local backend's scratch directory lives under `workspace_dir`, which

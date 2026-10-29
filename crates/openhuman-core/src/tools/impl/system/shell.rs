@@ -637,6 +637,28 @@ impl ShellTool {
         )
     }
 
+    /// The sandbox policy for this call, from the configured `[runtime]`
+    /// (`kind`, `[runtime.docker]`) the way the native path reads its config —
+    /// never the compiled-in default, which always picks the local jail (#6081).
+    async fn sandboxed_policy(
+        &self,
+        ctx: &DispatchCtx,
+        action_dir: &Path,
+    ) -> Result<crate::sandbox::SandboxPolicy, String> {
+        let runtime = match self.analysis_config.as_deref() {
+            Some(config) => config.runtime.clone(),
+            None => ctx.load_config().await?.runtime,
+        };
+        Ok(crate::sandbox::resolve_sandbox_policy(
+            ctx,
+            tinyagents_definition::SandboxMode::Sandboxed,
+            action_dir,
+            &self.security.workspace_dir,
+            &runtime,
+            false,
+        ))
+    }
+
     /// Execute a command through the sandbox backend. Called when the
     /// agent's `SandboxMode` is `Sandboxed`.
     async fn run_sandboxed(
@@ -650,15 +672,15 @@ impl ShellTool {
         meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
         audit: &AuditOnce,
     ) -> (bool, ToolResult) {
-        let config = crate::config::RuntimeConfig::default();
-        let policy = crate::sandbox::resolve_sandbox_policy(
-            ctx,
-            tinyagents_definition::SandboxMode::Sandboxed,
-            action_dir,
-            &self.security.workspace_dir,
-            &config,
-            false,
-        );
+        let policy = match self.sandboxed_policy(ctx, action_dir).await {
+            Ok(policy) => policy,
+            Err(error) => {
+                return (
+                    true,
+                    ToolResult::error(format!("Cannot read module configuration: {error}")),
+                );
+            }
+        };
         let timeout = requested_timeout;
         run_in_policy(
             ctx, policy, command, timeout, come_back, action_dir, context, meter, audit,
