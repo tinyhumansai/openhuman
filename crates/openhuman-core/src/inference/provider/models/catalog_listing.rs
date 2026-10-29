@@ -53,24 +53,55 @@ fn catalog_request(
 ) -> Result<crate::inference::registry::CatalogHostRequest, String> {
     let service_key = "providers.list_models";
     let slug = entry.map(|e| e.slug.trim()).unwrap_or_default();
+    use crate::config::schema::cloud_providers::AuthStyle;
     let provider_key = match entry {
         Some(entry) => {
             let looked_up =
                 crate::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
                     .unwrap_or_default();
-            resolve_local_runtime_key(&entry.slug, looked_up, config)
+            let raw = resolve_local_runtime_key(&entry.slug, looked_up, config);
+            // A model catalog request can authenticate with only one key.
+            // Never send the raw delimited fleet as one Authorization header.
+            // OAuth credentials are opaque and must not be interpreted as a fleet.
+            let byok = matches!(entry.auth_style, AuthStyle::Bearer | AuthStyle::Anthropic)
+                && !(entry.slug == "openai"
+                    && crate::inference::provider::factory::openai_bearer_is_oauth(config));
+            if byok {
+                let keys = crate::inference::provider::factory::byok_catalog_keys(&raw);
+                if keys.len() > 1 && crate::core::runtime::is_saas() {
+                    return Err(
+                        "multi-key BYOK catalog discovery is unavailable in shared mode".into(),
+                    );
+                }
+                keys.into_iter().next().unwrap_or_default()
+            } else {
+                raw
+            }
         }
         None => String::new(),
     };
-    let client = match config
+    let pem = config
         .cloud_provider_ca_certs
         .get(slug)
-        .filter(|pem| !pem.is_empty())
-    {
-        Some(pem) => {
-            crate::util::tls::client_with_ca_bundle_with_timeouts(pem, service_key, 30, 10)?
+        .map(String::as_str)
+        .filter(|value| !value.is_empty());
+    let credentialed = entry
+        .is_some_and(|entry| matches!(entry.auth_style, AuthStyle::Bearer | AuthStyle::Anthropic));
+    // Catalog discovery carries the same credential headers as inference.
+    // Its HTTP client must not forward a custom header over redirects.
+    let client = if credentialed {
+        crate::util::tls::credentialed_client_builder(service_key, pem)?
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|_| "Could not build secure model catalog HTTP client".to_string())?
+    } else {
+        match pem {
+            Some(pem) => {
+                crate::util::tls::client_with_ca_bundle_with_timeouts(pem, service_key, 30, 10)?
+            }
+            None => crate::config::build_runtime_proxy_client_with_timeouts(service_key, 30, 10),
         }
-        None => crate::config::build_runtime_proxy_client_with_timeouts(service_key, 30, 10),
     };
     Ok(crate::inference::registry::CatalogHostRequest {
         provider_key,

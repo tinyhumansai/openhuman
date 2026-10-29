@@ -13,10 +13,20 @@
 
 pub(crate) mod access_gates;
 mod chat_model;
+mod cloud_fleet;
+mod cloud_http;
 mod cloud_slug;
 mod cloud_spec;
+// The adapter is compiled and unit-tested before wiring any live BYOK route.
+// No credential group is enabled in production until explicit factory support.
+#[allow(dead_code)]
+mod credential_fleet;
 mod credentials;
 mod inspection;
+// Wave-1 scheduler foundation: remain isolated until the model-factory integration
+// adopts it in the next stacked change. No inference behavior changes in this draft.
+#[allow(dead_code)]
+mod key_pool;
 mod local_runtime;
 mod managed_backend;
 mod routing;
@@ -29,6 +39,13 @@ pub use chat_model::{
 pub(crate) use chat_model::{resolves_to_managed_backend, OpenHumanModelFactory};
 pub(crate) use cloud_slug::resolve_cloud_slug_for;
 pub(crate) use cloud_spec::{cloud_provider_spec, CloudCredentialResolver};
+/// Catalog discovery is a one-credential HTTP call. Never give its request
+/// builder a delimited fleet: that would forward multiple secrets as a single
+/// Authorization header. The native inference path owns per-call rotation.
+pub(crate) fn byok_catalog_keys(raw: &str) -> Vec<String> {
+    key_pool::parse_api_keys(raw)
+}
+
 pub use credentials::{auth_key_for_slug, lookup_key_for_slug};
 pub(crate) use credentials::{
     openai_bearer_is_oauth, redact_endpoint_origin, resolve_codex_routing,

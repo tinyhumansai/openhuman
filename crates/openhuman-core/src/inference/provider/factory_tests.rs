@@ -626,6 +626,8 @@ mod crate_native_diagnostics_tests;
 mod crate_native_jwt_tests;
 #[path = "factory_crate_native_tests.rs"]
 mod crate_native_tests;
+#[path = "factory_credential_fleet_tests.rs"]
+mod credential_fleet_tests;
 #[path = "factory_egress_fallback_tests.rs"]
 mod egress_fallback_tests;
 #[path = "factory_explicit_ctx_tests.rs"]

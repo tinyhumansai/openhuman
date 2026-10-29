@@ -113,6 +113,33 @@ async fn openrouter_key_is_trimmed_for_validation_and_catalog_probe() {
     );
 }
 
+#[tokio::test]
+async fn multi_key_catalog_uses_one_bearer_and_never_forwards_the_group() {
+    let tmp = tempfile::tempdir().expect("catalog workspace");
+    let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::OK).await;
+    let config =
+        configure_openrouter_workspace(&tmp, endpoint, "catalog-key-first;catalog-key-second")
+            .await;
+
+    let outcome = catalog_listing::list_configured_models_from_config("openrouter", &config)
+        .await
+        .expect("one credential must be used for catalog discovery");
+    assert_eq!(outcome.value["models"][0]["id"], "openrouter/test-model");
+
+    let key_headers = state
+        .key_authorization
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let model_headers = state
+        .model_authorization
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    assert_eq!(key_headers, vec![Some("Bearer catalog-key-first".into())]);
+    assert_eq!(model_headers, key_headers);
+}
+
 #[test]
 fn test_sanitize_api_error_utf8() {
     let input = "🦀".repeat(MAX_API_ERROR_CHARS + 10);

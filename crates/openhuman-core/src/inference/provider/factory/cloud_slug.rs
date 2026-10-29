@@ -77,6 +77,8 @@ pub(crate) fn resolve_cloud_slug_for<'a>(
     )
 }
 
+pub(super) use super::cloud_fleet::rotation_pool_scope;
+
 /// The user-facing error for a failed credential lookup: the guidance, plus
 /// the expiry signal when the lookup reported one. The doctor's
 /// refresh-required check and the Codex reconnect classifier key on those
@@ -661,45 +663,66 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         crate::security::egress::EgressDescriptor::inference(&slug, &effective_model, true),
     );
 
-    let http = match config
-        .cloud_provider_ca_certs
-        .get(&slug)
-        .filter(|pem| !pem.is_empty())
-    {
-        Some(pem) => {
-            let service_key = if anthropic_native {
-                "provider.anthropic"
-            } else {
-                "provider.compatible"
-            };
-            match crate::util::tls::client_with_ca_bundle(pem, service_key) {
-                Ok(http) => Some(http),
-                Err(error) => return Some(Err(anyhow::anyhow!(error))),
-            }
-        }
-        None => None,
+    let http = match super::cloud_http::build_cloud_http_client(
+        entry.auth_style,
+        anthropic_native,
+        config
+            .cloud_provider_ca_certs
+            .get(&slug)
+            .map(String::as_str),
+    ) {
+        Ok(client) => client,
+        Err(error) => return Some(Err(anyhow::anyhow!(error))),
     };
     let auth_style = cloud_spec::registry_auth_style(entry.auth_style)
         .expect("managed JWT entries returned above");
-    let chat = cloud_spec::build_cloud_model(cloud_spec::CloudBuild {
-        spec: cloud_spec::cloud_provider_spec(entry, &effective_model),
-        auth_style,
-        key: key.as_str(),
-        temperature_override,
-        temperature_unsupported_models: config.temperature_unsupported_models.as_slice(),
-        native_tool_calling,
-        default_provider_options,
-        extra_headers: extra_headers.as_slice(),
-        extra_query_params: extra_query_params.as_slice(),
-        user_agent: user_agent.as_deref(),
-        codex: codex_route,
-        http,
-    });
+    // Parse only actual BYOK credentials. OAuth, hosted and unauthenticated
+    // routes retain their original single-key identity and provider semantics.
+    let eligible =
+        !codex.using_oauth && matches!(entry.auth_style, AuthStyle::Bearer | AuthStyle::Anthropic);
+    let keys = if eligible {
+        super::key_pool::parse_api_keys(&key)
+    } else {
+        vec![key.clone()]
+    };
+    if keys.len() > 1 && (crate::core::runtime::is_saas() || codex.account_id.is_some()) {
+        return Some(Err(anyhow::anyhow!(
+            "multi-key BYOK rotation is unavailable for shared or account-bound sessions"
+        )));
+    }
+    let inspection_key = keys.first().cloned().unwrap_or_default();
+    let scope = rotation_pool_scope(
+        &config.workspace_dir,
+        &slug,
+        &effective_model,
+        &codex.endpoint,
+    );
+    let chat = super::cloud_fleet::build_cloud_model_with_keys(
+        scope,
+        keys,
+        eligible && credential_access == CredentialAccess::Runtime,
+        |credential| {
+            cloud_spec::build_cloud_model(cloud_spec::CloudBuild {
+                spec: cloud_spec::cloud_provider_spec(entry, &effective_model),
+                auth_style: auth_style.clone(),
+                key: credential,
+                temperature_override,
+                temperature_unsupported_models: config.temperature_unsupported_models.as_slice(),
+                native_tool_calling,
+                default_provider_options: default_provider_options.clone(),
+                extra_headers: extra_headers.as_slice(),
+                extra_query_params: extra_query_params.as_slice(),
+                user_agent: user_agent.as_deref(),
+                codex: codex_route,
+                http: http.clone(),
+            })
+        },
+    );
     if let Some(identity) = inspection_identity {
         let credential = if entry.auth_style == AuthStyle::None {
             String::new()
         } else {
-            key.clone()
+            inspection_key.clone()
         };
         let output_budget = inspection_output_budget_capability(&codex);
         // Doctor's live probe deduplicates on this identity, so it carries

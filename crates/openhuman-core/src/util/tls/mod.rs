@@ -56,6 +56,28 @@ fn ca_client_builder(pem: &str, service_key: &str) -> Result<reqwest::ClientBuil
     Ok(builder)
 }
 
+/// Build an authenticated provider HTTP client without following redirects.
+///
+/// reqwest strips Authorization and Cookie on cross-origin redirects, but not
+/// provider-specific secret headers such as Anthropic's x-api-key. A redirect
+/// could otherwise forward that secret to a different origin or plaintext URL.
+/// Keep platform TLS roots, the user's runtime proxy and their optional CA.
+pub fn credentialed_client_builder(
+    service_key: &str,
+    ca_pem: Option<&str>,
+) -> Result<reqwest::ClientBuilder, String> {
+    let mut builder = crate::config::apply_runtime_proxy_to_builder(
+        tls_client_builder().redirect(reqwest::redirect::Policy::none()),
+        service_key,
+    );
+    if let Some(pem) = ca_pem.filter(|value| !value.is_empty()) {
+        for certificate in parse_ca_bundle(pem)? {
+            builder = builder.add_root_certificate(certificate);
+        }
+    }
+    Ok(builder)
+}
+
 pub fn client_with_ca_bundle(pem: &str, service_key: &str) -> Result<reqwest::Client, String> {
     let builder = ca_client_builder(pem, service_key)?;
     builder
