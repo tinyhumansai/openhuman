@@ -24,3 +24,16 @@ pub(crate) const COMPOSIO_INVALID_API_KEY_USER_MESSAGE: &str =
 /// `composio_set_key_anchor_is_substring_of_message` test asserts it stays a
 /// lowercase substring of [`COMPOSIO_INVALID_API_KEY_USER_MESSAGE`].
 pub(crate) const COMPOSIO_INVALID_API_KEY_ANCHOR: &str = "invalid composio api key";
+
+/// Lowercase prefix of the direct-mode invalid-key **backoff** message
+/// ([`super::invalid_api_key_backoff_message`]) — returned on every poll once
+/// the `direct_auth` gate has opened for a key Composio rejected
+/// [`super::DIRECT_INVALID_API_KEY_THRESHOLD`] times in a row. The
+/// observability classifier's TAURI-RUST-116R arm keys on this anchor to demote
+/// the op-layer `report_composio_op_error` to `ProviderUserState`: that call
+/// receives the bare backoff text (no `[composio-direct]` prefix, and the word
+/// `Composio` splits `invalid … api key`), so neither the X9 nor the K27 arm
+/// claims it. The `composio_backoff_anchor_is_prefix_of_backoff_message` test
+/// keeps the anchor and the rendered message in sync.
+pub(crate) const COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR: &str =
+    "direct-mode composio api key was rejected";
