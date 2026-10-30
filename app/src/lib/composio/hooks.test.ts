@@ -291,6 +291,58 @@ describe('useComposioIntegrations', () => {
   });
 });
 
+describe('useComposioIntegrations — rejected direct-mode key (#8509)', () => {
+  const KEY_REJECTED =
+    'Direct-mode Composio API key was rejected 3 consecutive times with HTTP 401 Invalid API key; re-enter a valid key in Connections > Composio to resume polling.';
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    sessionToken = 'jwt-abc';
+    mockOpenhumanComposioGetMode.mockResolvedValue({
+      result: { mode: 'direct', api_key_set: true },
+      logs: [],
+    });
+  });
+
+  it('recognises only the core backoff message', async () => {
+    const { isComposioKeyRejectedError } = await import('./hooks');
+    expect(isComposioKeyRejectedError(KEY_REJECTED)).toBe(true);
+    expect(isComposioKeyRejectedError(`[composio-direct] list_connections: ${KEY_REJECTED}`)).toBe(
+      true
+    );
+    expect(isComposioKeyRejectedError('HTTP 401: Invalid API key')).toBe(false);
+    expect(isComposioKeyRejectedError(null)).toBe(false);
+  });
+
+  it('surfaces the re-enter prompt and stops polling once the key is rejected', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValueOnce({ connections: [] });
+    mockListConnections.mockRejectedValue(new Error(KEY_REJECTED));
+
+    const { result } = renderHook(() => useComposioIntegrations(20));
+
+    await waitFor(() => expect(result.current.error).toBe(KEY_REJECTED), { timeout: 2000 });
+    const callsWhenRejected = mockListConnections.mock.calls.length;
+
+    // Several poll intervals later the known-bad key has not been retried.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(mockListConnections.mock.calls.length).toBe(callsWhenRejected);
+    expect(result.current.error).toBe(KEY_REJECTED);
+
+    // Re-entering the key (config-changed) refreshes and resumes polling.
+    mockListConnections.mockResolvedValue({ connections: [] });
+    window.dispatchEvent(new Event('composio:config-changed'));
+    await waitFor(() => expect(result.current.error).toBeNull(), { timeout: 2000 });
+    await waitFor(
+      () => expect(mockListConnections.mock.calls.length).toBeGreaterThan(callsWhenRejected + 1),
+      { timeout: 2000 }
+    );
+  });
+});
+
 describe('useAgentReadyComposioToolkits', () => {
   beforeEach(() => {
     vi.resetModules();
