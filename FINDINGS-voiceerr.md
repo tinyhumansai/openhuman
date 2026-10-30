@@ -2,51 +2,75 @@
 
 Branch: `fix/voice-provider-error-handling` (GitHub #8502, #8503). Not pushed.
 
+## Correction (second commit): hosted vs BYOK
+CONTEXT.md treated `payment_required` as a user config problem. The backend source
+(`tinyhumansai/backend` @ 6af8f69, read-only clone) shows that is wrong for the hosted routes:
+- `src/services/elevenlabs/elevenlabsService.ts` always calls ElevenLabs with the **server's own**
+  `ELEVENLABS_API_KEY` (all 5 call sites) and wraps any upstream failure as
+  `BadRequestError("ElevenLabs request failed (<status>): <body>")` (line 107), i.e. a 400.
+- `src/middlewares/errorHandler.ts` does not report 4xx to the backend's Sentry, so the client report is
+  the only signal anyone gets.
+
+So **TAURI-RUST-15BM (TTS) and -15CT (STT) are TinyHumans' own ElevenLabs subscription with a failed
+payment**, not the users'. Telling 44 + 17 users to "update billing" is wrong, and demoting the event
+hides an outage from the only people who can fix it. The first commit did both. Now:
+- Hosted failures (detected by the backend's `ElevenLabs request failed (` wrapping) are never matched by
+  `voice_provider_user_message` / `is_voice_provider_user_state_message`, so they stay Sentry errors.
+- The `classify.rs` demotion from the first commit is reverted: `authed_json` reports them again.
+- Hosted TTS (`reply_speech.rs`) now uses `map_hosted_voice_error`, which swaps the raw backend line for
+  "The voice service is temporarily unavailable. Please try again later." (the raw error was already
+  reported by `authed_json` and is logged at `warn`).
+- Hosted STT (`cloud_transcribe.rs`) is left raw: the RPC boundary is its only report site, and mapping
+  there would strip the detail ops needs.
+- The BYOK handling is kept: the external STT/TTS providers use the user's own key, so for them
+  `payment_required` ("Update billing") and the key-ID message (TAURI-RUST-1635) are correct, and demoted.
+
+**The real fix for 15BM / 15CT is operational**: settle the TinyHumans ElevenLabs subscription. The
+backend should also surface upstream 401/402 as a 5xx (or a distinct `errorCode`) and alert on it
+(backend repo, not changed here).
+
 ## What I found
 - The ElevenLabs HTTP clients live in the vendored `tinyinference-voice` crate (`external_stt.rs` / `external_tts.rs`),
   which formats errors as `[voice-stt] elevenlabs error {status}: {body}` / `[voice-tts] ... `. Not edited (vendor).
   The host wraps them in `crates/openhuman-core/src/voice/factory/{stt,tts}_providers.rs`.
 - Hosted TTS (`POST /openai/v1/audio/speech`) goes `openhuman-tinyhumans/src/voice/reply_speech.rs` ->
   `BackendClient::authed_json` -> `client/classify.rs::finish_authed_json`. Any non-2xx that is not 401, budget, or
-  transient goes to `report_error` (Sentry error) with only the body *shape*. That is the TAURI-RUST-15BM/-112J flood.
-  The returned error string still carries up to 512 bytes of the body (RPC error / daily logs).
+  transient goes to `report_error` (Sentry error) with only the body *shape*.
+- Hosted STT goes `cloud_transcribe.rs` -> `tinyinference_voice::cloud::transcribe` (not `authed_json`); only 401 is
+  classified there.
 - Existing convention: `core/observability*.rs` `expected_error_kind` -> `ExpectedErrorKind::ProviderUserState`
-  (logged at info, not sent to Sentry); callers use `report_error_or_expected`.
+  (logged at info, not sent to Sentry).
 
-## What I changed
-- New `crates/openhuman-core/src/core/observability_voice_provider_errors.rs` (included into `observability.rs`):
-  - `voice_provider_user_message()` maps `elevenlabs` + `payment_required`/"failed or incomplete payment" to
-    "Your ElevenLabs subscription has a payment issue. Update billing to continue." and "API key ID used as API key"
-    to "That looks like an ElevenLabs key ID, not a key. Keys start with `sk_`. Re-enter the API key."
-  - `is_voice_provider_user_state_message()` matches the raw upstream text AND the mapped messages, so the re-report at
-    the RPC boundary stays demoted.
-  - `map_voice_provider_error()` swaps in the user message (raw error kept in a `warn` log); unknown errors pass through.
-- `expected_error_kind` returns `ProviderUserState` for these (early arm, so broader 400/401 matchers cannot claim them).
-- `openhuman-tinyhumans/src/client/classify.rs`: a 400 whose body matches is logged at `warn` and NOT `report_error`ed
-  (same pattern as the existing budget-exhausted 400 branch).
-- User-facing mapping applied in `ExternalSttProvider`, `ExternalTtsProvider` (core factory) and hosted
-  `reply_speech.rs`. `openhuman-embed/src/host_internals.rs` re-exports the two helpers.
-- Tests: `observability_error_classification_voice_provider_tests.rs` (payment, key-ID, mapped-message re-report,
-  pass-through of unknown bodies, no over-match).
+## What I changed (net)
+- `crates/openhuman-core/src/core/observability_voice_provider_errors.rs` (included into `observability.rs`):
+  - `voice_provider_user_message()`: BYOK `payment_required` -> "Your ElevenLabs subscription has a payment issue.
+    Update billing to continue."; "API key ID used as API key" -> "That looks like an ElevenLabs key ID, not a key.
+    Keys start with `sk_`. Re-enter the API key."; hosted wrapping -> `None`.
+  - `is_voice_provider_user_state_message()`: raw BYOK text and the two mapped messages (RPC re-report stays demoted).
+  - `map_voice_provider_error()` (BYOK) and `map_hosted_voice_error()` (hosted, neutral message).
+- `expected_error_kind` returns `ProviderUserState` for the BYOK cases only.
+- Mapping applied in `ExternalSttProvider`, `ExternalTtsProvider` (BYOK) and `reply_speech.rs` (hosted, neutral).
+  `openhuman-embed/src/host_internals.rs` re-exports `map_hosted_voice_error`.
+- Tests: `observability_error_classification_voice_provider_tests.rs` (BYOK payment, key ID, hosted TTS/STT not
+  claimed, hosted neutral mapping, mapped-message re-report, pass-through, no over-match).
 
 ## TAURI-RUST-112J classification
-Classified as **config / upstream (probable), not confirmed**; no code defect identified. Reasoning: same endpoint
-(`POST /openai/v1/audio/speech`), same status (400), and a backend error envelope (`error,errorCode,success`) that
-wraps an upstream provider failure, the same shape class as 15BM. But the telemetry holds only the key names, so
-I cannot prove the wrapped text is `payment_required`. I deliberately did NOT demote unknown 400s on that path: if the
-body is not one of the two known ElevenLabs conditions it still reports. If the 53 users' bodies are the payment
-case, they are now demoted. To close it out: pull the body from a user's daily log (the error string carries the
-first 512 bytes) and add its marker to `voice_provider_user_message`, or if it is a different upstream
-condition, treat it as a server-side/config issue in the TinyHumans backend (different repo).
+**Backend / upstream, not a client defect, and probably not user credits.** Same route (`/openai/v1/audio/speech`),
+400, envelope `error,errorCode,success` (no `details`). The backend's low-credit answer on this route is
+`BadRequestError('Insufficient budget')` (`controllers/inference/textToSpeech.ts:57`), which the client's existing
+budget filter already keeps out of Sentry (present in 0.64.15), so a reported 400 here is most likely another
+`ElevenLabs request failed (...)` upstream failure (voice not found, quota, the same billing problem). Unknown 400s
+still report. To close it: read the body from one user's daily log (the error string carries the first 512 bytes),
+or check whether 112J drops once the ElevenLabs billing is fixed.
 
 ## Verification (limited, please read)
-- `cargo check -p openhuman` fails on a **clean** `upstream/main` too (401 errors, identical count before/after my
-  change): vendored submodules are pinned to commits older than the API the host code uses
-  (e.g. `tinychannels_bus::module_progressive::ChannelOutputEvent`, `tinyflows_bus::schedule`,
-  `tinyagents_harness::progress` missing). This blocks `cargo check/test` for `openhuman`, `openhuman-tinyhumans` and
-  `openhuman-embed`. I did not touch vendor/. Needs submodule pins bumped upstream.
-- Instead I compiled and tested the new pure module standalone (stubbed `tracing`): mapping, mapped-message
-  re-match, and non-match cases pass. The wiring edits (classify.rs, reply_speech.rs, factory providers, embed
-  re-export, observability include and arm) are small, were formatted with rustfmt, and checked by reading, but
-  were NOT compiled in-tree; the new in-tree test file has not been run.
-- Note: a sccache `EAGAIN` failure occurs with default parallelism on this box; use `cargo check -j 12`.
+- `cargo check -p openhuman` fails on a **clean** `upstream/main` too (~400 errors): vendored submodules are pinned to
+  commits older than the API the host code uses (e.g. `tinychannels_bus::module_progressive::ChannelOutputEvent`).
+  This blocks in-tree `cargo check/test` for `openhuman`, `openhuman-tinyhumans` and `openhuman-embed`. vendor/ not
+  touched; needs submodule pins bumped upstream.
+- The corrected `observability_voice_provider_errors.rs` was compiled verbatim in a scratch crate (stubbed
+  `tracing`) with the test file's real error strings: BYOK payment and key ID map, hosted TTS/STT are not
+  claimed and pass through, hosted maps to the neutral message, no over-match. All pass. The parts that need
+  `expected_error_kind` (the demotion asserts) and the wiring edits (`reply_speech.rs`, embed re-export,
+  `classify.rs` revert) were formatted with rustfmt and checked by reading, NOT compiled in-tree.
+- Note: sccache `EAGAIN` occurs with default parallelism on this box; use `cargo check -j 12`.

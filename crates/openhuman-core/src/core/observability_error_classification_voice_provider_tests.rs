@@ -1,16 +1,23 @@
 use super::*;
 
-const PAYMENT_TTS: &str = r#"POST /openai/v1/audio/speech failed (400 Bad Request): ElevenLabs request failed (401): payment_required — "Your subscription has a failed or incomplete payment""#;
+/// TAURI-RUST-15BM: the hosted TTS route wrapping a refusal of the backend's
+/// own ElevenLabs account.
+const HOSTED_PAYMENT_TTS: &str = r#"POST /openai/v1/audio/speech failed (400 Bad Request): {"success":false,"error":"ElevenLabs request failed (401): {\"detail\":{\"status\":\"payment_required\",\"message\":\"Your subscription has a failed or incomplete payment\"}}","errorCode":"BAD_REQUEST"}"#;
+/// TAURI-RUST-15CT: the same refusal on the hosted transcription route.
+const HOSTED_PAYMENT_STT: &str = r#"transcription request failed (400 Bad Request): {"success":false,"error":"ElevenLabs request failed (401): payment_required — \"Your subscription has a failed or incomplete payment\"","errorCode":"BAD_REQUEST"}"#;
+/// A BYOK request refused because the user's own subscription is unpaid.
+const BYOK_PAYMENT_TTS: &str = r#"[voice-tts] elevenlabs 401 payment_required: "Your subscription has a failed or incomplete payment""#;
+/// TAURI-RUST-1635: a BYOK user pasted the key ID.
 const KEY_ID_STT: &str = r#"[voice-stt] elevenlabs 400 invalid_api_key: "API key ID used as API key - only valid API keys can be used. API keys start with 'sk_'""#;
 
 #[test]
-fn payment_required_maps_and_demotes() {
+fn byok_payment_required_maps_and_demotes() {
     assert_eq!(
-        voice_provider_user_message(PAYMENT_TTS),
+        voice_provider_user_message(BYOK_PAYMENT_TTS),
         Some(VOICE_PROVIDER_PAYMENT_REQUIRED_USER_MESSAGE)
     );
     assert_eq!(
-        expected_error_kind(PAYMENT_TTS),
+        expected_error_kind(BYOK_PAYMENT_TTS),
         Some(ExpectedErrorKind::ProviderUserState)
     );
 }
@@ -24,6 +31,37 @@ fn key_id_maps_and_demotes() {
     assert_eq!(
         expected_error_kind(KEY_ID_STT),
         Some(ExpectedErrorKind::ProviderUserState)
+    );
+}
+
+#[test]
+fn hosted_payment_required_is_not_user_state() {
+    // The backend's own account: no "update billing" message, and it keeps
+    // reaching Sentry so ops sees it.
+    for raw in [HOSTED_PAYMENT_TTS, HOSTED_PAYMENT_STT] {
+        assert_eq!(voice_provider_user_message(raw), None, "{raw}");
+        assert!(!is_voice_provider_user_state_message(raw), "{raw}");
+        assert_ne!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "{raw}"
+        );
+        assert_eq!(map_voice_provider_error(raw.to_string()), raw);
+    }
+}
+
+#[test]
+fn hosted_upstream_failure_maps_to_neutral_message() {
+    assert_eq!(
+        map_hosted_voice_error(HOSTED_PAYMENT_TTS.to_string()),
+        HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE
+    );
+    let other = "POST /openai/v1/audio/speech failed (400 Bad Request): {\"error\":\"x\"}";
+    assert_eq!(map_hosted_voice_error(other.to_string()), other);
+    // The neutral message is not demoted.
+    assert_eq!(
+        expected_error_kind(HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE),
+        None
     );
 }
 
@@ -44,10 +82,10 @@ fn mapped_user_messages_stay_demoted_at_rpc_boundary() {
 #[test]
 fn map_voice_provider_error_passes_unknown_through() {
     assert_eq!(
-        map_voice_provider_error(PAYMENT_TTS.to_string()),
+        map_voice_provider_error(BYOK_PAYMENT_TTS.to_string()),
         VOICE_PROVIDER_PAYMENT_REQUIRED_USER_MESSAGE
     );
-    let other = "POST /openai/v1/audio/speech failed (400 Bad Request): {\"error\":\"x\"}";
+    let other = "[voice-tts] elevenlabs 500: upstream exploded";
     assert_eq!(map_voice_provider_error(other.to_string()), other);
     assert_eq!(expected_error_kind(other), None);
 }

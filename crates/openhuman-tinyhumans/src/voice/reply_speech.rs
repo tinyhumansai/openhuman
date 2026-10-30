@@ -193,9 +193,10 @@ pub async fn synthesize_reply(
         )
         .await
         .map_err(flatten_authed_error)
-        // Known upstream ElevenLabs account/key problems become an actionable
-        // user-facing message (TAURI-RUST-15BM); other errors pass through.
-        .map_err(openhuman_embed::__host::core::observability::map_voice_provider_error)?;
+        // The backend's own ElevenLabs account refused (TAURI-RUST-15BM):
+        // `authed_json` already reported the raw failure, so the user gets a
+        // neutral "unavailable" message instead of a backend error line.
+        .map_err(openhuman_embed::__host::core::observability::map_hosted_voice_error)?;
 
     let result = normalize_response(&raw);
     debug!(

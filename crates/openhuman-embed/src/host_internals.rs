@@ -39,9 +39,8 @@ pub mod core {
         pub use openhuman_core::core::observability::{
             contains_transient_transport_phrase, expected_error_kind, is_api_key_rejected_message,
             is_session_expired_message, is_suppressed_usage_probe_backoff,
-            is_transient_http_status_code, is_transient_message_failure,
-            is_voice_provider_user_state_message, map_voice_provider_error, report_error,
-            report_error_or_expected, report_warning_message, ExpectedErrorKind,
+            is_transient_http_status_code, is_transient_message_failure, map_hosted_voice_error,
+            report_error, report_error_or_expected, report_warning_message, ExpectedErrorKind,
             API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, REPORT_ERROR_TRACING_TARGET,
             USAGE_PROBE_BACKOFF_PREFIX,
         };

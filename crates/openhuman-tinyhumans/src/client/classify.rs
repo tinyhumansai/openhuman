@@ -5,8 +5,7 @@
 use crate::transport::BackendTransportError;
 use anyhow::{Context, Result};
 use openhuman_embed::__host::core::observability::{
-    contains_transient_transport_phrase, is_transient_http_status_code,
-    is_voice_provider_user_state_message, report_error,
+    contains_transient_transport_phrase, is_transient_http_status_code, report_error,
 };
 use openhuman_embed::__host::util::truncate_at_byte_boundary;
 use reqwest::Method;
@@ -210,25 +209,7 @@ impl BackendClient {
         let is_transient_infra = is_transient_http_status_code(status_code);
         let is_budget_exhausted =
             status_code == 400 && tinyinference_providers::is_budget_exhausted_message(&text);
-        // Upstream voice-provider account/key problems (ElevenLabs
-        // `payment_required`, key ID pasted as key) wrapped in a backend 400
-        // are user/upstream config, not code defects (TAURI-RUST-15BM/-15CT).
-        let is_voice_provider_config =
-            status_code == 400 && is_voice_provider_user_state_message(&text);
-        if is_voice_provider_config {
-            tracing::warn!(
-                domain = "backend_api",
-                operation = "authed_json",
-                method = method.as_str(),
-                path = url.path(),
-                status = status_code,
-                failure = "non_2xx",
-                kind = "voice_provider_config",
-                "[backend_api] voice-provider config 400 on {} {}: not reporting to Sentry",
-                method.as_str(),
-                url.path(),
-            );
-        } else if is_budget_exhausted {
+        if is_budget_exhausted {
             tracing::info!(
                 method = method.as_str(),
                 path = url.path(),
