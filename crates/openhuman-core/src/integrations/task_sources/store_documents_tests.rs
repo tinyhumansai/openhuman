@@ -266,3 +266,107 @@ fn a_corrupt_ledger_payload_is_an_error() {
         .unwrap();
     assert!(store.list_ingested("s", 10).is_err());
 }
+
+/// The pipeline reads the ledger once and decides both dedup questions from
+/// the map, so the map must answer exactly what the point reads answer: an
+/// entry's presence is `was_ingested`, and its hash matching is `is_ingested`.
+/// Checked for every case the pipeline can meet — absent, present and
+/// unchanged, present and edited — and across two sources, since dedup is
+/// per-source.
+#[test]
+fn ingested_hashes_agrees_with_the_point_reads() {
+    let store = docs();
+    store.add_source(&source("s")).unwrap();
+    store.add_source(&source("t")).unwrap();
+
+    let original = task("1", "Fix it");
+    let edited = task("1", "Fix it properly");
+    assert_ne!(content_hash(&original), content_hash(&edited));
+    store.mark_ingested("s", &original).unwrap();
+    store.mark_ingested("t", &task("2", "Other")).unwrap();
+
+    let map = store.ingested_hashes("s").unwrap();
+    assert_eq!(map.len(), 1, "only this source's ledger");
+    assert!(
+        !map.contains_key("2"),
+        "another source's entry must not leak in"
+    );
+
+    for (external_id, hash) in [
+        ("1", content_hash(&original)),
+        ("1", content_hash(&edited)),
+        ("9", content_hash(&original)),
+    ] {
+        assert_eq!(
+            map.get(external_id).and_then(|stored| stored.as_deref()) == Some(hash.as_str()),
+            store.is_ingested("s", external_id, &hash).unwrap(),
+            "is_ingested mismatch for ({external_id}, {hash})"
+        );
+        assert_eq!(
+            map.contains_key(external_id),
+            store.was_ingested("s", external_id).unwrap(),
+            "was_ingested mismatch for {external_id}"
+        );
+    }
+
+    // An empty ledger is an empty map, not an error.
+    store.add_source(&source("fresh")).unwrap();
+    assert!(store.ingested_hashes("fresh").unwrap().is_empty());
+}
+
+/// A ledger row the `ingested_v2` migration carried over without a
+/// `content_hash` — that step requires `source_id` and `external_id` but only
+/// *copies* the hash when the legacy row had one — must stay visible as
+/// "ingested, hash unknown". This is the one case where the two point reads
+/// disagree: `was_ingested` is true while `is_ingested` is false, so the
+/// pipeline owes it an edit. A map that dropped the row would report it as a
+/// task never seen before, and re-ingest it as new.
+#[test]
+fn a_ledger_row_without_a_hash_stays_ingested_with_an_unknown_hash() {
+    let store = docs();
+    store.add_source(&source("s")).unwrap();
+    let key = ingested_id("s", "7");
+    let payload = serde_json::to_string(&task("7", "Carried over")).unwrap();
+    store
+        .0
+        .run(|docs| async move {
+            docs.put(
+                INGESTED,
+                &key,
+                json!({
+                    "source_id": "s",
+                    "external_id": "7",
+                    "title": "Carried over",
+                    "payload": payload,
+                    "ingested_ms": 1,
+                }),
+                Precondition::Absent,
+            )
+            .await
+            .map(|_| ())
+        })
+        .unwrap();
+
+    let map = store.ingested_hashes("s").unwrap();
+    assert_eq!(
+        map.get("7"),
+        Some(&None),
+        "the row is present, with no hash to compare"
+    );
+    // And the map still agrees with both point reads on this row.
+    assert_eq!(
+        map.contains_key("7"),
+        store.was_ingested("s", "7").unwrap(),
+        "was_ingested"
+    );
+    let hash = content_hash(&task("7", "Carried over"));
+    assert_eq!(
+        map.get("7").and_then(|stored| stored.as_deref()) == Some(hash.as_str()),
+        store.is_ingested("s", "7", &hash).unwrap(),
+        "is_ingested"
+    );
+    assert!(
+        !store.is_ingested("s", "7", &hash).unwrap(),
+        "no stored hash can never match"
+    );
+}

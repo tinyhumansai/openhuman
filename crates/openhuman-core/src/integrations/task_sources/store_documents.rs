@@ -309,6 +309,45 @@ impl Docs {
         })
     }
 
+    /// The source's whole dedup ledger as `external_id -> content_hash`.
+    ///
+    /// The hash is `Option` because it genuinely can be absent: the
+    /// `ingested_v2` migration (`storage_schema.rs`) requires `source_id` and
+    /// `external_id` but only *copies* `content_hash` when the legacy row had
+    /// one. Dropping such a row would turn "ingested, hash unknown" into
+    /// "never seen", which is the one case where the pair below disagree —
+    /// `was_ingested` is true and `is_ingested` is false, i.e. an edit.
+    ///
+    /// One query in place of the per-task [`Self::is_ingested`] /
+    /// [`Self::was_ingested`] pair: both are decided by this map, since
+    /// `is_ingested` is "an entry exists and its hash matches" and
+    /// `was_ingested` is "an entry exists". Each of those runs its own
+    /// [`Self::ledger_entry`] — a `docs.get` per call — so a fetch of N tasks
+    /// paid 2N document reads to answer what one query covers.
+    ///
+    /// It costs no extra round-trip over [`Self::list_ingested_refs`], which
+    /// already reads whole documents and keeps a single field; this pulls one
+    /// more field out of the same read.
+    pub(super) fn ingested_hashes(
+        &self,
+        source_id: &str,
+    ) -> Result<std::collections::HashMap<String, Option<String>>> {
+        let query = Query::filter(Filter::eq("source_id", source_id));
+        self.0.run(|docs| async move {
+            Ok(docs
+                .query_all(INGESTED, &query)
+                .await?
+                .iter()
+                .filter_map(|stored| {
+                    Some((
+                        text(&stored.doc, "external_id")?.to_string(),
+                        text(&stored.doc, "content_hash").map(str::to_string),
+                    ))
+                })
+                .collect())
+        })
+    }
+
     pub(super) fn list_ingested_refs(&self, source_id: &str) -> Result<Vec<IngestedTaskRef>> {
         let query = Query::filter(Filter::eq("source_id", source_id))
             .sort(Sort::asc("ingested_ms"))
