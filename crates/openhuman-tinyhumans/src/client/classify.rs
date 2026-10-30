@@ -291,6 +291,19 @@ impl BackendClient {
             let error_code = backend_api_error_code(&text)
                 .map(|c| format!("; error_code={c}"))
                 .unwrap_or_default();
+            // Only the identifier-shaped `errorCode` is logged here: the raw
+            // body may hold PII and the report message precedes Sentry scrubbing.
+            tracing::warn!(
+                domain = "backend_api",
+                operation = "authed_json",
+                method = method.as_str(),
+                path = url.path(),
+                status = status_code,
+                error_code = backend_api_error_code(&text).as_deref().unwrap_or(""),
+                "[backend_api] {} {} failed ({status})",
+                method.as_str(),
+                url.path(),
+            );
             if backend_error_text_logging_enabled() {
                 if let Some(detail) = backend_api_error_text(&text) {
                     tracing::debug!(

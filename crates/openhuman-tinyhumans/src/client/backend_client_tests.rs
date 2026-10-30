@@ -409,6 +409,18 @@ fn backend_api_error_code_only_echoes_identifier_like_codes() {
 }
 
 #[test]
+fn backend_api_error_code_rejects_non_identifier_and_non_string_codes() {
+    let body = r#"{"success":false,"error":"jo@example.com is not entitled","errorCode":"FORBIDDEN_PLAN"}"#;
+    assert_eq!(
+        backend_api_error_code(body).as_deref(),
+        Some("FORBIDDEN_PLAN")
+    );
+    assert_eq!(backend_api_error_code(r#"{"errorCode":7}"#), None);
+    assert_eq!(backend_api_error_code(r#"{"error":"x"}"#), None);
+    assert_eq!(backend_api_error_code("Forbidden"), None);
+}
+
+#[test]
 fn backend_api_error_text_extracts_error_and_details_truncated() {
     let body =
         r#"{"success":false,"error":"Bad Request","errorCode":"E","details":["model: unknown"]}"#;
