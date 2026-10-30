@@ -356,6 +356,9 @@ fn is_disk_full_message(lower: &str) -> bool {
     {
         return true;
     }
+    if is_disk_full_os_code(lower, cfg!(windows)) {
+        return true;
+    }
     // Two SQLITE_FULL renderings — see the fifth-shape section above. The
     // **bare** shape lands the phrase as a suffix (after trimming trailing
     // whitespace / punctuation that closures + JSON wrappers append). The
@@ -372,6 +375,56 @@ fn is_disk_full_message(lower: &str) -> bool {
     let extended_local = lower.contains("database or disk is full")
         && lower.contains("insertion failed because database is full");
     (bare_suffix || extended_local) && !lower.contains("backend returned ")
+}
+
+/// Locale-independent disk-full detection on the `std::io::Error` Display
+/// suffix `(os error N)`.
+///
+/// The English-text anchors in [`is_disk_full_message`] miss every
+/// non-English OS: Windows renders `ERROR_DISK_FULL` through `FormatMessageW`
+/// in the user's UI language, e.g. German `"Auf dem Datenträger ist nicht
+/// genügend Speicherplatz vorhanden. (os error 112)"`. That is how Sentry
+/// TAURI-RUST-15PJ (`transcript persistence failed: … (os error 112)`, 2,278
+/// events / 1 user on 0.64.15, GitHub #8508) escaped the `DiskFull` demotion.
+/// Same remedy as the `(os error 665)` precedent
+/// ([`is_windows_file_system_limitation_message`], TAURI-RUST-QT0): anchor on
+/// the numeric suffix, which is identical in every locale.
+///
+/// Errno numbers are platform-specific, so the anchor is gated on the
+/// platform that produced the error (this process — `windows` is
+/// `cfg!(windows)` in production; a parameter so both arms are unit-testable):
+///
+/// - **Windows**: `112` (`ERROR_DISK_FULL`) and `39` (`ERROR_HANDLE_DISK_FULL`).
+///   NOT on unix, where 112 is `EHOSTDOWN` (Linux) and 39 is `ENOTEMPTY`
+///   (Linux) — both genuine, unrelated failures.
+/// - **Unix** (Linux / macOS / BSD): `28` (`ENOSPC`). NOT on Windows, where 28
+///   is `ERROR_OUT_OF_PAPER`.
+///
+/// The closing parenthesis is part of the anchor so `(os error 1120)` /
+/// `(os error 280)` never match. A remote backend body that quotes an errno is
+/// rejected via the `"backend returned "` envelope guard, mirroring the other
+/// local-only disk-full arms.
+fn is_disk_full_os_code(lower: &str, windows: bool) -> bool {
+    if lower.contains("backend returned ") {
+        return false;
+    }
+    if windows {
+        lower.contains("(os error 112)") || lower.contains("(os error 39)")
+    } else {
+        lower.contains("(os error 28)")
+    }
+}
+
+/// Whether `message` is a local host disk-full failure (ENOSPC /
+/// `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` / `ErrorKind::StorageFull` /
+/// `SQLITE_FULL`), in any OS locale.
+///
+/// Same predicate the [`expected_error_kind`] `DiskFull` arm uses, exposed
+/// directly so callers (the chat-error classifier, the `before_send` filter)
+/// can ask the single question without depending on the classifier's arm
+/// order.
+pub fn is_disk_full_error(message: &str) -> bool {
+    is_disk_full_message(&message.to_ascii_lowercase())
 }
 
 /// Detect Windows `ERROR_FILE_SYSTEM_LIMITATION` (os error 665) —

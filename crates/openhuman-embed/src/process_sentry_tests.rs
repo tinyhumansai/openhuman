@@ -23,8 +23,9 @@ fn fixed_user() -> Option<String> {
 fn the_chain_is_the_union_of_both_hosts_with_unique_names() {
     // 19 CLI predicates + 1 shell-only (localhost dev fetch); the shell's other
     // 11 were already in the CLI chain. `is_transient_backend_api_failure` and
-    // its three siblings were one `||` group in both hosts.
-    assert_eq!(NOISE_FILTERS.len(), 21);
+    // its three siblings were one `||` group in both hosts. +1 disk-full
+    // (#8508, TAURI-RUST-15PJ).
+    assert_eq!(NOISE_FILTERS.len(), 22);
     let mut names: Vec<_> = NOISE_FILTERS.iter().map(|(name, _)| *name).collect();
     names.sort_unstable();
     names.dedup();
@@ -57,6 +58,13 @@ fn each_known_noise_class_is_dropped() {
             ),
         ),
         ("fs-limitation", event("write failed (os error 665)", &[])),
+        (
+            "disk-full",
+            event(
+                "transcript persistence failed: No space left on device (os error 28)",
+                &[],
+            ),
+        ),
         (
             "max-iterations",
             event(
