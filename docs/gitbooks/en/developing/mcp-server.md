@@ -168,3 +168,21 @@ The response should include `capabilities.tools` from `initialize` and the tool 
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
 {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.recall",...},{"name":"memory.fetch",...},{"name":"memory.list",...},{"name":"memory.learn",...},{"name":"memory.forget",...}]}}
 ```
+
+## Codex
+
+[Codex](https://github.com/openai/codex) launches stdio MCP servers listed in `~/.codex/config.toml`. Register the core with the CLI:
+
+```bash
+codex mcp add openhuman -- openhuman-core mcp
+```
+
+That writes the same entry you can add by hand:
+
+```toml
+[mcp_servers.openhuman]
+command = "openhuman-core"
+args = ["mcp"]
+```
+
+Use an absolute path for `command` when `openhuman-core` is not on the `PATH` Codex starts with. `codex mcp list` shows the server as `enabled` once it is configured. Codex reads the same workspace as every other MCP client, so its memory writes carry the label derived from its `clientInfo.name` (see [Client provenance](#client-provenance)).
