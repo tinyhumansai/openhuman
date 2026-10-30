@@ -1,6 +1,7 @@
 use super::*;
 use crate::client::classify::{
-    backend_api_body_shape, BACKEND_API_BODY_SHAPE_MAX_BYTES, BACKEND_API_ERROR_BODY_MAX_BYTES,
+    backend_api_body_shape, backend_api_error_code, backend_api_error_text,
+    BACKEND_API_BODY_SHAPE_MAX_BYTES, BACKEND_API_ERROR_BODY_MAX_BYTES,
 };
 use crate::client::{flatten_authed_error, HostedApiError};
 use axum::extract::State;
@@ -393,4 +394,29 @@ async fn non_2xx_error_body_is_truncated_in_the_returned_error() {
         "{}",
         message.len()
     );
+}
+
+#[test]
+fn backend_api_error_code_only_echoes_identifier_like_codes() {
+    let body = r#"{"success":false,"error":"x","errorCode":"INVALID_ARGUMENT"}"#;
+    assert_eq!(
+        backend_api_error_code(body).as_deref(),
+        Some("INVALID_ARGUMENT")
+    );
+    let free_text = r#"{"errorCode":"bad value for jo@example.com"}"#;
+    assert_eq!(backend_api_error_code(free_text), None);
+    assert_eq!(backend_api_error_code("not json"), None);
+}
+
+#[test]
+fn backend_api_error_text_extracts_error_and_details_truncated() {
+    let body =
+        r#"{"success":false,"error":"Bad Request","errorCode":"E","details":["model: unknown"]}"#;
+    let text = backend_api_error_text(body).unwrap();
+    assert!(text.contains("error=Bad Request"), "{text}");
+    assert!(text.contains(r#"details=["model: unknown"]"#), "{text}");
+    let long = format!(r#"{{"error":"{}"}}"#, "a".repeat(2000));
+    assert!(backend_api_error_text(&long).unwrap().len() < 400);
+    assert_eq!(backend_api_error_text(r#"{"success":true}"#), None);
+    assert_eq!(backend_api_error_text("<html>"), None);
 }

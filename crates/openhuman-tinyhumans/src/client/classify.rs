@@ -54,6 +54,56 @@ pub(super) fn backend_api_body_shape(body: &str) -> String {
     }
 }
 
+/// Max bytes of each of the backend's `error` / `details` text echoed by the
+/// opt-in diagnostic log (see [`backend_error_text_logging_enabled`]).
+pub(super) const BACKEND_API_ERROR_TEXT_MAX_BYTES: usize = 300;
+
+/// Env flag that opts in to logging the backend's `error` / `details` text.
+/// Off by default: those values are server-controlled free text and may echo
+/// user content, so they are never put in Sentry reports.
+const LOG_BACKEND_ERROR_TEXT_ENV: &str = "OPENHUMAN_LOG_BACKEND_ERROR_TEXT";
+
+fn backend_error_text_logging_enabled() -> bool {
+    std::env::var(LOG_BACKEND_ERROR_TEXT_ENV)
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// The backend's `errorCode`, only when it is a short ASCII identifier (an
+/// enum-like code such as `INVALID_ARGUMENT`), so it is safe for telemetry.
+pub(super) fn backend_api_error_code(body: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
+    let code = value.get("errorCode")?.as_str()?;
+    is_schema_like_key(code).then(|| code.to_string())
+}
+
+/// The backend's `error` and `details` text (the standard
+/// `{success,error,errorCode,details}` failure envelope), each truncated.
+/// Contains server-controlled values: for the opt-in local log only.
+pub(super) fn backend_api_error_text(body: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
+    let render = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let mut parts = Vec::new();
+    for key in ["error", "details"] {
+        if let Some(v) = value.get(key).filter(|v| !v.is_null()) {
+            let text = render(v);
+            parts.push(format!(
+                "{key}={}",
+                truncate_at_byte_boundary(&text, BACKEND_API_ERROR_TEXT_MAX_BYTES)
+            ));
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
 /// A JSON key safe to echo into telemetry: a short ASCII identifier.
 fn is_schema_like_key(key: &str) -> bool {
     const MAX_KEY_LEN: usize = 40;
@@ -238,13 +288,29 @@ impl BackendClient {
             let host = url.host_str().unwrap_or("");
             let body_shape = backend_api_body_shape(&text);
             let status_str = status_code.to_string();
+            let error_code = backend_api_error_code(&text)
+                .map(|c| format!("; error_code={c}"))
+                .unwrap_or_default();
+            if backend_error_text_logging_enabled() {
+                if let Some(detail) = backend_api_error_text(&text) {
+                    tracing::debug!(
+                        method = method.as_str(),
+                        path = url.path(),
+                        status = status_code,
+                        "[backend_api] {} {} failed ({status}): {detail}",
+                        method.as_str(),
+                        url.path(),
+                    );
+                }
+            }
             report_error(
                 format!(
-                    "{} {} failed ({status}); response_body_len={}; body_shape={}",
+                    "{} {} failed ({status}); response_body_len={}; body_shape={}{}",
                     method.as_str(),
                     url.path(),
                     text.len(),
                     body_shape,
+                    error_code,
                 )
                 .as_str(),
                 "backend_api",
