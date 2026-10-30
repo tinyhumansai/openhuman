@@ -265,7 +265,10 @@ export function AppShellDesktop() {
 
   return (
     <SidebarSlotProvider>
-      <div className="relative h-screen flex flex-col overflow-hidden">
+      <div
+        data-app-focus-fallback
+        tabIndex={-1}
+        className="relative h-screen flex flex-col overflow-hidden">
         <AppBackground />
         <div className="relative z-10 flex-1 min-h-0 flex flex-col overflow-hidden">
           {chromeless ? (
