@@ -132,6 +132,8 @@ mod error_classification_provider;
 mod error_classification_session;
 #[path = "observability_error_classification_user_state_tests.rs"]
 mod error_classification_user_state;
+#[path = "observability_error_classification_voice_provider_tests.rs"]
+mod error_classification_voice_provider;
 
 /// Log output of `f` under a plain fmt subscriber.
 fn captured_logs(f: impl FnOnce()) -> String {

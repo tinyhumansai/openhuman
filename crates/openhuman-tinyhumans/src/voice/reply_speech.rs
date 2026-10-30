@@ -192,7 +192,10 @@ pub async fn synthesize_reply(
             Some(Value::Object(body)),
         )
         .await
-        .map_err(flatten_authed_error)?;
+        .map_err(flatten_authed_error)
+        // Known upstream ElevenLabs account/key problems become an actionable
+        // user-facing message (TAURI-RUST-15BM); other errors pass through.
+        .map_err(openhuman_embed::__host::core::observability::map_voice_provider_error)?;
 
     let result = normalize_response(&raw);
     debug!(

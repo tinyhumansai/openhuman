@@ -1,4 +1,3 @@
-
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     let lower = message.to_ascii_lowercase();
     // Explicit host ownership/reportability metadata precedes text heuristics.
@@ -61,6 +60,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // ordering here is for clarity rather than precedence.
     if is_wallet_not_configured_message(&lower) {
         return Some(ExpectedErrorKind::WalletNotConfigured);
+    }
+    // TAURI-RUST-15BM / -15CT / -1635 — ElevenLabs account payment failure or a
+    // key ID pasted as the API key (upstream/user config, not a code defect).
+    // Checked early: the wrapped body carries `401` / `400` tokens that the
+    // broader matchers below would otherwise claim with a less specific kind.
+    // See `observability_voice_provider_errors.rs`.
+    if is_voice_provider_user_state_message(message) {
+        return Some(ExpectedErrorKind::ProviderUserState);
     }
     // TAURI-RUST-117K et al. — see `ExpectedErrorKind::ModuleUnavailable`.
     if is_module_unavailable_message(message) {
