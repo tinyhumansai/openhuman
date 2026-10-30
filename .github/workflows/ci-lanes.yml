@@ -270,7 +270,9 @@ jobs:
     needs: plan
     if: inputs.profile == 'hosted' && fromJSON(needs.plan.outputs.matrix).include[0] != null
     runs-on: ubuntu-22.04
-    timeout-minutes: 100
+    # A cold coverage build can exceed the generic lane limit. Each shard
+    # retains its full subsystem test suite and independent failure reporting.
+    timeout-minutes: ${{ startsWith(matrix.group, 'rust-cov-') && 180 || 100 }}
     container:
       # Empty for the pester group: pwsh ships on the bare runner image.
       image: ${{ matrix.container }}
@@ -326,19 +328,31 @@ jobs:
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
 
+      - name: Preflight pinned Rust toolchain before parallel lanes
+        # Rust 1.99.1 may be absent in cold containers. Installing components
+        # concurrently from separate lane workers corrupts shared RUSTUP_HOME.
+        # Prime cargo, rustfmt and clippy in a single sequential action.
+        if: matrix.container != '' && matrix.group != 'pester'
+        run: |
+          set -euo pipefail
+          cargo --version
+          rustc --version
+          cargo fmt --version
+          cargo clippy --version
+
       - name: Cache Rust build artifacts
-        if: matrix.group == 'rust-lint' || matrix.group == 'rust-cov' || matrix.group == 'tauri' || matrix.group == 'storage'
+        if: matrix.group == 'rust-lint' || startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri' || matrix.group == 'storage'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
             crates/openhuman-app -> target
-          cache-on-failure: ${{ matrix.group != 'rust-cov' }}
+          cache-on-failure: ${{ !startsWith(matrix.group, 'rust-cov-') }}
           shared-key: ci-fast-${{ matrix.group }}
 
       - name: Prune stale coverage test executables
         # Instrumented test binaries in a restored cache can exhaust the disk.
-        if: matrix.group == 'rust-cov'
+        if: startsWith(matrix.group, 'rust-cov-')
         run: find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
 
       - name: Cache pnpm store
@@ -351,8 +365,12 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Install cargo-llvm-cov
-        if: matrix.group == 'rust-cov' || matrix.group == 'tauri'
+        if: startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri'
         uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install cargo-nextest for isolated core tests
+        if: matrix.group == 'rust-cov-core'
+        uses: taiki-e/install-action@cargo-nextest
 
       # One step per lane: `Start lanes` launches every lane in the background
       # (they still run in parallel); each `Lane:` step streams its own lane's
@@ -392,9 +410,17 @@ jobs:
         if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'frontend-tests') }}
         run: node scripts/ci/self-hosted/lanes.mjs --wait frontend-tests
 
-      - name: "Lane: Rust core coverage"
-        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-cov') }}
-        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-cov
+      - name: "Lane: Rust library coverage"
+        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-cov-core') }}
+        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-cov-core
+
+      - name: "Lane: Rust facade coverage"
+        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-cov-facades') }}
+        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-cov-facades
+
+      - name: "Lane: Rust integration coverage"
+        if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-cov-integrations') }}
+        run: node scripts/ci/self-hosted/lanes.mjs --wait rust-cov-integrations
 
       - name: "Lane: Rust lint + crate tests"
         if: ${{ !cancelled() && contains(fromJSON(steps.lanes.outputs.lanes || '[]'), 'rust-lint') }}
@@ -418,7 +444,7 @@ jobs:
         run: node scripts/ci/self-hosted/lanes.mjs --wait-all
 
       - name: Prune coverage test executables before cache save
-        if: always() && matrix.group == 'rust-cov'
+        if: always() && startsWith(matrix.group, 'rust-cov-')
         run: find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
 
       - name: Upload lane logs, timings and coverage
@@ -474,6 +500,18 @@ jobs:
         with:
           path: ci-artifacts
           pattern: ci-out-*
+
+      - name: Assert whole-tree Rust coverage from all three shards
+        if: needs.plan.outputs['rust-core'] == 'true' || needs.plan.outputs.storage == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t reports < <(find ci-artifacts -type f -name 'lcov-core-*.info' | sort)
+          if [ "${#reports[@]}" -ne 3 ]; then
+            echo "::error::Expected all 3 Rust coverage shards; found ${#reports[@]}."
+            exit 1
+          fi
+          cat "${reports[@]}" > merged-rust-core.info
+          bash scripts/ci/assert-coverage-presence.sh merged-rust-core.info --all
 
       - name: Enforce >= 80% coverage on changed lines
         if: needs.plan.outputs.coverage == 'true'

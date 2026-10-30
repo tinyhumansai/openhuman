@@ -94,7 +94,7 @@ test("Rust coverage installs the mock backend dependencies without a frontend ar
     });
     const selected = selectLanes(
       plan,
-      profile === "ex63" ? ["frontend", "rust-cov"] : ["rust-cov"],
+      profile === "ex63" ? ["frontend", "rust-cov"] : ["rust-cov-core", "rust-cov-facades", "rust-cov-integrations"],
     );
     assert.deepEqual(validatePlan(selected), []);
     const checks = selected.lanes.flatMap((lane) => lane.checks);
@@ -123,15 +123,16 @@ test("commands are static: no suite is ever narrowed to the diff", () => {
   }
 });
 
-test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner", () => {
+test("ex63 and hosted core run isolated Nextest tests while hosted facades remain cargo", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
-      .find((l) => l.name === "rust-cov")
+      .find((l) => l.name === (plan.profile === "ex63" ? "rust-cov" : "rust-cov-core"))
       .checks.find((c) => c.name === "rust-core-coverage");
-    assert.equal(
-      cov.env.OH_COV_RUNNER,
-      plan.profile === "ex63" ? "nextest" : undefined,
-    );
+    assert.equal(cov.env.OH_COV_RUNNER, "nextest");
+    if (plan.profile === "hosted") {
+      const facade = plan.lanes.find((lane) => lane.name === "rust-cov-facades");
+      assert.equal(facade.checks.find((check) => check.name === "rust-core-coverage").env.OH_COV_RUNNER, undefined);
+    }
   }
   assert.match(
     fs.readFileSync(path.join(repoRoot, ".config/nextest.toml"), "utf8"),
@@ -139,8 +140,7 @@ test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner
   );
 });
 
-test("a core-only or storage-only change still installs the node deps rust-core-coverage's mock backend imports", () => {
-  // Both areas arm rust-core-coverage, so both must arm the install it needs.
+test("core and storage changes install isolated coverage fixtures for every hosted shard", () => {
   for (const [area, only] of [
     ["core", { ...NONE, rustCore: true }],
     ["storage", { ...NONE, storage: true }],
@@ -151,25 +151,30 @@ test("a core-only or storage-only change still installs the node deps rust-core-
     ]) {
       const label = `${area}/${plan.profile}`;
       const checks = new Map(
-        plan.lanes.flatMap((l) =>
-          l.checks.map((c) => [`${l.name}:${c.name}`, c]),
+        plan.lanes.flatMap((lane) =>
+          lane.checks.map((check) => [`${lane.name}:${check.name}`, check]),
         ),
       );
-      const cov = checks.get("rust-cov:rust-core-coverage");
-      assert.equal(cov.when, true, `${label}: rust-core-coverage runs`);
-      const install = cov.needs
-        .map((n) => checks.get(n.includes(":") ? n : `rust-cov:${n}`))
-        .find((c) => c.run === "pnpm install --frozen-lockfile");
-      assert.ok(install, `${label}: rust-core-coverage needs a pnpm install`);
-      assert.equal(install.when, true, `${label}: that install runs`);
-      // Exactly one install per profile: ex63 lanes share one checkout.
+      const groups =
+        plan.profile === "ex63"
+          ? ["rust-cov"]
+          : ["rust-cov-core", "rust-cov-facades", "rust-cov-integrations"];
+      for (const group of groups) {
+        const cov = checks.get(`${group}:rust-core-coverage`);
+        assert.equal(cov?.when, true, `${label}/${group} coverage runs`);
+        const install = cov.needs
+          .map((need) => checks.get(need.includes(":") ? need : `${group}:${need}`))
+          .find((check) => check?.run === "pnpm install --frozen-lockfile");
+        assert.ok(install?.when, `${label}/${group} needs a node dependency install`);
+        assert.ok(checks.get(`${group}:test-modules`)?.when);
+      }
       const installs = [...checks.values()].filter(
-        (c) => c.when && c.run === "pnpm install --frozen-lockfile",
+        (check) => check.when && check.run === "pnpm install --frozen-lockfile",
       );
-      assert.equal(installs.length, 1, label);
+      assert.equal(installs.length, plan.profile === "ex63" ? 1 : 3, label);
     }
     const hosted = buildPlan({ profile: "hosted", areas: only });
-    const sub = selectLanes(hosted, ["rust-cov"]);
+    const sub = selectLanes(hosted, ["rust-cov-core", "rust-cov-facades", "rust-cov-integrations"]);
     assert.deepEqual(validatePlan(sub), []);
     assert.deepEqual(orderProblems(sub), []);
   }
@@ -178,7 +183,7 @@ test("a core-only or storage-only change still installs the node deps rust-core-
 test("core doctests remain outside PR coverage; embed doctests and tui tests run on PRs", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
-      .find((l) => l.name === "rust-cov")
+      .find((l) => l.name === (plan.profile === "ex63" ? "rust-cov" : "rust-cov-core"))
       .checks.find((c) => c.name === "rust-core-coverage");
     assert.equal(cov.env.OH_COV_DOCTESTS, "0");
     assert.equal(cov.env.OH_COV_TUI, "1");
@@ -270,44 +275,42 @@ test("untouched areas leave only the always-on gates", () => {
   );
 });
 
-test("the storage area arms the core coverage lane, which covers every storage driver", () => {
+test("a storage-only change runs every Rust coverage shard and no unrelated build", () => {
   for (const profile of ["hosted", "ex63"]) {
     const plan = buildPlan({
       profile,
       areas: { ...NONE, storage: true },
       env: profile === "ex63" ? EX63_ENV : {},
     });
-    const on = plan.lanes.flatMap((l) =>
-      l.checks.filter((c) => c.when).map((c) => `${l.name}:${c.name}`),
+    const enabled = plan.lanes.flatMap((lane) =>
+      lane.checks.filter((check) => check.when).map((check) => `${lane.name}:${check.name}`),
     );
-    // The storage area arms the core coverage suite and nothing else outside
-    // the always-on gates: there is no separate driver build of the core.
+    const groupNames =
+      profile === "ex63"
+        ? ["rust-cov"]
+        : ["rust-cov-core", "rust-cov-facades", "rust-cov-integrations"];
+    const expected = groupNames.flatMap((name) => [
+      `${name}:test-modules`,
+      `${name}:rust-core-coverage`,
+    ]);
+    if (profile === "ex63") expected.push("rust-cov:prune-coverage-binaries");
     assert.deepEqual(
-      on.filter((id) => !id.startsWith("static:") && !id.endsWith("pnpm-install")),
-      [
-        "rust-cov:test-modules",
-        "rust-cov:rust-core-coverage",
-        // ex63 frees the shared scratch disk once the core lcov is written.
-        ...(profile === "ex63" ? ["rust-cov:prune-coverage-binaries"] : []),
-      ],
-      profile,
+      enabled.filter((id) => !id.startsWith("static:") && !id.endsWith("pnpm-install")),
+      expected,
     );
-    assert.equal(
-      plan.lanes.some((l) => l.name === "storage-drivers"),
-      false,
-      profile,
-    );
-
+    assert.equal(plan.lanes.some((lane) => lane.name === "storage-drivers"), false);
     if (profile === "hosted") {
       assert.deepEqual(
-        hostedMatrix(plan).map((g) => g.group),
-        ["checks", "rust-cov"],
+        hostedMatrix(plan).map((group) => group.group),
+        ["checks", ...groupNames],
       );
     }
   }
-  // Without the area (or a core change) the coverage lane stays off.
   const off = buildPlan({ profile: "hosted", areas: NONE });
-  assert.equal(off.lanes.find((l) => l.name === "rust-cov").active, false);
+  assert.equal(
+    off.lanes.filter((lane) => lane.name.startsWith("rust-cov-")).some((lane) => lane.active),
+    false,
+  );
 });
 
 test("ex63 prunes core coverage executables with no needs, after the core suite", () => {
@@ -339,7 +342,7 @@ test("hosted matrix only spins up groups with active lanes", () => {
   );
   assert.deepEqual(
     core.map((g) => g.group),
-    ["checks", "rust-lint", "rust-cov"],
+    ["checks", "rust-lint", "rust-cov-core", "rust-cov-facades", "rust-cov-integrations"],
   );
   const pester = hostedMatrix(
     buildPlan({ profile: "hosted", areas: { ...NONE, installPs1: true } }),
@@ -1121,7 +1124,7 @@ test("private ordinary Rust builds keep line tables while coverage and hosted pr
   for (const plan of plans()) {
     for (const lane of plan.lanes.filter((lane) => lane.heavy != null)) {
       const expected =
-        lane.name === "rust-cov"
+        lane.name.startsWith("rust-cov")
           ? "0"
           : plan.profile === "ex63"
             ? "line-tables-only"

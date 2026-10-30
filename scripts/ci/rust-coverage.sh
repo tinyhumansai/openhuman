@@ -9,6 +9,15 @@ set -euo pipefail
 OUT="${OUT:-lcov-core.info}"
 PRODUCT_FEATURES="$(bash scripts/ci/product-features.sh)"
 CORE_PRODUCT_FEATURES="$(bash scripts/ci/product-features.sh --core)"
+# Split only hosted coverage; EX63 and local calls remain whole-suite by default.
+COV_SHARD="${OH_COV_SHARD:-full}"
+case "$COV_SHARD" in
+  full | core | facades | integrations) ;;
+  *) echo "::error::Unknown Rust coverage shard: $COV_SHARD" >&2; exit 2 ;;
+esac
+has_cov_section() {
+  [ "$COV_SHARD" = full ] || [ "$COV_SHARD" = "$1" ]
+}
 
 # Sandboxed acting-tool tests deliberately do not forward RUSTUP_HOME. The
 # container installs Rust outside HOME, so its rustup proxy otherwise tries
@@ -236,9 +245,10 @@ run_integration_target() {
       suite "${target}::${module}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
         --test "${target}" -- "${module}::"
     done < <(in_process_modules)
-  elif [ "${target}" = "mcp_registry_multi_server" ]; then
-    # Its cases share TinyMCP's process-wide module client; keep them serial,
-    # as scripts/test-rust-with-mock.sh does.
+  elif [ "${target}" = "mcp_registry_multi_server" ] || [ "${target}" = "agent_harness_e2e" ]; then
+    # TinyMCP registry and agent harness suites share process-global runtime
+    # and module state within each integration-test binary. Run all tests
+    # serially without filtering any cases or relaxing coverage requirements.
     suite "${target}" llvm_cov --no-report --no-fail-fast -p openhuman-cli \
       --test "${target}" -- --test-threads=1
   elif [[ "${target}" =~ ^json_rpc_.*_e2e$ ]]; then
@@ -312,7 +322,7 @@ trap preserve_coverage EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
+if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ] && [ "$COV_SHARD" = full ]; then
   # The core, embed, tinyhumans and cli suites are one nextest run: one build
   # of the product graph and one test run over the union of their filters.
   # Run as four invocations with the same arguments, Cargo still rebuilt most
@@ -353,22 +363,33 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   suite "openhuman product suites (nextest)" llvm_cov --no-report --no-fail-fast \
     "${UNIFIED_PRODUCT_ARGS[@]}" -E "${FILTER_PRODUCT}"
 else
-  # Keep the aggregate unit-test process aligned with the canonical Rust runner.
-  # The isolated reaper test installs one-shot process globals, so it cannot run
-  # in the same process as the rest of the library tests.
-  suite "openhuman lib+bins" llvm_cov --no-report --no-fail-fast -p openhuman --lib --bins -- \
-    --test-threads=1 \
-    --skip a_build_only_runtime_is_swept_before_it_can_be_invoked
-
-  log "running isolated build-only reaper test"
-  run_build_only_reaper_test
+  if has_cov_section core; then
+    if [ "${OH_COV_RUNNER:-cargo}" = nextest ]; then
+      # Hosted core tests run in isolated Nextest processes, preventing
+      # ambient/thread-local registry contamination across unit cases.
+      suite "openhuman lib+bins (nextest)" llvm_cov --no-report --no-fail-fast \
+        -p openhuman --lib --bins
+    else
+      # Preserve the historical whole-suite runner for local/full invocations.
+      suite "openhuman lib+bins" llvm_cov --no-report --no-fail-fast -p openhuman --lib --bins -- \
+        --test-threads=1 \
+        --skip a_build_only_runtime_is_swept_before_it_can_be_invoked
+      log "running isolated build-only reaper test"
+      run_build_only_reaper_test
+    fi
+  fi
 fi
 
 # Run every root-workspace Rust support crate rather than only crates named by
 # changed paths. Product features are forwarded to the embedding facade; the
 # remaining crates do not expose that feature vocabulary.
+if has_cov_section facades; then
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
-  suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
+  # The embed facade admits one live runtime process-wide. Its cleanup and
+  # build-ownership tests cannot claim that singleton concurrently within one
+  # libtest binary; execute every case serially, without filtering or skipping.
+  suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets -- \
+    --test-threads=1
 fi
 suite "openhuman-rpc" llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets \
   --features storage-sqlite,secret-file
@@ -394,8 +415,9 @@ if [ "${OH_COV_TUI:-1}" = "1" ]; then
 else
   log "skipping openhuman-tui (OH_COV_TUI=${OH_COV_TUI})"
 fi
+fi # facades
 
-if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
+if has_cov_section integrations && [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   # The nextest runner ran the integration targets with the product suites.
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
@@ -408,12 +430,14 @@ fi
 # complete Rust test suite and must run whenever the Rust-core area changes.
 # They compile their own uninstrumented core, so a caller that runs them in a
 # parallel lane instead (CI Fast on the EX63) sets OH_COV_DOCTESTS=0.
+if has_cov_section core; then
 if [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
   suite "openhuman doctests" bash scripts/ci-cancel-aware.sh cargo test -p openhuman \
     --doc --features "${CORE_PRODUCT_FEATURES}"
 else
   log "skipping doctests (OH_COV_DOCTESTS=${OH_COV_DOCTESTS}); the caller runs them"
 fi
+fi # core
 
 log "merging coverage into ${OUT}"
 suite "lcov report" llvm_cov report --lcov --output-path "${OUT}"
@@ -425,8 +449,14 @@ COVERAGE_REPORTED=1
 presence_skip=""
 [ "${OH_COV_TUI:-1}" = "1" ] || presence_skip="crates/openhuman-tui/src/"
 [ -z "${presence_skip}" ] || log "coverage presence: not checking ${presence_skip} (suite skipped)"
-suite "coverage presence" env COVERAGE_PRESENCE_SKIP_PREFIXES="${presence_skip}" \
-  bash scripts/ci/assert-coverage-presence.sh "${OUT}" --all
+if [ "$COV_SHARD" = full ]; then
+  suite "coverage presence" env COVERAGE_PRESENCE_SKIP_PREFIXES="${presence_skip}" \
+    bash scripts/ci/assert-coverage-presence.sh "${OUT}" --all
+else
+  # Each shard covers only part of the tree. The hosted gate requires three
+  # reports and enforces the same original whole-tree --all presence check.
+  log "whole-tree coverage presence deferred to the hosted aggregate gate"
+fi
 
 if [ "${#FAILED_SUITES[@]}" -gt 0 ]; then
   log "${#FAILED_SUITES[@]} suite(s) failed:"

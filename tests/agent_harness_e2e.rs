@@ -1950,10 +1950,9 @@ async fn delegated_background_task_completion_flow_inner() {
             }),
         ),
         text_completion("Handed that to the task manager."),
-        text_completion(
-            "Best-effort task-source setup completed using the default API version. TASK_MANAGER_RESULT_CANARY",
-        ),
-        text_completion("The task manager completed its best-effort setup: TASK_MANAGER_RESULT_CANARY."),
+        text_completion("The task manager will ask for any missing detail."),
+        text_completion("Missing detail: WHICH_VERSION_CANARY?"),
+        text_completion("The task manager needs one detail: WHICH_VERSION_CANARY?"),
         text_completion("Final: ANSWER_CANARY_V2"),
     ]);
     serialize_children_after_parent(2, 1);
@@ -1998,7 +1997,7 @@ async fn delegated_background_task_completion_flow_inner() {
 
     // ── the child's result reaches the parent's thread ──
     // The delivery turn is host-authored (no web client waits on it), so wait for
-    // the script to drain until only turn 2's response remains.
+    // the script to drain: the relay is the fifth completion consumed.
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     loop {
         let consumed_all_but_last = with_scripted(|q| q.len()) <= 1;
@@ -2029,10 +2028,19 @@ async fn delegated_background_task_completion_flow_inner() {
             ["messages"]
             .as_array()
             .expect("thread message list");
-        if messages
-            .iter()
-            .any(|message| message.to_string().contains("TASK_MANAGER_RESULT_CANARY"))
-        {
+        // Verify the durable background-delivery reply, not an earlier
+        // parent/child message. The scripted child relays WHICH_VERSION_CANARY;
+        // it never emits the obsolete TASK_MANAGER_RESULT_CANARY sentinel.
+        if messages.iter().any(|message| {
+            message
+                .pointer("/extraMetadata/scope")
+                .and_then(Value::as_str)
+                == Some("background_delivery")
+                && message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|content| content.contains("WHICH_VERSION_CANARY"))
+        }) {
             break;
         }
         assert!(
@@ -2075,52 +2083,87 @@ async fn delegated_background_task_completion_flow_inner() {
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
     assert!(
-        requests.len() >= 5,
-        "expected ≥5 upstream requests (spawn, ack, child, delivery, turn-2), got {};\n\
+        requests.len() >= 6,
+        "expected ≥6 upstream requests (spawn, ack, verification, child result, relay, turn-2), got {};\n\
          all requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // Find the specialist by its own system prompt rather than assuming the
-    // parent's acknowledgement and child request always occupy fixed slots.
-    let child_index = requests.iter().position(|request| {
+    // Verify the *actor* and the durable result, not fixed FIFO indices.
+    // The host may issue a verification/nudge request between asynchronous
+    // child and delivery turns; that does not change which agent ran.
+    let task_manager_prompt = "You own the user's task-source feeds and artifacts";
+    let child_request = requests.iter().find(|request| {
         request
-            .to_string()
-            .contains("You own the user's task-source feeds and artifacts")
+            .pointer("/body/messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| {
+                messages.iter().any(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("system")
+                        && message
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .is_some_and(|content| content.contains(task_manager_prompt))
+                })
+            })
     });
-    let child_index = child_index.expect("the task_manager_agent made its own model request");
-    let child_request = requests[child_index].to_string();
+    let child_request = child_request.unwrap_or_else(|| {
+        panic!(
+            "no task_manager_agent model request was observed; requests: {}",
+            serde_json::to_string_pretty(&requests).unwrap_or_default()
+        )
+    });
     assert!(
-        child_request.contains("Do not call ask_user_clarification"),
-        "the background task request did not carry the no-clarification contract: {child_request}"
+        child_request
+            .to_string()
+            .contains("Do not call ask_user_clarification"),
+        "the background child must not request interactive user attention"
     );
 
-    // A later parent request sees the host-authored result, regardless of
-    // whether an unrelated parent inference entered the capture first.
-    let delivery_request = requests
+    // Locate the *second user turn* structurally. A later verification nudge
+    // or background delivery may add provider calls after the user's answer,
+    // so the last captured request is not necessarily the turn-2 request.
+    let is_turn_two = |request: &Value| {
+        request
+            .pointer("/body/messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| {
+                messages.iter().any(|message| {
+                    message.get("role").and_then(Value::as_str) == Some("user")
+                        && message
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .is_some_and(|content| content.trim_end().ends_with("version 2"))
+                })
+            })
+    };
+    let turn2_request = requests
         .iter()
-        .skip(child_index + 1)
-        .find(|request| request.to_string().contains("TASK_MANAGER_RESULT_CANARY"))
-        .map(Value::to_string)
-        .unwrap_or_default();
+        .find(|request| is_turn_two(request))
+        .unwrap_or_else(|| {
+            panic!(
+                "no second user turn reached the model; requests: {}",
+                serde_json::to_string_pretty(&requests).unwrap_or_default()
+            )
+        });
+
+    // The completed child reply must reach a separate orchestrator relay,
+    // rather than merely appear in the child's own provider history.
     assert!(
-        !delivery_request.is_empty(),
-        "no parent request carried the child's result: {requests:#?}"
+        requests.iter().any(|request| {
+            !is_turn_two(request)
+                && body_is_orchestrator(&request["body"])
+                && request.to_string().contains("WHICH_VERSION_CANARY")
+        }),
+        "no orchestrator relay carried the background child's missing-detail result"
     );
 
-    // The turn-2 request must still hold the child result: the delivery was
-    // persisted in thread history. Scoped to the last request because request[3]
-    // also carries the canary, so an `any()` would pass without persistence.
-    let turn2_contains_result = requests
-        .last()
-        .map(|request| request.to_string().contains("TASK_MANAGER_RESULT_CANARY"))
-        .unwrap_or(false);
+    // The turn-2 model context must include the persisted child result, not
+    // the obsolete TASK_MANAGER_RESULT_CANARY string used by an old fixture.
     assert!(
-        turn2_contains_result,
-        "TASK_MANAGER_RESULT_CANARY not found in the turn-2 request — the child result \
-         was not persisted in thread history; requests: {}",
-        serde_json::to_string_pretty(&requests).unwrap_or_default()
+        turn2_request.to_string().contains("WHICH_VERSION_CANARY"),
+        "the persisted background child result was missing from the resumed turn"
     );
 
     stack.shutdown();
@@ -3754,7 +3797,11 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
             json!({ "agent_id": "skill_setup", "prompt": "Install the harness registry skill" }),
         ),
         text_completion("Handed the install to the skill specialist."),
-        // skill_setup finds the entry, then installs it (the gate parks here).
+        // The barrier waits for two parent responses before dispatching the
+        // child's first model response. Keep the CHILD's registry calls in
+        // those next slots: otherwise the child consumes the extra parent
+        // acknowledgement and exits, while the parent later issues the
+        // registry calls against its narrower (correctly denied) tool belt.
         tool_call_completion(
             "skill_registry_search",
             json!({ "query": "harness-registry" }),
@@ -3763,10 +3810,12 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
             "skill_registry_install",
             json!({ "entry_id": REGISTRY_SKILL_ID }),
         ),
+        // The install writes state; the child reports success only after
+        // installation has passed the approval gate.
         text_completion("Installed the skill."),
-        // The delivery turn: the child's result reaches the orchestrator, which
-        // answers. (The `workflows` pack is closed to it while it can hand off
-        // to `workflow_builder`, so it does not load the skill itself.)
+        // The background delivery turn runs on the parent after three child
+        // completions. Keep the remaining parent follow-ups after that fence.
+        text_completion("The skill specialist owns the install and will report its result."),
         text_completion("The skill is installed."),
     ]);
     serialize_children_after_parent(2, 3);
