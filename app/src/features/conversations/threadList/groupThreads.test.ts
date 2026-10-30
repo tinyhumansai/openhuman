@@ -67,6 +67,81 @@ describe('groupThreads', () => {
     expect(groups).toEqual([{ key: 'pinned', threads: [expect.objectContaining({ id: 'a' })] }]);
   });
 
+  it('does not merge project directories sharing a basename', () => {
+    const groups = groupThreads(
+      [
+        { ...thread('project-a', daysAgo(4)), actionDir: '/work/alpha/repo' },
+        { ...thread('project-b', daysAgo(0)), actionDir: '/work/beta/repo' },
+        { ...thread('project-a2', daysAgo(1)), actionDir: '/work/alpha/repo/' },
+        thread('general', daysAgo(0)),
+      ],
+      NOW
+    );
+
+    expect(groups.map(group => group.key)).toEqual([
+      'project:/work/alpha/repo',
+      'project:/work/beta/repo',
+      'today',
+    ]);
+    expect(groups.map(group => group.label)).toEqual(['repo', 'repo', undefined]);
+    expect(groups.map(group => group.threads.map(row => row.id))).toEqual([
+      ['project-a', 'project-a2'],
+      ['project-b'],
+      ['general'],
+    ]);
+  });
+
+  it('normalizes Windows project spelling but preserves case-sensitive Unix paths', () => {
+    const groups = groupThreads(
+      [
+        { ...thread('windows-a', NOW), actionDir: 'C:\\Work\\Repo\\' },
+        { ...thread('windows-b', NOW), actionDir: 'c:/work/repo' },
+        { ...thread('unix-a', NOW), actionDir: '/work/Repo' },
+        { ...thread('unix-b', NOW), actionDir: '/work/repo' },
+      ],
+      NOW
+    );
+
+    expect(groups.map(group => group.key)).toEqual([
+      'project:/work/Repo',
+      'project:/work/repo',
+      'project:c:\\work\\repo',
+    ]);
+    const windows = groups.find(group => group.key === 'project:c:\\work\\repo');
+    expect(windows?.threads.map(row => row.id)).toEqual(['windows-a', 'windows-b']);
+  });
+
+  it('preserves literal backslashes in Unix directory identities and labels', () => {
+    const groups = groupThreads(
+      [
+        { ...thread('plain', NOW), actionDir: '/work/repo' },
+        { ...thread('backslash', NOW), actionDir: '/work/repo\\\\' },
+      ],
+      NOW
+    );
+    expect(groups).toHaveLength(2);
+    expect(groups.map(group => group.key)).toEqual(['project:/work/repo', 'project:/work/repo\\\\']);
+    expect(groups.map(group => group.label)).toEqual(['repo', 'repo\\\\']);
+  });
+
+  it('retains pinned-first semantics and keeps blank project paths in recency', () => {
+    const groups = groupThreads(
+      [
+        { ...thread('unpinned-project', daysAgo(1)), actionDir: '/work/code' },
+        { ...thread('pinned', daysAgo(8), [PINNED_THREAD_LABEL]), actionDir: '/work/code' },
+        { ...thread('blank', daysAgo(0)), actionDir: '   ' },
+      ],
+      NOW
+    );
+
+    const groupsAndThreads = groups.map(group => [group.key, group.threads.map(row => row.id)]);
+    expect(groupsAndThreads).toEqual([
+      ['pinned', ['pinned']],
+      ['project:/work/code', ['unpinned-project']],
+      ['today', ['blank']],
+    ]);
+  });
+
   it('returns no sections for no threads', () => {
     expect(groupThreads([], NOW)).toEqual([]);
   });
