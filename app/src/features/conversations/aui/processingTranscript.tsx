@@ -181,6 +181,7 @@ function ToolRow({ entry }: { entry: ToolTimelineEntry }) {
                 toolName={entry.name}
                 target={detail ?? title}
                 failure={entry.failure}
+                diagnostic={entry.result}
               />
             </span>
           ) : null}

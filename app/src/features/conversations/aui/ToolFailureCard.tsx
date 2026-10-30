@@ -22,7 +22,6 @@ const LOCALIZED_FAILURE_CLASSES: ReadonlySet<string> = new Set([
   'approvalExpired',
   'notFound',
   'unsupported',
-  'unknown',
 ]);
 
 /** Lowercase the first character: `MissingPermission` → `missingPermission`. */
@@ -35,9 +34,8 @@ function toCamelClass(cls: string): string {
  * instead of the inline `ToolFailureLines` text it replaces.
  *
  * There is no retry telemetry for an arbitrary OpenHuman tool (the core does
- * not report an attempt count), so `attempt`/`maxAttempts` are always `1/1`
- * and `onRetry`/`onSkip` are omitted — the element disables both buttons in
- * that case, same as it already does for a caller with no `onSkip`. Retrying a
+ * not report an attempt count), so counters and Retry/Skip actions are omitted.
+ * Retrying a
  * tool call is a re-send of the same turn, which belongs to whatever surface
  * offers "Try again" today (`aiRegenerate`), not to this card.
  */
@@ -45,18 +43,24 @@ export function ToolFailureCard({
   toolName,
   target,
   failure,
+  diagnostic,
 }: {
   toolName: string;
   /** Short context for the call, e.g. the server's display detail. Falls back to the failure class. */
   target?: string;
   failure: ToolFailureExplanation;
+  /** Existing tool output, used when an unclassified failure has no useful summary. */
+  diagnostic?: string;
 }) {
   const { t } = useT();
   const camel = toCamelClass(failure.class);
-  const known = LOCALIZED_FAILURE_CLASSES.has(camel);
-  const cause = known
-    ? t(`conversations.toolFailure.${camel}.cause`, failure.causePlain)
-    : failure.causePlain;
+  const known = LOCALIZED_FAILURE_CLASSES.has(camel) || camel === 'unknown';
+  const cause =
+    camel === 'unknown' && diagnostic?.trim()
+      ? diagnostic.trim().split('\n').slice(0, 3).join('\n').slice(0, 360)
+      : known
+        ? t(`conversations.toolFailure.${camel}.cause`, failure.causePlain)
+        : failure.causePlain;
   const next = known
     ? t(`conversations.toolFailure.${camel}.next`, failure.nextAction)
     : failure.nextAction;
@@ -66,10 +70,10 @@ export function ToolFailureCard({
     <ToolError
       data-testid="assistant-ui-tool-failure"
       name={toolName}
-      target={target ?? failure.class}
+      target={
+        target ?? (camel === 'unknown' ? t('conversations.tools.status.failed') : failure.class)
+      }
       message={`${why}: ${cause} ${nextLabel}: ${next}`}
-      attempt={1}
-      maxAttempts={1}
       retrying={false}
     />
   );

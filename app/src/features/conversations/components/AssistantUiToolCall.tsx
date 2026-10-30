@@ -240,6 +240,7 @@ export function AssistantUiToolCallCard({
                 toolName={toolName}
                 target={detail ?? displayName}
                 failure={failure}
+                diagnostic={typeof result === 'string' ? result : undefined}
               />
             </div>
           ) : null}

@@ -99,6 +99,26 @@ describe('AssistantUiToolCallCard', () => {
     );
   });
 
+  it('does not turn an empty tool result into a fabricated failure diagnostic', () => {
+    render(
+      <AssistantUiToolCallCard
+        toolName="unrecognized_tool"
+        result=""
+        status="error"
+        failure={{
+          class: 'Unknown',
+          category: 'Failed',
+          recoverable: true,
+          causePlain: 'Underlying cause unavailable',
+          nextAction: 'Try again',
+        }}
+      />
+    );
+    const card = screen.getByTestId('assistant-ui-tool-failure');
+    expect(card).toHaveTextContent('Something went wrong with this action.');
+    expect(card).not.toHaveTextContent('Why: No output');
+  });
+
   it('shows no balance hint for other failures', () => {
     render(
       <AssistantUiToolCallCard
