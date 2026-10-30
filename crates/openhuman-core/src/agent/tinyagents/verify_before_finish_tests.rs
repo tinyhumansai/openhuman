@@ -14,8 +14,8 @@ fn activity(rounds: usize, tools: &[&str]) -> FinishActivity {
     FinishActivity {
         tool_rounds: rounds,
         tools_called: tools.iter().map(|t| (*t).to_string()).collect(),
-        tools_executed: Default::default(),
-        tools_with_side_effects: Default::default(),
+        tools_executed: tools.iter().map(|t| (*t).to_string()).collect(),
+        ..Default::default()
     }
 }
 
@@ -72,6 +72,8 @@ async fn drive_with(
     harness.with_model(Arc::new(ScriptedModel::new(responses)));
     harness.register_tool(Arc::new(FakeTool::returning("lookup", "ok")));
     harness.register_tool(Arc::new(FakeTool::returning("todo", "ok")));
+    harness.register_tool(Arc::new(FakeTool::returning("file_write", "ok")));
+    harness.register_tool(Arc::new(FakeTool::returning("delegate_coding", "ok")));
     harness.with_policy(RunPolicy {
         limits: RunLimits::default()
             .with_max_model_calls(max_model_calls)
@@ -301,4 +303,135 @@ async fn an_unlinked_wrap_up_does_not_silence_the_check() {
         checks, 1,
         "without the shared Arc the check cannot see the notice"
     );
+}
+
+/// Peer convergence: one-round code edits and child handoffs still need a final
+/// independent requirements/verification pass when the executor starts, even
+/// if execution later fails. Refused requests have no execution to verify.
+#[test]
+fn single_round_mutations_and_delegations_require_finish_verification() {
+    for tool in [
+        "file_write",
+        "edit",
+        "edit_file",
+        "apply_patch",
+        "delegate_coding",
+        "delegate_reviewer",
+        "spawn_subagent",
+        "spawn_parallel_agents",
+        "spawn_async_subagent",
+        "spawn_worker_thread",
+        "continue_subagent",
+        "steer_subagent",
+        "delegate",
+        "git_operations",
+        "run_workflow",
+    ] {
+        assert!(
+            should_check(&activity(1, &[tool])),
+            "a consequential one-round {tool} call must be verified"
+        );
+    }
+    for tool in ["file_read", "grep", "glob", "current_time"] {
+        assert!(
+            !should_check(&activity(1, &[tool])),
+            "read-only {tool} should not force a costly extra check"
+        );
+    }
+}
+
+#[test]
+fn structural_writes_require_finish_verification_but_previews_and_refusals_do_not() {
+    for tool in ["ast_patch", "chunk_apply"] {
+        let activity = FinishActivity {
+            tool_rounds: 1,
+            tools_called: [tool.to_string()].into_iter().collect(),
+            tools_executed: [tool.to_string()].into_iter().collect(),
+            tools_with_side_effects: [tool.to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        assert!(
+            should_check(&activity),
+            "a started structural write needs a check"
+        );
+        let mut preview = activity.clone();
+        preview.tools_with_side_effects.clear();
+        assert!(!should_check(&preview), "read-only preview of {tool}");
+        preview.tools_executed.clear();
+        assert!(!should_check(&preview), "refused request for {tool}");
+    }
+    for tool in ["file_read", "grep", "glob", "current_time"] {
+        assert!(
+            !should_check(&FinishActivity {
+                tool_rounds: 1,
+                tools_called: [tool.to_string()].into_iter().collect(),
+                ..Default::default()
+            }),
+            "read-only {tool} should not force an extra check"
+        );
+    }
+}
+
+#[test]
+fn requested_but_unexecuted_mutations_and_handoffs_do_not_trigger_verification() {
+    for tool in VERIFY_AFTER_TOOL
+        .iter()
+        .copied()
+        .chain([TODO_TOOL, "delegate_coding"])
+    {
+        assert!(
+            !should_check(&FinishActivity {
+                tool_rounds: 1,
+                tools_called: [tool.to_string()].into_iter().collect(),
+                ..Default::default()
+            }),
+            "refused {tool} request must not trigger an extra model call"
+        );
+    }
+}
+
+#[test]
+fn finish_check_requires_verification_after_latest_write_or_commit() {
+    let check = check_message();
+    assert!(check.contains("after the last write"));
+    assert!(check.contains("latest exact commit"));
+    assert!(check.contains("stale"));
+}
+
+#[tokio::test]
+async fn installed_middleware_checks_a_single_code_write_before_final_answer() {
+    let (checks, text) = drive(1, "file_write", false, Some("orchestrator")).await;
+    assert_eq!(
+        checks, 1,
+        "the check must be dispatched by real harness middleware"
+    );
+    assert_eq!(text, "checked");
+}
+
+#[tokio::test]
+async fn installed_middleware_checks_a_single_delegate_handoff() {
+    let (checks, text) = drive(1, "delegate_coding", false, Some("orchestrator")).await;
+    assert_eq!(
+        checks, 1,
+        "delegated work must be verified by its root orchestrator"
+    );
+    assert_eq!(text, "checked");
+}
+
+#[test]
+fn finish_evidence_rejects_hidden_exit_status_as_proof() {
+    let check = check_message();
+    for fragment in [
+        "exit status",
+        "without pipefail",
+        "|| true",
+        "backgrounded",
+        "skipped",
+        "cancelled",
+    ] {
+        assert!(
+            check.contains(fragment),
+            "verification instruction must mention {fragment}"
+        );
+    }
 }
