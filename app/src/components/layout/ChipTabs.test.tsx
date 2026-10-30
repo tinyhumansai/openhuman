@@ -140,12 +140,65 @@ describe('ChipTabs', () => {
     expect(screen.getByTestId('t-one')).not.toHaveClass('px-3', 'py-1');
   });
 
-  it('emits onChange with the clicked chip id', () => {
+  it('emits onChange with the clicked chip id', async () => {
     const onChange = vi.fn();
     render(<ChipTabs items={items} value="one" onChange={onChange} testIdPrefix="t" />);
 
-    fireEvent.click(screen.getByTestId('t-three'));
+    await userEvent.click(screen.getByTestId('t-three'));
     expect(onChange).toHaveBeenCalledWith('three');
+  });
+
+  it('emits one selection event per pointer activation', async () => {
+    const onChange = vi.fn();
+    render(<ChipTabs items={items} value="one" onChange={onChange} testIdPrefix="t" />);
+
+    await userEvent.click(screen.getByTestId('t-two'));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('two');
+  });
+
+  it('deduplicates mousedown and focus notifications before the parent updates', () => {
+    const onChange = vi.fn();
+    render(<ChipTabs items={items} value="one" onChange={onChange} />);
+    const tab = screen.getByRole('tab', { name: 'Two' });
+    fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
+    fireEvent.focus(tab);
+    fireEvent.click(tab);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('two');
+  });
+
+  it('supports click-only activation without selecting the active tab again', () => {
+    const onChange = vi.fn();
+    render(<ChipTabs items={items} value="one" onChange={onChange} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'One' }));
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('tab', { name: 'Two' }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('two');
+  });
+
+  it('can retry a rejected keyboard selection in a later interaction', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<ChipTabs items={items} value="one" onChange={onChange} testIdPrefix="t" />);
+    screen.getByTestId('t-one').focus();
+    await user.keyboard('{ArrowRight}');
+    expect(onChange).toHaveBeenCalledWith('two');
+    await user.keyboard('{ArrowLeft}');
+    await user.keyboard('{ArrowRight}');
+    expect(onChange.mock.calls.filter(([selection]) => selection === 'two')).toHaveLength(2);
+  });
+
+  it('does not suppress a selection after an external controlled value change', async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<ChipTabs items={items} value="one" onChange={onChange} />);
+    screen.getByRole('tab', { name: 'One' }).focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(onChange).toHaveBeenLastCalledWith('two');
+    rerender(<ChipTabs items={items} value="three" onChange={onChange} />);
+    onChange.mockClear();
+    fireEvent.click(screen.getByRole('tab', { name: 'Two' }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('two');
   });
 
   it('uses an explicit per-item testId over the prefix', () => {
