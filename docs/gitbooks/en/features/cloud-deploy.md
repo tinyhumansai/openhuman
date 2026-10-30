@@ -744,6 +744,11 @@ docker build -t openhuman-core:smoke .
 # Keep CARGO_BUILD_JOBS=1 on constrained builders; raise it on larger machines.
 docker build --build-arg CARGO_PROFILE=release --build-arg CARGO_BUILD_JOBS=4 -t openhuman-core:release .
 
+# Optional: build the desktop product's feature set (voice, web3, documents, ...)
+# instead of the contributor default, e.g. to serve a config migrated from the app.
+features="$(scripts/ci/product-features.sh)" &&
+  docker build --build-arg "CARGO_FEATURES=${features}" -t openhuman-core:product .
+
 # Token-set path (App Platform):
 docker run -d --name oh-smoke -p 7788:7788 \
   -e OPENHUMAN_CORE_TOKEN=smoke-test-token \
