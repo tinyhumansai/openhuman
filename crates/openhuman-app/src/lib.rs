@@ -132,6 +132,16 @@ pub(crate) type AppRuntime = tauri::Wry;
 static EARLY_TEARDOWN_RAN: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Set once `RunEvent::ExitRequested` has been seen. Every exit the app starts
+/// itself (window close, tray / menu quit, `app_quit`, `app.exit`) goes through
+/// `ExitRequested` first and then leaves tao's message loop normally. A
+/// `RunEvent::Exit` that arrives without it was started by the OS: on Windows,
+/// tao turns `WM_ENDSESSION` (logoff / shutdown / restart-for-update) into
+/// `LoopDestroyed` while the message loop keeps running. See
+/// [`must_terminate_after_exit_event`].
+static EXIT_REQUESTED_SEEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "macos")]
 const APP_QUIT_MENU_ID: &str = "app_quit";
 
@@ -1338,6 +1348,23 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     }
 
     log::info!("[app] perform_early_teardown_sync — early teardown complete");
+}
+
+/// Whether the process has to end inside the `RunEvent::Exit` handler.
+///
+/// tao's Windows runner panics with `cannot move state from Destroyed` when it
+/// dispatches any event after `LoopDestroyed` (`runner.rs`, `move_state_to`).
+/// On a normal exit that can't happen: tao fires `LoopDestroyed` after the
+/// message loop has ended, resets the runner and calls `process::exit`. On
+/// `WM_ENDSESSION`, though, tao fires `LoopDestroyed` from inside the window
+/// procedure and goes back to `GetMessageW`. The next user event (a core
+/// event forwarded to the webview, a window hide from Tauri's cleanup) or
+/// redraw panics before Windows gets around to ending the process (#8505).
+/// When `Exit` arrives without an `ExitRequested` on Windows, nothing can
+/// safely run on the event loop again, so the handler must finish the
+/// teardown itself and exit.
+fn must_terminate_after_exit_event(exit_requested_seen: bool, is_windows: bool) -> bool {
+    is_windows && !exit_requested_seen
 }
 
 fn perform_early_teardown_sync_once(app_handle: &AppHandle<AppRuntime>, reason: &str) {
@@ -2891,6 +2918,7 @@ pub fn run() {
                 }
             }
             RunEvent::ExitRequested { .. } => {
+                EXIT_REQUESTED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
                 // Persist the main window's geometry on every clean quit
                 // (Cmd+Q, tray "Quit", dock quit, or the frontend
                 // `app_quit` command) so the next launch restores the
@@ -2909,7 +2937,35 @@ pub fn run() {
                 perform_early_teardown_sync_once(app_handle, "exit_requested");
             }
             RunEvent::Exit => {
-                log::info!("[app] RunEvent::Exit — cef::shutdown follows");
+                let exit_requested_seen =
+                    EXIT_REQUESTED_SEEN.load(std::sync::atomic::Ordering::SeqCst);
+                if exit_requested_seen {
+                    log::info!("[app] RunEvent::Exit — event loop finished");
+                } else {
+                    // OS-initiated exit (Windows WM_ENDSESSION): no
+                    // ExitRequested ran, so neither did the teardown or the
+                    // geometry save.
+                    log::warn!(
+                        "[app] RunEvent::Exit without ExitRequested — OS session end; running teardown"
+                    );
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        window_state::save_main(&window);
+                    }
+                    perform_early_teardown_sync_once(app_handle, "session_end");
+                }
+                if must_terminate_after_exit_event(exit_requested_seen, cfg!(target_os = "windows")) {
+                    // tao's runner is now `Destroyed` but its message loop
+                    // keeps running. The next dispatched event would panic
+                    // with `cannot move state from Destroyed` (#8505). Do
+                    // what Tauri and tao would do after this callback
+                    // (tray / resource cleanup, then exit), and exit here.
+                    log::warn!(
+                        "[app] event loop destroyed by session end — exiting now (#8505)"
+                    );
+                    app_handle.cleanup_before_exit();
+                    process_kill::sweep_orphan_children();
+                    std::process::exit(0);
+                }
             }
             _ => {}
         });

@@ -1104,3 +1104,20 @@ fn capabilities_reference_only_defined_app_permissions() {
         }
     }
 }
+
+#[test]
+fn exit_event_after_exit_requested_returns_to_the_event_loop() {
+    // Normal quits run ExitRequested first; tao then exits on its own.
+    assert!(!must_terminate_after_exit_event(true, true));
+    assert!(!must_terminate_after_exit_event(true, false));
+}
+
+#[test]
+fn exit_event_without_exit_requested_terminates_on_windows_only() {
+    // WM_ENDSESSION: LoopDestroyed fires while tao's message loop keeps
+    // running, so the next event would panic "cannot move state from
+    // Destroyed" (#8505).
+    assert!(must_terminate_after_exit_event(false, true));
+    // Other platforms leave the loop before LoopDestroyed fires.
+    assert!(!must_terminate_after_exit_event(false, false));
+}
