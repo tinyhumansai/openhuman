@@ -110,6 +110,9 @@ pub async fn update_agent(
             true,
         )
     })?;
+    // Refresh the process registry so the new policy reaches
+    // `spawn_async_subagent`'s enum and dispatch checks without a restart (#6934).
+    AgentDefinitionRegistry::apply_registry_entries(&config.agent_registry.entries);
     Ok(updated)
 }
 
@@ -147,6 +150,12 @@ pub async fn remove_agent(ctx: &DispatchCtx, id: &str) -> Result<bool, String> {
                 true,
             )
         })?;
+        // Refresh the process registry like `update_agent` does, so a removed
+        // entry's overlay stops resolving without a restart (#6934).
+        // Only on success: refreshing with this older snapshot after a
+        // failed removal could clobber a newer registry state saved
+        // concurrently by another mutation.
+        AgentDefinitionRegistry::apply_registry_entries(&config.agent_registry.entries);
     }
     Ok(removed)
 }
