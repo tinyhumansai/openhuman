@@ -224,6 +224,94 @@ describe('runBootCheck — unset mode', () => {
 // ---------------------------------------------------------------------------
 
 describe('runBootCheck — port conflict auto-recovery', () => {
+  it('does not mistake a legacy SQLite upgrade failure for a port collision', async () => {
+    const recovery = vi.fn().mockResolvedValue({ success: false, message: 'no port owner' });
+    const transport: BootCheckTransport = {
+      callRpc: vi.fn(),
+      invokeCmd: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'in-process core server exited before becoming ready: open the storage backend ' +
+              'sqlite:C:\\Users\\ACER\\.openhuman\\users\\local-desktop\\workspace\\storage: ' +
+              'invalid input: legacy sqlite storage must be upgraded by the host'
+          )
+        ),
+      recoverPortConflict: recovery,
+    };
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+
+    expect(recovery).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ kind: 'unreachable', portConflict: false });
+    if (result.kind === 'unreachable') {
+      expect(result.reason).toContain('legacy sqlite storage must be upgraded by the host');
+    }
+  });
+
+  it('does not reap processes for unrelated app-engine startup errors', async () => {
+    const recovery = vi.fn();
+    const result = await runBootCheck(
+      { kind: 'local' },
+      {
+        callRpc: vi.fn(),
+        invokeCmd: vi.fn().mockRejectedValue(new Error('core runtime initialization failed')),
+        recoverPortConflict: recovery,
+      }
+    );
+    expect(recovery).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      kind: 'unreachable',
+      reason: 'Failed to start local core: core runtime initialization failed',
+      portConflict: false,
+    });
+  });
+
+  it.each([
+    'failed to signal stale openhuman pid 123: permission denied',
+    'failed to force-kill stale openhuman pid 123: permission denied',
+  ])('keeps stale-listener recovery available after %s', async diagnostic => {
+    const recoverPortConflict = vi.fn().mockResolvedValue({
+      success: false,
+      message: 'listener requires manual recovery',
+      foreign_owner: { pid: 456, name: 'another process' },
+    });
+    const result = await runBootCheck(
+      { kind: 'local' },
+      {
+        callRpc: vi.fn(),
+        invokeCmd: vi.fn().mockRejectedValue(new Error(diagnostic)),
+        recoverPortConflict,
+      }
+    );
+    expect(recoverPortConflict).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      kind: 'unreachable',
+      portConflict: true,
+      foreignOwner: { pid: 456, name: 'another process' },
+    });
+  });
+
+  it('does not run broad recovery when the port rebounds to a new owner', async () => {
+    const recovery = vi.fn();
+    const diagnostic =
+      'port 7788 rebounded to pid 456 after terminating pid 123; refusing to kill a different process';
+    const result = await runBootCheck(
+      { kind: 'local' },
+      {
+        callRpc: vi.fn(),
+        invokeCmd: vi.fn().mockRejectedValue(new Error(diagnostic)),
+        recoverPortConflict: recovery,
+      }
+    );
+    expect(recovery).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      kind: 'unreachable',
+      portConflict: true,
+      reason: expect.stringContaining('rebounded to pid 456'),
+    });
+  });
+
   it('auto-recovery succeeds: start fails, recovery succeeds, second start succeeds', async () => {
     const appVersion = (await import('../../utils/config')).APP_VERSION;
 

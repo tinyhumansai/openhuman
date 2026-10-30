@@ -187,6 +187,27 @@ async function checkVersion(callRpc: BootCheckTransport['callRpc']): Promise<Ver
   }
 }
 
+/** Only a confirmed bind/port failure warrants reaping or port recovery.
+ * Storage, config and runtime failures must retain their original diagnosis.
+ * An arbitrary startup failure is NOT evidence that another process owns a port. */
+function isPortBindingFailure(error: string): boolean {
+  return (
+    /\b(?:eaddrinuse|addrinuse|wsaeaddrinuse|address already in use|port in use)\b/i.test(error) ||
+    /\bport\s+\d+\s+(?:is\s+)?(?:occupied|busy|in use|remained bound|did not become free)\b/i.test(
+      error
+    ) ||
+    /\b(?:no fallback ports available|no available port|port excluded by os|stale-listener pid|failed to signal stale openhuman pid|failed to force-kill stale openhuman pid|failed to bind core listener|could not determine pid bound to port|port \d+ rebounded to pid)\b/i.test(
+      error
+    )
+  );
+}
+
+/** A rebound proves a different PID now owns the port; never invoke the
+ * legacy broad process reaper in this case. Preserve the diagnostic for the UI. */
+function isPortReboundFailure(error: string): boolean {
+  return /\bport\s+\d+\s+rebounded\s+to\s+pid\b/i.test(error);
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -222,17 +243,26 @@ export async function runBootCheck(
   if (mode.kind === 'local') {
     log('[boot-check] local mode — starting core process');
 
-    let startFailed = false;
+    let startError: string | null = null;
     try {
       await invokeCmd<void>('start_core_process', {});
       log('[boot-check] start_core_process invoked successfully');
     } catch (err) {
-      startFailed = true;
+      startError = err instanceof Error ? err.message : String(err);
       logError('[boot-check] start_core_process failed: %o', err);
+      if (!isPortBindingFailure(startError)) {
+        // Do not run a destructive port-recovery procedure for a storage
+        // migration failure, invalid configuration or any other boot error.
+        return {
+          kind: 'unreachable',
+          reason: `Failed to start local core: ${startError}`,
+          portConflict: false,
+        };
+      }
     }
 
     // If start failed, attempt port-conflict auto-recovery before giving up.
-    if (startFailed && transport.recoverPortConflict) {
+    if (startError !== null && transport.recoverPortConflict && !isPortReboundFailure(startError)) {
       log('[boot-check] start_core_process failed — attempting port-conflict auto-recovery');
       try {
         const recovery = await transport.recoverPortConflict();
@@ -261,8 +291,12 @@ export async function runBootCheck(
           portConflict: true,
         };
       }
-    } else if (startFailed) {
-      return { kind: 'unreachable', reason: `Failed to start local core` };
+    } else if (startError !== null) {
+      return {
+        kind: 'unreachable',
+        reason: `Failed to start local core: ${startError}`,
+        portConflict: true,
+      };
     }
 
     // Wait for the embedded core to be reachable.
@@ -277,7 +311,7 @@ export async function runBootCheck(
       return {
         kind: 'unreachable',
         reason: 'Local core did not respond in time',
-        portConflict: startFailed,
+        portConflict: false,
       };
     }
 
