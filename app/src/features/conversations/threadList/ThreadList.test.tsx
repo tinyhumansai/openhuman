@@ -150,6 +150,82 @@ describe('ThreadList', () => {
     expect(onRequestDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
   });
 
+  it('does not forward a rename Enter to global chat-composer key handlers', async () => {
+    const onRenameThread = vi.fn(async () => {});
+    renderList({ onRenameThread });
+    await userEvent.click(
+      within(screen.getByTestId('thread-row-t1').parentElement!).getByRole('button', {
+        name: 'assistantUi.threadList.moreOptions',
+      })
+    );
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: 'assistantUi.threadList.rename' })
+    );
+    const input = screen.getByTestId('thread-title-input-t1');
+    fireEvent.change(input, { target: { value: 'Renamed without submitting chat' } });
+    const globalKeydown = vi.fn();
+    document.addEventListener('keydown', globalKeydown);
+    try {
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+      await waitFor(() =>
+        expect(onRenameThread).toHaveBeenCalledWith('t1', 'Renamed without submitting chat')
+      );
+      expect(globalKeydown).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('keydown', globalKeydown);
+    }
+  });
+
+  it('does not forward rename cancellation to document-wide Escape handlers', async () => {
+    const onRenameThread = vi.fn(async () => {});
+    renderList({ onRenameThread });
+    await userEvent.click(
+      within(screen.getByTestId('thread-row-t1').parentElement!).getByRole('button', {
+        name: 'assistantUi.threadList.moreOptions',
+      })
+    );
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: 'assistantUi.threadList.rename' })
+    );
+    const input = screen.getByTestId('thread-title-input-t1');
+    const globalKeydown = vi.fn();
+    document.addEventListener('keydown', globalKeydown);
+    try {
+      fireEvent.keyDown(input, { key: 'Escape', code: 'Escape' });
+      await waitFor(() => expect(screen.queryByTestId('thread-title-input-t1')).toBeNull());
+      expect(globalKeydown).not.toHaveBeenCalled();
+      expect(onRenameThread).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('keydown', globalKeydown);
+    }
+  });
+
+  it('contains IME-composing Enter and Escape without committing or cancelling a rename', async () => {
+    const onRenameThread = vi.fn(async () => {});
+    renderList({ onRenameThread });
+    await userEvent.click(
+      within(screen.getByTestId('thread-row-t1').parentElement!).getByRole('button', {
+        name: 'assistantUi.threadList.moreOptions',
+      })
+    );
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: 'assistantUi.threadList.rename' })
+    );
+    const input = screen.getByTestId('thread-title-input-t1');
+    fireEvent.change(input, { target: { value: 'Composing title' } });
+    const globalKeydown = vi.fn();
+    document.addEventListener('keydown', globalKeydown);
+    try {
+      fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+      fireEvent.keyDown(input, { key: 'Escape', isComposing: true });
+      expect(globalKeydown).not.toHaveBeenCalled();
+      expect(onRenameThread).not.toHaveBeenCalled();
+      expect(screen.getByTestId('thread-title-input-t1')).toBeInTheDocument();
+    } finally {
+      document.removeEventListener('keydown', globalKeydown);
+    }
+  });
+
   it('cancels a rename on Escape without committing the subsequent blur', async () => {
     const onRenameThread = vi.fn(async () => {});
     renderList({ onRenameThread });

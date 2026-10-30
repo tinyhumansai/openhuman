@@ -377,6 +377,9 @@ const ThreadListItemRename: FC<{ onDone: (restoreFocus: boolean) => void }> = ({
       onChange={event => setValue(event.target.value)}
       onBlur={() => commit(false)}
       onKeyDown={event => {
+        // Even during IME composition, these keys belong to the rename editor,
+        // never to the global chat composer or app shortcuts.
+        if (event.key === 'Enter' || event.key === 'Escape') event.stopPropagation();
         if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === 'Enter') {
           event.preventDefault();
