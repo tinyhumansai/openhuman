@@ -311,7 +311,9 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
             // their machine — Sentry can't help. Demote at `warn!` so a
             // sustained spike still shows up in operator dashboards
             // without turning every affected user-session into a Sentry
-            // error event. Drops TAURI-RUST-H4.
+            // error event. Drops TAURI-RUST-H4, and (via the
+            // locale-independent `(os error N)` anchor) TAURI-RUST-15PJ /
+            // #8508 — localized-Windows transcript-persistence failures.
             tracing::warn!(
                 domain = domain,
                 operation = operation,
@@ -531,21 +533,23 @@ const FS_ERROR_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30
 /// 1 user).
 #[cfg(feature = "crash-reporting")]
 static LAST_FS_LIMIT_REPORT: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
+    std::sync::Mutex<std::collections::HashMap<(String, String, String), std::time::Instant>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-/// Returns `true` when `(domain, operation)` was already reported with
-/// an error-665 message within [`FS_ERROR_COOLDOWN`]. Cleans up stale
-/// entries older than the cooldown on every call.
+/// Returns `true` when `(kind, domain, operation)` was already reported
+/// within [`FS_ERROR_COOLDOWN`]. `kind` keeps the host-filesystem error
+/// families (`fs_limitation` = os error 665, `disk_full`) on separate
+/// cooldowns so one cannot mask the other. Cleans up stale entries older than
+/// the cooldown on every call.
 #[cfg(feature = "crash-reporting")]
-fn was_recently_reported(domain: &str, operation: &str) -> bool {
+fn was_recently_reported(kind: &str, domain: &str, operation: &str) -> bool {
     let mut guard = LAST_FS_LIMIT_REPORT
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let now = std::time::Instant::now();
     // Prune stale entries older than cooldown (single-pass to keep map bounded).
     guard.retain(|_, last| now.duration_since(*last) < FS_ERROR_COOLDOWN);
-    let key = (domain.to_string(), operation.to_string());
+    let key = (kind.to_string(), domain.to_string(), operation.to_string());
     if let Some(last) = guard.get(&key) {
         if now.duration_since(*last) < FS_ERROR_COOLDOWN {
             return true;
@@ -574,12 +578,28 @@ pub(crate) fn report_error_message(
     // 6,050 events / 1 user). The `before_send` chain also filters these,
     // but this early-exit avoids the Sentry scope overhead entirely.
     #[cfg(feature = "crash-reporting")]
-    if message.contains("os error 665") && was_recently_reported(domain, operation) {
+    if message.contains("os error 665") && was_recently_reported("fs_limitation", domain, operation)
+    {
         tracing::debug!(
             target: REPORT_ERROR_TRACING_TARGET,
             domain = domain,
             operation = operation,
             "[observability] {domain}.{operation} rate-limited os error 665 (reported within cooldown)"
+        );
+        return;
+    }
+    // Same cooldown for host disk-full (TAURI-RUST-15PJ / #8508: 2,278
+    // transcript-persistence events from 1 user). Callers normally route
+    // through `report_error_or_expected`, which demotes `DiskFull` to a
+    // `warn!` breadcrumb; this guards any direct `report_error` call site so a
+    // full disk can never flood Sentry with one event per failed write.
+    #[cfg(feature = "crash-reporting")]
+    if is_disk_full_error(message) && was_recently_reported("disk_full", domain, operation) {
+        tracing::debug!(
+            target: REPORT_ERROR_TRACING_TARGET,
+            domain = domain,
+            operation = operation,
+            "[observability] {domain}.{operation} rate-limited disk-full error (reported within cooldown)"
         );
         return;
     }

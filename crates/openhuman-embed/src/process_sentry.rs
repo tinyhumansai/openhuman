@@ -182,6 +182,7 @@ const NOISE_FILTERS: &[NoiseFilter] = &[
         "fs-limitation",
         obs::is_windows_file_system_limitation_event,
     ),
+    ("disk-full", obs::is_disk_full_event),
     ("max-iterations", obs::is_max_iterations_event),
     (
         "transient-backend-api",

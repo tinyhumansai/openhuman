@@ -3904,6 +3904,8 @@ const messages: TranslationMap = {
     'Agen sudah menjalankan jumlah langkah alat maksimum dalam satu giliran tanpa selesai. Biasanya ini berarti sebuah alat terus gagal (sering karena batas laju pada pengambilan web). Anda dapat mengulang pertanyaan yang sama di utas ini setelah batasnya pulih.',
   'chat_error.turn_timeout':
     'Giliran ini melewati batas waktunya tanpa selesai dan dihentikan agar tidak menggantung. Biasanya ini berarti panggilan alat atau sub-agen yang didelegasikan macet. Anda dapat mengulang pertanyaan Anda di utas ini.',
+  'chat_error.disk_full':
+    'Disk Anda penuh, sehingga percakapan ini tidak dapat disimpan. Kosongkan sebagian ruang disk, lalu kirim ulang pesan Anda di utas ini.',
   'chat_error.empty_response':
     'Model mengembalikan respons kosong. Silakan coba lagi. Jika terus terjadi, coba model lain atau periksa pengaturannya di Koneksi → Kunci API → LLM.',
   'chat_error.chat_template_rejected':

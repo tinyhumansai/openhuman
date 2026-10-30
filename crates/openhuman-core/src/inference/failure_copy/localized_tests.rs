@@ -65,6 +65,7 @@ const CATALOG_KEYS: &[&str] = &[
     "chat_error.chat_template_rejected",
     "chat_error.codex_session_expired",
     "chat_error.context_overflow",
+    "chat_error.disk_full",
     "chat_error.empty_response",
     "chat_error.inference",
     "chat_error.local_session_managed_unavailable",

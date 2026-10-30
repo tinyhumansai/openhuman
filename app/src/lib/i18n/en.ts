@@ -4151,6 +4151,8 @@ const en: TranslationMap = {
     'The agent ran the maximum number of tool steps for one turn without finishing. This usually means a tool kept failing (often a rate limit on a web fetch). You can retry the same question in this thread once the underlying limit clears.',
   'chat_error.turn_timeout':
     "This turn ran past its time budget without finishing and was stopped so it wouldn't hang. This usually means a tool call or a delegated sub-agent stalled. You can retry your question in this thread.",
+  'chat_error.disk_full':
+    "Your disk is full, so this conversation couldn't be saved. Free up some disk space, then send your message again in this thread.",
   'chat_error.empty_response':
     'The model returned an empty response. Please retry. If it keeps happening, try a different model or check its setup in Connections → API keys → LLM.',
   'chat_error.chat_template_rejected':
