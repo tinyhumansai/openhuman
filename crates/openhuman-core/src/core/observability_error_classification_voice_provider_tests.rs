@@ -4,7 +4,11 @@ use super::*;
 /// own ElevenLabs account.
 const HOSTED_PAYMENT_TTS: &str = r#"POST /openai/v1/audio/speech failed (400 Bad Request): {"success":false,"error":"ElevenLabs request failed (401): {\"detail\":{\"status\":\"payment_required\",\"message\":\"Your subscription has a failed or incomplete payment\"}}","errorCode":"BAD_REQUEST"}"#;
 /// TAURI-RUST-15CT: the same refusal on the hosted transcription route.
-const HOSTED_PAYMENT_STT: &str = r#"transcription request failed (400 Bad Request): {"success":false,"error":"ElevenLabs request failed (401): payment_required — \"Your subscription has a failed or incomplete payment\"","errorCode":"BAD_REQUEST"}"#;
+/// The backend's transcription wrapper differs from the TTS one.
+const HOSTED_PAYMENT_STT: &str = r#"transcription request failed (400 Bad Request): {"success":false,"error":"ElevenLabs transcription failed (401): {\"detail\":{\"status\":\"payment_required\",\"message\":\"Your subscription has a failed or incomplete payment\"}}","errorCode":"BAD_REQUEST"}"#;
+/// Streaming TTS uses a third wrapper.
+const HOSTED_PAYMENT_STREAM_TTS: &str =
+    r#"ElevenLabs streaming TTS failed (401): {"detail":{"status":"payment_required"}}"#;
 /// A BYOK request refused because the user's own subscription is unpaid.
 const BYOK_PAYMENT_TTS: &str = r#"[voice-tts] elevenlabs 401 payment_required: "Your subscription has a failed or incomplete payment""#;
 /// TAURI-RUST-1635: a BYOK user pasted the key ID.
@@ -38,7 +42,11 @@ fn key_id_maps_and_demotes() {
 fn hosted_payment_required_is_not_user_state() {
     // The backend's own account: no "update billing" message, and it keeps
     // reaching Sentry so ops sees it.
-    for raw in [HOSTED_PAYMENT_TTS, HOSTED_PAYMENT_STT] {
+    for raw in [
+        HOSTED_PAYMENT_TTS,
+        HOSTED_PAYMENT_STT,
+        HOSTED_PAYMENT_STREAM_TTS,
+    ] {
         assert_eq!(voice_provider_user_message(raw), None, "{raw}");
         assert!(!is_voice_provider_user_state_message(raw), "{raw}");
         assert_ne!(

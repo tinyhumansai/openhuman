@@ -27,11 +27,20 @@ pub const VOICE_PROVIDER_KEY_ID_USER_MESSAGE: &str =
 pub const HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE: &str =
     "The voice service is temporarily unavailable. Please try again later.";
 
-/// Whether `lower` (ASCII-lowercased) is the TinyHumans backend's wrapping of
-/// an upstream ElevenLabs failure (`elevenlabsService` in the backend), i.e. a
-/// hosted request on the server's own ElevenLabs account.
+/// The TinyHumans backend's wrappings of an upstream ElevenLabs failure
+/// (`elevenlabsService` in the backend: TTS, streaming TTS, transcription).
+const HOSTED_ELEVENLABS_FAILURE_MARKERS: &[&str] = &[
+    "elevenlabs request failed (",
+    "elevenlabs streaming tts failed (",
+    "elevenlabs transcription failed (",
+];
+
+/// Whether `lower` (ASCII-lowercased) is a hosted request refused on the
+/// backend's own ElevenLabs account.
 fn is_hosted_elevenlabs_failure(lower: &str) -> bool {
-    lower.contains("elevenlabs request failed (")
+    HOSTED_ELEVENLABS_FAILURE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 /// Map a raw BYOK voice-provider error to an actionable user-facing message,
