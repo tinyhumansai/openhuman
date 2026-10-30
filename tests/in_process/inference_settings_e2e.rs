@@ -196,3 +196,81 @@ async fn inference_settings_and_oauth_validation_round_trip_over_rpc() {
 
     harness.join.abort();
 }
+
+/// A failed local-runtime connection undoes its save over JSON-RPC (#8172):
+/// the checkpointed update returns an id, the rollback restores the prior
+/// runtime and its key, and the same id cannot restore twice.
+#[tokio::test]
+async fn a_checkpointed_local_save_rolls_back_over_rpc() {
+    let _lock = env_lock_async().await;
+    let harness = setup().await;
+    let local_ai = |response: &Value| {
+        payload(response, "local settings snapshot")
+            .pointer("/config/local_ai")
+            .cloned()
+            .expect("local_ai in the snapshot")
+    };
+
+    let connected = rpc(
+        &harness.rpc_base,
+        10_301,
+        "openhuman.inference_update_local_settings",
+        json!({
+            "runtime_enabled": true,
+            "opt_in_confirmed": true,
+            "provider": "omlx",
+            "base_url": "http://127.0.0.1:9/v1",
+            "api_key": "working-key"
+        }),
+    )
+    .await;
+    let before = local_ai(&connected);
+
+    let attempt = rpc(
+        &harness.rpc_base,
+        10_302,
+        "openhuman.inference_update_local_settings",
+        json!({
+            "provider": "lm_studio",
+            "base_url": "http://127.0.0.1:9/v1",
+            "api_key": "rejected-key",
+            "checkpoint": true
+        }),
+    )
+    .await;
+    let checkpoint_id = payload(&attempt, "checkpointed save")
+        .get("checkpoint_id")
+        .and_then(Value::as_str)
+        .expect("checkpoint_id in the snapshot")
+        .to_string();
+    assert_eq!(local_ai(&attempt)["provider"], "lm_studio");
+
+    let rollback = |id: i64| {
+        rpc(
+            &harness.rpc_base,
+            id,
+            "openhuman.inference_rollback_local_settings",
+            json!({ "checkpoint_id": checkpoint_id }),
+        )
+    };
+    let restored = rollback(10_303).await;
+    assert_eq!(payload(&restored, "rollback")["restored"], true);
+    let after = rpc(
+        &harness.rpc_base,
+        10_304,
+        "openhuman.config_get",
+        json!({}),
+    )
+    .await;
+    let after = payload(&after, "config_get")
+        .pointer("/config/local_ai")
+        .cloned()
+        .expect("local_ai after rollback");
+    assert_eq!(after["provider"], before["provider"]);
+    assert_eq!(after["base_url"], before["base_url"]);
+
+    let again = rollback(10_305).await;
+    assert_eq!(payload(&again, "second rollback")["restored"], false);
+
+    harness.join.abort();
+}

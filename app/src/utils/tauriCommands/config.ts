@@ -158,6 +158,12 @@ export interface LocalAiSettingsUpdate {
   model_id?: string | null;
   chat_model_id?: string | null;
   usage_embeddings?: boolean | null;
+  /**
+   * Keep the previous local settings in the core and return a
+   * `checkpoint_id`, so a failed connection check can undo this save with
+   * {@link openhumanRollbackLocalAiSettings}.
+   */
+  checkpoint?: boolean | null;
 }
 
 export interface RuntimeFlags {
@@ -621,10 +627,24 @@ export async function openhumanUpdateAgentSettings(
 
 export async function openhumanUpdateLocalAiSettings(
   update: LocalAiSettingsUpdate
-): Promise<CommandResponse<ConfigSnapshot>> {
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+): Promise<CommandResponse<ConfigSnapshot & { checkpoint_id?: string }>> {
+  return await callCoreRpc<CommandResponse<ConfigSnapshot & { checkpoint_id?: string }>>({
     method: 'openhuman.inference_update_local_settings',
     params: update,
+  });
+}
+
+/**
+ * Undoes a checkpointed {@link openhumanUpdateLocalAiSettings}. The core
+ * leaves the settings alone (`restored: false`) when they were saved again
+ * after that checkpoint.
+ */
+export async function openhumanRollbackLocalAiSettings(
+  checkpointId: string
+): Promise<CommandResponse<{ restored: boolean }>> {
+  return await callCoreRpc<CommandResponse<{ restored: boolean }>>({
+    method: CORE_RPC_METHODS.inferenceRollbackLocalSettings,
+    params: { checkpoint_id: checkpointId },
   });
 }
 

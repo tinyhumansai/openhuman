@@ -19,7 +19,28 @@ vi.mock('../../../../../services/api/aiSettingsApi', async importOriginal => ({
   setCloudProviderKey: api.setCloudProviderKey,
 }));
 
+const localAi = vi.hoisted(() => ({
+  openhumanRollbackLocalAiSettings: vi.fn(),
+  openhumanUpdateLocalAiSettings: vi.fn(),
+}));
+
+vi.mock('../../../../../utils/tauriCommands/config', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../../../utils/tauriCommands/config')>()),
+  openhumanRollbackLocalAiSettings: localAi.openhumanRollbackLocalAiSettings,
+  openhumanUpdateLocalAiSettings: localAi.openhumanUpdateLocalAiSettings,
+}));
+
 beforeEach(() => {
+  localAi.openhumanUpdateLocalAiSettings.mockReset();
+  localAi.openhumanUpdateLocalAiSettings.mockResolvedValue({
+    result: { config: {}, workspace_dir: '', config_path: '', checkpoint_id: 'cp-1' },
+    logs: [],
+  });
+  localAi.openhumanRollbackLocalAiSettings.mockReset();
+  localAi.openhumanRollbackLocalAiSettings.mockResolvedValue({
+    result: { restored: true },
+    logs: [],
+  });
   api.flushCloudProviders.mockReset();
   api.flushCloudProviders.mockResolvedValue(undefined);
   api.listProviderModels.mockReset();
@@ -356,5 +377,60 @@ describe('useProviderConnect', () => {
         expect.objectContaining({ slug: 'anthropic' }),
       ])
     );
+  });
+
+  describe('local runtime rollback (#8172)', () => {
+    // Render outside `act`, connect inside it, as the tests above do.
+    const renderLmStudio = () => {
+      const { result } = renderHook(() =>
+        useProviderConnect({
+          draft: EMPTY_SETTINGS,
+          saved: EMPTY_SETTINGS,
+          persist: vi.fn().mockResolvedValue(undefined),
+          t: key => key,
+          onConnected: vi.fn(),
+        })
+      );
+      return () =>
+        result.current.connectProvider({
+          slug: 'lmstudio',
+          value: 'http://127.0.0.1:1234/v1',
+          credentialMode: 'endpoint',
+        });
+    };
+
+    it('saves the local settings under a checkpoint', async () => {
+      const connectLmStudio = renderLmStudio();
+      await act(async () => {
+        await connectLmStudio();
+      });
+
+      expect(localAi.openhumanUpdateLocalAiSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'lm_studio', checkpoint: true })
+      );
+      expect(localAi.openhumanRollbackLocalAiSettings).not.toHaveBeenCalled();
+    });
+
+    it('rolls the local settings back when the runtime does not answer', async () => {
+      const connectLmStudio = renderLmStudio();
+      api.listProviderModels.mockRejectedValue(new Error('connection refused'));
+
+      await act(async () => {
+        await expect(connectLmStudio()).rejects.toThrow(/connection refused/);
+      });
+
+      expect(localAi.openhumanRollbackLocalAiSettings).toHaveBeenCalledWith('cp-1');
+    });
+
+    it('rolls the local settings back when the provider list cannot be saved', async () => {
+      const connectLmStudio = renderLmStudio();
+      api.flushCloudProviders.mockRejectedValueOnce(new Error('disk full'));
+
+      await act(async () => {
+        await expect(connectLmStudio()).rejects.toThrow(/disk full/);
+      });
+
+      expect(localAi.openhumanRollbackLocalAiSettings).toHaveBeenCalledWith('cp-1');
+    });
   });
 });
