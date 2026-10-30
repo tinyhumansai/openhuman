@@ -116,7 +116,10 @@ interim title derived from the first message is written
 ([`ops/title_generation.rs`](./ops/title_generation.rs)) later asks the model for a summary title using the
 `tinyagents_harness::title` helpers. `is_replaceable_title` only allows it to
 replace the placeholder, or the interim title during the first exchange;
-anything the user typed is left alone. Logs use the `[threads:title]` prefix
+anything the user typed is left alone. That check runs before the model call,
+so every system-chosen title is written through
+`support::update_title_unless_renamed`, which re-reads the thread and keeps a
+rename the user made while the model was answering. Logs use the `[threads:title]` prefix
 and a fingerprint, never the title text.
 
 ### Working folder
