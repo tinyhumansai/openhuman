@@ -58,6 +58,20 @@ async function fetchLegWithRetries<T>(
   return { error: lastError };
 }
 
+/**
+ * Lowercase prefix of the core's direct-mode invalid-key backoff message
+ * (`invalid_api_key_backoff_message`, keyed by `COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR`
+ * in `integrations/composio/direct_auth`). The core returns it once Composio
+ * has rejected the BYO key with `401 Invalid API key` three times in a row and
+ * stops calling Composio until the key changes (#8509).
+ */
+const COMPOSIO_KEY_REJECTED_ANCHOR = 'direct-mode composio api key was rejected';
+
+/** Whether `message` is the core's "re-enter your Composio API key" backoff. */
+export function isComposioKeyRejectedError(message: string | null | undefined): boolean {
+  return Boolean(message && message.toLowerCase().includes(COMPOSIO_KEY_REJECTED_ANCHOR));
+}
+
 // ── useComposioIntegrations ───────────────────────────────────────
 
 interface UseComposioIntegrationsResult {
@@ -122,6 +136,11 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   // tenant's connections, painting phantom activations on the next restart
   // (PR #4288).
   const configGenerationRef = useRef(0);
+  // Set once the core reports the direct-mode key as rejected (#8509). Polling
+  // a known-bad key only repeats the same failure, so the interval stands down
+  // until a full `refresh()` (mount, "Try again", or the config-changed event
+  // fired when the user re-enters the key) clears it.
+  const keyRejectedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -168,6 +187,7 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
       return;
     }
 
+    keyRejectedRef.current = false;
     let nextError: string | null = null;
     try {
       // Bound both fetches so the loading skeleton can't pin past ~8s per
@@ -216,6 +236,13 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
         // fetchLegWithRetries already logged each failed attempt for this leg.
         nextError = connectionsResult.error;
       }
+      if ('error' in connectionsResult && isComposioKeyRejectedError(connectionsResult.error)) {
+        keyRejectedRef.current = true;
+        // The key-rejection prompt is the actionable one; prefer it over a
+        // concurrent toolkit-leg error.
+        nextError = connectionsResult.error;
+        console.warn('[composio] direct API key rejected — pausing connection polling');
+      }
 
       setError(nextError);
     } finally {
@@ -228,6 +255,10 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     void refresh();
     if (pollIntervalMs <= 0 || fetchEnabled !== true) return;
     const id = window.setInterval(() => {
+      if (keyRejectedRef.current) {
+        console.debug('[composio] polling skipped: direct API key rejected, awaiting re-entry');
+        return;
+      }
       const generation = configGenerationRef.current;
       void listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS })
         .then(resp => {
@@ -239,10 +270,18 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
           writeConnectionCache({ connections: freshConnections });
         })
         .catch(err => {
-          console.warn(
-            '[composio] polling connections failed:',
-            err instanceof Error ? err.message : String(err)
-          );
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn('[composio] polling connections failed:', message);
+          if (
+            isComposioKeyRejectedError(message) &&
+            mountedRef.current &&
+            generation === configGenerationRef.current
+          ) {
+            // Surface the "re-enter your Composio API key" prompt through the
+            // hook's `error` (→ integration-degraded notice) and stop polling.
+            keyRejectedRef.current = true;
+            setError(message);
+          }
         });
     }, pollIntervalMs);
     return () => window.clearInterval(id);
