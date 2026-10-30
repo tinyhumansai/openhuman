@@ -106,6 +106,26 @@ describe('RiveMascot — asset wiring', () => {
 });
 
 describe('RiveMascot — idle pose rotation', () => {
+  it('pauses hidden idle flourishes and restarts one timer on return', () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    render(<RiveMascot face="idle" idlePoseRotation />);
+    act(() => {
+      hidden.mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(poseCalls().every(pose => pose === 'idle')).toBe(true);
+
+    act(() => {
+      hidden.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(poseCalls().filter(pose => pose === AMBIENT_POSES[0])).toHaveLength(1);
+  });
+
   it('does not drift when rotation is disabled', () => {
     vi.useFakeTimers();
     render(<RiveMascot face="idle" />);

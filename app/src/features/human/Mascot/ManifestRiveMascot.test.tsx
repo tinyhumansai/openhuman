@@ -13,6 +13,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MascotManifestEntry } from './manifest/types';
 import { ManifestRiveMascot } from './ManifestRiveMascot';
 
+const activity = vi.hoisted(() => ({ enabled: true }));
+vi.mock('../../../hooks/useAnimationActivity', () => ({
+  useAnimationActivity: () => activity.enabled,
+}));
+
 const h = vi.hoisted(() => ({
   useRiveParams: null as Record<string, unknown> | null,
   enumCalls: {} as Record<string, unknown[]>,
@@ -93,6 +98,7 @@ beforeEach(() => {
   h.enumCalls = {};
   h.colorCalls = {};
   loadManifestRiv.mockReset();
+  activity.enabled = true;
 });
 
 afterEach(() => {
@@ -142,6 +148,40 @@ describe('ManifestRiveMascot', () => {
     await waitFor(() => expect(h.useRiveParams?.buffer).toBeInstanceOf(ArrayBuffer));
     // Toshi has no 'oh' viseme → rest on sil.
     await waitFor(() => expect(enumLast('mouthVisemeCode')).toBe('sil'));
+  });
+
+  it('pauses manifest idle pose and channel timers during hidden or reduced-motion activity', async () => {
+    vi.useFakeTimers();
+    loadManifestRiv.mockResolvedValue(new Uint8Array([1]).buffer);
+    const { rerender } = render(
+      <ManifestRiveMascot entry={TOSHI} face="idle" idlePoseRotation />
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(h.useRiveParams?.buffer).toBeInstanceOf(ArrayBuffer);
+    act(() => {
+      vi.advanceTimersByTime(2_600);
+    });
+    expect((h.enumCalls['eyes'] ?? []).length).toBeGreaterThan(1);
+
+    activity.enabled = false;
+    rerender(<ManifestRiveMascot entry={TOSHI} face="idle" idlePoseRotation />);
+    const eyesWhilePaused = (h.enumCalls['eyes'] ?? []).length;
+    const posesWhilePaused = (h.enumCalls['pose'] ?? []).length;
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect((h.enumCalls['eyes'] ?? []).length).toBe(eyesWhilePaused);
+    expect((h.enumCalls['pose'] ?? []).length).toBe(posesWhilePaused);
+
+    activity.enabled = true;
+    rerender(<ManifestRiveMascot entry={TOSHI} face="idle" idlePoseRotation />);
+    act(() => {
+      vi.advanceTimersByTime(2_600);
+    });
+    expect((h.enumCalls['eyes'] ?? []).length).toBeGreaterThan(eyesWhilePaused);
   });
 
   it('auto-cycles a cyclable channel when idle rotation is on', async () => {

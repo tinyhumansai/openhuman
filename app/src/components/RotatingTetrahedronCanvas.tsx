@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { useEffect, useRef, useState } from 'react';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
+import { useAnimationActivity } from '../hooks/useAnimationActivity';
 import { useT } from '../lib/i18n/I18nContext';
 
 interface RotatingTetrahedronCanvasProps {
@@ -39,6 +40,9 @@ export default function RotatingTetrahedronCanvas({
   const fillMaterialRef = useRef<THREE.MeshLambertMaterial | null>(null);
   const edgeMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
   const speedRef = useRef(2);
+  const drawRef = useRef<(() => void) | null>(null);
+  const playRef = useRef<((playing: boolean) => void) | null>(null);
+  const animationAllowed = useAnimationActivity();
   const [webglFailed, setWebglFailed] = useState(false);
 
   useEffect(() => {
@@ -58,6 +62,7 @@ export default function RotatingTetrahedronCanvas({
     edgeMaterial.needsUpdate = true;
 
     speedRef.current = inverted ? 20 : 2;
+    drawRef.current?.();
   }, [inverted]);
 
   useEffect(() => {
@@ -134,6 +139,9 @@ export default function RotatingTetrahedronCanvas({
     scene.add(sun);
 
     let animationFrame = 0;
+    let playing = false;
+    const draw = () => renderer.render(scene, camera);
+    drawRef.current = draw;
 
     const resize = () => {
       const parent = canvas.parentElement;
@@ -145,6 +153,7 @@ export default function RotatingTetrahedronCanvas({
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      draw();
     };
 
     const observer = new ResizeObserver(resize);
@@ -159,14 +168,25 @@ export default function RotatingTetrahedronCanvas({
       edges.rotation.y += 0.0038 * speed;
       edges.rotation.x += 0.0002 * speed;
 
-      renderer.render(scene, camera);
-      animationFrame = window.requestAnimationFrame(animate);
+      draw();
+      if (playing) animationFrame = window.requestAnimationFrame(animate);
     };
 
-    animate();
+    // Keep a static frame when motion is reduced or the window is hidden.
+    // React controls play state without rebuilding the WebGL scene.
+    draw();
+    playRef.current = shouldPlay => {
+      if (playing === shouldPlay) return;
+      playing = shouldPlay;
+      if (playing) animationFrame = window.requestAnimationFrame(animate);
+      else window.cancelAnimationFrame(animationFrame);
+    };
 
     return () => {
       window.cancelAnimationFrame(animationFrame);
+      playing = false;
+      drawRef.current = null;
+      playRef.current = null;
       observer.disconnect();
       edgeGeometry.dispose();
       geometry.dispose();
@@ -178,6 +198,10 @@ export default function RotatingTetrahedronCanvas({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Scene created once; inverted changes handled by separate effect.
   }, []);
+
+  useEffect(() => {
+    playRef.current?.(animationAllowed);
+  }, [animationAllowed]);
 
   if (webglFailed) {
     return null;

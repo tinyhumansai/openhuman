@@ -10,6 +10,7 @@ import {
 import debug from 'debug';
 import { type FC, useEffect, useRef } from 'react';
 
+import { useAnimationActivity } from '../../../hooks/useAnimationActivity';
 import type { MascotFace } from './Ghosty';
 import {
   faceToPose,
@@ -91,6 +92,7 @@ export const RiveMascot: FC<RiveMascotProps> = ({
   const { setValue: setSecondaryColor } = useViewModelInstanceColor('secondaryColor', vmInstance);
 
   const basePose = faceToPose(face);
+  const animationAllowed = useAnimationActivity();
 
   // The driven (face-derived) pose. A real activity pose always shows; `idle`
   // is the resting state the ambient scheduler is free to override below.
@@ -108,7 +110,7 @@ export const RiveMascot: FC<RiveMascotProps> = ({
   const setPoseRef = useRef(setPose);
   setPoseRef.current = setPose;
   useEffect(() => {
-    if (!idlePoseRotation || basePose !== 'idle') return;
+    if (!idlePoseRotation || !animationAllowed || basePose !== 'idle') return;
     let timer: number | undefined;
     let current: RivePose = 'idle';
     const toIdle = () => {
@@ -127,7 +129,7 @@ export const RiveMascot: FC<RiveMascotProps> = ({
       if (timer !== undefined) window.clearTimeout(timer);
       setPoseRef.current('idle');
     };
-  }, [idlePoseRotation, basePose]);
+  }, [idlePoseRotation, animationAllowed, basePose]);
 
   useEffect(() => {
     setMouthVisemeCode(toRiveVisemeCode(visemeCode));
