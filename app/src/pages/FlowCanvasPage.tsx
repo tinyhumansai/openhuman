@@ -1500,6 +1500,7 @@ export default function FlowCanvasPage() {
   const location = useLocation();
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const [loadAttempt, setLoadAttempt] = useState(0);
   // The app sidebar is hidden entirely on this route via App's `chromeless`
   // check, so the builder owns the full viewport — nothing to do here.
   // "Fix with agent" (Phase 5c) navigates here with a repair seed in
@@ -1594,7 +1595,7 @@ export default function FlowCanvasPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, loadAttempt]);
 
   if (state.status === 'ready') {
     // Keyed by flow id so switching flows cleanly re-seeds the editable canvas's
@@ -1628,8 +1629,16 @@ export default function FlowCanvasPage() {
       )}
 
       {state.status === 'error' && (
-        <div className="p-4" data-testid="flow-canvas-error">
+        <div className="space-y-3 p-4" data-testid="flow-canvas-error">
           <ErrorBanner message={state.message || t('flows.canvas.loadError')} />
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="flow-canvas-retry"
+            onClick={() => setLoadAttempt(attempt => attempt + 1)}>
+            {t('common.retry')}
+          </Button>
         </div>
       )}
 
