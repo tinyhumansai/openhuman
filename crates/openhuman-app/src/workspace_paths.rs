@@ -22,10 +22,7 @@ pub async fn open_workspace_path(path: String) -> Result<(), String> {
     let target = resolve_workspace_path(&workspace, &path)?;
     let workspace_path = workspace_path_label(&workspace, &target);
     tauri_plugin_opener::open_path(&target, None::<&str>).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("failed to open workspace path {workspace_path}: {err}"),
-            format!("failed to open workspace path {}: {err}", target.display()),
-        )
+        workspace_path_error(format!("failed to open workspace path {workspace_path}: {err}"))
     })
 }
 
@@ -35,13 +32,7 @@ pub async fn reveal_workspace_path(path: String) -> Result<(), String> {
     let target = resolve_workspace_path(&workspace, &path)?;
     let workspace_path = workspace_path_label(&workspace, &target);
     tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("failed to reveal workspace path {workspace_path}: {err}"),
-            format!(
-                "failed to reveal workspace path {}: {err}",
-                target.display()
-            ),
-        )
+        workspace_path_error(format!("failed to reveal workspace path {workspace_path}: {err}"))
     })
 }
 
@@ -56,13 +47,7 @@ async fn active_workspace_root() -> Result<PathBuf, String> {
         .await
         .map_err(|err| workspace_path_error(format!("failed to load OpenHuman config: {err}")))?;
     fs::create_dir_all(&config.workspace_dir).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("failed to create workspace directory: {err}"),
-            format!(
-                "failed to create workspace directory {}: {err}",
-                config.workspace_dir.display()
-            ),
-        )
+        workspace_path_error(format!("failed to create workspace directory: {err}"))
     })?;
     Ok(config.workspace_dir)
 }
@@ -183,15 +168,20 @@ pub(crate) fn resolve_workspace_path(
 ) -> Result<PathBuf, String> {
     let (relative, normalized_path) = normalize_workspace_relative_path(requested_path)?;
     let root = fs::canonicalize(workspace_root).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("failed to canonicalize workspace directory: {err}"),
-            format!(
-                "failed to canonicalize workspace directory {}: {err}",
-                workspace_root.display()
-            ),
-        )
+        workspace_path_error(format!("failed to access workspace directory: {err}"))
     })?;
     let target = root.join(relative);
+    
+    if !target.exists() {
+        let parent = target.parent().unwrap_or(&target);
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|err| {
+                workspace_path_error(format!("failed to create directory for {normalized_path}: {err}"))
+            })?;
+        }
+        return Ok(target);
+    }
+
     let target = fs::canonicalize(&target).map_err(|err| {
         workspace_path_error(format!(
             "workspace path does not exist {normalized_path}: {err}"
@@ -225,10 +215,7 @@ pub(crate) fn preview_workspace_text_from_root(
     let (_, normalized_path) = normalize_workspace_relative_path(requested_path)?;
     let target = resolve_workspace_path(workspace_root, &normalized_path)?;
     let metadata = fs::metadata(&target).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("failed to read metadata for {normalized_path}: {err}"),
-            format!("failed to read metadata for {}: {err}", target.display()),
-        )
+        workspace_path_error(format!("failed to read metadata for {normalized_path}: {err}"))
     })?;
     if !metadata.is_file() {
         return Err(workspace_path_error(format!(
@@ -237,29 +224,20 @@ pub(crate) fn preview_workspace_text_from_root(
     }
 
     let mut file = fs::File::open(&target).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("failed to open workspace file {normalized_path}: {err}"),
-            format!("failed to open workspace file {}: {err}", target.display()),
-        )
+        workspace_path_error(format!("failed to open workspace file {normalized_path}: {err}"))
     })?;
     let mut bytes = Vec::new();
     file.by_ref()
         .take(max_bytes.saturating_add(4) as u64)
         .read_to_end(&mut bytes)
         .map_err(|err| {
-            workspace_path_error_with_debug(
-                format!("failed to read workspace file {normalized_path}: {err}"),
-                format!("failed to read workspace file {}: {err}", target.display()),
-            )
+            workspace_path_error(format!("failed to read workspace file {normalized_path}: {err}"))
         })?;
 
     let truncated = metadata.len() > max_bytes as u64;
     let preview_len = bytes.len().min(max_bytes);
     let contents = utf8_preview(&bytes[..preview_len], truncated).map_err(|err| {
-        workspace_path_error_with_debug(
-            format!("{err}: {normalized_path}"),
-            format!("{err}: {}", target.display()),
-        )
+        workspace_path_error(format!("{err}: {normalized_path}"))
     })?;
 
     log::debug!(
