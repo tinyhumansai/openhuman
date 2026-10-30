@@ -545,6 +545,7 @@ async fn start_chat_inner(
             native_staged_parts: Vec::new(),
             native_staged_lease: None,
             native_message_id: None,
+            native_user_text: None,
             native_preparation_error: None,
         },
         host_authored: false,

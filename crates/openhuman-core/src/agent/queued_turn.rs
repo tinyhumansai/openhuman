@@ -63,6 +63,9 @@ pub struct QueuedPayload {
     /// clones and disarmed only after durable claim persistence.
     pub(crate) native_staged_lease: Option<crate::threads::attachments::NativeStagedLease>,
     pub(crate) native_message_id: Option<String>,
+    /// The sender's own words, before the host prepends its channel context:
+    /// what `beforeSubmitPrompt` screens on a channel turn.
+    pub(crate) native_user_text: Option<String>,
     /// A preparation failure is sent through the shared runner's terminal
     /// path without invoking the model.
     pub(crate) native_preparation_error: Option<String>,

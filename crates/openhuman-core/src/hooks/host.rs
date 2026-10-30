@@ -26,7 +26,7 @@ impl PromptEvaluator for HostPromptEvaluator {
     }
 }
 
-fn environment() -> HookEnvironment {
+pub(super) fn environment() -> HookEnvironment {
     HookEnvironment::new(PRODUCT_NAME, dirs::home_dir())
         .with_shell(super::shell::command)
         .with_prompt_evaluator(Arc::new(HostPromptEvaluator))
@@ -37,6 +37,10 @@ static ENGINE: LazyLock<Arc<HookEngine>> =
 
 /// The process-global engine.
 pub fn engine() -> &'static Arc<HookEngine> {
+    #[cfg(test)]
+    if let Some(engine) = super::fixture::pinned() {
+        return engine;
+    }
     &ENGINE
 }
 

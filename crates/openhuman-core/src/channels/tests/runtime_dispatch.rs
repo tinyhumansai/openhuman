@@ -130,8 +130,13 @@ async fn message_dispatch_processes_messages_in_parallel() {
     assert_eq!(sent_messages.len(), 2);
 }
 
-#[tokio::test]
-async fn process_channel_message_sends_typing_before_the_provider_reply() {
+/// Runs one Telegram message through the linked TinyChannels module, the
+/// trusted host agent and the shared turn runner, against mocked Telegram and
+/// provider HTTP. Returns the fixture so a test can read what each one received.
+async fn run_linked_telegram_message(
+    id: &str,
+    content: &str,
+) -> crate::channels::runtime::test_support::LinkedTelegramRuntime {
     let _bus_guard = use_real_agent_handler().await;
     crate::core::bus::init().await.expect("bus init");
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
@@ -178,10 +183,10 @@ async fn process_channel_message_sends_typing_before_the_provider_reply() {
     let message = traits::ChannelMessage {
         reply_to_id: None,
         topic_id: None,
-        id: "typing-msg".to_string(),
+        id: id.to_string(),
         sender: "alice".to_string(),
         reply_target: "42".to_string(),
-        content: "hello".to_string(),
+        content: content.to_string(),
         channel: "telegram".to_string(),
         timestamp: 1,
         thread_ts: None,
@@ -238,6 +243,12 @@ async fn process_channel_message_sends_typing_before_the_provider_reply() {
         },
     )
     .await;
+    linked
+}
+
+#[tokio::test]
+async fn process_channel_message_sends_typing_before_the_provider_reply() {
+    let linked = run_linked_telegram_message("typing-msg", "hello").await;
 
     let requests = linked.provider_request_paths().await;
     // The host drives typing through the module's `StartTyping` interaction
@@ -273,6 +284,54 @@ async fn process_channel_message_sends_typing_before_the_provider_reply() {
         .await;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["text"], "typing fixture reply");
+}
+
+/// A `beforeSubmitPrompt` hook that blocks a channel turn keeps it from the
+/// model and its reason is what the sender gets back (#8124).
+/// Spawns the hook under `/bin/sh`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_prompt_hook_blocks_a_channel_turn_and_replies_with_its_reason() {
+    crate::hooks::fixture::install_prompt_hooks().await;
+    let linked = run_linked_telegram_message(
+        "blocked-msg",
+        &format!("{} please", crate::hooks::fixture::BLOCK),
+    )
+    .await;
+
+    let requests = linked.provider_request_paths().await;
+    assert!(
+        !requests
+            .iter()
+            .any(|path| path.ends_with("/chat/completions")),
+        "a blocked prompt must not reach the model: {requests:?}"
+    );
+    let sent = linked
+        .provider_request_bodies("/bottoken/sendMessage")
+        .await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["text"], "hook says no");
+}
+
+/// A `beforeSubmitPrompt` hook's context reaches the model on a channel turn.
+/// Spawns the hook under `/bin/sh`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_prompt_hooks_context_reaches_the_model_on_a_channel_turn() {
+    crate::hooks::fixture::install_prompt_hooks().await;
+    let linked = run_linked_telegram_message(
+        "context-msg",
+        &format!("{} look", crate::hooks::fixture::CONTEXT),
+    )
+    .await;
+
+    let completions = linked.provider_request_bodies("/v1/chat/completions").await;
+    assert!(
+        completions
+            .iter()
+            .any(|body| body.to_string().contains("EXTRACTED-BY-HOOK")),
+        "the hook's context should reach the model: {completions:?}"
+    );
 }
 
 /// Integration test that proves channel dispatch actually routes through
