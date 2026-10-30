@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { CoreRpcError } from '../../services/coreRpcClient';
 import { isLocalSessionToken } from '../../utils/localSession';
 import { openhumanComposioGetMode } from '../../utils/tauriCommands';
 import { getCoreStateSnapshot } from '../coreState/store';
@@ -22,6 +23,25 @@ import type { ComposioConnection, ComposioToolkitCatalogEntry } from './types';
 const COMPOSIO_FETCH_RETRY_ATTEMPTS = 1;
 /** Backoff between a failed attempt and the silent retry. */
 const COMPOSIO_FETCH_RETRY_BACKOFF_MS = 400;
+
+/** A local RPC bearer failure is not a rejected Composio API key. */
+function isComposioCredentialRejection(error: unknown): boolean {
+  if (error instanceof CoreRpcError) {
+    if (error.kind === 'provider_auth') {
+      return true;
+    }
+    if (error.kind !== 'unknown') {
+      return false;
+    }
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  // Only a provider-key-specific rejection is terminal for this credential generation.
+  return (
+    /invalid (?:api[ -]?key|composio credentials)/i.test(message) ||
+    /composio.{0,40}(?:unauthori[sz]ed|\b401\b)/i.test(message) ||
+    /(?:api[ -]?key|composio credentials).{0,30}(?:rejected|revoked)/i.test(message)
+  );
+}
 
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -122,6 +142,13 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   // tenant's connections, painting phantom activations on the next restart
   // (PR #4288).
   const configGenerationRef = useRef(0);
+  // Do not repeatedly poll Composio with a rejected API key. Resume only
+  // after the provider identity or credentials change.
+  const authRejectedPollRef = useRef(false);
+  // Serialize polls: the fetch timeout can exceed the polling interval.
+  // Otherwise every 5s tick can invalidate a successful 6-8s response.
+  const pollInFlightRef = useRef(false);
+  const pollRequestIdRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -201,6 +228,13 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
       }
 
       if ('value' in connectionsResult) {
+        // A successful refresh supersedes any older in-flight poll, even when
+        // both use the same credential generation. Its delayed response cannot
+        // roll the refreshed connection snapshot back to stale data.
+        pollRequestIdRef.current += 1;
+        // A successful user-invoked refresh confirms recovery after a previous
+        // provider-auth rejection. Resume periodic updates without remounting.
+        authRejectedPollRef.current = false;
         const freshConnections = connectionsResult.value.connections ?? [];
         setConnections(freshConnections);
         // Persist the latest activation snapshot for instant cold-start paint.
@@ -228,10 +262,19 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     void refresh();
     if (pollIntervalMs <= 0 || fetchEnabled !== true) return;
     const id = window.setInterval(() => {
+      if (authRejectedPollRef.current || pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
       const generation = configGenerationRef.current;
+      const pollRequestId = ++pollRequestIdRef.current;
       void listConnections({ timeoutMs: COMPOSIO_FETCH_TIMEOUT_MS })
         .then(resp => {
-          if (!mountedRef.current || generation !== configGenerationRef.current) return;
+          if (
+            !mountedRef.current ||
+            generation !== configGenerationRef.current ||
+            pollRequestId !== pollRequestIdRef.current
+          ) {
+            return;
+          }
           const freshConnections = resp.connections ?? [];
           setConnections(freshConnections);
           // Keep the durable cache current with each poll so a restart paints
@@ -239,10 +282,23 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
           writeConnectionCache({ connections: freshConnections });
         })
         .catch(err => {
-          console.warn(
-            '[composio] polling connections failed:',
-            err instanceof Error ? err.message : String(err)
-          );
+          // A stale 401 from an earlier tenant must not pause polling after
+          // a credential switch. Config generation is incremented first.
+          if (
+            !mountedRef.current ||
+            generation !== configGenerationRef.current ||
+            pollRequestId !== pollRequestIdRef.current
+          ) {
+            return;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          if (isComposioCredentialRejection(err)) {
+            authRejectedPollRef.current = true;
+          }
+          console.warn('[composio] polling connections failed:', message);
+        })
+        .finally(() => {
+          pollInFlightRef.current = false;
         });
     }, pollIntervalMs);
     return () => window.clearInterval(id);
@@ -263,6 +319,8 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
       // Invalidate any refresh/poll already in flight under the previous client
       // so it can't write its result back after the caches below are cleared.
       configGenerationRef.current += 1;
+      pollRequestIdRef.current += 1;
+      authRejectedPollRef.current = false;
       // The Composio client identity changed (backend ↔ direct / BYO key),
       // so the cached catalog AND connections belong to the previous tenant.
       // Drop both before refetching, mirroring the core-side

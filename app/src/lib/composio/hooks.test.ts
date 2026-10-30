@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockListToolkits = vi.fn();
@@ -267,6 +267,396 @@ describe('useComposioIntegrations', () => {
     expect(result.current.toolkits).toEqual([]);
     expect(result.current.connectionByToolkit.size).toBe(0);
     expect(result.current.error).toBe('backend unreachable');
+  });
+
+  it('pauses Composio polling on 401 until a credential configuration change', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    // Keep Testing Library's waitFor interval alive while intercepting only
+    // the hook's own 12_345ms poll. Swallowing all setInterval calls makes
+    // waitFor hang indefinitely even after the hook has settled.
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(tick).toBeDefined();
+
+      // This is a completed authenticated fetch, not an unavailable local key.
+      mockListConnections.mockRejectedValueOnce(new Error('HTTP 401 invalid API key'));
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const afterUnauthorized = mockListConnections.mock.calls.length;
+
+      // Calling the installed interval callback again must not keep hammering
+      // the invalid credentials endpoint, or poll the old tenant repeatedly.
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(afterUnauthorized);
+
+      // Once a new key is saved (or the mode changes), normal refresh and
+      // periodic polling must resume without requiring component remount.
+      await act(async () => {
+        window.dispatchEvent(new Event('composio:config-changed'));
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(mockListConnections.mock.calls.length).toBeGreaterThan(afterUnauthorized)
+      );
+      const afterRefresh = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(afterRefresh + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('keeps polling on transient Composio failures other than authentication', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: [] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    // Keep Testing Library's waitFor interval alive while intercepting only
+    // the hook's own 12_345ms poll. Swallowing all setInterval calls makes
+    // waitFor hang indefinitely even after the hook has settled.
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      mockListConnections.mockRejectedValueOnce(new Error('503 service unavailable'));
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const first = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(first + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('keeps polling when the local core bearer is rejected with a 401', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    const { CoreRpcError } = await import('../../services/coreRpcClient');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      mockListConnections.mockRejectedValueOnce(
+        new CoreRpcError('Core RPC HTTP 401: Unauthorized', 'core_auth', 401)
+      );
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const afterCoreAuth = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(afterCoreAuth + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('does not supersede a slow successful poll with the next interval tick', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let resolveSlow!: (value: {
+        connections: { id: string; toolkit: string; status: string }[];
+      }) => void;
+      mockListConnections.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveSlow = resolve;
+          })
+      );
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      const started = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(started);
+      await act(async () => {
+        resolveSlow({ connections: [{ id: 'slow', toolkit: 'gmail', status: 'ACTIVE' }] });
+        await Promise.resolve();
+      });
+      expect(result.current.connectionByToolkit.get('gmail')?.id).toBe('slow');
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(started + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('does not let an earlier poll overwrite a successful manual refresh', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let resolveOld!: (value: {
+        connections: { id: string; toolkit: string; status: string }[];
+      }) => void;
+      mockListConnections.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveOld = resolve;
+          })
+      );
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      mockListConnections.mockResolvedValueOnce({
+        connections: [{ id: 'fresh', toolkit: 'gmail', status: 'ACTIVE' }],
+      });
+      await act(async () => {
+        await result.current.refresh();
+      });
+      expect(result.current.connectionByToolkit.get('gmail')?.id).toBe('fresh');
+
+      await act(async () => {
+        resolveOld({ connections: [{ id: 'stale', toolkit: 'gmail', status: 'ACTIVE' }] });
+        await Promise.resolve();
+      });
+      expect(result.current.connectionByToolkit.get('gmail')?.id).toBe('fresh');
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('ignores an older unauthorized poll after a successful manual refresh', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let rejectOld!: (error: Error) => void;
+      mockListConnections.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectOld = reject;
+          })
+      );
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      mockListConnections.mockResolvedValueOnce({
+        connections: [{ id: 'fresh', toolkit: 'gmail', status: 'ACTIVE' }],
+      });
+      await act(async () => {
+        await result.current.refresh();
+      });
+      expect(result.current.connectionByToolkit.get('gmail')?.id).toBe('fresh');
+
+      await act(async () => {
+        rejectOld(new Error('HTTP 401 invalid API key'));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.connectionByToolkit.get('gmail')?.id).toBe('fresh');
+      const afterRejectedOldPoll = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(afterRejectedOldPoll + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('resumes periodic polling after a successful manual refresh of rejected credentials', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      mockListConnections.mockRejectedValueOnce(new Error('HTTP 401 invalid API key'));
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const paused = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(paused);
+      await act(async () => {
+        await result.current.refresh();
+      });
+      const refreshed = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(refreshed + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
+  });
+
+  it('serializes poll requests and pauses on rejection until identity recovery', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    mockListConnections.mockResolvedValue({ connections: [] });
+    let tick: (() => void) | undefined;
+    const realSetInterval = window.setInterval.bind(window);
+    const timer = vi.spyOn(window, 'setInterval').mockImplementation((handler, interval) => {
+      if (interval === 12_345 && typeof handler === 'function') {
+        tick = handler;
+        return 1234 as unknown as ReturnType<typeof window.setInterval>;
+      }
+      return realSetInterval(handler, interval) as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const { result, unmount } = renderHook(() => useComposioIntegrations(12_345));
+    try {
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let rejectOldPoll: ((error: Error) => void) | undefined;
+      mockListConnections.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectOldPoll = reject;
+          })
+      );
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      const firstInFlight = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(firstInFlight);
+      await act(async () => {
+        rejectOldPoll?.(new Error('HTTP 401 invalid API key'));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(firstInFlight);
+      await act(async () => {
+        window.dispatchEvent(new Event('composio:config-changed'));
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(mockListConnections.mock.calls.length).toBeGreaterThan(firstInFlight);
+      });
+      const afterRecovery = mockListConnections.mock.calls.length;
+      await act(async () => {
+        tick?.();
+        await Promise.resolve();
+      });
+      expect(mockListConnections).toHaveBeenCalledTimes(afterRecovery + 1);
+    } finally {
+      unmount();
+      timer.mockRestore();
+    }
   });
 
   it('skips toolkit fetch and polling for local sessions without a composio api key', async () => {
