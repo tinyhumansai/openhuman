@@ -3573,7 +3573,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': '제공업체와 모델 선택',
   'settings.ai.picker.subtitle': '구성된 제공업체와 사용 가능한 모델을 검색하세요.',
   'settings.ai.picker.useThisModel': '이 모델 사용',
-  'settings.ai.picker.searchPlaceholder': '모델 검색',
+  'settings.ai.picker.searchPlaceholder': '제공업체 및 모델 검색',
   'settings.ai.picker.providersLabel': '제공업체',
   'settings.ai.picker.modelIdPlaceholder': '모델 ID 입력',
   'settings.ai.picker.claudeCodeHint': 'Claude Code 모델 별칭 또는 모델 ID를 사용하세요.',

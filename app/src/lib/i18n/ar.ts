@@ -3539,7 +3539,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': 'اختيار المزوّد والنموذج',
   'settings.ai.picker.subtitle': 'ابحث بين المزوّدين المُعدّين والنماذج المتاحة.',
   'settings.ai.picker.useThisModel': 'استخدام هذا النموذج',
-  'settings.ai.picker.searchPlaceholder': 'ابحث عن النماذج',
+  'settings.ai.picker.searchPlaceholder': 'ابحث عن المزوّدين والنماذج',
   'settings.ai.picker.providersLabel': 'المزوّدون',
   'settings.ai.picker.modelIdPlaceholder': 'أدخل معرّف النموذج',
   'settings.ai.picker.claudeCodeHint': 'استخدم اسمًا مستعارًا لنموذج Claude Code أو معرّف نموذج.',

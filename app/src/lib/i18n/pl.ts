@@ -3664,7 +3664,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': 'Wybierz dostawcę i model',
   'settings.ai.picker.subtitle': 'Przeszukaj skonfigurowanych dostawców i dostępne modele.',
   'settings.ai.picker.useThisModel': 'Użyj tego modelu',
-  'settings.ai.picker.searchPlaceholder': 'Szukaj modeli',
+  'settings.ai.picker.searchPlaceholder': 'Szukaj dostawców i modeli',
   'settings.ai.picker.providersLabel': 'Dostawcy',
   'settings.ai.picker.modelIdPlaceholder': 'Wpisz identyfikator modelu',
   'settings.ai.picker.claudeCodeHint': 'Użyj aliasu modelu Claude Code lub identyfikatora modelu.',

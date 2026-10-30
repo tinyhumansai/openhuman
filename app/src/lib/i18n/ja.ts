@@ -2819,7 +2819,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': 'プロバイダーとモデルを選択',
   'settings.ai.picker.subtitle': '設定済みのプロバイダーと利用可能なモデルを検索します。',
   'settings.ai.picker.useThisModel': 'このモデルを使用',
-  'settings.ai.picker.searchPlaceholder': 'モデルを検索',
+  'settings.ai.picker.searchPlaceholder': 'プロバイダーとモデルを検索',
   'settings.ai.picker.providersLabel': 'プロバイダー',
   'settings.ai.picker.modelIdPlaceholder': 'モデルIDを入力',
   'settings.ai.picker.claudeCodeHint':

@@ -3651,7 +3651,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': 'Выбор провайдера и модели',
   'settings.ai.picker.subtitle': 'Поиск среди настроенных провайдеров и доступных моделей.',
   'settings.ai.picker.useThisModel': 'Использовать эту модель',
-  'settings.ai.picker.searchPlaceholder': 'Поиск моделей',
+  'settings.ai.picker.searchPlaceholder': 'Поиск провайдеров и моделей',
   'settings.ai.picker.providersLabel': 'Провайдеры',
   'settings.ai.picker.modelIdPlaceholder': 'Введите ID модели',
   'settings.ai.picker.claudeCodeHint': 'Используйте псевдоним модели Claude Code или ID модели.',

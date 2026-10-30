@@ -3410,7 +3410,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': '选择提供方和模型',
   'settings.ai.picker.subtitle': '在已配置的提供方和可用模型中搜索。',
   'settings.ai.picker.useThisModel': '使用此模型',
-  'settings.ai.picker.searchPlaceholder': '搜索模型',
+  'settings.ai.picker.searchPlaceholder': '搜索提供商和模型',
   'settings.ai.picker.providersLabel': '提供方',
   'settings.ai.picker.modelIdPlaceholder': '输入模型 ID',
   'settings.ai.picker.claudeCodeHint': '使用 Claude Code 模型别名或模型 ID。',

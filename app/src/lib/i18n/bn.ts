@@ -3610,7 +3610,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': 'প্রদানকারী ও মডেল বেছে নিন',
   'settings.ai.picker.subtitle': 'কনফিগার করা প্রদানকারী এবং উপলব্ধ মডেল খুঁজুন।',
   'settings.ai.picker.useThisModel': 'এই মডেল ব্যবহার করুন',
-  'settings.ai.picker.searchPlaceholder': 'মডেল খুঁজুন',
+  'settings.ai.picker.searchPlaceholder': 'প্রোভাইডার ও মডেল খুঁজুন',
   'settings.ai.picker.providersLabel': 'প্রদানকারী',
   'settings.ai.picker.modelIdPlaceholder': 'মডেল আইডি লিখুন',
   'settings.ai.picker.claudeCodeHint': 'একটি Claude Code মডেল উপনাম বা মডেল আইডি ব্যবহার করুন।',

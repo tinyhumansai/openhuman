@@ -2809,7 +2809,7 @@ const en: TranslationMap = {
   'settings.ai.picker.title': 'Choose provider and model',
   'settings.ai.picker.subtitle': 'Search configured providers and available models.',
   'settings.ai.picker.useThisModel': 'Use this model',
-  'settings.ai.picker.searchPlaceholder': 'Search models',
+  'settings.ai.picker.searchPlaceholder': 'Search providers and models',
   'settings.ai.picker.providersLabel': 'Providers',
   'settings.ai.picker.modelIdPlaceholder': 'Enter a model ID',
   'settings.ai.picker.claudeCodeHint': 'Use a Claude Code model alias or model ID.',

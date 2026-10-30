@@ -3702,7 +3702,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.subtitle':
     'Recherchez parmi les fournisseurs configurés et les modèles disponibles.',
   'settings.ai.picker.useThisModel': 'Utiliser ce modèle',
-  'settings.ai.picker.searchPlaceholder': 'Rechercher des modèles',
+  'settings.ai.picker.searchPlaceholder': 'Rechercher des fournisseurs et des modèles',
   'settings.ai.picker.providersLabel': 'Fournisseurs',
   'settings.ai.picker.modelIdPlaceholder': "Saisissez l'ID du modèle",
   'settings.ai.picker.claudeCodeHint':

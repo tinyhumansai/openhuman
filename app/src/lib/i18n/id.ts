@@ -3640,7 +3640,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.subtitle':
     'Cari di antara penyedia yang dikonfigurasi dan model yang tersedia.',
   'settings.ai.picker.useThisModel': 'Gunakan model ini',
-  'settings.ai.picker.searchPlaceholder': 'Cari model',
+  'settings.ai.picker.searchPlaceholder': 'Cari penyedia dan model',
   'settings.ai.picker.providersLabel': 'Penyedia',
   'settings.ai.picker.modelIdPlaceholder': 'Masukkan ID model',
   'settings.ai.picker.claudeCodeHint': 'Gunakan alias model Claude Code atau ID model.',

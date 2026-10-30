@@ -239,18 +239,26 @@ export function ProviderModelPickerDialog({
     };
   }, [catalogRequest, fetchSlug, isLocalSource]);
 
-  // The search box narrows the MODEL list of the selected source. Providers
-  // are a handful of fixed rows and stay put; a query only ever hides models.
+  // Search both provider names and the active provider's catalog. Keep the
+  // selected provider visible so its model results remain usable.
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const matchesQuery = (candidate: ModelInfo) =>
     normalizedQuery === '' ||
     candidate.id.toLocaleLowerCase().includes(normalizedQuery) ||
     (candidate.display_name ?? '').toLocaleLowerCase().includes(normalizedQuery);
+  const visibleSources = sources.filter(
+    candidate =>
+      normalizedQuery === '' ||
+      (source !== null && sourceKey(candidate) === sourceKey(source)) ||
+      sourceLabel(candidate, cloudProviders, t).toLocaleLowerCase().includes(normalizedQuery) ||
+      sourceSlug(candidate).toLocaleLowerCase().includes(normalizedQuery)
+  );
   const modelTitle = (candidate: ModelInfo) => candidate.display_name?.trim() || candidate.id;
   const visibleCatalog = catalog
     .filter(matchesQuery)
     .sort((a, b) => modelTitle(a).localeCompare(modelTitle(b), undefined, { sensitivity: 'base' }));
   const selectSource = (nextSource: CustomDialogSource) => {
+    setQuery('');
     setSource(nextSource);
     setModel(nextSource.kind === 'claude-code' ? CLAUDE_CODE_DEFAULT_MODEL : '');
     modelEntryMode.syncToEndpoint(
@@ -311,7 +319,7 @@ export function ProviderModelPickerDialog({
             {t('settings.ai.picker.providersLabel')}
           </p>
           <div className="space-y-1">
-            {sources.map(candidate => {
+            {visibleSources.map(candidate => {
               const selected = source && sourceKey(candidate) === sourceKey(source);
               return (
                 <Button

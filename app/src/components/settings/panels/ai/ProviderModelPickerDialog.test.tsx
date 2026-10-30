@@ -178,7 +178,7 @@ describe('ProviderModelPickerDialog', () => {
     expect(vi.mocked(listProviderModels)).toHaveBeenCalledTimes(1);
   });
 
-  it('the search box narrows the managed model list, not the provider column', async () => {
+  it('the search box narrows models and finds providers from the same field', async () => {
     vi.mocked(listProviderModels).mockResolvedValue([
       { id: 'openrouter/a/alpha', owned_by: 'openrouter', display_name: 'Alpha' },
       { id: 'openrouter/b/beta', owned_by: 'openrouter', display_name: 'Beta' },
@@ -206,13 +206,21 @@ describe('ProviderModelPickerDialog', () => {
     );
     await screen.findByTestId('model-picker-managed-option-openrouter/a/alpha');
 
-    fireEvent.change(screen.getByLabelText('Search models'), { target: { value: 'bet' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search providers and models' }), {
+      target: { value: 'bet' },
+    });
 
     expect(screen.queryByTestId('model-picker-managed-option-openrouter/a/alpha')).toBeNull();
     expect(screen.getByTestId('model-picker-managed-option-openrouter/b/beta')).toBeInTheDocument();
-    // Providers are untouched by the query.
-    expect(screen.getByText('OpenAI')).toBeInTheDocument();
+    // The selected provider stays available, but unrelated providers are filtered.
+    expect(screen.queryByText('OpenAI')).not.toBeInTheDocument();
     expect(screen.getByText('OpenRouter')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search providers and models' }), {
+      target: { value: 'OpenAI' },
+    });
+    expect(screen.getByRole('button', { name: /OpenAI/ })).toBeInTheDocument();
+    expect(screen.queryByTestId('model-picker-managed-option-openrouter/b/beta')).toBeNull();
   });
 
   it('lists the managed catalog alphabetically by display name', async () => {

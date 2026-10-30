@@ -2509,7 +2509,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.subtitle':
     'Yapılandırılmış sağlayıcılarda ve kullanılabilir modellerde arayın.',
   'settings.ai.picker.useThisModel': 'Bu modeli kullan',
-  'settings.ai.picker.searchPlaceholder': 'Model ara',
+  'settings.ai.picker.searchPlaceholder': 'Sağlayıcı ve model ara',
   'settings.ai.picker.providersLabel': 'Sağlayıcılar',
   'settings.ai.picker.modelIdPlaceholder': 'Bir model kimliği girin',
   'settings.ai.picker.claudeCodeHint':

@@ -3722,7 +3722,7 @@ const messages: TranslationMap = {
   'settings.ai.picker.title': 'Anbieter und Modell wählen',
   'settings.ai.picker.subtitle': 'Konfigurierte Anbieter und verfügbare Modelle durchsuchen.',
   'settings.ai.picker.useThisModel': 'Dieses Modell verwenden',
-  'settings.ai.picker.searchPlaceholder': 'Modelle suchen',
+  'settings.ai.picker.searchPlaceholder': 'Anbieter und Modelle suchen',
   'settings.ai.picker.providersLabel': 'Anbieter',
   'settings.ai.picker.modelIdPlaceholder': 'Modell-ID eingeben',
   'settings.ai.picker.claudeCodeHint':
