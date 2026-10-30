@@ -4106,6 +4106,8 @@ const messages: TranslationMap = {
   'voice.live.error.micDenied': '麦克风访问被拒绝。请在系统设置中允许后重试。',
   'voice.live.error.micUnavailable': '没有可用的麦克风。',
   'voice.live.error.connection': '无法连接到语音助手。',
+  'voice.live.error.insufficientCredits': '实时语音需要更多额度。请充值后继续。',
+  'voice.live.error.paidPlanRequired': '实时语音需要付费套餐。请升级后继续。',
   'voice.live.toolRunning': '正在运行 {name}',
   'voice.live.toolOk': '{name} 已完成',
   'voice.live.toolFailed': '{name} 失败',

@@ -104,6 +104,44 @@ pub(super) fn backend_api_error_text(body: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("; "))
 }
 
+/// The backend `errorCode` for an account whose balance is below what the
+/// route reserves (e.g. Gemini Live's per-session reserve).
+const INSUFFICIENT_CREDITS_ERROR_CODE: &str = "USER_INSUFFICIENT_CREDITS";
+
+/// A billing refusal the backend signals on a gated hosted feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BillingRefusal {
+    /// Balance below the route's reserve.
+    InsufficientCredits,
+    /// The feature needs a paid plan.
+    PaidPlanRequired,
+}
+
+/// Classify a non-2xx response as a billing refusal: an
+/// `errorCode: USER_INSUFFICIENT_CREDITS` envelope on any status
+/// (TAURI-RUST-13BR, whose message matches no budget phrase), or a 403 whose
+/// `error` text asks to add credits or names a paid plan (the voice-agent
+/// signed-url gate, TAURI-RUST-11G3, which answers with `errorCode: FORBIDDEN`).
+/// Only the `error` field is read for 403s, so a body that merely echoes a
+/// phrase elsewhere does not match.
+pub(super) fn backend_billing_refusal(status: u16, body: &str) -> Option<BillingRefusal> {
+    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
+    if value.get("errorCode").and_then(Value::as_str) == Some(INSUFFICIENT_CREDITS_ERROR_CODE) {
+        return Some(BillingRefusal::InsufficientCredits);
+    }
+    if status != 403 {
+        return None;
+    }
+    let error = value.get("error").and_then(Value::as_str)?;
+    if error.to_ascii_lowercase().contains("paid plan") {
+        Some(BillingRefusal::PaidPlanRequired)
+    } else if tinyinference_providers::is_budget_exhausted_message(error) {
+        Some(BillingRefusal::InsufficientCredits)
+    } else {
+        None
+    }
+}
+
 /// A JSON key safe to echo into telemetry: a short ASCII identifier.
 fn is_schema_like_key(key: &str) -> bool {
     const MAX_KEY_LEN: usize = 40;
@@ -259,6 +297,40 @@ impl BackendClient {
         let is_transient_infra = is_transient_http_status_code(status_code);
         let is_budget_exhausted =
             status_code == 400 && tinyinference_providers::is_budget_exhausted_message(&text);
+        let billing_refusal = (!is_budget_exhausted)
+            .then(|| backend_billing_refusal(status_code, &text))
+            .flatten();
+        if let Some(refusal) = billing_refusal {
+            tracing::info!(
+                domain = "backend_api",
+                operation = "authed_json",
+                method = method.as_str(),
+                path = url.path(),
+                status = status_code,
+                failure = "non_2xx",
+                kind = ?refusal,
+                "[backend_api] billing refusal {status} on {} {}: {refusal:?}, not reporting to Sentry",
+                method.as_str(),
+                url.path(),
+            );
+            let (method, path) = (method.as_str().to_string(), url.path().to_string());
+            let body =
+                truncate_at_byte_boundary(&text, BACKEND_API_ERROR_BODY_MAX_BYTES).to_string();
+            return Err(anyhow::Error::new(match refusal {
+                BillingRefusal::InsufficientCredits => HostedApiError::InsufficientCredits {
+                    method,
+                    path,
+                    status: status_code,
+                    body,
+                },
+                BillingRefusal::PaidPlanRequired => HostedApiError::PaidPlanRequired {
+                    method,
+                    path,
+                    status: status_code,
+                    body,
+                },
+            }));
+        }
         if is_budget_exhausted {
             tracing::info!(
                 method = method.as_str(),

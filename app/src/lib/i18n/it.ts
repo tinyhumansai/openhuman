@@ -4430,6 +4430,8 @@ const messages: TranslationMap = {
     "L'accesso al microfono è stato negato. Consentilo nelle impostazioni di sistema e riprova.",
   'voice.live.error.micUnavailable': 'Nessun microfono disponibile.',
   'voice.live.error.connection': "Impossibile connettersi all'agente vocale.",
+  'voice.live.error.insufficientCredits': 'La voce dal vivo richiede più crediti. Aggiungi crediti per continuare.',
+  'voice.live.error.paidPlanRequired': 'La voce dal vivo richiede un piano a pagamento. Passa a un piano superiore per continuare.',
   'voice.live.toolRunning': '{name} in esecuzione',
   'voice.live.toolOk': '{name} completato',
   'voice.live.toolFailed': '{name} non riuscito',

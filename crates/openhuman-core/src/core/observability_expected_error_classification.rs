@@ -233,7 +233,12 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_local_ai_capability_unavailable_message(&lower) {
         return Some(ExpectedErrorKind::LocalAiCapabilityUnavailable);
     }
-    if tinyinference_providers::is_budget_exhausted_message(message) {
+    // TAURI-RUST-13BR / -11G3 — the backend refused a gated hosted feature
+    // (live voice) because the balance is below its reserve or the plan is
+    // free. Billing user state, same bucket as an exhausted budget.
+    if tinyinference_providers::is_budget_exhausted_message(message)
+        || is_hosted_billing_refusal_message(message)
+    {
         return Some(ExpectedErrorKind::BudgetExhausted);
     }
     if is_backend_unavailable_message(message) {

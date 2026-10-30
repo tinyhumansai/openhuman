@@ -1,5 +1,28 @@
 # FINDINGS: voice-agent signed-url 403 (TAURI-RUST-11G3, GitHub #8504)
 
+## Verdict (final, backend-confirmed)
+**User billing state.** `tinyhumansai/backend` @ 6af8f69, `src/controllers/voiceAgent/getSignedUrl.ts:48-56`
+answers `ForbiddenError` (`errorCode: FORBIDDEN`, no `details`, matching the Sentry shape
+`keys=[error,errorCode,success]`) with either:
+- "Voice sessions require a paid plan." (free plan), or
+- "Insufficient balance to start a voice session. Add credits to continue." (balance below
+  `VOICE_AGENT_MIN_BALANCE_USD`, default $1).
+
+The client's budget filter only runs on status 400, so these 403s went to Sentry, and the UI showed the
+raw backend line. The second-pass hypothesis below (entitlement exposed by the new
+`elevenlabs-hosted` picker) was right in kind; the backend source settles which gate it is.
+
+## Fix
+Shared with TAURI-RUST-13BR, see FINDINGS-gemini-live.md "Fix": a 403 whose `error` names a paid plan
+becomes `HostedApiError::PaidPlanRequired`; one matching the budget phrases (here "insufficient
+balance" / "add credits") becomes `InsufficientCredits`. Both are kept out of Sentry and shown in the
+live-voice UI as "requires a paid plan" / "add credits". A 403 with any other message (e.g. a plain
+"Forbidden") still reports. The `voice.agent_signed_url` RPC path gets the same sentinel and the same
+`BudgetExhausted` demotion.
+
+---
+Earlier analysis, kept for the record:
+
 ## Found
 - Caller: `mint_voice_agent_signed_url` in `crates/openhuman-tinyhumans/src/voice/realtime.rs`
   (used by `voice/live.rs` and the `voice/schemas.rs` RPC). It does

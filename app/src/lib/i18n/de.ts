@@ -4494,6 +4494,8 @@ const messages: TranslationMap = {
     'Der Mikrofonzugriff wurde verweigert. Erlaube ihn in den Systemeinstellungen und versuche es erneut.',
   'voice.live.error.micUnavailable': 'Kein Mikrofon verfügbar.',
   'voice.live.error.connection': 'Verbindung zum Sprachagenten fehlgeschlagen.',
+  'voice.live.error.insufficientCredits': 'Für Live-Sprache brauchst du mehr Guthaben. Lade Guthaben auf, um fortzufahren.',
+  'voice.live.error.paidPlanRequired': 'Live-Sprache erfordert einen kostenpflichtigen Tarif. Führe ein Upgrade durch, um fortzufahren.',
   'voice.live.toolRunning': '{name} läuft',
   'voice.live.toolOk': '{name} abgeschlossen',
   'voice.live.toolFailed': '{name} fehlgeschlagen',

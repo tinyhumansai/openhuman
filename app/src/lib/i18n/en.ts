@@ -4632,6 +4632,8 @@ const en: TranslationMap = {
     'Microphone access was denied. Allow it in your system settings and try again.',
   'voice.live.error.micUnavailable': 'No microphone is available.',
   'voice.live.error.connection': "Couldn't connect to the voice agent.",
+  'voice.live.error.insufficientCredits': 'Live voice needs more credits. Add credits to continue.',
+  'voice.live.error.paidPlanRequired': 'Live voice requires a paid plan. Upgrade to continue.',
   'voice.live.toolRunning': 'Running {name}',
   'voice.live.toolOk': '{name} finished',
   'voice.live.toolFailed': '{name} failed',

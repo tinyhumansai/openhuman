@@ -4302,6 +4302,8 @@ const messages: TranslationMap = {
     '마이크 접근이 거부되었습니다. 시스템 설정에서 허용한 뒤 다시 시도하세요.',
   'voice.live.error.micUnavailable': '사용 가능한 마이크가 없습니다.',
   'voice.live.error.connection': '음성 에이전트에 연결할 수 없습니다.',
+  'voice.live.error.insufficientCredits': '실시간 음성에 크레딧이 더 필요합니다. 계속하려면 크레딧을 추가하세요.',
+  'voice.live.error.paidPlanRequired': '실시간 음성은 유료 플랜이 필요합니다. 계속하려면 업그레이드하세요.',
   'voice.live.toolRunning': '{name} 실행 중',
   'voice.live.toolOk': '{name} 완료',
   'voice.live.toolFailed': '{name} 실패',

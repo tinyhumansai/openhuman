@@ -4638,6 +4638,8 @@ const messages: TranslationMap = {
     'マイクへのアクセスが拒否されました。システム設定で許可してから、もう一度お試しください。',
   'voice.live.error.micUnavailable': '利用可能なマイクがありません。',
   'voice.live.error.connection': '音声エージェントに接続できませんでした。',
+  'voice.live.error.insufficientCredits': 'ライブ音声にはクレジットが不足しています。続けるにはクレジットを追加してください。',
+  'voice.live.error.paidPlanRequired': 'ライブ音声には有料プランが必要です。続けるにはアップグレードしてください。',
   'voice.live.toolRunning': '{name}を実行中',
   'voice.live.toolOk': '{name}が完了しました',
   'voice.live.toolFailed': '{name}が失敗しました',

@@ -1,6 +1,52 @@
 # FINDINGS: gemini live/sessions 400 (TAURI-RUST-13BR, #8501)
 
-## Verdict
+## Verdict (final, backend-confirmed)
+**User billing state, not a request defect.** The 400 is the backend's balance gate:
+`tinyhumansai/backend` @ 6af8f69, `src/controllers/agentIntegrations/gemini/liveSessions.ts:119-125`
+throws `BadRequestError("Gemini Live requires an available balance of at least $X.XX (reserved per
+open session)", {reserveUsd}, USER_INSUFFICIENT_CREDITS)` when the user's balance is below the
+per-session reserve. Serialized through `errorHandler.ts` that body is
+`{"success":false,"error":"Gemini Live requires an available balance of at least $1.00 (reserved per open session)","errorCode":"USER_INSUFFICIENT_CREDITS","details":{"reserveUsd":1}}`,
+exactly **182 bytes with keys `details,error,errorCode,success`**, matching the Sentry shape. The
+request body passes the backend's strict zod schema (`validators/agentIntegration.validator.ts:278-305`;
+`functionDeclarations` max 128, `tools` max 10), which rules out the tool-declaration hypothesis below.
+It is systemic because `gemini-hosted` is the default live provider and counts as configured for every
+signed-in user, whatever their balance.
+
+Why it reached Sentry: the client's budget filter keys on phrases ("insufficient balance", "add
+credits", ...), and this message contains none of them; the `errorCode` was never read.
+
+## Fix (this branch)
+- `client/classify.rs`: `backend_billing_refusal(status, body)` classifies an
+  `errorCode: USER_INSUFFICIENT_CREDITS` envelope (any status) and the voice-agent 403 billing
+  messages (see FINDINGS-voice-signed-url.md). Those are info-logged, **not** `report_error`ed, and
+  returned as typed `HostedApiError::InsufficientCredits` / `PaidPlanRequired`.
+- `client/error.rs`: the two variants display in the generic `<METHOD> <path> failed (<status>): <body>`
+  shape and flatten onto new `INSUFFICIENT_CREDITS:` / `PAID_PLAN_REQUIRED:` sentinels.
+- `openhuman-core` observability: the sentinels (`observability_availability.rs`, re-exported through
+  embed) classify as `ExpectedErrorKind::BudgetExhausted`, so a re-report at any boundary is demoted.
+- `voice/live.rs`: `mint_error` maps the sentinels to live-session codes `insufficient_credits` /
+  `paid_plan_required` (Gemini and ElevenLabs hosted mints).
+- App: `LiveVoiceControls.tsx` `errorText` shows "Live voice needs more credits. Add credits to
+  continue." / "Live voice requires a paid plan. Upgrade to continue." instead of the raw backend line;
+  both keys translated in all 16 locales.
+- Not done (product decision): hiding or de-defaulting the hosted live providers for users below the
+  reserve. `backend_ready()` still only checks that a credential exists.
+
+## Verification of the fix
+- In-tree `cargo check`/`test` still impossible (vendor pins, see below). `cargo check -p openhuman
+  --tests` gives the **same error set** with and without this change (880 vs 881 lines, identical
+  after normalizing line numbers, none in touched files).
+- `backend_billing_refusal`, the two error variants and `flatten_authed_error` were compiled verbatim
+  in a scratch crate together with the in-repo pure tests (the real 182-byte body, both 403 messages,
+  non-matches) and pass. The axum round-trip test, `mint_error` test, core classifier test and the
+  Vitest case were added but not run (no compiling tree; no pnpm/node_modules on this box). All 16
+  locale files were parsed with node and carry both keys exactly once.
+
+---
+Earlier analysis, kept for the record (superseded by the verdict above):
+
+## Verdict (first/second pass)
 Root cause NOT confirmed. This is not a regression: live voice (including the
 `gemini-hosted` provider) first shipped in v0.64.14 on 2026-10-08, the day the
 issue began, so the request has most likely been rejected since launch.
