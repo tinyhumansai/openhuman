@@ -84,6 +84,7 @@ profiles/surface_tests.rs
 threads/store/mod.rs
 agent/session_host/transcript_compat_tests.rs
 channels/mod.rs
+channels/host/adapters_tests.rs
 mcp/host.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
