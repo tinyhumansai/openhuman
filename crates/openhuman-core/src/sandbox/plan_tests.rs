@@ -278,3 +278,28 @@ fn a_plan_with_no_workspace_grant_does_not_mount_one() {
     artifact.no_workspace = true;
     assert!(!BoxPlan::from_artifact(&artifact, None).unwrap().workspace);
 }
+
+#[test]
+fn a_container_plan_on_the_openshell_executor_maps_to_the_tenant_box() {
+    let mut planned = artifact(SandboxBackend::Docker);
+    planned.executor_id = crate::sandbox::spawn_plan::OPENSHELL_EXECUTOR.into();
+    let plan = BoxPlan::from_artifact(&planned, None).unwrap();
+    assert_eq!(plan.executor, PlannedExecutor::OpenShell);
+    assert_eq!(plan.network, NetworkPolicy::Denied);
+    assert!(!plan.jail.allow_net);
+}
+
+#[test]
+fn an_openshell_plan_that_reaches_the_network_is_refused() {
+    let mut planned = artifact(SandboxBackend::Docker);
+    planned.executor_id = crate::sandbox::spawn_plan::OPENSHELL_EXECUTOR.into();
+    planned.network = PlannedNetwork::Host;
+    assert_eq!(
+        BoxPlan::from_artifact(&planned, None),
+        Err(PlanMappingError::OpenShellNetworkUnenforceable)
+    );
+    assert_eq!(
+        PlanMappingError::OpenShellNetworkUnenforceable.to_string(),
+        "the sandbox plan grants network to an OpenShell box, which has none"
+    );
+}

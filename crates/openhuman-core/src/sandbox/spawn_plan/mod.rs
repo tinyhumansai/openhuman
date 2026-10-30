@@ -35,6 +35,7 @@ use tinysecurity_bus::{
     SubjectScope, Verdict,
 };
 
+pub(crate) use executors::OPENSHELL_EXECUTOR;
 pub(crate) use facts::SpawnSource;
 pub(crate) use operation::SpawnOperation;
 
@@ -200,7 +201,10 @@ fn options(policy: &SandboxPolicy, host_run: bool) -> SandboxPlanOptions2 {
         preferred_backend: match policy.backend {
             SandboxBackendKind::None => None,
             SandboxBackendKind::Local => Some(SandboxBackend::Jail),
-            SandboxBackendKind::Docker => Some(SandboxBackend::Docker),
+            // OpenShell is the only container executor declared for it.
+            SandboxBackendKind::Docker | SandboxBackendKind::OpenShell => {
+                Some(SandboxBackend::Docker)
+            }
         },
         require_preferred_backend: policy.backend != SandboxBackendKind::None,
         no_workspace: !policy.mount_workspace,
@@ -228,6 +232,8 @@ async fn probe(
             .map_err(|error| format!("docker status: {error}"))
     };
     let (jail, docker) = match policy.backend {
+        // A box is created on the tenant's first command; there is nothing to probe.
+        SandboxBackendKind::OpenShell => return Ok(vec![executors::openshell()]),
         SandboxBackendKind::Local => (Some(jail().await), None),
         SandboxBackendKind::Docker => (None, Some(docker().await)),
         SandboxBackendKind::None => {
@@ -463,6 +469,7 @@ impl PlannedSpawn {
             super::plan::PlannedExecutor::NativeJail => SandboxBackendKind::Local,
             super::plan::PlannedExecutor::Docker => SandboxBackendKind::Docker,
             super::plan::PlannedExecutor::Host => SandboxBackendKind::None,
+            super::plan::PlannedExecutor::OpenShell => SandboxBackendKind::OpenShell,
         };
         let workspace = policy.workspace_root.to_str();
         let paths = |list: &[String]| -> Vec<std::path::PathBuf> {

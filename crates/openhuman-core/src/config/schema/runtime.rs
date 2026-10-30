@@ -15,6 +15,9 @@ pub struct RuntimeConfig {
     /// Filesystem grants for the local OS jail (`[runtime.local_jail]`).
     #[serde(default)]
     pub local_jail: super::LocalJailConfig,
+    /// Boxes for the OpenShell sandbox backend (`[runtime.openshell]`).
+    #[serde(default)]
+    pub openshell: super::OpenShellRuntimeConfig,
     #[serde(default)]
     pub reasoning_enabled: Option<bool>,
     /// Reasoning ("thinking") effort for agent turns: `none`, `minimal`,
@@ -107,6 +110,7 @@ impl Default for RuntimeConfig {
             kind: default_runtime_kind(),
             docker: DockerRuntimeConfig::default(),
             local_jail: super::LocalJailConfig::default(),
+            openshell: super::OpenShellRuntimeConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
             reasoning_effort_by_model: BTreeMap::new(),

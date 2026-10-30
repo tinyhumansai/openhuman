@@ -185,3 +185,19 @@ async fn missing_tinybox_status_does_not_start_the_module_runtime() {
         crate::modules::types::ModuleState::Available
     );
 }
+
+#[tokio::test]
+async fn a_configured_openshell_backend_is_checked_when_its_first_box_is_created() {
+    let scratch = tempfile::tempdir().expect("create isolated config fixture");
+    let check = SandboxBackendCheck::with_probe(Arc::new(DockerAvailability(false)));
+    let finding = check
+        .detect(&DoctorCtx::from_config(config(
+            scratch.path(),
+            SandboxBackend::OpenShell,
+        )))
+        .await
+        .remove(0);
+
+    assert_eq!(finding.severity, FindingSeverity::Skipped);
+    assert!(finding.message.contains("OpenShell"));
+}

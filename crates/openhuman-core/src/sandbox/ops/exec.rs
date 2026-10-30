@@ -186,6 +186,22 @@ pub(crate) async fn execute_in_sandbox_yielding(
                     .await
                     .map(ShellRunOutcome::Finished)
             }
+            // The box has its own workspace (`/sandbox`); no host path or host
+            // variable is sent, only the request's own environment. A box cannot
+            // hand back a running command, so the come-back time is a deadline.
+            SandboxBackendKind::OpenShell => {
+                let timeout = come_back
+                    .deadline_instead
+                    .map_or(timeout, |deadline| timeout.min(deadline));
+                crate::sandbox::spawn_plan::consume(&planned)
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("Sandbox plan could not be consumed: {error}")
+                    })?;
+                crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
+                    .await
+                    .map(ShellRunOutcome::Finished)
+            }
         }
     }
     #[cfg(not(feature = "security-module"))]

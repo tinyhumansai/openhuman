@@ -182,3 +182,38 @@ fn the_configured_docker_runtime_carries_its_workspace_setting() {
     assert_eq!(filled.backend, SandboxBackendKind::Docker);
     assert!(!filled.mount_workspace);
 }
+
+#[test]
+fn an_openshell_selection_routes_to_openshell_without_docker_network_or_host_mounts() {
+    let sandbox = SandboxConfig {
+        backend: SandboxBackend::OpenShell,
+        ..SandboxConfig::default()
+    };
+    for (mode, runtime, remote) in [
+        (SandboxMode::Sandboxed, docker_runtime(), false),
+        (SandboxMode::Sandboxed, RuntimeConfig::default(), true),
+        (SandboxMode::None, RuntimeConfig::default(), false),
+    ] {
+        let routed = policy(mode, &sandbox, &runtime, remote);
+        assert_eq!(routed.backend, SandboxBackendKind::OpenShell);
+        assert!(routed.docker_overrides.is_none());
+        assert!(!routed.allow_network);
+        assert!(!routed.mount_workspace);
+        assert!(routed.read_only_mounts.is_empty() && routed.read_write_mounts.is_empty());
+    }
+}
+
+#[test]
+fn an_explicit_backend_selection_requires_the_sandbox() {
+    for backend in [
+        SandboxBackend::Landlock,
+        SandboxBackend::Firejail,
+        SandboxBackend::Bubblewrap,
+        SandboxBackend::Docker,
+        SandboxBackend::OpenShell,
+    ] {
+        assert!(backend_requires_sandbox(&backend), "{backend:?}");
+    }
+    assert!(!backend_requires_sandbox(&SandboxBackend::Auto));
+    assert!(!backend_requires_sandbox(&SandboxBackend::None));
+}

@@ -399,3 +399,20 @@ fn config_disables_sandbox_for_legacy_flag_or_component() {
     config.components.sandbox = false;
     assert!(config_disables_sandbox(&config));
 }
+
+#[tokio::test]
+async fn the_openshell_handle_is_ready_without_pretending_to_be_a_container() {
+    let policy = SandboxPolicy {
+        backend: SandboxBackendKind::OpenShell,
+        ..unsandboxed_policy(Path::new("/tmp/action"), Path::new("/tmp/state"))
+    };
+
+    let handle = create_sandbox_backend_with_config(&policy, &crate::config::Config::default())
+        .await
+        .unwrap();
+
+    assert_eq!(handle.kind, SandboxBackendKind::OpenShell);
+    assert_eq!(handle.status, SandboxStatus::Ready);
+    assert_eq!(handle.backend_id, None);
+    assert_eq!(handle.isolation, None);
+}

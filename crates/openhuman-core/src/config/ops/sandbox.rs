@@ -31,14 +31,7 @@ pub async fn get_sandbox_settings(ctx: &DispatchCtx) -> Result<Outcome<serde_jso
     .await
     .map_err(|_| "Docker status probe timed out".to_owned())??;
 
-    let backend_str = match sandbox.backend {
-        crate::config::SandboxBackend::Auto => "auto",
-        crate::config::SandboxBackend::Landlock => "landlock",
-        crate::config::SandboxBackend::Firejail => "firejail",
-        crate::config::SandboxBackend::Bubblewrap => "bubblewrap",
-        crate::config::SandboxBackend::Docker => "docker",
-        crate::config::SandboxBackend::None => "none",
-    };
+    let backend_str = backend_name(&sandbox.backend);
 
     let detected_backend = crate::sandbox::native_jail::status(&config)
         .await
@@ -62,6 +55,45 @@ pub async fn get_sandbox_settings(ctx: &DispatchCtx) -> Result<Outcome<serde_jso
     Ok(Outcome::single_log(value, "sandbox settings read"))
 }
 
+/// The settings name of a backend, as `[security.sandbox] backend` spells it.
+fn backend_name(backend: &crate::config::SandboxBackend) -> &'static str {
+    use crate::config::SandboxBackend;
+    match backend {
+        SandboxBackend::Auto => "auto",
+        SandboxBackend::Landlock => "landlock",
+        SandboxBackend::Firejail => "firejail",
+        SandboxBackend::Bubblewrap => "bubblewrap",
+        SandboxBackend::Docker => "docker",
+        SandboxBackend::OpenShell => "openshell",
+        SandboxBackend::None => "none",
+    }
+}
+
+/// The backend a settings name selects. `firejail` and `bubblewrap` stay
+/// readable in saved settings but cannot be chosen: TinyBox does the native
+/// sandboxing in this build.
+fn parse_backend(name: &str) -> Result<crate::config::SandboxBackend, String> {
+    use crate::config::SandboxBackend;
+    Ok(match name {
+        "auto" => SandboxBackend::Auto,
+        "landlock" => SandboxBackend::Landlock,
+        "firejail" | "bubblewrap" => {
+            return Err(format!(
+                "unsupported sandbox backend '{name}': this build uses TinyBox for native sandboxing; valid: auto, landlock, docker, openshell, none"
+            ));
+        }
+        "docker" => SandboxBackend::Docker,
+        "openshell" => SandboxBackend::OpenShell,
+        "none" => SandboxBackend::None,
+        other => {
+            log::warn!("[config][sandbox] rejected unknown backend: {other}");
+            return Err(format!(
+                "unknown sandbox backend '{other}'; valid: auto, landlock, docker, openshell, none"
+            ));
+        }
+    })
+}
+
 pub async fn apply_sandbox_settings(
     config: &mut Config,
     update: SandboxSettingsPatch,
@@ -73,23 +105,7 @@ pub async fn apply_sandbox_settings(
         );
     }
     if let Some(ref backend) = update.backend {
-        config.sandbox.backend = match backend.as_str() {
-            "auto" => crate::config::SandboxBackend::Auto,
-            "landlock" => crate::config::SandboxBackend::Landlock,
-            "firejail" | "bubblewrap" => {
-                return Err(format!(
-                    "unsupported sandbox backend '{backend}': this build uses TinyBox for native sandboxing; valid: auto, landlock, docker, none"
-                ));
-            }
-            "docker" => crate::config::SandboxBackend::Docker,
-            "none" => crate::config::SandboxBackend::None,
-            other => {
-                log::warn!("[config][sandbox] rejected unknown backend: {other}");
-                return Err(format!(
-                    "unknown sandbox backend '{other}'; valid: auto, landlock, docker, none"
-                ));
-            }
-        };
+        config.sandbox.backend = parse_backend(backend)?;
     }
     if let Some(enabled) = update.enabled {
         config.sandbox.enabled = Some(enabled);
@@ -133,3 +149,7 @@ pub async fn load_and_apply_sandbox_settings(
     let mut config = ctx.load_config().await?;
     apply_sandbox_settings(&mut config, update).await
 }
+
+#[cfg(test)]
+#[path = "sandbox_tests.rs"]
+mod tests;

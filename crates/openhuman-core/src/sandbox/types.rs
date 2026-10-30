@@ -15,6 +15,9 @@ pub enum SandboxBackendKind {
     Local,
     /// Docker container isolation.
     Docker,
+    /// The tenant's long-lived OpenShell box (`sandbox::openshell`).
+    #[serde(rename = "openshell")]
+    OpenShell,
 }
 
 /// Per-session sandbox policy resolved from agent definition, session

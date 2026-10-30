@@ -161,7 +161,7 @@ pub(crate) fn operator_host_network(policy: &SandboxPolicy) -> bool {
 fn configured(config: &Config) -> bool {
     matches!(
         config.sandbox.backend,
-        SandboxBackend::Landlock | SandboxBackend::Docker
+        SandboxBackend::Landlock | SandboxBackend::Docker | SandboxBackend::OpenShell
     )
 }
 
