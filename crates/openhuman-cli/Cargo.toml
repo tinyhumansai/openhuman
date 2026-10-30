@@ -180,6 +180,11 @@ name = "storage_agent_scopes_e2e"
 path = "../../tests/storage_agent_scopes_e2e.rs"
 
 [[test]]
+# Its own binary: one live agent's pass leaves the others' due jobs alone.
+name = "cron_agent_pass_e2e"
+path = "../../tests/cron_agent_pass_e2e.rs"
+
+[[test]]
 # Its own binary: it boots a core with `[components]` switches off.
 name = "components_e2e"
 path = "../../tests/components_e2e.rs"

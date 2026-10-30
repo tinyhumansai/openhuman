@@ -99,8 +99,8 @@ pub use dispatcher::execute_job_now;
 pub(crate) use dispatcher::lose_next_ack_reply_after_commit_for_test;
 pub(crate) use dispatcher::run_job_now;
 pub(crate) use dispatcher::{tick_once, JobDispatcher};
-pub use live_agents::run_live_agent_pass;
 pub(crate) use live_agents::LiveAgentSchedulers;
+pub use live_agents::{run_agent_pass, run_live_agent_pass};
 pub(crate) fn scheduler_config(config: &Config) -> serde_json::Value {
     serde_json::json!({
         "poll_secs": config.reliability.scheduler_poll_secs,

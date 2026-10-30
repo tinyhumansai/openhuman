@@ -56,8 +56,13 @@ scope's config, security policy and `CoreContext`. The host drives the ticks
 rather than letting the module run its own loop so the poll interval, the
 transition-only `HealthChanged` signals and the live-agent reconcile stay in one
 place, and so a test or embedder can run one deterministic pass
-(`run_live_agent_pass`). Dropping a dispatcher stops its scheduler
-(`StopScheduler`) and unserves its object.
+(`run_live_agent_pass`). A host that decides when one agent's jobs run (it
+opens agents on demand, or hands due work to a queue) runs that agent's pass
+alone with `run_agent_pass(agent_id)`, which is `None` when the agent is not
+live. Both are the loop's own run, so occurrence claims keep a pass that races
+the loop, or another process's pass, from running an occurrence twice.
+Dropping a dispatcher stops its scheduler (`StopScheduler`) and unserves its
+object.
 
 Health is published on transitions only, so an idle queue does not put a
 steady `healthy: true` event on the bus every poll. A successful tick after a
@@ -349,6 +354,8 @@ feature) nothing loads and every cron call answers `COMPONENT_DISABLED:tinyflows
 - `AgentJobSpec`: the store's agent-job creation spec (from `tinyflows_bus::schedule`),
   used by `add_agent_job_from_spec`.
 - `scheduler::run(ctx, config)`: the service entry point.
+- `scheduler::run_agent_pass(agent_id)`: one live agent's due jobs, run to
+  completion.
 - `scheduler::run_job_now`: manual worker lifecycle owner used by Run Now and
   the run tool; `scheduler::execute_job_now` preserves the synchronous tuple
   adapter for existing host callers.
