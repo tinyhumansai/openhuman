@@ -36,6 +36,7 @@ import { BackgroundLoopControls } from './ai/BackgroundLoopControls';
 import { CloudProviderEditor } from './ai/CloudProviderEditor';
 import { CustomRoutingDialog } from './ai/CustomRoutingDialog';
 import { DefaultModelRow } from './ai/DefaultModelRow';
+import { ModelFeasibilityPreview } from './ai/ModelFeasibilityPreview';
 import { ProviderAuthSection } from './ai/ProviderAuthSection';
 import { ProviderKeyDialog } from './ai/ProviderConnectControls';
 import { SaveBar } from './ai/SaveBar';
@@ -302,6 +303,16 @@ const AIPanel = ({
                     />
                   ))}
                 </WorkloadTable>
+                {!embedded && (
+                  <details className="rounded-lg border border-line-subtle">
+                    <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-content">
+                      {t('settings.ai.feasibility.title', 'Model suitability and cost preview')}
+                    </summary>
+                    <div className="p-3 pt-0">
+                      <ModelFeasibilityPreview models={draft.modelRegistry} />
+                    </div>
+                  </details>
+                )}
                 {isDirty && (
                   <SaveBar
                     diffSummary={diffSummary}
