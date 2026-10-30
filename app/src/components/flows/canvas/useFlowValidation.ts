@@ -15,7 +15,7 @@
  * last successful `validation` is left untouched and `validating` clears.
  */
 import createDebug from 'debug';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { WorkflowGraph } from '../../../lib/flows/types';
 import { type FlowValidation, validateFlow } from '../../../services/api/flowsApi';
@@ -30,7 +30,7 @@ interface FlowValidationState {
   validation: FlowValidation | null;
   /** True while a validation RPC is in flight (debounced or manual). */
   validating: boolean;
-  /** Validate the current graph immediately, resolving with the result (or `null` on error). */
+  /** Validate the current draft; return null on error or superseded completion. */
   validateNow: () => Promise<FlowValidation | null>;
 }
 
@@ -46,14 +46,24 @@ export function useFlowValidation(
   graphKey: string,
   enabled = true
 ): FlowValidationState {
-  const [validation, setValidation] = useState<FlowValidation | null>(null);
-  const [validating, setValidating] = useState(false);
+  // A result belongs to the exact draft key validated, not to the editor globally.
+  // Derive visibility immediately on render, before the next debounce elapses.
+  const [snapshot, setSnapshot] = useState<{ key: string; result: FlowValidation } | null>(null);
+  const validation = snapshot?.key === graphKey ? snapshot.result : null;
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const validating = pendingKey === graphKey;
 
   // Latest graph, read lazily so the debounced effect / manual trigger always
   // validate the current draft without listing `graph` (new object each render)
   // as a dependency.
   const graphRef = useRef(graph);
-  graphRef.current = graph;
+  const graphKeyRef = useRef(graphKey);
+  // A concurrent render can be discarded. Updating refs in render would
+  // associate an in-flight validation with a draft that never committed.
+  useLayoutEffect(() => {
+    graphRef.current = graph;
+    graphKeyRef.current = graphKey;
+  }, [graph, graphKey]);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -73,10 +83,17 @@ export function useFlowValidation(
 
   const run = useCallback(async (): Promise<FlowValidation | null> => {
     const requestId = ++requestIdRef.current;
-    setValidating(true);
+    const checkedKey = graphKeyRef.current;
+    setPendingKey(checkedKey);
     try {
       const result = await validateFlow(graphRef.current);
-      if (!mountedRef.current || requestId !== requestIdRef.current) return result;
+      if (
+        !mountedRef.current ||
+        requestId !== requestIdRef.current ||
+        graphKeyRef.current !== checkedKey
+      ) {
+        return null;
+      }
       log(
         'validated (req=%d): valid=%s errors=%d warnings=%d',
         requestId,
@@ -84,13 +101,13 @@ export function useFlowValidation(
         result.errors.length,
         result.warnings.length
       );
-      setValidation(result);
+      setSnapshot({ key: checkedKey, result });
       return result;
     } catch (err) {
       log('validation failed (non-fatal): %o', err);
       return null;
     } finally {
-      if (mountedRef.current && requestId === requestIdRef.current) setValidating(false);
+      if (mountedRef.current && requestId === requestIdRef.current) setPendingKey(null);
     }
   }, []);
 
