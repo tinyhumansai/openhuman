@@ -76,6 +76,7 @@
 - [Architecture](developing/architecture/README.md)
   - [Deep Architecture Reference](developing/architecture.md)
   - [Agent Harness](developing/architecture/agent-harness.md)
+  - [Workspace Source Evidence](developing/architecture/source-evidence.md)
   - [Storage](developing/architecture/storage.md)
   - [Flows on TinyFlows](developing/architecture/flows-on-tinyflows.md)
   - [Memory](developing/architecture/memory.md)

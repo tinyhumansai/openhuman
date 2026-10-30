@@ -145,6 +145,7 @@
   "skill_registry_uninstall",
   "skill_runtime_resolve_runtimes",
   "skill_search",
+  "source_evidence",
   "spawn_subagent",
   "suggest_workflows",
   "task_source_add",

@@ -520,6 +520,16 @@
     "verification": "threads/artifact_rows_tests.rs: recording_an_artifact_twice_writes_one_row"
   },
   {
+    "file": "crates/openhuman-core/src/tools/impl/filesystem/source_graph.rs",
+    "scope": "",
+    "name": "PATTERN",
+    "type": "OnceLock<Regex>",
+    "count": 6,
+    "category": "A",
+    "reason": "Six process-wide, immutable compiled regexes for syntax-only source graph projection. They contain fixed literals and no tenant paths, user content, permissions or mutable state. Reuse avoids recompiling each pattern on every scan; authorization and output budgets are applied per request.",
+    "verification": "tools/impl/filesystem/source_graph_tests.rs: graph_does_not_invent_edges_from_js_comments_or_string_literals; graph_does_not_parse_rust_mod_declarations_inside_block_comments"
+  },
+  {
     "file": "crates/openhuman-core/src/tools/sources.rs",
     "scope": "",
     "name": "TOOL_SOURCES",

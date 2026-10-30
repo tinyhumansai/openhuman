@@ -145,6 +145,7 @@ export const INTEGRATION_ICON = PlugIcon;
 
 export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   // ── Files and code ──────────────────────────────────────────────────────
+  source_evidence: spec('analyzeCode', ScanSearchIcon, 'code', { chip: chip.path(), body: 'file' }),
   file_read: spec('readFile', FileTextIcon, 'file', { chip: chip.path(), body: 'file' }),
   file_write: spec('writeFile', FilePlusIcon, 'file', { chip: chip.path(), body: 'file' }),
   edit: spec('editFile', FilePenIcon, 'file', { chip: chip.path(), body: 'file' }),

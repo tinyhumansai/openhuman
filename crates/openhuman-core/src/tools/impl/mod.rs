@@ -2,6 +2,7 @@ pub mod browser;
 #[cfg(feature = "documents")]
 pub mod document;
 mod filesystem;
+pub use filesystem::SourceEvidenceTool;
 pub mod network;
 #[cfg(feature = "documents")]
 pub mod presentation;

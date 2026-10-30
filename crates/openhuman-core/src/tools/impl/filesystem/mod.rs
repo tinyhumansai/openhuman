@@ -11,6 +11,11 @@
 //! ask.
 
 pub(in crate::tools::implementations) mod gate;
+mod source_evidence;
+mod source_graph;
+mod source_locate;
+
+pub use source_evidence::SourceEvidenceTool;
 
 #[cfg(test)]
 #[path = "gate_tests.rs"]
