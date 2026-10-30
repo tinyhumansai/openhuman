@@ -3940,6 +3940,8 @@ const messages: TranslationMap = {
     "L'agente ha eseguito il numero massimo di passaggi con gli strumenti in un turno senza finire. Di solito significa che uno strumento continuava a fallire (spesso per un limite di richieste su un recupero web). Puoi riprovare la stessa domanda in questo thread quando il limite si sarà sbloccato.",
   'chat_error.turn_timeout':
     'Questo turno ha superato il suo limite di tempo senza finire ed è stato interrotto per non restare bloccato. Di solito significa che una chiamata a uno strumento o un sub-agente delegato si è bloccato. Puoi riprovare la tua domanda in questo thread.',
+  'chat_error.disk_full':
+    "Il disco è pieno, quindi non è stato possibile salvare questa conversazione. Libera un po' di spazio su disco, poi invia di nuovo il messaggio in questo thread.",
   'chat_error.empty_response':
     'Il modello ha restituito una risposta vuota. Riprova. Se continua a succedere, prova un altro modello o controlla la sua configurazione in Connessioni → Chiavi API → LLM.',
   'chat_error.chat_template_rejected':

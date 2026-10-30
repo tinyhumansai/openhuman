@@ -3929,6 +3929,8 @@ const messages: TranslationMap = {
     'Agent wykonał maksymalną liczbę kroków z narzędziami w jednej turze i nie zakończył jej. Zwykle oznacza to, że narzędzie wciąż zawodziło (często z powodu limitu zapytań przy pobieraniu strony). Gdy limit ustąpi, możesz ponowić to samo pytanie w tym wątku.',
   'chat_error.turn_timeout':
     'Ta tura przekroczyła limit czasu bez zakończenia i została zatrzymana, aby się nie zawiesić. Zwykle oznacza to, że zawiesiło się wywołanie narzędzia lub delegowany podagent. Możesz ponowić pytanie w tym wątku.',
+  'chat_error.disk_full':
+    'Dysk jest pełny, więc nie udało się zapisać tej rozmowy. Zwolnij trochę miejsca na dysku, a potem wyślij wiadomość ponownie w tym wątku.',
   'chat_error.empty_response':
     'Model zwrócił pustą odpowiedź. Spróbuj ponownie. Jeśli to się powtarza, wypróbuj inny model lub sprawdź jego konfigurację w Połączenia → Klucze API → LLM.',
   'chat_error.chat_template_rejected':

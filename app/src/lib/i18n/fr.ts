@@ -3970,6 +3970,8 @@ const messages: TranslationMap = {
     "L'agent a exécuté le nombre maximal d'étapes d'outils pour un tour sans terminer. Cela signifie généralement qu'un outil a continué d'échouer (souvent à cause d'une limite de débit sur une récupération web). Vous pouvez reposer la même question dans ce fil une fois la limite levée.",
   'chat_error.turn_timeout':
     "Ce tour a dépassé son budget de temps sans se terminer et a été arrêté pour ne pas se bloquer. Cela signifie généralement qu'un appel d'outil ou un sous-agent délégué est resté bloqué. Vous pouvez reposer votre question dans ce fil.",
+  'chat_error.disk_full':
+    "Votre disque est plein, cette conversation n'a donc pas pu être enregistrée. Libérez de l'espace disque, puis renvoyez votre message dans ce fil.",
   'chat_error.empty_response':
     'Le modèle a renvoyé une réponse vide. Veuillez réessayer. Si cela persiste, essayez un autre modèle ou vérifiez sa configuration dans Connexions → Clés API → LLM.',
   'chat_error.chat_template_rejected':

@@ -684,3 +684,43 @@ fn hosted_timeout_bound_reaches_the_sentry_tag_and_keeps_the_user_class() {
         );
     }
 }
+
+#[test]
+fn classify_inference_error_disk_full_tells_the_user_to_free_space() {
+    // #8508 / Sentry TAURI-RUST-15PJ: the turn's transcript append failed
+    // because the host disk is full. The user must get actionable "free disk
+    // space" copy, not the generic "something went wrong" bucket.
+    let native = if cfg!(windows) {
+        // Localized Windows ERROR_DISK_FULL — no English anchor survives.
+        "transcript persistence failed: Auf dem Datenträger ist nicht genügend \
+         Speicherplatz vorhanden. (os error 112)"
+    } else {
+        "transcript persistence failed: No space left on device (os error 28)"
+    };
+    for raw in [
+        native,
+        "transcript persistence failed: There is not enough space on the disk. (os error 112)",
+    ] {
+        let classified = classify_inference_error(raw);
+        assert_eq!(classified.error_type, "disk_full", "{raw}");
+        assert_eq!(classified.source, "local_storage");
+        assert_eq!(classified.copy_key, "chat_error.disk_full");
+        assert!(classified.retryable, "succeeds once space is freed");
+        assert_eq!(classified.provider, None);
+        assert!(
+            classified.message.contains("disk is full") && classified.message.contains("Free up"),
+            "must tell the user to free space: {}",
+            classified.message
+        );
+    }
+}
+
+#[test]
+fn classify_inference_error_provider_quoting_enospc_keeps_provider_copy() {
+    // A remote provider whose own server disk is full is not the user's
+    // machine: the provider envelope keeps the provider classification.
+    let raw = "OpenAI API error (500 Internal Server Error): \
+               write failed: No space left on device (os error 28)";
+    let classified = classify_inference_error(raw);
+    assert_ne!(classified.error_type, "disk_full", "{classified:?}");
+}
