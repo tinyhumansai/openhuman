@@ -16,9 +16,9 @@ the bus.
 
 ### Providers, routes, and roles
 
-TinySearch knows ten providers (`tinysearch_bus::PROVIDERS`): `exa`, `gemini`,
+TinySearch knows eleven providers (`tinysearch_bus::PROVIDERS`): `exa`, `gemini`,
 `gemini_deep_research`, `tinyfish`, `parallel`, `brave`, `querit`, `tavily`,
-`seltz`, and `searxng`. Each provider the user enables has a route:
+`seltz`, `searxng`, and `keenable`. Each provider the user enables has a route:
 
 - `managed`: called through the TinyHumans backend, billed to the session or
   API key. Only `exa` and `gemini` support it
@@ -28,6 +28,8 @@ TinySearch knows ten providers (`tinysearch_bus::PROVIDERS`): `exa`, `gemini`,
 - `direct`: the user's own key, or a base URL for SearXNG. Seltz reads its key
   from `[seltz]`, SearXNG from `[searxng].base_url`, everyone else from
   `[search]` credentials. `gemini_deep_research` uses the direct Gemini key.
+  Keenable's direct route works with no key (keyless public endpoints,
+  rate-limited per IP); a key in `[search.keenable]` raises the limits.
 
 There are three roles, each with an ordered provider list:
 
@@ -47,8 +49,9 @@ response lists the providers it skipped in `fallback_from`.
 provider: whether the user enabled it, its route, whether it can be managed,
 whether a backend credential exists (`managed_available`, from
 `resolve_backend_credential`), whether the direct route is configured
-(`key_configured`), and the result, `usable`. A provider is usable when search
-is on, the provider is enabled, and its chosen route is reachable.
+(`key_configured`), whether it also works without a key (`key_optional`, only
+Keenable), and the result, `usable`. A provider is usable when search is on,
+the provider is enabled, and its chosen route is reachable.
 `ResolvedProvider::status` turns that into the settings badge
 (`Ready`, `Disabled`, `NeedsKey`, `SignInRequired`, `SearchOff`).
 

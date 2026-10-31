@@ -174,7 +174,7 @@ async fn for_each_secret(
     process_secret!(&mut config.api_key, "api_key");
     process_secret!(&mut config.seltz.api_key, "seltz.api_key");
     for provider in [
-        "parallel", "brave", "querit", "exa", "tavily", "gemini", "tinyfish",
+        "parallel", "brave", "querit", "exa", "tavily", "gemini", "tinyfish", "keenable",
     ] {
         if let Some(creds) = config.search.credentials_mut(provider) {
             process_secret!(&mut creds.api_key, &format!("search.{provider}.api_key"));

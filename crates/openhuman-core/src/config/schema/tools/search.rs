@@ -311,6 +311,10 @@ pub struct SearchConfig {
     /// backend does not proxy it.
     #[serde(default)]
     pub tinyfish: SearchEngineCredentials,
+    /// Keenable key (direct route). Optional: without one Keenable serves its
+    /// keyless public endpoints, rate-limited per IP; a key raises the limits.
+    #[serde(default)]
+    pub keenable: SearchEngineCredentials,
 
     // ── Legacy single-engine fields: read for migration, never written ──
     #[serde(default, skip_serializing)]
@@ -356,6 +360,7 @@ impl Default for SearchConfig {
             gemini_route: None,
             parallel: SearchEngineCredentials::default(),
             tinyfish: SearchEngineCredentials::default(),
+            keenable: SearchEngineCredentials::default(),
             host_credentials: BTreeMap::new(),
         }
     }
@@ -400,6 +405,7 @@ impl SearchConfig {
             "gemini" | "gemini_deep_research" => Some(&self.gemini),
             "parallel" => Some(&self.parallel),
             "tinyfish" => Some(&self.tinyfish),
+            "keenable" => Some(&self.keenable),
             _ => None,
         }
     }
@@ -413,6 +419,7 @@ impl SearchConfig {
             "gemini" | "gemini_deep_research" => Some(&mut self.gemini),
             "parallel" => Some(&mut self.parallel),
             "tinyfish" => Some(&mut self.tinyfish),
+            "keenable" => Some(&mut self.keenable),
             _ => None,
         }
     }
