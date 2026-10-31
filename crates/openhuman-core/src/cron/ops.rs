@@ -86,11 +86,7 @@ pub async fn cron_update(
     crate::core::runtime::components::require_config(config, "tinyflows")?;
 
     if let Some(command) = &patch.command {
-        let security = SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        );
+        let security = SecurityPolicy::for_config(config);
         crate::cron::scheduler::shell_job::authorize_shell_command(config, &security, command)
             .await?;
     }

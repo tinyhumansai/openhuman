@@ -108,13 +108,8 @@ fn handle_tool_call(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerF
         let arguments = params.get("arguments").cloned();
         let confirmed = read_optional::<bool>(&params, "confirmed")?.unwrap_or(false);
         let config = ctx.load_config().await?;
-        let security = crate::security::live_policy::current().unwrap_or_else(|| {
-            Arc::new(SecurityPolicy::from_config(
-                &config.autonomy,
-                &config.workspace_dir,
-                &config.action_dir,
-            ))
-        });
+        let security = crate::security::live_policy::current()
+            .unwrap_or_else(|| Arc::new(SecurityPolicy::for_config(&config)));
         let port = HostUiPort::new(Arc::new(config));
         let outcome =
             ops::tool_call(&port, &security, server_id, tool_name, arguments, confirmed).await?;

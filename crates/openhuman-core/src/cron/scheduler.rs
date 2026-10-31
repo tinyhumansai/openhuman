@@ -68,11 +68,7 @@ pub async fn run(ctx: &crate::core::runtime::DispatchCtx, config: Config) -> Res
 
     let poll_secs = config.reliability.scheduler_poll_secs.max(5);
     let mut interval = time::interval(Duration::from_secs(poll_secs));
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(&config));
 
     BUS.publish(DomainEvent::SystemStartup {
         component: "scheduler".to_string(),

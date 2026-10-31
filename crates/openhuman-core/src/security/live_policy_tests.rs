@@ -46,11 +46,21 @@ fn install_then_reload_swaps_policy_and_bumps_generation() {
     // which all take this same lock — otherwise a parallel install races.
     let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
     let workspace = std::env::temp_dir().join("openhuman_live_policy_test");
-    let initial = Arc::new(SecurityPolicy {
-        autonomy: AutonomyLevel::Supervised,
-        workspace_dir: workspace.clone(),
-        ..SecurityPolicy::default()
-    });
+    // The account root rides along on this cycle rather than in a test of its
+    // own: asserting it needs an install and a reload, and a third test
+    // mutating this process-global measurably destabilises the env-sensitive
+    // tests that read it (an added install/reload cycle turned the suite from
+    // 2/2 green into an intermittent failure in `trusted_roots` and the
+    // approval origin-intercept tests).
+    let account = workspace.join("account");
+    let initial = Arc::new(
+        SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            workspace_dir: workspace.clone(),
+            ..SecurityPolicy::default()
+        }
+        .with_account_dir(Some(account.as_path())),
+    );
     install(initial, workspace.clone(), workspace.clone());
 
     let before = generation();
@@ -68,9 +78,17 @@ fn install_then_reload_swaps_policy_and_bumps_generation() {
     reload_from(&cfg);
 
     assert!(generation() > before, "generation must increase on reload");
+    let after = current().expect("policy still installed");
+    assert_eq!(after.autonomy, AutonomyLevel::Full);
+    // `reload_from` rebuilds through `from_config`, which cannot infer the
+    // account root (it is not derivable from `workspace_dir`). Without the
+    // stored copy the field would be right at boot and silently lost on the
+    // first `config.update_autonomy_settings` — the predicate would still run,
+    // just against the wrong directory.
     assert_eq!(
-        current().expect("policy still installed").autonomy,
-        AutonomyLevel::Full
+        after.account_dir.as_deref(),
+        Some(account.as_path()),
+        "the configured account root must survive a reload"
     );
 }
 

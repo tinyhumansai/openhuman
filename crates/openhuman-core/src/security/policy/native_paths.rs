@@ -11,8 +11,9 @@ use tinysecurity_bus::{
 };
 
 use super::types::{
-    SecurityPolicy, TrustedAccess, ACCOUNT_CONFIG_FILE, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR,
-    WORKSPACE_INTERNAL_DIRS, WORKSPACE_INTERNAL_FILES, WORKSPACE_INTERNAL_PREFIXES,
+    SecurityPolicy, TrustedAccess, ACCOUNT_CONFIG_FILE, ACCOUNT_INTERNAL_FILES, ARTIFACTS_DIR,
+    ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS, WORKSPACE_INTERNAL_FILES,
+    WORKSPACE_INTERNAL_PREFIXES,
 };
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
@@ -49,12 +50,40 @@ impl SecurityPolicy {
                 children_only: false,
             })
             .collect();
-        if let Some(account_dir) = self.workspace_dir.parent() {
+        // The account dir is reachable on purpose — a trusted root over it
+        // grants its files (#5505) — so its secrets and privilege files are
+        // carved out by name rather than contained. Reserving them here hands
+        // the module the comparison, so canonicalisation and the case/Unicode
+        // folding it applies on normalising filesystems come for free; an agent
+        // cannot reach `.secret_key` through a symlinked root or create
+        // `CLAUDE_CODE_SETTINGS.JSON` where the provider later reads the lower
+        // case name.
+        //
+        // The explicit root takes the whole list; `workspace_dir`'s parent is
+        // only a fallback, so it keeps the single name it has always refused —
+        // once the two directories diverge, the parent is not the account dir
+        // and must not have its other files reserved.
+        let mut reserve_name = |dir: &std::path::Path, name: &str| {
+            let path = dir.join(name);
+            if reserved_paths
+                .iter()
+                .any(|reservation: &PathReservation| reservation.path == path)
+            {
+                return;
+            }
             reserved_paths.push(PathReservation {
-                path: account_dir.join(ACCOUNT_CONFIG_FILE),
+                path,
                 exceptions: Vec::new(),
                 children_only: false,
             });
+        };
+        if let Some(account_dir) = self.account_dir.as_deref() {
+            for name in ACCOUNT_INTERNAL_FILES {
+                reserve_name(account_dir, name);
+            }
+        }
+        if let Some(workspace_parent) = self.workspace_dir.parent() {
+            reserve_name(workspace_parent, ACCOUNT_CONFIG_FILE);
         }
         let tool_results = self
             .workspace_dir
