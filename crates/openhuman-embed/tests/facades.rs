@@ -81,8 +81,10 @@ async fn web_channel_events_reach_a_subscriber_with_a_timestamp() {
             request_id: "facade-request".into(),
             ..WebEventContext::default()
         },
+        message: None,
         error_type: Some("facade_probe".into()),
         error_source: None,
+        error_retryable: None,
     });
     let received = loop {
         let event = tokio::time::timeout(Duration::from_secs(5), events.recv())

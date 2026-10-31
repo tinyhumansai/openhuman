@@ -790,4 +790,7 @@
 #                      measures this floor. +10 packages / +9 unique names;
 #                      native unchanged. Measured with scripts/kernel-floor.sh
 #                      flows --json.
-flows:341:312:3
+# 325/305/3 2026-10-30 The module roll-up's upstream ownership split removes
+#                      dependencies from the always-on flows graph. Measured by
+#                      the hosted kernel-floor and dep-sim calibration checks.
+flows:325:305:3

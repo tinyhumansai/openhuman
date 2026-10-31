@@ -207,3 +207,11 @@ mod turn_lifecycle_tests;
 #[cfg(feature = "voice")]
 #[path = "web_tests_ptt_source_tests.rs"]
 mod ptt_source_tests;
+
+/// Keep admission, queue operations, cancellation and spawned turns under the
+/// same isolated host configuration for the entire lifecycle assertion.
+async fn with_web_test_context<F: std::future::Future>(operation: F) -> F::Output {
+    let workspace = tempfile::tempdir().expect("isolated web host configuration");
+    let config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&config, operation).await
+}

@@ -223,7 +223,7 @@ async fn fetch_connected_integrations_returns_empty_without_auth() {
 
 #[tokio::test]
 async fn invalidate_connected_integrations_cache_is_safe_without_prior_insert() {
-    let _guard = cache_guard();
+    let _guard = cache_guard_async().await;
     // Must not panic on an empty cache.
     invalidate_connected_integrations_cache();
     invalidate_connected_integrations_cache();

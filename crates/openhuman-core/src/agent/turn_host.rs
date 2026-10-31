@@ -14,10 +14,8 @@ use crate::{
         host_agents::HostAgent, queued_turn::QueuedTurn, session_host::OpenHumanSessionHost,
         turn_env::HostTurnEnv,
     },
-    security::{
-        approval::ApprovalTurnContext,
-        turn_origin::{with_origin, AgentTurnOrigin},
-    },
+    core::runtime::turn_origin::{with_origin, AgentTurnOrigin},
+    security::approval::ApprovalTurnContext,
 };
 
 /// Trusted identity and authority selected at an inbound host boundary.

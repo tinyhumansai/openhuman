@@ -39,8 +39,8 @@ pub(super) fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePa
         cached_input_tokens: usage.cached_input_tokens,
         cost_usd: usage.cost_usd,
         cost_source: cost_source(usage.cost_source),
-        context_window: usage.context_window,
-        context_tokens: usage.context_tokens,
+        context_window: Some(usage.context_window),
+        context_tokens: Some(usage.context_tokens),
         subagents,
     })
 }
@@ -232,7 +232,13 @@ pub(super) fn chat_done_event(
     bus_web::WebChannelEvent::ChatDone {
         context,
         full_response: Some(full_response.to_string()),
-        citations: (!citations.is_empty()).then(|| serde_json::json!(citations)),
+        citations: (!citations.is_empty()).then(|| {
+            citations
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap_or_default()
+        }),
         usage,
         timing,
         parts: None,

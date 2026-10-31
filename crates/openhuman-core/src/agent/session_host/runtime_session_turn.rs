@@ -42,7 +42,7 @@ impl OpenHumanSessionHost {
         &mut self,
         user_message: &str,
         input: Message,
-        origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         self.turn_with_approval_input(user_message, Some(input), origin, approval)
@@ -53,7 +53,7 @@ impl OpenHumanSessionHost {
         &mut self,
         user_message: &str,
         input: Option<Message>,
-        origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         // The turn's context is bound once, here, before the runtime session

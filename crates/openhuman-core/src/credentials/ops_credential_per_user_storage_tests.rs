@@ -1,6 +1,7 @@
 use super::*;
 use crate::core::runtime::DispatchCtx;
-use crate::security::credentials::api_key;
+use crate::credentials::session_state::CredentialKind;
+use crate::credentials::{api_key, session_state as session_support};
 
 // Credentials on the desktop's DEFAULT storage: the backend belongs to the
 // profile (`users/<id>/storage.db` under layout v2), the host installs it from
@@ -95,10 +96,15 @@ async fn a_session_is_stored_in_the_users_own_database() {
     let _slot = crate::storage::test_support::lock_storage_slot();
     let tmp = TempDir::new().unwrap();
     let _home = EnvVarGuard::set("HOME", tmp.path());
+    crate::credentials::test_support::seed_plain_profile_configs(tmp.path(), &["user-42"]);
     let _env = EnvVarGuard::unset_many(&["OPENHUMAN_STORAGE_URL", "OPENHUMAN_WORKSPACE"]);
     let pre_login = crate::config::load_config_with_timeout().await.unwrap();
     let _storage = DefaultStorageForTest::install(&pre_login).await;
 
+    assert!(
+        !profile_databases(tmp.path()).contains(&"user-42".to_string()),
+        "the configuration fixture must not create the user database before login"
+    );
     let token = session_token("user-42");
     store_session(
         &DispatchCtx::process_default(),
@@ -119,6 +125,7 @@ async fn a_session_is_stored_in_the_users_own_database() {
 
     assert_eq!(
         session_support::get_session_token(&user_scoped)
+            .await
             .unwrap()
             .as_deref(),
         Some(token.as_str()),
@@ -142,6 +149,7 @@ async fn a_session_sign_out_keeps_the_api_key_on_per_user_storage() {
     let _slot = crate::storage::test_support::lock_storage_slot();
     let tmp = TempDir::new().unwrap();
     let _home = EnvVarGuard::set("HOME", tmp.path());
+    crate::credentials::test_support::seed_plain_profile_configs(tmp.path(), &["user-42"]);
     let _env = EnvVarGuard::unset_many(&["OPENHUMAN_STORAGE_URL", "OPENHUMAN_WORKSPACE"]);
     let pre_login = crate::config::load_config_with_timeout().await.unwrap();
     let _storage = DefaultStorageForTest::install(&pre_login).await;
@@ -154,7 +162,7 @@ async fn a_session_sign_out_keeps_the_api_key_on_per_user_storage() {
     let cleared = clear_credential(
         &DispatchCtx::process_default(),
         &user_scoped,
-        Some(session_support::CredentialKind::Session),
+        Some(CredentialKind::Session),
     )
     .await
     .unwrap()
@@ -165,7 +173,7 @@ async fn a_session_sign_out_keeps_the_api_key_on_per_user_storage() {
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
     assert_eq!(signed_out.config_path, pre_login.config_path);
     assert_eq!(
-        api_key::get_api_key(&signed_out).unwrap().as_deref(),
+        api_key::get_api_key(&signed_out).await.unwrap().as_deref(),
         Some("sk-live"),
         "the API key must survive a session sign-out on per-user storage"
     );
@@ -188,7 +196,7 @@ async fn a_session_sign_out_keeps_the_api_key_on_per_user_storage() {
     // Moved, not copied: signing back in finds no stale key in the user's
     // database (only the session authenticates there).
     let again = sign_in(&signed_out, "user-42").await;
-    assert_eq!(api_key::get_api_key(&again).unwrap(), None);
+    assert_eq!(api_key::get_api_key(&again).await.unwrap(), None);
     let state = auth_get_state(&again).await.unwrap().value;
     assert_eq!(state.credential.as_deref(), Some("session"));
 }
@@ -204,6 +212,10 @@ async fn another_user_signing_in_does_not_get_the_first_users_api_key() {
     let _slot = crate::storage::test_support::lock_storage_slot();
     let tmp = TempDir::new().unwrap();
     let _home = EnvVarGuard::set("HOME", tmp.path());
+    crate::credentials::test_support::seed_plain_profile_configs(
+        tmp.path(),
+        &["user-42", "user-77"],
+    );
     let _env = EnvVarGuard::unset_many(&["OPENHUMAN_STORAGE_URL", "OPENHUMAN_WORKSPACE"]);
     let pre_login = crate::config::load_config_with_timeout().await.unwrap();
     let _storage = DefaultStorageForTest::install(&pre_login).await;
@@ -213,20 +225,20 @@ async fn another_user_signing_in_does_not_get_the_first_users_api_key() {
     clear_credential(
         &DispatchCtx::process_default(),
         &first,
-        Some(session_support::CredentialKind::Session),
+        Some(CredentialKind::Session),
     )
     .await
     .unwrap();
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
     assert_eq!(
-        api_key::get_api_key(&signed_out).unwrap().as_deref(),
+        api_key::get_api_key(&signed_out).await.unwrap().as_deref(),
         Some("sk-first-user"),
         "control: the key is in effect while signed out"
     );
 
     let second = sign_in(&signed_out, "user-77").await;
     assert_eq!(
-        api_key::get_api_key(&second).unwrap(),
+        api_key::get_api_key(&second).await.unwrap(),
         None,
         "another account must not get the first user's API key"
     );
@@ -236,43 +248,61 @@ async fn another_user_signing_in_does_not_get_the_first_users_api_key() {
     assert_eq!(state.user_id.as_deref(), Some("user-77"));
 }
 
-// A carry that fails after the sign-out rebound storage to the signed-out
-// database cannot put the key back: its source is another database, no longer
-// installed. The error says so, and nothing is written through the old
-// user-scoped config into the signed-out store, where the record would sit
-// under this user's secret namespace and read back as nothing.
+// Auth profiles are local encrypted documents even when other domains use
+// per-user databases. A failed destination write must retain the source key.
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::await_holding_lock)] // Serializes the process-wide storage slot.
-async fn a_failed_carry_on_per_user_storage_says_the_key_must_be_entered_again() {
+async fn a_failed_carry_after_storage_rebind_keeps_the_source_profile_key() {
     let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let _slot = crate::storage::test_support::lock_storage_slot();
     let tmp = TempDir::new().unwrap();
     let _home = EnvVarGuard::set("HOME", tmp.path());
+    crate::credentials::test_support::seed_plain_profile_configs(tmp.path(), &["user-42"]);
     let _env = EnvVarGuard::unset_many(&["OPENHUMAN_STORAGE_URL", "OPENHUMAN_WORKSPACE"]);
     let pre_login = crate::config::load_config_with_timeout().await.unwrap();
     let _storage = DefaultStorageForTest::install(&pre_login).await;
     let user_scoped = sign_in(&pre_login, "user-42").await;
     set_api_key(&user_scoped, "sk-live").await;
+    assert_eq!(
+        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
+        Some("sk-live")
+    );
 
-    let error = clear_credential_with(
+    let destination = crate::credentials::profiles::profiles_file(
+        &crate::credentials::state_dir_from_config(&pre_login),
+    );
+    assert!(
+        !destination.exists(),
+        "no pre-login credential document was created by the fixture"
+    );
+    std::fs::create_dir_all(&destination).unwrap();
+    assert!(
+        api_key::store_api_key(&pre_login, "cannot-write")
+            .await
+            .is_err(),
+        "positive control: the destination credential document cannot be written"
+    );
+    let error = clear_credential(
         &DispatchCtx::process_default(),
         &user_scoped,
         Some(session_support::CredentialKind::Session),
-        |_, _| Err(anyhow::anyhow!("injected carry failure")),
     )
     .await
     .unwrap_err();
-    assert!(error.contains("injected carry failure"), "{error}");
-    assert!(error.contains("must be entered again"), "{error}");
-
+    assert!(!error.is_empty());
     let signed_out = crate::config::load_config_with_timeout().await.unwrap();
     assert_eq!(signed_out.config_path, pre_login.config_path);
-    assert!(
-        crate::security::credentials::AuthService::from_config(&signed_out)
-            .get_profile(api_key::API_KEY_PROVIDER, None)
-            .unwrap()
-            .is_none(),
-        "no api-key record may be written into the signed-out store under the old user's namespace"
+    assert_eq!(
+        session_support::get_session_token(&user_scoped)
+            .await
+            .unwrap(),
+        None,
+        "the session was removed before the destination failed"
+    );
+    assert_eq!(
+        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
+        Some("sk-live"),
+        "the source document stays readable after the database rebind and failed carry"
     );
 }

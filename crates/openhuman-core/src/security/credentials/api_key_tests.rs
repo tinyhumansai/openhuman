@@ -11,40 +11,42 @@ fn config_in(dir: &std::path::Path) -> Config {
     config
 }
 
-#[test]
-fn store_then_get_round_trips_and_marks_kind() {
+#[tokio::test]
+async fn store_then_get_round_trips_and_marks_kind() {
     let dir = tempfile::tempdir().expect("tempdir");
     let config = config_in(dir.path());
-    let profile = store_api_key(&config, "  th_live_abc  ").expect("store");
+    let profile = store_api_key(&config, "  th_live_abc  ")
+        .await
+        .expect("store");
     assert_eq!(profile.provider, API_KEY_PROVIDER);
     assert_eq!(
         profile.metadata.get(API_KEY_KIND_META).map(String::as_str),
         Some(API_KEY_KIND)
     );
     assert_eq!(
-        get_api_key(&config).expect("get").as_deref(),
+        get_api_key(&config).await.expect("get").as_deref(),
         Some("th_live_abc")
     );
-    assert!(has_api_key(&config));
+    assert!(has_api_key(&config).await);
 }
 
-#[test]
-fn blank_key_is_rejected_and_nothing_is_stored() {
+#[tokio::test]
+async fn blank_key_is_rejected_and_nothing_is_stored() {
     let dir = tempfile::tempdir().expect("tempdir");
     let config = config_in(dir.path());
-    assert!(store_api_key(&config, "   ").is_err());
-    assert!(!has_api_key(&config));
-    assert_eq!(get_api_key(&config).expect("get"), None);
+    assert!(store_api_key(&config, "   ").await.is_err());
+    assert!(!has_api_key(&config).await);
+    assert_eq!(get_api_key(&config).await.expect("get"), None);
 }
 
-#[test]
-fn clear_removes_the_profile() {
+#[tokio::test]
+async fn clear_removes_the_profile() {
     let dir = tempfile::tempdir().expect("tempdir");
     let config = config_in(dir.path());
-    store_api_key(&config, "th_x").expect("store");
-    assert!(clear_api_key(&config).expect("clear"));
-    assert!(!has_api_key(&config));
-    assert!(!clear_api_key(&config).expect("clear again"));
+    store_api_key(&config, "th_x").await.expect("store");
+    assert!(clear_api_key(&config).await.expect("clear"));
+    assert!(!has_api_key(&config).await);
+    assert!(!clear_api_key(&config).await.expect("clear again"));
 }
 
 /// Regression: an ordinary provider profile named `"api-key"` — the generic
@@ -53,8 +55,8 @@ fn clear_removes_the_profile() {
 /// because it lives under the same provider id. Only a profile carrying the
 /// [`API_KEY_KIND_META`]`=`[`API_KEY_KIND`] marker (written by
 /// [`store_api_key`]) counts.
-#[test]
-fn a_provider_profile_named_api_key_without_the_marker_is_not_accepted() {
+#[tokio::test]
+async fn a_provider_profile_named_api_key_without_the_marker_is_not_accepted() {
     use crate::security::credentials::AuthService;
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -68,18 +70,19 @@ fn a_provider_profile_named_api_key_without_the_marker_is_not_accepted() {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store unmarked provider profile");
 
     assert_eq!(
-        get_api_key(&config).expect("get"),
+        get_api_key(&config).await.expect("get"),
         None,
         "an unmarked provider profile named api-key must not be read back as the runtime key"
     );
-    assert!(!has_api_key(&config));
+    assert!(!has_api_key(&config).await);
 }
 
-#[test]
-fn api_key_wins_over_an_expired_session() {
+#[tokio::test]
+async fn api_key_wins_over_an_expired_session() {
     use crate::security::credentials::session_support::SESSION_EXPIRES_AT_META;
     use crate::security::credentials::{
         AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
@@ -100,15 +103,18 @@ fn api_key_wins_over_an_expired_session() {
             meta,
             true,
         )
+        .await
         .expect("store session");
     assert!(matches!(
-        resolve_backend_credential(&config),
+        resolve_backend_credential(&config).await,
         Err(e) if e.contains("SESSION_EXPIRED")
     ));
 
-    store_api_key(&config, "th_key").expect("store key");
+    store_api_key(&config, "th_key").await.expect("store key");
     assert_eq!(
-        resolve_backend_credential(&config).expect("credential"),
+        resolve_backend_credential(&config)
+            .await
+            .expect("credential"),
         BackendCredential::ApiKey("th_key".to_string())
     );
 }

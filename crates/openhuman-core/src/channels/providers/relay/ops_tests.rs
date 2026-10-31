@@ -1,8 +1,8 @@
 use super::super::channel::CHANNEL_OUTBOUND_EVENT;
 use super::*;
 use crate::agent::host_agents::{self, HostAgent, HostAgentResolver};
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
-use crate::security::turn_origin::AgentTurnOrigin;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 async fn relayed_thread_and_external_authority_survive_scoped_spawn() {
     let tmp = tempfile::tempdir().unwrap();
     let context = CoreContext::for_test(DomainSet::full(), None).derive_with(
-        ContextOverlay::new(config(&tmp), DomainSet::full(), Default::default())
+        ContextOverlay::new(config(&tmp).await, DomainSet::full(), Default::default())
             .session_agent("relay-agent"),
     );
     let origin = AgentTurnOrigin::ExternalChannel {
@@ -33,7 +33,7 @@ async fn relayed_thread_and_external_authority_survive_scoped_spawn() {
                 .unwrap()
                 .derive_channel_turn(Some(thread.clone()), None),
             async {
-                crate::security::turn_origin::with_origin(origin, async {
+                crate::core::runtime::turn_origin::with_origin(origin, async {
                     let (child_thread, child_agent, child_origin) =
                         crate::core::runtime::DispatchCtx::ambient()
                             .spawn(async {
@@ -41,7 +41,7 @@ async fn relayed_thread_and_external_authority_survive_scoped_spawn() {
                                     CoreContext::current_channel_thread(),
                                     CoreContext::scoped()
                                         .and_then(|ctx| ctx.session_agent().map(str::to_owned)),
-                                    crate::security::turn_origin::current(),
+                                    crate::core::runtime::turn_origin::current(),
                                 )
                             })
                             .await
@@ -64,7 +64,7 @@ async fn relayed_thread_and_external_authority_survive_scoped_spawn() {
     .await;
 }
 
-fn config(tmp: &tempfile::TempDir) -> Config {
+async fn config(tmp: &tempfile::TempDir) -> Config {
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
     let mut config = Config {
@@ -78,6 +78,7 @@ fn config(tmp: &tempfile::TempDir) -> Config {
     config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;
     crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+        .await
         .expect("store relay test credential");
     config
 }
@@ -201,11 +202,16 @@ impl HostAgentResolver for RelayAgentResolver {
                 definition,
                 config: self.config.clone(),
                 host_tools: Some(Arc::new(move |_turn| {
-                    crate::agent::HostTurnTools::advertised(vec![Box::new(RelayProbe {
-                        dispatch_ctx: dispatch_ctx.clone(),
-                        thread_id: thread_id.clone(),
-                        seen: Arc::clone(&seen),
-                    })])
+                    let dispatch_ctx = dispatch_ctx.clone();
+                    let thread_id = thread_id.clone();
+                    let seen = Arc::clone(&seen);
+                    Box::pin(async move {
+                        crate::agent::HostTurnTools::advertised(vec![Box::new(RelayProbe {
+                            dispatch_ctx,
+                            thread_id,
+                            seen,
+                        })])
+                    })
                 })),
                 hooks: Default::default(),
                 context: Arc::clone(&self.context),
@@ -266,7 +272,7 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
     let tmp = tempfile::tempdir().unwrap();
     // The credential lands in the file-backed secret store, so write it before
     // the module fixture replaces the installed storage backend.
-    let mut config = config(&tmp);
+    let mut config = config(&tmp).await;
     let _module_storage = crate::channels::module_fixture::install_memory_storage();
     let channel_module = crate::channels::module_fixture::client().await;
     let server = relay_provider().await;
@@ -462,7 +468,7 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
 #[tokio::test]
 async fn invalid_or_repeated_messages_start_no_turn() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = config(&tmp);
+    let config = config(&tmp).await;
     let workspace = config.workspace_dir.clone();
     let ctx = CoreContext::for_test(DomainSet::full(), Some(workspace.clone())).derive_with(
         ContextOverlay::new(config, DomainSet::full(), Default::default()),
@@ -511,7 +517,7 @@ async fn relay_preflight_failure_uses_trusted_channel_locale_without_running_age
     let resolver_guard = ResolverInstallGuard::new(resolver.clone());
 
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = config(&tmp);
+    let mut config = config(&tmp).await;
     config.modules.enabled = false;
     config.channels_locale = Some("es".into());
     let workspace = config.workspace_dir.clone();

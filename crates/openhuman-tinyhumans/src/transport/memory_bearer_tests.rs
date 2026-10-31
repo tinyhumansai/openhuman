@@ -6,12 +6,14 @@ use tempfile::TempDir;
 use super::{BackendTransport, SdkBackendTransport};
 
 fn config(tmp: &TempDir) -> Config {
-    Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
-    }
+    };
+    config.secrets.encrypt = false;
+    config
 }
 
 #[tokio::test]

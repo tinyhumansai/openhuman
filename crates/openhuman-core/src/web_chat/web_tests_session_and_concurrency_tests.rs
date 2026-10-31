@@ -207,67 +207,71 @@ fn web_chat_params_deserialize_with_all_ptt_fields_present() {
 /// invariant behind cross-thread parallel inference.
 #[tokio::test]
 async fn start_chat_runs_distinct_threads_concurrently() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    let block = make_block();
-    set_test_run_chat_task_block(Some(block.clone())).await;
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        let block = make_block();
+        set_test_run_chat_task_block(Some(block.clone())).await;
 
-    let thread_a = "concurrent-thread-a";
-    let thread_b = "concurrent-thread-b";
+        let thread_a = "concurrent-thread-a";
+        let thread_b = "concurrent-thread-b";
 
-    start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "client-a",
-        thread_a,
-        "hello a",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("thread A should start");
-    start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "client-b",
-        thread_b,
-        "hello b",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("thread B should start");
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "client-a",
+            thread_a,
+            "hello a",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("thread A should start");
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "client-b",
+            thread_b,
+            "hello b",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("thread B should start");
 
-    // Both threads' turns must be parked in-flight simultaneously.
-    let entries = wait_for_in_flight(|e| {
-        let keys: Vec<&str> = e.iter().map(|(k, _)| k.as_str()).collect();
-        keys.contains(&thread_a) && keys.contains(&thread_b)
+        // Both threads' turns must be parked in-flight simultaneously.
+        let entries = wait_for_in_flight(|e| {
+            let keys: Vec<&str> = e.iter().map(|(k, _)| k.as_str()).collect();
+            keys.contains(&thread_a) && keys.contains(&thread_b)
+        })
+        .await;
+        assert!(
+            entries.iter().any(|(k, _)| k == thread_a)
+                && entries.iter().any(|(k, _)| k == thread_b),
+            "expected both threads in-flight concurrently, got {entries:?}"
+        );
+
+        // Cleanup: cancel both and clear the test hook.
+        let _ = cancel_chat_scoped(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "client-a",
+            thread_a,
+            None,
+        )
+        .await;
+        let _ = cancel_chat_scoped(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "client-b",
+            thread_b,
+            None,
+        )
+        .await;
+        set_test_run_chat_task_block(None).await;
     })
     .await;
-    assert!(
-        entries.iter().any(|(k, _)| k == thread_a) && entries.iter().any(|(k, _)| k == thread_b),
-        "expected both threads in-flight concurrently, got {entries:?}"
-    );
-
-    // Cleanup: cancel both and clear the test hook.
-    let _ = cancel_chat_scoped(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "client-a",
-        thread_a,
-        None,
-    )
-    .await;
-    let _ = cancel_chat_scoped(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "client-b",
-        thread_b,
-        None,
-    )
-    .await;
-    set_test_run_chat_task_block(None).await;
 }
 
 /// `cancel_chat` must cooperatively tear down the in-flight turn (drop its
@@ -275,53 +279,56 @@ async fn start_chat_runs_distinct_threads_concurrently() {
 /// the parked future's `Drop` guard firing well before its 30s sleep elapses.
 #[tokio::test]
 async fn cancel_chat_cooperatively_stops_in_flight_turn() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    let block = make_block();
-    set_test_run_chat_task_block(Some(block.clone())).await;
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        let block = make_block();
+        set_test_run_chat_task_block(Some(block.clone())).await;
 
-    let thread_id = "cancel-coop-thread";
-    let request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "cancel-client",
-        thread_id,
-        "park me",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("turn should start");
+        let thread_id = "cancel-coop-thread";
+        let request_id = start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "cancel-client",
+            thread_id,
+            "park me",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("turn should start");
 
-    // Wait until the turn future has actually parked (guard created) — only then
-    // is a cooperative cancel meaningful.
-    wait_for_flag(&block.started, "turn started").await;
-    assert!(
-        !block.dropped.load(Ordering::SeqCst),
-        "turn should still be parked, not yet dropped"
-    );
+        // Wait until the turn future has actually parked (guard created) — only then
+        // is a cooperative cancel meaningful.
+        wait_for_flag(&block.started, "turn started").await;
+        assert!(
+            !block.dropped.load(Ordering::SeqCst),
+            "turn should still be parked, not yet dropped"
+        );
 
-    let cancelled = cancel_chat_scoped(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "cancel-client",
-        thread_id,
-        None,
-    )
-    .await
-    .expect("cancel_chat should succeed");
-    assert_eq!(
-        cancelled.as_deref(),
-        Some(request_id.as_str()),
-        "cancel_chat should report the cancelled request id"
-    );
+        let cancelled = cancel_chat_scoped(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "cancel-client",
+            thread_id,
+            None,
+        )
+        .await
+        .expect("cancel_chat should succeed");
+        assert_eq!(
+            cancelled.as_deref(),
+            Some(request_id.as_str()),
+            "cancel_chat should report the cancelled request id"
+        );
 
-    // The in-flight entry is removed and the parked future is dropped promptly
-    // (cooperative cancel), long before the 30s test sleep would elapse.
-    wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
-    wait_for_flag(&block.dropped, "turn future dropped by cooperative cancel").await;
+        // The in-flight entry is removed and the parked future is dropped promptly
+        // (cooperative cancel), long before the 30s test sleep would elapse.
+        wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
+        wait_for_flag(&block.dropped, "turn future dropped by cooperative cancel").await;
 
-    set_test_run_chat_task_block(None).await;
+        set_test_run_chat_task_block(None).await;
+    })
+    .await;
 }
 
 /// Issue #4746: a turn that never produces a terminal event on its own — a
@@ -335,47 +342,50 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
 /// the turn ends in the graceful, retryable `turn_timeout` chat_error.
 #[tokio::test]
 async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    // Panic-safe teardown of the process-global env override: if any assertion
-    // below unwinds, this guard still clears `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` so
-    // a 1s backstop can't leak into unrelated tests sharing this process.
-    let _env_guard = crate::config::test_env::EnvVarGuard::locked_set_async(
-        "OPENHUMAN_WEB_TURN_TIMEOUT_SECS",
-        "1",
-    )
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        // Panic-safe teardown of the process-global env override: if any assertion
+        // below unwinds, this guard still clears `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` so
+        // a 1s backstop can't leak into unrelated tests sharing this process.
+        let _env_guard = crate::config::test_env::EnvVarGuard::locked_set_async(
+            "OPENHUMAN_WEB_TURN_TIMEOUT_SECS",
+            "1",
+        )
+        .await;
+        let block = make_block();
+        set_test_run_chat_task_block(Some(block.clone())).await;
+
+        let mut rx = subscribe_web_channel_events();
+        let request_id = start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "backstop-client",
+            "backstop-thread",
+            "park me until the wall-clock backstop fires",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("turn should start");
+
+        let recv = timeout(
+            Duration::from_secs(20),
+            terminal_event(&mut rx, &request_id),
+        )
+        .await
+        .expect("a wedged turn must still emit a terminal event (issue #4746)");
+        assert_turn_timeout(&recv);
+
+        // The wedged future is torn down cooperatively when the backstop drops it
+        // (the Drop guard flips), not left sleeping to its 30s test wall.
+        wait_for_flag(&block.dropped, "wedged turn future dropped by backstop").await;
+
+        set_test_run_chat_task_block(None).await;
+        // `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` is cleared by `_env_guard`'s Drop.
+    })
     .await;
-    let block = make_block();
-    set_test_run_chat_task_block(Some(block.clone())).await;
-
-    let mut rx = subscribe_web_channel_events();
-    let request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "backstop-client",
-        "backstop-thread",
-        "park me until the wall-clock backstop fires",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("turn should start");
-
-    let recv = timeout(
-        Duration::from_secs(20),
-        terminal_event(&mut rx, &request_id),
-    )
-    .await
-    .expect("a wedged turn must still emit a terminal event (issue #4746)");
-    assert_turn_timeout(&recv);
-
-    // The wedged future is torn down cooperatively when the backstop drops it
-    // (the Drop guard flips), not left sleeping to its 30s test wall.
-    wait_for_flag(&block.dropped, "wedged turn future dropped by backstop").await;
-
-    set_test_run_chat_task_block(None).await;
-    // `OPENHUMAN_WEB_TURN_TIMEOUT_SECS` is cleared by `_env_guard`'s Drop.
 }
 
 /// The idle guard ends a turn that emits no progress with nothing in flight,
@@ -384,105 +394,113 @@ async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error(
 /// checkout, so the turn ends in the graceful `turn_timeout` chat_error.
 #[tokio::test]
 async fn silent_turn_hits_idle_guard_and_emits_turn_timeout_chat_error() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    let _env_guard =
-        crate::config::test_env::EnvVarGuard::locked_set_async("OPENHUMAN_WEB_TURN_IDLE_SECS", "1")
-            .await;
-    let block = make_block();
-    set_test_run_chat_task_block(Some(block.clone())).await;
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        let _env_guard = crate::config::test_env::EnvVarGuard::locked_set_async(
+            "OPENHUMAN_WEB_TURN_IDLE_SECS",
+            "1",
+        )
+        .await;
+        let block = make_block();
+        set_test_run_chat_task_block(Some(block.clone())).await;
 
-    let mut rx = subscribe_web_channel_events();
-    let request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "idle-client",
-        "idle-thread",
-        "park me until the idle guard fires",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("turn should start");
+        let mut rx = subscribe_web_channel_events();
+        let request_id = start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "idle-client",
+            "idle-thread",
+            "park me until the idle guard fires",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("turn should start");
 
-    let recv = timeout(
-        Duration::from_secs(20),
-        terminal_event(&mut rx, &request_id),
-    )
-    .await
-    .expect("a silent turn must end in a terminal event");
-    assert_turn_timeout(&recv);
-    wait_for_flag(&block.dropped, "silent turn future dropped by idle guard").await;
+        let recv = timeout(
+            Duration::from_secs(20),
+            terminal_event(&mut rx, &request_id),
+        )
+        .await
+        .expect("a silent turn must end in a terminal event");
+        assert_turn_timeout(&recv);
+        wait_for_flag(&block.dropped, "silent turn future dropped by idle guard").await;
 
-    set_test_run_chat_task_block(None).await;
+        set_test_run_chat_task_block(None).await;
+    })
+    .await;
 }
 
 /// A `parallel`-mode turn runs CONCURRENTLY with the primary turn on the SAME
 /// thread (it does not interrupt it), and a thread-level cancel tears down both.
 #[tokio::test]
 async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    let block = make_block();
-    set_test_run_chat_task_block(Some(block.clone())).await;
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        let block = make_block();
+        set_test_run_chat_task_block(Some(block.clone())).await;
 
-    let thread_id = "parallel-same-thread";
+        let thread_id = "parallel-same-thread";
 
-    // Primary turn (default interrupt mode) parks in IN_FLIGHT.
-    start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "pp-client",
-        thread_id,
-        "primary",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("primary turn should start");
-    wait_for_in_flight(|e| e.iter().any(|(k, _)| k == thread_id)).await;
+        // Primary turn (default interrupt mode) parks in IN_FLIGHT.
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "pp-client",
+            thread_id,
+            "primary",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("primary turn should start");
+        wait_for_in_flight(|e| e.iter().any(|(k, _)| k == thread_id)).await;
 
-    // Parallel turn on the SAME thread must NOT interrupt the primary — it
-    // lives in the parallel lane while the primary stays in-flight.
-    start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "pp-client",
-        thread_id,
-        "branch",
-        None,
-        None,
-        None,
-        Some("parallel".to_string()),
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("parallel turn should start");
+        // Parallel turn on the SAME thread must NOT interrupt the primary — it
+        // lives in the parallel lane while the primary stays in-flight.
+        start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "pp-client",
+            thread_id,
+            "branch",
+            None,
+            None,
+            None,
+            Some("parallel".to_string()),
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("parallel turn should start");
 
-    wait_for_parallel(|e| e.iter().any(|(_, t)| t == thread_id)).await;
-    // Primary is still in-flight — the parallel send did not interrupt it.
-    assert!(
-        in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient())
-            .await
-            .iter()
-            .any(|(k, _)| k == thread_id),
-        "primary turn must remain in-flight alongside the parallel turn"
-    );
+        wait_for_parallel(|e| e.iter().any(|(_, t)| t == thread_id)).await;
+        // Primary is still in-flight — the parallel send did not interrupt it.
+        assert!(
+            in_flight_entries_for_test(&crate::core::runtime::DispatchCtx::ambient())
+                .await
+                .iter()
+                .any(|(k, _)| k == thread_id),
+            "primary turn must remain in-flight alongside the parallel turn"
+        );
 
-    // A thread-level cancel tears down BOTH the primary and the parallel turn.
-    cancel_chat_scoped(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "pp-client",
-        thread_id,
-        None,
-    )
-    .await
-    .expect("cancel should succeed");
-    wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
-    wait_for_parallel(|e| !e.iter().any(|(_, t)| t == thread_id)).await;
+        // A thread-level cancel tears down BOTH the primary and the parallel turn.
+        cancel_chat_scoped(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "pp-client",
+            thread_id,
+            None,
+        )
+        .await
+        .expect("cancel should succeed");
+        wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
+        wait_for_parallel(|e| !e.iter().any(|(_, t)| t == thread_id)).await;
 
-    set_test_run_chat_task_block(None).await;
+        set_test_run_chat_task_block(None).await;
+    })
+    .await;
 }
 
 // ── #3714: session-expired arm (must precede `auth_error`) ──────────────

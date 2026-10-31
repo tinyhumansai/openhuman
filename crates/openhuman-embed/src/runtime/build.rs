@@ -552,19 +552,10 @@ pub(crate) fn routed_provider_effective(provider: &Provider, config: Option<&Con
 }
 
 async fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
-    let state_dir = config
-        .config_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| config.config_path.clone());
-    openhuman_core::credentials::api_key::store_api_key_in(
-        &state_dir,
-        config.secrets.encrypt,
-        key.expose(),
-    )
-    .await
-    .map(|_| ())
-    .map_err(RuntimeError::Build)
+    openhuman_core::credentials::api_key::store_api_key(config, key.expose())
+        .await
+        .map(|_| ())
+        .map_err(RuntimeError::Build)
 }
 
 fn create_dir(dir: &Path, what: &'static str) -> Result<(), RuntimeError> {

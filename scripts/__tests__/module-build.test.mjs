@@ -15,6 +15,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { parseRecords } from "../lib/module-pins.mjs";
+
 import { main, readRegistry, DEFAULT_ROOT } from "../modules/build.mjs";
 import {
   artifactFilename,
@@ -79,8 +81,10 @@ test("the operator-trust file maps the artifact name to the sha256 of its bytes"
 });
 
 test("every registry record carries a SourceSpec whose manifest exists in its submodule", () => {
-  const specs = parseSourceSpecs(readRegistry(DEFAULT_ROOT));
-  assert.equal(specs.size, 13);
+  const registry = readRegistry(DEFAULT_ROOT);
+  const specs = parseSourceSpecs(registry);
+  const expectedIds = [...parseRecords(registry).values()].map((record) => record.id);
+  assert.deepEqual([...specs.keys()].sort(), expectedIds.sort());
   for (const spec of specs.values()) {
     assert.equal(spec.submodule, spec.id);
     const manifest = join(DEFAULT_ROOT, "vendor", spec.submodule, spec.manifest);

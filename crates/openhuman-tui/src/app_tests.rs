@@ -2,6 +2,22 @@ use super::*;
 use openhuman_rpc::embed::chat_surface::WebChannelEvent;
 
 fn web_event(value: serde_json::Value) -> WebChannelEvent {
+    let mut value = value;
+    let object = value.as_object_mut().unwrap();
+    let mut context = object
+        .remove("context")
+        .unwrap_or_else(|| serde_json::json!({}));
+    for (key, context_key) in [
+        ("client_id", "clientId"),
+        ("thread_id", "threadId"),
+        ("request_id", "requestId"),
+        ("seq", "seq"),
+    ] {
+        if let Some(field) = object.remove(key) {
+            context[context_key] = field;
+        }
+    }
+    object.insert("context".into(), context);
     serde_json::from_value(value).expect("test event matches TinyChannels' web contract")
 }
 

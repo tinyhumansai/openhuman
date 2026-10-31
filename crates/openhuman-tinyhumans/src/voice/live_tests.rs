@@ -63,7 +63,7 @@ fn registration_installs_both_hosted_providers() {
 
 #[tokio::test]
 async fn hosted_providers_are_listed_ahead_of_the_built_in_ones() {
-    let _registry = crate::registry_test_lock();
+    let _registry = crate::registry_test_lock_async().await;
 
     // The catalogue has always listed the hosted providers first:
     // gemini-hosted, elevenlabs-hosted, gemini, sarvam.

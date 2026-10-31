@@ -213,35 +213,39 @@ fn channel_activity_merge_patch(event: &tinychannels_bus::ChannelEvent) -> Resul
 
     match &event.event {
         Kind::ReadReceipt {
-            actor, timestamp, ..
+            actor_id,
+            read_at_unix_ms,
+            ..
         } => {
-            let actor = actor
-                .as_ref()
-                .filter(|actor| !actor.id.is_empty())
+            let actor_id = actor_id
+                .as_deref()
+                .filter(|actor_id| !actor_id.is_empty())
                 .ok_or_else(|| anyhow!("read receipt has no actor identity"))?;
-            let receipt_key = keyed_digest(&[&actor.id])?;
+            let receipt_key = keyed_digest(&[actor_id])?;
             Ok(json!({"channelActivity":{"readReceipts":{
-                (receipt_key): {"actorId":actor.id,"timestamp":timestamp}
+                (receipt_key): {"actorId":actor_id,"timestamp":(*read_at_unix_ms).or(event.timestamp_unix_ms)}
             }}}))
         }
         Kind::ReactionAdded {
-            actor, reaction, ..
+            actor_id, reaction, ..
         } => {
-            if actor.id.is_empty() {
-                return Err(anyhow!("reaction has no actor identity"));
-            }
-            let reaction_key = reaction_digest(&actor.id, reaction)?;
+            let actor_id = actor_id
+                .as_deref()
+                .filter(|actor_id| !actor_id.is_empty())
+                .ok_or_else(|| anyhow!("reaction has no actor identity"))?;
+            let reaction_key = reaction_digest(actor_id, reaction)?;
             Ok(json!({"channelActivity":{"reactions":{
-                (reaction_key): {"actorId":actor.id,"value":reaction.value,"customEmojiId":reaction.custom_emoji_id}
+                (reaction_key): {"actorId":actor_id,"value":reaction.value,"customEmojiId":reaction.custom_emoji_id}
             }}}))
         }
         Kind::ReactionRemoved {
-            actor, reaction, ..
+            actor_id, reaction, ..
         } => {
-            if actor.id.is_empty() {
-                return Err(anyhow!("reaction has no actor identity"));
-            }
-            let reaction_key = reaction_digest(&actor.id, reaction)?;
+            let actor_id = actor_id
+                .as_deref()
+                .filter(|actor_id| !actor_id.is_empty())
+                .ok_or_else(|| anyhow!("reaction has no actor identity"))?;
+            let reaction_key = reaction_digest(actor_id, reaction)?;
             Ok(json!({"channelActivity":{"reactions":{(reaction_key):null}}}))
         }
         _ => Err(anyhow!("event does not target persisted channel activity")),

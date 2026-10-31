@@ -22,7 +22,10 @@ fn forbidden_edit_error_is_preserved_instead_of_reported_as_unsupported() {
         tinychannels_bus::channel::SendErrorKind::Forbidden
     );
     assert_eq!(error.message, "edit denied by account policy");
-    assert!(!error.unsupported);
+    assert_eq!(
+        error.kind,
+        tinychannels_bus::channel::SendErrorKind::Forbidden
+    );
 }
 
 #[test]

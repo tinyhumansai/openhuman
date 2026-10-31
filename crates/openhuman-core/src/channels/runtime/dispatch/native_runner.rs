@@ -126,7 +126,7 @@ impl TurnHost<QueuedPayload> for NativeHost {
             return serde_json::Value::Null;
         };
         match &trusted.origin {
-            crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+            crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
                 channel,
                 sender,
                 reply_target,
@@ -467,6 +467,11 @@ impl FailureClassifier for NativeFailures {
     }
 
     fn classify_failure(&self, error: &str) -> FailureClassification {
+        #[cfg(test)]
+        tracing::debug!(
+            error = %tinyinference_core::sanitize::sanitize_api_error(error),
+            "native channel failure before presentation"
+        );
         if error == crate::channels::failure_copy::LEGACY_HISTORY_UNAVAILABLE {
             return FailureClassification {
                 class: "channel_history_unavailable".to_owned(),

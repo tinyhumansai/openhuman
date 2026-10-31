@@ -141,6 +141,7 @@ async fn budgeted_turn(chat_image_in: bool, input_tokens: u64) -> Fixture {
     );
     let models = TurnModelSource::new_crate_native(&ctx, "chat", Arc::new(config))
         .build("hint:chat", 0.0, None, None)
+        .await
         .expect("budgeted turn models build")
         .with_host_controls(Some(&budget), None);
     Fixture {

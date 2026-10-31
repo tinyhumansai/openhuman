@@ -18,6 +18,8 @@ pub use composio::{
 };
 #[cfg(test)]
 pub(crate) use credential::clear_credential_with;
+#[cfg(test)]
+pub(crate) use credential::restore_api_key;
 pub use credential::{
     clear_credential, clear_session, set_credential, store_session, SetCredentialRequest,
     PENDING_BACKEND_VALIDATION_FIELD,

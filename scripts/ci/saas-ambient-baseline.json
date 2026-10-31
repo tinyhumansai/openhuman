@@ -441,24 +441,10 @@
     "occurrence": 2
   },
   {
-    "rule": "home-dir",
-    "path": "crates/openhuman-core/src/inference/provider/factory/access_gates.rs",
-    "line": 415,
-    "text": ".map(|d| d.home_dir().join(\".openhuman\"))",
-    "occurrence": 1
-  },
-  {
     "rule": "ambient-context",
     "path": "crates/openhuman-core/src/inference/provider/factory/access_gates.rs",
-    "line": 449,
+    "line": 440,
     "text": "crate::core::runtime::context::CoreContext::current()",
-    "occurrence": 1
-  },
-  {
-    "rule": "home-dir",
-    "path": "crates/openhuman-core/src/inference/provider/factory/credentials.rs",
-    "line": 142,
-    "text": ".map(|dirs| dirs.home_dir().join(\".openhuman\"))",
     "occurrence": 1
   },
   {
@@ -653,7 +639,7 @@
   {
     "rule": "home-dir",
     "path": "crates/openhuman-core/src/security/policy/native_commands.rs",
-    "line": 296,
+    "line": 317,
     "text": "home_dir: dirs::home_dir(),",
     "occurrence": 1
   },

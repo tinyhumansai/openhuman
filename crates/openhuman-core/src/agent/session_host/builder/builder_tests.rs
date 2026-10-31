@@ -27,6 +27,9 @@ fn test_config_without_inference(tmp: &tempfile::TempDir) -> crate::config::Conf
     config.workspace_dir = tmp.path().join("workspace");
     config.action_dir = tmp.path().join("workspace");
     config.config_path = tmp.path().join("config.toml");
+    // This fixture only needs a local credential to satisfy model readiness;
+    // cipher and keychain behavior is covered by credential tests.
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     config
 }

@@ -272,12 +272,23 @@ fn handle_chat(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture
                 p.model_override,
                 p.temperature,
                 p.locale,
-                p.queue_mode,
-                p.run_mode,
+                p.queue_mode.clone(),
+                p.run_mode.clone(),
                 ChatRequestMetadata {
                     speak_reply: p.speak_reply,
                     source: p.source,
                     session_id: p.session_id,
+                    queue_mode: p.queue_mode.as_deref().and_then(|mode| match mode {
+                        "interrupt" => Some(tinychannels_bus::web::QueueMode::Interrupt),
+                        "steer" => Some(tinychannels_bus::web::QueueMode::Steer),
+                        "followup" => Some(tinychannels_bus::web::QueueMode::Followup),
+                        "collect" => Some(tinychannels_bus::web::QueueMode::Collect),
+                        "parallel" => Some(tinychannels_bus::web::QueueMode::Parallel),
+                        _ => None,
+                    }),
+                    run_mode: p.run_mode.clone(),
+                    reasoning_effort: p.reasoning_effort.clone(),
+                    task_id: None,
                     // Attribution is stamped later by run_chat_task once the
                     // target agent is resolved.
                     agent_id: None,

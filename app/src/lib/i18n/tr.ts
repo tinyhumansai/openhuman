@@ -4644,11 +4644,6 @@ const messages: TranslationMap = {
   'userErrors.scope.workspace': 'Çalışma alanı',
   'userErrors.scope.memory': 'Bellek',
 
-  'devOptions.toolPolicyDiagnostics.inventory.title': 'Araç envanteri',
-  'devOptions.toolPolicyDiagnostics.inventory.totalTools': 'Toplam araç',
-  'devOptions.toolPolicyDiagnostics.inventory.enabledTools': 'Etkin araçlar',
-  'devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools': 'MCP stdio araçları',
-  'devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools': 'JSON-RPC araçları',
   'devOptions.toolPolicyDiagnostics.posture.title': 'Politika durumu',
   'devOptions.toolPolicyDiagnostics.posture.autonomy': 'Özerklik düzeyi',
   'devOptions.toolPolicyDiagnostics.posture.workspaceOnly': 'Yalnızca çalışma alanı',

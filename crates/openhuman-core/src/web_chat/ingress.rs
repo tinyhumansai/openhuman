@@ -19,7 +19,7 @@ use crate::agent::queued_turn::QueuedPayload;
 use crate::core::events::DomainEvent;
 use crate::core::runtime::DispatchCtx;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
 };
 
 const LOG: &str = "[web-channel]";
@@ -102,8 +102,13 @@ impl WebIngress {
         }
     }
 
-    fn guardrail(&self, request: &TurnRequest<QueuedPayload>) -> IngressDecision {
-        let decision = enforce_prompt_input(
+    async fn guardrail(
+        &self,
+        ctx: &DispatchCtx,
+        request: &TurnRequest<QueuedPayload>,
+    ) -> IngressDecision {
+        let decision = enforce_prompt_input_in(
+            ctx,
             &request.text,
             PromptEnforcementContext {
                 source: "web_chat.start_chat",
@@ -111,7 +116,8 @@ impl WebIngress {
                 user_id: Some(&request.payload.client_id),
                 session_id: Some(&request.thread_id),
             },
-        );
+        )
+        .await;
         let verdict = match decision.action {
             PromptEnforcementAction::Allow => return IngressDecision::Continue,
             PromptEnforcementAction::Blocked => "block",
@@ -296,7 +302,7 @@ impl IngressPolicy<QueuedPayload> for WebIngress {
         };
         Ok(match stage {
             IngressStage::StageAttachments => self.stage_attachments(&ctx, request).await,
-            IngressStage::Guardrail => self.guardrail(request),
+            IngressStage::Guardrail => self.guardrail(&ctx, request).await,
             IngressStage::ApprovalInterception => self.approval_reply(request),
             IngressStage::BeforeSubmit => self.before_submit(&ctx, request).await,
         })

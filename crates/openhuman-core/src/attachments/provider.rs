@@ -21,11 +21,11 @@ pub(crate) async fn wrap(
     model: &str,
     provider: &str,
 ) -> Arc<dyn ChatModel<()>> {
-    wrap_controlled(ctx, inner, config, model, provider, None)
+    wrap_controlled(ctx, inner, config, model, provider, None).await
 }
 
 /// [`wrap`] with the turn's spend controls placed beneath attachment rendering.
-pub(crate) fn wrap_controlled(
+pub(crate) async fn wrap_controlled(
     ctx: &crate::core::runtime::DispatchCtx,
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,

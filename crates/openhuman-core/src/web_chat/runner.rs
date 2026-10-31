@@ -174,7 +174,6 @@ impl Default for WebRuntime {
             Arc::new(WebSummarizer::new(shared.clone())),
             TurnRunnerConfig {
                 close_timeout: CLOSE_REPLY_BUDGET,
-                cancel_grace: STOPPED_TURN_PERSIST_GRACE,
                 ..TurnRunnerConfig::default()
             },
         ));

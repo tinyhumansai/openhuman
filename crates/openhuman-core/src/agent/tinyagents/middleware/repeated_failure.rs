@@ -321,8 +321,11 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
         }
 
         let failure_text = sanitized_failure(&content);
-        let heuristic = heuristic_text(&call.name, &failure_text);
-        if result.is_error && !is_command_exit_report(&failure_text) {
+        // Classify the tool's original outcome into closed labels before a
+        // fail-closed redactor can withhold its error markers. Persist and
+        // display only `failure_text`, never the original tool output.
+        let heuristic = heuristic_text(&call.name, &content);
+        if result.is_error && !is_command_exit_report(&content) {
             if let Some(kind) = stop::terminal_inference_failure_kind(heuristic) {
                 let halt = match kind {
                     TerminalInferenceFailureKind::BudgetExhausted => stop::halt_summary::budget(
@@ -351,6 +354,23 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
 
         let hard_reject = content.contains(tinytools::status::POLICY_BLOCKED_MARKER)
             || content.contains(tinytools::status::POLICY_DENIED_MARKER);
+        // Shell timeouts are retryable once even when the shell's repeat-call
+        // exemptions apply. A stopped command may have partially completed,
+        // so the first retry needs a reconcile-first correction.
+        if !hard_reject
+            && matches!(call.name.as_str(), "shell" | "shell_process")
+            // Classify the raw result into a closed enum before sanitization
+            // can withhold it. The raw text is never stored or returned here.
+            && tinytools::status::classify(&content, false).class
+                == tinytools::status::ToolFailureClass::Timeout
+        {
+            return FailureAssessment::ClassifiedFailure {
+                class: "uncertain_side_effect".to_owned(),
+                budget: 1,
+                error: failure_text,
+                nudge: Some(super::failure_policy::uncertain_timeout_nudge(&call.name)),
+            };
+        }
         if !is_repeat_call_exempt(&call.name) {
             let effect = call_effect(
                 self.tool_facts
@@ -361,10 +381,16 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
                 &call.arguments,
             );
             if let Some((class, budget)) =
-                recovery_policy_with_effect(&call.name, &failure_text, body_failure, effect)
+                recovery_policy_with_effect(&call.name, &content, body_failure, effect)
             {
-                let nudge = (class == "missing_app" && call.name == "shell")
-                    .then(|| missing_program_nudge(&call.name, &first_error_line(&failure_text)));
+                let nudge = if class == "missing_app" && call.name == "shell" {
+                    Some(missing_program_nudge(
+                        &call.name,
+                        &first_error_line(&failure_text),
+                    ))
+                } else {
+                    None
+                };
                 return FailureAssessment::ClassifiedFailure {
                     class: class.to_owned(),
                     budget,
@@ -376,7 +402,7 @@ impl FailureScopePolicy<OpenHumanRunContext> for HostFailurePolicy {
 
         let recoverable = result.is_error
             && !hard_reject
-            && !is_command_exit_report(&failure_text)
+            && !is_command_exit_report(&content)
             && (is_recoverable_tool_failure(heuristic)
                 || matches!(
                     tinytools::status::classify(heuristic, false).class,

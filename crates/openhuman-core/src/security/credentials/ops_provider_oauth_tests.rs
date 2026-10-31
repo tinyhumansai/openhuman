@@ -208,6 +208,7 @@ async fn list_provider_credentials_filters_by_provider_and_excludes_app_session(
         std::collections::HashMap::new(),
         true,
     )
+    .await
     .unwrap();
 
     let all = list_provider_credentials(&config, None).await.unwrap();

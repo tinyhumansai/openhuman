@@ -86,11 +86,18 @@ async fn unavailable_privacy_module_refuses_external_search_tool_dispatch() {
     let _privacy =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::LocalOnly);
 
-    let message = local_only_search_block("web_search_tool")
-        .await
-        .expect("search requests must be blocked in LocalOnly mode");
+    let workspace = tempfile::tempdir().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    config.modules.enabled = false;
+    let message = crate::core::runtime::CoreContext::scope_test_config(
+        &config,
+        local_only_search_block("web_search_tool"),
+    )
+    .await
+    .expect("unavailable security must refuse the transfer");
     assert!(message.contains(tinytools::status::POLICY_BLOCKED_MARKER));
-    assert!(message.contains("tinysearch"));
+    assert!(message.contains("web_search_tool"));
+    assert!(message.contains("security module could not confirm"));
 }
 
 #[tokio::test]
@@ -98,7 +105,16 @@ async fn standard_privacy_mode_refuses_when_the_module_cannot_answer() {
     let _privacy =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::Standard);
 
-    assert!(local_only_search_block("web_search_tool").await.is_some());
+    let workspace = tempfile::tempdir().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    config.modules.enabled = false;
+    let refusal = crate::core::runtime::CoreContext::scope_test_config(
+        &config,
+        local_only_search_block("web_search_tool"),
+    )
+    .await
+    .expect("Standard privacy also fails closed without its security module");
+    assert!(refusal.contains("security module could not confirm"));
 }
 
 // ---------------------------------------------------------------------------

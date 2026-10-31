@@ -4,7 +4,6 @@
 use anyhow::{Context, Result};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::sync::TryLockError;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -59,18 +58,7 @@ impl AuthProfilesStore {
         // timeout the caller (e.g. `app_state_snapshot`) expects. Poison is
         // recoverable — the `()` payload carries no invariant.
         let in_process_lock = in_process_lock_for(&self.lock_path);
-        let in_process_guard = loop {
-            match in_process_lock.try_lock() {
-                Ok(guard) => break guard,
-                Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
-                Err(TryLockError::WouldBlock) => {
-                    if started_at.elapsed().as_millis() as u64 >= LOCK_TIMEOUT_MS {
-                        anyhow::bail!("Timed out waiting for auth profile lock");
-                    }
-                    thread::sleep(Duration::from_millis(LOCK_WAIT_MS));
-                }
-            }
-        };
+        let in_process_guard = in_process_lock.acquire(Duration::from_millis(LOCK_TIMEOUT_MS))?;
 
         let mut cleared_stale = false;
         // Periodically re-probe for stale locks during the busy-wait. A

@@ -19,7 +19,7 @@ impl AuthProfilesStore {
     /// The returned `AuthProfilesData` reflects the in-memory cleanup either
     /// way, so the lock-free read path (`persist = false`) still returns a
     /// correct, fully-resolved view without touching disk.
-    pub(super) fn load_resolved(&self, persist: bool) -> Result<AuthProfilesData> {
+    pub(super) async fn load_resolved(&self, persist: bool) -> Result<AuthProfilesData> {
         let mut persisted = self.read_persisted_locked()?;
         // `migrated` tracks enc: → enc2: XOR-cipher upgrades (original behavior).
         let mut migrated = false;
@@ -72,14 +72,15 @@ impl AuthProfilesStore {
                     }
                     Ok(None) => {
                         // ── (b) No keychain entry yet — decrypt JSON fields and migrate ──
-                        let decrypted = (|| -> Result<_> {
+                        let decrypted: Result<_> = async {
                             let (access_token, access_mig) =
-                                self.decrypt_optional(p.access_token.as_deref())?;
+                                self.decrypt_optional(p.access_token.as_deref()).await?;
                             let (refresh_token, refresh_mig) =
-                                self.decrypt_optional(p.refresh_token.as_deref())?;
+                                self.decrypt_optional(p.refresh_token.as_deref()).await?;
                             let (id_token, id_mig) =
-                                self.decrypt_optional(p.id_token.as_deref())?;
-                            let (token, token_mig) = self.decrypt_optional(p.token.as_deref())?;
+                                self.decrypt_optional(p.id_token.as_deref()).await?;
+                            let (token, token_mig) =
+                                self.decrypt_optional(p.token.as_deref()).await?;
                             Ok((
                                 access_token,
                                 access_mig,
@@ -90,7 +91,8 @@ impl AuthProfilesStore {
                                 token,
                                 token_mig,
                             ))
-                        })();
+                        }
+                        .await;
                         let (at, at_mig, rt, rt_mig, it, it_mig, tok, tok_mig) = match decrypted {
                             Ok(v) => v,
                             Err(e) => {
@@ -197,13 +199,14 @@ impl AuthProfilesStore {
                         log::warn!(
                             "[auth] keychain error for profile_id={id}; falling back to JSON"
                         );
-                        let decrypted = (|| -> Result<_> {
-                            let (at, _) = self.decrypt_optional(p.access_token.as_deref())?;
-                            let (rt, _) = self.decrypt_optional(p.refresh_token.as_deref())?;
-                            let (it, _) = self.decrypt_optional(p.id_token.as_deref())?;
-                            let (tok, _) = self.decrypt_optional(p.token.as_deref())?;
+                        let decrypted: Result<_> = async {
+                            let (at, _) = self.decrypt_optional(p.access_token.as_deref()).await?;
+                            let (rt, _) = self.decrypt_optional(p.refresh_token.as_deref()).await?;
+                            let (it, _) = self.decrypt_optional(p.id_token.as_deref()).await?;
+                            let (tok, _) = self.decrypt_optional(p.token.as_deref()).await?;
                             Ok((at, rt, it, tok))
-                        })();
+                        }
+                        .await;
                         match decrypted {
                             Ok(v) => v,
                             Err(decrypt_error) => {
@@ -220,13 +223,14 @@ impl AuthProfilesStore {
                 }
             } else {
                 // ── (b/c) No keychain — use existing JSON decrypt path ────────
-                let decrypted = (|| -> Result<_> {
+                let decrypted: Result<_> = async {
                     let (access_token, access_migrated) =
-                        self.decrypt_optional(p.access_token.as_deref())?;
+                        self.decrypt_optional(p.access_token.as_deref()).await?;
                     let (refresh_token, refresh_migrated) =
-                        self.decrypt_optional(p.refresh_token.as_deref())?;
-                    let (id_token, id_migrated) = self.decrypt_optional(p.id_token.as_deref())?;
-                    let (token, token_migrated) = self.decrypt_optional(p.token.as_deref())?;
+                        self.decrypt_optional(p.refresh_token.as_deref()).await?;
+                    let (id_token, id_migrated) =
+                        self.decrypt_optional(p.id_token.as_deref()).await?;
+                    let (token, token_migrated) = self.decrypt_optional(p.token.as_deref()).await?;
                     Ok((
                         access_token,
                         access_migrated,
@@ -237,7 +241,8 @@ impl AuthProfilesStore {
                         token,
                         token_migrated,
                     ))
-                })();
+                }
+                .await;
 
                 let (
                     access_token,

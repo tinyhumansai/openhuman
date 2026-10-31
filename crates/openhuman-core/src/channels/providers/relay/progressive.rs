@@ -75,7 +75,7 @@ impl RelayProgressiveTransport {
             } => {
                 self.check_scope(
                     &channel,
-                    turn_id.as_deref(),
+                    Some(&turn_id),
                     channel_ref.as_ref(),
                     conversation.as_ref(),
                 )?;
@@ -157,9 +157,9 @@ impl RelayProgressiveTransport {
                 "hosted relay callback capability unavailable",
             ));
         };
-        Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
+        Ok(ChannelBackendResult::ProgressiveTransport(
             self.dispatch(*request).await?,
-        )))
+        ))
     }
 }
 
@@ -182,13 +182,24 @@ fn outbound_delivery(
             let parts = if parts.is_empty() {
                 vec![text_part(text)]
             } else {
-                parts.clone()
+                parts
+                    .iter()
+                    .cloned()
+                    .map(|part| OutboundContentPart::Content { part })
+                    .collect()
             };
             Some((parts, text.clone()))
         }
         Event::Media { text, parts } => {
-            let mut outbound: Vec<OutboundContentPart> =
-                text.iter().map(|text| text_part(text)).collect();
+            let mut outbound: Vec<OutboundContentPart> = text
+                .iter()
+                .map(|text| OutboundContentPart::Content {
+                    part: ContentPart::Text {
+                        text: text.clone(),
+                        markdown_dialect: None,
+                    },
+                })
+                .collect();
             outbound.extend(
                 parts
                     .iter()

@@ -13,7 +13,12 @@ fn profile(tmp: &tempfile::TempDir, user: &str) -> Config {
     .unwrap();
     let layout = ProfileLayout::new(tmp.path(), &id);
     std::fs::create_dir_all(&layout.workspace_dir).unwrap();
-    profile_config(&layout, &id)
+    let mut config = profile_config(&layout, &id);
+    // This suite verifies tenant isolation with synthetic credentials. The
+    // profile document remains encrypted at rest; native cipher consent has
+    // dedicated coverage in the credential suite.
+    config.secrets.encrypt = false;
+    config
 }
 
 #[tokio::test]

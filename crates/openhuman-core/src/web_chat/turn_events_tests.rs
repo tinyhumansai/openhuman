@@ -122,7 +122,7 @@ async fn a_completed_turn_announces_one_chat_done_with_its_timing() {
             full_response: Some(text),
             timing: Some(timing),
             ..
-        } if text == "all done" && timing.total_ms == Some(1_000)
+        } if text == "all done" && timing.elapsed_ms == 1_000
     ));
     assert_eq!(
         done.context().seq,

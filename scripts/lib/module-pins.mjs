@@ -7,6 +7,7 @@
 import { posix } from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { repositoryGitEnv } from "./git-env.mjs";
 
 /**
  * Read a Rust module and the source fragments it brings in with `include!`.
@@ -206,6 +207,7 @@ export function validateTestOnlySourceParity({
   runGit = (args) =>
     execFileSync("git", args, {
       cwd: repoPath,
+      env: repositoryGitEnv(),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim(),
@@ -330,7 +332,9 @@ export function validateTestOnlySourceParity({
         !file.path.endsWith(".rs") ||
         filePaths.has(file.path)
       ) {
-        throw new Error("test-file paths must be unique safe Rust source paths");
+        throw new Error(
+          "test-file paths must be unique safe Rust source paths",
+        );
       }
       filePaths.add(file.path);
       const newTestFile =
@@ -339,7 +343,9 @@ export function validateTestOnlySourceParity({
         (!newTestFile && file.releaseMode !== "100644") ||
         file.candidateMode !== "100644"
       ) {
-        throw new Error("attested test file must remain a regular non-executable file");
+        throw new Error(
+          "attested test file must remain a regular non-executable file",
+        );
       }
       if (
         !/^[0-9a-f]{40}$/.test(file.candidateBlob) ||
@@ -362,12 +368,16 @@ export function validateTestOnlySourceParity({
         posix.dirname(binding.testPath) !== posix.dirname(binding.modulePath) ||
         bindingsByPath.has(binding.testPath)
       ) {
-        throw new Error("test path is not a safe sibling of an exact module binding");
+        throw new Error(
+          "test path is not a safe sibling of an exact module binding",
+        );
       }
       bindingsByPath.set(binding.testPath, binding);
     }
     if (bindingsByPath.size !== filePaths.size) {
-      throw new Error("every changed test file must have exactly one module binding");
+      throw new Error(
+        "every changed test file must have exactly one module binding",
+      );
     }
     const entries = (ref) =>
       runGit(["ls-tree", "-r", "--full-tree", "-z", ref])
@@ -391,8 +401,12 @@ export function validateTestOnlySourceParity({
     const releaseEntries = entries(proof.releaseCommit);
     const candidateEntries = entries(proof.candidateCommit);
     for (const file of files) {
-      const releaseFile = releaseEntries.find((item) => item.path === file.path);
-      const candidateFile = candidateEntries.find((item) => item.path === file.path);
+      const releaseFile = releaseEntries.find(
+        (item) => item.path === file.path,
+      );
+      const candidateFile = candidateEntries.find(
+        (item) => item.path === file.path,
+      );
       const newTestFile =
         fileSetProof && file.releaseMode === null && file.releaseBlob === null;
       if (

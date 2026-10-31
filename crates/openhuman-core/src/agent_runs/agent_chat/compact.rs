@@ -42,6 +42,7 @@ pub fn compact_thread_for<'a>(
         // caller's ambient one.
         let ctx = crate::core::runtime::DispatchCtx::from_weak(None);
         let mut session = build_turn_agent(&ctx, config, &target, Some(thread_id), None, None)
+            .await
             .map_err(anyhow::Error::msg)?;
         session.set_thread_id(Some(thread_id));
         tracing::debug!(thread_id, ?options, "[compact_thread] session bound");

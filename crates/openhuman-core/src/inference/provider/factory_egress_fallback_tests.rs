@@ -184,7 +184,7 @@ async fn a_readable_profile_with_no_stored_key_is_treated_as_missing_credentials
     // has nothing for this slug, so the lookup succeeds with an empty string.
     // Without an emptiness check the client would be built with a blank bearer
     // and the user would get a raw 401 from the provider instead of guidance.
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().expect("tempdir");
     let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
     config.chat_provider = Some("ollama:gemma3:1b".to_string());
@@ -224,7 +224,7 @@ async fn a_failed_credential_lookup_does_not_echo_its_underlying_error() {
     // The lookup error can carry stored-credential content, so the user-facing
     // error is the guidance alone; the routing shape goes to the log. The
     // read-only (doctor) lookup fails on an unreadable profile store.
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().expect("tempdir");
     let mut config = config_with_providers_in_tempdir(&tmp, vec![openai_entry("p_oai", "openai")]);
     config.chat_provider = Some("openai:gpt-4o".to_string());

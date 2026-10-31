@@ -122,7 +122,7 @@ pub(crate) async fn decided_history(
     config: &Config,
     limit: usize,
 ) -> anyhow::Result<Vec<ApprovalAuditEntry>> {
-    let rows = Rows::current(config)?;
+    let rows = Rows::current(config).await?;
     let stored = rows
         .decided(limit)
         .await
@@ -138,7 +138,7 @@ pub(crate) async fn decided_history(
 /// Whether the request was stored and has left `Pending`. `None` when it is not
 /// stored at all.
 pub(crate) async fn row_decided(config: &Config, request_id: &str) -> anyhow::Result<Option<bool>> {
-    let rows = Rows::current(config)?;
+    let rows = Rows::current(config).await?;
     let stored = rows
         .row(request_id)
         .await

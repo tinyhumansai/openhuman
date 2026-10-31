@@ -5,8 +5,10 @@ use crate::inference::provider::factory::access_gates::local_only_violation;
 /// successfully and return that model id unchanged.
 #[tokio::test]
 async fn nvidia_nim_with_explicit_model_builds_correctly() {
-    let _guard = crate::inference::inference_test_guard();
-    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let (_tmp, mut config) = super::crate_native_tests::isolated_config();
+    config.cloud_providers = vec![nvidia_nim_entry("p_nim", None)];
+    super::crate_native_tests::store_fixture_cloud_key(&config, "nvidia-nim").await;
     let (_, model) = create_test_chat_model_from_string(
         "reasoning",
         "nvidia-nim:meta/llama-3.1-8b-instruct",
@@ -28,7 +30,7 @@ async fn nvidia_nim_with_explicit_model_builds_correctly() {
 /// Regression test for https://github.com/tinyhumansai/openhuman/issues/2784.
 #[tokio::test]
 async fn nvidia_nim_empty_model_in_provider_string_errors_clearly() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
     let err = match create_test_chat_model_from_string("reasoning", "nvidia-nim:", &config).await {
         Ok(_) => panic!("empty model string must not succeed — would send model='' to the API"),
@@ -49,11 +51,13 @@ async fn nvidia_nim_empty_model_in_provider_string_errors_clearly() {
 /// default_model, that default should be used — no error.
 #[tokio::test]
 async fn nvidia_nim_falls_back_to_default_model_when_no_model_in_string() {
-    let _guard = crate::inference::inference_test_guard();
-    let config = config_with_providers(vec![nvidia_nim_entry(
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let (_tmp, mut config) = super::crate_native_tests::isolated_config();
+    config.cloud_providers = vec![nvidia_nim_entry(
         "p_nim",
         Some("meta/llama-3.1-70b-instruct"),
-    )]);
+    )];
+    super::crate_native_tests::store_fixture_cloud_key(&config, "nvidia-nim").await;
     let (_, model) = create_test_chat_model_from_string("reasoning", "nvidia-nim:", &config)
         .await
         .expect("nvidia-nim: with default_model configured must build");
@@ -115,7 +119,7 @@ async fn config_api_key_fallback_inert_without_inference_url() {
 
 #[tokio::test]
 async fn mlx_provider_string_resolves() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let config = Config::default();
     let result = create_test_chat_model_from_string("chat", "mlx:llama-3.1-8b", &config).await;
     assert!(result.is_ok(), "mlx provider must resolve");
@@ -125,7 +129,7 @@ async fn mlx_provider_string_resolves() {
 
 #[tokio::test]
 async fn local_openai_provider_string_resolves() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let config = Config::default();
     let result = create_test_chat_model_from_string("chat", "local-openai:phi3", &config).await;
     assert!(result.is_ok(), "local-openai provider must resolve");
@@ -135,7 +139,7 @@ async fn local_openai_provider_string_resolves() {
 
 #[tokio::test]
 async fn mlx_provider_empty_model_errors() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let config = Config::default();
     let result = create_test_chat_model_from_string("chat", "mlx:", &config).await;
     let err = result.err().expect("mlx: with empty model must error");
@@ -144,7 +148,7 @@ async fn mlx_provider_empty_model_errors() {
 
 #[tokio::test]
 async fn local_openai_provider_empty_model_errors() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let config = Config::default();
     let result = create_test_chat_model_from_string("chat", "local-openai:", &config).await;
     let err = result
@@ -155,7 +159,7 @@ async fn local_openai_provider_empty_model_errors() {
 
 #[tokio::test]
 async fn ollama_provider_passes_num_ctx() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let mut config = Config::default();
     config.local_ai.num_ctx = Some(32768);
     let result = create_test_chat_model_from_string("chat", "ollama:qwen3:14b", &config).await;
@@ -326,7 +330,7 @@ async fn resolve_model_for_hint_handles_unknown_hint_passthrough() {
 
 #[tokio::test]
 async fn omlx_provider_builds_with_bearer_key() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let mut config = crate::config::Config::default();
     config.local_ai.api_key = Some("sk-omlx-test".to_string());
     config.local_ai.base_url = Some("http://127.0.0.1:8000/v1".to_string());
@@ -338,7 +342,7 @@ async fn omlx_provider_builds_with_bearer_key() {
 
 #[tokio::test]
 async fn omlx_dispatch_empty_model_errors() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     // Covers the empty-model bail! arms in create_test_chat_model_from_string
     // and create_test_local_chat_model_from_string for the "omlx:" prefix.
     let config = crate::config::Config::default();
@@ -366,7 +370,7 @@ async fn omlx_dispatch_empty_model_errors() {
 
 #[tokio::test]
 async fn omlx_provider_builds_without_key_uses_no_auth() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     // Covers the no-api_key OMLX builder branch — must not panic and must
     // return Ok with the correct model name.
     let mut config = crate::config::Config::default();
@@ -380,7 +384,7 @@ async fn omlx_provider_builds_without_key_uses_no_auth() {
 
 #[tokio::test]
 async fn omlx_dispatch_success_builds_provider() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     // Covers the non-empty OMLX model success arms in both
     // create_test_chat_model_from_string and create_test_local_chat_model_from_string.
     let mut config = crate::config::Config::default();
@@ -597,7 +601,8 @@ async fn standard_mode_permits_external() {
 #[tokio::test]
 async fn claude_agent_sdk_inspection_reads_the_model_as_the_runtime_does() {
     let _guard = crate::inference::inference_test_guard_async().await;
-    let _env = crate::config::test_env::EnvVarGuard::locked()
+    let _env = crate::config::test_env::EnvVarGuard::locked_async()
+        .await
         .with("ANTHROPIC_API_KEY", "dummy-inspection-key")
         .without("ANTHROPIC_AUTH_TOKEN")
         .without("ANTHROPIC_BASE_URL");

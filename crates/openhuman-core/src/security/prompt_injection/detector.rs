@@ -130,20 +130,47 @@ pub async fn enforce_prompt_input(
     input: &str,
     context: PromptEnforcementContext<'_>,
 ) -> PromptEnforcementDecision {
+    let config = crate::core::runtime::CoreContext::current_embedder_config();
+    enforce_prompt_input_with_config(input, context, config.as_ref()).await
+}
+
+/// Screen using the request owner's configuration, including a normal host's
+/// persisted config. An unbound dispatch cannot borrow another tenant's scanner.
+pub(crate) async fn enforce_prompt_input_in(
+    dispatch: &crate::core::runtime::DispatchCtx,
+    input: &str,
+    context: PromptEnforcementContext<'_>,
+) -> PromptEnforcementDecision {
+    dispatch
+        .enter(async {
+            let config = if dispatch.resolved().is_some() {
+                dispatch.load_config().await.ok()
+            } else {
+                None
+            };
+            enforce_prompt_input_with_config(input, context, config.as_ref()).await
+        })
+        .await
+}
+
+/// Screen against the configuration supplied by the owning dispatch. Missing
+/// authority remains a held decision, even if another task has a configuration.
+pub(crate) async fn enforce_prompt_input_with_config(
+    input: &str,
+    context: PromptEnforcementContext<'_>,
+    config: Option<&crate::config::Config>,
+) -> PromptEnforcementDecision {
     if input.len() > MAX_PROMPT_BYTES {
         return held_decision(input, context, "input.oversized");
     }
-    #[cfg(feature = "security-module")]
-    let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() else {
+    let Some(config) = config else {
         return held_decision(input, context, "screen.unavailable");
     };
     #[cfg(not(feature = "security-module"))]
-    if crate::core::runtime::CoreContext::current_embedder_config().is_none() {
-        return held_decision(input, context, "screen.unavailable");
-    }
+    let _ = config;
     #[cfg(feature = "security-module")]
     let scanned = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let client = crate::modules::security::client(&config)
+        let client = crate::modules::security::client(config)
             .await
             .map_err(|error| error.to_string())?;
         client

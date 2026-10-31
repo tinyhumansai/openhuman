@@ -292,18 +292,23 @@ pub(crate) async fn linked_telegram_runtime() -> LinkedTelegramRuntime {
 
 /// Bind a test runtime context to a real core context so module callbacks that
 /// clear durable channel history exercise the host reset path.
-pub(crate) fn bind_test_core_context(
+pub(crate) async fn bind_test_core_context(
     context: &mut crate::channels::context::ChannelRuntimeContext,
     base_config: &crate::config::Config,
 ) -> Arc<crate::core::runtime::CoreContext> {
     bind_test_core_context_with_provider_endpoint(context, base_config, "http://127.0.0.1:9/v1")
+        .await
 }
 
-pub(crate) fn bind_test_core_context_with_provider_endpoint(
+pub(crate) async fn bind_test_core_context_with_provider_endpoint(
     context: &mut crate::channels::context::ChannelRuntimeContext,
     base_config: &crate::config::Config,
     provider_endpoint: &str,
 ) -> Arc<crate::core::runtime::CoreContext> {
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter("openhuman_core=debug")
+        .try_init();
     use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
 
     let workspace = context.workspace_dir.as_ref().clone();
@@ -311,6 +316,7 @@ pub(crate) fn bind_test_core_context_with_provider_endpoint(
     config.workspace_dir = workspace.clone();
     config.action_dir = workspace.clone();
     config.config_path = workspace.join("config.toml");
+    config.secrets.encrypt = false;
     config.cloud_providers = ["openai", "test-provider"]
         .into_iter()
         .map(|slug| crate::config::schema::CloudProviderCreds {
@@ -331,15 +337,21 @@ pub(crate) fn bind_test_core_context_with_provider_endpoint(
     context.core = Some(Arc::downgrade(&core));
     // A standing API-key credential satisfies the backend session gate that
     // building the host agent's model checks, without a signed-in user. Store
-    // it inside the context so a storage-backed secret store (installed by the
-    // module fixture) records it under the scope the turn later reads.
+    // it in the canonical encrypted profile document the model factory reads;
+    // the historical security::credentials adapter writes another store.
     let stored_config = config_for_credential;
-    CoreContext::sync_scope(Arc::clone(&core), || {
-        crate::security::credentials::api_key::store_api_key(
-            &stored_config,
-            "test-session-fixture-key",
-        )
+    CoreContext::scope(Arc::clone(&core), async {
+        crate::credentials::api_key::store_api_key(&stored_config, "test-session-fixture-key")
+            .await?;
+        assert_eq!(
+            crate::credentials::api_key::get_api_key(&stored_config)
+                .await?
+                .as_deref(),
+            Some("test-session-fixture-key")
+        );
+        anyhow::Ok(())
     })
+    .await
     .expect("store channel test credential");
     core
 }
@@ -423,6 +435,25 @@ impl Tool for HarnessTool {
 }
 
 pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHarnessObservation {
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter("openhuman_core=debug")
+        .try_init();
+    // Several messages can share one admitted runtime. Keep the caller's host
+    // identity while each invocation still creates its own acting workspace.
+    if crate::core::runtime::CoreContext::current_embedder_config().is_some() {
+        return run_dispatch_harness_in(options).await;
+    }
+    let workspace = tempfile::tempdir().expect("isolated channel host configuration");
+    let config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(
+        &config,
+        run_dispatch_harness_in(options),
+    )
+    .await
+}
+
+async fn run_dispatch_harness_in(options: DispatchHarnessOptions) -> DispatchHarnessObservation {
     // The real agent handler and global registries are process-wide. Serialize
     // the whole harness run so concurrent tests cannot replace them mid-turn.
     let _agent_handler_guard = crate::agent::bus::use_real_agent_handler().await;

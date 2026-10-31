@@ -123,6 +123,12 @@ impl SecurityPolicy {
 
     /// Ask whether `query.command` may run, and whether a human must approve it.
     pub async fn check_command(&self, query: CommandQuery<'_>) -> Result<CommandVerdict, Refusal> {
+        if !self.enabled {
+            return Ok(CommandVerdict {
+                class: query.declared.unwrap_or(CommandClass::Write),
+                gate: GateDecision::Allow,
+            });
+        }
         match &self.command_gateway {
             Some(gateway) => gateway.decide(self, &query).await,
             None => self.native_command_verdict(&query).await,
@@ -132,6 +138,10 @@ impl SecurityPolicy {
     /// The tier's gate for an acting call of `class`: the module's answer to a
     /// command of that class. `Err` is a refusal.
     pub async fn command_class_gate(&self, class: CommandClass) -> Result<GateDecision, Refusal> {
+        if !self.enabled {
+            self.record_class_gate(class, GateDecision::Allow);
+            return Ok(GateDecision::Allow);
+        }
         let result = match &self.command_gateway {
             Some(gateway) => gateway
                 .decide(self, &class_query(class))
@@ -140,12 +150,16 @@ impl SecurityPolicy {
             None => self.native_class_gate(class).await,
         };
         if let Ok(gate) = result {
-            if let Ok(mut snapshot) = self.class_gate_snapshot.lock() {
-                snapshot.retain(|(cached, _)| *cached != class);
-                snapshot.push((class, gate));
-            }
+            self.record_class_gate(class, gate);
         }
         result
+    }
+
+    fn record_class_gate(&self, class: CommandClass, gate: GateDecision) {
+        if let Ok(mut snapshot) = self.class_gate_snapshot.lock() {
+            snapshot.retain(|(cached, _)| *cached != class);
+            snapshot.push((class, gate));
+        }
     }
 
     /// [`Self::command_class_gate`] for the synchronous tool traits
@@ -155,6 +169,9 @@ impl SecurityPolicy {
         &self,
         class: CommandClass,
     ) -> Result<GateDecision, Refusal> {
+        if !self.enabled {
+            return Ok(GateDecision::Allow);
+        }
         if let Some(gateway) = self.command_gateway.clone() {
             let policy = self.clone();
             return block_on_gateway(async move {
@@ -253,6 +270,10 @@ impl std::fmt::Display for Refusal {
 }
 
 impl std::error::Error for Refusal {}
+
+#[cfg(test)]
+#[path = "native_commands_tests.rs"]
+mod tests;
 
 impl SecurityPolicy {
     /// The settings the module enforces for this policy. Derived entirely from

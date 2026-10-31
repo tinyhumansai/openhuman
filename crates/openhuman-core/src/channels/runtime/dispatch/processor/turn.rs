@@ -305,7 +305,7 @@ pub(crate) async fn run_admitted_turn(
             },
         })
     });
-    let turn_origin = crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+    let turn_origin = crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         sender_name: msg.sender_name.clone(),
         channel: msg.channel.clone(),
         sender: Some(msg.sender.clone()),

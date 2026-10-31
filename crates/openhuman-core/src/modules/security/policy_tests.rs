@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn enabled_policy_expands_home_relative_forbidden_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.action_dir = root.path().join("action");
+    config.workspace_dir = root.path().join("workspace");
+    config.autonomy.enabled = true;
+    config.autonomy.allowed_commands = vec!["pwd".into()];
+    config.autonomy.forbidden_paths = vec!["~/.ssh".into(), "~/.aws".into()];
+
+    assert_eq!(validate(&config), Ok(()));
+    let translated = policy_config(&config);
+    assert_eq!(
+        translated.forbidden_paths,
+        [
+            crate::config::expand_tilde("~/.ssh"),
+            crate::config::expand_tilde("~/.aws")
+        ]
+    );
+    assert!(translated
+        .forbidden_paths
+        .iter()
+        .all(|path| std::path::Path::new(path).is_absolute()));
+}
+
+#[test]
+fn enabled_policy_still_refuses_relative_forbidden_paths() {
+    let mut config = Config::default();
+    config.autonomy.enabled = true;
+    config.autonomy.allowed_commands = vec!["pwd".into()];
+    config.autonomy.forbidden_paths = vec!["relative/private".into()];
+
+    assert_eq!(
+        validate(&config),
+        Err("enabled policy forbidden paths must be absolute")
+    );
+}
+
+#[test]
 fn policy_translation_copies_effective_host_settings() {
     let mut config = Config::default();
     config.autonomy.enabled = true;
@@ -147,8 +185,10 @@ fn enabled_policy_rejects_commands_the_module_cannot_represent() {
 }
 
 #[test]
-fn module_contract_requires_the_exact_published_wire_version() {
-    assert!(supports_contract((1, 33)));
+fn module_contract_requires_the_exact_host_wire_version() {
+    assert!(supports_contract((1, 34)));
+    assert!(!supports_contract((1, 33)));
+    assert!(!supports_contract((1, 35)));
     assert!(!supports_contract((1, 28)));
     assert!(!supports_contract((1, 29)));
     assert!(!supports_contract((1, 32)));

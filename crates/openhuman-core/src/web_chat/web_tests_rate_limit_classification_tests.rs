@@ -164,173 +164,179 @@ fn classify_inference_error_rate_limited_returns_structured_retry_after_ms() {
 
 #[tokio::test]
 async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    // The JSON-RPC SSE endpoint emits chat_error by running
-    // `serde_json::to_value(&event)` over the WebChannelEvent struct
-    // (see `openhuman-rpc/src/server/socketio.rs::emit_web_channel_event`). This pins the
-    // resulting JSON keys so the frontend contract stays stable: the
-    // FE reads exactly `error_source`, `error_retryable`,
-    // `error_retry_after_ms`, `error_provider`, `error_fallback_available`
-    // off the SSE payload — the same keys our Rust struct serializes
-    // to with `#[serde(rename_all = "snake_case")]`.
-    //
-    // Also asserts the additive contract: when these fields are None
-    // they MUST be omitted from the JSON (older FE clients that don't
-    // know about them keep working) — `skip_serializing_if =
-    // "Option::is_none"` on every new field carries this guarantee.
-    set_test_forced_run_chat_task_error(Some(
-        "openrouter API error (429 Too Many Requests): Retry-After: 7",
-    ))
-    .await;
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        // The JSON-RPC SSE endpoint emits chat_error by running
+        // `serde_json::to_value(&event)` over the WebChannelEvent struct
+        // (see `openhuman-rpc/src/server/socketio.rs::emit_web_channel_event`). This pins the
+        // resulting JSON keys so the frontend contract stays stable: the
+        // FE reads exactly `error_source`, `error_retryable`,
+        // `error_retry_after_ms`, `error_provider`, `error_fallback_available`
+        // off the SSE payload — the same keys our Rust struct serializes
+        // to with `#[serde(rename_all = "snake_case")]`.
+        //
+        // Also asserts the additive contract: when these fields are None
+        // they MUST be omitted from the JSON (older FE clients that don't
+        // know about them keep working) — `skip_serializing_if =
+        // "Option::is_none"` on every new field carries this guarantee.
+        set_test_forced_run_chat_task_error(Some(
+            "openrouter API error (429 Too Many Requests): Retry-After: 7",
+        ))
+        .await;
 
-    let mut rx = subscribe_web_channel_events();
-    let request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "wire-shape-client",
-        "wire-shape-thread",
-        "Please summarize this in one line.",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("start_chat should accept valid request");
+        let mut rx = subscribe_web_channel_events();
+        let request_id = start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "wire-shape-client",
+            "wire-shape-thread",
+            "Please summarize this in one line.",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("start_chat should accept valid request");
 
-    let recv = timeout(Duration::from_secs(20), async move {
-        loop {
-            let event = rx.recv().await.expect("event stream should stay open");
-            if event.event_name() != "chat_error" {
-                continue;
+        let recv = timeout(Duration::from_secs(20), async move {
+            loop {
+                let event = rx.recv().await.expect("event stream should stay open");
+                if event.event_name() != "chat_error" {
+                    continue;
+                }
+                if event.context().request_id != request_id {
+                    continue;
+                }
+                return event;
             }
-            if event.context().request_id != request_id {
-                continue;
-            }
-            return event;
-        }
-    })
-    .await
-    .expect("expected chat_error event for started chat request");
+        })
+        .await
+        .expect("expected chat_error event for started chat request");
 
-    let json = serde_json::to_value(&recv).expect("WebChannelEvent must serialize");
-    assert_eq!(
-        json.get("error_type").and_then(|v| v.as_str()),
-        Some("rate_limited")
-    );
-    assert_eq!(
-        json.get("error_source").and_then(|v| v.as_str()),
-        Some("provider")
-    );
-    assert_eq!(
-        json.get("error_retryable").and_then(|v| v.as_bool()),
-        Some(true)
-    );
-    assert_eq!(
-        json.get("error_retry_after_ms").and_then(|v| v.as_u64()),
-        Some(7_000)
-    );
-    assert_eq!(
-        json.get("error_provider").and_then(|v| v.as_str()),
-        Some("openrouter")
-    );
-    // No fallback signal in this error string → field omitted.
-    assert!(
-        json.get("error_fallback_available").is_none(),
-        "None fields MUST be omitted from JSON for additive wire compat: {json}"
-    );
-
-    // Pin the additive contract: serializing a default (no error)
-    // event must NOT introduce any of the new keys.
-    let empty = crate::web_chat::WebChannelEvent::ChatDone {
-        context: Default::default(),
-        full_response: None,
-        citations: None,
-        usage: None,
-        timing: None,
-        parts: None,
-    };
-    let empty_json = serde_json::to_value(&empty).expect("Default WebChannelEvent serializes");
-    for key in [
-        "error_source",
-        "error_retryable",
-        "error_retry_after_ms",
-        "error_provider",
-        "error_fallback_available",
-    ] {
+        let json = serde_json::to_value(&recv).expect("WebChannelEvent must serialize");
+        assert_eq!(
+            json.get("error_type").and_then(|v| v.as_str()),
+            Some("rate_limited")
+        );
+        assert_eq!(
+            json.get("error_source").and_then(|v| v.as_str()),
+            Some("provider")
+        );
+        assert_eq!(
+            json.get("error_retryable").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            json.get("error_retry_after_ms").and_then(|v| v.as_u64()),
+            Some(7_000)
+        );
+        assert_eq!(
+            json.get("error_provider").and_then(|v| v.as_str()),
+            Some("openrouter")
+        );
+        // No fallback signal in this error string → field omitted.
         assert!(
+            json.get("error_fallback_available").is_none(),
+            "None fields MUST be omitted from JSON for additive wire compat: {json}"
+        );
+
+        // Pin the additive contract: serializing a default (no error)
+        // event must NOT introduce any of the new keys.
+        let empty = crate::web_chat::WebChannelEvent::ChatDone {
+            context: Default::default(),
+            full_response: None,
+            citations: None,
+            usage: None,
+            timing: None,
+            parts: None,
+        };
+        let empty_json = serde_json::to_value(&empty).expect("Default WebChannelEvent serializes");
+        for key in [
+            "error_source",
+            "error_retryable",
+            "error_retry_after_ms",
+            "error_provider",
+            "error_fallback_available",
+        ] {
+            assert!(
             empty_json.get(key).is_none(),
             "{key} must be omitted when None so older FE clients aren't surprised: {empty_json}"
         );
-    }
+        }
 
-    set_test_forced_run_chat_task_error(None).await;
+        set_test_forced_run_chat_task_error(None).await;
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    // End-to-end wire check for issue #2606: when run_chat_task fails
-    // with a 429-shaped error string, the published `chat_error`
-    // WebChannelEvent on the bus MUST carry the structured fields the
-    // FE needs (retry_after_ms, source, provider, retryable) — not
-    // just the message text. This is the contract older PR #2371
-    // landed in *message* form but kept off the wire as structured
-    // metadata.
-    set_test_forced_run_chat_task_error(Some(
-        "openrouter API error (429 Too Many Requests): Retry-After: 30",
-    ))
-    .await;
+    with_web_test_context(async {
+        let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
+        // End-to-end wire check for issue #2606: when run_chat_task fails
+        // with a 429-shaped error string, the published `chat_error`
+        // WebChannelEvent on the bus MUST carry the structured fields the
+        // FE needs (retry_after_ms, source, provider, retryable) — not
+        // just the message text. This is the contract older PR #2371
+        // landed in *message* form but kept off the wire as structured
+        // metadata.
+        set_test_forced_run_chat_task_error(Some(
+            "openrouter API error (429 Too Many Requests): Retry-After: 30",
+        ))
+        .await;
 
-    let mut rx = subscribe_web_channel_events();
-    let request_id = start_chat(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "rate-limit-client",
-        "rate-limit-thread",
-        "Please summarize this in one line.",
-        None,
-        None,
-        None,
-        None,
-        ChatRequestMetadata::default(),
-    )
-    .await
-    .expect("start_chat should accept valid request");
+        let mut rx = subscribe_web_channel_events();
+        let request_id = start_chat(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            "rate-limit-client",
+            "rate-limit-thread",
+            "Please summarize this in one line.",
+            None,
+            None,
+            None,
+            None,
+            ChatRequestMetadata::default(),
+        )
+        .await
+        .expect("start_chat should accept valid request");
 
-    let recv = timeout(Duration::from_secs(20), async move {
-        loop {
-            let event = rx.recv().await.expect("event stream should stay open");
-            if event.event_name() != "chat_error" {
-                continue;
+        let recv = timeout(Duration::from_secs(20), async move {
+            loop {
+                let event = rx.recv().await.expect("event stream should stay open");
+                if event.event_name() != "chat_error" {
+                    continue;
+                }
+                if event.context().request_id != request_id {
+                    continue;
+                }
+                return event;
             }
-            if event.context().request_id != request_id {
-                continue;
-            }
-            return event;
-        }
-    })
-    .await
-    .expect("expected chat_error event for started chat request");
+        })
+        .await
+        .expect("expected chat_error event for started chat request");
 
-    assert!(
-        matches!(recv.wire_event(), crate::web_chat::WebChannelEvent::ChatError {
+        assert!(
+            matches!(recv.wire_event(), crate::web_chat::WebChannelEvent::ChatError {
         error_type: Some(error_type), error_source: Some(source),
         error_retryable: Some(true), error_retry_after_ms: Some(30_000), ..
     } if error_type == "rate_limited" && source == "provider"),
-        "upstream 429 wire classification and countdown changed: {recv:?}"
-    );
-    assert_eq!(
-        match recv.wire_event() {
-            crate::web_chat::WebChannelEvent::ChatError { error_provider, .. } =>
-                error_provider.as_deref(),
-            _ => None,
-        },
-        Some("openrouter"),
-        "provider name must reach the wire so the FE can show \"openrouter is throttling\": \
+            "upstream 429 wire classification and countdown changed: {recv:?}"
+        );
+        assert_eq!(
+            match recv.wire_event() {
+                crate::web_chat::WebChannelEvent::ChatError { error_provider, .. } =>
+                    error_provider.as_deref(),
+                _ => None,
+            },
+            Some("openrouter"),
+            "provider name must reach the wire so the FE can show \"openrouter is throttling\": \
          {recv:?}"
-    );
+        );
 
-    set_test_forced_run_chat_task_error(None).await;
+        set_test_forced_run_chat_task_error(None).await;
+    })
+    .await;
 }
 
 #[test]

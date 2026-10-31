@@ -24,48 +24,61 @@ async fn token_expiry_math() {
     assert!(!token_set.is_expiring_within(Duration::from_secs(1)));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn store_roundtrip_with_encryption() {
     let tmp = TempDir::new().unwrap();
-    let store = AuthProfilesStore::new(tmp.path(), true);
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    config.secrets.encrypt = true;
+    #[cfg(feature = "security-module")]
+    let worker_config = config.clone();
+    #[cfg(feature = "security-module")]
+    crate::credentials::test_support::with_native_cipher_approval(&config, async move {
+        let store = AuthProfilesStore::document_with_config(tmp.path(), &worker_config);
 
-    let mut profile = AuthProfile::new_oauth(
-        "openai-codex",
-        "default",
-        TokenSet {
-            access_token: "access-123".into(),
-            refresh_token: Some("refresh-123".into()),
-            id_token: None,
-            expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
-            token_type: Some("Bearer".into()),
-            scope: Some("openid offline_access".into()),
-        },
-    );
-    profile.account_id = Some("acct_123".into());
+        let mut profile = AuthProfile::new_oauth(
+            "openai-codex",
+            "default",
+            TokenSet {
+                access_token: "access-123".into(),
+                refresh_token: Some("refresh-123".into()),
+                id_token: None,
+                expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
+                token_type: Some("Bearer".into()),
+                scope: Some("openid offline_access".into()),
+            },
+        );
+        profile.account_id = Some("acct_123".into());
 
-    store.upsert_profile(profile.clone(), true).await.unwrap();
+        store.upsert_profile(profile.clone(), true).await.unwrap();
 
-    let data = store.load().await.unwrap();
-    let loaded = data.profiles.get(&profile.id).unwrap();
+        let data = store.load().await.unwrap();
+        let loaded = data.profiles.get(&profile.id).unwrap();
 
-    assert_eq!(loaded.provider, "openai-codex");
-    assert_eq!(loaded.profile_name, "default");
-    assert_eq!(loaded.account_id.as_deref(), Some("acct_123"));
-    assert_eq!(
-        loaded
-            .token_set
-            .as_ref()
-            .and_then(|t| t.refresh_token.as_deref()),
-        Some("refresh-123")
-    );
+        assert_eq!(loaded.provider, "openai-codex");
+        assert_eq!(loaded.profile_name, "default");
+        assert_eq!(loaded.account_id.as_deref(), Some("acct_123"));
+        assert_eq!(
+            loaded
+                .token_set
+                .as_ref()
+                .and_then(|t| t.refresh_token.as_deref()),
+            Some("refresh-123")
+        );
 
-    // Under the keychain-backed model (FileBackend in debug builds, real OS
-    // keychain in release), secret fields are stored in the keychain and
-    // omitted from the JSON file entirely. The on-disk JSON must not leak
-    // the plaintext secrets in any form.
-    let raw = tokio::fs::read_to_string(store.path()).await.unwrap();
-    assert!(!raw.contains("refresh-123"));
-    assert!(!raw.contains("access-123"));
+        // Both the field-level cipher and the outer profile document protect
+        // the secret; no UTF-8/plaintext document is written.
+        let raw = tokio::fs::read(store.path()).await.unwrap();
+        let raw = String::from_utf8_lossy(&raw);
+        assert!(!raw.contains("refresh-123"));
+        assert!(!raw.contains("access-123"));
+    })
+    .await;
+    #[cfg(not(feature = "security-module"))]
+    {
+        let store = AuthProfilesStore::document_with_config(tmp.path(), &config);
+        let profile = AuthProfile::new_token("openai", "default", "requires-native-cipher".into());
+        assert!(store.upsert_profile(profile, true).await.is_err());
+    }
 }
 
 #[tokio::test]
@@ -168,13 +181,20 @@ async fn corrupt_store_is_quarantined_and_reset() {
 /// never log in cleanly because every read pre-empts before reaching
 /// the "no profile" code path.
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    config.secrets.encrypt = true;
+    #[cfg(feature = "security-module")]
+    let worker_config = config.clone();
+    #[cfg(feature = "security-module")]
+    crate::credentials::test_support::with_native_cipher_approval(&config, async move {
+
     // The SecretStore caches keys by canonicalised path in a process-wide
     // OnceCell. Use a fresh temp dir per test so we don't pick up a
     // sibling test's cached key.
-    let tmp = TempDir::new().unwrap();
-    let store = AuthProfilesStore::new(tmp.path(), true);
+    let store = AuthProfilesStore::document_with_config(tmp.path(), &worker_config);
 
     // Seed one profile, then replace its token with malformed enc2 data and
     // add a valid plaintext legacy profile to verify selective cleanup.
@@ -220,6 +240,13 @@ async fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
     // there's nothing to drop on the second pass — same clean state.
     let loaded2 = store.load().await.unwrap();
     assert!(!loaded2.profiles.contains_key(&profile_id));
+    }).await;
+    #[cfg(not(feature = "security-module"))]
+    {
+        let store = AuthProfilesStore::document_with_config(tmp.path(), &config);
+        let profile = AuthProfile::new_token("openai", "default", "requires-native-cipher".into());
+        assert!(store.upsert_profile(profile, true).await.is_err());
+    }
 }
 
 /// A persisted profile whose `kind` string is something the current code
@@ -375,7 +402,7 @@ async fn auth_profile_lock_errors_do_not_include_local_paths() {
     let store = AuthProfilesStore::new(&invalid_state_dir, false);
     let err = store.load().await.unwrap_err().to_string();
 
-    assert!(err.contains("Failed to acquire auth profile lease"));
+    assert!(err.contains("Failed to acquire auth profile read lease"));
     assert!(!err.contains(&tmp.path().display().to_string()));
     assert!(!err.contains(&invalid_state_dir.display().to_string()));
 }
@@ -428,4 +455,117 @@ async fn upsert_preserves_created_at_on_update() {
     let data = store.load().await.unwrap();
     let loaded = data.profiles.get(&id).unwrap();
     assert_eq!(loaded.created_at, created);
+}
+
+#[tokio::test]
+async fn removing_document_profile_does_not_require_keyring_or_rewrite_other_profiles() {
+    let workspace = TempDir::new().unwrap();
+    let document = AuthProfilesStore::new(workspace.path(), false);
+    let removed = AuthProfile::new_token("api-key", "removed", "synthetic-key-one".into());
+    let retained = AuthProfile::new_token("api-key", "retained", "synthetic-key-two".into());
+    document
+        .upsert_profile(removed.clone(), true)
+        .await
+        .unwrap();
+    document
+        .upsert_profile(retained.clone(), true)
+        .await
+        .unwrap();
+    let before =
+        serde_json::to_value(&document.read_persisted_locked().unwrap().profiles[&retained.id])
+            .unwrap();
+
+    // A document-backed credential remains removable when a newly configured
+    // host cannot reach the optional keyring. No secret needs to be resolved.
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
+    config.modules.enabled = false;
+    let configured = AuthProfilesStore::new_with_config(workspace.path(), false, &config);
+    assert!(configured
+        .keychain_delete_secrets(&removed.id)
+        .await
+        .is_err());
+    assert!(configured.remove_profile(&removed.id).await.unwrap());
+    let after = configured.read_persisted_locked().unwrap();
+    assert!(!after.profiles.contains_key(&removed.id));
+    assert_eq!(
+        serde_json::to_value(&after.profiles[&retained.id]).unwrap(),
+        before
+    );
+    assert_eq!(
+        document.load().await.unwrap().profiles[&retained.id]
+            .token
+            .as_deref(),
+        Some("synthetic-key-two")
+    );
+}
+
+#[tokio::test]
+async fn profile_cleanup_does_not_overwrite_a_newer_document() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let original = store.read_persisted_locked().unwrap();
+    let expected = serde_json::to_vec(&original).unwrap();
+    let mut cleanup = original.clone();
+    cleanup.updated_at = "2026-01-01T00:00:00Z".into();
+    let concurrent = AuthProfile::new_token("openai", "new", "new-secret".into());
+    store
+        .upsert_profile(concurrent.clone(), true)
+        .await
+        .unwrap();
+    let before_cleanup = store.read_persisted_locked().unwrap();
+    store
+        .publish_cleanup_if_current(&expected, &cleanup)
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(store.read_persisted_locked().unwrap()).unwrap(),
+        serde_json::to_value(before_cleanup).unwrap()
+    );
+    assert!(store
+        .load()
+        .await
+        .unwrap()
+        .profiles
+        .contains_key(&concurrent.id));
+}
+
+#[tokio::test]
+async fn document_profile_case_normalization_does_not_require_a_keyring() {
+    let directory = TempDir::new().unwrap();
+    let document = AuthProfilesStore::new(directory.path(), false);
+    let profile = AuthProfile::new_token("openai", "default", "synthetic-document-token".into());
+    document
+        .upsert_profile(profile.clone(), true)
+        .await
+        .unwrap();
+    let mut raw = document.read_persisted_locked().unwrap();
+    let mut entry = raw.profiles.remove(&profile.id).unwrap();
+    entry.provider = "OpenAI".into();
+    raw.profiles.insert("OpenAI:default".into(), entry);
+    raw.active_profiles = [("OpenAI".into(), "OpenAI:default".into())].into();
+    document.write_persisted_locked(&raw).unwrap();
+
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(directory.path());
+    config.modules.enabled = false;
+    let configured = AuthProfilesStore::new_with_config(directory.path(), false, &config);
+    assert!(
+        configured.keychain_store_secrets(&profile).await.is_err(),
+        "positive control: this host cannot migrate a secret to the keyring"
+    );
+    let loaded = configured.load().await.unwrap();
+    let normalized = loaded
+        .profiles
+        .get(&profile.id)
+        .expect("document-owned profiles normalize without contacting the keyring");
+    assert_eq!(
+        normalized.token.as_deref(),
+        Some("synthetic-document-token")
+    );
+    assert_eq!(loaded.active_profiles.get("openai"), Some(&profile.id));
+    let cleaned = configured.read_persisted_locked().unwrap();
+    assert!(cleaned.profiles.contains_key(&profile.id));
+    assert!(!cleaned.profiles.contains_key("OpenAI:default"));
+    assert_eq!(
+        cleaned.profiles[&profile.id].secret_location,
+        Some(crate::credentials::profiles::persistence::SecretLocation::EncryptedDocument)
+    );
 }

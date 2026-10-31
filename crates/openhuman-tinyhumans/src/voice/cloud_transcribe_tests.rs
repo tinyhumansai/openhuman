@@ -8,6 +8,18 @@ use openhuman_embed::__host::credentials::{
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+fn test_config(tmp: &tempfile::TempDir, api_url: Option<String>) -> Config {
+    let mut config = Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        api_url,
+        ..Config::default()
+    };
+    config.secrets.encrypt = false;
+    config
+}
+
 #[test]
 fn backend_401_is_tagged_as_session_expiry() {
     let tagged = classify_transcribe_error(
@@ -38,12 +50,7 @@ fn backend_401_with_api_key_does_not_expire_session() {
 #[tokio::test]
 async fn offline_local_session_refuses_without_a_request() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        ..Config::default()
-    };
+    let config = test_config(&tmp, None);
     AuthService::from_config(&config)
         .store_provider_token(
             APP_SESSION_PROVIDER,
@@ -63,13 +70,7 @@ async fn offline_local_session_refuses_without_a_request() {
 #[tokio::test]
 async fn api_key_refuses_remote_plaintext_endpoint_before_request() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        api_url: Some("http://backend.example.test".to_string()),
-        ..Config::default()
-    };
+    let config = test_config(&tmp, Some("http://backend.example.test".to_string()));
     store_api_key(&config, "test-api-key").await.unwrap();
 
     let err = transcribe_cloud(&config, "AAAA", &CloudTranscribeOptions::default())
@@ -90,13 +91,7 @@ async fn api_key_transcribes_via_safe_backend_with_bearer_and_multipart_audio() 
         .await;
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        api_url: Some(server.uri()),
-        ..Config::default()
-    };
+    let config = test_config(&tmp, Some(server.uri()));
     store_api_key(&config, "test-api-key").await.unwrap();
 
     let outcome = transcribe_cloud(&config, "AQID", &CloudTranscribeOptions::default())

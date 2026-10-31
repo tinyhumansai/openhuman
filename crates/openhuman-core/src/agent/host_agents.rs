@@ -96,7 +96,7 @@ impl HostAgent {
         channel: &str,
         message: &str,
         message_input: Option<tinyinference_llm::message::Message>,
-        origin: crate::security::turn_origin::AgentTurnOrigin,
+        origin: crate::core::runtime::turn_origin::AgentTurnOrigin,
         approval: crate::security::approval::ApprovalTurnContext,
         progress: Option<tokio::sync::mpsc::Sender<crate::progress::AgentProgress>>,
         run_queue: Option<
@@ -114,7 +114,7 @@ impl HostAgent {
     ) -> anyhow::Result<String> {
         let config = self.config.clone();
         let agent_id = self.definition.id.clone();
-        let mut session = self.session_host(&config, Some(session_key))?;
+        let mut session = self.session_host(&config, Some(session_key)).await?;
         session.set_thread_id(Some(session_key));
         session.set_event_context(event_session_id, channel);
         session.adopt_imported_history(imported_history)?;
@@ -168,7 +168,7 @@ impl HostAgent {
         event_session_id: &str,
         channel: &str,
     ) -> anyhow::Result<bool> {
-        let mut session = self.session_host(&self.config, Some(session_key))?;
+        let mut session = self.session_host(&self.config, Some(session_key)).await?;
         session.set_thread_id(Some(session_key));
         session.set_event_context(event_session_id, channel);
         self.scope(session.reset_bound_history()).await

@@ -77,6 +77,7 @@ async fn a_local_session_token_is_off() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Locks serialize process-global test fixtures across awaits.
 async fn the_host_credential_binds_below_the_endpoint_and_is_cached() {
     // The engine cache is keyed by a fingerprint that includes the attribution
     // headers, which derive from the process-global product identity and the

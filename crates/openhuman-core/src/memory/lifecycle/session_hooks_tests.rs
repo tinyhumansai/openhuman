@@ -145,6 +145,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
         ..Default::default()
     };
     config.memory.conversations.enabled = true;
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());

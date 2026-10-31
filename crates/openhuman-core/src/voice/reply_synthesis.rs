@@ -38,8 +38,9 @@ pub async fn synthesize_reply(
         "{LOG_PREFIX} synthesize provider={provider_name} chars={}",
         trimmed.chars().count()
     );
-    let provider =
-        super::create_tts_provider(&provider_name, &voice, config).map_err(|e| e.to_string())?;
+    let provider = super::create_tts_provider(&provider_name, &voice, config)
+        .await
+        .map_err(|e| e.to_string())?;
     let effective = (!voice.is_empty()).then_some(voice.as_str());
     provider.synthesize(config, trimmed, effective).await
 }

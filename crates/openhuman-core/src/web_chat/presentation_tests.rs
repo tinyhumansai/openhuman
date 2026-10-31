@@ -106,7 +106,7 @@ async fn chat_done_carries_timing_when_a_snapshot_is_supplied() {
     };
     assert_eq!(payload.first_token_ms, Some(120));
     assert_eq!(payload.first_tool_ms, None);
-    assert_eq!(payload.total_ms, Some(2000));
+    assert_eq!(payload.elapsed_ms, 2000);
     // 40 output tokens / (2000ms / 1000) = 20 tokens/sec.
     assert_eq!(payload.tokens_per_second, Some(20.0));
     // The gauge numerator travels beside the spend totals, unsummed.
@@ -116,7 +116,7 @@ async fn chat_done_carries_timing_when_a_snapshot_is_supplied() {
     else {
         panic!("chat_done.usage must be Some");
     };
-    assert_eq!((usage.input_tokens, usage.context_tokens), (100, 60));
+    assert_eq!((usage.input_tokens, usage.context_tokens), (100, Some(60)));
 }
 
 /// A caller with no timing snapshot in scope (e.g. the flows stream

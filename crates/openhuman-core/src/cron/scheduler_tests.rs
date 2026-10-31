@@ -15,12 +15,16 @@ use {
 
 async fn test_config(tmp: &TempDir) -> Config {
     let ws = tmp.path().join("workspace");
-    let config = Config {
+    let mut config = Config {
         workspace_dir: ws.clone(),
         action_dir: ws.clone(),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    // Scheduler fixtures use a synthetic API key; secret-store encryption is
+    // exercised separately with an armed TinySecurity module.
+    config.secrets.encrypt = false;
+    config.modules.source = crate::config::schema::ModuleSourceMode::Source;
     tokio::fs::create_dir_all(&config.workspace_dir)
         .await
         .unwrap();
@@ -29,6 +33,31 @@ async fn test_config(tmp: &TempDir) -> Config {
         .await
         .expect("store the managed inference fixture credential");
     config
+}
+
+async fn run_job_command_in_test_context(
+    config: &Config,
+    security: &SecurityPolicy,
+    job: &CronJob,
+) -> (bool, String) {
+    let core = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config.clone(),
+    );
+    crate::core::runtime::CoreContext::scope(core, async {
+        crate::core::runtime::DispatchCtx::ambient()
+            .load_config()
+            .await
+            .expect("scoped scheduler fixture config");
+        run_job_command(
+            &crate::core::runtime::DispatchCtx::host_default(),
+            config,
+            security,
+            job,
+        )
+        .await
+    })
+    .await
 }
 
 fn test_job(command: &str) -> CronJob {
@@ -328,13 +357,7 @@ async fn a_shell_job_runs_on_this_platform() {
 
     let job = test_job("echo tinyhumans");
 
-    let (success, output) = run_job_command(
-        &crate::core::runtime::DispatchCtx::host_default(),
-        &config,
-        &security,
-        &job,
-    )
-    .await;
+    let (success, output) = run_job_command_in_test_context(&config, &security, &job).await;
 
     assert!(success, "the shell job did not succeed: {output}");
     assert!(
@@ -384,13 +407,7 @@ async fn a_pipeline_reports_its_last_stage_rather_than_pipefail() {
 
     let job = test_job("false | true");
 
-    let (success, output) = run_job_command(
-        &crate::core::runtime::DispatchCtx::host_default(),
-        &config,
-        &security,
-        &job,
-    )
-    .await;
+    let (success, output) = run_job_command_in_test_context(&config, &security, &job).await;
 
     assert!(
         success,

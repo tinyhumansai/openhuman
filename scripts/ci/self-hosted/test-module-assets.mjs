@@ -30,6 +30,11 @@ export const TEST_MODULE_IDS = [
   "tinyconnectors",
   "tinyflows",
   "tinyvoice",
+  // The core test suite exercises keyring and privacy decisions with the
+  // pinned TinySecurity module. It is loaded through the verified local-file
+  // callback path, so the CI installer must stage it alongside the modules
+  // that use the regular release search path.
+  "tinysecurity",
 ];
 
 /** Concatenate registry.rs and its `registry/records_*.rs` fragments. */

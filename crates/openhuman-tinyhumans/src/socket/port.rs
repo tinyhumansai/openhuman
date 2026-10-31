@@ -145,10 +145,12 @@ impl SocketPort for SdkSocketPort {
             rx,
             shutdown_rx,
             done,
-            Arc::clone(&self.state),
-            Arc::clone(&self.transport_connected),
-            Arc::clone(&self.loop_active),
-            Arc::clone(&self.stopped_on_failure),
+            SocketActorShared {
+                state: Arc::clone(&self.state),
+                transport_connected: Arc::clone(&self.transport_connected),
+                loop_active: Arc::clone(&self.loop_active),
+                stopped_on_failure: Arc::clone(&self.stopped_on_failure),
+            },
         ));
         Ok(())
     }
@@ -269,15 +271,19 @@ impl SocketPort for SdkSocketPort {
     }
 }
 
+struct SocketActorShared {
+    state: Arc<RwLock<SocketState>>,
+    transport_connected: Arc<AtomicBool>,
+    loop_active: Arc<AtomicBool>,
+    stopped_on_failure: Arc<AtomicBool>,
+}
+
 async fn run_socket_actor(
     mut connection: SocketConnection,
     mut commands: mpsc::Receiver<SocketCommand>,
     mut shutdown: watch::Receiver<bool>,
     done: oneshot::Sender<()>,
-    state: Arc<RwLock<SocketState>>,
-    transport_connected: Arc<AtomicBool>,
-    loop_active: Arc<AtomicBool>,
-    stopped_on_failure: Arc<AtomicBool>,
+    shared: SocketActorShared,
 ) {
     let emitter = connection.emitter();
     let mut tasks = JoinSet::<(u64, SocketResult)>::new();
@@ -294,20 +300,22 @@ async fn run_socket_actor(
             }
             event = connection.next_event() => {
                 let Some(event) = event else {
-                    transport_connected.store(false, Ordering::Release);
-                    loop_active.store(false, Ordering::Release);
-                    stopped_on_failure.store(connection.stopped_on_failure(), Ordering::Release);
+                    shared.transport_connected.store(false, Ordering::Release);
+                    shared.loop_active.store(false, Ordering::Release);
+                    shared
+                        .stopped_on_failure
+                        .store(connection.stopped_on_failure(), Ordering::Release);
                     if connection.stopped_on_failure() {
-                        state.write().status = ConnectionStatus::Error;
+                        shared.state.write().status = ConnectionStatus::Error;
                     }
                     break 'actor;
                 };
                 if apply_supervisor_event(
                     &event,
-                    &mut state.write(),
-                    &transport_connected,
-                    &loop_active,
-                    &stopped_on_failure,
+                    &mut shared.state.write(),
+                    &shared.transport_connected,
+                    &shared.loop_active,
+                    &shared.stopped_on_failure,
                     connection.stopped_on_failure(),
                 ) {
                     continue;
@@ -316,7 +324,7 @@ async fn run_socket_actor(
                     log::debug!("[socket] unhandled SDK supervisor event: {}", event.name);
                     continue;
                 }
-                apply_backend_status_event(&event, &mut state.write());
+                apply_backend_status_event(&event, &mut shared.state.write());
                 let data = event.payload.decode::<Value>(&event.name).unwrap_or(Value::Null);
                 crate::devices::tunnel_client::dispatch_backend_event(&event.name, data.clone());
                 openhuman_embed::__host::platform::socket::dispatch_socket_event(&event.name, data);
@@ -381,8 +389,8 @@ async fn run_socket_actor(
             }
         }
     }
-    loop_active.store(false, Ordering::Release);
-    transport_connected.store(false, Ordering::Release);
+    shared.loop_active.store(false, Ordering::Release);
+    shared.transport_connected.store(false, Ordering::Release);
     let _ = done.send(());
 }
 

@@ -340,8 +340,6 @@ pub async fn desktop(
     shutdown_token: CancellationToken,
     ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
 ) -> anyhow::Result<()> {
-    openhuman_tinyhumans::register_hooks();
-    secret_storage::install();
     log::debug!("[rpc:host] desktop options={options:?}");
     serve_desktop(desktop_builder(&options), shutdown_token, ready_tx).await
 }
@@ -361,6 +359,8 @@ pub async fn serve_desktop(
     shutdown_token: CancellationToken,
     ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
 ) -> anyhow::Result<()> {
+    openhuman_tinyhumans::register_hooks();
+    secret_storage::install();
     let builder = builder.connect().map_err(|error| {
         log::warn!("[rpc:host] desktop: TinyHumans connection failed: {error}");
         anyhow::Error::new(error)

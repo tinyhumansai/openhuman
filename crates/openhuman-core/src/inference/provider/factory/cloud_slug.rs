@@ -525,8 +525,8 @@ pub(super) async fn try_create_cloud_slug_chat_model_from_string_with_native_too
     if let Err(e) = enforce_local_only_inference(role, &p) {
         return Some(Err(e));
     }
+    #[cfg(not(test))]
     if let CredentialAccess::Runtime(snapshot) = credential_access {
-        #[cfg(not(test))]
         if let Err(e) = super::access_gates::verify_session_active_with_snapshot(config, snapshot) {
             return Some(Err(e));
         }
@@ -597,8 +597,8 @@ pub(super) async fn try_create_cloud_slug_chat_model_from_string_with_native_too
                 extensions, style,
             ) =>
         {
+            #[cfg(not(test))]
             if let CredentialAccess::Runtime(snapshot) = credential_access {
-                #[cfg(not(test))]
                 if !snapshot.backend_session_active() {
                     return Some(Err(anyhow::anyhow!(
                         "SESSION_EXPIRED: no backend session — sign in to use OpenHuman"

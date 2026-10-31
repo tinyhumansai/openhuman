@@ -16,6 +16,17 @@ use super::LOCK_FILENAME;
 
 impl AuthProfilesStore {
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
+        Self::new_with_secret_store(state_dir, SecretStore::new(state_dir, encrypt_secrets))
+    }
+
+    pub fn new_with_config(state_dir: &Path, config: &crate::config::Config) -> Self {
+        Self::new_with_secret_store(
+            state_dir,
+            SecretStore::new_with_config(state_dir, config.secrets.encrypt, config),
+        )
+    }
+
+    fn new_with_secret_store(state_dir: &Path, secret_store: SecretStore) -> Self {
         let user_id = super::user_id_from_state_dir(state_dir);
         let policy = crate::security::keyring_consent::policy::check_secret_access();
         let use_keychain = policy == crate::security::keyring_consent::PolicyDecision::Proceed
@@ -50,7 +61,7 @@ impl AuthProfilesStore {
         Self {
             path: super::profiles_file(state_dir),
             lock_path: state_dir.join(LOCK_FILENAME),
-            secret_store: SecretStore::new(state_dir, encrypt_secrets),
+            secret_store,
             user_id,
             use_keychain,
             #[cfg(test)]
@@ -66,9 +77,9 @@ impl AuthProfilesStore {
         &self.path
     }
 
-    pub fn load(&self) -> Result<AuthProfilesData> {
+    pub async fn load(&self) -> Result<AuthProfilesData> {
         match self.acquire_lock() {
-            Ok(_lock) => self.load_locked(),
+            Ok(_lock) => self.load_locked().await,
             Err(e) if is_lock_create_unwritable_fs(&e) => {
                 // RCA Sentry TAURI-RUST-4SZ: a full / read-only filesystem
                 // can't create the exclusive lock file, but the store already
@@ -85,15 +96,15 @@ impl AuthProfilesStore {
                     "[auth] auth-profile lock could not be created ({e}); \
                      serving lock-free read-only load (likely disk full / read-only FS)"
                 );
-                self.load_unlocked_readonly()
+                self.load_unlocked_readonly().await
             }
             Err(e) => Err(e),
         }
     }
 
-    pub fn upsert_profile(&self, mut profile: AuthProfile, set_active: bool) -> Result<()> {
+    pub async fn upsert_profile(&self, mut profile: AuthProfile, set_active: bool) -> Result<()> {
         let _lock = self.acquire_lock()?;
-        let mut data = self.load_locked()?;
+        let mut data = self.load_locked().await?;
 
         profile.updated_at = Utc::now();
         if let Some(existing) = data.profiles.get(&profile.id) {
@@ -108,12 +119,12 @@ impl AuthProfilesStore {
         data.profiles.insert(profile.id.clone(), profile);
         data.updated_at = Utc::now();
 
-        self.save_locked(&data)
+        self.save_locked(&data).await
     }
 
-    pub fn remove_profile(&self, profile_id: &str) -> Result<bool> {
+    pub async fn remove_profile(&self, profile_id: &str) -> Result<bool> {
         let _lock = self.acquire_lock()?;
-        let mut data = self.load_locked()?;
+        let mut data = self.load_locked().await?;
 
         let removed = data.profiles.remove(profile_id).is_some();
         if !removed {
@@ -123,7 +134,7 @@ impl AuthProfilesStore {
         data.active_profiles
             .retain(|_, active| active != profile_id);
         data.updated_at = Utc::now();
-        self.save_locked(&data)?;
+        self.save_locked(&data).await?;
 
         // Clean up keychain entry for this profile (idempotent if keychain
         // is unavailable or no entry exists).
@@ -134,9 +145,9 @@ impl AuthProfilesStore {
         Ok(true)
     }
 
-    pub fn set_active_profile(&self, provider: &str, profile_id: &str) -> Result<()> {
+    pub async fn set_active_profile(&self, provider: &str, profile_id: &str) -> Result<()> {
         let _lock = self.acquire_lock()?;
-        let mut data = self.load_locked()?;
+        let mut data = self.load_locked().await?;
 
         if !data.profiles.contains_key(profile_id) {
             anyhow::bail!("Auth profile not found: {profile_id}");
@@ -145,23 +156,23 @@ impl AuthProfilesStore {
         data.active_profiles
             .insert(provider.to_ascii_lowercase(), profile_id.to_string());
         data.updated_at = Utc::now();
-        self.save_locked(&data)
+        self.save_locked(&data).await
     }
 
-    pub fn clear_active_profile(&self, provider: &str) -> Result<()> {
+    pub async fn clear_active_profile(&self, provider: &str) -> Result<()> {
         let _lock = self.acquire_lock()?;
-        let mut data = self.load_locked()?;
+        let mut data = self.load_locked().await?;
         data.active_profiles.remove(&provider.to_ascii_lowercase());
         data.updated_at = Utc::now();
-        self.save_locked(&data)
+        self.save_locked(&data).await
     }
 
-    pub fn update_profile<F>(&self, profile_id: &str, mut updater: F) -> Result<AuthProfile>
+    pub async fn update_profile<F>(&self, profile_id: &str, mut updater: F) -> Result<AuthProfile>
     where
         F: FnMut(&mut AuthProfile) -> Result<()>,
     {
         let _lock = self.acquire_lock()?;
-        let mut data = self.load_locked()?;
+        let mut data = self.load_locked().await?;
 
         let profile = data
             .profiles
@@ -172,12 +183,12 @@ impl AuthProfilesStore {
         profile.updated_at = Utc::now();
         let updated_profile = profile.clone();
         data.updated_at = Utc::now();
-        self.save_locked(&data)?;
+        self.save_locked(&data).await?;
         Ok(updated_profile)
     }
 
-    pub(super) fn load_locked(&self) -> Result<AuthProfilesData> {
-        self.load_resolved(true)
+    pub(super) async fn load_locked(&self) -> Result<AuthProfilesData> {
+        self.load_resolved(true).await
     }
 
     /// Lock-free read-only load used as the [`AuthProfilesStore::load`]
@@ -188,7 +199,7 @@ impl AuthProfilesStore {
     /// a complete file. Skips the opportunistic migration / dropped-profile
     /// rewrite that `load_locked` performs — that write needs both the lock
     /// and a writable disk, and this path runs precisely when neither holds.
-    pub(super) fn load_unlocked_readonly(&self) -> Result<AuthProfilesData> {
-        self.load_resolved(false)
+    pub(super) async fn load_unlocked_readonly(&self) -> Result<AuthProfilesData> {
+        self.load_resolved(false).await
     }
 }

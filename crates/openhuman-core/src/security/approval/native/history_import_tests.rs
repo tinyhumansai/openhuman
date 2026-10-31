@@ -134,7 +134,7 @@ async fn absent_module() -> (
 }
 
 fn seed_legacy(config: &Config) {
-    use crate::storage::{DocumentStoreExt, Precondition};
+    use crate::storage::Precondition;
     let opened = crate::storage::local::open("history import test", &config.workspace_dir).unwrap();
     let storage = opened.scoped().unwrap();
     let docs = std::sync::Arc::clone(storage.documents());

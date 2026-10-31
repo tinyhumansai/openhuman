@@ -26,16 +26,24 @@ fn viewport_journal_is_bounded_and_identifies_non_tail_changes_and_resets() {
 const CLIENT: &str = "tui-abc123";
 
 fn ev(event: &str, fields: serde_json::Value) -> WebChannelEvent {
-    let mut value = serde_json::json!({
-        "event": event,
-        "client_id": CLIENT,
-        "thread_id": "thread-1",
-        "request_id": "request-1"
+    let mut context = serde_json::json!({
+        "clientId": CLIENT,
+        "threadId": "thread-1",
+        "requestId": "request-1"
     });
-    value
-        .as_object_mut()
-        .unwrap()
-        .extend(fields.as_object().unwrap().clone());
+    let mut payload = fields.as_object().unwrap().clone();
+    for (key, context_key) in [
+        ("client_id", "clientId"),
+        ("thread_id", "threadId"),
+        ("request_id", "requestId"),
+        ("seq", "seq"),
+    ] {
+        if let Some(value) = payload.remove(key) {
+            context[context_key] = value;
+        }
+    }
+    let mut value = serde_json::json!({"event": event, "context": context});
+    value.as_object_mut().unwrap().extend(payload);
     serde_json::from_value(value).expect("test event matches the owner contract")
 }
 
@@ -224,7 +232,7 @@ fn events_for_other_client_id_are_ignored() {
         let mut event =
             serde_json::to_value(ev("text_delta", serde_json::json!({"delta":"not mine"})))
                 .unwrap();
-        event["client_id"] = "tui-someone-else".into();
+        event["context"]["clientId"] = "tui-someone-else".into();
         serde_json::from_value(event).unwrap()
     };
     s.apply_event(&foreign);
@@ -241,7 +249,7 @@ fn events_for_an_inactive_thread_are_ignored() {
     state.set_thread("thread-1");
     let event = {
         let mut event = serde_json::to_value(text_delta("not this conversation")).unwrap();
-        event["thread_id"] = "thread-2".into();
+        event["context"]["threadId"] = "thread-2".into();
         serde_json::from_value(event).unwrap()
     };
     state.apply_event(&event);
@@ -417,53 +425,6 @@ fn concurrent_same_named_tools_match_results_by_call_identity() {
         }),
     ));
     assert_eq!(state.entries().len(), 2);
-}
-
-#[test]
-fn child_activity_accumulates_output_and_failed_status_in_one_record() {
-    let mut state = TranscriptState::new(CLIENT);
-    for (event, delta) in [
-        ("subagent_spawned", None),
-        ("subagent_text_delta", Some("partial")),
-        ("subagent_failed", None),
-    ] {
-        state.apply_event(&ev(
-            event,
-            serde_json::json!({
-                "skill_id":"task","request_id":"turn","delta":delta,"message":"Timed out"
-            }),
-        ));
-    }
-    assert_eq!(state.entries().len(), 1);
-    let child = state.entries()[0].activity.as_ref().unwrap();
-    assert!(child.child);
-    assert_eq!(child.status, Status::Error);
-    assert_eq!(child.output, "partial");
-    assert!(child.details().contains("Timed out"));
-}
-
-#[test]
-fn child_thinking_delta_uses_nested_task_identity() {
-    let mut state = TranscriptState::new(CLIENT);
-    for (event, delta) in [
-        ("subagent_spawned", None),
-        ("subagent_text_delta", Some("partial")),
-        ("subagent_thinking_delta", Some("reasoning")),
-        ("subagent_failed", None),
-    ] {
-        state.apply_event(&ev(
-            event,
-            serde_json::json!({
-                "skill_id":null,"request_id":"turn","delta":delta,"message":"Timed out",
-                "subagent":{"task_id":"task"}
-            }),
-        ));
-    }
-    assert_eq!(state.entries().len(), 1);
-    let child = state.entries()[0].activity.as_ref().unwrap();
-    assert!(child.child);
-    assert_eq!(child.status, Status::Error);
-    assert_eq!(child.output, "partial");
 }
 
 #[test]

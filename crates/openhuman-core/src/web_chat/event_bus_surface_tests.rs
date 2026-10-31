@@ -248,8 +248,10 @@ async fn publish_web_channel_event_stamps_ts_when_unset() {
             thread_id: "thread-ts-stamp-probe".into(),
             ..WebEventContext::default()
         },
+        message: None,
         error_type: Some("ts_stamp_probe".into()),
         error_source: None,
+        error_retryable: None,
     });
 
     let ev = find_agent_web_event(&mut web_rx, "user_error", "thread-ts-stamp-probe").await;

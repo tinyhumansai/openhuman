@@ -70,9 +70,7 @@ async fn start_mock_composio() -> (String, SeenKeys) {
 async fn shared_runtime_config(tmp: &tempfile::TempDir) -> Config {
     let config_path = tmp.path().join("config.toml");
     std::fs::write(&config_path, "[composio]\nmode = \"backend\"\n").unwrap();
-    let mut config = Config::default();
-    config.config_path = config_path;
-    config.workspace_dir = tmp.path().join("workspace");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
             crate::integrations::composio::COMPOSIO_DIRECT_PROVIDER,

@@ -6,7 +6,7 @@ fn ui() -> UiState {
 }
 
 #[test]
-fn sample_transcript_has_user_turn_tools_subagent_and_final_answer() {
+fn sample_transcript_has_user_turn_tools_and_final_answer() {
     let state = sample();
     let kinds: Vec<_> = state.entries().iter().map(|e| e.kind).collect();
     assert_eq!(kinds.first(), Some(&EntryKind::User));
@@ -16,10 +16,6 @@ fn sample_transcript_has_user_turn_tools_subagent_and_final_answer() {
         .unwrap()
         .contains("offline preview; no model or account calls"));
     assert!(!state.is_streaming());
-    assert!(state
-        .entries()
-        .iter()
-        .any(|e| e.activity.as_ref().is_some_and(|a| a.child)));
     assert!(state
         .entries()
         .iter()

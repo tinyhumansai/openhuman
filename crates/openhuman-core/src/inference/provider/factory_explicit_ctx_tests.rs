@@ -74,12 +74,7 @@ async fn managed_factory_and_probe_use_the_explicit_provider_entry() {
         b_extensions,
     );
     let dispatch = DispatchCtx::new(context_a);
-    let tmp = tempfile::tempdir().expect("isolated workspace");
-    let config = Config {
-        config_path: tmp.path().join("config.toml"),
-        workspace_dir: tmp.path().join("workspace"),
-        ..Default::default()
-    };
+    let (_fixture_dir, config) = super::crate_native_tests::isolated_config();
     crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
             crate::credentials::APP_SESSION_PROVIDER,
@@ -91,6 +86,11 @@ async fn managed_factory_and_probe_use_the_explicit_provider_entry() {
         .await
         .expect("store isolated fixture session");
 
+    let context_b = context_b.derive_with(crate::core::runtime::ContextOverlay::new(
+        config.clone(),
+        DomainSet::full(),
+        crate::tools::toolpacks::ToolGroups::none(),
+    ));
     CoreContext::scope(context_b, async {
         let (_, model) = create_chat_model_with_model_id_in(&dispatch, "chat", &config, 0.0)
             .await
@@ -252,6 +252,7 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
             workspace_dir: tmp.path().join("workspace"),
             ..Default::default()
         };
+        config.secrets.encrypt = false;
         crate::credentials::AuthService::from_config(&config)
             .store_provider_token(
                 crate::credentials::APP_SESSION_PROVIDER,

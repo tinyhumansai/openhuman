@@ -173,7 +173,6 @@ impl Running {
             message: message.clone(),
             envelope: envelope.clone(),
             history_key: history_key.clone(),
-            history_key_ignores_thread: false,
             thread_id: history_key.clone(),
             client_id: "test-channel".to_string(),
             session_key: history_key,

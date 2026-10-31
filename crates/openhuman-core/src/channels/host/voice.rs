@@ -99,7 +99,7 @@ impl ChannelVoiceHost {
             "{LOG_PREFIX} stt start request_id={request_id} provider={provider} bytes_b64={}",
             request.audio_base64.len()
         );
-        let stt = crate::voice::create_stt_provider(&provider, "", &self.config)?;
+        let stt = crate::voice::create_stt_provider(&provider, "", &self.config).await?;
         let outcome = stt
             .transcribe(
                 &self.config,

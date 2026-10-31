@@ -75,13 +75,8 @@ pub(crate) fn run() -> anyhow::Result<()> {
         tool_name: Some("benchmark".into()),
         output: Some("deterministic tool output\n".repeat(40_000)),
         success: Some(true),
-        skill_id: None,
-        args: None,
-        round: None,
-        failure: None,
         elapsed_ms: None,
-        tool_display_label: None,
-        tool_display_detail: None,
+        output_chars: None,
         structured: None,
     });
     tool.toggle_entry(0);

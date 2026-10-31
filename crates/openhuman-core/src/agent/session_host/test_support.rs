@@ -105,9 +105,35 @@ pub(crate) fn install_model_fixture() {
 /// Configure a managed-provider session fixture with its required test credential.
 pub(crate) async fn install_managed_model_fixture(config: &crate::config::Config) {
     install_model_fixture();
+    #[cfg(feature = "security-module")]
+    // Plain fixture credentials do not need the process-wide native secret scope.
+    if config.modules.enabled && config.secrets.encrypt {
+        crate::modules::security::ensure_loaded(config)
+            .await
+            .expect("the staged TinySecurity module should load for managed-model tests");
+    }
     crate::credentials::api_key::store_api_key(config, "test-session-fixture-key")
         .await
         .expect("store the managed inference fixture credential");
+}
+
+/// Bootstrap a managed model from a synchronous test fixture without using the
+/// storage bridge as a general executor. Profile persistence uses that bridge
+/// itself, and model registrations must also exist on the test's own thread.
+pub(crate) fn install_managed_model_fixture_sync(config: &crate::config::Config) {
+    install_model_fixture();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("managed fixture runtime")
+                    .block_on(install_managed_model_fixture(config));
+            })
+            .join()
+            .expect("managed fixture bootstrap thread");
+    });
 }
 
 pub(crate) fn install_scripted_model(model: Arc<dyn ChatModel<()>>) {
@@ -123,4 +149,12 @@ pub(crate) fn install_model_fixture_in(extensions: &crate::core::slots::Extensio
         PROVIDER_OPENHUMAN,
         model_fixture_entry(),
     );
+}
+
+/// Bind pure session fixtures to a real, isolated host for security screens
+/// and result scrubbing. The native module remains the authority.
+pub(crate) async fn with_native_security<F: std::future::Future>(operation: F) -> F::Output {
+    let directory = tempfile::tempdir().expect("session security fixture");
+    let config = crate::credentials::test_support::plaintext_fixture_config(directory.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&config, operation).await
 }

@@ -175,6 +175,8 @@ fn config_with_providers_in_tempdir(tmp: &TempDir, providers: Vec<CloudProviderC
     let mut c = config_with_providers(providers);
     c.workspace_dir = tmp.path().join("workspace");
     c.config_path = tmp.path().join("config.toml");
+    // Routing fixtures use synthetic keys; encryption has dedicated module tests.
+    c.secrets.encrypt = false;
     c
 }
 
@@ -606,10 +608,16 @@ fn deepseek_entry(id: &str) -> CloudProviderCreds {
 /// `model_override` and before building the agent.
 fn routed_config(endpoint: &str, api_key: &str, model: &str) -> Config {
     use crate::config::schema::ephemeral_route::{apply, EphemeralRoute};
+    let directory = tempfile::tempdir()
+        .expect("isolated route credentials")
+        .keep();
     let mut config = Config {
+        config_path: directory.join("config.toml"),
+        workspace_dir: directory.join("workspace"),
         default_model: Some(model.to_string()),
         ..Config::default()
     };
+    config.secrets.encrypt = false;
     apply(
         &mut config,
         EphemeralRoute {

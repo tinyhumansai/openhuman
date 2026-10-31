@@ -9,10 +9,7 @@ fn typed_channel_projection_uses_the_target_message_id_not_the_event_id() {
     };
 
     let event = ChannelEvent {
-        version: 2,
         event_id: "event-99".into(),
-        source_event_id: Some("source-99".into()),
-        source_timestamp: None,
         channel: ChannelRef {
             id: "telegram".into(),
             account_id: Some("bot-1".into()),
@@ -24,9 +21,10 @@ fn typed_channel_projection_uses_the_target_message_id_not_the_event_id() {
         }),
         event: ChannelEventKind::ReadReceipt {
             message_id: "provider-target-42".into(),
-            actor: None,
-            timestamp: None,
+            actor_id: None,
+            read_at_unix_ms: None,
         },
+        timestamp_unix_ms: None,
     };
     assert_eq!(
         super::adapters::channel_event_target_message_id(&event),
@@ -43,7 +41,7 @@ async fn typed_channel_projection_uses_scoped_persisted_row_bindings_after_resta
     use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
     use tinychannels_bus::{
         ChannelEvent, ChannelEventKind, ChannelReaction, ChannelRef, ConversationKind,
-        ConversationRef, SenderRef,
+        ConversationRef,
     };
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -171,24 +169,19 @@ async fn typed_channel_projection_uses_scoped_persisted_row_bindings_after_resta
     .unwrap();
 
     let event = ChannelEvent {
-        version: 2,
         event_id: "provider-event-outer-99".into(),
-        source_event_id: None,
-        source_timestamp: None,
         channel: channel.clone(),
         conversation: Some(conversation.clone()),
         event: ChannelEventKind::ReactionAdded {
             message_id: provider_id.into(),
-            provider_message_id: None,
-            actor: SenderRef {
-                id: "reader-alice".into(),
-                ..Default::default()
-            },
+            actor_id: Some("reader-alice".into()),
             reaction: ChannelReaction {
                 value: "👍".into(),
                 custom_emoji_id: Some("emoji:custom:1".into()),
+                custom: true,
             },
         },
+        timestamp_unix_ms: None,
     };
 
     assert!(super::adapters::project_channel_event(&bob, event.clone())
@@ -233,12 +226,10 @@ async fn typed_channel_projection_uses_scoped_persisted_row_bindings_after_resta
         event_id: "provider-event-outer-100".into(),
         event: ChannelEventKind::ReadReceipt {
             message_id: provider_id.into(),
-            actor: Some(SenderRef {
-                id: "reader-bob".into(),
-                ..Default::default()
-            }),
-            timestamp: Some(1_792_444_800),
+            actor_id: Some("reader-bob".into()),
+            read_at_unix_ms: Some(1_792_444_800),
         },
+        timestamp_unix_ms: Some(1_792_444_800),
         ..event
     };
     assert!(super::adapters::project_channel_event(&restarted, read)

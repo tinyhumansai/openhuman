@@ -89,7 +89,7 @@ fn session_messages(
         .collect()
 }
 
-fn tenant_runtime(
+async fn tenant_runtime(
     profile: &str,
     workspace: &Path,
 ) -> (
@@ -116,9 +116,11 @@ fn tenant_runtime(
     );
     // Store a standing credential in the tenant's own scope so a storage-backed
     // secret store records it where the host agent later reads it.
-    CoreContext::sync_scope(Arc::clone(&core), || {
+    CoreContext::scope(Arc::clone(&core), async {
         crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+            .await
     })
+    .await
     .expect("store reset test credential");
     let mut runtime = runtime_context(workspace);
     runtime.config = Some(Arc::new(config));
@@ -140,8 +142,8 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
     let _storage = crate::channels::module_fixture::install_memory_storage();
     let tmp = tempfile::TempDir::new().unwrap();
     let workspace = tmp.path();
-    let (alice_core, alice_runtime) = tenant_runtime("remote-reset-alice", workspace);
-    let (bob_core, _bob_runtime) = tenant_runtime("remote-reset-bob", workspace);
+    let (alice_core, alice_runtime) = tenant_runtime("remote-reset-alice", workspace).await;
+    let (bob_core, _bob_runtime) = tenant_runtime("remote-reset-bob", workspace).await;
     let alice_dispatch = DispatchCtx::new(Arc::clone(&alice_core));
     let bob_dispatch = DispatchCtx::new(Arc::clone(&bob_core));
     let alice_tenant = alice_dispatch.tenant().unwrap();
@@ -235,7 +237,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&reset),
         RemoteHostRequest::ClearHistory {
-            session_scope: forged,
+            sender_key: forged.session_key,
         },
     )
     .await
@@ -256,7 +258,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&reset),
         RemoteHostRequest::ClearHistory {
-            session_scope: scope,
+            sender_key: reset.history_key.clone(),
         },
     )
     .await
@@ -307,7 +309,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&reset),
         RemoteHostRequest::ClearHistory {
-            session_scope: remote_session_scope(canonical),
+            sender_key: reset.history_key.clone(),
         },
     )
     .await
@@ -340,7 +342,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&empty_reset),
         RemoteHostRequest::ClearHistory {
-            session_scope: empty_scope,
+            sender_key: empty_reset.history_key.clone(),
         },
     )
     .await

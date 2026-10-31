@@ -115,7 +115,12 @@ async function gzipBlob(file: File): Promise<Blob | null> {
   try {
     const compressionStream = new CompressionStream('gzip');
     const compressed = file.stream().pipeThrough(compressionStream);
-    return await new Response(compressed).blob();
+    // Rebuild the Blob from bytes instead of returning Response.blob()'s
+    // platform Blob directly. Embedded WebViews and test DOMs can provide a
+    // different Blob implementation than Response, and wrapping a foreign
+    // Blob would serialize it as `[object Blob]` instead of preserving bytes.
+    const bytes = await new Response(compressed).arrayBuffer();
+    return new Blob([bytes]);
   } catch (error) {
     debug('[chat:attachments] gzip_failed name=%s error=%o', file.name, error);
     return null;

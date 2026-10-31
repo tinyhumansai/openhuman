@@ -6,8 +6,8 @@ use super::*;
 /// covers the Windows AV / indexer case where `Drop::drop` on the
 /// previous guard could not unlink the file and orphaned it with the
 /// still-alive owner pid inside.
-#[test]
-fn clear_lock_if_stale_reclaims_lock_older_than_threshold_even_with_live_pid() {
+#[tokio::test]
+async fn clear_lock_if_stale_reclaims_lock_older_than_threshold_even_with_live_pid() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -30,8 +30,8 @@ fn clear_lock_if_stale_reclaims_lock_older_than_threshold_even_with_live_pid() {
     assert!(!lock_path.exists(), "stale lock should have been removed");
 }
 
-#[test]
-fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
+#[tokio::test]
+async fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -58,8 +58,8 @@ fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
 /// full [`STALE_LOCK_AGE_MS`]. Previously a fresh pidless lock made
 /// `app_state_snapshot` (→ `acquire_lock`) block ~30s, stranding the user on
 /// "Initializing OpenHuman" after a kill+reopen.
-#[test]
-fn clear_lock_if_stale_reclaims_pidless_lock_past_short_grace() {
+#[tokio::test]
+async fn clear_lock_if_stale_reclaims_pidless_lock_past_short_grace() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -86,8 +86,8 @@ fn clear_lock_if_stale_reclaims_pidless_lock_past_short_grace() {
     assert!(!lock_path.exists());
 }
 
-#[test]
-fn lock_timeout_allows_fresh_leaked_locks_to_age_into_stale_reclaim() {
+#[tokio::test]
+async fn lock_timeout_allows_fresh_leaked_locks_to_age_into_stale_reclaim() {
     const {
         assert!(
             LOCK_TIMEOUT_MS > STALE_LOCK_AGE_MS,
@@ -109,8 +109,8 @@ fn lock_timeout_allows_fresh_leaked_locks_to_age_into_stale_reclaim() {
 /// with a synthetic `io::Error` so the test is platform-independent and
 /// doesn't depend on filesystem permissions (CI runs as root and bypasses
 /// `chmod`).
-#[test]
-fn annotate_lock_create_failure_embeds_io_kind_and_os_code() {
+#[tokio::test]
+async fn annotate_lock_create_failure_embeds_io_kind_and_os_code() {
     // Use each platform's native permission-denied code so the test exercises
     // the OS error that real production failures would carry. Rust does map
     // `from_raw_os_error(13)` to `PermissionDenied` on Windows too, but real
@@ -145,8 +145,8 @@ fn annotate_lock_create_failure_embeds_io_kind_and_os_code() {
 /// still emit the stable top-level message with explicit `None` markers so
 /// the Sentry fingerprint still splits cleanly (and we know to look
 /// upstream for an io::Error that got dropped).
-#[test]
-fn annotate_lock_create_failure_handles_missing_io_error() {
+#[tokio::test]
+async fn annotate_lock_create_failure_handles_missing_io_error() {
     let wrapped = annotate_lock_create_failure(anyhow::anyhow!("synthetic"));
     let msg = format!("{wrapped:?}");
 
@@ -155,8 +155,8 @@ fn annotate_lock_create_failure_handles_missing_io_error() {
     assert!(msg.contains("os_code=None"), "{msg}");
 }
 
-#[test]
-fn auth_profile_kind_serde_roundtrip() {
+#[tokio::test]
+async fn auth_profile_kind_serde_roundtrip() {
     let json = serde_json::to_string(&AuthProfileKind::OAuth).unwrap();
     assert_eq!(json, "\"o-auth\""); // kebab-case
     let back: AuthProfileKind = serde_json::from_str(&json).unwrap();
@@ -186,8 +186,8 @@ fn auth_profile_kind_serde_roundtrip() {
 // `__TEST_TRANSIENT__`, which `is_transient_fs_error` recognises as
 // retryable on every platform (see `crates/openhuman-core/src/util.rs`).
 
-#[test]
-fn write_stage_retries_one_shot_transient() {
+#[tokio::test]
+async fn write_stage_retries_one_shot_transient() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -198,17 +198,18 @@ fn write_stage_retries_one_shot_transient() {
     let profile = AuthProfile::new_token("anthropic", "default", "tok-w1".into());
     store
         .upsert_profile(profile.clone(), true)
+        .await
         .expect("retry should absorb the single write-stage transient");
 
     assert_eq!(store.remaining_forced_write_failures(), 0);
     assert_eq!(store.remaining_forced_rename_failures(), 0);
 
-    let data = store.load().unwrap();
+    let data = store.load().await.unwrap();
     assert!(data.profiles.contains_key(&profile.id));
 }
 
-#[test]
-fn write_stage_absorbs_burst_of_transients() {
+#[tokio::test]
+async fn write_stage_absorbs_burst_of_transients() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -221,12 +222,13 @@ fn write_stage_absorbs_burst_of_transients() {
     let profile = AuthProfile::new_token("anthropic", "default", "tok-w-burst".into());
     store
         .upsert_profile(profile.clone(), true)
+        .await
         .expect("retry must absorb a burst of write-stage transients within budget");
 
     assert_eq!(store.remaining_forced_write_failures(), 0);
     assert_eq!(store.remaining_forced_rename_failures(), 0);
 
-    let data = store.load().unwrap();
+    let data = store.load().await.unwrap();
     let loaded = data
         .profiles
         .get(&profile.id)
@@ -234,8 +236,8 @@ fn write_stage_absorbs_burst_of_transients() {
     assert_eq!(loaded.token.as_deref(), Some("tok-w-burst"));
 }
 
-#[test]
-fn write_stage_exhausts_retries_on_persistent_transient() {
+#[tokio::test]
+async fn write_stage_exhausts_retries_on_persistent_transient() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -248,6 +250,7 @@ fn write_stage_exhausts_retries_on_persistent_transient() {
     let profile = AuthProfile::new_token("anthropic", "default", "tok-w2".into());
     let err = store
         .upsert_profile(profile, true)
+        .await
         .expect_err("persistent write-stage transient must exhaust retries and surface as Err");
 
     let chain = format!("{err:?}");
@@ -276,7 +279,7 @@ async fn load_falls_back_to_lock_free_read_when_disk_full() {
     let store = AuthProfilesStore::new(tmp.path(), true);
 
     let profile = AuthProfile::new_token("openai-codex", "default", "tok-abc".into());
-    store.upsert_profile(profile.clone(), true).unwrap();
+    store.upsert_profile(profile.clone(), true).await.unwrap();
 
     // Next acquire_lock simulates a StorageFull (ENOSPC) lock-create failure.
     store.force_next_lock_unwritable();
@@ -284,6 +287,7 @@ async fn load_falls_back_to_lock_free_read_when_disk_full() {
     // load() must still return the persisted profile via the read-only fallback.
     let data = store
         .load()
+        .await
         .expect("load must degrade to lock-free read on disk-full");
     assert!(
         data.profiles.contains_key(&profile.id),
@@ -293,6 +297,7 @@ async fn load_falls_back_to_lock_free_read_when_disk_full() {
     // The flag is one-shot: the next load takes the lock normally.
     let again = store
         .load()
+        .await
         .expect("subsequent load takes the lock normally");
     assert!(again.profiles.contains_key(&profile.id));
 }
@@ -306,10 +311,10 @@ async fn load_unlocked_readonly_matches_locked_load() {
     let store = AuthProfilesStore::new(tmp.path(), true);
 
     let profile = AuthProfile::new_token("slack", "default", "tok-xyz".into());
-    store.upsert_profile(profile.clone(), true).unwrap();
+    store.upsert_profile(profile.clone(), true).await.unwrap();
 
-    let locked = store.load().unwrap();
-    let unlocked = store.load_unlocked_readonly().unwrap();
+    let locked = store.load().await.unwrap();
+    let unlocked = store.load_unlocked_readonly().await.unwrap();
 
     assert_eq!(
         locked.profiles.keys().collect::<Vec<_>>(),
@@ -322,8 +327,8 @@ async fn load_unlocked_readonly_matches_locked_load() {
 /// Polarity guard for the read-path fallback predicate: only genuine
 /// filesystem-unwritable conditions (disk full / read-only mount) degrade the
 /// read; lock contention and unrelated errors must still propagate.
-#[test]
-fn is_lock_create_unwritable_fs_polarity() {
+#[tokio::test]
+async fn is_lock_create_unwritable_fs_polarity() {
     let storage_full = annotate_lock_create_failure(
         anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::StorageFull))
             .context("open lock file"),
@@ -356,8 +361,8 @@ fn is_lock_create_unwritable_fs_polarity() {
 /// rendered producer string both (a) lacks that legacy anchor and (b) still
 /// classifies as DiskFull — so a future format!() / std rename fails CI here
 /// instead of silently re-leaking the flood.
-#[test]
-fn disk_full_lock_failure_string_classifies_as_disk_full() {
+#[tokio::test]
+async fn disk_full_lock_failure_string_classifies_as_disk_full() {
     use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
 
     let err = annotate_lock_create_failure(
@@ -378,8 +383,8 @@ fn disk_full_lock_failure_string_classifies_as_disk_full() {
     );
 }
 
-#[test]
-fn rename_stage_retries_one_shot_transient() {
+#[tokio::test]
+async fn rename_stage_retries_one_shot_transient() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -393,12 +398,13 @@ fn rename_stage_retries_one_shot_transient() {
     let profile = AuthProfile::new_token("anthropic", "default", "tok-r1".into());
     store
         .upsert_profile(profile.clone(), true)
+        .await
         .expect("retry should absorb the single rename-stage transient");
 
     assert_eq!(store.remaining_forced_write_failures(), 0);
     assert_eq!(store.remaining_forced_rename_failures(), 0);
 
-    let data = store.load().unwrap();
+    let data = store.load().await.unwrap();
     assert!(data.profiles.contains_key(&profile.id));
 
     // Successful rename consumes the tmp; directory should hold only the
@@ -420,8 +426,8 @@ fn rename_stage_retries_one_shot_transient() {
     );
 }
 
-#[test]
-fn rename_stage_exhausts_retries_and_cleans_up_tmp() {
+#[tokio::test]
+async fn rename_stage_exhausts_retries_and_cleans_up_tmp() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -436,6 +442,7 @@ fn rename_stage_exhausts_retries_and_cleans_up_tmp() {
     let profile = AuthProfile::new_token("anthropic", "default", "tok-r2".into());
     let err = store
         .upsert_profile(profile, true)
+        .await
         .expect_err("persistent rename-stage transient must exhaust retries and surface as Err");
 
     let chain = format!("{err:?}");
@@ -496,8 +503,8 @@ async fn load_migrates_un_lowercased_active_profiles_keys_and_providers() {
 
     std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
 
-    // Call store.load() to trigger automatic migration on load
-    let data = store.load().unwrap();
+    // Call store.load().await to trigger automatic migration on load
+    let data = store.load().await.unwrap();
 
     // 1. Assert memory representation is normalized for active_profiles
     assert!(data.active_profiles.contains_key("provider:deepseek"));
@@ -521,14 +528,17 @@ async fn load_migrates_un_lowercased_active_profiles_keys_and_providers() {
     assert!(!disk_raw.contains("\"provider:DeepSeek:default\":"));
 
     // 4. Assert profile can be successfully deleted after migration
-    assert!(store.remove_profile("provider:deepseek:default").unwrap());
-    let reloaded = store.load().unwrap();
+    assert!(store
+        .remove_profile("provider:deepseek:default")
+        .await
+        .unwrap());
+    let reloaded = store.load().await.unwrap();
     assert!(reloaded.profiles.is_empty());
     assert!(reloaded.active_profiles.is_empty());
 }
 
-#[test]
-fn migration_normalizes_provider_but_preserves_profile_name_casing() {
+#[tokio::test]
+async fn migration_normalizes_provider_but_preserves_profile_name_casing() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
     let raw_json = serde_json::json!({
@@ -550,7 +560,7 @@ fn migration_normalizes_provider_but_preserves_profile_name_casing() {
     });
     std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
 
-    let data = store.load().unwrap();
+    let data = store.load().await.unwrap();
     let profile = data.profiles.get("provider:deepseek:Work").unwrap();
     assert_eq!(profile.id, "provider:deepseek:Work");
     assert_eq!(profile.provider, "provider:deepseek");
@@ -560,8 +570,8 @@ fn migration_normalizes_provider_but_preserves_profile_name_casing() {
     );
 }
 
-#[test]
-fn migration_collision_prefers_existing_lowercase_key() {
+#[tokio::test]
+async fn migration_collision_prefers_existing_lowercase_key() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
 
@@ -594,7 +604,7 @@ fn migration_collision_prefers_existing_lowercase_key() {
 
     std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
 
-    let data = store.load().unwrap();
+    let data = store.load().await.unwrap();
 
     assert_eq!(
         data.active_profiles.get("provider:deepseek").unwrap(),
@@ -603,8 +613,8 @@ fn migration_collision_prefers_existing_lowercase_key() {
     );
 }
 
-#[test]
-fn migration_profile_id_collision_prefers_canonical_lowercase() {
+#[tokio::test]
+async fn migration_profile_id_collision_prefers_canonical_lowercase() {
     // Two profiles whose IDs differ only by casing.
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
@@ -637,7 +647,7 @@ fn migration_profile_id_collision_prefers_canonical_lowercase() {
 
     std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
 
-    let data = store.load().unwrap();
+    let data = store.load().await.unwrap();
 
     assert_eq!(data.profiles.len(), 1);
     let profile = data.profiles.get("provider:deepseek:default").unwrap();

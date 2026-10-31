@@ -44,9 +44,8 @@ async fn backend_dispatch_forwards_the_workflow_connection_id() {
     });
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let mut config =
+        crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     config.api_url = Some(format!("http://{addr}"));
     crate::credentials::AuthService::from_config(&config)
         .store_provider_token(

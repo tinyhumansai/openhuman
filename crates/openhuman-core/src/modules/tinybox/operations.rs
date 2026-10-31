@@ -53,6 +53,7 @@ const RUN_DOCKER_WITHOUT_WORKSPACE: &str = contract::names::RUN_DOCKER_WITHOUT_W
 const SELECT_SHELL: &str = contract::names::SELECT_SHELL;
 const RESOLVE_LOCAL_GRANTS: &str = contract::names::RESOLVE_LOCAL_GRANTS;
 const START_NATIVE_SHELL_EXEC: &str = contract::names::START_NATIVE_SHELL_EXEC;
+const RUN_NATIVE_SHELL: &str = contract::names::RUN_NATIVE_SHELL;
 const VALIDATE_DOCKER_POLICY: &str = contract::names::VALIDATE_DOCKER_POLICY;
 const DOCKER_CALL_GRACE: Duration = Duration::from_secs(5);
 
@@ -165,6 +166,14 @@ pub async fn start_jailed_exec(
     jail: contract::NativeJailConfig,
 ) -> Result<contract::ProcessRef, String> {
     call(config, START_JAILED_EXEC, (request, jail), true).await
+}
+
+/// Run a native shell under TinyBox-owned supervision until completion or yield.
+pub async fn run_native_shell(
+    config: &Config,
+    request: contract::RunNativeShellRequest,
+) -> Result<contract::RunNativeShellResult, String> {
+    call(config, RUN_NATIVE_SHELL, (request,), true).await
 }
 
 /// Ask TinyBox which shell it would spawn for a command on its machine.

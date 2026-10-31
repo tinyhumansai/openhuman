@@ -132,6 +132,10 @@ async fn message_dispatch_processes_messages_in_parallel() {
 
 #[tokio::test]
 async fn process_channel_message_sends_typing_before_the_provider_reply() {
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter("openhuman_core=debug")
+        .try_init();
     let _bus_guard = use_real_agent_handler().await;
     crate::core::bus::init().await.expect("bus init");
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
@@ -167,7 +171,8 @@ async fn process_channel_message_sends_typing_before_the_provider_reply() {
             &mut runtime_ctx,
             linked.config(),
             &linked.provider_endpoint(),
-        );
+        )
+        .await;
     let runtime_ctx = Arc::new(runtime_ctx);
     let configured_account = runtime_ctx
         .channels_by_name

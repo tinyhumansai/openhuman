@@ -21,6 +21,7 @@ agent/session_host/mod.rs
 integrations/prelude_integrations.rs
 agent/session_host/runtime_session_tool_surface.rs
 agent/session_host/runtime_session_tests.rs
+agent/session_host/runtime_session_mcp_tests.rs
 agent_registry/agents/loader.rs
 agent_registry/agents/loader_tests_specialist_agents_tests.rs
 agent/tinyagents/mod.rs
@@ -49,7 +50,7 @@ modules/registry_tests.rs
 modules/registry_release_manifest_tests.rs
 modules/runtime.rs
 modules/runtime_tests.rs
-platform/socket/event_handlers.rs
+platform/socket/event_sink.rs
 profiles/surface_tests.rs
 threads/store/mod.rs
 agent/session_host/transcript_compat_tests.rs
@@ -57,7 +58,9 @@ channels/mod.rs
 mcp/host.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
-credentials/ops/credential.rs
+credentials/core.rs
+credentials/ops/credential/set.rs
+credentials/ops/credential/teardown.rs
 storage/import/tinyflows.rs
 storage/schema.rs
 skills/bundled/mod.rs
@@ -108,6 +111,9 @@ doctor/checks/skills.rs
 doctor/checks/voice.rs
 doctor/checks/wallet.rs
 doctor/checks/wallet_tests.rs
+inference/host_runtime/service/speech_tests.rs
+security/credentials/ops/credential.rs
+storage/layout/credentials.rs
 skills/ops_discover.rs
 agent/host_agents.rs
 agent/turn_host.rs
@@ -118,6 +124,7 @@ agent/queued_turn_tests.rs
 cron/ops_tests.rs
 cron/scheduler_tests.rs
 web_chat/web_tests_turn_lifecycle_tests.rs
+web_chat/run_task.rs
 channels/host/voice_tests.rs
 EOF
 )

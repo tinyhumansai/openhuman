@@ -45,11 +45,22 @@ impl Default for PersistedAuthProfiles {
     }
 }
 
+/// The authoritative secret location chosen when a profile is written.
+/// Absent on legacy records, whose consent and fallback rules remain unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SecretLocation {
+    EncryptedDocument,
+    Keyring,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(super) struct PersistedAuthProfile {
     pub(super) provider: String,
     pub(super) profile_name: String,
     pub(super) kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) secret_location: Option<SecretLocation>,
     #[serde(default)]
     pub(super) account_id: Option<String>,
     #[serde(default)]
@@ -74,6 +85,24 @@ pub(super) struct PersistedAuthProfile {
     pub(super) updated_at: String,
     #[serde(default)]
     pub(super) metadata: BTreeMap<String, String>,
+}
+
+impl PersistedAuthProfile {
+    pub(super) fn validate_secret_location(&self) -> Result<()> {
+        if self.secret_location == Some(SecretLocation::Keyring)
+            && [
+                self.access_token.as_ref(),
+                self.refresh_token.as_ref(),
+                self.id_token.as_ref(),
+                self.token.as_ref(),
+            ]
+            .into_iter()
+            .any(|field| field.is_some())
+        {
+            anyhow::bail!("keyring-owned profile contains document secret fields");
+        }
+        Ok(())
+    }
 }
 
 fn default_schema_version() -> u32 {
@@ -104,10 +133,11 @@ impl AuthProfilesStore {
             // The profile document itself is encrypted by TSD. Keep tokens in
             // the keyring when one is available; otherwise the outer encrypted
             // document protects the fields directly.
+            let mut secret_location = SecretLocation::EncryptedDocument;
             let (access_token, refresh_token, id_token, token, expires_at, token_type, scope) =
                 if self.use_keychain {
                     // Store secrets in the OS keychain — JSON gets no secret fields.
-                    if let Err(e) = self.keychain_store_secrets(profile) {
+                    if let Err(e) = self.keychain_store_secrets(profile).await {
                         if !super::keychain::should_fallback_to_encrypted_document(&e) {
                             // A per-operation refusal must not be bypassed by
                             // copying the same secret into another store.
@@ -120,6 +150,7 @@ impl AuthProfilesStore {
                         );
                         self.encrypt_for_json(profile).await?
                     } else {
+                        secret_location = SecretLocation::Keyring;
                         log::debug!("[auth] save: secrets stored in keychain profile_id={id}");
                         let (expires_at, token_type, scope) = match &profile.token_set {
                             Some(ts) => (
@@ -143,6 +174,7 @@ impl AuthProfilesStore {
                     provider: profile.provider.clone(),
                     profile_name: profile.profile_name.clone(),
                     kind: profile_kind_to_string(profile.kind).to_string(),
+                    secret_location: Some(secret_location),
                     account_id: profile.account_id.clone(),
                     workspace_id: profile.workspace_id.clone(),
                     access_token,
@@ -159,15 +191,14 @@ impl AuthProfilesStore {
             );
         }
 
-        if !self.use_keychain {
-            // Entries whose secrets are only in the unavailable keychain never
-            // reach `data`; keep them so they resolve once it reads again.
-            for (id, held) in previous.profiles.clone() {
-                if !persisted.profiles.contains_key(&id)
-                    && super::migration::keychain_held_oauth(&held)
-                {
-                    persisted.profiles.insert(id, held);
-                }
+        // An unavailable keyring record was intentionally withheld from the
+        // resolved view. An unrelated update must retain its opaque metadata.
+        for (id, held) in &previous.profiles {
+            if !persisted.profiles.contains_key(id)
+                && (held.secret_location == Some(SecretLocation::Keyring)
+                    || (!self.use_keychain && super::migration::keychain_held_oauth(held)))
+            {
+                persisted.profiles.insert(id.clone(), held.clone());
             }
         }
 

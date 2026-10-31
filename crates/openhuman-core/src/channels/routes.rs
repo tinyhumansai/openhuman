@@ -193,21 +193,20 @@ where
         .as_ref()
         .map(|scope| scope.conversation.id.clone())
         .unwrap_or_else(|| msg.reply_target.clone());
-    let reply_topic = reset_scope
+    let reply_scope_topic = reset_scope
         .as_ref()
         .and_then(|scope| scope.conversation.topic_id.clone())
         .or_else(|| msg.topic_id.clone());
     let reply_message = |content: &str| {
         let mut message = SendMessage::new(content, reply_recipient.clone());
         message.thread_ts = reply_thread.clone();
-        message.topic_id = reply_topic.clone();
+        message.topic_id = reply_scope_topic.clone();
         message.reply_to_id = msg.reply_to_id.clone();
         message
     };
     let history_len =
         durable_channel_history_len(ctx, &current, &msg.channel, durable_session_key.as_deref())
             .await;
-    let configured_channel = configured_control_channel(ctx, reset_scope.as_ref());
     let client = super::context::module_client(ctx).await;
     let operation = async {
         let lease = crate::modules::channel_runtime::ChannelRuntimeLease::open(
@@ -236,20 +235,11 @@ where
                 (ChannelControlRequest::Route {
                     workspace_dir: ctx.workspace_dir.to_string_lossy().into_owned(),
                     message: Box::new(msg.clone()),
-                    capabilities: target_channel
-                        .map(|channel| Box::new(channel.capabilities()))
-                        .or_else(|| {
-                            configured_channel
-                                .as_ref()
-                                .map(|configured| Box::new(configured.capabilities.clone()))
-                        }),
                     route: tinychannels_bus::module_remote::RemoteRoute {
                         provider: current.provider,
                         model: current.model,
                     },
                     history_len,
-                    session_scope: reset_scope.map(Box::new),
-                    configured_channel,
                     providers: ctx
                         .config
                         .as_deref()

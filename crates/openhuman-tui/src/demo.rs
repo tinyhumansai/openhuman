@@ -25,65 +25,22 @@ pub fn sample() -> TranscriptState {
     state.apply_event(&WebChannelEvent::ToolCall {
         context: context(),
         tool_name: Some("Read source".into()),
-        skill_id: None,
         args: Some(serde_json::json!({"path":"src/render.rs"})),
-        round: None,
         tool_call_id: Some("read-1".into()),
-        tool_display_label: None,
-        tool_display_detail: None,
     });
     state.apply_event(&WebChannelEvent::ToolResult {
         context: context(),
         tool_name: Some("Read source".into()),
-        skill_id: None,
         output: Some("Header → conversation → composer → status\nCached viewport rendering\nShared mouse and keyboard actions".into()),
-        args: None,
         success: Some(true),
-        round: None,
         tool_call_id: Some("read-1".into()),
-        failure: None,
         elapsed_ms: Some(12),
-        tool_display_label: None,
-        tool_display_detail: None,
+        output_chars: None,
         structured: None,
-    });
-    state.apply_event(&WebChannelEvent::SubagentSpawned {
-        context: context(),
-        message: None,
-        tool_name: Some("Explore".into()),
-        skill_id: Some("child-1".into()),
-        round: None,
-        subagent: None,
-    });
-    state.apply_event(&WebChannelEvent::SubagentTextDelta {
-        context: context(),
-        delta: Some("Checked the command, login, and tool-call surfaces.\nMouse targets use the displayed layout.".into()),
-        delta_kind: None,
-        skill_id: Some("child-1".into()),
-        round: None,
-        subagent: Some(openhuman_rpc::embed::chat_surface::SubagentProgressDetail {
-            task_id: Some("child-1".into()),
-            display_name: Some("Explore".into()),
-            ..Default::default()
-        }),
-    });
-    state.apply_event(&WebChannelEvent::SubagentCompleted {
-        context: context(),
-        message: None,
-        tool_name: None,
-        skill_id: Some("child-1".into()),
-        success: Some(true),
-        round: None,
-        subagent: Some(openhuman_rpc::embed::chat_surface::SubagentProgressDetail {
-            task_id: Some("child-1".into()),
-            display_name: Some("Explore".into()),
-            elapsed_ms: Some(840),
-            ..Default::default()
-        }),
     });
     state.apply_event(&WebChannelEvent::ChatDone {
         context: context(),
-        full_response: Some("Ready to inspect. Click a tool row to expand it, use Tools or /subagents for details, and choose a theme in Settings.\n\nThis is an offline preview; no model or account calls are made.".into()),
+        full_response: Some("Ready to inspect. Click a tool row to expand it, use Tools for details, and choose a theme in Settings.\n\nThis is an offline preview; no model or account calls are made.".into()),
         citations: None,
         usage: None,
         timing: None,

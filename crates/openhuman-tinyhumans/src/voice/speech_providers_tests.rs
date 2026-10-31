@@ -5,7 +5,7 @@ use openhuman_embed::__host::voice_registry::{
 
 #[tokio::test]
 async fn registration_covers_every_historical_cloud_slug() {
-    let _registry = crate::registry_test_lock();
+    let _registry = crate::registry_test_lock_async().await;
 
     register();
     let config = Config::default();

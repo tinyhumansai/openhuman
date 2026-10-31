@@ -108,7 +108,8 @@ impl ProgressProjection {
             &ids.client_id,
             &ids.thread_id,
             &ids.request_id,
-        );
+        )
+        .await;
         let ledger = for_turn(
             &config.workspace_dir,
             &ids.client_id,
@@ -146,7 +147,7 @@ impl ProgressProjection {
     /// The first-token / first-tool / total timings, once `TurnCompleted` has
     /// been seen.
     pub(crate) fn timing_snapshot(&self) -> Option<TurnTimingSnapshot> {
-        self.timing_snapshot
+        self.timing_snapshot.clone()
     }
 
     fn elapsed_ms(&self) -> u64 {

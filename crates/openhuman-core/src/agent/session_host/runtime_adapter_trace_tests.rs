@@ -6,6 +6,7 @@ use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelRespo
 
 struct GatedRepairModel {
     calls: std::sync::atomic::AtomicUsize,
+    total_calls: std::sync::atomic::AtomicUsize,
     repair_started: tokio::sync::Notify,
     repair_call_id: std::sync::Mutex<Option<String>>,
     user_messages: std::sync::Mutex<Vec<String>>,
@@ -28,6 +29,8 @@ impl ChatModel<()> for GatedRepairModel {
         _state: &(),
         request: ModelRequest,
     ) -> tinyinference_llm::Result<ModelResponse> {
+        self.total_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.user_messages.lock().unwrap().extend(
             request
                 .messages
@@ -76,6 +79,7 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
     );
     let model = Arc::new(GatedRepairModel {
         calls: std::sync::atomic::AtomicUsize::new(0),
+        total_calls: std::sync::atomic::AtomicUsize::new(0),
         repair_started: tokio::sync::Notify::new(),
         repair_call_id: std::sync::Mutex::new(None),
         user_messages: std::sync::Mutex::new(Vec::new()),
@@ -116,8 +120,23 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
     .collect();
     let input = format!("hello using this synthetic credential: {secret}");
     let redacted = tinyinference_core::sanitize::scrub_credentials(&input);
-    let turn = tokio::spawn(async move { host.run_single_with_origin(&input, Some(origin)).await });
-    model.repair_started.notified().await;
+    let turn = tokio::spawn(crate::core::runtime::CoreContext::scope(
+        Arc::clone(&core),
+        async move { host.run_single_with_origin(&input, Some(origin)).await },
+    ));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        model.repair_started.notified(),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "host supplemental repair starts (model calls: {}, non-supplemental: {}, turn finished: {})",
+            model.total_calls.load(std::sync::atomic::Ordering::SeqCst),
+            model.calls.load(std::sync::atomic::Ordering::SeqCst),
+            turn.is_finished()
+        )
+    });
     let repair_call_id = model
         .repair_call_id
         .lock()
@@ -125,7 +144,11 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
         .clone()
         .expect("only a post-harness supplemental call releases this barrier");
     cancellation.cancel();
-    assert!(turn.await.expect("turn task").is_err());
+    let turn_result = tokio::time::timeout(std::time::Duration::from_secs(10), turn)
+        .await
+        .expect("cancellation interrupts the pending repair")
+        .expect("turn task");
+    assert!(turn_result.is_err());
     assert!(model
         .user_messages
         .lock()

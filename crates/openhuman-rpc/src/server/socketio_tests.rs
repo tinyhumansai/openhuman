@@ -217,7 +217,7 @@ async fn web_events_reach_client_and_thread_rooms_once_with_compat_aliases() {
         .all(|(_, payload)| payload["full_response"] == "finished"));
     assert!(reconnected_packets
         .iter()
-        .all(|(_, payload)| payload["thread_id"] == "thread-1"));
+        .all(|(_, payload)| payload["context"]["threadId"] == "thread-1"));
     assert_empty_queue(&mut initiator_rx);
     assert_empty_queue(&mut reconnected_rx);
     assert_empty_queue(&mut unrelated_rx);
@@ -494,6 +494,11 @@ fn ensure_rpc_token() -> String {
 /// CONNECT with `auth`, then poll until the server either emits `ready` or
 /// disconnects the namespace. Returns everything the server sent.
 async fn polling_handshake(base: &str, auth: serde_json::Value) -> String {
+    let (_, received) = polling_handshake_with_sid(base, auth).await;
+    received
+}
+
+async fn polling_handshake_with_sid(base: &str, auth: serde_json::Value) -> (String, String) {
     let http = reqwest::Client::new();
     let open = http
         .get(format!("{base}/socket.io/?EIO=4&transport=polling"))
@@ -527,7 +532,7 @@ async fn polling_handshake(base: &str, auth: serde_json::Value) -> String {
             break;
         }
     }
-    received
+    (url, received)
 }
 
 /// H5: the handshake bearer gate, end to end over a real socket. Only the
@@ -553,19 +558,25 @@ async fn startup_preflight_denies_authenticated_socketio_until_open_and_guards_r
 }
 
 async fn startup_preflight_socket_gate() {
-    let token = ensure_rpc_token();
     let gate = crate::server::auth::PreflightGate::new_active();
-    let router = crate::server::http::build_core_http_router_with_preflight(true, gate.clone());
+    let router = crate::server::http::build_core_http_router_with_preflight(true, gate.clone())
+        .layer(axum::Extension(
+            crate::core_host::core::runtime::DispatchCtx::host_default(),
+        ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
     let client = reqwest::Client::new();
-    let denied = client
-        .get(format!("{base}/socket.io/?EIO=4&transport=polling"))
-        .send()
-        .await
-        .expect("preflight Engine.IO open");
+    let denied = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client
+            .get(format!("{base}/socket.io/?EIO=4&transport=polling"))
+            .send(),
+    )
+    .await
+    .expect("preflight Engine.IO request responds")
+    .expect("preflight Engine.IO open");
     assert!(
         denied.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE,
         "initial Engine.IO request must be denied before allocating a session: {}",
@@ -578,37 +589,17 @@ async fn startup_preflight_socket_gate() {
     );
 
     gate.open();
-    let open = client
-        .get(format!("{base}/socket.io/?EIO=4&transport=polling"))
-        .send()
-        .await
-        .expect("engine.io open after gate")
-        .text()
-        .await
-        .unwrap();
-    let open: serde_json::Value =
-        serde_json::from_str(open.trim_start_matches('0')).expect("engine.io open packet");
-    let sid = open["sid"].as_str().expect("engine.io sid").to_owned();
-    let url = format!("{base}/socket.io/?EIO=4&transport=polling&sid={sid}");
-    client
-        .post(&url)
-        .body(format!(
-            "40{}",
-            serde_json::json!({ "token": ensure_rpc_token() })
-        ))
-        .send()
-        .await
-        .expect("authenticated socket connect after gate");
-    let connected = client.get(&url).send().await.unwrap().text().await.unwrap();
+    let (url, connected) =
+        polling_handshake_with_sid(&base, serde_json::json!({ "token": ensure_rpc_token() })).await;
     assert!(
         connected.contains("\"ready\""),
         "post-preflight ready: {connected}"
     );
 
-    // A live authenticated socket must still check the same gate before
-    // dispatching RPC events. Re-closing is test-only; production opens once.
+    // Re-closing is test-only; production opens once. The outer HTTP preflight
+    // layer must reject Socket.IO traffic before it can dispatch an event.
     gate.close_for_test();
-    client
+    let denied_rpc = client
         .post(&url)
         .body(
             "42[\"rpc:request\",{\"id\":\"probe\",\"method\":\"openhuman.config_get\",\"params\":{}}]",
@@ -616,14 +607,15 @@ async fn startup_preflight_socket_gate() {
         .send()
         .await
         .expect("send authenticated RPC event");
-    let denied_rpc = client.get(&url).send().await.unwrap().text().await.unwrap();
     assert!(
-        denied_rpc.contains("rpc:error"),
-        "preflight rpc response: {denied_rpc}"
+        denied_rpc.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "preflight must reject Socket.IO before the event is dispatched: {}",
+        denied_rpc.status()
     );
+    let denied_rpc = denied_rpc.text().await.unwrap();
     assert!(
-        denied_rpc.contains("unavailable during startup approval preflight"),
-        "preflight must not dispatch the protected method: {denied_rpc}"
+        denied_rpc.contains("startup_preflight"),
+        "preflight rejection body: {denied_rpc}"
     );
 }
 

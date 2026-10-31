@@ -15,6 +15,7 @@ async fn build_triage_parent_scopes_allowed_subagents_to_target() {
         ..Config::default()
     };
     config.default_model = Some("test/session-fixture".to_string());
+    config.secrets.encrypt = false;
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
 
     let _ = AgentDefinitionRegistry::init_global_builtins();

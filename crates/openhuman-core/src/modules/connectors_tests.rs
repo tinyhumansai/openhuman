@@ -67,7 +67,11 @@ async fn every_member_this_host_names_is_one_the_module_serves() {
 
 /// A config with no backend session and no stored key.
 fn bare_config() -> Config {
-    Config::default()
+    let directory = tempfile::tempdir().expect("isolated connector configuration");
+    let config =
+        crate::integrations::composio::module_client::test_support::config_in(directory.path());
+    let _ = directory.keep();
+    config
 }
 
 #[tokio::test]
@@ -128,7 +132,7 @@ async fn direct_mode_hands_the_module_the_hosts_proxy_policy() {
 
     // The destination follows the direct-base env overrides; keep any other
     // test's loopback override out of this one.
-    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let _env = crate::config::TEST_ENV_LOCK.lock().await;
     let _scrub = DirectBaseScrub::new();
 
     let mut config = bare_config();

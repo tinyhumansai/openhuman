@@ -228,7 +228,8 @@ async fn selected_managed_route_constructs_with_the_picker_model() {
     // Wait out any test that has a mock chat model installed process-wide.
     let _serial = crate::inference::provider::factory::test_provider_override::exclusive();
     crate::agent::session_host::test_support::install_model_fixture();
-    let config = Config::default();
+    let workspace = tempfile::tempdir().unwrap();
+    let config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
     crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
         .await
         .expect("store managed routing test credential");
@@ -389,8 +390,9 @@ fn explicit_picker_model_keeps_its_fingerprint_when_saved_default_changes() {
     assert_eq!(first, second);
 }
 
-async fn configured_huggingface_route() -> Config {
-    let mut config = Config::default();
+async fn configured_huggingface_route() -> (Config, tempfile::TempDir) {
+    let workspace = tempfile::tempdir().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(workspace.path());
     crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
         .await
         .expect("store routing test credential");
@@ -405,7 +407,7 @@ async fn configured_huggingface_route() -> Config {
             auth_style: crate::config::schema::cloud_providers::AuthStyle::None,
             ..Default::default()
         });
-    config
+    (config, workspace)
 }
 
 async fn assert_huggingface_model_builds(config: &Config, expected_model: &str) {
@@ -425,8 +427,8 @@ async fn assert_huggingface_model_builds(config: &Config, expected_model: &str) 
 
 #[tokio::test]
 async fn mixed_case_cloud_picker_uses_configured_slug_and_preserves_colon_suffix() {
-    let _guard = crate::inference::inference_test_guard();
-    let config = configured_huggingface_route().await;
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let (config, _workspace) = configured_huggingface_route().await;
     let original = serde_json::to_value(&config).expect("config serializes");
     let selected = "HuggingFace:org/model:version:variant";
     let effective = effective_session_config(&config, Some(selected), None);
@@ -446,8 +448,8 @@ async fn mixed_case_cloud_picker_uses_configured_slug_and_preserves_colon_suffix
 
 #[tokio::test]
 async fn persisted_mixed_case_cloud_default_uses_configured_slug_after_restart() {
-    let _guard = crate::inference::inference_test_guard();
-    let mut config = configured_huggingface_route().await;
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let (mut config, _workspace) = configured_huggingface_route().await;
     let selected = "HUGGINGFACE:org/model:version:variant";
     config.default_model = Some(selected.to_string());
     let original = serde_json::to_value(&config).expect("config serializes");

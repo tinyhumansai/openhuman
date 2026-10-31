@@ -2,8 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn unmanaged_openhuman_jwt_route_never_builds_a_direct_unauthenticated_model() {
-    let _guard = crate::inference::inference_test_guard();
-    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let _guard = crate::inference::inference_test_guard_async().await;
+    let _env = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = tempfile::TempDir::new().expect("isolated workspace");
     let extensions = crate::core::slots::Extensions::new();
     crate::config::schema::cloud_providers::register_hosted_cloud_provider_policy_in(

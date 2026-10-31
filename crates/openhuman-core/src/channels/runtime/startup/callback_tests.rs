@@ -304,7 +304,7 @@ async fn native_progressive_transport_dispatches_typed_content_through_configure
     let ChannelBackendResult::ProgressiveTransport(result) = result else {
         panic!("expected progressive transport result");
     };
-    let ProgressiveTransportResult::Outcome(outcome) = *result else {
+    let ProgressiveTransportResult::Outcome(outcome) = result else {
         panic!("typed native send must return the complete provider outcome");
     };
     assert_eq!(
@@ -437,7 +437,7 @@ async fn native_progressive_output_event_is_acknowledged_by_optional_host_observ
         .dispatch_controller_backend(ChannelBackendRequest::ProgressiveTransport(Box::new(
             ProgressiveTransportRequest::OutputEvent {
                 channel: "telegram:bot-b".into(),
-                turn_id: Some("turn-13".into()),
+                turn_id: "turn-13".into(),
                 channel_ref: Some(tinychannels_bus::ChannelRef {
                     id: "telegram".into(),
                     account_id: Some("telegram:bot-b".into()),
@@ -459,7 +459,7 @@ async fn native_progressive_output_event_is_acknowledged_by_optional_host_observ
     let ChannelBackendResult::ProgressiveTransport(result) = result else {
         panic!("expected progressive transport result");
     };
-    assert!(matches!(*result, ProgressiveTransportResult::Acknowledged));
+    assert!(matches!(result, ProgressiveTransportResult::Acknowledged));
     assert_eq!(
         *observer.seen.lock().await,
         [(
@@ -480,7 +480,7 @@ fn output_event_request(
     ChannelBackendRequest::ProgressiveTransport(Box::new(
         ProgressiveTransportRequest::OutputEvent {
             channel: "telegram:chat-42".into(),
-            turn_id: turn_id.map(str::to_owned),
+            turn_id: turn_id.unwrap_or_default().to_owned(),
             channel_ref: account.map(|account_id| tinychannels_bus::ChannelRef {
                 id: "telegram".into(),
                 account_id: Some(account_id.into()),
@@ -523,7 +523,7 @@ async fn native_progressive_output_event_validates_scope_without_observer() {
     assert!(matches!(
         valid,
         ChannelBackendResult::ProgressiveTransport(result)
-            if matches!(*result, ProgressiveTransportResult::Acknowledged)
+            if matches!(result, ProgressiveTransportResult::Acknowledged)
     ));
 
     for invalid in [
@@ -617,7 +617,7 @@ async fn native_progressive_callbacks_fail_closed_after_transport_owner_drops() 
             ))
             .await,
         Ok(ChannelBackendResult::ProgressiveTransport(result))
-            if matches!(*result, ProgressiveTransportResult::Acknowledged)
+            if matches!(result, ProgressiveTransportResult::Acknowledged)
     ));
     drop(context);
     drop(adapter);

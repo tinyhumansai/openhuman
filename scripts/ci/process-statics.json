@@ -668,5 +668,15 @@
     "category": "A",
     "reason": "One-shot guard that subscribes the proactive web subscriber to the process-wide bus once; it stores no tenant identifiers, and per-event tenant scope arrives on each event.",
     "verification": "web_chat/event_bus_tests.rs: egress_surface_bridges_pending_with_chat_context"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/credentials/profiles.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "OnceLock<Mutex<HashMap<PathBuf,Arc<InProcessAuthLock>>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "The process-local registry shares only lock objects keyed by canonical profile-store path; it serializes same-process access without storing profile contents or tenant identifiers.",
+    "verification": "security/credentials/profiles_store_lock_tests.rs: acquire_lock_serializes_same_process_acquirers"
   }
 ]

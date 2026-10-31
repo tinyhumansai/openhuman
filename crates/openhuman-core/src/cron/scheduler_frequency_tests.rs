@@ -45,13 +45,17 @@ fn publish_cron_user_error_broadcasts_metadata_only_for_each_kind() {
         assert!(ev.context().request_id.is_empty());
         match ev.wire_event() {
             crate::web_chat::WebChannelEvent::UserError {
+                message,
                 error_type,
                 error_source,
+                error_retryable,
                 ..
             } => {
                 // Stable kind token mirrors the frontend `UserErrorKind` discriminator.
                 assert_eq!(error_type.as_deref(), Some(kind));
                 assert_eq!(error_source.as_deref(), Some("cron"));
+                assert!(message.is_none());
+                assert_eq!(*error_retryable, Some(false));
             }
             other => panic!("expected user_error, got {}", other.event_name()),
         }

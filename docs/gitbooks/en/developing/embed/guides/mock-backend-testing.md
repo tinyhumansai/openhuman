@@ -28,9 +28,10 @@ The shared support module uses loopback Wiremock servers for backend and inferen
                     .tools(ToolScopeSpec::HostOnly),
             )
             .tools(move |_| {
-                openhuman_embed::HostTurnTools::advertised(vec![Box::new(Ping(
-                    recorded_calls.clone(),
-                ))])
+                let recorded_calls = recorded_calls.clone();
+                Box::pin(async move {
+                    openhuman_embed::HostTurnTools::advertised(vec![Box::new(Ping(recorded_calls))])
+                })
             }),
     )?;
     assert_eq!(agent.run("Ping").await?.reply, "pong complete");

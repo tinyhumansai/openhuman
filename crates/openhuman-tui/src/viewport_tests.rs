@@ -65,8 +65,8 @@ fn indexed_rows_equal_full_wrapping_after_updates_resizes_and_expired_journal() 
     let mut state = TranscriptState::new("test");
     state.apply_event(
         &serde_json::from_value(serde_json::json!({
-            "event":"tool_call","client_id":"test","thread_id":"thread-1",
-            "request_id":"turn","tool_call_id":"first","tool_name":"tool"
+            "event":"tool_call","context":{"clientId":"test","threadId":"thread-1",
+            "requestId":"turn"},"tool_call_id":"first","tool_name":"tool"
         }))
         .unwrap(),
     );
@@ -81,8 +81,8 @@ fn indexed_rows_equal_full_wrapping_after_updates_resizes_and_expired_journal() 
         if step == 4 {
             state.apply_event(
                 &serde_json::from_value(serde_json::json!({
-                    "event":"tool_result","client_id":"test","thread_id":"thread-1",
-                    "request_id":"turn","tool_call_id":"first",
+                    "event":"tool_result","context":{"clientId":"test","threadId":"thread-1",
+                    "requestId":"turn"},"tool_call_id":"first",
                     "output":"a\nb\nc","success":true
                 }))
                 .unwrap(),
@@ -166,7 +166,7 @@ fn changing_an_old_tools_height_updates_prefix_lookup_without_rebuilding_history
     let mut state = TranscriptState::new("test");
     let event = |name: &str, fields: serde_json::Value| {
         let mut value = serde_json::json!({
-            "event":name,"client_id":"test","thread_id":"thread","request_id":"turn",
+            "event":name,"context":{"clientId":"test","threadId":"thread","requestId":"turn"},
             "tool_call_id":"old","tool_name":"tool"
         });
         value

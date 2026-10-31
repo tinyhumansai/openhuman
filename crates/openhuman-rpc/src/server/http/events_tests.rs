@@ -114,16 +114,20 @@ async fn events_stream_forwards_only_the_bound_client() {
             client_id: "another-client".into(),
             ..Default::default()
         },
+        message: None,
         error_type: Some("wrong_client_probe".into()),
         error_source: None,
+        error_retryable: None,
     });
     publish_web_channel_event(WebChannelEvent::UserError {
         context: crate::core_host::web_chat::WebEventContext {
             client_id: "stream-client".into(),
             ..Default::default()
         },
+        message: None,
         error_type: Some("right_client_probe".into()),
         error_source: None,
+        error_retryable: None,
     });
 
     let chunk = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())

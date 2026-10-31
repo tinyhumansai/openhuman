@@ -293,6 +293,22 @@ pub fn open(domain: &'static str, workspace_dir: &Path) -> Result<Opened> {
     Ok(Opened { backend, scope })
 }
 
+/// Open the acting storage scope from asynchronous bootstrap or module code.
+///
+/// Resolve the scope before opening a backend, just like [`open`]. Cold storage
+/// initialization stays async so calls already on the storage bridge never
+/// queue a synchronous operation back onto their own runtime.
+///
+/// # Errors
+/// Returns an error if the acting scope is missing or its backend cannot open.
+pub async fn open_async(domain: &'static str, workspace_dir: &Path) -> Result<Opened> {
+    let scope = current_scope().with_context(|| format!("[{domain}] resolve the storage scope"))?;
+    let backend = backend_for_async(workspace_dir)
+        .await
+        .with_context(|| format!("[{domain}] open the storage backend"))?;
+    Ok(Opened { backend, scope })
+}
+
 /// Drops every cached workspace default, so a data reset can delete the files
 /// (Windows refuses while a handle is open) and the next call opens afresh.
 pub fn release_all() {

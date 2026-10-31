@@ -84,27 +84,41 @@ pub(crate) fn prepare_once(
     backend: &Arc<dyn StorageBackend>,
     scope: &tinystoragedrivers::Scope,
 ) -> Result<(), StorageError> {
-    let prepared_key = (backend_addr(backend), scope.as_str().to_owned());
-    let already_prepared = PREPARED_SCOPES
+    if scope_prepared(backend, scope) {
+        return Ok(());
+    }
+    let backend = Arc::clone(backend);
+    let scope = scope.clone();
+    block_on(async move { prepare_once_async(&backend, &scope).await })
+}
+
+fn scope_prepared(backend: &Arc<dyn StorageBackend>, scope: &tinystoragedrivers::Scope) -> bool {
+    let key = (backend_addr(backend), scope.as_str().to_owned());
+    PREPARED_SCOPES
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .get(&prepared_key)
+        .get(&key)
         .and_then(Weak::upgrade)
-        .is_some_and(|alive| Arc::ptr_eq(&alive, backend));
-    if already_prepared {
+        .is_some_and(|alive| Arc::ptr_eq(&alive, backend))
+}
+
+async fn prepare_once_async(
+    backend: &Arc<dyn StorageBackend>,
+    scope: &tinystoragedrivers::Scope,
+) -> Result<(), StorageError> {
+    if scope_prepared(backend, scope) {
         return Ok(());
     }
     let to_prepare = backend.for_scope(scope)?;
-    let scope = scope.clone();
-    block_on(async move {
-        super::boot::prepare_scope(&to_prepare, &scope).await?;
-        Ok(())
-    })?;
+    super::boot::prepare_scope(&to_prepare, scope).await?;
     let mut prepared = PREPARED_SCOPES
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     prepared.retain(|_, weak| weak.strong_count() > 0);
-    prepared.insert(prepared_key, Arc::downgrade(backend));
+    prepared.insert(
+        (backend_addr(backend), scope.as_str().to_owned()),
+        Arc::downgrade(backend),
+    );
     Ok(())
 }
 
@@ -161,6 +175,28 @@ impl Repo {
     ) -> Result<Self> {
         let opened = super::local::open(domain, workspace_dir)?;
         Self::on(&opened.backend, &opened.scope, domain, collections)
+    }
+
+    /// Open a workspace repository without entering the synchronous storage bridge.
+    ///
+    /// # Errors
+    /// Returns an error if the acting scope, backend, or owner migrations fail.
+    pub async fn current_for_async(
+        workspace_dir: &std::path::Path,
+        domain: &'static str,
+        collections: fn() -> Vec<CollectionSpec>,
+    ) -> Result<Self> {
+        let opened = super::local::open_async(domain, workspace_dir).await?;
+        let scoped = opened.scoped()?;
+        prepare_once_async(&opened.backend, &opened.scope)
+            .await
+            .with_context(|| format!("[{domain}] prepare owner collections"))?;
+        let mut repo = Self::over(&scoped, domain, collections);
+        repo.origin = Some(Origin {
+            backend: opened.backend,
+            scope: opened.scope.as_str().to_owned(),
+        });
+        Ok(repo)
     }
 
     /// The repo over `backend` under `scope`, declaring its collections once

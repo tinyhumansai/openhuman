@@ -15,13 +15,7 @@ use tempfile::TempDir;
 use tokio::net::TcpListener;
 
 fn test_config(tmp: &TempDir) -> Config {
-    let config = Config {
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        config_path: tmp.path().join("config.toml"),
-        ..Config::default()
-    };
-    config
+    crate::credentials::test_support::plaintext_fixture_config(tmp.path())
 }
 
 fn jwt_with_payload(payload: serde_json::Value) -> String {
@@ -47,7 +41,7 @@ async fn spawn_auth_me_status(status: StatusCode) -> String {
 /// caller's mock backend only has to answer the route under test — `store_session`
 /// would additionally need `/auth/me` to succeed first, and re-scopes the profile
 /// to the resolved user directory as a side effect.
-fn store_live_session(user_id: &str) -> Config {
+async fn store_live_session(user_id: &str) -> Config {
     let root_dir = default_root_openhuman_dir().unwrap();
     write_active_user_id(&root_dir, user_id).unwrap();
     let user_dir = user_openhuman_dir(&root_dir, user_id);
@@ -75,6 +69,7 @@ fn store_live_session(user_id: &str) -> Config {
             metadata,
             true,
         )
+        .await
         .unwrap();
     config
 }

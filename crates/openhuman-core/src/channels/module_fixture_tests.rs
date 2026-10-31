@@ -1,16 +1,9 @@
-//! A linked TinyChannels module fixture for host-side unit tests.
+//! The pinned TinyChannels release fixture for host-side unit tests.
 //!
-//! These tests exercise the real owning module over TinyBus without downloading
-//! a release artifact or reaching a provider service. The module is attached
-//! through the same seam local development uses: the factory is registered with
-//! [`register_linked`] and `[modules] source = "linked"` makes
-//! `ops::ensure_loaded` attach it to the process-wide module host, which lives
-//! on a process-lifetime runtime, so it outlives the short Tokio runtimes of
-//! individual tests.
+//! Channel callbacks require TinyBus's verified local-file admission path, so
+//! this fixture uses the staged release artifact instead of a linked module.
 
-use crate::config::schema::ModuleSourceMode;
 use crate::config::Config;
-use crate::modules::linked::register_linked;
 use crate::modules::{ops, runtime};
 use std::sync::{Arc, MutexGuard};
 use tinybus::module::ModuleClient;
@@ -21,17 +14,24 @@ use tokio::sync::OnceCell;
 const MODULE_ID: &str = "tinychannels";
 static CLIENT: OnceCell<ModuleClient> = OnceCell::const_new();
 
-/// Return a client for the compiled, linked TinyChannels module fixture.
+/// Return a client for the staged TinyChannels module fixture.
 pub(crate) async fn client() -> ModuleClient {
     CLIENT
         .get_or_init(|| async {
-            register_linked(MODULE_ID, tinychannels_module::linked_module);
             let mut config = Config::default();
             config.modules.allow_download = false;
-            config.modules.source = ModuleSourceMode::Linked;
+            let artifact = ops::local_artifact_for_test(MODULE_ID)
+                .expect("the pinned TinyChannels test module must be staged");
+            config
+                .modules
+                .overrides
+                .push(crate::config::schema::ModuleOverride::with_path(
+                    MODULE_ID,
+                    artifact.to_string_lossy(),
+                ));
             ops::ensure_loaded(&config, MODULE_ID)
                 .await
-                .expect("the linked TinyChannels module should be admitted through the seam");
+                .expect("the staged TinyChannels module should load with verified callbacks");
             let proxy = runtime::runtime()
                 .await
                 .expect("the module host should be running")

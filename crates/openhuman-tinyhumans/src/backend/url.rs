@@ -313,7 +313,7 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     }
 
     // ── Signal 2: loopback / private host + secondary LLM signal ───────────
-    if !host_is_local(&parsed) {
+    if !host_is_local(&parsed) && !is_literal_local_host(&parsed) {
         return false;
     }
 
@@ -329,6 +329,35 @@ pub fn looks_like_local_ai_endpoint(url: &str) -> bool {
     let path_is_llm = path.starts_with("/v1/") || path == "/v1";
 
     port_is_llm || path_is_llm
+}
+
+/// Keep the local-model URL heuristic independent of TinySecurity's runtime
+/// availability for standard local names and private IP ranges. The module
+/// classifier can recognize additional provider hosts, but may not be loaded
+/// yet while the host is resolving its own API endpoint.
+fn is_literal_local_host(parsed: &url::Url) -> bool {
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
+        return true;
+    }
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => {
+            address.is_loopback()
+                || address.is_private()
+                || address.is_link_local()
+                || address.is_unspecified()
+        }
+        Ok(std::net::IpAddr::V6(address)) => {
+            address.is_loopback()
+                || address.is_unique_local()
+                || address.is_unicast_link_local()
+                || address.is_unspecified()
+        }
+        Err(_) => false,
+    }
 }
 
 /// Well-known managed inference-provider registrable domains. A `config.api_url`

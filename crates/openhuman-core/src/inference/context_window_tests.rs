@@ -82,9 +82,7 @@ fn openrouter_listing() -> Value {
 }
 
 async fn openrouter_config(tmp: &TempDir) -> Config {
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
     config.cloud_providers = vec![CloudProviderCreds {
         id: "p_openrouter".to_string(),
         slug: "openrouter".to_string(),

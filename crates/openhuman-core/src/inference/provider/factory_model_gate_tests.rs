@@ -11,6 +11,7 @@ async fn turn_factory_checks_privacy_then_explicit_host_session_before_building_
     let mut config = Config::default();
     config.workspace_dir = tmp.path().join("workspace");
     config.config_path = tmp.path().join("config.toml");
+    config.secrets.encrypt = false;
     let config = config;
 
     let ambient_library = crate::core::runtime::CoreContext::for_test_with_host_kind(
@@ -78,6 +79,10 @@ async fn turn_factory_checks_privacy_then_explicit_host_session_before_building_
             )
             .await
             .expect("store isolated test session");
+        let factory = OpenHumanModelFactory {
+            credentials: super::credentials::RuntimeCredentialSnapshot::resolve(&config).await,
+            ..factory
+        };
         let built =
             tinyagents_harness::host::TurnModelSet::<()>::builder(&factory, &factory, "chat")
                 .primary_model_pin("factory-gate-order-sentinel-model")

@@ -43,6 +43,7 @@ pub async fn store_composio_api_key(
         std::collections::HashMap::new(),
         true,
     )
+    .await
     .map_err(|e| e.to_string())?;
 
     Ok(Outcome::single_log(
@@ -56,10 +57,11 @@ pub async fn store_composio_api_key(
 ///
 /// Used by [`crate::integrations::composio::client::resolve_composio_route`]
 /// to decide whether direct mode can actually be activated.
-pub fn get_composio_api_key(config: &Config) -> Result<Option<String>, String> {
+pub async fn get_composio_api_key(config: &Config) -> Result<Option<String>, String> {
     let auth = AuthService::from_config(config);
     let key = auth
         .get_provider_bearer_token(COMPOSIO_DIRECT_PROVIDER, None)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()))
 }
@@ -81,6 +83,7 @@ pub async fn clear_composio_api_key(config: &Config) -> Result<Outcome<serde_jso
     let auth = AuthService::from_config(config);
     let removed = auth
         .remove_profile(COMPOSIO_DIRECT_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(Outcome::single_log(
         json!({ "removed": removed }),

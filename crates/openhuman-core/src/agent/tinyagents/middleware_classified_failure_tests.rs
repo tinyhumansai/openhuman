@@ -576,10 +576,14 @@ async fn middleware_with_one_pending_nudge() -> (
     let handle = SteeringHandle::allow_all();
     let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
     let mw = RepeatedToolFailureMiddleware::new(handle, 3, slot);
+    // This compound command is classified as an uncertain side effect, which
+    // queues OpenHuman's reconcile-first correction on the first timeout.
     let mut call = TaToolCall::new(
         "sh-1",
         "shell",
-        serde_json::json!({ "command": "whois a.io" }),
+        serde_json::json!({
+            "command": "for d in a.io b.io c.io; do whois $d; done"
+        }),
     );
     mw.before_tool(&mut run_ctx, &(), &mut call).await.unwrap();
     let mut result = failing_result("shell", "Command timed out after 60s and was killed");

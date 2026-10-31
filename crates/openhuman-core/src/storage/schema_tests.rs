@@ -39,11 +39,54 @@ fn every_linked_crate_exposes_its_valid_collection_declarations() {
     }
 }
 
+#[cfg(feature = "inbound-queues")]
+#[test]
+fn event_queue_bus_declarations_keep_their_indexes_in_host_storage_specs() {
+    let declarations = tinyeventqueues_bus::storage::collection_specs();
+    let specs = event_queue_collection_specs();
+
+    assert_eq!(specs.len(), declarations.len());
+    for (declaration, spec) in declarations.iter().zip(specs) {
+        assert_eq!(spec.name, declaration.name);
+        assert_eq!(spec.indexes.len(), declaration.indexes.len());
+        for (index, declaration) in spec.indexes.iter().zip(&declaration.indexes) {
+            assert_eq!(index.name, declaration.name);
+            assert_eq!(index.fields, declaration.fields);
+            assert_eq!(index.unique, declaration.unique);
+        }
+    }
+}
+
 #[test]
 fn module_collections_are_limited_to_the_named_owner() {
     let mcp = module_collections("mcp");
     assert!(mcp.iter().any(|spec| spec.name == "mcp.servers"));
     assert!(module_collections("no-such-owner").is_empty());
+}
+
+#[test]
+fn tinychannels_bus_declarations_map_indexes_ttl_and_search_to_host_specs() {
+    let declaration = tinychannels_bus::storage::CollectionSpec {
+        name: "channels.test".into(),
+        indexes: vec![tinychannels_bus::storage::IndexSpec {
+            name: "by_sender".into(),
+            fields: vec!["sender.id".into()],
+            unique: true,
+        }],
+        ttl_field: Some("expiresAt".into()),
+        search: Some(tinychannels_bus::storage::SearchSpec {
+            fields: vec!["title".into(), "body".into()],
+        }),
+    };
+    let spec = channel_collection_spec(declaration);
+
+    assert_eq!(spec.name, "channels.test");
+    assert_eq!(spec.indexes.len(), 1);
+    assert_eq!(spec.indexes[0].name, "by_sender");
+    assert_eq!(spec.indexes[0].fields, ["sender.id"]);
+    assert!(spec.indexes[0].unique);
+    assert_eq!(spec.ttl_field.as_deref(), Some("expiresAt"));
+    assert_eq!(spec.search.as_ref().unwrap().fields, ["title", "body"]);
 }
 
 #[test]

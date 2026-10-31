@@ -207,7 +207,7 @@ async fn native_runner_checkouts_serialize_and_cancel_waiters_cleanly() {
             channel: "telegram".into(),
             session_key: session.into(),
             event_session_id: format!("event-{session}"),
-            origin: crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+            origin: crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
                 sender_name: Some("Ada".into()),
                 channel: "telegram".into(),
                 sender: Some("sender".into()),

@@ -33,7 +33,6 @@ async fn module_inbound_envelope_reaches_host_dispatch_with_identity_intact() {
             ..Default::default()
         },
         text: "native Telegram inbound".into(),
-        reply_to_id: Some("parent-message-9".into()),
         timestamp_unix_ms: Some(1_700_000_000_123),
         access: tinychannels_bus::channel::AccessContext {
             dm_decision: tinychannels_bus::channel::SenderDmDecision::Allow,
@@ -67,7 +66,6 @@ async fn module_inbound_envelope_reaches_host_dispatch_with_identity_intact() {
     assert_eq!(received_envelope.conversation, envelope.conversation);
     assert_eq!(received_envelope.sender, envelope.sender);
     assert_eq!(received_envelope.message_id, envelope.message_id);
-    assert_eq!(received_envelope.reply_to_id, envelope.reply_to_id);
     assert_eq!(
         received_envelope.timestamp_unix_ms,
         envelope.timestamp_unix_ms

@@ -110,11 +110,9 @@ async fn the_module_config_is_what_the_storage_grant_declares() {
     config.inbound.queues_path = Some(queues.path().to_path_buf());
 
     let blob = module_config(&config);
-    // The module refuses to load without the bus name serving its storage.
-    assert_eq!(
-        blob["storage_callback"],
-        "ai.tinyhumans.tinystorage.Storage"
-    );
+    // Only the loader may issue the authenticated storage route.
+    assert!(blob.get("storage_callback").is_none());
+    assert!(blob.get("storage_address").is_none());
     assert_eq!(blob["queues"]["queues"][0]["max_attempts"], 4);
     assert_eq!(blob["pipeline"]["version"], 1);
     let grant = queue_grant().unwrap();

@@ -357,6 +357,7 @@ async fn handle_agent_run_turn_on_large_stack(
     req: AgentTurnRequest,
 ) -> Result<AgentTurnResponse, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
+    let dispatch = crate::core::runtime::DispatchCtx::ambient();
     let handle = std::thread::Builder::new()
         .name("agent-run-turn-test".to_string())
         // Match the CI test runtime's stack: LLVM instrumentation expands
@@ -367,7 +368,7 @@ async fn handle_agent_run_turn_on_large_stack(
                 .enable_all()
                 .build()
                 .expect("build agent run_turn test runtime");
-            let result = runtime.block_on(handle_agent_run_turn(req));
+            let result = runtime.block_on(dispatch.enter(handle_agent_run_turn(req)));
             let _ = tx.send(result);
         })
         .map_err(|error| format!("failed to spawn large-stack agent handler: {error}"))?;

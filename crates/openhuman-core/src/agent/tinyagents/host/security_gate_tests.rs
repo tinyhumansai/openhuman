@@ -155,6 +155,20 @@ async fn a_read_only_tool_is_allowed_in_every_tier() {
     }
 }
 
+#[tokio::test]
+async fn disabled_autonomy_allows_registered_actions_without_tinysecurity() {
+    let policy = Arc::new(SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    });
+    let decision = OpenHumanSecurityGate::new(policy, registry())
+        .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
+        .await
+        .expect("disabled autonomy should not require TinySecurity");
+
+    assert_eq!(decision, GateDecision::Allow);
+}
+
 async fn cron_decision(gate: OpenHumanSecurityGate, tool_name: &str) -> GateDecision {
     let core =
         crate::core::runtime::CoreContext::for_test(crate::core::runtime::DomainSet::full(), None);

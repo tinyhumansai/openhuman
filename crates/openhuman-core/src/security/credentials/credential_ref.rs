@@ -199,6 +199,7 @@ fn keyring_error_kind(e: &secret_storage::SecretStorageError) -> &'static str {
     match e {
         E::InvalidUtf8 { .. } => "invalid-utf8",
         E::Crypto(_) => "crypto",
+        E::MasterKeyUnavailable => "master-key-unavailable",
         E::VerifyFailed { .. }
         | E::RandomGeneration(_)
         | E::Backend(_)

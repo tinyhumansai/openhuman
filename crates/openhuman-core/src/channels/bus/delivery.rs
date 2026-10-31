@@ -11,9 +11,11 @@ use tinychannels_bus::{methods, ChannelBackendRequest, ChannelBackendResult};
 fn request_channel(request: &ProgressiveTransportRequest) -> &str {
     match request {
         ProgressiveTransportRequest::Send { channel, .. }
+        | ProgressiveTransportRequest::SendTyped { channel, .. }
         | ProgressiveTransportRequest::Edit { channel, .. }
         | ProgressiveTransportRequest::Delete { channel, .. }
-        | ProgressiveTransportRequest::Typing { channel, .. } => channel,
+        | ProgressiveTransportRequest::Typing { channel, .. }
+        | ProgressiveTransportRequest::OutputEvent { channel, .. } => channel,
     }
 }
 
@@ -39,9 +41,9 @@ impl SlotTransport {
             return Err(tinybus::Error::failed("callback capability unavailable"));
         };
         if request_channel(&request) != self.channel {
-            return Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
+            return Ok(ChannelBackendResult::ProgressiveTransport(
                 ProgressiveTransportResult::Failed,
-            )));
+            ));
         }
         let ctx = crate::channels::callback_slot::ChannelCallbackCtx {
             config: self.config.clone(),
@@ -52,15 +54,15 @@ impl SlotTransport {
         tokio::select! {
             biased;
             _ = self.session.cancelled() => Ok(ChannelBackendResult::ProgressiveTransport(
-                Box::new(ProgressiveTransportResult::Unavailable),
+                ProgressiveTransportResult::Unavailable,
             )),
             result = call => match result {
                 Ok(result) => Ok(result),
                 Err(error) => {
                     tracing::debug!(%error, "[channels][delivery] registered callback failed");
-                    Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
+                    Ok(ChannelBackendResult::ProgressiveTransport(
                         ProgressiveTransportResult::Failed,
-                    )))
+                    ))
                 }
             },
         }

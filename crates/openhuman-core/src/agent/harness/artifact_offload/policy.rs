@@ -54,6 +54,40 @@ impl ArtifactPathPolicy for WorkspaceGuard {
     }
 }
 
+/// Artifact materialization reserves the complete private workspace, beyond the
+/// general acting-tool policy's named internal subdirectories. Ask the native
+/// engine to resolve aliases and prospective parents before any blob is stored.
+pub(super) async fn materialization_allowed(policy: &SecurityPolicy, path: &Path) -> bool {
+    #[cfg(feature = "security-module")]
+    {
+        use tinysecurity_bus::{PathCheckKind, PathReservation};
+        let mut scope = policy.native_path_policy();
+        scope.reserved_paths.push(PathReservation {
+            path: policy.workspace_dir.clone(),
+            exceptions: Vec::new(),
+            children_only: false,
+        });
+        let paths = [path.to_path_buf()];
+        let internal = crate::modules::security::gap::check_paths(
+            scope.clone(),
+            PathCheckKind::Internal,
+            &paths,
+        )
+        .await;
+        if !matches!(internal, Ok(answers) if answers == [false]) {
+            return false;
+        }
+        matches!(crate::modules::security::gap::check_paths(
+            scope, PathCheckKind::ResolvedWrite, &paths,
+        ).await, Ok(answers) if answers == [true])
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = (policy, path);
+        false
+    }
+}
+
 /// Scrubs credentials and PII out of an artifact body before it is stored,
 /// using the same `sanitize_text` pass that persists oversized tool results.
 ///

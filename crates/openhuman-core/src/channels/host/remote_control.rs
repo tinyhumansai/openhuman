@@ -67,7 +67,7 @@ pub(crate) async fn dispatch_callback(
             .map_err(|_| tinybus::Error::failed("conversation state unavailable"))?;
             Ok(Response::Completed)
         }
-        Request::ClearHistory { session_scope } => {
+        Request::ClearHistory { sender_key } => {
             if cancellation.is_cancelled() {
                 return Err(tinybus::Error::failed("channel session ended"));
             }
@@ -76,21 +76,22 @@ pub(crate) async fn dispatch_callback(
                     "remote reset has no captured ingress scope",
                 ));
             };
-            if session_scope != reset.scope
-                || session_scope.session_key.trim().is_empty()
-                || session_scope.conversation.id.trim().is_empty()
+            if sender_key != reset.history_key
+                || reset.scope.session_key.trim().is_empty()
+                || reset.scope.conversation.id.trim().is_empty()
             {
                 return Err(tinybus::Error::failed(
                     "remote reset scope does not match captured ingress",
                 ));
             }
-            let account = session_scope
+            let account = reset
+                .scope
                 .channel
                 .account_id
                 .as_deref()
                 .ok_or_else(|| tinybus::Error::failed("remote reset account is unavailable"))?;
             let configured = ctx.channels_by_name.get(account).is_some_and(|channel| {
-                tinychannels_bus::provider_id(channel.name()) == session_scope.channel.id
+                tinychannels_bus::provider_id(channel.name()) == reset.scope.channel.id
             });
             if !configured {
                 return Err(tinybus::Error::failed(

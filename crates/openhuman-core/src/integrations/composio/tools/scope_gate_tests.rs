@@ -183,9 +183,7 @@ async fn a_preference_still_in_the_legacy_file_gates_execution() {
     use crate::integrations::composio::module_client::module_guard;
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
     crate::integrations::composio::file_store::save(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
@@ -234,9 +232,7 @@ async fn an_unreadable_preference_denies_at_every_gate() {
     let _serialised = module_guard().await;
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-    config.config_path = tmp.path().join("config.toml");
+    let config = crate::integrations::composio::module_client::test_support::config_in(tmp.path());
 
     crate::integrations::composio::ops::save_user_scope_pref(
         &ctx,

@@ -4,7 +4,6 @@
 //! Otherwise an explicit environment override wins, followed by in-memory
 //! storage. Persistent hosts select an encrypted-file or native provider.
 
-#[cfg(feature = "secret-file")]
 mod adapter;
 pub mod backend;
 #[cfg(feature = "secret-file")]
