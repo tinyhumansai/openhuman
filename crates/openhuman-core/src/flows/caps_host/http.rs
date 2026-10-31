@@ -181,8 +181,16 @@ impl OpenHumanHttp {
             serde_json::to_value(&request).unwrap_or_default(),
         )
         .await;
-        if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
-            return Err(EngineError::Capability(reason));
+        match outcome {
+            crate::security::approval::GateOutcome::Deny { reason } => {
+                return Err(EngineError::Capability(reason));
+            }
+            crate::security::approval::GateOutcome::Steer { instructions } => {
+                return Err(EngineError::Capability(format!(
+                    "Steered by operator: {instructions}"
+                )));
+            }
+            crate::security::approval::GateOutcome::Allow => {}
         }
 
         // Resolve `http_cred:<name>` to a stored credential and inject its auth

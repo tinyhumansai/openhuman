@@ -10,13 +10,13 @@
  */
 import { ApprovalCardAdapter } from '../../features/conversations/aui/ApprovalCardAdapter';
 import { useT } from '../../lib/i18n/I18nContext';
-import { type ApprovalDecision, type PendingApproval } from '../../services/api/approvalApi';
+import { type ApprovalDecisionInput, type PendingApproval } from '../../services/api/approvalApi';
 
 interface Props {
   approval: PendingApproval;
   /** Whether THIS approval's decision RPC is currently in flight. */
   deciding: boolean;
-  onDecide: (decision: ApprovalDecision) => Promise<void>;
+  onDecide: (decision: ApprovalDecisionInput) => Promise<void>;
 }
 
 export function FlowRunPendingApprovalCard({ approval, deciding, onDecide }: Props) {

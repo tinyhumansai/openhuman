@@ -2983,6 +2983,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Sempre permitido',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Sempre permitido (fluxo)',
   'settings.approvalHistory.decision.deny': 'Negado',
+  'settings.approvalHistory.decision.steer': 'Redirecionado',
   'settings.theme.variantLight': 'Claro',
   'settings.theme.variantDark': 'Escuro',
   'settings.theme.variantAuto': 'Automático',

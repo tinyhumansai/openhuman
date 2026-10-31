@@ -70,6 +70,15 @@ pub(super) fn parameter_contracts() -> Vec<ControllerParamContract> {
             ],
         },
         ControllerParamContract {
+            method: "approval.steer",
+            required: &["request_id", "instructions"],
+            optional: &["agent_id"],
+            examples: vec![
+                json!({"request_id": "request-1", "instructions": "push to a branch instead"}),
+                json!({"request_id": " request-2 ", "instructions": " use the other card ", "agent_id": null}),
+            ],
+        },
+        ControllerParamContract {
             method: "approval.get_gate_state",
             required: &[],
             optional: &[],

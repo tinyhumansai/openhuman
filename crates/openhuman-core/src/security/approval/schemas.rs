@@ -22,6 +22,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_tool_trust"),
         schemas("revoke_tool_trust"),
         schemas("decide"),
+        schemas("steer"),
         schemas("get_gate_state"),
         schemas("preauthorize_flow"),
     ]
@@ -50,6 +51,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_decide,
         },
         RegisteredController {
+            schema: schemas("steer"),
+            handler: handle_steer,
+        },
+        RegisteredController {
             schema: schemas("get_gate_state"),
             handler: handle_get_gate_state,
         },
@@ -67,6 +72,7 @@ pub(crate) fn all_approval_controller_entries() -> Vec<ControllerEntry> {
         ControllerEntry::bound(list_tool_trust_controller()),
         ControllerEntry::bound(revoke_tool_trust_controller()),
         ControllerEntry::bound(decide_controller()),
+        ControllerEntry::bound(steer_controller()),
         ControllerEntry::bound(get_gate_state_controller()),
         ControllerEntry::bound(preauthorize_flow_controller()),
     ]
@@ -135,6 +141,40 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "revoked",
                 ty: TypeSchema::Bool,
                 comment: "Whether the grant was still present and has now been revoked.",
+                required: true,
+            }],
+        },
+        "steer" => ControllerSchema {
+            namespace: "approval",
+            function: "steer",
+            description:
+                "Refuse a pending tool call but redirect the agent with operator instructions \
+                 instead of running it.",
+            inputs: vec![
+                FieldSchema {
+                    name: "request_id",
+                    ty: TypeSchema::String,
+                    comment: "Identifier of the pending approval to steer.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "instructions",
+                    ty: TypeSchema::String,
+                    comment: "What the agent should do instead. Must not be empty.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "agent_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Steer as this embedded agent; refused when the request belongs to \
+                              another agent.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "steered",
+                ty: TypeSchema::Ref("PendingApproval"),
+                comment: "The pending row after steering was applied.",
                 required: true,
             }],
         },
@@ -359,6 +399,31 @@ fn run_decide(
     })
 }
 
+fn handle_steer(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    steer_controller().invoke(ctx, params)
+}
+
+fn steer_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(schemas("steer"), parse_steer, run_steer)
+}
+
+fn run_steer(
+    ctx: DispatchCtx,
+    (request_id, instructions, agent_id): (String, String, Option<String>),
+) -> ControllerFuture {
+    Box::pin(async move {
+        let outcome = approval_rpc::approval_steer(
+            &ctx,
+            request_id.trim(),
+            instructions.trim(),
+            agent_id.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        to_json(outcome)
+    })
+}
+
 fn handle_preauthorize_flow(_ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     preauthorize_flow_controller().invoke(_ctx, params)
 }
@@ -408,6 +473,15 @@ fn parse_decide(
 ) -> Result<(String, ApprovalDecision, Option<String>), String> {
     let request_id = read_required_string(&params, "request_id")?;
     let decision_str = read_required_string(&params, "decision")?;
+    // `ApprovalDecision::from_str` accepts "steer", but this endpoint carries no
+    // directive and a steer without one is refused downstream. Reject it here so
+    // the caller gets the right endpoint instead of a denial.
+    if decision_str.trim() == "steer" {
+        return Err(
+            "invalid 'decision': steer requires an operator instruction via approval.steer"
+                .to_string(),
+        );
+    }
     let decision = ApprovalDecision::from_str(decision_str.trim()).ok_or_else(|| {
         format!(
             "invalid 'decision': expected \
@@ -416,6 +490,16 @@ fn parse_decide(
     })?;
     let agent_id = read_optional_string(&params, "agent_id")?;
     Ok((request_id, decision, agent_id))
+}
+
+fn parse_steer(params: Map<String, Value>) -> Result<(String, String, Option<String>), String> {
+    let request_id = read_required_string(&params, "request_id")?;
+    let instructions = read_required_string(&params, "instructions")?;
+    if instructions.trim().is_empty() {
+        return Err("invalid 'instructions': must not be empty".to_string());
+    }
+    let agent_id = read_optional_string(&params, "agent_id")?;
+    Ok((request_id, instructions, agent_id))
 }
 
 fn parse_preauthorize_flow(params: Map<String, Value>) -> Result<(String, Vec<String>), String> {

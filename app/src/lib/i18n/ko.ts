@@ -2909,6 +2909,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': '항상 허용',
   'settings.approvalHistory.decision.approveAlwaysFlow': '항상 허용(플로우)',
   'settings.approvalHistory.decision.deny': '거부됨',
+  'settings.approvalHistory.decision.steer': '방향 전환됨',
   'settings.theme.variantLight': '밝게',
   'settings.theme.variantDark': '어둡게',
   'settings.theme.variantAuto': '자동',

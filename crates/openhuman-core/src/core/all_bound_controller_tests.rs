@@ -28,6 +28,7 @@ fn staged_bound_methods() -> Vec<&'static str> {
         "approval.list_tool_trust",
         "approval.revoke_tool_trust",
         "approval.decide",
+        "approval.steer",
         "approval.get_gate_state",
         "approval.preauthorize_flow",
     ]);

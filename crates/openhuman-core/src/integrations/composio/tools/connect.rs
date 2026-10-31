@@ -456,6 +456,16 @@ impl ComposioConnectTool {
                     "reason": reason,
                 }))?))
             }
+            crate::security::approval::GateOutcome::Steer { instructions } => {
+                tracing::info!(toolkit = %toolkit, instructions_len = instructions.len(), "[composio] connect.execute: steered");
+                Ok(ToolResult::success(serde_json::to_string(&json!({
+                    "toolkit": toolkit,
+                    "connected": false,
+                    "declined": true,
+                    "steered": true,
+                    "reason": format!("Steered by operator: {instructions}"),
+                }))?))
+            }
         }
     }
 }

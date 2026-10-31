@@ -336,7 +336,7 @@ Capability {
         domain: "security",
         category: CapabilityCategory::Settings,
         description: "Review a read-only audit trail of past tool-approval decisions \
-                      (Approve once / Always allow / Deny), newest first. Summaries are \
+                      (Approve once / Always allow / Deny / Steer), newest first. Summaries are \
                       scrubbed of chat content and arguments are shown as redacted shape only.",
         how_to: "Settings → Agent OS access → View approval history",
         status: CapabilityStatus::Stable,

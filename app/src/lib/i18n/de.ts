@@ -3025,6 +3025,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Immer erlaubt',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Immer erlaubt (Flow)',
   'settings.approvalHistory.decision.deny': 'Abgelehnt',
+  'settings.approvalHistory.decision.steer': 'Umgelenkt',
   'settings.theme.variantLight': 'Hell',
   'settings.theme.variantDark': 'Dunkel',
   'settings.theme.variantAuto': 'Automatisch',

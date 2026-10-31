@@ -2938,6 +2938,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'সর্বদা অনুমোদিত',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'সর্বদা অনুমোদিত (ফ্লো)',
   'settings.approvalHistory.decision.deny': 'অস্বীকার করেছে',
+  'settings.approvalHistory.decision.steer': 'পুনর্নির্দেশিত',
   'settings.theme.variantLight': 'হালকা',
   'settings.theme.variantDark': 'গাঢ়',
   'settings.theme.variantAuto': 'স্বয়ংক্রিয়',

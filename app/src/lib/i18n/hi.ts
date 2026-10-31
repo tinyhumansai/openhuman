@@ -2942,6 +2942,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'हमेशा अनुमति',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'हमेशा अनुमति (फ़्लो)',
   'settings.approvalHistory.decision.deny': 'इनकार किया',
+  'settings.approvalHistory.decision.steer': 'पुनर्निर्देशित',
   'settings.theme.variantLight': 'हल्का',
   'settings.theme.variantDark': 'गहरा',
   'settings.theme.variantAuto': 'स्वचालित',

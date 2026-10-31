@@ -160,6 +160,28 @@ impl ApprovalGate {
         request_id: &str,
         decision: ApprovalDecision,
     ) -> anyhow::Result<Option<PendingApproval>> {
+        self.decide_with_directive(request_id, decision, None)
+    }
+
+    /// [`Self::decide`] carrying the host-only payload a
+    /// [`ApprovalDecision::Steer`] needs.
+    ///
+    /// Every decision — steer included — goes through this one body so the
+    /// closed-scope guard, the `forced` guard, the engine call, the waiter
+    /// resolution and the [`DomainEvent::ApprovalDecided`] event are never
+    /// duplicated per decision kind. `directive` is only meaningful for a
+    /// steer: it reaches the parked call through [`Resolution`] and is not
+    /// persisted, published or logged.
+    ///
+    /// A `forced` request still accepts only a one-time approval or a denial,
+    /// so it cannot be steered — redirecting a call that was escalated
+    /// *because* it needs an explicit yes or no would weaken that posture.
+    pub fn decide_with_directive(
+        &self,
+        request_id: &str,
+        decision: ApprovalDecision,
+        directive: Option<String>,
+    ) -> anyhow::Result<Option<PendingApproval>> {
         let Some(route) = self.parked.request_routes.lock().get(request_id).cloned() else {
             return Ok(None);
         };
@@ -200,7 +222,10 @@ impl ApprovalGate {
         // RPC handler after this call has been released. The module records the
         // whole-tool grant under the parked request's exact subject.
         if let Some(tx) = self.parked.take_waiter(request_id) {
-            let _ = tx.send(decision);
+            let _ = tx.send(Resolution {
+                decision,
+                directive,
+            });
         }
         // Routing (thread/client/tool_call_id) was recorded at park time —
         // see `Surface::deliver` — so a decision made after the in-memory
@@ -231,6 +256,17 @@ impl ApprovalGate {
         request_id: &str,
         decision: ApprovalDecision,
     ) -> anyhow::Result<Option<PendingApproval>> {
+        self.decide_for_agent_with_directive(agent, request_id, decision, None)
+    }
+
+    /// [`Self::decide_for_agent`] carrying a steer's directive.
+    pub fn decide_for_agent_with_directive(
+        &self,
+        agent: &str,
+        request_id: &str,
+        decision: ApprovalDecision,
+        directive: Option<String>,
+    ) -> anyhow::Result<Option<PendingApproval>> {
         let owner = self
             .parked
             .request_routes
@@ -251,7 +287,7 @@ impl ApprovalGate {
                 .into());
             }
         }
-        self.decide(request_id, decision)
+        self.decide_with_directive(request_id, decision, directive)
     }
 
     /// Deny every undecided request `agent` parked, resolving its waiters.
@@ -291,7 +327,7 @@ impl ApprovalGate {
             }
             denied += 1;
             if let Some(tx) = self.parked.take_waiter(&request_id) {
-                let _ = tx.send(ApprovalDecision::Deny);
+                let _ = tx.send(Resolution::plain(ApprovalDecision::Deny));
             }
             if let Some(thread_key) = route.thread_key.as_deref() {
                 self.parked

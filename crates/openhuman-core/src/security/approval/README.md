@@ -20,6 +20,26 @@ pending request once after an audited decision; it cannot create a reusable
 grant or override a hard denial. OpenHuman's current TinySecurity config leaves
 Jev scoring disabled.
 
+**Steering** (`approval.steer`) is a third answer beside approve and deny: the
+operator refuses *this* call and hands the agent a directive to follow instead.
+It is host-only by construction. To TinySecurity a steer is a denial — the tool
+never runs, so the module records `Denied` and the call is released, never
+reserved; reserving is irreversible and would consume an approval for something
+that will not execute. The contract needs nothing new for it
+(`ApprovalChoice2` is `Once | Tool | Flow | Deny`), and the host keeps the
+distinction in its own decision label and in `ApprovalDecided`.
+
+The directive never leaves the host: it is not persisted on the pending row,
+not published on the bus, and never logged — only its length is. It reaches the
+parked call through `Resolution`, which crosses an in-process `oneshot` only.
+`ApprovalDecision::Steer` is deliberately fieldless so the enum stays `Copy`
+and keeps serializing as a plain `"steer"`.
+
+A `forced` request still accepts only a one-time approval or a denial, so it
+cannot be steered: it was escalated precisely because it needs an explicit yes
+or no. `approval.decide` rejects `"steer"` as well — a steer without a
+directive has nothing to redirect to, so it must come through `approval.steer`.
+
 The `approval.*` RPC names and approval event names remain host wire contracts.
 The host may change how it stores callback documents or presents a prompt, but
 must not bypass TinySecurity's decision or durable-state checks.

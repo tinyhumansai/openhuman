@@ -22,7 +22,7 @@ import debug from 'debug';
 import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { type ApprovalDecision, decideApproval } from '../../services/api/approvalApi';
+import { type ApprovalDecisionInput, decideApproval } from '../../services/api/approvalApi';
 import { useAppDispatch } from '../../store/hooks';
 import {
   clearNotificationActions,
@@ -69,13 +69,13 @@ interface Props {
 const GateApprovalCard = ({ notification: n }: Props) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
-  const [deciding, setDeciding] = useState<ApprovalDecision | null>(null);
+  const [deciding, setDeciding] = useState<ApprovalDecisionInput | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const payload = n.actions?.[0]?.payload;
   const parsed = isGateApprovalPayload(payload) ? payload : null;
 
-  const handleDecide = async (decision: ApprovalDecision) => {
+  const handleDecide = async (decision: ApprovalDecisionInput) => {
     if (deciding) return;
     if (!parsed) {
       // Defensive — the core always stamps this shape, but never crash the

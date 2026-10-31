@@ -27,14 +27,14 @@ import { useState } from 'react';
 
 import { ApprovalCard } from '../../../components/assistant-ui/elements/approval-card';
 import { useT } from '../../../lib/i18n/I18nContext';
-import type { ApprovalDecision } from '../../../services/api/approvalApi';
+import type { ApprovalDecisionInput } from '../../../services/api/approvalApi';
 import { formatCountdown, useApprovalExpirySeconds } from './approvalCountdown';
 
 const log = debug('openhuman:aui:approval-card-adapter');
 
 /**
  * `D` is the decision vocabulary sent to `onDecide` — the real
- * `openhuman.approval_decide` RPC's {@link ApprovalDecision} for every
+ * `openhuman.approval_decide` RPC's {@link ApprovalDecisionInput} for every
  * approval-gate call site (the default), or a different RPC's own decision
  * union for a call site whose "deny / always-allow / allow-once" SHAPE fits
  * this card even though its wire vocabulary doesn't (e.g. `PlanReviewPart`'s
@@ -43,7 +43,7 @@ const log = debug('openhuman:aui:approval-card-adapter');
  * whatever the caller passes as `alwaysDecision`/the fixed once/deny calls
  * below to `onDecide` — so a second vocabulary costs the caller nothing.
  */
-export interface ApprovalCardAdapterProps<D = ApprovalDecision> {
+export interface ApprovalCardAdapterProps<D = ApprovalDecisionInput> {
   ariaLabel: string;
   title: string;
   subtitle: string;
@@ -89,7 +89,7 @@ export interface ApprovalCardAdapterProps<D = ApprovalDecision> {
   busy?: boolean;
 }
 
-export function ApprovalCardAdapter<D = ApprovalDecision>({
+export function ApprovalCardAdapter<D = ApprovalDecisionInput>({
   ariaLabel,
   title,
   subtitle,

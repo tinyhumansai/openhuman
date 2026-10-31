@@ -229,6 +229,8 @@ mod forced_tests;
 mod gate_origin_class_tests;
 #[path = "gate_origin_intercept_tests.rs"]
 mod origin_intercept_tests;
+#[path = "gate_steer_tests.rs"]
+mod steer_tests;
 #[path = "gate_subagent_tests.rs"]
 mod subagent_tests;
 #[path = "gate_tenant_tests.rs"]

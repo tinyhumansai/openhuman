@@ -1,5 +1,5 @@
 impl Parked {
-    fn take_waiter(&self, request_id: &str) -> Option<oneshot::Sender<ApprovalDecision>> {
+    fn take_waiter(&self, request_id: &str) -> Option<oneshot::Sender<Resolution>> {
         self.waiters.lock().remove(request_id)
     }
 

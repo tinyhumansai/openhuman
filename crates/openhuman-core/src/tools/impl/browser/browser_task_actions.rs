@@ -78,6 +78,20 @@ pub(super) fn task_inputs(args: &Value) -> anyhow::Result<BTreeMap<String, Strin
     )
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TaskApprovalOutcome {
+    Approved,
+    Denied { reason: String },
+    Steered { instructions: String },
+}
+
+impl TaskApprovalOutcome {
+    #[allow(dead_code)]
+    pub(super) fn is_approved(&self) -> bool {
+        matches!(self, Self::Approved)
+    }
+}
+
 /// Ask the host approval gate about a paused task's exact action. A missing
 /// gate denies: a task never takes an irreversible step unapproved, unless a
 /// trusted unattended turn has `task_step` in `[browser] unattended_actions`.
@@ -85,7 +99,7 @@ pub(super) async fn approve_task_action(
     pending: &Pending,
     browser: &crate::config::BrowserConfig,
     origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<TaskApprovalOutcome> {
     let clean = |raw: &str| {
         let cleaned = raw.chars().filter(|c| !c.is_control()).collect::<String>();
         let mut short = cleaned.chars().take(160).collect::<String>();
@@ -99,7 +113,7 @@ pub(super) async fn approve_task_action(
     }))?);
     let digest_hex = format!("{digest:x}");
     if super::unattended::allow(origin, browser, "task_step", &digest_hex) {
-        return Ok(true);
+        return Ok(TaskApprovalOutcome::Approved);
     }
     let gate = ApprovalGate::try_global().ok_or_else(|| {
         anyhow::anyhow!("[policy-denied] Browser action needs an interactive host approval gate")
@@ -113,10 +127,17 @@ pub(super) async fn approve_task_action(
     let args = json!({"action": "task_step", "target": summary, "exact_action_sha256": digest_hex});
     Ok(
         match gate.intercept_forced("browser", &summary, args).await {
-            GateOutcome::Allow => true,
+            GateOutcome::Allow => TaskApprovalOutcome::Approved,
             GateOutcome::Deny { reason } => {
                 tracing::debug!(%reason, "[browser] task action denied by host");
-                false
+                TaskApprovalOutcome::Denied { reason }
+            }
+            GateOutcome::Steer { instructions } => {
+                tracing::debug!(
+                    instructions_len = instructions.len(),
+                    "[browser] task action steered by host"
+                );
+                TaskApprovalOutcome::Steered { instructions }
             }
         },
     )

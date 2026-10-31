@@ -2996,6 +2996,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Siempre permitido',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Siempre permitido (flujo)',
   'settings.approvalHistory.decision.deny': 'Denegado',
+  'settings.approvalHistory.decision.steer': 'Redirigido',
   'settings.theme.variantLight': 'Claro',
   'settings.theme.variantDark': 'Oscuro',
   'settings.theme.variantAuto': 'Automático',

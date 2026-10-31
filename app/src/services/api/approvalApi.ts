@@ -24,7 +24,11 @@ export type ApprovalDecision =
   | 'approve_once'
   | 'approve_always_for_tool'
   | 'approve_always_for_flow'
-  | 'deny';
+  | 'deny'
+  | 'steer';
+
+/** Decisions accepted by `openhuman.approval_decide`. `steer` uses `approval_steer`. */
+export type ApprovalDecisionInput = Exclude<ApprovalDecision, 'steer'>;
 
 /**
  * Origin hint attached to a pending approval that was raised from inside a
@@ -148,11 +152,30 @@ export const revokeToolTrust = async (requestId: string): Promise<boolean> => {
  */
 export const decideApproval = async (
   requestId: string,
-  decision: ApprovalDecision
+  decision: ApprovalDecisionInput
 ): Promise<void> => {
   await callCoreRpc({
     method: 'openhuman.approval_decide',
     params: { request_id: requestId, decision },
+  });
+};
+
+/**
+ * Record a steering directive on a pending approval, redirecting the agent
+ * with operator instructions instead of denying or aborting.
+ */
+export const steerApproval = async (
+  requestId: string,
+  instructions: string,
+  agentId?: string
+): Promise<void> => {
+  await callCoreRpc({
+    method: 'openhuman.approval_steer',
+    params: {
+      request_id: requestId,
+      instructions,
+      ...(agentId ? { agent_id: agentId } : {}),
+    },
   });
 };
 

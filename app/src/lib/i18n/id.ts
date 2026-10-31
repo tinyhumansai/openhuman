@@ -2967,6 +2967,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Selalu diizinkan',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Selalu diizinkan (alur)',
   'settings.approvalHistory.decision.deny': 'Ditolak',
+  'settings.approvalHistory.decision.steer': 'Diarahkan',
   'settings.theme.variantLight': 'Terang',
   'settings.theme.variantDark': 'Gelap',
   'settings.theme.variantAuto': 'Otomatis',

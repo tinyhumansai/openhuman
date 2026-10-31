@@ -13,7 +13,7 @@ import { toast } from '../components/ui/Toast';
 import { useOpenHumanQueueAdapter } from '../features/conversations/aui/queueAdapter';
 import { mapDisplayItems } from '../features/conversations/derived/mapDisplayItems';
 import { useT } from '../lib/i18n/I18nContext';
-import { type ApprovalDecision, decideApproval } from '../services/api/approvalApi';
+import { type ApprovalDecisionInput, decideApproval } from '../services/api/approvalApi';
 import { threadApi } from '../services/api/threadApi';
 import { editMessage, regenerateMessage } from '../services/chatService';
 import {
@@ -818,7 +818,7 @@ export function useOpenHumanExternalStore(
    */
   const onRespondToToolApproval = useCallback(
     async ({ approvalId, approved, optionId }: RespondToToolApprovalOptions) => {
-      const decision = (optionId ?? (approved ? 'approve_once' : 'deny')) as ApprovalDecision;
+      const decision = (optionId ?? (approved ? 'approve_once' : 'deny')) as ApprovalDecisionInput;
       await decideApproval(approvalId, decision);
       // Resolve optimistically, exactly as `ApprovalRequestCard` does — the
       // turn-end handlers in `ChatRuntimeProvider` clear it again if the turn

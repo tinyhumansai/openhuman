@@ -186,6 +186,24 @@ impl ConsequenceReviewHost {
                 allow: false,
                 reason: Some(reason),
             }),
+            // A steer refuses the consequence like a denial, but tells the
+            // module's decision model what to do instead of just "no".
+            crate::security::approval::GateOutcome::Steer { instructions } => {
+                // `request.action`/`task` were moved into `args` above; `kind`
+                // is a `&'static str`. The gate already logged the summary
+                // under this call's request id.
+                tracing::info!(
+                    kind = kind,
+                    instructions_len = instructions.len(),
+                    "[browser-egress] consequence review steered by operator"
+                );
+                Ok(ReviewActionResponse {
+                    allow: false,
+                    reason: Some(crate::security::approval::GateOutcome::steer_message(
+                        &instructions,
+                    )),
+                })
+            }
         }
     }
 }

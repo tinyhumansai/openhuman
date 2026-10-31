@@ -134,6 +134,16 @@ impl ApprovalSecurityMiddleware {
         match outcome {
             GateOutcome::Deny { reason } => ApprovalResolution::Deny { reason },
             GateOutcome::Allow => ApprovalResolution::Allow { ticket: request_id },
+            GateOutcome::Steer { instructions } => {
+                tracing::info!(
+                    tool = %call.name,
+                    instructions_len = instructions.len(),
+                    "[tinyagents::mw] approval gate steered tool call by operator"
+                );
+                ApprovalResolution::Deny {
+                    reason: GateOutcome::steer_message(&instructions),
+                }
+            }
         }
     }
 
@@ -222,6 +232,16 @@ impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
             )
             .await;
         match outcome {
+            GateOutcome::Steer { instructions } => {
+                tracing::info!(
+                    tool = %call.name,
+                    instructions_len = instructions.len(),
+                    "[tinyagents::mw] approval gate steered tool call by operator"
+                );
+                ApprovalResolution::Deny {
+                    reason: GateOutcome::steer_message(&instructions),
+                }
+            }
             GateOutcome::Deny { reason } => {
                 tracing::warn!(
                     tool = %call.name,

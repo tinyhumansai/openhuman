@@ -49,7 +49,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import {
-  type ApprovalDecision,
+  type ApprovalDecisionInput,
   decideApproval,
   type PendingApproval,
 } from '../services/api/approvalApi';
@@ -75,7 +75,7 @@ export interface UseUnroutedApprovalsResult {
   decidingId: string | null;
   /** Set when the last decide failed; cleared on the next attempt. */
   error: string | null;
-  decide: (requestId: string, decision: ApprovalDecision) => Promise<void>;
+  decide: (requestId: string, decision: ApprovalDecisionInput) => Promise<void>;
 }
 
 export function useUnroutedApprovals(enabled = true): UseUnroutedApprovalsResult {
@@ -111,7 +111,7 @@ export function useUnroutedApprovals(enabled = true): UseUnroutedApprovalsResult
   );
 
   const mountedRef = useRef(true);
-  const decide = useCallback(async (requestId: string, decision: ApprovalDecision) => {
+  const decide = useCallback(async (requestId: string, decision: ApprovalDecisionInput) => {
     setDecidingId(requestId);
     setError(null);
     try {

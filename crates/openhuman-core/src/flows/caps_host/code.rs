@@ -89,8 +89,16 @@ impl OpenHumanCode {
             action,
         )
         .await;
-        if let crate::security::approval::GateOutcome::Deny { reason } = gate_outcome {
-            return Err(EngineError::Capability(reason));
+        match gate_outcome {
+            crate::security::approval::GateOutcome::Deny { reason } => {
+                return Err(EngineError::Capability(reason));
+            }
+            crate::security::approval::GateOutcome::Steer { instructions } => {
+                return Err(EngineError::Capability(format!(
+                    "Steered by operator: {instructions}"
+                )));
+            }
+            crate::security::approval::GateOutcome::Allow => {}
         }
 
         let dispatch = self.ctx.clone();

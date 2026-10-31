@@ -76,6 +76,9 @@ impl flow_backend::FlowPolicyHooks for NativeFlowPolicyHooks<'_, '_> {
         match outcome {
             crate::security::approval::GateOutcome::Deny { reason } => Err(reason),
             crate::security::approval::GateOutcome::Allow => Ok(audit_id),
+            crate::security::approval::GateOutcome::Steer { instructions } => {
+                Err(format!("Steered by operator: {instructions}"))
+            }
         }
     }
 

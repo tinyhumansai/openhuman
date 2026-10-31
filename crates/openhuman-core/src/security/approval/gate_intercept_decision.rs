@@ -15,7 +15,7 @@ impl ApprovalGate {
         request_id: &str,
         tool_name: &str,
         wait: Duration,
-        rx: oneshot::Receiver<ApprovalDecision>,
+        rx: oneshot::Receiver<Resolution>,
         park_bound_active: bool,
         park_bound_elapsed: &mut bool,
         effective_ttl: Duration,
@@ -23,7 +23,10 @@ impl ApprovalGate {
         track: bool,
     ) -> (GateOutcome, Option<String>) {
         match tokio::time::timeout(wait, rx).await {
-            Ok(Ok(decision)) => {
+            Ok(Ok(Resolution {
+                decision,
+                directive,
+            })) => {
                 tracing::info!(
                     request_id = %request_id,
                     tool = tool_name,
@@ -40,6 +43,42 @@ impl ApprovalGate {
                     } else {
                         self.reserved(request_id.to_string(), tool_name, scope, track)
                             .await
+                    }
+                } else if decision == ApprovalDecision::Steer {
+                    // A steer refuses *this* call, so it takes the denial path:
+                    // release, never `reserved(..)`. Reserving would consume an
+                    // approval for a call that is not going to run.
+                    self.engine.release(request_id);
+                    // A directive is required to steer; the RPC rejects an empty
+                    // one. Fail closed if one still arrives without it rather
+                    // than hand the agent an empty instruction.
+                    match directive.filter(|text| !text.trim().is_empty()) {
+                        Some(instructions) => {
+                            // Length only — the directive is operator content and
+                            // is never logged (see `security::scrub`).
+                            tracing::info!(
+                                request_id = %request_id,
+                                tool = tool_name,
+                                instructions_len = instructions.len(),
+                                "[approval::gate] steer directive received from operator"
+                            );
+                            (GateOutcome::Steer { instructions }, None)
+                        }
+                        None => {
+                            tracing::warn!(
+                                request_id = %request_id,
+                                tool = tool_name,
+                                "[approval::gate] steer arrived without a directive — denying"
+                            );
+                            (
+                                GateOutcome::Deny {
+                                    reason: format!(
+                                        "{POLICY_DENIED_MARKER} User redirected '{tool_name}' but                                          supplied no instructions."
+                                    ),
+                                },
+                                None,
+                            )
+                        }
                     }
                 } else {
                     // Nothing will reserve or record a denied request.

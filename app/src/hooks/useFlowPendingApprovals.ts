@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  type ApprovalDecision,
+  type ApprovalDecisionInput,
   decideApproval,
   type PendingApproval,
 } from '../services/api/approvalApi';
@@ -44,7 +44,7 @@ interface UseFlowPendingApprovalsResult {
   /** Set when the last poll or decide call failed; cleared on the next success. */
   error: string | null;
   /** Record a decision for one of `approvals`. Throws on failure (caller may ignore). */
-  decide: (requestId: string, decision: ApprovalDecision) => Promise<void>;
+  decide: (requestId: string, decision: ApprovalDecisionInput) => Promise<void>;
 }
 
 /**
@@ -75,7 +75,7 @@ export function useFlowPendingApprovals(
 
   useEffect(() => setDecisionError(null), [flowId, runId]);
 
-  const decide = useCallback(async (requestId: string, decision: ApprovalDecision) => {
+  const decide = useCallback(async (requestId: string, decision: ApprovalDecisionInput) => {
     setDecidingId(requestId);
     setDecisionError(null);
     try {

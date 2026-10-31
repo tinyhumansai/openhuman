@@ -199,6 +199,19 @@ pub enum ApprovalDecision {
     ApproveAlwaysForFlow,
     /// Reject the call. The agent receives a structured error string.
     Deny,
+    /// Refuse *this* call but redirect the agent: the operator supplies a
+    /// directive the agent sees in place of the tool result.
+    ///
+    /// To the engine — and so to TinySecurity's durable lifecycle and audit
+    /// trail — a steer is a denial: nothing executes, so the module records
+    /// `Denied` and the host keeps the distinction in its own decision label.
+    /// The directive itself never leaves the host and is never logged.
+    ///
+    /// Deliberately fieldless. The directive travels beside the decision (see
+    /// [`Resolution`]) rather than inside it, so this enum stays `Copy` and
+    /// keeps serializing as a plain `"steer"` string in persisted rows and on
+    /// the wire.
+    Steer,
 }
 
 impl ApprovalDecision {
@@ -208,6 +221,7 @@ impl ApprovalDecision {
             Self::ApproveAlwaysForTool => "approve_always_for_tool",
             Self::ApproveAlwaysForFlow => "approve_always_for_flow",
             Self::Deny => "deny",
+            Self::Steer => "steer",
         }
     }
 
@@ -218,6 +232,7 @@ impl ApprovalDecision {
             "approve_always_for_tool" => Some(Self::ApproveAlwaysForTool),
             "approve_always_for_flow" => Some(Self::ApproveAlwaysForFlow),
             "deny" => Some(Self::Deny),
+            "steer" => Some(Self::Steer),
             _ => None,
         }
     }
@@ -238,6 +253,56 @@ pub enum GateOutcome {
     /// Abort the call. The agent sees `reason` in place of a tool
     /// result.
     Deny { reason: String },
+    /// Abort the call and hand the agent the operator's `instructions`
+    /// instead of a tool result. Like [`Self::Deny`] the tool never runs, so
+    /// the call reserves nothing.
+    Steer { instructions: String },
+}
+
+impl GateOutcome {
+    pub fn is_steer(&self) -> bool {
+        matches!(self, Self::Steer { .. })
+    }
+
+    /// How a steered tool call is reported to the model.
+    ///
+    /// The single home for this wording: a steer replaces the tool result, so
+    /// the model has to be told both that the call did not run and what to do
+    /// instead — otherwise it retries the same call and parks again.
+    ///
+    /// A browser *task* step that was steered mid-run words it differently
+    /// (`tools/impl/browser/browser.rs`): the task itself kept going, so
+    /// "do not re-execute the original call" would not apply there.
+    pub fn steer_message(instructions: &str) -> String {
+        format!(
+            "[SYSTEM: Tool execution paused by operator. New directive from operator: \
+             {instructions}. Do not re-execute the original tool call with the previous \
+             parameters. Update your plan and proceed according to the operator's instructions.]"
+        )
+    }
+}
+
+/// What a human's answer resolves a parked call with.
+///
+/// The decision is the part the engine, the persisted row and the product
+/// event all speak; `directive` is the host-only payload a
+/// [`ApprovalDecision::Steer`] carries. In-process only — this crosses the
+/// parked `oneshot`, never a transport — which is why widening it costs
+/// nothing on the wire.
+#[derive(Debug)]
+pub struct Resolution {
+    pub decision: ApprovalDecision,
+    pub directive: Option<String>,
+}
+
+impl Resolution {
+    /// A plain decision with no directive.
+    pub fn plain(decision: ApprovalDecision) -> Self {
+        Self {
+            decision,
+            directive: None,
+        }
+    }
 }
 
 /// Terminal status of a tool action that the gate previously allowed.

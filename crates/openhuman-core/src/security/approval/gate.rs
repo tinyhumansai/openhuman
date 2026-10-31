@@ -16,7 +16,9 @@
 //! 4. UI calls `approval_decide` (RPC) which routes through
 //!    [`ApprovalGate::decide`] → sends the decision on the oneshot.
 //! 5. The parked future wakes with the decision and translates it
-//!    into [`GateOutcome::Allow`] / `Deny`.
+//!    into [`GateOutcome::Allow`] / `Deny` / `Steer`. A steer refuses the
+//!    call like a denial — nothing is reserved and nothing runs — and hands
+//!    the agent the operator's directive instead of a tool result.
 //!
 //! Sessions: the gate is keyed by an internal per-launch UUID
 //! (`session-<uuid>`) used purely for audit grouping. This value is
@@ -50,6 +52,7 @@ use super::engine::{
 };
 use super::types::{
     ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, GateOutcome, PendingApproval,
+    Resolution,
 };
 
 /// Disambiguates why [`ApprovalGate::decide`] returned `Ok(None)`. See
@@ -137,7 +140,7 @@ pub struct ApprovalChatContext {
 /// Per-run flow context (flow-approval-surface, PR2 of the tinyflows
 /// approval-surfacing design). `flows::ops::flows_run` / `flows_resume`
 /// hand it to the engine's capabilities, alongside the existing
-/// `Workflow` [`AgentTurnOrigin`](crate::security::turn_origin::AgentTurnOrigin),
+/// `Workflow` [`AgentTurnOrigin`](crate::core::runtime::turn_origin::AgentTurnOrigin),
 /// so a tool call parked from that run can correlate
 /// [`PendingApproval::source_context`](super::types::PendingApproval) back to
 /// the exact flow + run (the origin alone only carries `flow_id`, not
@@ -299,7 +302,7 @@ pub(crate) struct RequestRoute {
 /// surface the engine calls while it makes a request durable.
 #[derive(Default)]
 pub(crate) struct Parked {
-    waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>,
+    waiters: Mutex<HashMap<String, oneshot::Sender<Resolution>>>,
     /// [`thread_route_key`] → request_id for the approval currently parked on
     /// that chat thread, so the web channel can route a yes/no reply to
     /// `approval_decide`.
@@ -352,7 +355,7 @@ struct ParkContext {
 struct Surface {
     parked: Arc<Parked>,
     context: ParkContext,
-    waiter: Mutex<Option<oneshot::Sender<ApprovalDecision>>>,
+    waiter: Mutex<Option<oneshot::Sender<Resolution>>>,
     /// The request the engine delivered for this call, once it did.
     delivered: Mutex<Option<String>>,
 }

@@ -158,6 +158,20 @@ pub async fn apply_decision(
                         );
                         return Ok(());
                     }
+                    crate::security::approval::GateOutcome::Steer { instructions } => {
+                        tracing::warn!(
+                            action = %action_str,
+                            target_agent = %target,
+                            external_id = %envelope.external_id,
+                            instructions_len = instructions.len(),
+                            "[triage::escalation] approval gate steered dispatch"
+                        );
+                        events::publish_failed(
+                            envelope,
+                            &format!("approval steered for `{target}`"),
+                        );
+                        return Ok(());
+                    }
                 }
             }
 

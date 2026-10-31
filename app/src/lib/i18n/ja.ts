@@ -3477,6 +3477,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': '常に許可',
   'settings.approvalHistory.decision.approveAlwaysFlow': '常に許可（フロー）',
   'settings.approvalHistory.decision.deny': '拒否',
+  'settings.approvalHistory.decision.steer': 'ステアリング済み',
   'settings.approvalHistory.column.time': '時刻',
   'settings.approvalHistory.column.tool': 'ツール / アクション',
   'settings.approvalHistory.column.decision': '決定',

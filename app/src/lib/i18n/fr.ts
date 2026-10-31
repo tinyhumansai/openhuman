@@ -3007,6 +3007,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Toujours autorisé',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Toujours autorisé (flux)',
   'settings.approvalHistory.decision.deny': 'Refusé',
+  'settings.approvalHistory.decision.steer': 'Redirigé',
   'settings.theme.variantLight': 'Clair',
   'settings.theme.variantDark': 'Sombre',
   'settings.theme.variantAuto': 'Automatique',

@@ -311,7 +311,7 @@ impl ApprovalGate {
         let scope = turn_ctx
             .host_overrides()
             .and_then(|overrides| overrides.approval_scope());
-        let (waiter, decision) = oneshot::channel::<ApprovalDecision>();
+        let (waiter, decision) = oneshot::channel::<Resolution>();
         let surface = Arc::new(Surface {
             parked: Arc::clone(&self.parked),
             context: ParkContext {

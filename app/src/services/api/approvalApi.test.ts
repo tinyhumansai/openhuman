@@ -8,6 +8,7 @@ import {
   fetchToolTrust,
   preauthorizeFlow,
   revokeToolTrust,
+  steerApproval,
   unwrapRows,
 } from './approvalApi';
 
@@ -174,6 +175,17 @@ describe('whole-tool grants', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.approval_revoke_tool_trust',
       params: { request_id: 'grant-1' },
+describe('steerApproval', () => {
+  beforeEach(() => mockCallCoreRpc.mockReset());
+
+  it('calls openhuman.approval_steer with request id and instructions', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({});
+
+    await steerApproval('req-1', 'use different branch', 'agent-a');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.approval_steer',
+      params: { request_id: 'req-1', instructions: 'use different branch', agent_id: 'agent-a' },
     });
   });
 });

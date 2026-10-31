@@ -3459,6 +3459,7 @@ const en: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Always allowed',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Always allowed (flow)',
   'settings.approvalHistory.decision.deny': 'Denied',
+  'settings.approvalHistory.decision.steer': 'Steered',
   'settings.approvalHistory.column.time': 'Time',
   'settings.approvalHistory.column.tool': 'Tool / action',
   'settings.approvalHistory.column.decision': 'Decision',

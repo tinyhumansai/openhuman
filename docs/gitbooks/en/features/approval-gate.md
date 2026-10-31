@@ -158,15 +158,16 @@ An external channel turn parks because remote input is untrusted. The row is wri
 - `OPENHUMAN_APPROVAL_GATE` set to `0` or `false` skips installing the gate even with the policy on. With no gate, Prompt-class calls run unprompted.
 - `[autonomy].level` and `[autonomy].auto_approve` set the tier and the allowlist. Change them with the `config.update_autonomy_settings` RPC or in the settings panels.
 
-The `approval` controller exposes three JSON-RPC methods:
+The `approval` controller exposes four JSON-RPC methods:
 
 | Method                                     | Purpose                                                                                                      |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
 | `openhuman.approval_list_pending`          | The live queue of parked requests.                                                                           |
 | `openhuman.approval_list_recent_decisions` | Decided and executed audit rows (`limit` 1 to 500, default 50), shown in **Settings > Approval history**.    |
 | `openhuman.approval_decide`                | Applies a decision (`approve_once`, `approve_always_for_tool` or `deny`).                                    |
+| `openhuman.approval_steer`                 | In-flight steering: redirects a parked turn with operator instructions without dropping execution context.   |
 
-The two list methods return an empty list, not an error, when no gate is installed. `decide` returns an error when the gate is absent or the request is unknown or already decided.
+The two list methods return an empty list, not an error, when no gate is installed. `decide` and `steer` return an error when the gate is absent or the request is unknown or already decided.
 
 ## See also
 

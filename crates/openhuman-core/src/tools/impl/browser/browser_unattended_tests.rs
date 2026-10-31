@@ -1,6 +1,10 @@
 use super::super::pending::Pending;
 use super::super::session_pool::{browser_session_fingerprint, thread_sessions, ThreadSession};
-use super::super::{approve_browser_action, task_actions::approve_task_action, BrowserTool};
+use super::super::{
+    approve_browser_action,
+    task_actions::{approve_task_action, TaskApprovalOutcome},
+    BrowserTool,
+};
 use super::*;
 use crate::core::runtime::{CoreContext, DomainSet};
 use crate::modules::browser::BrowserClient;
@@ -127,7 +131,7 @@ fn pending() -> Pending {
 async fn a_listed_task_step_is_approved_for_cron_without_a_gate() {
     let _serial = ALLOW_PATH.lock().await;
     let approved = approve_task_action(&pending(), &listing(&["task_step"]), Some(&cron())).await;
-    assert!(approved.unwrap());
+    assert_eq!(approved.unwrap(), TaskApprovalOutcome::Approved);
 }
 
 #[tokio::test]
@@ -135,11 +139,15 @@ async fn an_unlisted_or_untrusted_task_step_still_needs_the_gate() {
     // With no interactive gate this errors; with one, the forced gate denies a
     // non-WebChat turn. Either way the step is not approved.
     let unlisted = approve_task_action(&pending(), &listing(&["click"]), Some(&cron())).await;
-    assert!(!matches!(unlisted, Ok(true)));
+    assert_ne!(unlisted.ok(), Some(TaskApprovalOutcome::Approved));
     for origin in [external_channel(), approval_workflow()] {
         let outcome =
             approve_task_action(&pending(), &listing(&["task_step"]), Some(&origin)).await;
-        assert!(!matches!(outcome, Ok(true)), "{origin:?}");
+        assert_ne!(
+            outcome.ok(),
+            Some(TaskApprovalOutcome::Approved),
+            "{origin:?}"
+        );
     }
 }
 

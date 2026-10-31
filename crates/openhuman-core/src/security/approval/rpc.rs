@@ -241,6 +241,50 @@ pub async fn approval_decide(
     decision: ApprovalDecision,
     agent_id: Option<&str>,
 ) -> anyhow::Result<Outcome<PendingApproval>> {
+    decide_with_directive(ctx, request_id, decision, None, agent_id).await
+}
+
+/// Refuse a pending call but redirect the agent with `instructions`.
+///
+/// The tool does not run, so this takes the same path as a denial: the engine
+/// records the refusal and nothing is reserved. `instructions` is host-only —
+/// it resolves the parked call and is never persisted, published on the bus or
+/// logged (only its length is).
+pub async fn approval_steer(
+    ctx: &DispatchCtx,
+    request_id: &str,
+    instructions: &str,
+    agent_id: Option<&str>,
+) -> anyhow::Result<Outcome<PendingApproval>> {
+    tracing::debug!(
+        request_id = request_id,
+        instructions_len = instructions.len(),
+        agent_id = agent_id.unwrap_or("<any>"),
+        "[rpc:approval_steer] entry"
+    );
+    if instructions.trim().is_empty() {
+        anyhow::bail!("steer instructions must not be empty");
+    }
+    decide_with_directive(
+        ctx,
+        request_id,
+        ApprovalDecision::Steer,
+        Some(instructions.to_string()),
+        agent_id,
+    )
+    .await
+}
+
+/// The one body every decision runs through, so the gate lookup, the
+/// already-decided disambiguation ([`DecideMiss`]) and the grant persistence
+/// are not duplicated per decision kind.
+async fn decide_with_directive(
+    ctx: &DispatchCtx,
+    request_id: &str,
+    decision: ApprovalDecision,
+    directive: Option<String>,
+    agent_id: Option<&str>,
+) -> anyhow::Result<Outcome<PendingApproval>> {
     tracing::debug!(
         request_id = request_id,
         decision = decision.as_str(),
@@ -255,8 +299,8 @@ pub async fn approval_decide(
         anyhow!("approval gate is not installed; supervised mode disabled")
     })?;
     let decided = match agent_id {
-        Some(agent) => gate.decide_for_agent(agent, request_id, decision),
-        None => gate.decide(request_id, decision),
+        Some(agent) => gate.decide_for_agent_with_directive(agent, request_id, decision, directive),
+        None => gate.decide_with_directive(request_id, decision, directive),
     };
     let decided = match decided {
         Ok(row) => row,

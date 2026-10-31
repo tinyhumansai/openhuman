@@ -2774,6 +2774,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': '始终允许',
   'settings.approvalHistory.decision.approveAlwaysFlow': '始终允许（流程）',
   'settings.approvalHistory.decision.deny': '被拒绝',
+  'settings.approvalHistory.decision.steer': '已重定向',
   'settings.theme.variantLight': '浅色',
   'settings.theme.variantDark': '深色',
   'settings.theme.variantAuto': '自动',

@@ -3160,6 +3160,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Her zaman izin verildi',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Her zaman izin verildi (akış)',
   'settings.approvalHistory.decision.deny': 'Reddedildi',
+  'settings.approvalHistory.decision.steer': 'Yönlendirildi',
   'settings.approvalHistory.column.time': 'Zaman',
   'settings.approvalHistory.column.tool': 'Araç / işlem',
   'settings.approvalHistory.column.decision': 'Karar',

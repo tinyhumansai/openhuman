@@ -2971,6 +2971,7 @@ const messages: TranslationMap = {
   'settings.approvalHistory.decision.approveAlways': 'Всегда разрешено',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Всегда разрешено (поток)',
   'settings.approvalHistory.decision.deny': 'Отказано',
+  'settings.approvalHistory.decision.steer': 'Перенаправлено',
   'settings.theme.variantLight': 'Светлая',
   'settings.theme.variantDark': 'Тёмная',
   'settings.theme.variantAuto': 'Авто',

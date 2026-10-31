@@ -67,12 +67,13 @@ const AutoDecision = ({ entry }: { entry: ApprovalAuditEntry }) => {
   );
 };
 
-/** Badge tone per decision: approvals read sage, a denial coral. */
-const DECISION_VARIANT: Record<ApprovalDecision, 'success' | 'danger'> = {
+/** Badge tone per decision: approvals read sage, a denial coral, steering amber. */
+const DECISION_VARIANT: Record<ApprovalDecision, 'success' | 'danger' | 'warning'> = {
   approve_once: 'success',
   approve_always_for_tool: 'success',
   approve_always_for_flow: 'success',
   deny: 'danger',
+  steer: 'warning',
 };
 
 const DECISION_LABEL_KEY: Record<ApprovalDecision, string> = {
@@ -80,6 +81,7 @@ const DECISION_LABEL_KEY: Record<ApprovalDecision, string> = {
   approve_always_for_tool: 'settings.approvalHistory.decision.approveAlways',
   approve_always_for_flow: 'settings.approvalHistory.decision.approveAlwaysFlow',
   deny: 'settings.approvalHistory.decision.deny',
+  steer: 'settings.approvalHistory.decision.steer',
 };
 
 const DECISION_ORDER: ApprovalDecision[] = [
@@ -87,6 +89,7 @@ const DECISION_ORDER: ApprovalDecision[] = [
   'approve_always_for_tool',
   'approve_always_for_flow',
   'deny',
+  'steer',
 ];
 
 const ApprovalHistoryPanel = () => {
