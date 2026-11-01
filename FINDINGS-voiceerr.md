@@ -1,6 +1,6 @@
 # FINDINGS: voice-provider error handling (Workstream C)
 
-Branch: `fix/voice-provider-error-handling` (GitHub #8502, #8503). Not pushed.
+Branch: `fix/voice-provider-error-handling` (GitHub #8502, #8503). PR: tinyhumansai/openhuman#8521.
 
 ## Correction (second commit): hosted vs BYOK
 CONTEXT.md treated `payment_required` as a user config problem. The backend source
@@ -26,8 +26,8 @@ hides an outage from the only people who can fix it. The first commit did both. 
   `payment_required` ("Update billing") and the key-ID message (TAURI-RUST-1635) are correct, and demoted.
 
 **The real fix for 15BM / 15CT is operational**: settle the TinyHumans ElevenLabs subscription. The
-backend should also surface upstream 401/402 as a 5xx (or a distinct `errorCode`) and alert on it
-(backend repo, not changed here).
+backend now surfaces upstream billing/account refusals as a 503 and alerts on them
+(tinyhumansai/backend#1438).
 
 ## What I found
 - The ElevenLabs HTTP clients live in the vendored `tinyinference-voice` crate (`external_stt.rs` / `external_tts.rs`),
