@@ -84,8 +84,10 @@ pub async fn run_live_agent_pass(max_concurrent: usize) {
     agents.drain().await;
 }
 
-/// One pass over a single live agent's due jobs, run to completion; the
-/// count dispatched, or `None` when `agent_id` is not live. Errors when the
+/// One batch of a single live agent's due jobs, run to completion; the count
+/// dispatched, or `None` when `agent_id` is not live. A batch holds at most
+/// `scheduler.max_tasks` jobs, so a full batch means more may be due: call
+/// again to take them. Errors when the
 /// agent's config, policy or job store is unavailable, or when a dispatched
 /// run could not be executed or recorded. A job that ran and failed is not an
 /// error here: its run record carries the failure.
@@ -106,25 +108,17 @@ pub async fn run_agent_pass(agent_id: &str) -> Result<Option<usize>> {
     };
     tracing::debug!(agent = %agent_id, "[cron:scheduler] agent pass begin");
     let mut agents = LiveAgentSchedulers::default();
-    let mut total = 0;
-    // A tick dispatches at most `max_tasks` due jobs; after a full batch more
-    // may be due, so tick again once it has drained.
-    loop {
-        let count = agents
-            .tick_agent(agent_id.to_string(), Arc::clone(&ctx))
-            .await;
-        // Drain before surfacing a poll error: a partial tick may have dispatched.
-        for dispatcher in agents.by_agent.values_mut() {
-            dispatcher.try_drain().await?;
-        }
-        let count = count?;
-        total += count;
-        let batch_full = agents
-            .by_agent
-            .get(agent_id)
-            .is_some_and(|dispatcher| count >= dispatcher.max_tasks());
-        if !batch_full {
-            return Ok(Some(total));
-        }
+    let count = agents
+        .tick_agent(agent_id.to_string(), Arc::clone(&ctx))
+        .await;
+    // Drain before surfacing a poll error: a partial tick may have dispatched.
+    let mut drained = Ok(());
+    for (_, mut dispatcher) in agents.by_agent.drain() {
+        drained = drained.and(dispatcher.try_drain().await);
+        // Stop now rather than on drop, so the next pass over this agent
+        // finds its scope free.
+        dispatcher.stop().await;
     }
+    drained?;
+    Ok(Some(count?))
 }

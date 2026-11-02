@@ -103,6 +103,11 @@ async fn an_agent_pass_runs_only_that_agents_due_jobs() {
         0,
         "beta's due job waits for beta's own pass"
     );
+    assert_eq!(
+        cron::scheduler::run_agent_pass("pass-alpha").await.unwrap(),
+        Some(0),
+        "a second pass over the same agent is not refused for its scope"
+    );
 
     assert_eq!(
         cron::scheduler::run_agent_pass("pass-beta").await.unwrap(),

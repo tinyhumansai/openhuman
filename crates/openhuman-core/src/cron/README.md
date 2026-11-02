@@ -61,11 +61,13 @@ opens agents on demand, or hands due work to a queue) runs that agent's pass
 alone with `run_agent_pass(agent_id)`, which is `Ok(None)` when the agent is
 not live and errors when the agent's config, policy or job store is
 unavailable, or a run could not be executed or recorded (a job that ran and
-failed is in its run record, not the result). It ticks until a batch is not
-full. Such a host must not also run the scheduler loop over that agent: the
-loop's scheduler owns the agent's job scope and the pass is refused ("a
-scheduler already owns this scope"). Both are the loop's own run, so occurrence
-claims keep two processes' passes from running an occurrence twice.
+failed is in its run record, not the result). It runs one batch of at most
+`scheduler.max_tasks` jobs, so a host calls it again after a full batch, and it
+stops the agent's scheduler before returning. Such a host must not also run the
+scheduler loop over that agent: the loop's scheduler owns the agent's job scope
+and the pass is refused ("a scheduler already owns this scope"). Both are the
+loop's own run, so occurrence claims keep two processes' passes from running an
+occurrence twice.
 Dropping a dispatcher stops its scheduler (`StopScheduler`) and unserves its
 object.
 

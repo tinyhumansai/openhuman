@@ -550,9 +550,24 @@ impl JobDispatcher {
         Ok(dispatched)
     }
 
-    /// The most due jobs one tick dispatches (the store's batch limit).
-    pub(crate) fn max_tasks(&self) -> usize {
-        self.binding.config().scheduler.max_tasks.max(1)
+    /// Stop the module's scheduler and wait for it, so its scope is free when
+    /// this returns. A failed stop is left to the retrying stop of `Drop`.
+    pub(crate) async fn stop(mut self) {
+        let Some(started) = self.started.take() else {
+            return;
+        };
+        let config = self.binding.config();
+        let stopped = match module::proxy(&config).await {
+            Ok(proxy) => proxy
+                .call::<()>(members::STOP_SCHEDULER, (started.handle.clone(),))
+                .await
+                .map_err(|error| error.wire_message()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = stopped {
+            tracing::debug!(%error, "[cron:scheduler] StopScheduler failed; retrying on drop");
+            self.started = Some(started);
+        }
     }
 
     /// Wait for every dispatched job to finish.
