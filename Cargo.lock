@@ -5827,7 +5827,7 @@ dependencies = [
  "tinystoragedrivers-types",
  "tinytools 0.6.0",
  "tinytools-agent 0.6.0",
- "tinyvoice-bus",
+ "tinyvoice-bus 0.2.0",
  "tinywallet",
  "tinywallet-bus",
  "tokio",
@@ -9630,7 +9630,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels"
-version = "0.1.39"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -9680,7 +9680,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-bus"
-version = "0.1.39"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "schemars",
@@ -9691,10 +9691,11 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-module"
-version = "0.1.39"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.23.1",
  "futures-util",
  "hex",
  "log",
@@ -9709,6 +9710,7 @@ dependencies = [
  "tinystoragedrivers-api",
  "tinystoragedrivers-busproxy",
  "tinystoragedrivers-types",
+ "tinyvoice-bus 0.2.0 (git+https://github.com/tinyhumansai/tinyvoice?rev=cf6444424149bbc8dc2303bddbd9b366abb29933)",
  "tokio",
  "tracing",
  "uuid",
@@ -9716,7 +9718,7 @@ dependencies = [
 
 [[package]]
 name = "tinychannels-runtime"
-version = "0.1.39"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10907,13 +10909,23 @@ dependencies = [
  "serde_json",
  "symphonia",
  "thiserror 2.0.21",
- "tinyvoice-bus",
+ "tinyvoice-bus 0.2.0",
  "tokio",
 ]
 
 [[package]]
 name = "tinyvoice-bus"
 version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "tinyvoice-bus"
+version = "0.2.0"
+source = "git+https://github.com/tinyhumansai/tinyvoice?rev=cf6444424149bbc8dc2303bddbd9b366abb29933#cf6444424149bbc8dc2303bddbd9b366abb29933"
 dependencies = [
  "serde",
  "serde_json",
@@ -10944,7 +10956,7 @@ dependencies = [
  "tinybus-module 0.3.12",
  "tinytools 0.6.0",
  "tinyvoice",
- "tinyvoice-bus",
+ "tinyvoice-bus 0.2.0",
  "tinyvoice-hotkey-win",
  "tokio",
  "x11rb",
