@@ -134,6 +134,20 @@ impl Client {
         &self,
         request: tinysecurity_bus::PermissionRequest2,
     ) -> Result<tinysecurity_bus::PermissionResult2, SecurityError> {
+        self.audited::<_, Option<tinysecurity_bus::PermissionResult2>>(
+            tinysecurity_bus::names::methods::CHECK_PERMISSION_AUDITED2,
+            request,
+        )
+        .await?
+        .ok_or_else(|| SecurityError::Unavailable("native permission result unavailable".into()))
+    }
+
+    /// Call an audited member; its decision counts only with a committed receipt.
+    async fn audited<T, D>(&self, member: &str, request: T) -> Result<D, SecurityError>
+    where
+        T: Serialize + Send,
+        D: DeserializeOwned + Send,
+    {
         let scope = self
             .audit_scope
             .as_ref()
@@ -144,10 +158,10 @@ impl Client {
             .correlation(generation)
             .await
             .map_err(SecurityError::Unavailable)?;
-        let response: tinysecurity_bus::PermissionAuditResponse2 = self
+        let response: tinysecurity_bus::AuditedResponse2<D> = self
             .object
             .call_confidential(
-                tinysecurity_bus::names::methods::CHECK_PERMISSION_AUDITED2,
+                member,
                 (tinysecurity_bus::AuditedRequest2 { request, audit },),
             )
             .await
@@ -157,9 +171,7 @@ impl Client {
                 "native permission audit was not committed".into(),
             ));
         }
-        response.decision.ok_or_else(|| {
-            SecurityError::Unavailable("native permission result unavailable".into())
-        })
+        Ok(response.decision)
     }
 
     /// Run a paired-device lifecycle operation inside TinySecurity.
@@ -670,6 +682,15 @@ impl Client {
         &self,
         request: CommandRequest,
     ) -> Result<CommandDecision, SecurityError> {
+        if self.audit_scope.is_some() {
+            return self
+                .audited::<_, Option<CommandDecision>>(
+                    tinysecurity_bus::names::methods::CHECK_COMMAND_AUDITED2,
+                    request,
+                )
+                .await?
+                .ok_or_else(|| SecurityError::Unavailable("command decision unavailable".into()));
+        }
         self.object
             .call_confidential(tinysecurity_bus::names::methods::CHECK_COMMAND, (request,))
             .await
@@ -681,6 +702,14 @@ impl Client {
         &self,
         request: BudgetRequest2,
     ) -> Result<BudgetDecision2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return self
+                .audited(
+                    tinysecurity_bus::names::methods::RESERVE_ACTION_BUDGET_AUDITED2,
+                    request,
+                )
+                .await;
+        }
         self.object
             .call_confidential(tinysecurity_bus::names::methods::SPEND_ACTION2, (request,))
             .await
