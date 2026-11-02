@@ -550,6 +550,11 @@ impl JobDispatcher {
         Ok(dispatched)
     }
 
+    /// The most due jobs one tick dispatches (the store's batch limit).
+    pub(crate) fn max_tasks(&self) -> usize {
+        self.binding.config().scheduler.max_tasks.max(1)
+    }
+
     /// Wait for every dispatched job to finish.
     pub(crate) async fn drain(&mut self) {
         if let Err(error) = self.try_drain().await {
@@ -557,8 +562,9 @@ impl JobDispatcher {
         }
     }
 
-    /// Wait for every dispatched job to finish; errors with the first job or
-    /// persistence failure, or when the module cannot be reached.
+    /// Wait for every dispatched job to finish; errors with the first run that
+    /// could not be executed or recorded, or when the module cannot be
+    /// reached. A job that ran and failed is recorded, not returned.
     pub(crate) async fn try_drain(&mut self) -> Result<()> {
         if self.started.is_none() {
             return Ok(());

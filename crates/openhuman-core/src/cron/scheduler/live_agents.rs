@@ -86,15 +86,18 @@ pub async fn run_live_agent_pass(max_concurrent: usize) {
 
 /// One pass over a single live agent's due jobs, run to completion; the
 /// count dispatched, or `None` when `agent_id` is not live. Errors when the
-/// agent's config, policy or job store is unavailable, when a dispatched job
-/// or its run record failed, or when the drain did not complete.
+/// agent's config, policy or job store is unavailable, or when a dispatched
+/// run could not be executed or recorded. A job that ran and failed is not an
+/// error here: its run record carries the failure.
 ///
 /// For hosts that decide when an agent's jobs run instead of leaving it to the
 /// scheduler loop's sweep over every live agent: one that opens agents on
-/// demand, or hands due work to a queue and runs it wherever it is taken. The
-/// run is the loop's own (claims, retries, delivery, run record and the next
-/// occurrence), so a pass racing the loop or another process's pass over the
-/// same agent runs each occurrence once.
+/// demand, or hands due work to a queue and runs it wherever it is taken. Such
+/// a host must not also run the scheduler loop over the agent: the loop's
+/// scheduler owns the agent's job scope, and this pass then errors with "a
+/// scheduler already owns this scope". The run is the loop's own (claims,
+/// retries, delivery, run record and the next occurrence), so another
+/// process's pass over the same agent runs each occurrence once.
 pub async fn run_agent_pass(agent_id: &str) -> Result<Option<usize>> {
     // Held until `agents` drops: the registry and the dispatcher's callbacks
     // keep only weak references, and a host may close the agent mid-pass.
@@ -103,12 +106,25 @@ pub async fn run_agent_pass(agent_id: &str) -> Result<Option<usize>> {
     };
     tracing::debug!(agent = %agent_id, "[cron:scheduler] agent pass begin");
     let mut agents = LiveAgentSchedulers::default();
-    let count = agents
-        .tick_agent(agent_id.to_string(), Arc::clone(&ctx))
-        .await;
-    // Drain before surfacing a poll error: a partial tick may have dispatched.
-    for dispatcher in agents.by_agent.values_mut() {
-        dispatcher.try_drain().await?;
+    let mut total = 0;
+    // A tick dispatches at most `max_tasks` due jobs; after a full batch more
+    // may be due, so tick again once it has drained.
+    loop {
+        let count = agents
+            .tick_agent(agent_id.to_string(), Arc::clone(&ctx))
+            .await;
+        // Drain before surfacing a poll error: a partial tick may have dispatched.
+        for dispatcher in agents.by_agent.values_mut() {
+            dispatcher.try_drain().await?;
+        }
+        let count = count?;
+        total += count;
+        let batch_full = agents
+            .by_agent
+            .get(agent_id)
+            .is_some_and(|dispatcher| count >= dispatcher.max_tasks());
+        if !batch_full {
+            return Ok(Some(total));
+        }
     }
-    Ok(Some(count?))
 }
