@@ -110,8 +110,14 @@ async fn disabled_server_accepts_environment_update_without_reconnecting() {
     );
 }
 
+/// One workspace only. Un-tenanted workspaces in one process share TinyMCP's
+/// installs by design (the host binds module storage per tenant profile, not
+/// per workspace), so a second workspace here would boot-connect this server
+/// and record its own 401. Per-tenant isolation is covered by
+/// `modules::storage_host` `module_scopes_are_distinct_per_module_and_per_tenant`
+/// and `a_module_scope_is_the_explicit_contexts_profile_across_tasks`.
 #[tokio::test]
-async fn per_config_auth_failure_surfaces_401_reason_without_cross_workspace_leak() {
+async fn auth_failure_surfaces_401_reason_as_a_typed_hint() {
     use openhuman_core::mcp::registry::{connections, ops};
     use wiremock::matchers::any;
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -123,38 +129,31 @@ async fn per_config_auth_failure_surfaces_401_reason_without_cross_workspace_lea
         .mount(&upstream)
         .await;
 
-    let (_tmp_a, config_a) = fresh_workspace_config().await;
-    let (_tmp_b, config_b) = fresh_workspace_config().await;
+    let (_tmp, config) = fresh_workspace_config().await;
     let server_id = install_server(
-        &config_a,
+        &config,
         "@openhuman-test/remote",
         http_server(&upstream.uri()),
     )
     .await;
 
-    ops::mcp_clients_set_enabled(&config_a, server_id.clone(), true)
+    ops::mcp_clients_set_enabled(&config, server_id.clone(), true)
         .await
         .expect("enable remote server before exercising its 401 response");
 
     assert!(
-        ops::mcp_clients_connect(&config_a, server_id.clone())
+        ops::mcp_clients_connect(&config, server_id.clone())
             .await
             .is_err(),
         "the module must report a 401 as a failed connection"
     );
     assert_eq!(
-        connections::auth_hint_for_config(&config_a, &server_id).await,
+        connections::auth_hint_for_config(&config, &server_id).await,
         Some("credential_required")
     );
     assert_eq!(
-        connections::last_error_for_config(&config_a, &server_id).await,
+        connections::last_error_for_config(&config, &server_id).await,
         None,
         "401 response text stays hidden; the typed auth hint carries the user-facing reason"
     );
-    assert!(connections::auth_hint_for_config(&config_b, &server_id)
-        .await
-        .is_none());
-    assert!(connections::last_error_for_config(&config_b, &server_id)
-        .await
-        .is_none());
 }

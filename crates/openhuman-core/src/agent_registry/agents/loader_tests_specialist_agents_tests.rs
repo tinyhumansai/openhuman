@@ -202,13 +202,13 @@ fn flow_discovery_is_registered_readonly_reasoning_scout() {
 
 #[test]
 fn specialist_agents_are_registered_with_narrow_tools() {
-    // Scheduling is the `scheduling` skill over the collapsed `cron` tool,
-    // with the time tools the orchestrator holds directly.
+    // Scheduling is the `scheduling` skill over the per-operation cron
+    // tools, with the time tools the orchestrator holds directly.
     let scheduling = crate::tools::toolpacks::pack("scheduling").expect("scheduling skill");
     assert_eq!(
         scheduling.tools,
-        &["cron"],
-        "the skill uses collapsed `cron`"
+        crate::cron::tools::CRON_OPERATION_TOOLS,
+        "the skill lists the per-operation cron tools"
     );
     match &find("orchestrator").tools {
         ToolScope::Named(names) => {
@@ -280,6 +280,34 @@ fn orchestrator_routes_every_registered_specialist_through_spawn_subagent() {
                         .iter()
                         .any(|candidate| candidate.as_str() == Some(agent_id)),
                     "spawn_subagent must not advertise presentation_agent without documents"
+                );
+                continue;
+            }
+            if agent_id == "skill_setup" && !cfg!(feature = "skills") {
+                assert!(
+                    registry.get(agent_id).is_none(),
+                    "skill_setup is intentionally absent without skills"
+                );
+                assert!(
+                    !allowed
+                        .iter()
+                        .any(|candidate| candidate.as_str() == Some(agent_id)),
+                    "spawn_subagent must not advertise skill_setup without skills"
+                );
+                continue;
+            }
+            if matches!(agent_id.as_str(), "workflow_builder" | "flow_discovery")
+                && !cfg!(feature = "flows")
+            {
+                assert!(
+                    registry.get(agent_id).is_none(),
+                    "workflow specialists are intentionally absent without flows"
+                );
+                assert!(
+                    !allowed
+                        .iter()
+                        .any(|candidate| candidate.as_str() == Some(agent_id)),
+                    "spawn_subagent must not advertise workflow specialists without flows"
                 );
                 continue;
             }

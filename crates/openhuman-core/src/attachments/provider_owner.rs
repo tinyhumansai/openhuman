@@ -13,11 +13,17 @@ pub(super) fn wrap(
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
     profile: Option<ModelProfile>,
+    controls: Option<&HostControlSlot>,
 ) -> Arc<dyn ChatModel<()>> {
+    let inner = match controls {
+        Some(controls) => controls.wrap(inner),
+        None => inner,
+    };
     let host = Arc::new(AttachmentModel {
         config: config.clone(),
         core: ctx.downgrade(),
         fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+        controls: controls.cloned(),
     });
     let (max_images, image_mb) = config.multimodal.effective_limits();
     let (max_files, file_mb, text_limit) = config.multimodal_files.effective_limits();
@@ -105,15 +111,19 @@ impl MediaSourceResolver<AttachmentAccessScope> for AttachmentModel {
         max_bytes: usize,
         metadata: &MediaSourceMetadata,
     ) -> Result<ResolvedMedia, String> {
-        if (metadata.kind == MediaSourceKind::Url
-            && !source.starts_with("data:")
-            && !source.starts_with("http://")
-            && !source.starts_with("https://"))
-            || (metadata.kind == MediaSourceKind::Untyped
+        // Staged native attachments are opaque host references that
+        // `resolve_block` authorizes against the thread, not URLs to fetch.
+        let staged = source.starts_with("openhuman-staged://");
+        if !staged
+            && ((metadata.kind == MediaSourceKind::Url
                 && !source.starts_with("data:")
-                && source.contains("://")
                 && !source.starts_with("http://")
                 && !source.starts_with("https://"))
+                || (metadata.kind == MediaSourceKind::Untyped
+                    && !source.starts_with("data:")
+                    && source.contains("://")
+                    && !source.starts_with("http://")
+                    && !source.starts_with("https://")))
         {
             return Err("unsupported media URL scheme".into());
         }
@@ -165,7 +175,14 @@ impl MediaSourceResolver<AttachmentAccessScope> for AttachmentModel {
             }
         };
         let Some((resolved_modality, path, mut mime, bytes, recovered)) = self
-            .resolve_block(&block, scope)
+            .resolve_block(
+                &block, scope,
+                // The generic resolver port carries no message index, so staged
+                // attachments committed to this thread stay readable for
+                // history replay; `read_authorized_native_attachment` still
+                // requires the record to be bound to the thread.
+                true,
+            )
             .await
             .map_err(|error| error.to_string())?
         else {
@@ -277,7 +294,9 @@ impl MediaFallbackCache<AttachmentAccessScope> for AttachmentModel {
         _modality: InputModality,
         attachment: &ResolvedAttachment,
     ) -> Option<String> {
-        let key = self.fallback_key(&attachment.name, &attachment.mime, &attachment.bytes);
+        let key = self
+            .fallback_key(&attachment.name, &attachment.mime, &attachment.bytes)
+            .await;
         if let Some(text) = self.fallback_cache.lock().ok()?.get(&key).cloned() {
             return Some(text);
         }
@@ -295,7 +314,9 @@ impl MediaFallbackCache<AttachmentAccessScope> for AttachmentModel {
         attachment: &ResolvedAttachment,
         text: &str,
     ) {
-        let key = self.fallback_key(&attachment.name, &attachment.mime, &attachment.bytes);
+        let key = self
+            .fallback_key(&attachment.name, &attachment.mime, &attachment.bytes)
+            .await;
         if let Ok(mut cache) = self.fallback_cache.lock() {
             cache.insert(key.clone(), text.to_owned());
         }

@@ -64,6 +64,18 @@ OpenHuman's desktop UI is a React 19 app (`app/src/`) that:
 - Leaves AI prompts to the core: bundled `crates/openhuman-core/src/agent/prompts` ship as Tauri resources (see `crates/openhuman-app/tauri.conf.json` resources) and are read core-side, not by the frontend
 - Uses a minimal MCP-style helper layer under `lib/mcp/` (transport, validation)
 
+Chat messages use the core's typed content contract. Attachment uploads are
+accepted by the core, which stores them and returns opaque references for the
+message; the frontend does not persist local paths or inline media bytes as
+conversation content. The core resolves those references within the trusted
+turn context before calling a model. Web chat, TUI, and relayed web progress
+share the TinyChannels compiled web-output projection; provider delivery keeps
+its separate channel terminal event. TinyChannels v2 owns the canonical typed
+web-event schema and projection, while TinyAgents owns generic chat turn
+admission and queue mechanics. OpenHuman's core adapts both to its RPC, socket,
+session, approval, and process-event-bus boundaries; the frontend consumes the
+resulting event contract and does not implement provider or agent-runner logic.
+
 ### Entry points
 
 | File                    | Purpose                                                                          |

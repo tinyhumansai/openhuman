@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use tinyagents_harness_tools::static_schema;
-use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use {
     crate::cron, tinyflows_bus::schedule::types::DeliveryConfig,
     tinyflows_bus::schedule::types::JobType, tinyflows_bus::schedule::types::Schedule,
@@ -26,32 +26,13 @@ impl CronAddTool {
 
 #[async_trait]
 impl Tool for CronAddTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_add"
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job (shell or agent) with cron/at/every schedules. \
-         Standardizes on device-local timezone unless 'tz' is set. The scheduler polls on an \
-         interval (default 15s, minimum 5s) and does not 'catch up' missed runs.\n\
-         Delivery: an agent job created inside a conversation (web chat or a channel such as \
-         Telegram, Discord, Slack) sends each run's reply back to that same conversation \
-         automatically; do not set `delivery` or copy a reply target for that. Only set \
-         `delivery` to override it (`proactive` for an in-app notification, `none` for silent). \
-         A job created with no conversation defaults to `proactive`. In its scheduled run the \
-         agent's final reply is what gets delivered. Reminders and recurring messages always \
-         deliver. A conditional check must put its condition and \"otherwise reply NO_REPLY\" \
-         in its `prompt`; only such a job can skip a run.\n\
-         Agent jobs must be scheduled at least 5 minutes apart; a tighter cron expression or \
-         every_ms is rejected."
+        "Schedule a job: once (`at`) or repeating (`cron`, `every`; agent jobs \
+         at least 5 minutes apart)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

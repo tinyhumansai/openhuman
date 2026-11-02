@@ -32,52 +32,30 @@ pub(super) fn install_depth(
 }
 
 impl crate::inference::turn_models::TurnModels {
-    /// Wrap every concrete route and summarizer below harness retries/fallback.
+    /// Admit and charge every concrete route and summarizer below harness
+    /// retries/fallback, and below attachment rendering where it is present.
     pub(crate) fn with_host_controls(
         mut self,
         budget: Option<&tinyagents_harness::cost::ModelBudget>,
         admission: Option<Arc<dyn PhysicalDispatchAdmission>>,
     ) -> Self {
-        if budget.is_none() && admission.is_none() {
+        let Some(controls) = crate::inference::host_controls::HostControls::new(budget, admission)
+        else {
+            return self;
+        };
+        if let Some(slot) = &self.host_controls {
+            tracing::debug!(
+                budgeted = budget.is_some(),
+                "[budget] installing turn controls beneath attachment rendering"
+            );
+            slot.install(controls);
             return self;
         }
-        // A native turn set owns the resolver and error slots, so the
-        // decorator must be applied inside it, not only to the copies held here.
-        if let Some(models) = self.native_model_set.take() {
-            let models =
-                models.map_models(|_, model| control_model(model, budget, admission.clone()));
-            let mut registrations = models.registrations("primary").into_iter();
-            self.primary = registrations
-                .next()
-                .expect("native turn set contains its primary")
-                .1;
-            self.routes = registrations.collect();
-            self.summarizer = models.summarizer();
-            self.error_slot = models.primary_error_slot();
-            self.native_model_set = Some(models);
-            return self;
-        }
-        self.primary = control_model(self.primary, budget, admission.clone());
-        self.summarizer = control_model(self.summarizer, budget, admission.clone());
+        self.primary = controls.wrap(self.primary);
+        self.summarizer = controls.wrap(self.summarizer);
         for (_, route) in &mut self.routes {
-            *route = control_model(route.clone(), budget, admission.clone());
+            *route = controls.wrap(route.clone());
         }
         self
     }
-}
-
-fn control_model(
-    model: Arc<dyn tinyinference_llm::model::ChatModel<()>>,
-    budget: Option<&tinyagents_harness::cost::ModelBudget>,
-    admission: Option<Arc<dyn PhysicalDispatchAdmission>>,
-) -> Arc<dyn tinyinference_llm::model::ChatModel<()>> {
-    let monetary_budget = budget.map(|budget| {
-        tinyagents_harness::cost::ModelBudget::new(budget.ledger.clone(), budget.call)
-    });
-    Arc::new(tinyagents_harness::cost::ControlledChatModel::new(
-        model,
-        DispatchModelOptions::new()
-            .monetary_budget(monetary_budget)
-            .admission(admission),
-    ))
 }

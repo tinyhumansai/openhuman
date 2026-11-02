@@ -1,6 +1,6 @@
 //! Bind the core's HTTP listener and serve until shutdown.
 
-use std::sync::Arc;
+use std::{future::IntoFuture, sync::Arc};
 
 use tokio_util::sync::CancellationToken;
 
@@ -135,8 +135,17 @@ pub async fn serve(
         std::env::set_var("OPENHUMAN_CORE_RPC_URL", format!("http://{bind_addr}/rpc"));
     }
 
+    let preflight_gate = runtime
+        .requires_secret_preflight()
+        .then(super::auth::PreflightGate::new_active);
     let ctx = Arc::clone(runtime.context());
-    let router = super::http::build_core_http_router(runtime.services().socketio);
+    let router = match &preflight_gate {
+        Some(gate) => super::http::build_core_http_router_with_preflight(
+            runtime.normal_services().socketio,
+            gate.clone(),
+        ),
+        None => super::http::build_core_http_router(runtime.services().socketio),
+    };
     // A SaaS core scopes each request to the user the gateway names (or the
     // operator plane); a single-user core runs everything under its one
     // context.
@@ -155,16 +164,20 @@ pub async fn serve(
         ))
     };
 
-    // Await startup migrations before publishing readiness or allowing
-    // background writers to touch their crate-backed stores.
-    runtime.start_services().await;
+    // Normal boots finish migrations before readiness. Secret preflight must
+    // instead publish the restricted listener so the operator can answer the
+    // HumanOnce approval required to decrypt config; background writers stay
+    // deferred until that phase succeeds.
+    if preflight_gate.is_none() {
+        runtime.start_services().await;
+    }
 
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
         crate::core_host::core::invoke::default_state().core_version
     );
     log::info!("[rpc:http] JSON-RPC — POST http://{bind_addr}/rpc (JSON-RPC 2.0)");
-    if runtime.services().socketio {
+    if runtime.normal_services().socketio {
         log::info!("[rpc:socketio] Socket.IO — ws://{bind_addr}/socket.io/ (same HTTP server)");
     } else {
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
@@ -181,17 +194,46 @@ pub async fn serve(
     // has run. A `?` here on a server error would skip the memory teardown
     // on exactly the exits where a wedged store is likeliest, and the
     // callers only forward the error — nobody else runs the cleanup.
-    let served = if let Some(shutdown_token) = shutdown_token {
+    let served = if let Some(gate) = preflight_gate {
+        let shutdown = async move {
+            if let Some(shutdown_token) = shutdown_token {
+                shutdown_token.cancelled().await;
+            } else {
+                crate::core_host::core::shutdown::signal().await;
+            }
+        };
+        let server = axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown)
+            .into_future();
+        tokio::pin!(server);
+        let preflight = runtime.complete_secret_preflight();
+        tokio::pin!(preflight);
+        tokio::select! {
+            result = &mut server => result.map_err(anyhow::Error::from),
+            result = &mut preflight => match result {
+                Err(error) => Err(error),
+                Ok(()) => {
+                    // Start ordinary jobs only after credentials and config
+                    // have been refreshed, then expose the full router.
+                    runtime.start_services().await;
+                    gate.open();
+                    server.await.map_err(anyhow::Error::from)
+                }
+            }
+        }
+    } else if let Some(shutdown_token) = shutdown_token {
         log::info!("[core] embedded server waiting on cancellation token for graceful shutdown");
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
                 shutdown_token.cancelled().await;
             })
             .await
+            .map_err(anyhow::Error::from)
     } else {
         axum::serve(listener, app)
             .with_graceful_shutdown(crate::core_host::core::shutdown::signal())
             .await
+            .map_err(anyhow::Error::from)
     };
     if let Err(error) = &served {
         log::warn!(

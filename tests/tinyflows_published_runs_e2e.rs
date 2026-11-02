@@ -135,7 +135,7 @@ async fn published_runs_use_scoped_host_capabilities_and_persist_lifecycle() {
     let _module_source = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _module_source_dir = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (module, digest) = published_tinyflows::staged_v0_9_0_module();
+    let (module, digest) = published_tinyflows::staged_v0_9_4_module();
     let config_path = write_config(temp.path(), &module);
     tinyhumans_boot::boot();
 
@@ -334,7 +334,7 @@ async fn published_runs_use_scoped_host_capabilities_and_persist_lifecycle() {
         "failed run row must persist the same policy denial and steps: {terminal}"
     );
     assert_eq!(
-        published_tinyflows::verify_v0_9_0_module(&module),
+        published_tinyflows::verify_v0_9_4_module(&module),
         digest,
         "the run used the checksum-verified published module"
     );

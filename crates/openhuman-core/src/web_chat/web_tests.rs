@@ -165,6 +165,7 @@ fn make_block() -> TestRunChatTaskBlock {
         started: Arc::new(AtomicBool::new(false)),
         dropped: Arc::new(AtomicBool::new(false)),
         release: Arc::new(tokio::sync::Notify::new()),
+        max_park_for: Duration::from_secs(30),
         succeed_in: None,
     }
 }
@@ -200,6 +201,8 @@ mod rate_limit_classification_tests;
 mod session_and_concurrency_tests;
 #[path = "web_tests_start_chat_ingress_tests.rs"]
 mod start_chat_ingress_tests;
+#[path = "web_tests_turn_lifecycle_tests.rs"]
+mod turn_lifecycle_tests;
 
 #[cfg(feature = "voice")]
 #[path = "web_tests_ptt_source_tests.rs"]

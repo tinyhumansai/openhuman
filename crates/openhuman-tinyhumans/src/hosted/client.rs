@@ -32,12 +32,13 @@
 use crate::backend::url::effective_backend_api_url;
 use crate::transport::{BackendTransport, TransportProfile};
 use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::core::events::DomainEvent;
 use openhuman_embed::__host::core::observability::{
     contains_transient_transport_phrase, is_transient_http_status_code, API_KEY_REJECTED_PREFIX,
     BACKEND_UNAVAILABLE_PREFIX,
 };
-use openhuman_embed::__host::security::credentials::session_support::{
-    resolve_backend_credential, BackendCredential,
+use openhuman_embed::__host::credentials::backend_credential::{
+    credential_fingerprint, resolve_backend_credential, BackendCredential,
 };
 use serde_json::Value;
 use tinyhumans_sdk::{Error as SdkError, TinyHumansClient};
@@ -56,6 +57,7 @@ pub enum CredentialKind {
 pub struct HostedClient {
     sdk: TinyHumansClient,
     kind: CredentialKind,
+    credential_fingerprint: Option<String>,
 }
 
 impl HostedClient {
@@ -63,10 +65,12 @@ impl HostedClient {
     ///
     /// Errors without network I/O when there is no usable credential or
     /// installed backend transport, with the appropriate core sentinel.
-    pub fn from_config(config: &Config) -> Result<Self, String> {
-        let credential = resolve_backend_credential(config).inspect_err(|err| {
-            log::debug!("{LOG_PREFIX} no usable backend credential; skipping request: {err}");
-        })?;
+    pub async fn from_config(config: &Config) -> Result<Self, String> {
+        let credential = resolve_backend_credential(config)
+            .await
+            .inspect_err(|err| {
+                log::debug!("{LOG_PREFIX} no usable backend credential; skipping request: {err}");
+            })?;
         require_transport()?;
         let base_url = backend_origin(&effective_backend_api_url(&config.api_url))?;
         Self::with_credential(&base_url, credential)
@@ -91,13 +95,18 @@ impl HostedClient {
             // even for a client this crate did not build.
             .with_default_headers(crate::backend::product::product_identity_headers());
         Ok(match credential {
-            BackendCredential::Session(secret) => Self {
-                sdk: sdk.with_token(Some(secret.trim().to_string())),
-                kind: CredentialKind::Session,
-            },
+            BackendCredential::Session(secret) => {
+                let token = secret.trim().to_string();
+                Self {
+                    sdk: sdk.with_token(Some(token.clone())),
+                    kind: CredentialKind::Session,
+                    credential_fingerprint: Some(credential_fingerprint(&token)),
+                }
+            }
             BackendCredential::ApiKey(secret) => Self {
                 sdk: sdk.with_api_key(Some(secret.trim().to_string())),
                 kind: CredentialKind::ApiKey,
+                credential_fingerprint: None,
             },
         })
     }
@@ -115,6 +124,18 @@ impl HostedClient {
     /// Map an SDK result onto the RPC `String` error channel. `op` names the
     /// route as `"METHOD /template"` (no ids) for logs and error text.
     pub fn finish<T>(&self, op: &str, result: Result<T, SdkError>) -> Result<T, String> {
+        if matches!(&result, Err(SdkError::Status { status: 401, .. }))
+            && self.kind == CredentialKind::Session
+        {
+            if let Some(credential_fingerprint) = &self.credential_fingerprint {
+                openhuman_embed::__host::core::bus::BUS.publish(DomainEvent::SessionExpired {
+                    source: format!("tinyhumans.hosted:{op}"),
+                    reason: "backend rejected the session credential used by this hosted request"
+                        .to_string(),
+                    credential_fingerprint: Some(credential_fingerprint.clone()),
+                });
+            }
+        }
         result.map_err(|err| map_error(self.kind, op, err))
     }
 

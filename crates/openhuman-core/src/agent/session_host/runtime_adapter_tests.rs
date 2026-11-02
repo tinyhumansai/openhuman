@@ -115,7 +115,7 @@ fn codec_attaches_only_this_agents_own_sidecar_usage_to_atomic_append() {
     context.append_subagent_usage(crate::agent::tinyagents::host::SubagentUsageEntry {
         task_id: "child-usage".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 5,
             output_tokens: 2,
             cached_input_tokens: 1,
@@ -197,7 +197,7 @@ fn last_turn_usage_reports_the_same_holistic_totals_as_transcript_billing() {
     let child = crate::agent::tinyagents::host::SubagentUsageEntry {
         task_id: "child-ui".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: crate::progress::SubagentUsage {
             input_tokens: 5,
             output_tokens: 2,
             cached_input_tokens: 1,
@@ -312,7 +312,7 @@ async fn committed_goal_accounting_uses_direct_and_completed_child_usage() {
         let child = crate::agent::tinyagents::host::SubagentUsageEntry {
             task_id: "child-goal".into(),
             agent_id: "researcher".into(),
-            usage: crate::agent::subagent_host::SubagentUsage {
+            usage: tinyagents_harness::progress::SubagentUsage {
                 input_tokens: 5,
                 output_tokens: 3,
                 ..Default::default()
@@ -358,6 +358,7 @@ fn meta() -> TranscriptMeta {
         updated: chrono::Utc::now().to_rfc3339(),
         turn_count: 0,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -482,8 +483,8 @@ fn availability_notes_are_status_not_instructions() {
 /// is genuinely its own transcript. It must therefore not claim the
 /// conversation's durable session identity, or two concurrent workers on one
 /// thread would write into the same file.
-#[test]
-fn a_subagent_thread_binding_claims_no_session_identity() {
+#[tokio::test]
+async fn a_subagent_thread_binding_claims_no_session_identity() {
     let tmp = tempfile::tempdir().unwrap();
     let config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -492,11 +493,13 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
         ..crate::config::Config::default()
     };
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
 
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let mut root =
-        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+            .await
+            .unwrap();
     root.set_thread_id(Some("thread-1"));
     // The exact stem encoding (sanitisation, per-component digest, generation
     // suffix) belongs to tinyagents and is pinned by its own tests. What
@@ -511,7 +514,9 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
     );
 
     let mut child =
-        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+            .await
+            .unwrap();
     child.session_parent_prefix = Some("1713000000_orchestrator".into());
     child.set_thread_id(Some("thread-1"));
     assert_eq!(child.session_id(), None);

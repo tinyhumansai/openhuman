@@ -11,11 +11,10 @@ use std::sync::OnceLock;
 
 use crate::security::secret_storage::adapter;
 use crate::security::secret_storage::backend::SecretBackend;
-use crate::security::secret_storage::crypto::{self, KEY_LEN};
 use crate::security::secret_storage::error::SecretStorageError;
-use crate::security::secret_storage::file_store;
 use crate::security::secret_storage::store::BackendKind;
-use tinystoragedrivers::secrets::EncryptedFileSecrets;
+use tinystoragedrivers::secrets::crypto;
+use tinystoragedrivers::secrets::{CorruptFilePolicy, EncryptedFileSecrets};
 use zeroize::Zeroizing;
 
 #[path = "encrypted_file_backend/key_source.rs"]
@@ -35,11 +34,15 @@ pub const MASTER_KEY_ENV: &str = "OPENHUMAN_KEYRING_MASTER_KEY";
 pub const MASTER_KEY_FILE_ENV: &str = "OPENHUMAN_KEYRING_MASTER_KEY_FILE";
 const SECRETS_FILENAME: &str = "secrets.enc";
 const LEGACY_DEV_KEYCHAIN: &str = "dev-keychain.json";
+const LEGACY_IMPORT_OPERATION: &str = "openhuman.legacy-dev-keychain.v1";
+const LEGACY_IMPORT_PAYLOAD: &str = "openhuman:internal:legacy-dev-keychain:payload";
+const LEGACY_IMPORT_COMPLETE: &str = "openhuman:internal:legacy-dev-keychain:complete";
+const KEY_LEN: usize = crypto::KEY_LEN;
 
 /// Outcome of the one-time master-key initialization: the key (`None` when
 /// the backend needs none or the OS keychain could not provide it), or the
 /// configuration error that rejected an operator-supplied source.
-type MasterKeyInit = Result<Option<[u8; KEY_LEN]>, String>;
+type MasterKeyInit = Result<Option<[u8; crypto::KEY_LEN]>, String>;
 
 /// Process-wide master-key outcome, set once by [`init_master_key`].
 static MASTER_KEY: OnceLock<MasterKeyInit> = OnceLock::new();
@@ -262,10 +265,9 @@ fn parse_master_key_hex(hex: &str) -> Result<[u8; KEY_LEN], String> {
     if got != expected {
         return Err(format!("expected {expected} hex characters, got {got}"));
     }
-    let bytes = crypto::hex_decode(hex).map_err(|_| "value is not valid hex".to_string())?;
-    let mut key = [0u8; KEY_LEN];
-    key.copy_from_slice(&bytes);
-    Ok(key)
+    crypto::key_from_hex(hex)
+        .map(|key| *key)
+        .map_err(|_| "value is not valid hex".to_string())
 }
 
 /// Get a reference to the cached master key, if available.
@@ -306,13 +308,8 @@ pub(super) fn master_key_available() -> bool {
 ///
 /// - the master key (env, host source, else workspace file; see [`init_master_key`]);
 /// - the one-time import of a legacy plaintext `dev-keychain.json`;
-/// - **corruption recovery**. The driver fails closed on a file that does not
-///   decrypt or parse and leaves it untouched, which is right for a server
-///   that has an operator. A desktop has none: failing closed would wedge
-///   every `set` (so sign-in) forever. This adapter keeps today's behaviour
-///   instead: log, move the bytes aside as `secrets.enc.corrupt.<ts>` (never
-///   deleted, so the secrets stay recoverable with the right key) and carry
-///   on with an empty store. See [`adapter::recover_corrupt_file`].
+/// - desktop corruption policy, selected through the driver's
+///   `CorruptFilePolicy::QuarantineAndContinue`;
 pub struct EncryptedFileBackend {
     path: PathBuf,
     workspace_dir: PathBuf,
@@ -349,249 +346,196 @@ impl EncryptedFileBackend {
         self.get_with_key_read_only(&key, namespaced_key)
     }
 
-    fn key(&self) -> Option<Zeroizing<[u8; KEY_LEN]>> {
+    fn key(&self) -> Result<Zeroizing<[u8; KEY_LEN]>, SecretStorageError> {
         #[cfg(test)]
         {
             if let Some(source) = key_source::installed_master_key_source() {
-                return key_source::load_or_mint_master_key(source.as_ref()).ok();
+                return key_source::load_or_mint_master_key(source.as_ref())
+                    .map_err(|_| SecretStorageError::MasterKeyUnavailable);
             }
-            key_source::workspace_master_key(&self.workspace_dir).ok()
+            key_source::workspace_master_key(&self.workspace_dir)
         }
         #[cfg(not(test))]
         {
-            master_key().map(|key| Zeroizing::new(*key))
+            master_key()
+                .map(|key| Zeroizing::new(*key))
+                .ok_or(SecretStorageError::MasterKeyUnavailable)
         }
     }
 
     fn store(&self, key: &[u8; KEY_LEN]) -> EncryptedFileSecrets {
         EncryptedFileSecrets::at_path(self.path.clone(), Zeroizing::new(*key))
+            .with_corrupt_file_policy(CorruptFilePolicy::QuarantineAndContinue)
     }
 
-    /// Run one driver call, recovering once from a corrupt file.
+    fn read_only_store(&self, key: &[u8; KEY_LEN]) -> EncryptedFileSecrets {
+        EncryptedFileSecrets::at_path(self.path.clone(), Zeroizing::new(*key))
+    }
+
+    /// Run one call through the driver's host-selected corruption policy.
     fn run<T, F, Fut>(&self, key: &[u8; KEY_LEN], op: F) -> Result<T, SecretStorageError>
     where
         T: Send + 'static,
         F: Fn(EncryptedFileSecrets) -> Fut,
         Fut: std::future::Future<Output = tinystoragedrivers::Result<T>> + Send + 'static,
     {
-        self.import_legacy_dev_keychain(key)?;
-        match crate::storage::block_on(op(self.store(key))) {
-            Err(error) if adapter::is_corruption(&error) => {
-                adapter::recover_corrupt_file(&self.path, key, &error)?;
-                crate::storage::block_on(op(self.store(key))).map_err(adapter::backend_error)
+        if let Err(error) = self.import_legacy_dev_keychain(key) {
+            if self.path.exists() {
+                log::warn!(
+                    "[keyring:encrypted_file] legacy plaintext import was not completed: {error}"
+                );
+            } else {
+                return Err(error);
             }
-            result => result.map_err(adapter::backend_error),
         }
+        crate::storage::block_on(op(self.store(key))).map_err(adapter::backend_error)
     }
 
-    /// Import `dev-keychain.json` into a missing `secrets.enc`, once.
+    /// Import the legacy plaintext map through the driver's verified file-import API.
     fn import_legacy_dev_keychain(&self, key: &[u8; KEY_LEN]) -> Result<(), SecretStorageError> {
         let legacy_path = self.workspace_dir.join(LEGACY_DEV_KEYCHAIN);
         let migrated_path = legacy_path.with_extension("json.migrated");
-        if !legacy_path.exists() && !migrated_path.exists() {
-            return Ok(());
-        }
-        // Use one lock order everywhere: encrypted destination, current legacy
-        // source, then an older migrated source. The plaintext backend takes
-        // the source lock, so its writers cannot race this read-and-remove.
-        let _guard = file_store::lock_for_write(&self.path)?;
-        let _legacy_guard = file_store::lock_for_write(&legacy_path)?;
-        let _migrated_guard = file_store::lock_for_write(&migrated_path)?;
-        if !legacy_path.exists() && !migrated_path.exists() {
-            return Ok(());
-        }
-
-        // A legacy file can remain after a previous publication/cleanup error.
-        // It must not make an otherwise valid encrypted store unavailable.
-        if self.path.exists() {
-            let existing_sources = [legacy_path.exists(), migrated_path.exists()];
-            for (source, existed_before_cleanup) in [&legacy_path, &migrated_path]
-                .into_iter()
-                .zip(existing_sources)
-            {
-                if !existed_before_cleanup {
-                    continue;
-                }
-                if let Err(error) =
-                    self.remove_legacy_if_encrypted_copy_matches(key, source, &_guard)
-                {
-                    log::warn!("[keyring:encrypted_file] could not clean up legacy copy: {error}");
-                }
-            }
-            return Ok(());
-        }
-
-        let source_path = if legacy_path.exists() {
-            &legacy_path
-        } else {
-            &migrated_path
-        };
-        let metadata = std::fs::symlink_metadata(source_path).map_err(|source| {
-            SecretStorageError::MigrationReadFailed {
-                path: source_path.display().to_string(),
-                source,
-            }
-        })?;
-        if !metadata.file_type().is_file() {
-            return Err(SecretStorageError::Backend(format!(
-                "legacy {} is not a regular file; preserving it for recovery",
-                source_path.display()
-            )));
-        }
-        log::info!(
-            "[keyring:encrypted_file] found legacy {} — migrating to encrypted file",
-            source_path.display()
-        );
-        let bytes = std::fs::read(source_path).map_err(|source| {
-            SecretStorageError::MigrationReadFailed {
-                path: source_path.display().to_string(),
-                source,
-            }
-        })?;
-        let map: std::collections::BTreeMap<String, String> = if bytes.is_empty() {
-            Default::default()
-        } else {
-            serde_json::from_slice(&bytes).map_err(|e| {
-                SecretStorageError::Backend(format!(
-                    "legacy {} is invalid JSON; preserving it for recovery: {e}",
-                    source_path.display()
-                ))
-            })?
+        use tinystoragedrivers::secrets::{
+            CleanupAcknowledgment, FileImportSource, SecretStore as _,
         };
 
-        let json = Zeroizing::new(serde_json::to_vec(&map).map_err(|e| {
-            SecretStorageError::Backend(format!("failed to serialize secrets: {e}"))
-        })?);
-        {
-            let blob = crypto::chacha20_encrypt(key, &json)
-                .map_err(|e| SecretStorageError::Backend(format!("encryption failed: {e}")))?;
-            file_store::write_atomic(&self.path, &blob)?;
-        }
+        let store = std::sync::Arc::new(self.store(key));
+        crate::storage::block_on(async move {
+            let completed = store.get(LEGACY_IMPORT_COMPLETE).await?;
+            if completed.is_some() {
+                store.delete(LEGACY_IMPORT_PAYLOAD).await?;
+                return Ok(());
+            }
 
-        let verified = match self.remove_legacy_if_encrypted_copy_matches(key, source_path, &_guard)
-        {
-            Ok(verified) => verified,
-            Err(error @ SecretStorageError::MigrationDeleteFailed { .. }) => {
-                log::warn!("[keyring:encrypted_file] could not remove migrated plaintext: {error}");
-                true
-            }
-            Err(error) => return Err(error),
-        };
-        if !verified {
-            return Err(SecretStorageError::Backend(
-                "encrypted migration result did not verify against its plaintext source".into(),
-            ));
-        }
-        log::info!(
-            "[keyring:encrypted_file] legacy {} migrated \
-             ({} entries), verified, and durably published",
-            source_path.display(),
-            map.len()
-        );
-        Ok(())
-    }
-
-    /// Remove the plaintext source only after the published encrypted copy is
-    /// durable and decrypts to a map containing every source entry unchanged.
-    /// The caller holds the destination and source locks through verification
-    /// and deletion, preventing a concurrent encrypted write from invalidating
-    /// the snapshot between comparison and cleanup.
-    fn remove_legacy_if_encrypted_copy_matches(
-        &self,
-        key: &[u8; KEY_LEN],
-        legacy_path: &Path,
-        destination_lock: &file_store::WriteLock,
-    ) -> Result<bool, SecretStorageError> {
-        self.remove_legacy_if_encrypted_copy_matches_with_sync(
-            key,
-            legacy_path,
-            destination_lock,
-            file_store::sync_parent_dir,
-        )
-    }
-
-    fn remove_legacy_if_encrypted_copy_matches_with_sync(
-        &self,
-        key: &[u8; KEY_LEN],
-        legacy_path: &Path,
-        destination_lock: &file_store::WriteLock,
-        sync_parent: impl FnOnce(&Path, &file_store::WriteLock) -> Result<(), SecretStorageError>,
-    ) -> Result<bool, SecretStorageError> {
-        let metadata = match std::fs::symlink_metadata(legacy_path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(source) => {
-                return Err(SecretStorageError::MigrationReadFailed {
-                    path: legacy_path.display().to_string(),
-                    source,
-                });
-            }
-        };
-        if !metadata.file_type().is_file() {
-            return Ok(false);
-        }
-        let bytes = std::fs::read(legacy_path).map_err(|source| {
-            SecretStorageError::MigrationReadFailed {
-                path: legacy_path.display().to_string(),
-                source,
-            }
-        })?;
-        let legacy: std::collections::BTreeMap<String, String> = if bytes.is_empty() {
-            Default::default()
-        } else {
-            match serde_json::from_slice(&bytes) {
-                Ok(legacy) => legacy,
-                Err(_) => return Ok(false),
-            }
-        };
-        let blob = match std::fs::read(&self.path) {
-            Ok(blob) => blob,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(source) => {
-                return Err(SecretStorageError::MigrationReadFailed {
-                    path: self.path.display().to_string(),
-                    source,
-                });
-            }
-        };
-        let plaintext = match crypto::chacha20_decrypt(key, &blob) {
-            Ok(plaintext) => plaintext,
-            Err(_) => return Ok(false),
-        };
-        let encrypted: std::collections::HashMap<String, String> =
-            match serde_json::from_slice(&plaintext) {
-                Ok(encrypted) => encrypted,
-                Err(_) => return Ok(false),
+            let source_path = if legacy_path.exists() {
+                Some(legacy_path)
+            } else if migrated_path.exists() {
+                Some(migrated_path)
+            } else {
+                None
             };
-        if !legacy
-            .iter()
-            .all(|(name, value)| encrypted.get(name) == Some(value))
-        {
-            return Ok(false);
-        }
 
-        sync_parent(&self.path, destination_lock)?;
-        let current_legacy = self.workspace_dir.join(LEGACY_DEV_KEYCHAIN);
-        let archive_path = current_legacy.with_extension("json.migrated");
-        let cleanup = if legacy_path == current_legacy && !archive_path.exists() {
-            std::fs::rename(legacy_path, &archive_path)
-        } else {
-            std::fs::remove_file(legacy_path)
-        };
-        match cleanup {
-            Ok(()) => {
-                // Persist the source rename/removal too. If this sync fails,
-                // the encrypted copy is already durable and the archive (or
-                // original source) remains available for another cleanup pass.
-                file_store::sync_parent_dir(&self.path, destination_lock)?;
-                Ok(true)
+            let staged = store.get(LEGACY_IMPORT_PAYLOAD).await?;
+            let source = if staged.is_some() {
+                None
+            } else {
+                source_path
+                    .map(FileImportSource::open)
+                    .transpose()?
+            };
+            let (bytes, receipt) = match (staged, source.as_ref()) {
+                (Some(staged), _) => {
+                    let recovered = store
+                        .recover_file_import_source(
+                            LEGACY_IMPORT_OPERATION,
+                            LEGACY_IMPORT_PAYLOAD,
+                        )
+                        .await?;
+                    if staged.as_slice() != recovered.as_slice() {
+                        return Err(tinystoragedrivers::StorageError::backend(
+                            "staged legacy import differs from its authenticated source backup",
+                        ));
+                    }
+                    (recovered, None)
+                }
+                (None, Some(source)) => {
+                    let bytes = source.bytes();
+                    if !bytes.is_empty() {
+                        let _: std::collections::BTreeMap<String, String> =
+                            serde_json::from_slice(bytes).map_err(|error| {
+                                tinystoragedrivers::StorageError::backend(format!(
+                                    "legacy dev keychain is invalid JSON; preserving it for recovery: {error}"
+                                ))
+                            })?;
+                    }
+                    let verified = store
+                        .prepare_file_import(
+                            LEGACY_IMPORT_OPERATION,
+                            LEGACY_IMPORT_PAYLOAD,
+                            bytes,
+                            source,
+                        )
+                        .await?;
+                    (Zeroizing::new(bytes.to_vec()), Some(verified))
+                }
+                (None, None) => match store
+                    .recover_file_import_source(
+                        LEGACY_IMPORT_OPERATION,
+                        LEGACY_IMPORT_PAYLOAD,
+                    )
+                    .await
+                {
+                    Ok(bytes) => (bytes, None),
+                    Err(error) if error.kind() == tinystoragedrivers::ErrorKind::NotFound => {
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error),
+                },
+            };
+
+            let map: std::collections::BTreeMap<String, String> = if bytes.is_empty() {
+                Default::default()
+            } else {
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    tinystoragedrivers::StorageError::backend(format!(
+                        "verified legacy dev keychain is invalid JSON: {error}"
+                    ))
+                })?
+            };
+
+            // Replay every entry before the driver's cleanup receipt can remove
+            // the plaintext source. A conflict or failed write leaves it intact.
+            for (name, value) in &map {
+                if let Some(existing) = store.get(name).await? {
+                    if existing.as_slice() != value.as_bytes() {
+                        return Err(tinystoragedrivers::StorageError::conflict(
+                            "legacy secret conflicts with an existing encrypted value; source retained for recovery",
+                        ));
+                    }
+                }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(source) => Err(SecretStorageError::MigrationDeleteFailed {
-                path: legacy_path.display().to_string(),
-                source,
-            }),
-        }
+
+            for (name, value) in &map {
+                let existing = store.get(name).await?;
+                match existing {
+                    Some(existing) if existing.as_slice() == value.as_bytes() => {}
+                    Some(_) => {
+                        return Err(tinystoragedrivers::StorageError::conflict(
+                            "legacy secret conflicts with an existing encrypted value; source retained for recovery",
+                        ));
+                    }
+                    None => store.set(name, value.as_bytes()).await?,
+                }
+            }
+
+            // All imported values are durable and verified before the driver is
+            // allowed to remove the plaintext source.
+            if let Some(receipt) = receipt {
+                match store.cleanup_file_import(&receipt).await? {
+                    CleanupAcknowledgment::RemovedAndDirectorySynced
+                    | CleanupAcknowledgment::AlreadyCompleted => {}
+                    CleanupAcknowledgment::UnsupportedBoundary => {
+                        log::warn!(
+                            "[keyring:encrypted_file] legacy plaintext retained by the platform"
+                        );
+                    }
+                    CleanupAcknowledgment::RemovedUnacknowledged => {
+                        log::warn!(
+                            "[keyring:encrypted_file] legacy plaintext removal was not fully acknowledged"
+                        );
+                    }
+                }
+            }
+
+            store.set(LEGACY_IMPORT_COMPLETE, b"1").await?;
+            store.delete(LEGACY_IMPORT_PAYLOAD).await?;
+            log::info!(
+                "[keyring:encrypted_file] imported {} legacy dev-keychain entries",
+                map.len()
+            );
+            Ok(())
+        })
+        .map_err(adapter::backend_error)
     }
 
     /// [`SecretBackend::get`] under an explicit master key.
@@ -616,7 +560,7 @@ impl EncryptedFileBackend {
     ) -> Result<Option<String>, SecretStorageError> {
         use tinystoragedrivers::secrets::SecretStore as _;
         let name = namespaced_key.to_string();
-        let store = self.store(key);
+        let store = self.read_only_store(key);
         let value = crate::storage::block_on(async move { store.get(&name).await })
             .map_err(adapter::backend_error)?;
         adapter::utf8(namespaced_key, value)
@@ -641,26 +585,18 @@ impl EncryptedFileBackend {
 
 impl SecretBackend for EncryptedFileBackend {
     fn get(&self, namespaced_key: &str) -> Result<Option<String>, SecretStorageError> {
-        let Some(key) = self.key() else {
-            return Ok(None);
-        };
+        let key = self.key()?;
         self.get_with_key(&key, namespaced_key)
     }
 
     fn set(&self, namespaced_key: &str, value: &str) -> Result<(), SecretStorageError> {
-        let Some(key) = self.key() else {
-            return Err(SecretStorageError::Backend(
-                "master key unavailable — cannot store secrets".to_string(),
-            ));
-        };
+        let key = self.key()?;
         self.set_with_key(&key, namespaced_key, value)
     }
 
     fn delete(&self, namespaced_key: &str) -> Result<(), SecretStorageError> {
         use tinystoragedrivers::secrets::SecretStore as _;
-        let Some(key) = self.key() else {
-            return Ok(());
-        };
+        let key = self.key()?;
         let name = namespaced_key.to_string();
         self.run(&key, move |store| {
             let name = name.clone();

@@ -445,12 +445,17 @@ struct Stack {
     rpc_base: String,
     _guards: Vec<EnvVarGuard>,
     _tmp: tempfile::TempDir,
+    previous_storage: Option<std::sync::Arc<dyn openhuman_core::storage::StorageBackend>>,
     joins: Vec<tokio::task::JoinHandle<Result<(), std::io::Error>>>,
 }
 
 impl Drop for Stack {
     fn drop(&mut self) {
         self.joins.iter().for_each(|j| j.abort());
+        openhuman_core::storage::clear();
+        if let Some(previous) = self.previous_storage.take() {
+            openhuman_core::storage::install(previous);
+        }
     }
 }
 
@@ -458,7 +463,6 @@ async fn boot_stack(extra_config: &str) -> Stack {
     // The managed chat provider is installed by the TinyHumans layer; without
     // it every turn ends in `chat_error.inference` and no request reaches the
     // scripted upstream.
-    crate::tinyhumans_boot::boot();
     AGENT_DEF_REGISTRY_INIT.get_or_init(|| {
         AgentDefinitionRegistry::init_global_builtins()
             .expect("AgentDefinitionRegistry::init_global_builtins must not fail");
@@ -473,7 +477,10 @@ async fn boot_stack(extra_config: &str) -> Stack {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().to_path_buf();
     let openhuman_home = home.join(".openhuman");
-    let guards = vec![
+    let previous_storage = openhuman_core::storage::install(std::sync::Arc::new(
+        tinystoragedrivers_testkit::MemoryBackend::new(),
+    ));
+    let mut guards = vec![
         EnvVarGuard::set_to_path("HOME", &home),
         EnvVarGuard::unset("OPENHUMAN_WORKSPACE"),
         EnvVarGuard::unset("BACKEND_URL"),
@@ -482,6 +489,12 @@ async fn boot_stack(extra_config: &str) -> Stack {
 
     let (mock_addr, mock_join) = serve_on_ephemeral(scripted_upstream_router()).await;
     let mock_origin = format!("http://{mock_addr}");
+    // `api_url` is the inference override. Backend routing deliberately
+    // rejects arbitrary loopback endpoints as hosted APIs, so point the
+    // backend-specific resolver at this same local fixture explicitly.
+    guards.push(EnvVarGuard::set("BACKEND_URL", &mock_origin));
+    guards.push(EnvVarGuard::set("VITE_BACKEND_URL", &mock_origin));
+    crate::tinyhumans_boot::boot();
     write_min_config(&openhuman_home, &mock_origin, extra_config);
     write_min_config(
         &openhuman_home.join("users").join("e2e-user"),
@@ -507,6 +520,7 @@ async fn boot_stack(extra_config: &str) -> Stack {
         rpc_base,
         _guards: guards,
         _tmp: tmp,
+        previous_storage,
         joins: vec![mock_join, rpc_join],
     }
 }
@@ -896,7 +910,10 @@ fn orchestrator_searches_for_and_calls_the_integration_action() {
         ],
         advertises_nothing: false,
         max_consecutive_calls_of: None,
-        extra_config: "",
+        // Keep discovery local and deterministic; the default Jev ranker is
+        // installed by the host and this fixture does not mock its ranking
+        // service.
+        extra_config: "[agent.tool_search]\nranker = \"bm25\"\n",
     });
 }
 

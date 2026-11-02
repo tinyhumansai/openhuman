@@ -90,6 +90,7 @@ async fn without_a_store_transcripts_come_from_the_workspace_store_not_files() {
         updated: "2026-10-15T00:00:00Z".into(),
         turn_count: 0,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,

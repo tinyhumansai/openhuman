@@ -59,6 +59,15 @@ pub fn auth_error_message(provider: &str, status: u16) -> String {
 /// a 401 that repeats per-retry doesn't re-notify. An existing entry is
 /// refreshed (status / timestamp) and returns `false`.
 pub fn record(provider: &str, status: u16) -> bool {
+    record_in_scope(provider, status, current_scope())
+}
+
+fn record_in_scope(provider: &str, status: u16, scope: CurrentScope) -> bool {
+    if let CurrentScope::Unresolved(error) = scope {
+        log::warn!("[auth-errors] record provider={provider} skipped: scope unresolved ({error})");
+        return false;
+    }
+
     let timestamp_ms = now_ms();
     let changed = registry().record(ProviderAuthError {
         provider: provider.to_string(),
@@ -67,17 +76,24 @@ pub fn record(provider: &str, status: u16) -> bool {
         timestamp_ms,
     });
     let mut origins = origins().lock().unwrap_or_else(|error| error.into_inner());
-    let entry = origins.entry(provider.to_owned()).or_default();
-    if let CurrentScope::Bound(scope) = current_scope() {
-        entry.scopes.insert(
-            scope,
-            ScopedFailure {
-                status,
-                timestamp_ms,
-            },
-        );
-    } else {
-        entry.unscoped = true;
+    match scope {
+        CurrentScope::Bound(scope) => {
+            origins
+                .entry(provider.to_owned())
+                .or_default()
+                .scopes
+                .insert(
+                    scope,
+                    ScopedFailure {
+                        status,
+                        timestamp_ms,
+                    },
+                );
+        }
+        CurrentScope::Unbound => {
+            origins.entry(provider.to_owned()).or_default().unscoped = true;
+        }
+        CurrentScope::Unresolved(_) => unreachable!("unresolved scope returned before recording"),
     }
     changed
 }
@@ -183,8 +199,20 @@ fn origins() -> &'static Mutex<HashMap<String, ErrorOrigins>> {
 }
 
 fn current_scope() -> CurrentScope {
-    let Some(context) = crate::core::runtime::CoreContext::current() else {
-        return CurrentScope::Unbound;
+    let saas = crate::core::runtime::is_saas();
+    current_scope_in(saas, crate::core::runtime::tenant::context_in(saas))
+}
+
+fn current_scope_in(
+    saas: bool,
+    context: Option<std::sync::Arc<crate::core::runtime::CoreContext>>,
+) -> CurrentScope {
+    let Some(context) = context else {
+        return if saas {
+            CurrentScope::Unresolved("no profile context in SaaS mode".to_owned())
+        } else {
+            CurrentScope::Unbound
+        };
     };
     match context.workspace_config_binding() {
         Ok((workspace, config_path)) => CurrentScope::Bound(ScopeIdentity {

@@ -137,14 +137,14 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
     expect(onArtifactReady).not.toHaveBeenCalled();
   });
 
-  it('accepts every allowlisted kind for artifact_ready', () => {
+  it('accepts every artifact kind for artifact_ready', () => {
     const socket = createMockSocket();
     bindMockSocket(socket);
     const onArtifactReady = vi.fn();
 
     subscribeChatEvents({ onArtifactReady });
 
-    for (const kind of ['presentation', 'document', 'image', 'other'] as const) {
+    for (const kind of ['presentation', 'document', 'image', 'video', 'other'] as const) {
       socket.emit('artifact_ready', {
         thread_id: 'thread-1',
         args: {
@@ -158,11 +158,12 @@ describe('chatService — artifact_ready / artifact_failed handlers (#2779)', ()
       });
     }
 
-    expect(onArtifactReady).toHaveBeenCalledTimes(4);
+    expect(onArtifactReady).toHaveBeenCalledTimes(5);
     expect(onArtifactReady.mock.calls.map(c => (c[0] as { kind: string }).kind)).toEqual([
       'presentation',
       'document',
       'image',
+      'video',
       'other',
     ]);
   });

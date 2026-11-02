@@ -17,6 +17,7 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
     let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
 
     write_min_config(&openhuman_home, "http://127.0.0.1:9");
+    store_local_profile_api_key(&openhuman_home, "http://127.0.0.1:9");
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
@@ -769,6 +770,38 @@ async fn json_rpc_protocol_auth_and_agent_hello_inner() {
 }
 
 #[tokio::test]
+async fn removed_agent_work_and_team_methods_are_not_registered() {
+    let _env_lock = json_rpc_e2e_env_lock_async().await;
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    for (id, method) in [
+        (1, "openhuman.agent_work_list"),
+        (2, "openhuman.agent_team_create"),
+    ] {
+        let response = post_json_rpc(&rpc_base, id, method, json!({})).await;
+        let error = assert_jsonrpc_error(&response, method);
+        assert_eq!(error.get("code").and_then(Value::as_i64), Some(-32000));
+        assert!(
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("unknown method"),
+            "retired method should remain unavailable: {error}"
+        );
+    }
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn billing_rpc_e2e() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
     let tmp = tempdir().expect("tempdir");
@@ -1059,8 +1092,8 @@ async fn team_rpc_e2e() {
 async fn json_rpc_agent_run_mode_set_and_get_round_trip() {
     // `agent.set_run_mode` / `agent.get_run_mode` flip and read back a
     // thread's Plan/Build mode through the per-thread `RunModeHandle`
-    // registry (`agent::tinyagents::run_mode`) — no thread/session bootstrap
-    // needed since the registry is a bare thread_id-keyed map.
+    // registry (`agent::tinyagents::run_mode`). The RPC verifies ownership,
+    // so first create a real thread in the caller's workspace.
     let _env_lock = json_rpc_e2e_env_lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
@@ -1153,6 +1186,7 @@ async fn json_rpc_agent_context_breakdown_default_agent_returns_sections() {
     // params it must default `agent_id` to "orchestrator" and still work
     // against a bare `write_min_config` setup (no thread bootstrap needed).
     let _env_lock = json_rpc_e2e_env_lock_async().await;
+    tinyhumans_boot::boot();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
     let openhuman_home = home.join(".openhuman");
@@ -1166,6 +1200,7 @@ async fn json_rpc_agent_context_breakdown_default_agent_returns_sections() {
     let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
     let api_origin = format!("http://{api_addr}");
     write_min_config(openhuman_home.as_path(), &api_origin);
+    store_local_profile_api_key(openhuman_home.as_path(), &api_origin);
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");

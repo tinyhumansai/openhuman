@@ -3,7 +3,7 @@
 
 use super::{BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PROVIDER, PROVIDER_OPENHUMAN};
 use crate::config::Config;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 use crate::security::egress::EgressLedger;
 use tinyinference_providers::route::{ProviderRoute, RouteKind};
 
@@ -289,18 +289,18 @@ pub(crate) fn provider_uses_independent_auth(provider: &str) -> bool {
         })
 }
 
-pub(crate) fn verify_provider_session(config: &Config, provider: &str) -> anyhow::Result<()> {
+pub(crate) async fn verify_provider_session(config: &Config, provider: &str) -> anyhow::Result<()> {
     if provider_uses_independent_auth(provider) {
         log::debug!("[chat-factory] caller-owned runtime uses independent authentication");
         return Ok(());
     }
-    verify_session_active(config)
+    verify_session_active(config).await
 }
 
 /// Explicit-dispatch counterpart used by model construction. Session policy
 /// follows the host context that requested the model, never a different ambient
 /// context on the current task.
-pub(crate) fn verify_provider_session_in(
+pub(crate) async fn verify_provider_session_in(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     provider: &str,
@@ -313,7 +313,7 @@ pub(crate) fn verify_provider_session_in(
         .resolved()
         .map(|core| host_requires_session(core.host_kind()))
         .unwrap_or(true);
-    verify_session_active_for_host(config, requires_session)
+    verify_session_active_for_host(config, requires_session).await
 }
 
 /// Verify the user has an active OpenHuman backend session.
@@ -328,17 +328,20 @@ pub(crate) fn verify_provider_session_in(
 /// as its Layer 1 sync session check, so the author-time gate and this
 /// construction-time chokepoint can never diverge on what "session active"
 /// means.
-pub(crate) fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+pub(crate) async fn verify_session_active(config: &Config) -> anyhow::Result<()> {
     // An in-process library host is given its provider URL and credential by
     // its caller. It does not participate in the OpenHuman app's registration
     // or auth-profile lifecycle, so requiring a fabricated local session here
     // would mix desktop product policy into the library contract. The ambient
     // context is installed by the dispatch chokepoint; all other host kinds
     // retain the registration gate below.
-    verify_session_active_for_host(config, current_host_requires_session())
+    verify_session_active_for_host(config, current_host_requires_session()).await
 }
 
-fn verify_session_active_for_host(config: &Config, requires_session: bool) -> anyhow::Result<()> {
+async fn verify_session_active_for_host(
+    config: &Config,
+    requires_session: bool,
+) -> anyhow::Result<()> {
     if !requires_session {
         return Ok(());
     }
@@ -352,13 +355,57 @@ fn verify_session_active_for_host(config: &Config, requires_session: bool) -> an
         return Ok(());
     }
 
-    verify_backend_session_active(config)
+    verify_backend_session_active(config).await
+}
+
+pub(super) fn verify_provider_session_in_with_snapshot(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    provider: &str,
+    snapshot: &super::credentials::RuntimeCredentialSnapshot,
+) -> anyhow::Result<()> {
+    if provider_uses_independent_auth(provider) {
+        return Ok(());
+    }
+    let requires_session = ctx
+        .resolved()
+        .map(|core| host_requires_session(core.host_kind()))
+        .unwrap_or(true);
+    verify_session_active_with_snapshot_for_host(config, requires_session, snapshot)
+}
+
+/// Synchronous model-factory gate backed by the per-session credential
+/// snapshot loaded before TinyAgents invokes its sync `ModelFactory` trait.
+pub(super) fn verify_session_active_with_snapshot(
+    config: &Config,
+    snapshot: &super::credentials::RuntimeCredentialSnapshot,
+) -> anyhow::Result<()> {
+    verify_session_active_with_snapshot_for_host(config, current_host_requires_session(), snapshot)
+}
+
+fn verify_session_active_with_snapshot_for_host(
+    config: &Config,
+    requires_session: bool,
+    snapshot: &super::credentials::RuntimeCredentialSnapshot,
+) -> anyhow::Result<()> {
+    if !requires_session
+        || config
+            .profile_providers
+            .as_ref()
+            .is_some_and(|providers| providers.has_direct_chat())
+    {
+        return Ok(());
+    }
+    if snapshot.backend_session_active() {
+        return Ok(());
+    }
+    anyhow::bail!("SESSION_EXPIRED: backend session not active — sign in to use custom providers")
 }
 
 /// Managed `OpenhumanJwt` inference always needs the backend bearer, including
 /// in a Library host. Library mode exempts caller-owned provider credentials;
 /// it cannot manufacture a TinyHumans account credential.
-pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<()> {
+pub(crate) async fn verify_backend_session_active(config: &Config) -> anyhow::Result<()> {
     let state_dir = config
         .config_path
         .parent()
@@ -370,7 +417,7 @@ pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<(
         });
     // An API key is a standing credential: no session to be active, nothing
     // for the scheduler gate to have expired.
-    if crate::security::credentials::api_key::has_api_key_in(&state_dir, config.secrets.encrypt) {
+    if crate::credentials::api_key::has_api_key_in(&state_dir, config.secrets.encrypt).await {
         log::debug!(
             "[providers][access-gate] api-key credential satisfies the backend session gate"
         );
@@ -385,7 +432,8 @@ pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<(
     // Verify the app-session JWT actually exists in auth-profiles.
     let auth = AuthService::new(&state_dir, config.secrets.encrypt);
     let has_session = auth
-        .get_provider_bearer_token(crate::security::credentials::APP_SESSION_PROVIDER, None)?
+        .get_provider_bearer_token(crate::credentials::APP_SESSION_PROVIDER, None)
+        .await?
         .filter(|s| !s.trim().is_empty())
         .is_some();
     if !has_session {
@@ -405,4 +453,28 @@ pub(crate) fn current_host_requires_session() -> bool {
 
 pub(super) fn host_requires_session(host_kind: crate::core::types::HostKind) -> bool {
     host_kind != crate::core::types::HostKind::Library
+}
+
+/// The access check every model a harness turn builds passes first.
+impl tinyagents_harness::host::ModelBuildGate for super::OpenHumanModelFactory<'_> {
+    fn check(
+        &self,
+        request: &tinyagents_harness::host::ModelBuildRequest,
+    ) -> tinyagents_harness::Result<()> {
+        // Explicit host model injection is authoritative and has no provider
+        // construction, credential, or egress side effect to gate.
+        if self.injected(request).is_some() {
+            return Ok(());
+        }
+        let provider = self.provider_for(request);
+        enforce_local_only_inference(&request.role, &provider)
+            .map_err(|error| tinyagents_harness::TinyAgentsError::Model(error.to_string()))?;
+        verify_provider_session_in_with_snapshot(
+            self.ctx,
+            self.config,
+            &provider,
+            &self.credentials,
+        )
+        .map_err(|error| tinyagents_harness::TinyAgentsError::Model(error.to_string()))
+    }
 }

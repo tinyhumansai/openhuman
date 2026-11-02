@@ -22,6 +22,10 @@
 //! path the event is published at, so the broker can filter by domain and never
 //! wake a process for events it did not ask for.
 
+mod domain;
+mod keyring_access;
+pub use keyring_access::KeyringAccessApprovalRequest;
+
 /// A tool call made while answering a committed turn: name and id only.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConversationToolCall {
@@ -338,14 +342,14 @@ pub enum DomainEvent {
         /// `workspace_dir` does not match their own workspace binding.
         workspace_dir: std::path::PathBuf,
     },
-    /// A reaction event was received from a channel transport.
+    /// Retired legacy reaction callback payload, retained as an Events 1.x wire tombstone.
     ChannelReactionReceived {
         channel: String,
         sender: String,
         target_message_id: String,
         emoji: String,
     },
-    /// A reaction update was sent to a channel transport.
+    /// Retired legacy reaction callback payload, retained as an Events 1.x wire tombstone.
     ChannelReactionSent {
         channel: String,
         target_message_id: String,
@@ -372,10 +376,7 @@ pub enum DomainEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant: Option<crate::core::runtime::Tenant>,
     },
-
-    /// A proactive message (morning briefing, welcome, cron output, etc.)
-    /// needs to be delivered to the user. The channels module routes it to
-    /// the user's active channel.
+    /// A proactive message requested for user delivery.
     ProactiveMessageRequested {
         /// Identifies the source (e.g. `"cron:morning_briefing"`, `"cron:welcome"`).
         source: String,
@@ -383,6 +384,9 @@ pub enum DomainEvent {
         message: String,
         /// Optional job name for display/threading purposes.
         job_name: Option<String>,
+        /// The originating tenant; event subscribers execute outside the publisher task.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant: Option<crate::core::runtime::Tenant>,
     },
     /// A host-owned system cron job came due (a `flow`-type row whose command
     /// is `system:<job>`, see `cron::system_jobs`). The owning domain runs it.
@@ -1040,6 +1044,12 @@ pub enum DomainEvent {
     DeviceTunnelFrame {
         channel_id: String,
         payload_b64: String,
+        /// Fresh host-minted token binding operations to this backend connection.
+        connection_token: String,
+        /// Fresh host-minted nonce for this authenticated socket callback.
+        connection_nonce: String,
+        /// Expiry of the host-attested callback context, in epoch milliseconds.
+        expires_at_ms: u64,
     },
 
     // ── MCP Clients ─────────────────────────────────────────────────────
@@ -1276,23 +1286,25 @@ pub enum DomainEvent {
     /// operation hits the consent gate. The frontend surfaces a consent
     /// dialog in response.
     KeyringConsentRequired,
+    /// One exact TinySecurity keyring operation needs the human's decision.
+    KeyringAccessApprovalRequested(KeyringAccessApprovalRequest),
     /// A secret field failed to decrypt (rotated master key, corrupted
     /// ciphertext, keychain reset). Published so the frontend can surface
     /// a recovery prompt instead of silently clearing the field.
     KeyringDecryptFailed { field_name: String, reason: String },
 
     // ── Auth ────────────────────────────────────────────────────────────
-    /// The local app session is no longer valid — typically detected when
-    /// the backend returns 401 to an LLM inference call or a JSON-RPC
-    /// method. Subscribers tear down the session and pause background
-    /// LLM-bound work until the user signs back in.
-    ///
-    /// `source` is a short slug (e.g. `"llm_provider.openhuman_backend"`,
-    /// `"jsonrpc.invoke_method"`) so subscribers and logs can attribute
-    /// the trigger. `reason` is the sanitized error message that caused
-    /// detection (already redacted by the call site) — surfaced to logs,
-    /// never to Sentry or the UI verbatim.
-    SessionExpired { source: String, reason: String },
+    /// A backend 401 invalidated the local app session. Subscribers pause
+    /// background LLM work and clear the session. `source` identifies the
+    /// publisher; `reason` is sanitized and used only in logs.
+    SessionExpired {
+        source: String,
+        reason: String,
+        /// Opaque request credential identity; absent provenance cannot clear
+        /// the current session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credential_fingerprint: Option<String>,
+    },
 
     /// The backend credential this core holds was stored, replaced or
     /// cleared (`auth.set_credential` / `auth.clear_credential`, including the
@@ -1381,256 +1393,7 @@ pub fn clip_to_chars(text: &str, max: usize) -> String {
     out
 }
 
-impl DomainEvent {
-    /// Returns the domain name for routing and filtering.
-    pub fn domain(&self) -> &'static str {
-        match self {
-            Self::AgentTurnStarted { .. }
-            | Self::AgentTurnCompleted { .. }
-            | Self::ConversationTurnCommitted { .. }
-            | Self::AgentError { .. }
-            | Self::SubagentSpawned { .. }
-            | Self::SubagentCompleted { .. }
-            | Self::SubagentFailed { .. }
-            | Self::SubagentAwaitingUser { .. }
-            | Self::AgentOrchestrationSpawned { .. }
-            | Self::AgentOrchestrationCompleted { .. }
-            | Self::AgentOrchestrationFailed { .. }
-            | Self::AgentOrchestrationClosed { .. }
-            | Self::RunQueueMessageQueued { .. }
-            | Self::RunQueueFollowupDispatched { .. }
-            | Self::RunQueueInterrupted { .. }
-            | Self::RunQueueMessageDelivered { .. }
-            | Self::RunQueueSteerRequeued { .. } => "agent",
-
-            Self::MonitorStatusChanged { .. } | Self::MonitorLine { .. } => "monitor",
-
-            Self::EmbeddingModelUnhealthy { .. }
-            | Self::MemoryStored { .. }
-            | Self::MemoryRecalled { .. } => "memory",
-
-            Self::ChannelInboundMessage { .. }
-            | Self::ChannelMessageReceived { .. }
-            | Self::ChannelMessageProcessed { .. }
-            | Self::ChannelReactionReceived { .. }
-            | Self::ChannelReactionSent { .. }
-            | Self::ChannelConnected { .. }
-            | Self::ChannelDisconnected { .. } => "channel",
-
-            Self::CronJobTriggered { .. }
-            | Self::CronJobCompleted { .. }
-            | Self::ProactiveMessageRequested { .. }
-            | Self::CronSystemJobDue { .. }
-            | Self::FlowRunProgress { .. }
-            | Self::FlowRunStarted { .. }
-            | Self::FlowRunFinished { .. }
-            | Self::FlowChanged { .. } => "cron",
-
-            Self::WorkflowLoaded { .. }
-            | Self::WorkflowStopped { .. }
-            | Self::WorkflowStartFailed { .. }
-            | Self::WorkflowExecuted { .. }
-            | Self::WorkflowsChanged { .. } => "workflow",
-
-            Self::ToolExecutionStarted { .. } | Self::ToolExecutionCompleted { .. } => "tool",
-
-            Self::WorkspacePrepared { .. }
-            | Self::WorkspaceViolation { .. }
-            | Self::WorkspaceCleanup { .. } => "workspace",
-
-            Self::WebhookIncomingRequest { .. }
-            | Self::WebhookReceived { .. }
-            | Self::WebhookRegistered { .. }
-            | Self::WebhookUnregistered { .. }
-            | Self::WebhookProcessed { .. } => "webhook",
-
-            Self::ComposioTriggerReceived { .. }
-            | Self::ComposioConnectionCreated { .. }
-            | Self::ComposioConnectionDeleted { .. }
-            | Self::ComposioIntegrationsChanged { .. }
-            | Self::ComposioActionExecuted { .. }
-            | Self::ComposioConfigChanged { .. } => "composio",
-
-            Self::TriggerEvaluated { .. }
-            | Self::TriggerEscalated { .. }
-            | Self::TriggerEscalationFailed { .. } => "triage",
-
-            Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
-
-            Self::InboundEventDropped { .. }
-            | Self::InboundDeferred { .. }
-            | Self::InboundDeadLettered { .. }
-            | Self::InboundTurnCompleted { .. }
-            | Self::InboundTurnFailed { .. } => "inbound",
-
-            Self::DevicePaired { .. }
-            | Self::DeviceRevoked { .. }
-            | Self::DevicePeerOnline { .. }
-            | Self::DevicePeerOffline { .. }
-            | Self::DeviceTunnelFrame { .. } => "device",
-
-            Self::SystemStartup { .. }
-            | Self::SystemShutdown { .. }
-            | Self::SystemRestartRequested { .. }
-            | Self::SystemShutdownRequested { .. }
-            | Self::AutonomyConfigChanged
-            | Self::AgentPathsChanged
-            | Self::ActiveWorkspaceChanged { .. }
-            | Self::HealthChanged { .. }
-            | Self::HealthRestarted { .. } => "system",
-
-            Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
-
-            Self::SessionExpired { .. }
-            | Self::CredentialChanged { .. }
-            | Self::ProviderApiKeyRejected { .. } => "auth",
-
-            Self::TaskSourceFetched { .. }
-            | Self::TaskSourceTaskIngested { .. }
-            | Self::TaskSourceFetchFailed { .. } => "task_sources",
-
-            Self::ThreadGoalUpdated { .. }
-            | Self::ThreadGoalCleared { .. }
-            | Self::ThreadTodosChanged { .. }
-            | Self::ThreadRunModeChanged { .. } => "agent",
-
-            Self::ApprovalRequested { .. }
-            | Self::ApprovalDecided { .. }
-            | Self::ApprovalGateOverrideIgnored { .. }
-            | Self::ApprovalGateDisabled { .. }
-            | Self::FlowApprovalRequested { .. } => "approval",
-
-            Self::PlanReviewRequested { .. } | Self::PlanReviewDecided { .. } => "plan_review",
-
-            Self::ExternalTransferPending { .. } => "egress",
-
-            Self::ArtifactReady { .. }
-            | Self::ArtifactFailed { .. }
-            | Self::ArtifactPending { .. } => "artifact",
-
-            Self::McpServerInstalled { .. }
-            | Self::McpServerConnected { .. }
-            | Self::McpServerDisconnected { .. }
-            | Self::McpClientToolExecuted { .. }
-            | Self::McpToolRejected { .. }
-            | Self::McpServerProbeTimedOut { .. }
-            | Self::McpServerTransportDropped { .. }
-            | Self::McpServerReconnected { .. }
-            | Self::McpServerReconnectFailed { .. }
-            | Self::McpServerParked { .. } => "mcp_client",
-        }
-    }
-
-    /// Best-effort agent/session hint for display (not all events carry one).
-    pub fn agent_hint(&self) -> Option<&str> {
-        match self {
-            Self::AgentTurnStarted { session_id, .. }
-            | Self::AgentTurnCompleted { session_id, .. }
-            | Self::AgentError { session_id, .. } => Some(session_id.as_str()),
-            Self::SubagentSpawned { agent_id, .. }
-            | Self::SubagentCompleted { agent_id, .. }
-            | Self::SubagentFailed { agent_id, .. }
-            | Self::SubagentAwaitingUser { agent_id, .. }
-            | Self::AgentOrchestrationSpawned { agent_id, .. }
-            | Self::AgentOrchestrationCompleted { agent_id, .. }
-            | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),
-            Self::ChannelMessageReceived { channel, .. }
-            | Self::ChannelConnected { channel, .. }
-            | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
-            Self::ToolExecutionStarted { tool_name, .. }
-            | Self::ToolExecutionCompleted { tool_name, .. } => Some(tool_name.as_str()),
-            Self::WorkspacePrepared { policy_id, .. }
-            | Self::WorkspaceCleanup { policy_id, .. } => Some(policy_id.as_str()),
-            Self::WorkspaceViolation { path } => Some(path.as_str()),
-            Self::RunQueueMessageQueued { thread_id, .. }
-            | Self::RunQueueFollowupDispatched { thread_id, .. }
-            | Self::RunQueueInterrupted { thread_id, .. }
-            | Self::RunQueueMessageDelivered { thread_id, .. }
-            | Self::RunQueueSteerRequeued { thread_id, .. } => Some(thread_id.as_str()),
-            Self::MonitorStatusChanged { thread_id, .. } | Self::MonitorLine { thread_id, .. } => {
-                thread_id.as_deref()
-            }
-            // The Event Log's "agent" column is the only per-row context the
-            // stream carries, so an MCP row names its server there: the
-            // install id for the RPC-driven lifecycle, the registry name
-            // (`ac.inference.sh/mcp`) for the supervisor's verdicts, which is
-            // how a user knows the server and how the log lines name it.
-            Self::McpServerInstalled { server_id, .. }
-            | Self::McpServerConnected { server_id, .. }
-            | Self::McpServerDisconnected { server_id, .. } => Some(server_id.as_str()),
-            Self::McpServerProbeTimedOut { qualified_name, .. }
-            | Self::McpServerTransportDropped { qualified_name, .. }
-            | Self::McpServerReconnected { qualified_name, .. }
-            | Self::McpServerReconnectFailed { qualified_name, .. }
-            | Self::McpServerParked { qualified_name, .. } => Some(qualified_name.as_str()),
-            _ => None,
-        }
-    }
-
-    /// The workspace this event belongs to, for the variants bound to one.
-    ///
-    /// One process serves more than one workspace over its life, so a
-    /// process-wide consumer — the Event Log, the `core_notification`
-    /// broadcast — has to be able to ask which workspace a given event came
-    /// from. Three families already carry the answer and each used to be read
-    /// by whoever happened to need it: `desktop::notifications` matched the
-    /// MCP arms in a private helper of its own, and silently did not gate the
-    /// channel and artifact families that carry the same field. This is the
-    /// one place that question is answered, so a consumer cannot cover a
-    /// subset by accident and a new workspace-bound variant has one arm to
-    /// add rather than several to find (#5966).
-    ///
-    /// `None` means "not workspace-bound", which is the common case and is
-    /// **not** the same as "unknown workspace": a consumer filtering by
-    /// workspace should let these through rather than drop them.
-    ///
-    /// The value is an absolute path under the user's home directory. It is
-    /// for in-process comparison only — anything that reaches a client or an
-    /// export sends
-    /// [`workspace_handle`](crate::config::workspace_handle)
-    /// instead.
-    #[must_use]
-    pub fn workspace_dir(&self) -> Option<&std::path::Path> {
-        match self {
-            // Channel — the workspace the inbound message was received under.
-            Self::ChannelMessageReceived { workspace_dir, .. }
-            | Self::ChannelMessageProcessed { workspace_dir, .. } => Some(workspace_dir.as_path()),
-
-            // Artifact — carried as a `String` because the producer takes it
-            // from a config field it already has as text; same meaning.
-            //
-            // An empty string reads back as "bound to the empty path", which
-            // matches no workspace and would therefore hide the event from
-            // every scoped consumer — a worse failure than not knowing. Today
-            // the producers pass a real `Path`, so this is a guard against a
-            // future one that does not, not a case that occurs.
-            Self::ArtifactReady { workspace_dir, .. }
-            | Self::ArtifactFailed { workspace_dir, .. }
-            | Self::ArtifactPending { workspace_dir, .. } => {
-                if workspace_dir.is_empty() {
-                    None
-                } else {
-                    Some(std::path::Path::new(workspace_dir))
-                }
-            }
-
-            // MCP reconnect supervisor (#5931).
-            Self::McpServerProbeTimedOut { workspace_dir, .. }
-            | Self::McpServerTransportDropped { workspace_dir, .. }
-            | Self::McpServerReconnected { workspace_dir, .. }
-            | Self::McpServerReconnectFailed { workspace_dir, .. }
-            | Self::McpServerParked { workspace_dir, .. } => Some(workspace_dir.as_path()),
-
-            // The switch itself is *about* a workspace rather than bound to
-            // one: it is what tells a consumer the active workspace changed,
-            // so filtering it out by the very rule it announces would hide
-            // the announcement from everyone who is not already up to date.
-            Self::ActiveWorkspaceChanged { .. } => None,
-
-            _ => None,
-        }
-    }
-}
+mod context;
 
 mod log_detail;
 mod variant_names;

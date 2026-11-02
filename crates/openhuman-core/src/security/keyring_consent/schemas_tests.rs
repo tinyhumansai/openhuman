@@ -31,6 +31,12 @@ pub(crate) fn parameter_contracts() -> Vec<ControllerParamContract> {
             optional: &[],
             examples: vec![json!({})],
         },
+        ControllerParamContract {
+            method: "keyring_consent.respond_operation",
+            required: &["request_id", "approved"],
+            optional: &[],
+            examples: vec![json!({ "request_id": "approval-1", "approved": true })],
+        },
     ]
 }
 
@@ -105,4 +111,28 @@ fn status_and_retry_probe_parsers_ignore_the_entire_parameter_map() {
     let params = Map::from_iter([("ignored".into(), json!({"anything": [null, 3.5]}))]);
     assert_eq!(parse_status(params.clone()), Ok(()));
     assert_eq!(parse_retry_probe(params), Ok(()));
+}
+
+#[test]
+fn operation_response_parser_requires_an_id_and_boolean_decision() {
+    assert_eq!(
+        parse_respond_operation(Map::from_iter([
+            ("request_id".into(), json!("request-1")),
+            ("approved".into(), json!(false)),
+        ]))
+        .unwrap(),
+        ("request-1".into(), false),
+    );
+    assert_eq!(
+        parse_respond_operation(Map::new()).unwrap_err(),
+        "missing required param 'request_id'"
+    );
+    assert_eq!(
+        parse_respond_operation(Map::from_iter([
+            ("request_id".into(), json!("request-1")),
+            ("approved".into(), json!("yes")),
+        ]))
+        .unwrap_err(),
+        "missing required param 'approved'"
+    );
 }

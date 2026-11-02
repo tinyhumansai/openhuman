@@ -23,11 +23,13 @@
 mod channel;
 mod ops;
 mod params;
+pub(crate) mod progressive;
 mod schemas;
 mod store;
 
 pub use channel::{RelayChannel, CHANNEL_OUTBOUND_EVENT};
 pub use ops::channel_relay_inbound;
+pub(crate) use ops::LegacyHistoryImport;
 pub use params::{
     validate_channel, validate_id, RelayInboundParams, DEFAULT_RELAY_CLIENT_ID, MAX_CHANNEL_LEN,
     MAX_ID_LEN, MAX_SENDER_NAME_CHARS, MAX_TEXT_BYTES, RESERVED_CHANNELS,

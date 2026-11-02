@@ -61,11 +61,12 @@ pub mod services;
 pub mod spawn;
 pub(crate) mod subscribers;
 pub mod tenant;
+pub mod turn_origin;
 
 pub use agent_scope::{agent_scope_dir, slot_for, AgentContextRegistry, AgentScopedState};
 pub use builder::{CoreBootMode, CoreBuilder, CoreRuntime, DomainSet, ServiceSet, TokenSource};
 pub use context::{AutonomyTierSource, ContextOverlay, CoreContext};
-pub use dispatch_ctx::DispatchCtx;
+pub use dispatch_ctx::{DispatchCtx, InvocationSource};
 #[cfg(test)]
 pub(crate) use mode::lock_mode;
 pub use mode::{current_mode, is_saas, Mode};

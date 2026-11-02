@@ -1,15 +1,26 @@
 //! Presentation layer for web-channel chat responses: store a finished reply,
 //! then announce it to the client as one unmodified `chat_done` message.
 
+use tinychannels_bus::web as bus_web;
+
 use crate::agent::tinyagents::host::LastTurnUsage;
-use crate::web_chat::{SubagentUsagePayload, TurnUsagePayload, WebChannelEvent};
+use crate::web_chat::{SubagentUsagePayload, TurnUsagePayload};
 
 use super::publish_web_channel_event_in;
+
+fn cost_source(source: tinyagents_harness::cost::CostSource) -> bus_web::WebCostSource {
+    use tinyagents_harness::cost::CostSource;
+    match source {
+        CostSource::Charged => bus_web::WebCostSource::Charged,
+        CostSource::Estimated => bus_web::WebCostSource::Estimated,
+        CostSource::Unknown => bus_web::WebCostSource::Unknown,
+    }
+}
 
 /// Convert a turn's [`LastTurnUsage`] into the wire payload carried on
 /// `chat_done`. Returns `None` for a turn that recorded no spend at all (e.g. a
 /// synthetic budget-exhausted placeholder) so the event stays compact.
-fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
+pub(super) fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
     let usage = usage?;
     let subagents = usage
         .subagents
@@ -27,7 +38,7 @@ fn usage_payload(usage: Option<&LastTurnUsage>) -> Option<TurnUsagePayload> {
         output_tokens: usage.output_tokens,
         cached_input_tokens: usage.cached_input_tokens,
         cost_usd: usage.cost_usd,
-        cost_source: usage.cost_source,
+        cost_source: cost_source(usage.cost_source),
         context_window: usage.context_window,
         context_tokens: usage.context_tokens,
         subagents,
@@ -56,7 +67,7 @@ pub(crate) async fn deliver_response(
     citations: &[crate::web_chat::TurnCitation],
     usage: Option<&LastTurnUsage>,
     workspace_dir: Option<&std::path::Path>,
-    timing: Option<super::turn_timing::TurnTimingSnapshot>,
+    timing: Option<bus_web::TurnTimingSnapshot>,
     suggest_follow_ups: bool,
 ) {
     persist_reply(
@@ -149,7 +160,7 @@ pub(crate) fn announce_reply(
     user_message: &str,
     citations: &[crate::web_chat::TurnCitation],
     usage: Option<&LastTurnUsage>,
-    timing: Option<super::turn_timing::TurnTimingSnapshot>,
+    timing: Option<bus_web::TurnTimingSnapshot>,
     suggest_follow_ups: bool,
 ) {
     let usage_payload = usage_payload(usage);
@@ -208,6 +219,43 @@ pub(crate) fn deliver_response_single_bubble(
     );
 }
 
+/// The terminal `chat_done` for an unsegmented reply. Terminal delivery events
+/// are emitted outside the seq-stamping progress stream, so `seq` stays unset
+/// (older clients ignore it).
+pub(super) fn chat_done_event(
+    context: bus_web::WebEventContext,
+    full_response: &str,
+    citations: &[crate::web_chat::TurnCitation],
+    usage: Option<TurnUsagePayload>,
+    timing: Option<crate::web_chat::TurnTimingPayload>,
+) -> bus_web::WebChannelEvent {
+    bus_web::WebChannelEvent::ChatDone {
+        context,
+        full_response: Some(full_response.to_string()),
+        citations: (!citations.is_empty()).then(|| serde_json::json!(citations)),
+        usage,
+        timing,
+        parts: None,
+    }
+}
+
+/// The terminal `chat_done` of a finished turn, ready to publish.
+pub(super) fn announced_chat_done(
+    context: bus_web::WebEventContext,
+    full_response: &str,
+    citations: &[crate::web_chat::TurnCitation],
+    usage: Option<&LastTurnUsage>,
+    timing: Option<bus_web::TurnTimingSnapshot>,
+) -> bus_web::WebChannelEvent {
+    chat_done_event(
+        context,
+        full_response,
+        citations,
+        usage_payload(usage),
+        timing.map(|snapshot| snapshot.into_payload(usage.map(|u| u.output_tokens))),
+    )
+}
+
 /// Emit the terminal `chat_done` for an unsegmented reply.
 fn publish_chat_done(
     ctx: &crate::core::runtime::DispatchCtx,
@@ -219,52 +267,21 @@ fn publish_chat_done(
     usage_payload: Option<TurnUsagePayload>,
     timing_payload: Option<crate::web_chat::TurnTimingPayload>,
 ) {
+    let context = bus_web::WebEventContext {
+        client_id: client_id.to_string(),
+        thread_id: thread_id.to_string(),
+        request_id: request_id.to_string(),
+        ..Default::default()
+    };
     publish_web_channel_event_in(
         ctx,
-        WebChannelEvent {
-            event: "chat_done".to_string(),
-            client_id: client_id.to_string(),
-            thread_id: thread_id.to_string(),
-            request_id: request_id.to_string(),
-            full_response: Some(full_response.to_string()),
-            message: None,
-            error_type: None,
-            error_source: None,
-            error_retryable: None,
-            error_retry_after_ms: None,
-            error_provider: None,
-            error_fallback_available: None,
-            copy_key: None,
-            copy_params: None,
-            tool_name: None,
-            skill_id: None,
-            args: None,
-            output: None,
-            success: None,
-            round: None,
-            segment_index: None,
-            segment_total: None,
-            delta: None,
-            delta_kind: None,
-            tool_call_id: None,
-            failure: None,
-            subagent: None,
-            tool_display_label: None,
-            tool_display_detail: None,
-            elapsed_ms: None,
-            structured: None,
-            citations: if citations.is_empty() {
-                None
-            } else {
-                Some(serde_json::json!(citations))
-            },
-            usage: usage_payload,
-            timing: timing_payload,
-            // Terminal delivery events are emitted outside the seq-stamping
-            // progress bridge; leave `seq` unset (older clients ignore it).
-            seq: None,
-            ..Default::default()
-        },
+        chat_done_event(
+            context,
+            full_response,
+            citations,
+            usage_payload,
+            timing_payload,
+        ),
     );
 }
 

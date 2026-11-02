@@ -26,7 +26,7 @@ use tinyagents_harness::artifacts::{
 ///
 /// `action_dir` is granted as a read-write trusted root, because that is what
 /// production does: `SecurityPolicy::from_config` grants the projects dir
-/// exactly this way. Without the grant, `is_resolved_path_allowed_for` refuses
+/// exactly this way. Without the grant, TinySecurity's path authorization refuses
 /// everything outside `workspace_dir` — that check is unconditional and is NOT
 /// relaxed by `workspace_only`.
 fn policy_with(action_dir: PathBuf, workspace_dir: PathBuf) -> Arc<SecurityPolicy> {
@@ -84,10 +84,7 @@ fn workspace_guard_reports_workspace_dir_as_the_internal_root() {
 }
 
 #[test]
-fn workspace_guard_defers_to_the_security_policy_for_internal_state() {
-    // The adapter must not re-implement the rule, only forward it — a
-    // divergent copy here would drift from the policy the rest of the core
-    // enforces, and the two would disagree about the same path.
+fn workspace_guard_leaves_internal_state_authorization_to_async_preflight() {
     let policy = policy_with(PathBuf::from("/action"), PathBuf::from("/state/workspace"));
     let guard = WorkspaceGuard::new(Arc::clone(&policy));
     for candidate in [
@@ -96,10 +93,9 @@ fn workspace_guard_defers_to_the_security_policy_for_internal_state() {
         "/tmp/unrelated",
     ] {
         let path = std::path::Path::new(candidate);
-        assert_eq!(
-            guard.is_internal_state(path),
-            policy.is_workspace_internal_path(path),
-            "adapter disagreed with SecurityPolicy about {candidate}"
+        assert!(
+            !guard.is_internal_state(path),
+            "sync adapter must not decide policy for {candidate}"
         );
     }
 }

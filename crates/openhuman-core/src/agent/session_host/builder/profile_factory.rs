@@ -11,7 +11,7 @@ impl OpenHumanSessionHost {
     ///
     /// # Errors
     /// As [`Self::from_config_for_agent`], or when a profile has no definition.
-    pub fn from_config_for_agent_session(
+    pub async fn from_config_for_agent_session(
         ctx: &DispatchCtx,
         config: &Config,
         agent_id: &str,
@@ -29,8 +29,19 @@ impl OpenHumanSessionHost {
                 &definition,
                 Some(&factory),
                 session_id,
-            );
+            )
+            .await;
         }
-        Self::from_config_for_agent(ctx, config, agent_id)
+        let definition = super::factory::resolve_target_definition(config, agent_id)?;
+        Self::build_session_agent_inner(
+            ctx,
+            config,
+            agent_id,
+            definition.as_ref(),
+            false,
+            None,
+            session_id,
+        )
+        .await
     }
 }

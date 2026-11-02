@@ -6,7 +6,7 @@ Diagnostics for the local core's reachability and the live backend Socket.IO sta
 
 - Answer `openhuman.connectivity_diag` with a flat snapshot: backend socket state, last websocket error, whether the backend reconnect loop is running and whether it stopped on a terminal failure (`socket_loop_active` / `socket_loop_stopped_on_failure`, #6270), sidecar PID, configured listen port, and whether that port currently has a listener bound.
 - Resolve the configured core RPC port from the environment (`OPENHUMAN_CORE_RPC_URL` then `OPENHUMAN_CORE_PORT`, defaulting to `7788`).
-- Snapshot the backend Socket.IO connection state from the global `SocketManager` (reports `"uninitialized"` when the manager singleton isn't registered yet).
+- Snapshot the backend Socket.IO connection state from the host-installed `SocketPort` (reports `"uninitialized"` before registration).
 - Probe whether a TCP port on loopback is already bound (`is_port_in_use`).
 - Pick a listen port for the embedded core HTTP listener (`pick_listen_port` / `pick_listen_port_for_host`): try preferred, retry transient `AddrInUse` races, request stale-listener takeover when another OpenHuman core owns the port (#1130): the embedded desktop path; headless `serve` passes `OccupiedByCore::Fallback` to `pick_listen_port_for_host_with` and moves on instead: otherwise fall back to a port pool.
 - Handle Windows OS-excluded port ranges (`WSAEACCES` / os error 10013, Sentry OPENHUMAN-TAURI-500) by routing straight to fallback ports instead of failing.
@@ -37,11 +37,11 @@ Restart/mutate operations are intentionally **not** here: they live in the Tauri
 
 ## Persistence
 
-None: the module holds no state. The diag snapshot reads only the environment, the in-memory `SocketManager`, and a live TCP probe.
+None: the module holds no state. The diag snapshot reads only the environment, the in-memory socket port, and a live TCP probe.
 
 ## Dependencies
 
-- `crate::platform::socket::manager::global_socket_manager`: read the live backend Socket.IO `ConnectionStatus` and last error for the diag snapshot.
+- `crate::platform::socket::global_socket_manager`: read the host-owned backend Socket.IO `ConnectionStatus` and last error for the diag snapshot.
 - `crate::core::all::{ControllerFuture, RegisteredController}`: controller registration types.
 - `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller schema shape.
 - `crate::core::Outcome`: RPC return envelope (`Outcome::single_log`).
@@ -60,7 +60,7 @@ None: the module holds no state. The diag snapshot reads only the environment, t
 - Fallback pool: when preferred is the default `7788`, fallbacks are `7789..=7798`; otherwise `preferred+1..=preferred+10` (saturating-checked).
 - `WouldTakeOver` is only returned when something is actually listening (`AddrInUse`) **and** the listener fingerprints as an OpenHuman core (its `GET /` returns JSON with `"name":"openhuman"`). OS-excluded ports (Windows `WSAEACCES` / os error 10013) skip the takeover probe and route directly to fallbacks; `is_port_excluded_bind_error` matches on the raw OS code (10013) because Rust's `ErrorKind` mapping for it isn't stable across releases.
 - IPv6 probe hosts are bracketed per RFC 3986 before building the fingerprint URL so live cores on IPv6 aren't misclassified as `Other`.
-- `socket_state` is funneled through `serde_json` (not `Debug`) so the lowercased wire shape stays stable; `"uninitialized"` is reported when the `SocketManager` singleton isn't installed (early startup / tests).
+- `socket_state` is funneled through `serde_json` (not `Debug`) so the lowercased wire shape stays stable; `"uninitialized"` is reported before the host installs a socket port (early startup / tests).
 - `is_port_in_use` returns `false` on non-`AddrInUse` bind errors (e.g. permission denied) so a port isn't misreported as occupied.
 - No agent tools and no event-bus subscribers in this module.
 

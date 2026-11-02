@@ -4,6 +4,7 @@ import {
   chatCancel,
   chatClearQueue,
   chatSend,
+  chatSendWithAck,
   NO_SOCKET_CANCEL_CLIENT_ID,
   subscribeChatEvents,
 } from '../chatService';
@@ -429,7 +430,111 @@ describe('chatService.subscribeChatEvents', () => {
     });
   });
 
-  it('does not include PTT-only request fields', async () => {
+  it('returns the queue request identity and sanitized attachment references from the ack', async () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    const attachments = [{ kind: 'image', media: { opaqueId: 'opaque-1' } }];
+    mockCallCoreRpc.mockResolvedValue({
+      result: {
+        queued: true,
+        queue_mode: 'followup',
+        client_id: 'socket-1',
+        thread_id: 'thread-1',
+        request_id: 'request-1',
+        queue_depth: 1,
+        queued_attachments: attachments,
+      },
+      logs: ['accepted'],
+    });
+
+    await expect(
+      chatSendWithAck({ threadId: 'thread-1', message: '', queueMode: 'followup' })
+    ).resolves.toEqual({ requestId: 'request-1', queuedAttachments: attachments });
+  });
+
+  it('maps the started-turn acknowledgement returned by the core', async () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    mockCallCoreRpc.mockResolvedValue({
+      result: {
+        accepted: true,
+        client_id: 'socket-1',
+        thread_id: 'thread-1',
+        request_id: 'request-started',
+      },
+      logs: ['web channel request accepted'],
+    });
+
+    await expect(chatSendWithAck({ threadId: 'thread-1', message: 'hello' })).resolves.toEqual({
+      requestId: 'request-started',
+      queuedAttachments: [],
+    });
+  });
+
+  it('preserves compatibility with the legacy scalar request identity', async () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    mockCallCoreRpc.mockResolvedValue('request-started');
+
+    await expect(chatSendWithAck({ threadId: 'thread-1', message: 'hello' })).resolves.toEqual({
+      requestId: 'request-started',
+      queuedAttachments: [],
+    });
+  });
+
+  it.each([
+    { accepted: false, client_id: 'socket-1', thread_id: 'thread-1', request_id: 'request-1' },
+    { accepted: true, client_id: 'socket-1', thread_id: 'thread-1', request_id: 42 },
+    {
+      accepted: true,
+      queued: true,
+      client_id: 'socket-1',
+      thread_id: 'thread-1',
+      request_id: 'request-1',
+    },
+  ])('rejects malformed started-turn acknowledgements', async response => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    mockCallCoreRpc.mockResolvedValue(response);
+
+    await expect(chatSendWithAck({ threadId: 'thread-1', message: 'hello' })).rejects.toThrow(
+      'invalid chat queue acknowledgement'
+    );
+  });
+
+  it('rejects an invalid queue acknowledgement instead of trusting raw RPC data', async () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    mockCallCoreRpc.mockResolvedValue({ request_id: 'request-1', queued_attachments: [] });
+
+    await expect(
+      chatSendWithAck({ threadId: 'thread-1', message: '', queueMode: 'followup' })
+    ).rejects.toThrow('invalid chat queue acknowledgement');
+  });
+
+  it.each([
+    { kind: 'unknown_media', media: { opaqueId: 'opaque-1' } },
+    { kind: 'image', media: { opaqueId: 'opaque-1', localCachePath: '/tmp/image.png' } },
+    { kind: 'video', media: { opaqueId: 'opaque-1' }, thumbnail: { path: '/tmp/thumbnail.png' } },
+  ])('rejects queued attachment authorities or unknown kinds: $kind', async attachment => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    mockCallCoreRpc.mockResolvedValue({
+      queued: true,
+      queue_mode: 'followup',
+      client_id: 'socket-1',
+      thread_id: 'thread-1',
+      request_id: 'request-1',
+      queue_depth: 1,
+      queued_attachments: [attachment],
+    });
+
+    await expect(
+      chatSendWithAck({ threadId: 'thread-1', message: '', queueMode: 'followup' })
+    ).rejects.toThrow('invalid chat queue acknowledgement');
+  });
+
+  it('does not include the new fields when omitted', async () => {
     const socket = createMockSocket();
     bindMockSocket(socket);
 
@@ -507,6 +612,120 @@ describe('chatService.chatCancel', () => {
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
       method: 'openhuman.channel_web_cancel',
       params: { client_id: NO_SOCKET_CANCEL_CLIENT_ID, thread_id: 'thread-9' },
+    });
+  });
+});
+
+describe('chatService typed attachments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCallCoreRpc.mockResolvedValue(undefined);
+  });
+
+  const image = {
+    kind: 'image' as const,
+    altText: null,
+    caption: null,
+    media: {
+      kind: 'image' as const,
+      url: 'data:image/png;base64,AAA',
+      contentType: 'image/png',
+      fileName: 'a.png',
+      sizeBytes: null,
+      codec: null,
+      durationMs: null,
+      height: null,
+      localCachePath: null,
+      path: null,
+      platformMessageId: null,
+      transcribed: false,
+      width: null,
+    },
+  };
+
+  it('chatSend forwards attachments as typed parts and leaves the text alone', async () => {
+    bindMockSocket(createMockSocket());
+
+    await chatSend({
+      threadId: 'thread-1',
+      message: 'look',
+      persistedMessageId: 'persisted-user-row',
+      attachments: [image],
+    });
+
+    const params = mockCallCoreRpc.mock.calls[0][0].params;
+    expect(params.message).toBe('look');
+    expect(params.persisted_message_id).toBe('persisted-user-row');
+    expect(params.attachments).toEqual([image]);
+    expect(JSON.stringify(params.message)).not.toMatch(/\[(IMAGE|FILE):/);
+  });
+
+  it('chatSend omits the attachments param when there are none', async () => {
+    bindMockSocket(createMockSocket());
+
+    await chatSend({ threadId: 'thread-1', message: 'hi', attachments: [] });
+
+    expect(mockCallCoreRpc.mock.calls[0][0].params.attachments).toBeUndefined();
+  });
+});
+
+describe('chatService wire decoding', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The core publishes the run mode in `message` and an approval's terminal
+  // outcome in `cancel_reason` (the tinychannels WebChannelEvent schema has no
+  // `mode` / `resolution` field), so consumers must get them lifted.
+  it('lifts run_mode_changed.message into mode', () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    const onRunModeChanged = vi.fn();
+    subscribeChatEvents({ onRunModeChanged });
+
+    socket.emit('run_mode_changed', {
+      event: 'run_mode_changed',
+      client_id: '',
+      thread_id: 't1',
+      request_id: '',
+      message: 'plan',
+    });
+
+    expect(onRunModeChanged).toHaveBeenCalledTimes(1);
+    expect(onRunModeChanged.mock.calls[0][0]).toMatchObject({ thread_id: 't1', mode: 'plan' });
+  });
+
+  it('drops run_mode_changed with an unknown mode', () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    const onRunModeChanged = vi.fn();
+    subscribeChatEvents({ onRunModeChanged });
+
+    socket.emit('run_mode_changed', { thread_id: 't1', request_id: '', message: 'turbo' });
+
+    expect(onRunModeChanged).not.toHaveBeenCalled();
+  });
+
+  it('lifts approval_decided.cancel_reason into resolution', () => {
+    const socket = createMockSocket();
+    bindMockSocket(socket);
+    const onApprovalDecided = vi.fn();
+    subscribeChatEvents({ onApprovalDecided });
+
+    socket.emit('approval_decided', {
+      event: 'approval_decided',
+      client_id: 'c1',
+      thread_id: 't1',
+      request_id: 'r1',
+      tool_name: 'shell',
+      message: 'deny',
+      cancel_reason: 'expired',
+    });
+
+    expect(onApprovalDecided).toHaveBeenCalledTimes(1);
+    expect(onApprovalDecided.mock.calls[0][0]).toMatchObject({
+      request_id: 'r1',
+      resolution: 'expired',
     });
   });
 });

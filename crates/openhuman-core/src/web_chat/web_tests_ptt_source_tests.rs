@@ -169,11 +169,11 @@ async fn ptt_source_turn_completes_without_publishing_a_voice_event() {
                     .recv()
                     .await
                     .expect("web event stream stays open");
-                if event.request_id == request_id && event.event == "chat_done" {
+                if event.context().request_id == request_id && event.event_name() == "chat_done" {
                     break event;
                 }
                 assert_ne!(
-                    (event.request_id.as_str(), event.event.as_str()),
+                    (event.context().request_id.as_str(), event.event_name()),
                     (request_id.as_str(), "chat_error"),
                     "PTT turn should complete successfully: {event:?}; scripted model received {} requests; invoke errors: {:?}",
                     model.requests().len(),
@@ -189,7 +189,11 @@ async fn ptt_source_turn_completes_without_publishing_a_voice_event() {
                 model_errors.lock().expect("recording model error lock").as_slice()
             )
         });
-        assert_eq!(done.full_response.as_deref(), Some("hello from mock"));
+        let full_response = match done.wire_event() {
+            crate::web_chat::WebChannelEvent::ChatDone { full_response, .. } => full_response.clone(),
+            _ => None,
+        };
+        assert_eq!(full_response.as_deref(), Some("hello from mock"));
         assert!(
             !model.requests().is_empty(),
             "successful turn should invoke the scripted model"

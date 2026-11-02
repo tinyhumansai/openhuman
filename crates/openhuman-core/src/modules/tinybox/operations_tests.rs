@@ -149,26 +149,6 @@ fn host_and_module_contract_versions_must_cover_the_full_host_surface() {
 }
 
 #[tokio::test]
-async fn command_facts_use_shell_contract_and_host_policy_facts() {
-    let (_service, client, calls) = mock_client().await;
-    let command = "printf 'hello'".to_owned();
-    let raw: contract::ShellAnalysis =
-        call_with_client(&client, ANALYZE_SHELL, (command.clone(),), false)
-            .await
-            .expect("typed shell facts");
-    let facts = crate::security::policy::CommandAnalysis::from_shell_analysis(raw);
-
-    assert_eq!(facts.literal_words, ["printf", "hello"]);
-    assert_eq!(
-        calls.lock().expect("call log lock").as_slice(),
-        [
-            (CAPABILITIES.to_owned(), json!([])),
-            (ANALYZE_SHELL.to_owned(), json!([command]))
-        ]
-    );
-}
-
-#[tokio::test]
 async fn provider_failure_does_not_echo_paths_or_request_values() {
     let (_service, client, calls) = mock_client().await;
     let secret_path = "/home/user/token";
@@ -239,7 +219,7 @@ async fn docker_command_refusal_is_not_retried_as_an_ordinary_call() {
 }
 
 #[tokio::test]
-#[ignore = "requires a verified TinyBox archive, local Docker daemon, and preloaded alpine:latest"]
+#[ignore = "requires the verified pinned TinyBox archive, local Docker daemon, and preloaded alpine:latest"]
 async fn pinned_loader_serves_the_published_tinybox_release() {
     let _environment_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let artifact_root = std::env::var_os(crate::modules::ops::BUNDLED_MODULES_ENV)
@@ -304,7 +284,7 @@ async fn pinned_loader_serves_the_published_tinybox_release() {
 
     crate::modules::ops::ensure_loaded(&config, MODULE_ID)
         .await
-        .expect("the OpenHuman release registry and TinyBus loader admit v0.1.28");
+        .expect("the OpenHuman release registry and TinyBus loader admit the pinned release");
     let capabilities = super::capabilities(&config)
         .await
         .expect("the loaded release serves TinyBus capabilities");
@@ -339,20 +319,20 @@ async fn pinned_loader_serves_the_published_tinybox_release() {
 }
 
 #[tokio::test]
-#[ignore = "requires the downloaded, checksum-verified TinyBox v0.1.28 archive"]
-async fn pinned_loader_serves_resolve_local_grants_from_tinybox_v0124() {
+#[ignore = "requires the downloaded, checksum-verified pinned TinyBox archive"]
+async fn pinned_loader_serves_resolve_local_grants_from_pinned_tinybox_release() {
     let _environment_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let archive = std::env::var_os("TINYBOX_RELEASE_ARTIFACT")
         .map(std::path::PathBuf::from)
-        .expect("set TINYBOX_RELEASE_ARTIFACT to the verified v0.1.28 archive");
+        .expect("set TINYBOX_RELEASE_ARTIFACT to the verified pinned TinyBox archive");
     assert!(
         archive.is_file(),
         "missing verified release archive: {archive:?}"
     );
 
     let record = crate::modules::registry::find(MODULE_ID).expect("TinyBox registry record");
-    assert_eq!(record.version, "0.1.28");
-    assert_eq!(contract::CONTRACT_VERSION, (1, 18));
+    assert_eq!(record.version, "0.2.3");
+    assert_eq!(contract::CONTRACT_VERSION, (2, 1));
     let asset = tinybus::module::platform::host_candidates()
         .iter()
         .find_map(|host_key| record.asset_for(host_key))
@@ -409,7 +389,7 @@ async fn pinned_loader_serves_resolve_local_grants_from_tinybox_v0124() {
     config.modules.install_dir = Some(install.path().display().to_string());
     crate::modules::ops::ensure_loaded(&config, MODULE_ID)
         .await
-        .expect("the TinyBus loader admits the published v0.1.28 artifact");
+        .expect("the TinyBus loader admits the published pinned artifact");
 
     let home = tempfile::tempdir().expect("temporary operator home");
     let allowed = home.path().join("workspace");

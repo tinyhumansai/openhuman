@@ -119,13 +119,15 @@ pub async fn offload_oversized_result(
     policy: Option<&SecurityPolicy>,
 ) -> (String, Option<OffloadedArtifact>) {
     // Public callers may pair this explicit policy with an ArtifactOffload
-    // configured under a different policy (or no path policy at all). Keep
-    // OpenHuman's workspace-internal floor before the owner writes any blob.
+    // configured under a different policy (or no path policy at all). Ask
+    // TinySecurity before the owner writes or materializes the blob.
     if let Some(policy) = policy {
         if let Ok(key) = offload.resolve(ArtifactKind::Output, &offload.default_result_name()) {
             let target = materialize_root.join(key);
-            if policy.is_workspace_internal_path(&target)
-                || target.starts_with(&policy.workspace_dir)
+            if policy.is_internal(&target).await
+                || !policy
+                    .path_allowed(crate::security::policy::PathKind::ResolvedWrite, &target)
+                    .await
             {
                 tracing::warn!(path = %target.display(), "[artifact] materialized target reaches workspace state; keeping the inline result");
                 return (output, None);

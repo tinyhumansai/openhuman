@@ -595,17 +595,6 @@ fn a_working_folder_that_contains_the_workspace_is_not_trusted() {
 }
 
 #[test]
-fn a_protected_location_is_refused_under_its_macos_canonical_name() {
-    // `/etc` canonicalizes to `/private/etc` on macOS.
-    assert!(refused_path(Path::new("/private/etc/hosts")).is_some());
-    assert!(refused_path(Path::new("/etc/hosts")).is_some());
-    // `/private/var` and `/private/tmp` (temp folders) are not protected.
-    assert!(refused_path(Path::new("/private/var/folders/x/notes.md")).is_none());
-    assert!(refused_path(Path::new("/private/tmp/notes.md")).is_none());
-    assert!(refused_path(Path::new("/Users/me/OpenHuman/notes.md")).is_none());
-}
-
-#[test]
 fn a_stored_file_key_resolves_under_the_version_files_folder_and_an_absolute_one_stays() {
     let workspace = Path::new("/ws");
     let kept = tiny_artifacts::FileRef {

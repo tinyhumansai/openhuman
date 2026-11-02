@@ -55,6 +55,7 @@ documents = ["openhuman-tinyhumans/documents"]
 hosting = ["openhuman-tinyhumans/hosting"]
 inbound-queues = ["openhuman-tinyhumans/inbound-queues"]
 modules = ["openhuman-tinyhumans/modules"]
+security-module = ["openhuman-tinyhumans/security-module"]
 voice = ["openhuman-tinyhumans/voice"]
 web3 = ["openhuman-tinyhumans/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain and
@@ -129,3 +130,5 @@ tower = { version = "0.5", default-features = false }
 # Same spelling as embed's, tinyhumans' and cli's dev-dependency, so the dev
 # graphs unify and `cargo test -p openhuman-rpc` reuses their core build.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+engineioxide = "0.15"
+socketioxide = { version = "0.15", features = ["extensions", "__test_harness"] }

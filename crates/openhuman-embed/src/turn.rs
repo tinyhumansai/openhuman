@@ -22,7 +22,7 @@
 //!
 //! A turn reads one `tokio` task-local that no parameter can carry yet:
 //!
-//! - **origin** ([`turn_origin`](openhuman_core::security::turn_origin)) — the
+//! - **origin** ([`turn_origin`](openhuman_core::core::runtime::turn_origin)) — the
 //!   caller's statement of authority. The approval gate is *fail-closed*: an
 //!   unlabelled call gets the `Cli` default, and a caller wanting anything
 //!   else — a workflow's blanket automation grant, say — must scope it around
@@ -43,13 +43,13 @@ use std::sync::Arc;
 
 use super::error::CoreError;
 use openhuman_core::agent_runs::INFERENCE_AGENT_CHAT as AGENT_CHAT;
+use openhuman_core::core::runtime::turn_origin::AgentTurnOrigin;
 use openhuman_core::core::runtime::CoreRuntime;
 use openhuman_core::progress::AgentProgress;
-use openhuman_core::security::turn_origin::AgentTurnOrigin;
 
 #[path = "turn_types.rs"]
 mod types;
-pub(crate) use types::{is_safe_endpoint_for_bearer, sanitize_url_for_display};
+pub(crate) use types::sanitize_url_for_display;
 pub use types::{Route, TurnOutcome, TurnRequest};
 #[path = "turn_control.rs"]
 mod control;
@@ -176,8 +176,13 @@ impl Turn {
         mut self,
         factory: impl for<'a> Fn(
                 openhuman_core::agent::TurnContext<'a>,
-            ) -> openhuman_core::agent::HostTurnTools
-            + Send
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = openhuman_core::agent::HostTurnTools>
+                        + Send
+                        + 'a,
+                >,
+            > + Send
             + Sync
             + 'static,
     ) -> Self {
@@ -677,18 +682,7 @@ async fn dispatch(
                         agent_chat_reply_for_controlled, AgentChatTarget,
                     };
                     let mut config = inner.config.clone();
-                    let route = openhuman_core::config::schema::EphemeralRoute::from_params(
-                        request.inference_url,
-                        request.api_key,
-                    )
-                    .map(|route| route.with_headers(request.inference_headers));
-                    let route = route
-                        .map(|route| {
-                            route.with_provider_options(request.inference_provider_options)
-                        })
-                        .map(|route| {
-                            route.with_reasoning_effort(request.inference_reasoning_effort)
-                        });
+                    let route = inference_route(&request);
                     let host = options.tools.or_else(|| inner.composed_host_tools());
                     let target = AgentChatTarget::Definition {
                         definition: &inner.definition,
@@ -784,6 +778,21 @@ async fn dispatch(
                 .await
         }
     }
+}
+
+/// The per-call inference route `request` names (endpoint, bearer, headers,
+/// provider options, reasoning effort), applied to the agent's config in
+/// memory for that call alone.
+pub(crate) fn inference_route(
+    request: &TurnRequest,
+) -> Option<openhuman_core::config::schema::EphemeralRoute> {
+    openhuman_core::config::schema::EphemeralRoute::from_params(
+        request.inference_url.clone(),
+        request.api_key.clone(),
+    )
+    .map(|route| route.with_headers(request.inference_headers.clone()))
+    .map(|route| route.with_provider_options(request.inference_provider_options.clone()))
+    .map(|route| route.with_reasoning_effort(request.inference_reasoning_effort.clone()))
 }
 
 fn map_agent_chat_error(

@@ -388,7 +388,8 @@ impl StorageHost {
     /// The module's binding for `scope`, built on first use and again when the
     /// installed backend changed. The host runs the declared schema here.
     async fn bind(&self, module: &str, scope: Scope) -> Result<Arc<Binding>, BindError> {
-        let backend = self.environment.backend().ok_or(BindError::NoBackend)?;
+        let backend =
+            backend_choice::for_module(module, &*self.environment).ok_or(BindError::NoBackend)?;
         let key = (module.to_string(), scope.as_str().to_string());
         let mut bindings = self.bindings.lock().await;
         if let Some(existing) = bindings.get(&key) {
@@ -576,6 +577,9 @@ pub(crate) fn current_module_scope(
     module_scope(tenant.profile.as_deref(), module_id)
 }
 
+#[path = "storage_host_backend.rs"]
+pub(crate) mod backend_choice;
+
 /// Production wiring: the broker's name owners, the installed backend, the
 /// host's scope rule and the compiled grants.
 struct Live {
@@ -689,14 +693,27 @@ pub(crate) async fn install(
 /// Prepare the exact per-module storage capability used by TinyMCP and
 /// TinyEventQueues. The callback endpoint reuses the live storage policy but
 /// is reachable only by the verified module instance loaded with this binding.
+///
+/// Prepared on the module runtime, not the caller's: the binding is kept for
+/// the process, so its endpoint must outlive whichever runtime loaded the
+/// module first (as the host callbacks in [`super::runtime`] do).
 pub(super) async fn prepare_module_callbacks(
-    runtime: &tinybus::module::ModuleRuntime,
+    runtime: &'static tinybus::module::ModuleRuntime,
 ) -> tinybus::Result<(
     Arc<tinybus::module::HostCallbackBinding>,
     tinystoragedrivers_busproxy::ServedStorage,
 )> {
-    let connection = runtime.connection();
-    prepare_callbacks(connection, runtime.host()).await
+    runtime
+        .spawn(prepare_callbacks(runtime.connection(), runtime.host()))
+        .await
+        .map_err(callbacks_join_failed)?
+}
+
+/// The preparing task panicked or was cancelled before it returned a binding.
+fn callbacks_join_failed(error: tokio::task::JoinError) -> tinybus::Error {
+    tinybus::Error::Transport(format!(
+        "the module storage callbacks did not finish: {error}"
+    ))
 }
 
 /// Prepare a callback storage endpoint for a module host on `connection`.

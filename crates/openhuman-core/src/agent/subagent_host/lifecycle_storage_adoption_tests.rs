@@ -264,9 +264,10 @@ async fn a_detached_driver_uses_its_carried_actor_for_lifecycle_commits() {
         .unwrap()
         .expect("detached lifecycle write committed in its carried actor scope");
     assert_eq!(durable.output, "detached actor result");
-    let bob_dispatch =
-        CoreContext::scope(bob.clone(), async { crate::core::runtime::DispatchCtx::ambient() })
-            .await;
+    let bob_dispatch = CoreContext::scope(bob.clone(), async {
+        crate::core::runtime::DispatchCtx::ambient()
+    })
+    .await;
     let other = super::super::persistence::OpenHumanPersistence::new(checkpoints)
         .with_dispatch(bob_dispatch);
     assert!(other.load_terminal(&key).await.unwrap().is_none());

@@ -52,11 +52,12 @@ pub(crate) const COMPOSIO_NO_SESSION: &str =
 /// (`config.composio.api_key`). Checking only the keychain would wrongly
 /// short-circuit to an empty list for a user who configured their key via
 /// `config.toml`, hiding their real connections.
-pub(crate) fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
+pub(crate) async fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
     if config.composio.mode.trim() != crate::config::schema::COMPOSIO_MODE_DIRECT {
         return Ok(false);
     }
-    let has_key = crate::security::credentials::get_composio_api_key(config)
+    let has_key = crate::integrations::composio::get_composio_api_key(config)
+        .await
         .map_err(|e| format!("[composio] get_composio_api_key failed: {e}"))?
         .or_else(|| {
             config
@@ -96,18 +97,17 @@ pub(crate) fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
 /// A *failed* token lookup (store unreadable) deliberately returns `false`:
 /// that is a real fault, and it must keep surfacing through the normal error
 /// path rather than being read as "not signed in".
-pub(crate) fn backend_mode_without_session(config: &Config) -> bool {
+pub(crate) async fn backend_mode_without_session(config: &Config) -> bool {
     let mode = config.composio.mode.trim();
     if !(mode.is_empty() || mode == crate::config::schema::COMPOSIO_MODE_BACKEND) {
         return false;
     }
-    if crate::security::credentials::api_key::has_api_key(config) {
+    if crate::credentials::api_key::has_api_key(config).await {
         return false;
     }
-    match crate::security::credentials::jwt::get_session_token(config) {
+    match crate::credentials::session_state::get_session_token(config).await {
         Ok(token) => token.as_deref().map(str::trim).is_none_or(|token| {
-            token.is_empty()
-                || crate::security::credentials::session_support::is_local_session_token(token)
+            token.is_empty() || crate::credentials::session_state::is_local_session_token(token)
         }),
         Err(error) => {
             tracing::warn!(

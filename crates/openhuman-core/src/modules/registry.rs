@@ -47,6 +47,8 @@ mod records_flows;
 mod records_mcp_connectors;
 mod records_memory_juice;
 mod records_search;
+#[cfg(feature = "security-module")]
+mod records_security;
 mod records_voice;
 
 use crate::modules::types::ModuleRecord;
@@ -66,6 +68,8 @@ use records_flows::TINYFLOWS;
 use records_mcp_connectors::{TINYCONNECTORS, TINYMCP};
 use records_memory_juice::TINYJUICE;
 use records_search::TINYSEARCH;
+#[cfg(feature = "security-module")]
+use records_security::TINYSECURITY;
 #[cfg(feature = "voice")]
 use records_voice::TINYVOICE;
 
@@ -75,6 +79,8 @@ use records_voice::TINYVOICE;
 pub const ALL: &[ModuleRecord] = &[
     TINYCOMPUTER,
     TINYSEARCH,
+    #[cfg(feature = "security-module")]
+    TINYSECURITY,
     #[cfg(feature = "documents")]
     TINYDOCS,
     #[cfg(feature = "web3")]
@@ -115,8 +121,9 @@ pub fn release_records() -> Vec<&'static tinybus::module::ReleaseRecord> {
 
 /// Which `[components]` switch owns each module id.
 ///
-/// Every record in [`ALL`] has an entry (`registry_tests` enforces it), so a
-/// module is never exempt from a disabled component by omission.
+/// Every component-owned record in [`ALL`] has an entry (`registry_tests`
+/// enforces it). TinySecurity is controlled by the global module switch until
+/// a product component owns its caller migration.
 pub const COMPONENT_OF: &[(&str, &str)] = &[
     ("tinycomputer", "computer"),
     ("tinysearch", "search"),

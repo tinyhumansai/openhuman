@@ -132,7 +132,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                     .await
                     .expect("runtime builds"),
             );
-            assert!(runtime.has_api_key());
+            assert!(runtime.has_api_key().await);
 
             // Regression: `has_api_key()` must read the credential store live,
             // not a snapshot taken when the runtime was built — a host that
@@ -145,7 +145,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("clear api key");
             assert!(
-                !runtime.has_api_key(),
+                !runtime.has_api_key().await,
                 "has_api_key() must observe a live clear, not a build-time snapshot"
             );
             runtime
@@ -155,7 +155,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("restore api key");
             assert!(
-                runtime.has_api_key(),
+                runtime.has_api_key().await,
                 "has_api_key() must observe a live store, not a build-time snapshot"
             );
 
@@ -249,13 +249,18 @@ fn one_runtime_hosts_independently_configured_agents() {
                             AgentDefinitionSpec::new()
                                 .tools(ToolScopeSpec::Named(vec!["shell".to_string()])),
                         )
-                        .tools(|turn| HostTurnTools {
-                            withheld: if turn.session_id() == Some("hidden-turn") {
+                        .tools(|turn| {
+                            let withheld = if turn.session_id() == Some("hidden-turn") {
                                 std::collections::HashSet::from(["shell".to_string()])
                             } else {
                                 std::collections::HashSet::new()
-                            },
-                            ..Default::default()
+                            };
+                            Box::pin(async move {
+                                HostTurnTools {
+                                    withheld,
+                                    ..Default::default()
+                                }
+                            })
                         }),
                 )
                 .expect("withholding agent instantiates");
@@ -505,23 +510,28 @@ fn one_runtime_hosts_independently_configured_agents() {
             );
 
             // Interleaved concurrency across agents keeps their providers apart.
+            // Batch the turns so this isolation check does not flood one
+            // runtime with fifty simultaneous requests while Nextest runs the
+            // other integration binaries beside it.
             let mut turns = tokio::task::JoinSet::new();
-            for index in 0..25 {
-                let alpha = alpha.clone();
-                let beta = beta.clone();
-                turns.spawn(async move { alpha.turn(format!("a{index}")).send().await });
-                turns.spawn(async move { beta.turn(format!("b{index}")).send().await });
-            }
             let mut a_count = 0;
             let mut b_count = 0;
-            while let Some(outcome) = turns.join_next().await {
-                let outcome = outcome.expect("no panic").expect("turn runs");
-                if outcome.reply.contains("alpha-ok") {
-                    a_count += 1;
-                } else if outcome.reply.contains("beta-ok") {
-                    b_count += 1;
-                } else {
-                    panic!("unexpected reply {:?}", outcome.reply);
+            for start in (0..25).step_by(5) {
+                for index in start..start + 5 {
+                    let alpha = alpha.clone();
+                    let beta = beta.clone();
+                    turns.spawn(async move { alpha.turn(format!("a{index}")).send().await });
+                    turns.spawn(async move { beta.turn(format!("b{index}")).send().await });
+                }
+                while let Some(outcome) = turns.join_next().await {
+                    let outcome = outcome.expect("no panic").expect("turn runs");
+                    if outcome.reply.contains("alpha-ok") {
+                        a_count += 1;
+                    } else if outcome.reply.contains("beta-ok") {
+                        b_count += 1;
+                    } else {
+                        panic!("unexpected reply {:?}", outcome.reply);
+                    }
                 }
             }
             assert_eq!((a_count, b_count), (25, 25));

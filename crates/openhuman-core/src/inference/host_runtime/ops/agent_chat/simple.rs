@@ -9,7 +9,7 @@ pub async fn agent_chat_simple(
     temperature: Option<f64>,
     thread_id: Option<String>,
 ) -> Result<Outcome<String>, String> {
-    enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat_simple")?;
+    enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat_simple").await?;
 
     let mut effective = config.clone();
     // TAURI-RUST-RS: see `normalize_model_override` for the rationale.

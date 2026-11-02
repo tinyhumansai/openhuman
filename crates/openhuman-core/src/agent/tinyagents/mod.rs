@@ -20,7 +20,7 @@
 //! tinyagents harness.
 
 pub mod config;
-mod context_wiring;
+pub(crate) mod context_wiring;
 mod deadline_wind_down;
 pub mod discovery;
 pub mod host;

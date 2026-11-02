@@ -49,7 +49,7 @@ previously `providers/` (pre-consolidation single-crate layout); see
   the trait every transport implements.
 - `crate::config`: cloud-provider schema (`AuthStyle`, slug reservation),
   `Config::claude_agent_sdk`, abstract tier model constants.
-- `crate::security::credentials`: auth-profile store for BYOK keys and OAuth
+- `crate::credentials`: auth-profile store for BYOK keys and OAuth
   tokens.
 - `crate::agent::tinyagents::host`: explicit run
   explicit run-thread plumbing consumed while building a managed model.

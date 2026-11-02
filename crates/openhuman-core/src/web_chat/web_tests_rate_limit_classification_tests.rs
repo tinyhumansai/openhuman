@@ -201,10 +201,10 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
     let recv = timeout(Duration::from_secs(20), async move {
         loop {
             let event = rx.recv().await.expect("event stream should stay open");
-            if event.event != "chat_error" {
+            if event.event_name() != "chat_error" {
                 continue;
             }
-            if event.request_id != request_id {
+            if event.context().request_id != request_id {
                 continue;
             }
             return event;
@@ -242,9 +242,13 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
 
     // Pin the additive contract: serializing a default (no error)
     // event must NOT introduce any of the new keys.
-    let empty = crate::web_chat::WebChannelEvent {
-        event: "chat_done".to_string(),
-        ..Default::default()
+    let empty = crate::web_chat::WebChannelEvent::ChatDone {
+        context: Default::default(),
+        full_response: None,
+        citations: None,
+        usage: None,
+        timing: None,
+        parts: None,
     };
     let empty_json = serde_json::to_value(&empty).expect("Default WebChannelEvent serializes");
     for key in [
@@ -296,10 +300,10 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
     let recv = timeout(Duration::from_secs(20), async move {
         loop {
             let event = rx.recv().await.expect("event stream should stay open");
-            if event.event != "chat_error" {
+            if event.event_name() != "chat_error" {
                 continue;
             }
-            if event.request_id != request_id {
+            if event.context().request_id != request_id {
                 continue;
             }
             return event;
@@ -308,29 +312,19 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
     .await
     .expect("expected chat_error event for started chat request");
 
-    assert_eq!(
-        recv.error_type.as_deref(),
-        Some("rate_limited"),
-        "error_type token unchanged for backward compat"
+    assert!(
+        matches!(recv.wire_event(), crate::web_chat::WebChannelEvent::ChatError {
+        error_type: Some(error_type), error_source: Some(source),
+        error_retryable: Some(true), error_retry_after_ms: Some(30_000), ..
+    } if error_type == "rate_limited" && source == "provider"),
+        "upstream 429 wire classification and countdown changed: {recv:?}"
     );
     assert_eq!(
-        recv.error_source.as_deref(),
-        Some("provider"),
-        "upstream 429 must classify as provider source on the wire: {recv:?}"
-    );
-    assert_eq!(
-        recv.error_retryable,
-        Some(true),
-        "transient upstream 429 must be retryable on the wire: {recv:?}"
-    );
-    assert_eq!(
-        recv.error_retry_after_ms,
-        Some(30_000),
-        "30s Retry-After must surface as 30000ms on the wire (FE countdown): \
-         {recv:?}"
-    );
-    assert_eq!(
-        recv.error_provider.as_deref(),
+        match recv.wire_event() {
+            crate::web_chat::WebChannelEvent::ChatError { error_provider, .. } =>
+                error_provider.as_deref(),
+            _ => None,
+        },
         Some("openrouter"),
         "provider name must reach the wire so the FE can show \"openrouter is throttling\": \
          {recv:?}"

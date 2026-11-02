@@ -6,7 +6,7 @@
 
 [package]
 name = "openhuman-app"
-version = "0.64.18"
+version = "0.64.20"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -83,6 +83,7 @@ openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features 
     "web3",
     "documents",
     "modules",
+    "security-module",
     "flows",
     "skills",
     "mcp",
@@ -348,6 +349,8 @@ tinystoragedrivers-testkit = { path = "../../vendor/tinystoragedrivers/crates/ti
 tinystoragedrivers-types = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
 
 [patch."https://github.com/senamakel/tinystoragedrivers"]
+# Fork-pinned modules such as TinyWallet use this source identity; resolve it
+# to the same vendored checkout as the canonical Git URL above.
 tinystoragedrivers = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers" }
 tinystoragedrivers-api = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
 tinystoragedrivers-blob = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }

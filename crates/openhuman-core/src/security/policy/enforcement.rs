@@ -1,13 +1,101 @@
 use std::path::Path;
 
-use super::types::{
-    ActionTracker, AutonomyLevel, SecurityPolicy, ToolOperation, TrustedAccess, TrustedRoot,
-};
+#[cfg(feature = "security-module")]
+use super::native_commands::{CommandFlow, CommandStage};
+use super::types::{SecurityPolicy, ToolOperation, TrustedAccess, TrustedRoot};
 use std::sync::Arc;
 use tinytools::status::POLICY_BLOCKED_MARKER;
-use tokio::sync::OnceCell;
 
 impl SecurityPolicy {
+    /// Reserve one action from TinySecurity's hourly ledger.
+    #[cfg(feature = "security-module")]
+    pub async fn spend_action(&self, operation_name: &str) -> Result<(), String> {
+        use tinysecurity_bus::BudgetDecision2;
+
+        if !self.enabled {
+            if let Ok(mut snapshot) = self.budget_snapshot.lock() {
+                *snapshot = Some(BudgetDecision2::Allow);
+            }
+            return Ok(());
+        }
+
+        let policy = self
+            .native_command_policy(CommandFlow::Harness, CommandStage::Execute)
+            .map_err(|error| error.to_string())?;
+        let decision = crate::modules::security::gap::budget(
+            self.workspace_dir.clone(),
+            policy,
+            crate::modules::security::gap::BudgetOp::Spend,
+        )
+        .await
+        .map_err(|error| {
+            log::warn!("[security][policy] TinySecurity budget unavailable: {error}");
+            format!(
+                "{} TinySecurity action budget unavailable; action denied",
+                tinytools::status::POLICY_BLOCKED_MARKER
+            )
+        })?;
+        if let Ok(mut snapshot) = self.budget_snapshot.lock() {
+            *snapshot = Some(decision.clone());
+        }
+        match decision {
+            BudgetDecision2::Allow => Ok(()),
+            BudgetDecision2::ReadOnlyMode => Err(format!(
+                "{} Security policy: read-only mode, cannot perform '{operation_name}'. Do not retry; this tier blocks all write actions.",
+                tinytools::status::POLICY_BLOCKED_MARKER
+            )),
+            BudgetDecision2::RateLimited { max_per_hour } => Err(format!(
+                "Rate limit exceeded: action budget exhausted ({max_per_hour} actions/hour). Increase the limit in Settings -> Advanced -> Agent autonomy or wait for the rolling one-hour window to refill."
+            )),
+            _ => Err(format!(
+                "{} TinySecurity returned an unknown action-budget decision",
+                tinytools::status::POLICY_BLOCKED_MARKER
+            )),
+        }
+    }
+
+    /// Read the module-owned action budget without reserving an action.
+    #[cfg(feature = "security-module")]
+    pub async fn peek_action_budget(&self) -> Result<tinysecurity_bus::BudgetDecision2, String> {
+        if !self.enabled {
+            return Ok(tinysecurity_bus::BudgetDecision2::Allow);
+        }
+        let policy = self
+            .native_command_policy(CommandFlow::Harness, CommandStage::Execute)
+            .map_err(|error| error.to_string())?;
+        let decision = crate::modules::security::gap::budget(
+            self.workspace_dir.clone(),
+            policy,
+            crate::modules::security::gap::BudgetOp::Peek,
+        )
+        .await?;
+        if let Ok(mut snapshot) = self.budget_snapshot.lock() {
+            *snapshot = Some(decision.clone());
+        }
+        Ok(decision)
+    }
+
+    /// Without the module there is no budget authority, so the tier is unknown.
+    #[cfg(not(feature = "security-module"))]
+    pub async fn peek_action_budget(&self) -> Result<tinysecurity_bus::BudgetDecision2, String> {
+        if !self.enabled {
+            return Ok(tinysecurity_bus::BudgetDecision2::Allow);
+        }
+        Err("TinySecurity action budget unavailable".into())
+    }
+
+    /// Without the module there is no budget authority, so acting is refused.
+    #[cfg(not(feature = "security-module"))]
+    pub async fn spend_action(&self, _operation_name: &str) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        Err(format!(
+            "{} TinySecurity action budget unavailable; action denied",
+            tinytools::status::POLICY_BLOCKED_MARKER
+        ))
+    }
+
     /// Check if autonomy level permits any action at all.
     ///
     /// Always `true` when the policy is disabled ([`SecurityPolicy::enabled`]).
@@ -15,7 +103,33 @@ impl SecurityPolicy {
         if !self.enabled {
             return true;
         }
-        self.autonomy != AutonomyLevel::ReadOnly
+        let Ok(snapshot) = self.budget_snapshot.lock() else {
+            return false;
+        };
+        matches!(
+            snapshot.as_ref(),
+            Some(tinysecurity_bus::BudgetDecision2::Allow)
+                | Some(tinysecurity_bus::BudgetDecision2::RateLimited { .. })
+        )
+    }
+
+    /// Cached class decision from TinySecurity for synchronous tool adapters.
+    /// The async host gate refreshes it before the tool is dispatched; an
+    /// enabled policy with no answer fails closed.
+    pub fn gate_decision(&self, class: super::types::CommandClass) -> super::types::GateDecision {
+        use super::types::GateDecision;
+        if !self.enabled {
+            return GateDecision::Allow;
+        }
+        let Ok(snapshot) = self.class_gate_snapshot.lock() else {
+            return GateDecision::Block;
+        };
+        snapshot
+            .iter()
+            .rev()
+            .find(|(cached, _)| *cached == class)
+            .map(|(_, gate)| *gate)
+            .unwrap_or(GateDecision::Block)
     }
 
     /// The **tier** half of an act check, without touching the hourly action
@@ -47,46 +161,26 @@ impl SecurityPolicy {
     ///
     /// Read operations are always allowed by autonomy/rate gates.
     /// Act operations require non-readonly autonomy and available action budget.
-    pub fn enforce_tool_operation(
+    pub async fn enforce_tool_operation(
         &self,
         operation: ToolOperation,
         operation_name: &str,
     ) -> Result<(), String> {
         match operation {
             ToolOperation::Read => Ok(()),
-            ToolOperation::Act => {
-                self.enforce_write_tier(operation_name)?;
-
-                if !self.record_action() {
-                    log::warn!(
-                        "[openhuman:policy] Operation '{}' blocked: rate limit exceeded",
-                        operation_name
-                    );
-                    return Err(format!(
-                        "Rate limit exceeded: action budget exhausted ({} actions/hour). Increase the limit in Settings -> Advanced -> Agent autonomy or wait for the rolling one-hour window to refill.",
-                        self.max_actions_per_hour
-                    ));
-                }
-
-                log::debug!(
-                    "[openhuman:policy] Operation '{}' allowed (actions: {}/{})",
-                    operation_name,
-                    self.tracker.count(),
-                    self.max_actions_per_hour
-                );
-                Ok(())
-            }
+            ToolOperation::Act => self.spend_action(operation_name).await,
         }
     }
 
-    /// Record an action and check if the rate limit has been exceeded.
-    /// Returns `true` if the action is allowed, `false` if rate-limited.
+    /// Compatibility read for TinyTools' synchronous gate trait.
+    /// The async host authorization stage has already reserved the action in
+    /// TinySecurity and refreshed `budget_snapshot`; this method keeps no
+    /// local counter and never re-enters a Tokio runtime.
     pub fn record_action(&self) -> bool {
-        let count = self.tracker.record();
         if !self.enabled {
             return true;
         }
-        count <= self.max_actions_per_hour as usize
+        !self.is_rate_limited()
     }
 
     /// Check if the rate limit would be exceeded without recording.
@@ -94,7 +188,15 @@ impl SecurityPolicy {
         if !self.enabled {
             return false;
         }
-        self.tracker.count() >= self.max_actions_per_hour as usize
+        let Ok(snapshot) = self.budget_snapshot.lock() else {
+            return true;
+        };
+        match snapshot.as_ref() {
+            Some(tinysecurity_bus::BudgetDecision2::RateLimited { .. }) | None => true,
+            Some(tinysecurity_bus::BudgetDecision2::Allow)
+            | Some(tinysecurity_bus::BudgetDecision2::ReadOnlyMode) => false,
+            Some(_) => true,
+        }
     }
 
     /// Build from config sections
@@ -130,7 +232,7 @@ impl SecurityPolicy {
         );
         if !autonomy_config.enabled {
             log::info!(
-                "[openhuman:policy] autonomy policy DISABLED ([autonomy] enabled = false) —                  command classification, the approval gate, the command allowlist, the action                  budget and workspace containment are all inert. Credential stores and system                  roots (`is_always_forbidden`) remain blocked."
+                "[openhuman:policy] autonomy policy DISABLED ([autonomy] enabled = false) — command classification, approvals, allowlist, action budget and workspace containment are inert. TinySecurity's protected-path floor remains active."
             );
         }
 
@@ -150,8 +252,8 @@ impl SecurityPolicy {
         // carry an in-memory edit anyway. A user-granted entry is left as-is.
         // SaaS: the projects home and `/tmp/openhuman` are shared by every user
         // of the process, so neither is granted there.
-        // A relative or empty root grants nothing (`is_within_trusted_root`), so
-        // drop it here too: the turn prompt lists these roots as grants.
+        // A relative or empty root cannot be a usable grant, so drop it here too:
+        // the turn prompt lists these roots as grants.
         let mut trusted_roots: Vec<TrustedRoot> = autonomy_config
             .trusted_roots
             .iter()
@@ -191,11 +293,10 @@ impl SecurityPolicy {
         //
         // Guarded: an action dir at or above `workspace_dir` would hand a
         // trusted root to the whole workspace, and
-        // `check_resolved_against_forbidden` lets a trusted root override
-        // `forbidden_paths`. `is_workspace_internal_path` and
-        // `is_always_forbidden` are checked *before* that shortcut and still
-        // hold, but the `forbidden_paths` bypass is not something a working
-        // directory should buy, so skip the grant in that shape.
+        // TinySecurity lets a trusted root override `forbidden_paths`, but still
+        // applies protected-path and internal-state reservations. The
+        // `forbidden_paths` bypass is not something a working directory should
+        // buy, so skip the grant when it covers the workspace.
         // Path checks resolve tool paths against `action_dir` (absolute after
         // canonicalising), so a relative action dir is granted as its absolute
         // form; only an absolute trusted root matches anything.
@@ -222,8 +323,7 @@ impl SecurityPolicy {
         // `workspace_only` an absolute path is refused unless a trusted root
         // covers it, so without this grant every pointer would be unreadable.
         // Read-only: the agent reads its own outputs back; it has no reason to
-        // write there. `is_workspace_internal_path` already exempts this one
-        // directory from the internal-state boundary.
+        // write there. TinySecurity reserves the rest of artifact storage.
         let tool_results = super::types::tool_result_artifacts_dir(workspace_dir)
             .to_string_lossy()
             .to_string();
@@ -284,7 +384,6 @@ impl SecurityPolicy {
             allowed_commands: autonomy_config.allowed_commands.clone(),
             forbidden_paths: autonomy_config.forbidden_paths.clone(),
             max_actions_per_hour: autonomy_config.max_actions_per_hour,
-            max_cost_per_day_cents: autonomy_config.max_cost_per_day_cents,
             require_approval_for_medium_risk: autonomy_config.require_approval_for_medium_risk,
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
             trusted_roots,
@@ -293,8 +392,9 @@ impl SecurityPolicy {
             allow_tool_install: autonomy_config.allow_tool_install,
             auto_approve: autonomy_config.auto_approve.clone(),
             auto_approve_all: autonomy_config.auto_approve_all,
-            tracker: ActionTracker::new(),
-            canonical_workspace: Arc::new(OnceCell::new()),
+            command_gateway: None,
+            budget_snapshot: Arc::new(std::sync::Mutex::new(None)),
+            class_gate_snapshot: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -321,6 +421,10 @@ impl SecurityPolicy {
         self.privacy_mode
     }
 }
+
+#[cfg(all(test, feature = "security-module"))]
+#[path = "budget_module_tests.rs"]
+mod budget_module_tests;
 
 /// The dedicated, namespaced scratch directory granted to the agent so its
 /// natural `/tmp/...` temp-file habit lands in a sandboxed, trusted location

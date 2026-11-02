@@ -90,6 +90,7 @@ async fn prepare_with(
 ) -> tinyagents_runtime::turn_driver::PreparedTurn<(), OpenHumanRunContext> {
     let models = TurnModelSource::from_model(model)
         .build("assembly-test-model", 0.0, None, None)
+        .await
         .expect("scripted turn models build");
     let (policy, _) = turn_run_policy(
         "assembly-test-model",

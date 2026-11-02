@@ -241,7 +241,7 @@ async fn unscoped_async_spawn_refuses_before_persisting_a_running_session() {
     ) {
         return;
     }
-    use crate::agent::harness::fork_context::ParentExecutionContext;
+    use crate::agent::subagent_host::ParentExecutionContext;
     use crate::agent::orchestration::subagent_sessions::SubagentSessionStore;
     use crate::agent::orchestration::tools::{SpawnAsyncSubagentDispatch, SpawnAsyncSubagentTool};
     use tinyagents_harness::tool::ToolDispatch;

@@ -179,6 +179,7 @@ fn docker_policy_params(workspace: &str) -> Map<String, Value> {
         read_only_mounts: vec![],
         read_write_mounts: vec![],
         allow_network: false,
+        mount_workspace: true,
         env_passthrough: vec![],
         docker_overrides: None,
     };

@@ -160,7 +160,7 @@ pub(super) fn classified_plain(
 fn only_local_session_refused(err: &str) -> bool {
     const AGGREGATE: &str = "All providers/models failed";
     let sentinel =
-        crate::security::credentials::session_support::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE;
+        crate::credentials::backend_credential::LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE;
     if !err.contains(sentinel) {
         return false;
     }

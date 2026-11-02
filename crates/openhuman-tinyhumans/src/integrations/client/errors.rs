@@ -11,6 +11,10 @@ use crate::integrations::types::BackendResponse;
 
 use super::construct::IntegrationClient;
 
+#[cfg(test)]
+#[path = "errors_tests.rs"]
+mod tests;
+
 /// Maximum length (in bytes) of backend error body included in propagated
 /// errors. Keep this bounded — error messages flow through tracing/Sentry and
 /// are surfaced in user-facing toasts, neither of which want a 100KB blob.
@@ -52,13 +56,13 @@ pub(crate) fn extract_error_detail(body: &str, max_bytes: usize) -> String {
 /// when the client authenticates with the *app-session JWT* (an API-key client
 /// takes [`handle_api_key_unauthorized`] instead); that JWT rides
 /// `Authorization: Bearer`, resolved by
-/// `session_support::resolve_backend_credential`, the same resolver billing /
+/// `session_state::resolve_backend_credential`, the same resolver billing /
 /// team / webhooks / memory all use. The backend's auth middleware
 /// (`backend-openhuman`) is what answers `401 {"error":"Invalid token"}` when
 /// that JWT is expired / revoked / rotated server-side — see the identical
 /// envelope pinned in `inference/provider/config_rejection.rs` and the socket
 /// reconnect loop's `"Invalid token"` handling in
-/// `openhuman::platform::socket::ws_loop`. A *third-party* integration's auth failure
+/// the TinyHumans SDK socket supervisor. A *third-party* integration's auth failure
 /// never reaches this arm:
 ///
 /// - **Composio backend mode** (the default that routes through this client):
@@ -97,7 +101,13 @@ pub(crate) fn extract_error_detail(body: &str, max_bytes: usize) -> String {
 ///    recovery). Publishing here makes the credentials subscriber clear the
 ///    session and the UI prompt re-sign-in regardless of which call site
 ///    surfaced the 401.
-fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: &str) -> String {
+fn handle_session_jwt_unauthorized(
+    method: &str,
+    path: &str,
+    url: &str,
+    detail: &str,
+    credential_fingerprint: String,
+) -> String {
     let message = format!(
         "SESSION_EXPIRED: backend rejected session token on {method} {path} \
          (401 for {url}: {detail}) — sign in again to resume"
@@ -144,6 +154,7 @@ fn handle_session_jwt_unauthorized(method: &str, path: &str, url: &str, detail: 
         openhuman_embed::__host::core::events::DomainEvent::SessionExpired {
             source: format!("integrations.{method}:{path}"),
             reason: tinyinference_core::sanitize::sanitize_api_error(&message),
+            credential_fingerprint: Some(credential_fingerprint),
         },
     );
 
@@ -285,7 +296,10 @@ impl IntegrationClient {
                         &method_upper,
                         path,
                         url,
-                        &detail
+                        &detail,
+                        openhuman_embed::__host::credentials::backend_credential::credential_fingerprint(
+                            self.credential.secret(),
+                        ),
                     ));
                 }
                 let status_text = reqwest::StatusCode::from_u16(status)

@@ -1657,6 +1657,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Открыть на холсте',
   'chat.flowProposal.dismiss': 'Скрыть',
   'chat.flowProposal.error': 'Не удалось сохранить рабочий процесс. Попробуйте еще раз.',
+  'chat.flowProposal.versionConflict':
+    'Этот рабочий процесс изменился после создания предложения, поэтому он не был перезаписан. Запросите новую редакцию.',
   'chat.flowProposal.enableError':
     'Рабочий процесс сохранён, но не удалось его включить. Попробуйте ещё раз или включите его на странице Workflows.',
   'chat.flowProposal.savedConfirmation': 'Сохранено',
@@ -3497,6 +3499,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Загрузка моделей…',
   'composer.voiceMode': 'Голосовой режим',
   'composer.humanMode': 'Режим человека',
+  'voiceNote.record': 'Записать голосовое сообщение',
+  'voiceNote.stop': 'Остановить запись',
+  'voiceNote.discard': 'Удалить голосовое сообщение',
+  'voiceNote.send': 'Отправить голосовое сообщение',
+  'voiceNote.recording': 'Идёт запись…',
+  'voiceNote.play': 'Воспроизвести голосовое сообщение',
+  'voiceNote.pause': 'Приостановить голосовое сообщение',
+  'voiceNote.seek': 'Перемотать голосовое сообщение',
+  'voiceNote.transcript': 'Расшифровка',
+  'voiceNote.noTranscript': 'Расшифровка недоступна',
+  'voiceNote.label': 'Голосовое сообщение {duration}',
+  'voiceNote.micDenied': 'Доступ к микрофону отклонён или недоступен.',
+  'voiceNote.transcribeFailed': 'Не удалось расшифровать голосовое сообщение.',
+  'voiceNote.loadFailed': 'Не удалось загрузить это голосовое сообщение.',
+  'voiceNote.sendFailed': 'Не удалось отправить голосовое сообщение.',
 
   // Sync budget dialog
 
@@ -5131,6 +5148,54 @@ const messages: TranslationMap = {
   'settings.layout.contrast.subtle': 'Незаметный',
 
   'settings.layout.contrast.strong': 'Высокий',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Диагностика политик не включена в эту сборку ядра.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Активная политика безопасности',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Автономность',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Только в рабочей области',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Максимум действий в час',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Требовать подтверждение для среднего риска',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Блокировать команды высокого риска',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Разрешённые команды',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'Нет явно разрешённых команд.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Политика',
+  'settings.approvalHistory.judgeScores':
+    'Намерение {intent} · Обратимость {reversible} · Утечка данных {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'из кэша',
+  'settings.approvalHistory.judgeExpires': 'Истекает {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Всегда разрешённые инструменты',
+  'keyring.settings.toolTrustDescription':
+    'Эти инструменты могут запускаться без запроса подтверждения в этой области безопасности.',
+  'keyring.settings.toolTrustLoading': 'Загрузка разрешённых инструментов…',
+  'keyring.settings.toolTrustLoadFailed': 'Не удалось загрузить разрешённые инструменты.',
+  'keyring.settings.toolTrustRevokeFailed': 'Не удалось отозвать разрешение для этого инструмента.',
+  'keyring.settings.toolTrustEmpty': 'Нет инструментов с постоянным разрешением.',
+  'keyring.settings.toolTrustRetry': 'Повторить',
+  'keyring.settings.toolTrustRevoke': 'Отозвать',
+  'keyring.settings.toolTrustRevoking': 'Отзыв…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Запрос доступа к связке ключей',
+  'keyring.operation.description':
+    'TinySecurity запрашивает доступ к одному элементу связки ключей. Проверьте операцию перед решением.',
+  'keyring.operation.access': 'Доступ',
+  'keyring.operation.requester': 'Запросил',
+  'keyring.operation.origin': 'Источник',
+  'keyring.operation.purpose': 'Назначение',
+  'keyring.operation.name': 'Элемент связки ключей',
+  'keyring.operation.access.read': 'Чтение',
+  'keyring.operation.access.write': 'Запись',
+  'keyring.operation.access.delete': 'Удаление',
+  'keyring.operation.allow': 'Разрешить один раз',
+  'keyring.operation.deny': 'Отклонить',
+  'keyring.operation.submitting': 'Отправка…',
+  'keyring.operation.expires': 'Срок действия запроса истечёт через {seconds} с.',
+  'keyring.operation.error': 'Не удалось отправить решение. Возможно, срок запроса истёк.',
 };
 
 export default messages;

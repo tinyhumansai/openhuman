@@ -134,12 +134,16 @@ fn handle_agent_chat(
     Box::pin(async move {
         let params = deserialize_params::<InferenceAgentChatParams>(params)?;
         let mut config = ctx.load_config().await?;
+        // Keep the resolved owner alive until the one-shot turn (including
+        // spawned tools) has settled. The run context carries only a weak
+        // reference so a persisted session cannot pin a tenant indefinitely.
+        let core_lease = ctx.resolved();
         let target = match params.agent_id.as_deref().map(str::trim) {
             Some(id) if !id.is_empty() => super::AgentChatTarget::AgentId(id),
             _ => super::AgentChatTarget::Orchestrator,
         };
         let headless = ctx.is_headless_agent_chat();
-        super::session_turn::agent_chat_reply_for_with_headless(
+        let reply = super::session_turn::agent_chat_reply_for_with_headless(
             &mut config,
             target,
             &params.common.message,
@@ -157,11 +161,18 @@ fn handle_agent_chat(
                     .with_provider_options(params.inference_provider_options)
                     .with_reasoning_effort(params.inference_reasoning_effort)
             }),
-            super::AgentChatEnv::default(),
+            super::AgentChatEnv {
+                host: crate::agent::turn_env::HostTurnEnv {
+                    core: core_lease.as_ref().map(std::sync::Arc::downgrade),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             headless,
         )
-        .await?
-        .into_rpc_json()
+        .await?;
+        drop(core_lease);
+        reply.into_rpc_json()
     })
 }
 

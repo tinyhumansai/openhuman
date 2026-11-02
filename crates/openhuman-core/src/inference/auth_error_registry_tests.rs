@@ -31,6 +31,36 @@ fn record_returns_true_only_on_first_episode() {
 }
 
 #[test]
+fn an_unscoped_saas_auth_error_is_not_attributed_to_every_profile() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_for_tests();
+    let scope = current_scope_in(true, None);
+    assert!(matches!(scope, CurrentScope::Unresolved(_)));
+    assert!(!record_in_scope("saas-unscoped-provider", 401, scope));
+    assert!(
+        snapshot().is_empty(),
+        "an unresolved SaaS failure must not enter the process-wide registry"
+    );
+
+    let workspace = tempfile::tempdir().expect("profile workspace");
+    let (errors, has_unscoped) = snapshot_for_scope(
+        workspace.path(),
+        &workspace.path().join("config.toml"),
+        None,
+    );
+    assert!(errors.is_empty(), "an unscoped SaaS failure has no owner");
+    assert!(!has_unscoped, "a SaaS failure is never marked single-user");
+    assert!(
+        !origins()
+            .lock()
+            .unwrap()
+            .contains_key("saas-unscoped-provider"),
+        "the unresolved call must not create a process-wide origin"
+    );
+    reset_for_tests();
+}
+
+#[test]
 fn clear_removes_entry_and_rearms_latch() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     reset_for_tests();

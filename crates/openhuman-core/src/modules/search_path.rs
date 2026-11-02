@@ -14,7 +14,7 @@ use tinybus::module::{ModuleHost, ModuleInfo};
 /// TinyBus's generic search-path loader, which initializes them with `{}`.
 /// Leave those artifacts for the configured load below.
 pub fn configured_module_lib_stems() -> Vec<String> {
-    ["tinymcp", "tinyeventqueues"]
+    ["tinymcp", "tinyeventqueues", "tinysecurity"]
         .into_iter()
         .filter_map(super::registry::find)
         .flat_map(|record| {
@@ -27,6 +27,29 @@ pub fn configured_module_lib_stems() -> Vec<String> {
             ]
         })
         .collect()
+}
+
+/// Modules whose first admission must include a retained host callback
+/// binding. Their search-path artifacts remain available to the normal
+/// `ensure_loaded` path, which installs that binding before loading.
+fn callback_bound_module_lib_stems() -> Vec<String> {
+    ["tinysecurity"]
+        .into_iter()
+        .filter_map(super::registry::find)
+        .flat_map(|record| {
+            let stem = record.source.lib_name.to_string();
+            [
+                stem.clone(),
+                format!("lib{stem}"),
+                format!("{stem}_module"),
+                format!("lib{stem}_module"),
+            ]
+        })
+        .collect()
+}
+
+fn should_defer_to_host_callback(path: &Path) -> bool {
+    is_skipped(path, &callback_bound_module_lib_stems())
 }
 
 fn module_id_for_artifact(path: &Path) -> Option<&'static str> {
@@ -50,25 +73,28 @@ fn is_skipped(path: &Path, skip: &[String]) -> bool {
 /// A directory with no disabled or configured modules goes through `load_dir`
 /// unchanged, which keeps tinybus's dependency ordering. A directory holding
 /// either is loaded file by file, with host config for configured modules.
-pub fn load_enabled(
+pub async fn load_enabled<F, Fut>(
     host: &ModuleHost,
     skip: &[String],
-    module_config: impl Fn(&str) -> serde_json::Value,
-) -> Vec<Result<ModuleInfo, tinybus::Error>> {
+    module_config: F,
+) -> Vec<Result<ModuleInfo, tinybus::Error>>
+where
+    F: Fn(&str) -> Fut,
+    Fut: std::future::Future<Output = serde_json::Value>,
+{
     let disabled = skip.to_vec();
     let configured = configured_module_lib_stems();
+    let callback_bound = callback_bound_module_lib_stems();
     let mut skip = disabled.clone();
     skip.extend(configured.iter().cloned());
+    skip.extend(callback_bound.iter().cloned());
     skip.sort();
     skip.dedup();
     if skip.is_empty() {
         return host.load_search_paths();
     }
     let mut outcomes = Vec::new();
-    for dir in ModuleHost::search_paths()
-        .into_iter()
-        .filter(|p| p.is_dir())
-    {
+    for dir in host.search_paths().into_iter().filter(|p| p.is_dir()) {
         let mut files: Vec<_> = match std::fs::read_dir(&dir) {
             Ok(entries) => entries.filter_map(|e| e.ok().map(|e| e.path())).collect(),
             Err(_) => Vec::new(),
@@ -87,9 +113,13 @@ pub fn load_enabled(
                 log::debug!("[modules] search-path artifact skipped: component disabled");
                 continue;
             }
+            if is_skipped(&file, &callback_bound) {
+                log::debug!("[modules] callback-bound module deferred until requested");
+                continue;
+            }
             if is_skipped(&file, &configured) {
                 if let Some(id) = module_id_for_artifact(&file) {
-                    outcomes.push(host.load_file_with_config(&file, module_config(id)));
+                    outcomes.push(host.load_file_with_config(&file, module_config(id).await));
                     continue;
                 }
                 log::debug!("[modules] configured module artifact has no registry entry");

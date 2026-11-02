@@ -1,13 +1,11 @@
 //! A message on a channel bound to an agent (`agent.channel_agents`) runs as
 //! that host agent; a binding nobody answers is refused; an unbound channel
-//! still goes to the orchestrator over the bus.
+//! still reaches the orchestrator.
 
 use super::*;
-use crate::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
 use crate::agent::host_agents::{self, HostAgent, HostAgentResolver};
 use crate::channels::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
 use crate::channels::runtime::process_channel_message;
-use crate::channels::Channel;
 use crate::core::runtime::{CoreContext, DomainSet};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -18,41 +16,20 @@ use tinytools::{PermissionLevel, Tool, ToolResult};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-#[derive(Default)]
-struct Telegram {
-    sent: Mutex<Vec<String>>,
-}
+#[path = "dispatch_unbound_tests.rs"]
+mod unbound;
 
-#[async_trait::async_trait]
-impl Channel for Telegram {
-    fn name(&self) -> &str {
-        "telegram"
-    }
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v22 still requires the legacy send trait method"
-    )]
-    async fn send(&self, message: &traits::SendMessage) -> anyhow::Result<()> {
-        self.sent.lock().unwrap().push(message.content.clone());
-        Ok(())
-    }
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v22 still requires the legacy listener trait method"
-    )]
-    async fn listen(
-        &self,
-        _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-fn context(channel: Arc<Telegram>, config: Config) -> Arc<ChannelRuntimeContext> {
-    let channel: Arc<dyn Channel> = channel;
+fn context(
+    channel: Arc<crate::channels::runtime::TestChannel>,
+    config: Config,
+) -> Arc<ChannelRuntimeContext> {
     Arc::new(ChannelRuntimeContext {
         relay_thread: None,
-        channels_by_name: Arc::new(HashMap::from([("telegram".to_string(), channel)])),
+        channels_by_name: Arc::new(HashMap::from([(
+            "telegram".to_string(),
+            Arc::new(crate::channels::runtime::ChannelHandle::Test(channel)),
+        )])),
+        module_objects: Arc::new(HashMap::new()),
         turn_model_source: None,
         default_provider: Arc::new("test-provider".to_string()),
         tools_registry: Arc::new(vec![]),
@@ -60,7 +37,6 @@ fn context(channel: Arc<Telegram>, config: Config) -> Arc<ChannelRuntimeContext>
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         max_tool_iterations: 5,
-        conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_url: None,
@@ -75,23 +51,18 @@ fn context(channel: Arc<Telegram>, config: Config) -> Arc<ChannelRuntimeContext>
     })
 }
 
-fn message(text: &str) -> traits::ChannelInboundEnvelope {
-    traits::ChannelInboundEnvelope {
-        message_id: "m1".into(),
-        sender: traits::SenderRef {
-            id: "alice".into(),
-            ..Default::default()
-        },
-        conversation: traits::ConversationRef {
-            id: "42".into(),
-            ..Default::default()
-        },
-        text: text.into(),
-        channel: traits::ChannelRef {
-            id: "telegram".into(),
-            ..Default::default()
-        },
-        ..Default::default()
+fn message(text: &str) -> traits::ChannelMessage {
+    traits::ChannelMessage {
+        reply_to_id: None,
+        topic_id: None,
+        id: "m1".into(),
+        sender: "alice".into(),
+        sender_name: None,
+        reply_target: "42".into(),
+        content: text.into(),
+        channel: "telegram".into(),
+        timestamp: 0,
+        thread_ts: None,
     }
 }
 
@@ -105,6 +76,8 @@ fn config(tmp: &tempfile::TempDir, agent_id: Option<&str>) -> Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
+    config.modules.source = crate::config::schema::ModuleSourceMode::Linked;
+    config.modules.allow_download = false;
     config.local_ai.runtime_enabled = false;
     config.memory.conversations.enabled = false;
     config.agent.session_dual_write = false;
@@ -118,61 +91,6 @@ fn config(tmp: &tempfile::TempDir, agent_id: Option<&str>) -> Config {
             .insert("telegram".into(), agent_id.into());
     }
     config
-}
-
-#[tokio::test]
-async fn a_binding_no_agent_answers_is_refused_not_sent_to_the_orchestrator() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let stub_calls = Arc::clone(&calls);
-    let _bus = mock_agent_run_turn(move |_req: AgentTurnRequest| {
-        stub_calls.fetch_add(1, Ordering::SeqCst);
-        async { Ok(AgentTurnResponse::new("orchestrator answered")) }
-    })
-    .await;
-    let tmp = tempfile::tempdir().unwrap();
-    let channel = Arc::new(Telegram::default());
-    let ctx = context(
-        Arc::clone(&channel),
-        config(&tmp, Some("nobody-registered")),
-    );
-
-    process_channel_message(ctx, message("hello")).await;
-
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        0,
-        "never widened to the orchestrator"
-    );
-    let sent = channel.sent.lock().unwrap().clone();
-    assert_eq!(sent.len(), 1, "{sent:?}");
-    assert!(sent[0].contains("not available"), "{sent:?}");
-}
-
-#[tokio::test]
-async fn an_unbound_channel_still_runs_the_orchestrator() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let stub_calls = Arc::clone(&calls);
-    let _bus = mock_agent_run_turn(move |req: AgentTurnRequest| {
-        stub_calls.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(req.history[0].content, "ORCHESTRATOR_PROMPT");
-        async { Ok(AgentTurnResponse::new("orchestrator answered")) }
-    })
-    .await;
-    let tmp = tempfile::tempdir().unwrap();
-    let mut config = config(&tmp, None);
-    config
-        .agent
-        .channel_agents
-        .insert("discord".into(), "some-agent".into());
-    let channel = Arc::new(Telegram::default());
-
-    process_channel_message(context(Arc::clone(&channel), config), message("hello")).await;
-
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        channel.sent.lock().unwrap().clone(),
-        vec!["orchestrator answered".to_string()]
-    );
 }
 
 /// A host tool that records each call it actually ran.
@@ -312,25 +230,73 @@ async fn provider() -> MockServer {
     server
 }
 
-/// An agent turn is a deep future; run it the way hosts do, on workers with
-/// the documented stack.
-fn on_agent_runtime(test: impl std::future::Future<Output = ()> + Send + 'static) {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
-        .build()
+async fn delayed_provider(
+    delay: std::time::Duration,
+    request_arrived: Arc<tokio::sync::Notify>,
+    request_path: Arc<Mutex<Option<String>>>,
+) -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &wiremock::Request| {
+            *request_path.lock().expect("request path lock") = Some(request.url.path().to_string());
+            request_arrived.notify_one();
+            ResponseTemplate::new(200)
+                .set_body_json(answer("this response arrives after the channel deadline"))
+                .set_delay(delay)
+        })
+        .mount(&server)
+        .await;
+    server
+}
+
+struct InstalledResolver(Arc<dyn HostAgentResolver>);
+
+impl InstalledResolver {
+    fn new(resolver: Arc<dyn HostAgentResolver>) -> Self {
+        host_agents::install(Arc::clone(&resolver));
+        Self(resolver)
+    }
+}
+
+impl Drop for InstalledResolver {
+    fn drop(&mut self) {
+        host_agents::clear_if(&self.0);
+    }
+}
+
+/// An agent turn is a deep future; run it the way hosts do, on a worker with
+/// the documented stack. The future is built on that worker, so it may hold
+/// non-`Send` guards (the storage-slot lock) across awaits.
+fn on_agent_runtime<F, Fut>(make: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    std::thread::Builder::new()
+        .stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+                .build()
+                .unwrap()
+                .block_on(make())
+        })
         .unwrap()
-        .block_on(async { tokio::spawn(test).await.unwrap() });
+        .join()
+        .unwrap();
 }
 
 #[test]
 fn a_bound_channel_runs_its_host_agent_and_refuses_its_write_tool() {
     // The resolver slot is process-wide; hold it for the whole turn.
     let _slot = host_agents::tests::lock();
-    on_agent_runtime(bound_channel_runs_its_host_agent());
+    on_agent_runtime(bound_channel_runs_its_host_agent);
 }
 
 async fn bound_channel_runs_its_host_agent() {
+    let _storage = crate::channels::module_fixture::install_memory_storage();
+    crate::channels::module_fixture::client().await;
     let _bus = crate::agent::bus::use_real_agent_handler().await;
     let server = provider().await;
     let tmp = tempfile::tempdir().unwrap();
@@ -354,7 +320,7 @@ async fn bound_channel_runs_its_host_agent() {
         writes: Arc::clone(&writes),
         origins: Arc::clone(&origins),
     });
-    let channel = Arc::new(Telegram::default());
+    let channel = Arc::new(crate::channels::runtime::TestChannel::new("telegram"));
     let ctx = context(Arc::clone(&channel), config(&tmp, Some("teeny-chat")));
 
     let outcome = {
@@ -366,7 +332,13 @@ async fn bound_channel_runs_its_host_agent() {
     };
 
     assert_eq!(
-        channel.sent.lock().unwrap().clone(),
+        channel
+            .sent
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|message| message.content.clone())
+            .collect::<Vec<_>>(),
         vec!["teeny says hi".to_string()],
         "the host agent's reply goes back to the chat"
     );
@@ -415,4 +387,300 @@ async fn bound_channel_runs_its_host_agent() {
         ),
         "the read-only tool ran under the channel's origin: {origins:?}"
     );
+}
+
+#[test]
+fn native_host_agent_turn_enforces_the_configured_channel_deadline() {
+    std::thread::Builder::new()
+        .name("channel-deadline-test".into())
+        .stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .spawn(|| {
+            let _slot = host_agents::tests::lock();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime
+                .block_on(native_host_agent_turn_enforces_the_configured_channel_deadline_inner());
+        })
+        .unwrap()
+        .join()
+        .expect("channel deadline runtime thread");
+}
+
+async fn native_host_agent_turn_enforces_the_configured_channel_deadline_inner() {
+    let env_lock = crate::config::test_env::EnvVarGuard::locked_async().await;
+    let provider_server = MockServer::start().await;
+    let _provider_base = env_lock.with("OPENHUMAN_TELEGRAM_BOT_API_BASE", provider_server.uri());
+    Mock::given(method("POST"))
+        .and(path("/bottoken/getUpdates"))
+        .respond_with({
+            let poll_count = Arc::new(AtomicUsize::new(0));
+            move |_request: &wiremock::Request| {
+                let updates = if poll_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    serde_json::json!([{
+                        "update_id": 1,
+                        "message": {
+                            "message_id": 11,
+                            "date": 1,
+                            "chat": { "id": 42, "type": "private" },
+                            "from": { "id": 42, "is_bot": false, "first_name": "Alice" },
+                            "text": "slow native turn"
+                        }
+                    }])
+                } else {
+                    serde_json::json!([])
+                };
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "ok": true,
+                    "result": updates
+                }))
+            }
+        })
+        .mount(&provider_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/bottoken/deleteWebhook"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true,
+            "result": true
+        })))
+        .mount(&provider_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/bottoken/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true,
+            "result": { "id": 7, "is_bot": true, "username": "fixture_bot" }
+        })))
+        .mount(&provider_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/bottoken/sendMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true,
+            "result": {
+                "message_id": 991,
+                "date": 1,
+                "chat": { "id": 42, "type": "private" },
+                "text": "reply"
+            }
+        })))
+        .mount(&provider_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/bottoken/editMessageText"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": true,
+            "result": {
+                "message_id": 991,
+                "date": 1,
+                "chat": { "id": 42, "type": "private" },
+                "text": "working"
+            }
+        })))
+        .mount(&provider_server)
+        .await;
+    let _bus = crate::agent::bus::use_real_agent_handler().await;
+    let _storage = crate::channels::module_fixture::install_memory_storage();
+    crate::channels::module_fixture::client().await;
+    let timeout = tinychannels_bus::module_runtime::MIN_CHANNEL_MESSAGE_TIMEOUT_SECS;
+    let request_arrived = Arc::new(tokio::sync::Notify::new());
+    let request_path = Arc::new(Mutex::new(None));
+    let server = delayed_provider(
+        std::time::Duration::from_secs(timeout + 1),
+        Arc::clone(&request_arrived),
+        Arc::clone(&request_path),
+    )
+    .await;
+    let tmp = tempfile::tempdir().unwrap();
+    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
+        .unwrap();
+    let mut agent_config = config(&tmp, None);
+    agent_config.default_model = Some("fixture".into());
+    let route = crate::config::schema::EphemeralRoute::from_params(
+        Some(format!("{}/v1", server.uri())),
+        Some("sk-fixture".into()),
+    )
+    .unwrap();
+    crate::config::schema::ephemeral_route::apply(&mut agent_config, route);
+    let resolver: Arc<dyn HostAgentResolver> = Arc::new(OneHostAgent {
+        config: agent_config,
+        reads: Arc::new(AtomicUsize::new(0)),
+        writes: Arc::new(AtomicUsize::new(0)),
+        origins: Arc::new(Mutex::new(Vec::new())),
+    });
+    let mut channel_config = config(&tmp, Some("teeny-chat"));
+    channel_config.modules.source = crate::config::schema::ModuleSourceMode::Linked;
+    channel_config.modules.allow_download = false;
+    channel_config.channels_config.telegram = Some(tinychannels_bus::config::TelegramConfig {
+        bot_token: "token".into(),
+        chat_id: None,
+        allowed_users: vec!["42".into()],
+        stream_mode: Default::default(),
+        draft_update_interval_ms: 1,
+        silent_streaming: true,
+        mention_only: false,
+    });
+    channel_config.channel_voice.reply_mode = crate::config::schema::VoiceReplyMode::Never;
+    let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::channel(4);
+    let context_slot = Arc::new(std::sync::OnceLock::new());
+    let mut module_runtime = crate::channels::runtime::prepare_module_runtime_for_test_in_context(
+        Arc::new(channel_config.clone()),
+        Arc::clone(&context_slot),
+        dispatch_tx,
+    )
+    .await
+    .expect("the configured linked Telegram module prepares");
+    let configured_channels = module_runtime.channels();
+    let configured_module_objects = module_runtime.module_objects();
+    let (configured_key, configured_channel) = configured_channels
+        .iter()
+        .next()
+        .expect("the Telegram config resolves one configured channel handle");
+    let configured_key = configured_key.clone();
+    let configured_channel_name = configured_channel.name().to_owned();
+    assert!(configured_module_objects.contains_key(&configured_key));
+
+    let channel = Arc::new(crate::channels::runtime::TestChannel::new("telegram"));
+    let mut ctx = context(Arc::clone(&channel), channel_config.clone());
+    Arc::get_mut(&mut ctx)
+        .expect("the test owns the runtime context")
+        .message_timeout_secs = timeout;
+    Arc::get_mut(&mut ctx)
+        .expect("the test still owns the runtime context")
+        .channels_by_name = configured_channels;
+    Arc::get_mut(&mut ctx)
+        .expect("the test still owns the runtime context")
+        .module_objects = configured_module_objects;
+    context_slot
+        .set(Arc::downgrade(&ctx))
+        .expect("module callbacks receive the live host context");
+    module_runtime
+        .start(&channel_config)
+        .await
+        .expect("the configured Telegram provider starts against the mock API");
+
+    let inbound = tokio::time::timeout(std::time::Duration::from_secs(10), dispatch_rx.recv())
+        .await
+        .expect("the provider delivers its mocked update")
+        .expect("the provider dispatch channel remains open");
+    let account_id = inbound
+        .inbound_envelope
+        .as_ref()
+        .and_then(|envelope| envelope.channel.account_id.as_deref());
+    assert_eq!(account_id, Some(configured_key.as_str()));
+    assert_eq!(
+        inbound
+            .inbound_envelope
+            .as_ref()
+            .map(|envelope| envelope.channel.id.as_str()),
+        Some(configured_channel_name.as_str())
+    );
+
+    let _installed = InstalledResolver::new(resolver);
+    let mut turn = tokio::spawn(
+        crate::channels::runtime::dispatch::process_channel_runtime_message(ctx, inbound),
+    );
+    tokio::select! {
+        result = &mut turn => panic!(
+            "channel pipeline completed before a model request: result={result:?}, provider_requests={:#?}",
+            server.received_requests().await.unwrap(),
+        ),
+        arrived = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            request_arrived.notified(),
+        ) => if arrived.is_err() {
+            panic!(
+                "no model request reached the delayed provider; provider_requests={:#?}",
+                server.received_requests().await.unwrap(),
+            );
+        },
+    }
+    assert!(
+        request_path
+            .lock()
+            .expect("request path lock")
+            .as_deref()
+            .is_some_and(|path| path.ends_with("/chat/completions")),
+        "the delayed request is a model completion: {request_path:?}"
+    );
+    // The linked module and mock inference server perform I/O on their own
+    // runtimes. Use real time here: pausing this test runtime does not pause
+    // those requests and can fire the unrelated web backstop first.
+    let turn_result = tokio::time::timeout(std::time::Duration::from_secs(timeout + 15), &mut turn)
+        .await
+        .expect("native channel turn completes within the real-time test bound");
+    turn_result.expect("native channel turn task completes");
+    let provider_requests = provider_server
+        .received_requests()
+        .await
+        .expect("mock Telegram requests");
+    let provider_observations = provider_requests
+        .iter()
+        .map(|request| {
+            (
+                request.url.path().to_owned(),
+                serde_json::from_slice::<serde_json::Value>(&request.body).ok(),
+            )
+        })
+        .collect::<Vec<_>>();
+    println!("fixture Telegram provider requests: {provider_observations:#?}");
+    let timeout_notice = "past its time budget";
+    let late_model_reply = "this response arrives after the channel deadline";
+    let terminal_sends = provider_observations
+        .iter()
+        .filter(|(path, body)| {
+            matches!(
+                path.as_str(),
+                "/bottoken/sendMessage" | "/bottoken/editMessageText"
+            ) && body
+                .as_ref()
+                .and_then(|body| body["text"].as_str())
+                .is_some_and(|text| {
+                    text.contains(timeout_notice) || text.contains(late_model_reply)
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        terminal_sends.len(),
+        1,
+        "the turn emits one terminal timeout or late-model message; progressive placeholders are allowed: {provider_observations:#?}"
+    );
+    let terminal_text = terminal_sends[0]
+        .1
+        .as_ref()
+        .and_then(|body| body["text"].as_str())
+        .expect("terminal Telegram output has text");
+    assert!(
+        terminal_text.contains(timeout_notice),
+        "the actual module provider receives the classified timeout notice; observed terminal text: {terminal_text:?}"
+    );
+
+    // Let the delayed model response itself finish before checking that the
+    // cancelled turn cannot publish a second terminal provider request.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let late_model_deliveries = provider_server
+        .received_requests()
+        .await
+        .expect("mock Telegram requests")
+        .iter()
+        .filter(|request| {
+            matches!(
+                request.url.path(),
+                "/bottoken/sendMessage" | "/bottoken/editMessageText"
+            ) && serde_json::from_slice::<serde_json::Value>(&request.body)
+                .ok()
+                .and_then(|body| body["text"].as_str().map(str::to_owned))
+                .is_some_and(|text| text.contains(late_model_reply))
+        })
+        .count();
+    assert_eq!(
+        late_model_deliveries, 0,
+        "the delayed model response cannot deliver after timeout cleanup"
+    );
+    module_runtime
+        .close()
+        .await
+        .expect("the configured Telegram module shuts down");
 }

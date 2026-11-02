@@ -215,7 +215,8 @@ impl Repo {
 
     /// Opens the same owner scope with an additional storage-driver write
     /// condition. The backend remains responsible for composing any host
-    /// profile fence with `condition` atomically.
+    /// profile fence with `condition` atomically. Collection declarations
+    /// are not bound to it (see `claim_bound`).
     ///
     /// Repos made with [`Repo::over`] have no backend/scope origin and cannot
     /// be rebound safely; callers must use an explicitly opened repo for
@@ -229,9 +230,7 @@ impl Repo {
         })?;
         let scope = Scope::new(&origin.scope)
             .with_context(|| format!("[{}] parse the storage scope", self.domain))?;
-        let scoped = origin
-            .backend
-            .for_scope_conditioned(&scope, condition)
+        let scoped = super::claim_bound::claim_bound(origin.backend.as_ref(), &scope, condition)
             .with_context(|| {
                 format!("[{}] bind the import claim to storage writes", self.domain)
             })?;

@@ -7,8 +7,8 @@ use super::origin_delivery::job_allows_no_reply;
 use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use {
-    crate::cron::channel_bridge, tinyflows_bus::schedule::types::CronJob,
-    tinyflows_bus::schedule::types::JobOrigin,
+    tinyflows_bus::schedule::types::CronJob, tinyflows_bus::schedule::types::JobOrigin,
+    tinyflows_bus::schedule::ChannelSessionIdentity,
 };
 
 /// At most this many trailing messages of the origin conversation.
@@ -91,8 +91,104 @@ async fn origin_messages(
                 }
             }
         }
-        JobOrigin::Channel { history_key, .. } => channel_bridge::history_messages(history_key),
+        JobOrigin::Channel {
+            channel_session: Some(identity),
+            channel,
+            ..
+        } => match validated_channel_session(ctx, config, channel, identity) {
+            Ok((session_key, agent_id, tenant)) => {
+                let Some(core) = ctx.core() else {
+                    tracing::warn!("[cron] channel origin has no resolved core context");
+                    return Vec::new();
+                };
+                let locator = crate::storage::sessions::transcripts_or_files_in(
+                    core,
+                    &crate::storage::sessions::agent_key_for(&tenant, &agent_id),
+                    &config.workspace_dir,
+                );
+                let session =
+                    tinyagents_session::transcript::SessionRef::scoped(session_key, agent_id);
+                let head = locator.head_generation(&session);
+                locator
+                    .read_session_transcript(&head)
+                    .and_then(|read| read.read_session().ok().flatten())
+                    .map(|history| {
+                        history
+                            .messages
+                            .into_iter()
+                            .filter_map(|message| {
+                                let role = match message.role.as_str() {
+                                    "user" => "user",
+                                    "assistant" => "assistant",
+                                    _ => return None,
+                                };
+                                Some((role.to_string(), message.content))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            Err(error) => {
+                tracing::warn!(%error, "[cron] refusing unscoped channel origin context");
+                Vec::new()
+            }
+        },
+        JobOrigin::Channel { .. } => Vec::new(),
     }
+}
+
+/// Validate persisted channel identity claims against the current callback
+/// tenant and the config-owned channel-to-agent selection.
+pub(super) fn validated_channel_session(
+    ctx: &DispatchCtx,
+    config: &Config,
+    channel: &str,
+    identity: &ChannelSessionIdentity,
+) -> Result<(String, String, crate::core::runtime::Tenant), String> {
+    let tenant = ctx.tenant().map_err(|error| error.to_string())?;
+    let tenant_scope = crate::core::runtime::tenant_key(&tenant, "");
+    if identity.tenant_key != tenant_scope {
+        return Err("channel origin belongs to a different tenant".into());
+    }
+    let provider = tinychannels_bus::provider_id(channel);
+    let account_id = identity
+        .account_id
+        .as_deref()
+        .filter(|account| !account.trim().is_empty())
+        .ok_or_else(|| "channel origin has no configured account identity".to_string())?;
+    if identity.provider != provider
+        || tinychannels_bus::provider_id(account_id) != provider
+        || identity.session_key.trim().is_empty()
+        || identity.agent_id.trim().is_empty()
+        || identity.conversation.id.trim().is_empty()
+    {
+        return Err("channel origin identity does not match its trusted route".into());
+    }
+    let configured_agent = if tenant.profile.is_some() {
+        "orchestrator"
+    } else {
+        config
+            .agent
+            .channel_agents
+            .get(channel)
+            .or_else(|| config.agent.channel_agents.get(provider))
+            .map(|agent| agent.trim())
+            .filter(|agent| !agent.is_empty())
+            .unwrap_or("")
+    };
+    let selected_agent = if configured_agent.is_empty() {
+        crate::web_chat::pick_target_agent_id(config)
+    } else {
+        configured_agent.to_string()
+    };
+    if selected_agent != identity.agent_id {
+        return Err("channel origin agent no longer matches its configured route".into());
+    }
+    Ok((
+        crate::core::runtime::tenant_key(&tenant, &identity.session_key),
+        identity.agent_id.clone(),
+        tenant,
+    ))
 }
 
 /// Prompt for a `current` run: tagged task, unattended preamble (the

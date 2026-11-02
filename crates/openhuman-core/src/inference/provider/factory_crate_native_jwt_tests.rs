@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-fn unmanaged_openhuman_jwt_route_never_builds_a_direct_unauthenticated_model() {
+#[tokio::test]
+async fn unmanaged_openhuman_jwt_route_never_builds_a_direct_unauthenticated_model() {
     let _guard = crate::inference::inference_test_guard();
     let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
     let tmp = tempfile::TempDir::new().expect("isolated workspace");
@@ -31,6 +31,7 @@ fn unmanaged_openhuman_jwt_route_never_builds_a_direct_unauthenticated_model() {
         &EgressLedger::none(),
         Some(&extensions),
     )
+    .await
     .expect("configured slug");
     let error = match error {
         Err(error) => error,

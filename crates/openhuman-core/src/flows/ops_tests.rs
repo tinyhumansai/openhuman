@@ -17,7 +17,13 @@ fn test_config(tmp: &TempDir) -> Config {
     // every class, so nothing is ever `blocked`.
     config.autonomy.enabled = true;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    let fixture_config = config.clone();
+    crate::storage::block_on_anyhow(async move {
+        crate::agent::session_host::test_support::install_managed_model_fixture(&fixture_config)
+            .await;
+        Ok(())
+    })
+    .expect("install managed model fixture");
     config
 }
 
@@ -277,8 +283,8 @@ fn webhook_trigger_graph() -> Value {
 
 // ── flows_list_connections (picker source) ──────────────────────────────
 
+use crate::flows::http_credentials::{HttpCredential, HttpCredentialSummary, HttpCredentialsStore};
 use crate::integrations::composio::ComposioConnection;
-use crate::security::credentials::{HttpCredential, HttpCredentialSummary, HttpCredentialsStore};
 
 fn composio_conn(id: &str, toolkit: &str, status: &str, email: Option<&str>) -> ComposioConnection {
     ComposioConnection {
@@ -340,10 +346,8 @@ fn seed_suggestion(config: &Config, id: &str) {
 // purely on a config lookup (`resolve_cloud_slug`'s "no cloud provider
 // configured for slug" branch), before any HTTP client is built.
 
-fn seed_app_session_for_gate_test(tmp: &TempDir) {
-    use crate::security::credentials::{
-        AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
-    };
+async fn seed_app_session_for_gate_test(tmp: &TempDir) {
+    use crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
     // `verify_session_active` reads from `config.config_path.parent()`, which
     // `test_config` sets to `tmp.path()` itself (distinct from
     // `tmp.path()/workspace`) — seed the session there.
@@ -355,6 +359,7 @@ fn seed_app_session_for_gate_test(tmp: &TempDir) {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("seed app-session token");
 }
 

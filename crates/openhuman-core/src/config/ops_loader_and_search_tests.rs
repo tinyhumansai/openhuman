@@ -315,14 +315,16 @@ fn set_browser_allow_all_disable_does_not_require_operator_override() {
 
 // ── snapshot_config_json ───────────────────────────────────────
 
-#[test]
-fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
+#[tokio::test]
+async fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
     let tmp = tempdir().unwrap();
     let mut cfg = Config::default();
     cfg.workspace_dir = tmp.path().join("workspace");
     cfg.config_path = tmp.path().join("config.toml");
 
-    let snap = snapshot_config_json(&cfg).expect("snapshot should succeed");
+    let snap = snapshot_config_json(&cfg)
+        .await
+        .expect("snapshot should succeed");
     assert!(snap.get("config").is_some());
     assert!(snap.get("workspace_dir").is_some());
     assert!(snap.get("config_path").is_some());
@@ -331,8 +333,8 @@ fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
     assert!(ws.contains(tmp.path().to_str().unwrap_or("")));
 }
 
-#[test]
-fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
+#[tokio::test]
+async fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     let mut cfg = Config::default();
     cfg.search.max_results = 13;
     cfg.search.parallel.api_key = Some("parallel-sentinel".into());
@@ -342,7 +344,7 @@ fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     cfg.search.tavily.api_key = Some("tavily-sentinel".into());
     cfg.search.gemini.api_key = Some("gemini-sentinel".into());
     cfg.seltz.api_key = Some("seltz-sentinel".into());
-    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
     let serialized = snapshot.to_string();
     assert!(!serialized.contains("-sentinel"));
     assert_eq!(snapshot["config"]["search"]["max_results"], 13);
@@ -352,11 +354,11 @@ fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     assert!(snapshot["config"]["seltz"]["api_key"].is_null());
 }
 
-#[test]
-fn snapshot_config_json_redacts_the_storage_url_credentials() {
+#[tokio::test]
+async fn snapshot_config_json_redacts_the_storage_url_credentials() {
     let mut cfg = Config::default();
     cfg.storage.url = Some("mongodb://app:hunter2@db.internal/openhuman".into());
-    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
     assert!(!snapshot.to_string().contains("hunter2"));
     assert_eq!(
         snapshot["config"]["storage"]["url"],
@@ -364,11 +366,11 @@ fn snapshot_config_json_redacts_the_storage_url_credentials() {
     );
 }
 
-#[test]
-fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
+#[tokio::test]
+async fn snapshot_config_json_redacts_the_inbound_queue_url_credentials() {
     let mut cfg = Config::default();
     cfg.inbound.queue_url = Some("amqp://app:hunter2@broker.internal/vhost".into());
-    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let snapshot = snapshot_config_json(&cfg).await.unwrap();
     assert!(!snapshot.to_string().contains("hunter2"));
     assert_eq!(
         snapshot["config"]["inbound"]["queue_url"],

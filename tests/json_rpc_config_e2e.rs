@@ -3,6 +3,7 @@
 #[path = "support/rpc_e2e_harness.rs"]
 mod harness;
 use harness::*;
+use openhuman_core::platform::connectivity::rpc::{pick_listen_port_for_host_with, OccupiedByCore};
 
 #[tokio::test]
 async fn json_rpc_legacy_provider_type_preserves_default_endpoint() {
@@ -536,42 +537,44 @@ async fn json_rpc_config_agent_timeout_settings_roundtrip() {
 // Port-conflict recovery E2E
 // ---------------------------------------------------------------------------
 //
-// Verifies that when the preferred core port (7788) is already occupied, the
-// RPC stack starts successfully on a fallback port and remains fully
-// reachable.  A second pass confirms that once the blocker is dropped, port
-// 7788 becomes available again — matching the "repro gone" acceptance
-// criterion from issue #2617.
+// Verifies that when the preferred core port is already occupied, the RPC
+// stack starts successfully on a fallback port and remains fully reachable.
+// Use an ephemeral preferred port so this remains isolated from a developer's
+// already-running core on the standard port.
 
 #[tokio::test]
 async fn port_conflict_recovery_core_starts_on_fallback_port_e2e() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
 
-    // ── 1. occupy port 7788 with a dummy listener ─────────────────────────
-    // Use std::net so the binding is synchronous and stable before we call
-    // pick_listen_port.
-    let blocker =
-        std::net::TcpListener::bind("127.0.0.1:7788").expect("bind blocker on 7788 for e2e test");
+    // ── 1. occupy an ephemeral preferred port with a dummy listener ───────
+    let blocker = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind blocker on an ephemeral port for e2e test");
     blocker
         .set_nonblocking(true)
         .expect("set blocker non-blocking");
+    let preferred = blocker.local_addr().expect("blocker local addr").port();
+    let fallbacks: Vec<u16> = (1..=10)
+        .filter_map(|delta| preferred.checked_add(delta))
+        .collect();
 
-    // ── 2. pick_listen_port should fall back to 7789–7798 ────────────────
-    let pick_result = pick_listen_port(7788)
-        .await
-        .expect("pick_listen_port must succeed when port is occupied by non-OpenHuman process");
+    // ── 2. pick_listen_port should fall back to a neighbouring port ───────
+    let pick_result =
+        pick_listen_port_for_host_with("127.0.0.1", preferred, OccupiedByCore::Fallback)
+            .await
+            .expect("pick_listen_port must succeed when port is occupied by non-OpenHuman process");
     assert!(
         pick_result.fallback_from.is_some(),
-        "expected fallback_from to be Some(7788) when preferred port is occupied, got None"
+        "expected fallback_from to be Some({preferred}) when preferred port is occupied, got None"
     );
     assert_eq!(
         pick_result.fallback_from,
-        Some(7788),
+        Some(preferred),
         "fallback_from should record the originally preferred port"
     );
     let fallback_port = pick_result.port;
     assert!(
-        (7789..=7798).contains(&fallback_port),
-        "fallback port {fallback_port} should be in the 7789–7798 range"
+        fallbacks.contains(&fallback_port),
+        "fallback port {fallback_port} should be one of {fallbacks:?}"
     );
 
     // ── 3. serve the core router on the fallback listener ────────────────
@@ -613,15 +616,16 @@ async fn port_conflict_recovery_core_starts_on_fallback_port_e2e() {
 
     rpc_join.abort();
 
-    // ── 5. drop blocker — verify 7788 is now free ────────────────────────
+    // ── 5. drop blocker — verify the preferred port is now free ──────────
     drop(blocker);
 
-    let after_drop = pick_listen_port(7788)
-        .await
-        .expect("pick_listen_port should succeed with 7788 free");
+    let after_drop =
+        pick_listen_port_for_host_with("127.0.0.1", preferred, OccupiedByCore::Fallback)
+            .await
+            .expect("pick_listen_port should succeed with 7788 free");
     assert_eq!(
-        after_drop.port, 7788,
-        "after releasing the blocker, pick_listen_port should bind directly on 7788"
+        after_drop.port, preferred,
+        "after releasing the blocker, pick_listen_port should bind directly on the preferred port"
     );
     assert!(
         after_drop.fallback_from.is_none(),

@@ -120,7 +120,7 @@ fn a_stale_routing_patch_cannot_combine_with_a_newer_unvalidated_route() {
         history_key: format!("telegram-target-{target}"),
         sender: None,
         thread_id: None,
-        session_identity: None,
+        channel_session: None,
     };
     let origin_42 = channel_origin("42");
     let origin_999 = channel_origin("999");
@@ -252,12 +252,13 @@ async fn a_job_whose_agent_is_not_live_stays_dormant() {
     );
 }
 
+#[cfg(feature = "legacy-import")]
 fn legacy_fixture() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/storage/import/fixtures/tinyflows/workspace/cron/jobs.db")
 }
 
-#[cfg(feature = "storage-sqlite")]
+#[cfg(all(feature = "storage-sqlite", feature = "legacy-import"))]
 #[test]
 fn a_legacy_jobs_db_is_imported_by_the_storage_importer_and_left_untouched() {
     let tmp = TempDir::new().unwrap();

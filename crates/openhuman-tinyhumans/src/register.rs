@@ -20,13 +20,18 @@ pub(crate) enum DoctorRegistration<'a> {
 }
 #[cfg(feature = "voice")]
 use crate::voice;
-use crate::{channels, client, inference, integrations, memory};
+use crate::{channels, client, devices, inference, integrations, memory};
 
 /// Registers every area's hooks with the core.
 pub(crate) fn register_all(options: &InstallOptions, doctor_registration: DoctorRegistration<'_>) {
     log::debug!("[tinyhumans] register_all: registering core hooks");
+    openhuman_embed::__host::credentials::install_provider_credential_source(std::sync::Arc::new(
+        crate::provider_oauth::OpenAiProviderCredentialSource::default(),
+    ));
     crate::hosted_config::register();
     client::register(options);
+    crate::socket::register();
+    devices::tunnel_client::register();
     integrations::register(options);
     #[cfg(feature = "voice")]
     voice::register(options);

@@ -130,6 +130,7 @@ fn legacy_sessions(workspace: &Path) {
         updated: "2026-01-01T00:00:00Z".into(),
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -437,16 +438,12 @@ async fn import_modules(workspace: &Path) {
     #[cfg(feature = "web3")]
     assert!(modules::import_legacy_x402(&ctx, workspace).await);
     modules::import_legacy_tinybox(&ctx, workspace).await;
-    modules::import_legacy_tinyjuice(
-        &ctx,
-        &workspace.join("ccr"),
-        Some(Duration::from_secs(3600)),
-    )
-    .await;
+    modules::import_legacy_tinyjuice(&ctx, &workspace.join("ccr"), None).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched() {
+    let _ = env_logger::builder().is_test(true).try_init();
     let case = Case::open();
     std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
     std::env::set_var("OPENHUMAN_KEYRING_MASTER_KEY", "33".repeat(32));
@@ -571,7 +568,7 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched() {
         assert!(
             juice
                 .blobs()
-                .get(&format!("tinyjuice_ccr/{token}"))
+                .get(&format!("juice/ccr/{token}"))
                 .await
                 .unwrap()
                 .is_some(),

@@ -50,6 +50,20 @@ describe('useLoadThreadTodos', () => {
     ]);
   });
 
+  it('preserves the core reason for a cancelled todo item', async () => {
+    const cancelled = {
+      content: 'Review the migration',
+      status: 'cancelled' as const,
+      reason: null,
+    };
+    vi.mocked(threadApi.getTodos).mockResolvedValue([cancelled]);
+    const { store, wrapper } = setup();
+    renderHook(() => useLoadThreadTodos('t1'), { wrapper });
+
+    await waitFor(() => expect(store.getState().threadTodos.byThread.t1).toEqual([cancelled]));
+    expect(store.getState().threadTodos.byThread.t1?.[0].reason).toBeNull();
+  });
+
   // A rejected `getTodos()` (older core, transient failure) is swallowed by
   // the hook's try/catch, leaving the slice untouched — see the source. Not
   // exercised here via an actual rejected promise: doing so inside a React

@@ -24,7 +24,7 @@ use crate::core::slots::HookSlot;
 pub type LiveFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 /// Whether a registered provider is usable right now for `config`.
-pub type ConfiguredFn = Arc<dyn Fn(&Config) -> bool + Send + Sync>;
+pub type ConfiguredFn = Arc<dyn for<'a> Fn(&'a Config) -> LiveFuture<bool> + Send + Sync>;
 /// Shapes a session's [`LiveConfig`] for a registered provider
 /// (`config`, the system instruction, the live config to adjust).
 pub type ConfigureFn = Arc<dyn Fn(&Config, &str, &mut LiveConfig) + Send + Sync>;
@@ -93,14 +93,14 @@ pub fn unregister_live_provider(slug: &str) -> bool {
 /// Lists registered providers before or after the built-in ones according to
 /// their [`LiveProviderPlacement`]; a registered slug that is also built in
 /// replaces the built-in row in place.
-pub(super) fn merge_provider_infos(infos: &mut Vec<LiveProviderInfo>, config: &Config) {
+pub(super) async fn merge_provider_infos(infos: &mut Vec<LiveProviderInfo>, config: &Config) {
     let mut leading = Vec::new();
     for (slug, entry) in LIVE_PROVIDERS.entries() {
         let info = LiveProviderInfo {
             id: slug.clone(),
             label: entry.label.clone(),
             kind: entry.kind,
-            configured: (entry.configured)(config),
+            configured: (entry.configured)(config).await,
             key_slug: entry.key_slug.clone(),
             voices: entry.voices.clone(),
             languages: entry.languages.clone(),

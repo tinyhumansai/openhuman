@@ -191,9 +191,10 @@ pub(super) async fn deliver_run(
             }
         }
 
-        // Proactive delivery — the channels module decides where to send.
-        // Used by morning briefings, welcome messages, and other
-        // user-facing proactive agents.
+        // Proactive delivery — independent web and optional external-channel
+        // subscribers deliver the message to the tenant that ran this job.
+        // Used by morning briefings, welcome messages, and other user-facing
+        // proactive agents.
         "proactive" => match reply.as_deref().filter(|_| deliver_to_chat) {
             Some(message) => {
                 let source = format!("cron:{}", job.id);
@@ -206,6 +207,7 @@ pub(super) async fn deliver_run(
                     source,
                     message: message.to_string(),
                     job_name: job.name.clone(),
+                    tenant: ctx.event_tenant(),
                 });
                 status = DeliveryStatus::Delivered;
             }
@@ -228,15 +230,21 @@ pub(super) async fn deliver_run(
                     .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
 
                 let idempotency_key = super::origin_delivery::origin_request_id(&job.id, run_id);
-                match crate::cron::channel_bridge::send_to_channel(
+                #[cfg(feature = "channels")]
+                let sent = crate::cron::channel_bridge::announce_to_channel(
                     channel,
                     target,
                     None,
                     message,
                     &idempotency_key,
                 )
-                .await
-                {
+                .await;
+                #[cfg(not(feature = "channels"))]
+                let sent: Result<(), String> = {
+                    let _ = (message, &idempotency_key);
+                    Err("channel delivery requires the channels feature".to_string())
+                };
+                match sent {
                     Ok(()) => {
                         tracing::debug!(
                             job_id = %job.id,

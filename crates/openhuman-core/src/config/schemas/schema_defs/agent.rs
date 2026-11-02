@@ -235,7 +235,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
             inputs: vec![
                 optional_string(
                     "backend",
-                    "Sandbox backend: auto | landlock | firejail | bubblewrap | docker | none.",
+                    "Sandbox backend: auto | landlock | docker | none. Native sandboxing is provided by TinyBox.",
                 ),
                 optional_bool("enabled", "Enable or disable sandbox execution."),
                 optional_string(

@@ -480,7 +480,7 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
         }
         ExpectedErrorKind::ApprovalNoPendingRace => {
             // Benign approval race (TAURI-RUST-5EH): the request_id was already
-            // decided / lazily expired / superseded — `store::get_decision`
+            // decided / lazily expired / superseded — the approval engine
             // confirmed a persisted decision exists, so this is a double-tap,
             // two-operator, or expiry-while-live race classified benign by the
             // inline-approvals design spec, not a lost registration. Demote at

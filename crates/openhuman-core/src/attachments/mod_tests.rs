@@ -58,6 +58,7 @@ async fn legacy_migration_does_not_grant_private_file_or_disabled_image_access()
     let external_scope = AttachmentAccessScope {
         external_channel: true,
         workspace: None,
+        ..Default::default()
     };
     assert!(
         legacy::migrate_from(&cfg, source.to_str().unwrap(), &stash, &external_scope)
@@ -412,6 +413,7 @@ async fn explicit_workspace_wins_over_config_action_dir() {
     let scope = AttachmentAccessScope {
         external_channel: false,
         workspace: Some(scoped.clone()),
+        ..Default::default()
     };
     let attachment = save(&config, "thread", "file", "text/plain", b"original", &scope)
         .await

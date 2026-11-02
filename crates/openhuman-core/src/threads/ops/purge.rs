@@ -37,11 +37,12 @@ where
     Fut: std::future::Future<Output = ()> + Send,
 {
     let admission_workspace = dir.clone();
-    let _admission = tokio::task::spawn_blocking(move || {
-        crate::threads::store::backend::begin_thread_purge(&admission_workspace)
-    })
-    .await
-    .map_err(|error| format!("failed to close thread admission for purge: {error}"))?;
+    let _admission = ctx
+        .spawn_blocking(move || {
+            crate::threads::store::backend::begin_thread_purge(&admission_workspace)
+        })
+        .await
+        .map_err(|error| format!("failed to close thread admission for purge: {error}"))?;
 
     // Capture and fence the parents before deleting their rows. The owner
     // index is keyed by thread, and the permanent fence prevents another child

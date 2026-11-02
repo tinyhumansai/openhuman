@@ -100,8 +100,10 @@ async fn a_backup_of_an_at_rest_config_is_byte_for_byte() {
     let mut config = load_or_init_for_workspace(tmp.path()).await;
 
     // Something a future build wrote and this one has never heard of.
+    // A top-level key sits before every table: appended at the end it would
+    // land inside whichever table the serialized config ends with.
     let doctored = format!(
-        "{}\nkey_from_a_build_we_do_not_know = \"preserve-me\"\n",
+        "key_from_a_build_we_do_not_know = \"preserve-me\"\n{}",
         tokio::fs::read_to_string(&config.config_path)
             .await
             .unwrap()

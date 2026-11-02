@@ -95,6 +95,7 @@ fn scenario() {
             .modules([
                 RuntimeModule::Agent,
                 RuntimeModule::Inference,
+                RuntimeModule::Modules,
                 RuntimeModule::Memory,
                 RuntimeModule::Mcp,
                 RuntimeModule::Skills,

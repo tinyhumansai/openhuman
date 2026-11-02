@@ -2,7 +2,7 @@
 //! Summary: Measure retained runtime-owned agents using loopback inference and two worker threads.
 //! Run: offline on Linux; use a fresh constrained cgroup for release measurements.
 //! Profile: release
-//! Feature: storage-sqlite
+//! Feature: mcp,storage-sqlite
 //! Default features: disabled
 
 #![recursion_limit = "512"]
@@ -30,9 +30,12 @@ fn rss_kib() -> anyhow::Result<u64> {
 
 // ANCHOR: linux-fleet
 fn main() -> anyhow::Result<()> {
+    // Keep the dev-profile documentation/CI smoke bounded; release runs retain
+    // the 100-agent measurement unless the caller supplies an explicit count.
+    let default_count = if cfg!(debug_assertions) { "2" } else { "100" };
     let count: usize = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "100".into())
+        .unwrap_or_else(|| default_count.into())
         .parse()?;
     anyhow::ensure!(count > 0, "agent count must be positive");
     openhuman_embed::process::tokio_runtime_builder()

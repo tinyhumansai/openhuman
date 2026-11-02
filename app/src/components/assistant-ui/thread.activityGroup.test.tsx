@@ -58,6 +58,33 @@ function Harness({ messages, isRunning }: { messages: ThreadMessageLike[]; isRun
 }
 
 describe('activity group', () => {
+  it('renders persisted channel reactions and read receipts on the source message', () => {
+    render(
+      <Harness
+        messages={[
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'incoming channel message' }],
+            metadata: {
+              custom: {
+                extraMetadata: {
+                  channelActivity: {
+                    reactions: { 'reaction-key': { actorId: 'alice', value: '🔥' } },
+                    readReceipts: { 'receipt-key': { actorId: 'bob', timestamp: 123 } },
+                  },
+                },
+              },
+            },
+          },
+        ]}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByTestId('channel-message-reaction')).toHaveTextContent('🔥 1');
+    expect(screen.getByTestId('channel-message-read-receipts')).toHaveTextContent('✓✓ 1');
+  });
+
   it('puts interleaved reasoning and tool calls under one trigger, answer outside', () => {
     render(
       <Harness messages={interleaved({ type: 'complete', reason: 'stop' })} isRunning={false} />

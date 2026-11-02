@@ -143,7 +143,10 @@ cd "$(dirname "$0")/../.."
 # 300 -> 303 on 2026-10-24: #8198 adds two names and the TinyStorageDrivers v2
 # split (#8229/#8231) nets one more; see the 331/303/3 entry in
 # `kernel-floor.limits`.
+# 303 -> 312 on 2026-10-25: upstream's TinyAgents harness-tools feature set
+# adds the filesystem, network, execution, media and plan-review tool crates;
+# measured by both cargo tree and dep-sim on current upstream/main.
 # See kernel-floor.limits.
-EXPECTED_NAMES=303
+EXPECTED_NAMES=312
 
 exec python3 scripts/dep-sim.py --cut-nothing --expect-names "${EXPECTED_NAMES}"

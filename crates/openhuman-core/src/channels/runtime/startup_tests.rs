@@ -7,9 +7,8 @@
 //! (cloud) path is preserved for users who haven't picked a local /
 //! BYOK model, and the override path activates for those who have.
 
-use super::{resolve_chat_workload, ChatWorkloadResolution, RelayInboundMessageHandler};
+use super::{resolve_chat_workload, ChatWorkloadResolution};
 use crate::config::Config;
-use tinychannels::relay::RelayInboundHandler;
 
 fn config_with_chat_provider(s: Option<&str>) -> Config {
     let mut config = Config::default();
@@ -56,64 +55,4 @@ fn chat_provider_local_and_byok_strings_resolve_to_workload() {
             }
         }
     }
-}
-
-#[tokio::test]
-async fn relay_inbound_handler_forwards_envelopes_to_dispatch_bus() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let handler = RelayInboundMessageHandler::new(tx);
-    let envelope = tinychannels::ChannelInboundEnvelope {
-        channel: tinychannels::channel::ChannelRef {
-            id: "telegram".into(),
-            account_id: None,
-        },
-        message_id: "relay-msg-1".into(),
-        conversation: tinychannels::channel::ConversationRef {
-            id: "chat-1".into(),
-            topic_id: Some("topic-1".into()),
-            ..Default::default()
-        },
-        sender: tinychannels::channel::SenderRef {
-            id: "alice".into(),
-            ..Default::default()
-        },
-        text: "hello from relay".into(),
-        ..Default::default()
-    };
-
-    handler
-        .handle(tinychannels::relay::AuthenticatedRelayInboundEvent {
-            event: serde_json::to_value(envelope).expect("relay envelope json"),
-            buffer_id: Some("buffer-1".into()),
-            delivered_via_authenticated_relay: true,
-        })
-        .await
-        .expect("handle relay inbound");
-
-    let runtime_msg = rx.recv().await.expect("forwarded channel message");
-    let forwarded = runtime_msg.message;
-    assert_eq!(forwarded.message_id, "relay-msg-1");
-    assert_eq!(forwarded.channel.id, "telegram");
-    assert_eq!(forwarded.conversation.id, "chat-1");
-    assert_eq!(forwarded.sender.id, "alice");
-    assert_eq!(forwarded.text, "hello from relay");
-    assert_eq!(forwarded.conversation.thread_id, None);
-    assert_eq!(forwarded.conversation.topic_id.as_deref(), Some("topic-1"));
-}
-
-#[tokio::test]
-async fn relay_inbound_handler_rejects_malformed_envelopes() {
-    let (tx, _rx) = tokio::sync::mpsc::channel(1);
-    let handler = RelayInboundMessageHandler::new(tx);
-
-    let error = handler
-        .handle(tinychannels::relay::AuthenticatedRelayInboundEvent {
-            event: serde_json::json!("not an envelope"),
-            buffer_id: None,
-            delivered_via_authenticated_relay: true,
-        })
-        .await
-        .expect_err("malformed relay payload should fail");
-
-    assert!(error.to_string().contains("invalid inbound envelope"));
 }

@@ -40,6 +40,18 @@ test('collection names must be <owner>.<entity> in snake_case', () => {
   assert.equal(problems.length, 3, problems.join('\n'));
 });
 
+test('legacy migration source names are allowed only for TinyChannels storage reads', () => {
+  assert.deepEqual(lint({
+    owners: [{ crate: 'tinychannels-bus', collections: [collection('channels_delivery_pending')] }],
+  }), []);
+  assert.equal(lint({
+    owners: [{ crate: 'tinychannels-bus', collections: [collection('channels_new_collection')] }],
+  }).length, 1);
+  assert.equal(lint({
+    owners: [{ crate: 'openhuman', collections: [collection('channels_delivery_pending')] }],
+  }).length, 1);
+});
+
 test('duplicate collection and index names are refused within one crate', () => {
   const problems = lint({
     owners: [{ crate: 'tinyflows-scheduler', collections: [

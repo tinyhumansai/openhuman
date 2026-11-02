@@ -61,14 +61,14 @@ fn registration_installs_both_hosted_providers() {
     assert!(unregister_live_provider(LIVE_PROVIDER_ELEVENLABS_HOSTED));
 }
 
-#[test]
-fn hosted_providers_are_listed_ahead_of_the_built_in_ones() {
+#[tokio::test]
+async fn hosted_providers_are_listed_ahead_of_the_built_in_ones() {
     let _registry = crate::registry_test_lock();
 
     // The catalogue has always listed the hosted providers first:
     // gemini-hosted, elevenlabs-hosted, gemini, sarvam.
     register();
-    let listed = openhuman_embed::__host::voice_registry::live_providers(&Config::default());
+    let listed = openhuman_embed::__host::voice_registry::live_providers(&Config::default()).await;
     unregister_live_provider(LIVE_PROVIDER_GEMINI_HOSTED);
     unregister_live_provider(LIVE_PROVIDER_ELEVENLABS_HOSTED);
     let ids: Vec<_> = listed
@@ -96,7 +96,7 @@ async fn hosted_providers_report_not_configured_without_a_backend_credential() {
         config_path: dir.path().join("config.toml"),
         ..Config::default()
     };
-    assert!(!backend_ready(&config));
+    assert!(!backend_ready(&config).await);
     let err = prepare_gemini(config, LiveConfig::new())
         .await
         .err()

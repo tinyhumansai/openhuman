@@ -59,7 +59,7 @@ pub struct ItemsGetView {
 
 /// `memory_explore`.
 pub async fn explore(config: &Config, params: ExploreParams) -> Result<ExplorePage> {
-    let bound = engine::resolve(config).engine()?;
+    let bound = engine::resolve(config).await.engine()?;
     let facet = params.facet;
     let depth = params.path.len();
     let filter = narrowed(params.filter, &params.path)?;
@@ -89,7 +89,7 @@ pub async fn explore(config: &Config, params: ExploreParams) -> Result<ExplorePa
 
 /// `memory_items_get`.
 pub async fn items_get(config: &Config, params: ItemsGetParams) -> Result<ItemsGetView> {
-    let bound = engine::resolve(config).engine()?;
+    let bound = engine::resolve(config).await.engine()?;
     let ids: Vec<ItemId> = params.ids.into_iter().map(ItemId::new).collect();
     let asked = ids.len();
     let items = super::ops::memory_ops(config)?

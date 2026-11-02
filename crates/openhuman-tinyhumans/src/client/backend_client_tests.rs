@@ -17,7 +17,7 @@ const PRODUCT_IDENTITY_HEADER: &str = "x-sdk-name";
 
 #[tokio::test]
 async fn authed_json_rejects_api_key_for_foreign_or_plaintext_endpoint() {
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     for endpoint in ["https://example.com", "http://example.com"] {
         let client = BackendClient::new(endpoint).unwrap();
@@ -88,7 +88,7 @@ async fn authed_json_sends_an_api_key_as_x_api_key_and_no_bearer() {
     // Library mode: the TinyHumans API key rides the SDK REST routes as
     // `x-api-key`, never as `Authorization: Bearer` (that header is the
     // managed-inference shape, handled by `TinyHumansModel` through the host adapter).
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     let (base_url, captured) = spawn_header_capture_server().await;
     let client = BackendClient::new(&base_url).unwrap();
@@ -121,7 +121,7 @@ async fn authed_json_sends_an_api_key_as_x_api_key_and_no_bearer() {
 
 #[tokio::test]
 async fn authed_json_sends_a_session_credential_as_a_bearer_only() {
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     let (base_url, captured) = spawn_header_capture_server().await;
     let client = BackendClient::new(&base_url).unwrap();
@@ -231,7 +231,7 @@ async fn authed_json_surfaces_unauthorized_on_401() {
 /// session at all.
 #[tokio::test]
 async fn authed_json_surfaces_api_key_rejected_not_unauthorized_on_401() {
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     let app = Router::new().route(
         "/teams/me/usage",

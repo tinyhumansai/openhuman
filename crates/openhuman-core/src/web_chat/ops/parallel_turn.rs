@@ -60,7 +60,7 @@ pub(crate) async fn spawn_parallel_turn(
                 client_id: client_id_task.clone(),
                 request_id: Some(request_id_task.clone()),
             };
-            let origin = crate::security::turn_origin::AgentTurnOrigin::WebChat {
+            let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
                 thread_id: thread_id_task.clone(),
                 client_id: client_id_task.clone(),
                 request_id: Some(request_id_task.clone()),

@@ -17,8 +17,8 @@ pub const MODULE_ID: &str = "tinycomputer";
 
 pub use super::computer_config::{billing_route, module_config};
 
-pub fn jev_ready(config: &Config) -> bool {
-    module_config(config)["jev"].is_object()
+pub async fn jev_ready(config: &Config) -> bool {
+    module_config(config).await["jev"].is_object()
 }
 
 fn last_config() -> &'static tokio::sync::Mutex<Option<u64>> {
@@ -50,7 +50,23 @@ pub(crate) async fn proxy(config: &Config) -> Result<Proxy, String> {
 
     // Reinitialization is private and retains no plaintext secret in this host.
     // The lock makes credential rotation atomic across concurrent tool calls.
-    let configuration = module_config(config);
+    let configuration = module_config(config).await;
+    #[cfg(feature = "security-module")]
+    let mut configuration = configuration;
+    #[cfg(feature = "security-module")]
+    {
+        let callback_destination = crate::modules::ops::consequence_callback_destination(MODULE_ID)
+            .await
+            .ok_or_else(|| "TinyComputer host callback name unavailable".to_owned())?;
+        let egress = match super::browser_egress_host::browser_dial_config(config).await {
+            Ok(egress) => egress,
+            Err(error) => {
+                tracing::warn!(%error, "[computer] browser egress policy unavailable");
+                return Err("TinySecurity browser egress policy unavailable".into());
+            }
+        };
+        inject_security_browser_config(&mut configuration, egress, &callback_destination);
+    }
     let current = fingerprint(&configuration);
     let mut previous = last_config().lock().await;
     if *previous != Some(current) {
@@ -74,6 +90,15 @@ pub(crate) async fn proxy(config: &Config) -> Result<Proxy, String> {
     runtime
         .proxy(names::INTERFACE, names::OBJECT_PATH)
         .map_err(|error| format!("TinyComputer module proxy unavailable: {error}"))
+}
+
+fn inject_security_browser_config(
+    configuration: &mut serde_json::Value,
+    egress: serde_json::Value,
+    callback_destination: &str,
+) {
+    configuration["browser"]["egress"] = egress;
+    configuration["consequence_host"] = serde_json::json!({ "destination": callback_destination });
 }
 
 /// Call one contract member, preserving the structured error envelope.

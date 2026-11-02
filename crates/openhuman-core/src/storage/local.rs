@@ -54,11 +54,11 @@ type WorkspaceBackend = Arc<tokio::sync::OnceCell<Arc<dyn StorageBackend>>>;
 static WORKSPACES: LazyLock<Mutex<HashMap<PathBuf, WorkspaceBackend>>> =
     LazyLock::new(Mutex::default);
 
-#[cfg(all(test, feature = "storage-sqlite"))]
+#[cfg(test)]
 static TEST_WORKSPACE_URLS: LazyLock<Mutex<HashMap<PathBuf, String>>> =
     LazyLock::new(Mutex::default);
 
-#[cfg(all(test, feature = "storage-sqlite"))]
+#[cfg(test)]
 pub(crate) fn use_persistent_default_for_test(workspace_dir: &Path) {
     TEST_WORKSPACE_URLS
         .lock()
@@ -165,7 +165,7 @@ async fn open_default_backend(_workspace_dir: PathBuf) -> Result<Arc<dyn Storage
     #[cfg(test)]
     await_test_backend_open_gate().await;
 
-    #[cfg(all(test, feature = "storage-sqlite"))]
+    #[cfg(test)]
     {
         let persistent_url = TEST_WORKSPACE_URLS
             .lock()
@@ -233,7 +233,12 @@ pub fn backend_for(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
     if let Some(backend) = installed() {
         return Ok(backend);
     }
+    workspace_default(workspace_dir)
+}
 
+/// The workspace's own default backend, opened on first use, for a caller that
+/// already found no installed backend.
+fn workspace_default(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
     let cell = workspace_backend(workspace_dir);
     if let Some(backend) = cell.get() {
         return Ok(Arc::clone(backend));
@@ -265,7 +270,9 @@ pub async fn backend_for_async(workspace_dir: &Path) -> Result<Arc<dyn StorageBa
     if super::ON_STORAGE_RUNTIME.with(std::cell::Cell::get) {
         return initialized_backend(cell, workspace_dir).await;
     }
-    tokio::task::spawn_blocking(move || backend_for(&workspace_dir))
+    // This call already found no installed backend; the worker opens the
+    // workspace default rather than asking again from another thread.
+    tokio::task::spawn_blocking(move || workspace_default(&workspace_dir))
         .await
         .context("join the workspace storage opener")?
 }

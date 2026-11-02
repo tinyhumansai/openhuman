@@ -1,0 +1,50 @@
+name: Security browser egress fixture
+
+on:
+  pull_request:
+    branches: [epic/8369-security-migration, main]
+    paths:
+      - .github/workflows/security-browser-egress.yml
+      - .gitmodules
+      - vendor/tinysecurity
+      - vendor/tinycomputer
+      - crates/openhuman-core/src/modules/browser_egress_host.rs
+      - crates/openhuman-core/src/modules/browser_egress_host_tests.rs
+      - scripts/ci/security-browser-egress-fixture.sh
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-browser-egress-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-native-fixture:
+    name: TinySecurity browser egress host (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Fetch fork-pinned submodules
+        shell: bash
+        run: |
+          git config --global url."https://github.com/senamakel/tinysecurity.git".insteadOf "https://github.com/tinyhumansai/tinysecurity.git"
+          git config --global url."https://github.com/senamakel/tinydesktop.git".insteadOf "https://github.com/tinyhumansai/tinydesktop.git"
+          git submodule update --init --recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install browser module build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxdo-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            vendor/tinysecurity -> vendor/tinysecurity/target
+          key: security-browser-egress-linux
+      - name: Run native fixture
+        shell: bash
+        run: bash scripts/ci/security-browser-egress-fixture.sh

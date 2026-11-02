@@ -19,7 +19,6 @@ EXPECTED=$(cat <<'EOF'
 agent_registry/host_definition_tests.rs
 agent/session_host/mod.rs
 integrations/prelude_integrations.rs
-agent/session_host/runtime_session.rs
 agent/session_host/runtime_session_tool_surface.rs
 agent/session_host/runtime_session_tests.rs
 agent_registry/agents/loader.rs
@@ -58,7 +57,7 @@ channels/mod.rs
 mcp/host.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
-security/credentials/ops/credential.rs
+credentials/ops/credential.rs
 storage/import/tinyflows.rs
 storage/schema.rs
 skills/bundled/mod.rs
@@ -76,7 +75,6 @@ tools/registry/schemas_tests.rs
 tools/sources_tests.rs
 tools/ops_tests_catalog_fixture_tests.rs
 web_chat/mod.rs
-web_chat/run_task.rs
 web_chat/web_tests.rs
 web_chat/web_tests_ptt_source_tests.rs
 web3/stub.rs
@@ -111,6 +109,16 @@ doctor/checks/voice.rs
 doctor/checks/wallet.rs
 doctor/checks/wallet_tests.rs
 skills/ops_discover.rs
+agent/host_agents.rs
+agent/turn_host.rs
+cron/mod.rs
+cron/scheduler/delivery.rs
+cron/scheduler/origin_delivery.rs
+agent/queued_turn_tests.rs
+cron/ops_tests.rs
+cron/scheduler_tests.rs
+web_chat/web_tests_turn_lifecycle_tests.rs
+channels/host/voice_tests.rs
 EOF
 )
 

@@ -8,6 +8,8 @@
   "scripts": {
     "build": "pnpm --filter openhuman-app build",
     "docs:generate": "node scripts/generate-architecture-docs.mjs && node scripts/ci/check-storage-schema.mjs --write",
+    "chat-wire:generate": "node scripts/generate-chat-wire-types.mjs && node scripts/generate-thread-wire-types.mjs",
+    "chat-wire:check": "node scripts/generate-chat-wire-types.mjs --check && node scripts/generate-thread-wire-types.mjs --check",
     "docs:check": "node scripts/generate-architecture-docs.mjs --check && node scripts/ci/check-storage-schema.mjs",
     "docs:test": "node --test scripts/__tests__/generate-architecture-docs.test.mjs scripts/__tests__/generate-embed-docs.test.mjs",
     "test:scripts": "node --test scripts/__tests__/*.test.mjs scripts/mock-api/*.test.mjs scripts/mock-api/routes/__tests__/*.test.mjs",
@@ -59,7 +61,7 @@
     "rust:clippy": "cargo clippy -p openhuman -p openhuman-cli -p openhuman-tinyhumans -- -D warnings && pnpm --filter openhuman-app rust:clippy",
     "rust:module-boundaries": "node scripts/ci/check-module-boundaries.mjs",
     "rust:module-boundaries:complete": "node scripts/ci/check-module-boundaries.mjs --require-complete",
-    "rust:layout": "node scripts/ci/check-openhuman-rust-layout.mjs && node scripts/ci/check-crate-chain.mjs && node scripts/ci/check-core-hosted-free.mjs && node scripts/ci/check-storage-bypass.mjs && node scripts/ci/check-storage-owner.mjs && node scripts/ci/check-storage-schema.mjs && node scripts/ci/check-test-ownership.mjs",
+    "rust:layout": "node scripts/ci/check-openhuman-rust-layout.mjs && node scripts/ci/check-crate-chain.mjs && node scripts/ci/check-core-hosted-free.mjs && node scripts/ci/check-security-module-dependencies.mjs && node scripts/ci/check-storage-bypass.mjs && node scripts/ci/check-storage-owner.mjs && node scripts/ci/check-storage-schema.mjs && node scripts/ci/check-test-ownership.mjs",
     "ci:module-source": "node scripts/ci/check-ci-module-source.mjs",
     "rust:process-statics": "node scripts/ci/check-process-statics.mjs",
     "rust:ignored-tests": "node scripts/ci/check-ignored-tests.mjs",
@@ -76,7 +78,8 @@
     "tauri:android:init": "bash scripts/android-init.sh",
     "tauri:android:dev": "pnpm --filter openhuman-app tauri:android:dev",
     "tauri:android:build": "pnpm --filter openhuman-app tauri:android:build",
-    "i18n:check": "tsx scripts/i18n-coverage.ts",
+    "i18n:check": "tsx scripts/i18n-coverage.ts && tsx scripts/generate-rust-chat-error-catalog.ts --check",
+    "i18n:chat-errors:generate": "tsx scripts/generate-rust-chat-error-catalog.ts --write",
     "i18n:english:check": "tsx scripts/i18n-find-english.ts",
     "i18n:react:check": "tsx scripts/i18n-react-audit.ts",
     "i18n:bundle:check": "node scripts/verify-i18n-bundle.mjs",
@@ -85,6 +88,8 @@
   "devDependencies": {
     "gpt-tokenizer": "^3.4.0",
     "husky": "^9.1.7",
+    "smol-toml": "1.6.1",
+    "json-schema-to-typescript": "15.0.4",
     "tsx": "^4.20.3",
     "ws": "^8.20.0"
   },

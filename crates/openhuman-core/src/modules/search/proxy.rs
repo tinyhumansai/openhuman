@@ -103,7 +103,7 @@ async fn proxy(config: &Config) -> Result<tinybus::Proxy, String> {
         .await
         .map_err(|error| format!("search module bus unavailable: {error}"))?;
     let configuration =
-        serde_json::to_value(module_config(config)).map_err(|error| error.to_string())?;
+        serde_json::to_value(module_config(config).await).map_err(|error| error.to_string())?;
     let current = fingerprint(&configuration);
     if held_fingerprint() != Some(current) {
         tracing::debug!(
@@ -233,7 +233,7 @@ pub async fn list_tools(ctx: &DispatchCtx, config: &Config) -> Result<ListToolsR
 }
 
 /// The presentation and route boundary is checked before any module load or call.
-fn canonical_request(
+async fn canonical_request(
     ctx: &DispatchCtx,
     config: &Config,
     mut request: ExecuteToolRequest,
@@ -250,6 +250,7 @@ fn canonical_request(
         .canonical_role_name(&request.name)
         .ok_or_else(|| "search tool was not advertised by this profile".to_owned())?;
     if !super::configured_tool_specs(config)
+        .await
         .iter()
         .any(|tool| tool.name == request.name)
     {
@@ -257,7 +258,7 @@ fn canonical_request(
     }
     let role = tinysearch_bus::role_for_tool(canonical)
         .ok_or_else(|| "search alias has no canonical role".to_owned())?;
-    let module = module_config(config);
+    let module = module_config(config).await;
     if let Some(provider) = request
         .arguments
         .get("provider")
@@ -301,7 +302,7 @@ pub async fn execute_tool(
     request: ExecuteToolRequest,
 ) -> Result<ExecuteToolResponse, String> {
     let current = current_config(ctx, config).await?;
-    let request = canonical_request(ctx, &current, request)?;
+    let request = canonical_request(ctx, &current, request).await?;
     let tool = request.name.clone();
     with_module_lock(|| async {
         let proxy = proxy(&current).await?;

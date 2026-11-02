@@ -1,5 +1,4 @@
-type DetachedSpawnParent<'a> =
-    &'a RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>;
+type DetachedSpawnParent<'a> = &'a RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>;
 
 impl SpawnSubagentTool {
     async fn execute_with_context_inner(
@@ -299,6 +298,7 @@ impl SpawnSubagentTool {
                 driver_store.clone(),
                 resumed_session.subagent_session_id.clone(),
                 parent_thread_id.clone(),
+                0,
             );
             let options = SubagentRunOptions {
                 skill_filter_override: checkpoint.skill_filter_override,
@@ -551,13 +551,8 @@ impl SpawnSubagentTool {
             }
         };
 
-        let initial_history = reusable
-            .as_ref()
-            .and_then(|session| session.latest_history.clone())
-            .map(|mut history| {
-                history.push(TranscriptMessage::user(follow_up_prompt.clone()));
-                history
-            });
+        let (initial_history, seed_len) =
+            reused_session_history(reusable.as_ref(), &follow_up_prompt);
 
         log::info!(
             "[subagent_reuse] parent_thread_id={} subagent_session_id={} task_id={} agent_id={} reuse_decision={} task_key={}",
@@ -668,6 +663,7 @@ impl SpawnSubagentTool {
             background_store,
             background_subagent_session_id,
             background_parent_thread_id,
+            seed_len,
         );
         let background_prompt = add_background_contract(&prompt);
         let options = SubagentRunOptions {

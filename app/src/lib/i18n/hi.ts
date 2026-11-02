@@ -1649,6 +1649,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'कैनवास में खोलें',
   'chat.flowProposal.dismiss': 'खारिज करें',
   'chat.flowProposal.error': 'वर्कफ़्लो सहेजा नहीं जा सका। कृपया फिर से प्रयास करें।',
+  'chat.flowProposal.versionConflict':
+    'प्रस्ताव बनने के बाद यह वर्कफ़्लो बदल गया, इसलिए इसे ओवरराइट नहीं किया गया। नया संशोधन माँगें।',
   'chat.flowProposal.enableError':
     'वर्कफ़्लो सहेजा गया, लेकिन सक्षम नहीं किया जा सका। फिर से प्रयास करें, या Workflows पेज से इसे सक्षम करें।',
   'chat.flowProposal.savedConfirmation': 'सहेजा गया',
@@ -3459,6 +3461,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'मॉडल लोड हो रहे हैं…',
   'composer.voiceMode': 'वॉइस मोड',
   'composer.humanMode': 'मानव मोड',
+  'voiceNote.record': 'वॉइस नोट रिकॉर्ड करें',
+  'voiceNote.stop': 'रिकॉर्डिंग रोकें',
+  'voiceNote.discard': 'वॉइस नोट हटाएँ',
+  'voiceNote.send': 'वॉइस नोट भेजें',
+  'voiceNote.recording': 'रिकॉर्ड हो रहा है…',
+  'voiceNote.play': 'वॉइस नोट चलाएँ',
+  'voiceNote.pause': 'वॉइस नोट रोकें',
+  'voiceNote.seek': 'वॉइस नोट में आगे-पीछे जाएँ',
+  'voiceNote.transcript': 'ट्रांसक्रिप्ट',
+  'voiceNote.noTranscript': 'कोई ट्रांसक्रिप्ट उपलब्ध नहीं',
+  'voiceNote.label': 'वॉइस नोट {duration}',
+  'voiceNote.micDenied': 'माइक्रोफ़ोन की अनुमति अस्वीकृत या अनुपलब्ध है।',
+  'voiceNote.transcribeFailed': 'वॉइस नोट का ट्रांसक्रिप्शन नहीं हो सका।',
+  'voiceNote.loadFailed': 'यह वॉइस नोट लोड नहीं हो सका।',
+  'voiceNote.sendFailed': 'वॉइस नोट भेजा नहीं जा सका।',
 
   // Sync budget dialog
 
@@ -5074,6 +5091,55 @@ const messages: TranslationMap = {
   'onboarding.custom.localDefaultDisabledReason':
     'प्रबंधित सेटअप के लिए OpenHuman खाता आवश्यक है। लोकल सेशन में आपको हर सेवा खुद कॉन्फ़िगर करनी होती है।',
   'settings.layout.contrast.strong': 'मज़बूत',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'इस कोर में नीति निदान शामिल नहीं है।',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'सक्रिय सुरक्षा नीति',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'स्वायत्तता',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'केवल कार्यक्षेत्र',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'प्रति घंटे अधिकतम कार्रवाइयाँ',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'मध्यम जोखिम के लिए स्वीकृति आवश्यक',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'उच्च जोखिम वाले कमांड रोकें',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'अनुमत कमांड',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'कोई कमांड स्पष्ट रूप से अनुमत नहीं है।',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'नीति',
+  'settings.approvalHistory.judgeScores':
+    'इरादा {intent} · वापस करने योग्य {reversible} · डेटा निकासी {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'कैश किया गया',
+  'settings.approvalHistory.judgeExpires': '{time} पर समाप्त',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'हमेशा अनुमत टूल',
+  'keyring.settings.toolTrustDescription':
+    'इस सुरक्षा दायरे में ये टूल बिना स्वीकृति माँगे चल सकते हैं।',
+  'keyring.settings.toolTrustLoading': 'अनुमत टूल लोड हो रहे हैं…',
+  'keyring.settings.toolTrustLoadFailed': 'अनुमत टूल लोड नहीं हो सके।',
+  'keyring.settings.toolTrustRevokeFailed': 'इस टूल की अनुमति वापस नहीं ली जा सकी।',
+  'keyring.settings.toolTrustEmpty': 'कोई टूल हमेशा अनुमत नहीं है।',
+  'keyring.settings.toolTrustRetry': 'फिर कोशिश करें',
+  'keyring.settings.toolTrustRevoke': 'वापस लें',
+  'keyring.settings.toolTrustRevoking': 'वापस लिया जा रहा है…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'कीरिंग पहुँच अनुरोध',
+  'keyring.operation.description':
+    'TinySecurity एक कीरिंग आइटम तक पहुँच चाहता है। निर्णय लेने से पहले कार्रवाई देखें।',
+  'keyring.operation.access': 'पहुँच',
+  'keyring.operation.requester': 'अनुरोधकर्ता',
+  'keyring.operation.origin': 'स्रोत',
+  'keyring.operation.purpose': 'उद्देश्य',
+  'keyring.operation.name': 'कीरिंग आइटम',
+  'keyring.operation.access.read': 'पढ़ना',
+  'keyring.operation.access.write': 'लिखना',
+  'keyring.operation.access.delete': 'मिटाना',
+  'keyring.operation.allow': 'एक बार अनुमति दें',
+  'keyring.operation.deny': 'अस्वीकार करें',
+  'keyring.operation.submitting': 'भेजा जा रहा है…',
+  'keyring.operation.expires': 'अनुरोध {seconds} सेकंड में समाप्त होगा।',
+  'keyring.operation.error': 'निर्णय भेजा नहीं जा सका। अनुरोध समाप्त हो चुका हो सकता है।',
 };
 
 export default messages;

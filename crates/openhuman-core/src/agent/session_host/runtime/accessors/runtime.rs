@@ -172,6 +172,11 @@ impl OpenHumanSessionHost {
         self.workspace_descriptor = descriptor;
     }
 
+    /// The current workspace binding used by this session's tools.
+    pub(crate) fn live_workspace_descriptor(&self) -> Option<tinytools::WorkspaceDescriptor> {
+        self.workspace_descriptor.clone()
+    }
+
     /// Attach an active-run queue for mid-turn steering.
     pub fn set_run_queue(
         &mut self,

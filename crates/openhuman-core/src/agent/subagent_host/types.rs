@@ -185,38 +185,19 @@ impl SubagentRunOutcome {
     }
 }
 
-/// Token + cost totals for a single sub-agent run.
-///
-/// Mirrors the inner-loop `AggregatedUsage`, lifted into the public outcome so
-/// the parent turn can fold sub-agent spend into the session-level token/cost
-/// meters surfaced in the UI footer.
-#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SubagentUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cached_input_tokens: u64,
-    /// Sum of the run's known call costs; read with `cost_source`.
-    pub charged_amount_usd: f64,
-    /// How certain `charged_amount_usd` is. `Unknown` means some call had no
-    /// charge and no catalogued price, so the sum is incomplete.
-    #[serde(
-        default = "unknown_cost_source",
-        skip_serializing_if = "is_unknown_cost_source"
-    )]
-    pub cost_source: tinyagents_harness::cost::CostSource,
+/// Token + cost totals for a single sub-agent run, lifted into the public
+/// outcome so the parent turn can fold sub-agent spend into the session-level
+/// token/cost meters surfaced in the UI footer. The type is TinyAgents'
+/// (`AgentProgress::SubagentCompleted` carries it).
+use tinyagents_harness::progress::SubagentUsage;
+
+/// The run's cost as a tally, for folding into a parent's.
+pub trait SubagentUsageExt {
+    fn cost(&self) -> tinyagents_harness::cost::CostTally;
 }
 
-fn unknown_cost_source() -> tinyagents_harness::cost::CostSource {
-    tinyagents_harness::cost::CostSource::Unknown
-}
-
-fn is_unknown_cost_source(source: &tinyagents_harness::cost::CostSource) -> bool {
-    *source == tinyagents_harness::cost::CostSource::Unknown
-}
-
-impl SubagentUsage {
-    /// The run's cost as a tally, for folding into a parent's.
-    pub fn cost(&self) -> tinyagents_harness::cost::CostTally {
+impl SubagentUsageExt for SubagentUsage {
+    fn cost(&self) -> tinyagents_harness::cost::CostTally {
         tinyagents_harness::cost::CostTally {
             known_usd: self.charged_amount_usd,
             source: self.cost_source,

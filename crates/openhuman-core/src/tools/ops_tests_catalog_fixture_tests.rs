@@ -99,7 +99,7 @@ fn full_product_features_enabled() -> bool {
 /// itself once a turn has deferred tools (see that module's doc comment) —
 /// but it is a model-visible tool name the frontend's tool-call presentation
 /// must recognize exactly like any other.
-fn full_tool_catalog_names() -> Vec<String> {
+async fn full_tool_catalog_names() -> Vec<String> {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mut cfg = test_config(&tmp);
@@ -125,23 +125,25 @@ fn full_tool_catalog_names() -> Vec<String> {
     let extensions = crate::core::slots::Extensions::new();
     #[cfg(feature = "media")]
     crate::tools::sources::register_tool_source_in(&extensions, "catalog-test-media", |_| {
-        use std::sync::Arc;
-        use tinyagents_harness::tinyinference_image::MockImageGenerator;
-        use tinyagents_harness::tinyinference_video::{MockVideoGenerator, MockVideoScript};
+        Box::pin(async {
+            use std::sync::Arc;
+            use tinyagents_harness::tinyinference_image::MockImageGenerator;
+            use tinyagents_harness::tinyinference_video::{MockVideoGenerator, MockVideoScript};
 
-        crate::media::generation::media_tools_from(
-            crate::media::generation::MediaGenerators::new(
-                Arc::new(MockImageGenerator::new()),
-                Arc::new(MockVideoGenerator::new(MockVideoScript::delivers())),
-            ),
-            std::path::Path::new("."),
-            std::path::Path::new("./workspace"),
-            std::path::Path::new("./Files"),
-            tinyagents_harness::tinyinference_video::WaitPolicy::new(
-                std::time::Duration::from_millis(1),
-                std::time::Duration::from_secs(5),
-            ),
-        )
+            crate::media::generation::media_tools_from(
+                crate::media::generation::MediaGenerators::new(
+                    Arc::new(MockImageGenerator::new()),
+                    Arc::new(MockVideoGenerator::new(MockVideoScript::delivers())),
+                ),
+                std::path::Path::new("."),
+                std::path::Path::new("./workspace"),
+                std::path::Path::new("./Files"),
+                tinyagents_harness::tinyinference_video::WaitPolicy::new(
+                    std::time::Duration::from_millis(1),
+                    std::time::Duration::from_secs(5),
+                ),
+            )
+        })
     });
     let context = crate::core::runtime::CoreContext::for_test_with_extensions(
         crate::core::runtime::DomainSet::full(),
@@ -149,17 +151,19 @@ fn full_tool_catalog_names() -> Vec<String> {
         extensions,
     );
 
-    let tools = crate::core::runtime::CoreContext::sync_scope(context, || {
+    let tools = crate::core::runtime::CoreContext::scope(context, async {
         all_tools(
             Arc::new(cfg.clone()),
             &security,
-            AuditLogger::disabled(),
+            AuditSink::disabled(),
             &browser,
             &http,
             tmp.path(),
             &cfg,
         )
-    });
+        .await
+    })
+    .await;
 
     let mut names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
     names.push(tinyagents_harness::tool::discover::TOOL_SEARCH_NAME.to_string());
@@ -196,9 +200,9 @@ const REGENERATE_COMMAND: &str = "UPDATE_TOOL_CATALOG=1 cargo test -p openhuman 
 
 /// Regenerates the fixture when `UPDATE_TOOL_CATALOG=1`, otherwise fails with
 /// exactly what was added/removed relative to it.
-#[test]
-fn tool_catalog_matches_frontend_fixture() {
-    let names = full_tool_catalog_names();
+#[tokio::test]
+async fn tool_catalog_matches_frontend_fixture() {
+    let names = full_tool_catalog_names().await;
     let path = fixture_path();
 
     if std::env::var("UPDATE_TOOL_CATALOG").as_deref() == Ok("1") {

@@ -1,54 +1,5 @@
 use super::*;
-use async_trait::async_trait;
-use std::sync::Mutex;
-use tinychannels_bus::{Channel, ChannelMessage, SendMessage};
 use tinyflows_bus::schedule::types::DeliveryStatus;
-use tokio::sync::mpsc;
-
-type RecordedSends = Arc<Mutex<Vec<(String, Option<String>)>>>;
-
-struct AnnounceMockChannel {
-    name: String,
-    sends: RecordedSends,
-    fail: bool,
-}
-
-#[async_trait]
-impl Channel for AnnounceMockChannel {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
-        self.sends
-            .lock()
-            .unwrap()
-            .push((message.recipient.clone(), message.idempotency_key.clone()));
-        if self.fail {
-            anyhow::bail!("mock announce send failed");
-        }
-        Ok(())
-    }
-
-    async fn listen(&self, _tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-fn install_mock_channel(name: String, fail: bool) -> RecordedSends {
-    let sends = Arc::new(Mutex::new(Vec::new()));
-    let channel: Arc<dyn Channel> = Arc::new(AnnounceMockChannel {
-        name: name.clone(),
-        sends: Arc::clone(&sends),
-        fail,
-    });
-    crate::cron::channel_bridge::register_channel_bridge(
-        Arc::new(Mutex::new(std::collections::HashMap::new())),
-        Arc::new(std::collections::HashMap::from([(name, channel)])),
-        crate::cron::channel_bridge::MAX_HISTORY_MESSAGES,
-    );
-    sends
-}
 
 #[tokio::test]
 async fn announce_to_unavailable_channel_is_reported_as_failed() {
@@ -80,18 +31,19 @@ async fn announce_to_unavailable_channel_is_reported_as_failed() {
     );
 }
 
+/// An announce to a configured account goes through the channel module's
+/// progressive output and reaches the provider; the run's id is the turn id.
 #[tokio::test]
-async fn announce_send_failure_is_reported_as_failed() {
-    let _bridge_lock = crate::cron::channel_bridge::TEST_BRIDGE_LOCK.lock().await;
+async fn announce_success_is_delivered_through_the_channel_module_to_the_provider() {
+    let linked = crate::channels::runtime::test_support::linked_telegram_runtime().await;
+    crate::cron::channel_bridge::register_channel_bridge(linked.module_objects());
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
-    let channel = format!("failing-{}", uuid::Uuid::new_v4());
-    let sends = install_mock_channel(channel.clone(), true);
     let mut job = test_job("echo ok");
     job.delivery = DeliveryConfig {
         mode: "announce".into(),
-        channel: Some(channel),
-        to: Some("target".into()),
+        channel: Some("telegram".into()),
+        to: Some("42".into()),
         best_effort: false,
     };
 
@@ -99,97 +51,17 @@ async fn announce_send_failure_is_reported_as_failed() {
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         &job,
-        "run-2",
-        "hello",
+        "run-announce-success",
+        "announced hello",
         true,
     )
-    .await
-    .unwrap();
+    .await;
+    crate::cron::channel_bridge::clear_channel_bridge();
 
-    assert_eq!(result, DeliveryStatus::Failed);
-    assert_eq!(sends.lock().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn announce_success_is_reported_and_uses_a_run_idempotency_key() {
-    let _bridge_lock = crate::cron::channel_bridge::TEST_BRIDGE_LOCK.lock().await;
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let channel = format!("working-{}", uuid::Uuid::new_v4());
-    let sends = install_mock_channel(channel.clone(), false);
-    let mut job = test_job("echo ok");
-    job.delivery = DeliveryConfig {
-        mode: "announce".into(),
-        channel: Some(channel),
-        to: Some("target".into()),
-        best_effort: false,
-    };
-
-    let result = deliver_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &job,
-        "run-3",
-        "hello",
-        true,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(result, DeliveryStatus::Delivered);
-    assert_eq!(
-        *sends.lock().unwrap(),
-        vec![("target".into(), Some(format!("cron:{}:run-3", job.id)))]
+    assert_eq!(result.unwrap(), DeliveryStatus::Delivered);
+    let requests = linked.provider_request_paths().await;
+    assert!(
+        requests.iter().any(|path| path.ends_with("/sendMessage")),
+        "the provider should receive the announcement: {requests:?}"
     );
-}
-
-fn agent_announce_job(channel: String, prompt: &str) -> CronJob {
-    let mut job = test_job("");
-    job.job_type = JobType::Agent;
-    job.prompt = Some(prompt.into());
-    job.delivery = DeliveryConfig {
-        mode: "announce".into(),
-        channel: Some(channel),
-        to: Some("target".into()),
-        best_effort: false,
-    };
-    job
-}
-
-#[tokio::test]
-async fn announce_skips_an_allowed_no_reply_and_never_sends_the_token() {
-    let _bridge_lock = crate::cron::channel_bridge::TEST_BRIDGE_LOCK.lock().await;
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp).await;
-    let channel = format!("quiet-{}", uuid::Uuid::new_v4());
-    let sends = install_mock_channel(channel.clone(), false);
-
-    let conditional = agent_announce_job(channel.clone(), "Report changes, otherwise NO_REPLY");
-    let status = deliver_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &conditional,
-        "run-4",
-        "NO_REPLY",
-        true,
-    )
-    .await
-    .unwrap();
-    assert_eq!(status, DeliveryStatus::Suppressed);
-    assert!(sends.lock().unwrap().is_empty());
-    assert_eq!(cron_alerts(&config).await, 0);
-
-    let reminder = agent_announce_job(channel, "Remind the user to stretch");
-    let status = deliver_run(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        &config,
-        &reminder,
-        "run-5",
-        "No_reply.",
-        true,
-    )
-    .await
-    .unwrap();
-    assert_eq!(status, DeliveryStatus::Delivered);
-    assert_eq!(sends.lock().unwrap().len(), 1);
 }

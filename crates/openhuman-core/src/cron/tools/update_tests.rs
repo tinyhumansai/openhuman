@@ -1,11 +1,32 @@
 use super::*;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::config::Config;
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use tempfile::TempDir;
 use tinyagents_harness::{context::RunConfig, ids::CallId, tool::ToolExecutionContext};
 use tinyflows_bus::schedule::types::{DeliveryConfig, JobOrigin, Schedule, SessionTarget};
 use tinyflows_bus::schedule::AgentJobSpec;
+
+/// The trusted durable-session identity a channel turn carries. Jobs created
+/// from a channel conversation record it; a turn without one has no
+/// conversation to bind a job to.
+fn channel_session(reply_target: &str) -> tinyflows_bus::schedule::ChannelSessionIdentity {
+    tinyflows_bus::schedule::ChannelSessionIdentity {
+        tenant_key: "profile:alice".into(),
+        agent_id: "orchestrator".into(),
+        session_key: format!("main:telegram:bot-a:dm:{reply_target}"),
+        provider: "telegram".into(),
+        account_id: Some("telegram:bot-a".into()),
+        conversation: tinyflows_bus::schedule::ChannelConversationIdentity {
+            kind: "dm".into(),
+            id: reply_target.into(),
+            scope_id: None,
+            parent_id: None,
+            thread_id: None,
+            topic_id: None,
+        },
+    }
+}
 
 fn channel_origin(reply_target: &str) -> JobOrigin {
     JobOrigin::Channel {
@@ -14,7 +35,7 @@ fn channel_origin(reply_target: &str) -> JobOrigin {
         history_key: format!("telegram-user-{reply_target}"),
         sender: Some("alice".into()),
         thread_id: None,
-        session_identity: None,
+        channel_session: Some(Box::new(channel_session(reply_target))),
     }
 }
 
@@ -27,6 +48,7 @@ fn trusted_channel_context(reply_target: &str) -> (impl Sized, ToolExecutionCont
         reply_target: reply_target.into(),
         message_id: "message-1".into(),
         history_key: Some(format!("telegram-user-{reply_target}")),
+        channel_session: Some(channel_session(reply_target)),
     });
     let run = run_context.into_tinyagents(RunConfig::new("cron-update-context"));
     let tool_context =

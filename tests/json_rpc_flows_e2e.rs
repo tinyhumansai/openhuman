@@ -76,7 +76,7 @@ async fn json_rpc_cron_manual_worker_survives_caller_cancel_on_published_tinyflo
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     clear_forced_chat_completions();
 
-    let (artifact, _) = published_tinyflows::staged_v0_9_0_module();
+    let (artifact, _) = published_tinyflows::staged_v0_9_4_module();
     let module_path = artifact.parent().expect("native artifact directory");
     let _module_path_guard = EnvVarGuard::set_to_path("OPENHUMAN_MODULE_PATH", module_path);
 
@@ -253,7 +253,12 @@ async fn json_rpc_cron_manual_worker_survives_caller_cancel_on_published_tinyflo
         .unwrap_or_else(|| {
             panic!("TinyFlows is listed after the released cdylib loaded: {module_list}")
         });
-    assert_eq!(tinyflows["version"], "0.9.0");
+    let pinned = openhuman_core::modules::registry::find("tinyflows")
+        .expect("TinyFlows is registered in the module asset registry");
+    assert_eq!(
+        tinyflows["version"], pinned.version,
+        "the loaded TinyFlows must be the registry-pinned release"
+    );
 
     let name = format!("published-manual-{}", uuid::Uuid::new_v4().simple());
     let job = openhuman_core::cron::system_jobs::ensure_system_job(
@@ -909,6 +914,44 @@ async fn json_rpc_cron_add_run_list_round_trip_over_the_tinyflows_module_inner()
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn json_rpc_retired_workflow_run_methods_are_not_found() {
+    let _env_lock = json_rpc_e2e_env_lock_async().await;
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    for (id, method) in [
+        (9141, "openhuman.workflow_run_list_definitions"),
+        (9142, "openhuman.workflow_run_start"),
+        (9143, "openhuman.workflow_run_list"),
+        (9144, "openhuman.workflow_run_get"),
+    ] {
+        let response = post_json_rpc(&rpc_base, id, method, json!({})).await;
+        assert_unknown_method(&response, method);
+    }
+
+    rpc_join.abort();
+    api_join.abort();
+}
+
+/// Full lifecycle over JSON-RPC for the `workflows` namespace:
+/// create → list → read → phase → uninstall. Workflows are scaffolded under
+/// the user-scope root (`$HOME/.openhuman/workflows/<slug>/`), which the temp
+/// `HOME` isolates per-test.
 #[tokio::test]
 async fn json_rpc_workflows_lifecycle_round_trip() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
@@ -2335,8 +2378,9 @@ async fn json_rpc_flows_list_connections_aggregates_secret_free() {
         .await
         .expect("load config to seed http_cred");
     const SECRET: &str = "sk_live_flows_list_connections_seed";
-    openhuman_core::security::credentials::HttpCredentialsStore::from_config(&seed_config)
-        .upsert(&openhuman_core::security::credentials::HttpCredential::bearer("stripe", SECRET))
+    openhuman_core::flows::http_credentials::HttpCredentialsStore::from_config(&seed_config)
+        .upsert(&openhuman_core::flows::http_credentials::HttpCredential::bearer("stripe", SECRET))
+        .await
         .expect("seed http_cred");
 
     let resp = post_json_rpc(
@@ -2374,6 +2418,14 @@ async fn json_rpc_flows_list_connections_aggregates_secret_free() {
     api_join.abort();
     rpc_join.abort();
 }
+
+// Task 4 / #3090: when a web-chat request is sent with
+// `speak_reply: true`, `run_chat_task` should drive the agent's final text
+// through `voice::reply_speech::synthesize_reply` after the turn completes.
+//
+// We activate the [`reply_speech::test_seam`] short-circuit via the
+// `OPENHUMAN_TEST_REPLY_SPEECH_SEAM` env var so the call is recorded
+// without contacting the ElevenLabs proxy.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #5846 — the two authoring-gate behaviour changes, driven end-to-end through

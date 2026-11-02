@@ -79,11 +79,11 @@ pub(super) fn route_lock() -> &'static tokio::sync::Mutex<()> {
 /// The ordinary route fingerprint intentionally omits state_dir and toolkit
 /// policy; this separate identity prevents those omissions from authorizing a
 /// doctor read against a different workspace or configuration.
-pub(super) fn configured_binding_for_route(
+pub(super) async fn configured_binding_for_route(
     config: &Config,
     route: &serde_json::Value,
 ) -> Option<ConfiguredBinding> {
-    let selected = selected_credential(config)?;
+    let selected = selected_credential(config).await?;
     let accepted_secret = route
         .get("auth_token")
         .or_else(|| route.get("api_key"))?
@@ -110,9 +110,9 @@ pub(super) fn record_configured_route(binding: Option<ConfiguredBinding>) {
 }
 
 #[cfg(test)]
-pub(super) fn record_configured_route_for_test(config: &Config, route: &serde_json::Value) {
-    let binding = (|| {
-        let selected = selected_credential(config)?;
+pub(super) async fn record_configured_route_for_test(config: &Config, route: &serde_json::Value) {
+    let binding = async {
+        let selected = selected_credential(config).await?;
         let accepted_secret = route
             .get("auth_token")
             .or_else(|| route.get("api_key"))?
@@ -130,7 +130,8 @@ pub(super) fn record_configured_route_for_test(config: &Config, route: &serde_js
             route_scope: route_scope_fingerprint(config)?,
             credential: credential_fingerprint(&selected.0, &selected.1),
         })
-    })();
+    }
+    .await;
     record_configured_route(binding);
 }
 
@@ -165,7 +166,7 @@ where
     if !config.modules.enabled || !config.components.connectors || !runtime.is_ready() {
         return Ok(None);
     }
-    let Some(expected) = binding_for_config(config) else {
+    let Some(expected) = binding_for_config(config).await else {
         return Ok(None);
     };
     if *configured_binding()
@@ -189,7 +190,7 @@ where
     Request: Serialize + Send,
     Reply: DeserializeOwned,
 {
-    if !binding_matches_config(config) {
+    if !binding_matches_config(config).await {
         return Ok(None);
     }
     call_proxy_readonly(proxy, member, request).await.map(Some)
@@ -231,36 +232,31 @@ where
     }
 }
 
-fn selected_credential(config: &Config) -> Option<(String, String)> {
+async fn selected_credential(config: &Config) -> Option<(String, String)> {
     if let Some(pinned) = config.composio.host_credential.as_ref() {
         return Some(("host-pinned-direct".to_owned(), pinned.api_key().to_owned()));
     }
 
     match config.composio.mode.trim() {
         "" | crate::config::schema::COMPOSIO_MODE_BACKEND => {
-            let api_key =
-                crate::security::credentials::api_key::get_api_key_read_only(config).ok()?;
+            let api_key = crate::credentials::api_key::get_api_key_read_only(config)
+                .await
+                .ok()?;
             if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
                 return Some(("backend-api-key".to_owned(), api_key.trim().to_owned()));
             }
             let profile =
-                crate::security::credentials::session_support::load_app_session_profile_read_only(
-                    config,
-                )
+                crate::credentials::session_state::load_app_session_profile_read_only(config)
+                    .await
+                    .ok()?;
+            crate::credentials::session_state::check_session_backend(config, profile.as_ref())
                 .ok()?;
-            crate::security::credentials::session_support::check_session_backend(
-                config,
-                profile.as_ref(),
-            )
-            .ok()?;
-            let token = match crate::security::credentials::session_support::classify_session_token(
+            let token = match crate::credentials::session_state::classify_session_token(
                 profile.as_ref(),
                 chrono::Utc::now(),
             ) {
-                crate::security::credentials::session_support::SessionTokenCheck::Live(token)
-                    if !crate::security::credentials::session_support::is_local_session_token(
-                        token.trim(),
-                    ) =>
+                crate::credentials::session_state::SessionTokenCheck::Live(token)
+                    if !crate::credentials::session_state::is_local_session_token(token.trim()) =>
                 {
                     token
                 }
@@ -269,15 +265,16 @@ fn selected_credential(config: &Config) -> Option<(String, String)> {
             Some(("backend-session".to_owned(), token))
         }
         crate::config::schema::COMPOSIO_MODE_DIRECT => {
-            let profile = crate::security::credentials::AuthService::get_profile_read_only(
+            let profile = crate::credentials::AuthService::get_profile_read_only(
                 config,
-                crate::security::credentials::COMPOSIO_DIRECT_PROVIDER,
+                crate::integrations::composio::COMPOSIO_DIRECT_PROVIDER,
                 None,
             )
+            .await
             .ok()?;
             let stored = profile.and_then(|profile| match profile.kind {
-                crate::security::credentials::profiles::AuthProfileKind::Token => profile.token,
-                crate::security::credentials::profiles::AuthProfileKind::OAuth => {
+                crate::credentials::profiles::AuthProfileKind::Token => profile.token,
+                crate::credentials::profiles::AuthProfileKind::OAuth => {
                     profile.token_set.map(|tokens| tokens.access_token)
                 }
             });
@@ -290,7 +287,7 @@ fn selected_credential(config: &Config) -> Option<(String, String)> {
     }
 }
 
-fn binding_for_config(config: &Config) -> Option<ConfiguredBinding> {
+async fn binding_for_config(config: &Config) -> Option<ConfiguredBinding> {
     let actual_load_scope = loaded_scope()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -299,7 +296,7 @@ fn binding_for_config(config: &Config) -> Option<ConfiguredBinding> {
     if Some(actual_load_scope) != load_scope_fingerprint(config) {
         return None;
     }
-    let selected = selected_credential(config)?;
+    let selected = selected_credential(config).await?;
     binding_for_selected(config, &selected)
 }
 
@@ -348,8 +345,8 @@ pub(super) fn note_load_resolution_ready() {
     }
 }
 
-fn binding_matches_config(config: &Config) -> bool {
-    let Some(expected) = binding_for_config(config) else {
+async fn binding_matches_config(config: &Config) -> bool {
+    let Some(expected) = binding_for_config(config).await else {
         return false;
     };
     *configured_binding()

@@ -26,11 +26,11 @@ fn inference_schema_function_names_are_stable() {
     assert!(!functions.contains(&"presets"));
     assert!(!functions.contains(&"apply_preset"));
     assert!(functions.contains(&"diagnostics"));
-    assert!(functions.contains(&"openai_oauth_start"));
-    assert!(functions.contains(&"openai_oauth_complete"));
-    assert!(functions.contains(&"openai_oauth_import_codex_cli"));
-    assert!(functions.contains(&"openai_oauth_status"));
-    assert!(functions.contains(&"openai_oauth_disconnect"));
+    assert!(!functions.contains(&"openai_oauth_start"));
+    assert!(!functions.contains(&"openai_oauth_complete"));
+    assert!(!functions.contains(&"openai_oauth_import_codex_cli"));
+    assert!(!functions.contains(&"openai_oauth_status"));
+    assert!(!functions.contains(&"openai_oauth_disconnect"));
     assert!(functions.contains(&"prompt"));
     assert!(functions.contains(&"vision_prompt"));
     // embed moved to the embeddings domain (openhuman.embeddings_embed)
@@ -78,47 +78,6 @@ fn inference_update_local_settings_schema_accepts_api_key() {
         TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
         other => panic!("expected Option<String>, got {other:?}"),
     }
-}
-
-#[test]
-fn inference_openai_oauth_schemas_are_registered_with_expected_shapes() {
-    let registered: Vec<&str> = all_registered_controllers()
-        .into_iter()
-        .map(|controller| controller.schema.function)
-        .collect();
-    for function in [
-        "openai_oauth_start",
-        "openai_oauth_complete",
-        "openai_oauth_import_codex_cli",
-        "openai_oauth_status",
-        "openai_oauth_disconnect",
-    ] {
-        assert!(registered.contains(&function), "missing {function}");
-        let schema = schemas(function);
-        assert_eq!(schema.namespace, "inference");
-        assert_eq!(schema.function, function);
-        assert!(!schema.description.is_empty());
-        assert!(!schema.outputs.is_empty());
-    }
-
-    let complete = schemas("openai_oauth_complete");
-    assert_eq!(complete.inputs.len(), 1);
-    assert_eq!(complete.inputs[0].name, "callback_url");
-    assert!(complete.inputs[0].required);
-
-    assert!(schemas("openai_oauth_start").inputs.is_empty());
-    assert!(schemas("openai_oauth_import_codex_cli").inputs.is_empty());
-    assert!(schemas("openai_oauth_status").inputs.is_empty());
-    assert!(schemas("openai_oauth_disconnect").inputs.is_empty());
-}
-
-#[tokio::test]
-async fn inference_openai_oauth_complete_handler_rejects_invalid_params() {
-    let params = Map::from_iter([("callback_url".to_string(), Value::Bool(true))]);
-    let err = handle_inference_openai_oauth_complete(DispatchCtx::process_default(), params)
-        .await
-        .expect_err("invalid params");
-    assert!(err.contains("invalid params"));
 }
 
 #[tokio::test]

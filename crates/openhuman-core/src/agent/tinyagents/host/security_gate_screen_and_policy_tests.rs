@@ -22,15 +22,6 @@ async fn injection_payloads_are_blocked_from_every_origin() {
     }
 }
 
-#[tokio::test]
-async fn ordinary_text_passes_screening_unchanged() {
-    let gate = gate(AutonomyLevel::Full);
-    let text = "The build finished in 12 seconds with two warnings.";
-    let outcome = gate.screen_input(text, ContentOrigin::Tool).await.unwrap();
-    assert_eq!(outcome, ScreenOutcome::Pass);
-    assert_eq!(outcome.effective_text(text), Some(text));
-}
-
 /// Builds a session whose channel policy yields `action` for `tool_name`.
 fn policy_session(tool_name: &str, action: ToolPolicyAction) -> Arc<ToolPolicySession> {
     use tinytools::{TaskProfile, TaskRiskLevel, ToolPolicyDecision};
@@ -187,10 +178,9 @@ async fn allow_and_deny_channel_verdicts_are_unchanged() {
     assert!(matches!(denied, GateDecision::Deny { .. }));
 }
 
-/// Credential-like input is rewritten with the shared hosted scrubber before
-/// it enters the model context.
+/// Input is held when the shared TinySecurity scanner is unavailable.
 #[tokio::test]
-async fn screen_input_redacts_credentials_without_changing_screening_policy() {
+async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
     let gate = gate(AutonomyLevel::Full);
     let secret: String = [
         's', 'k', '-', 'l', 'i', 'v', 'e', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
@@ -200,14 +190,9 @@ async fn screen_input_redacts_credentials_without_changing_screening_policy() {
     .collect();
     let text = format!("credential={secret}");
     let outcome = gate.screen_input(&text, ContentOrigin::User).await.unwrap();
-    let ScreenOutcome::Redacted(redacted) = outcome else {
-        panic!("credential input should be redacted, got {outcome:?}");
-    };
-    assert!(!redacted.contains(&secret));
-    assert_eq!(
-        redacted,
-        tinyinference_core::sanitize::scrub_credentials(&text)
-    );
+    assert!(!outcome.is_admissible(), "unscanned input must be held");
+    let reason = outcome.block_reason().expect("held input has a reason");
+    assert!(!reason.contains(&secret));
 
     let untrusted = OpenHumanSecurityGate::new(policy(AutonomyLevel::Full), registry())
         .with_input_screening(false)
@@ -218,7 +203,7 @@ async fn screen_input_redacts_credentials_without_changing_screening_policy() {
 }
 
 #[tokio::test]
-async fn screening_changes_only_the_new_user_row() {
+async fn screening_holds_the_new_user_row_when_tinysecurity_is_unavailable() {
     let gate = gate(AutonomyLevel::Full);
     let secret: String = [
         's', 'k', '-', 'o', 'l', 'd', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a',
@@ -234,30 +219,10 @@ async fn screening_changes_only_the_new_user_row() {
     let (screened, blocked) = gate.screen_new_user_row(&mut history).await.unwrap();
 
     assert!(screened);
-    assert!(blocked.is_none());
+    assert!(blocked.is_some(), "unscanned input must be held");
     assert_eq!(history[0].text(), "frozen prefix");
     assert_eq!(history[1].text(), old_user);
-    assert!(!history[2].text().contains(&secret));
-    assert!(history[2]
-        .text()
-        .contains(&tinyinference_core::sanitize::scrub_credentials(
-            &current_user
-        )));
-}
-
-#[tokio::test]
-async fn tool_screening_preserves_host_confirmation_tokens() {
-    let gate = gate(AutonomyLevel::Full);
-    let token = "00000000-0000-4000-8000-000000000123";
-    let response = format!(r#"{{"status":"NeedsConfirmation","pending":{{"token":"{token}"}}}}"#);
-
-    let outcome = gate
-        .screen_input(&response, ContentOrigin::Tool)
-        .await
-        .unwrap();
-
-    assert_eq!(outcome, ScreenOutcome::Pass);
-    assert_eq!(outcome.effective_text(&response), Some(response.as_str()));
+    assert_eq!(history[2].text(), current_user);
 }
 
 /// A refused approval must reach the model as a Deny with a reason. Returned

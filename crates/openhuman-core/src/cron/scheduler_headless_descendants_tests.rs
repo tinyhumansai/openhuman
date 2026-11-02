@@ -38,7 +38,10 @@ impl CronChildModel {
     async fn wait_for_release(&self) {
         loop {
             let notified = self.child_release.notified();
-            if self.child_released.load(std::sync::atomic::Ordering::SeqCst) {
+            if self
+                .child_released
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
                 return;
             }
             notified.await;
@@ -284,12 +287,16 @@ async fn scheduled_agent_history_includes_its_spawned_child_result() {
             eprintln!(
                 "scheduled child start timeout diagnostics: spawn calls {}, followups {}, run result {result:?}",
                 model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
-                model.accepted_followups.load(std::sync::atomic::Ordering::SeqCst),
+                model
+                    .accepted_followups
+                    .load(std::sync::atomic::Ordering::SeqCst),
             );
             panic!(
-            "scheduled child never reached its model (spawn calls: {}, followups: {}); run result: {result:?}",
-            model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
-            model.accepted_followups.load(std::sync::atomic::Ordering::SeqCst),
+                "scheduled child never reached its model (spawn calls: {}, followups: {}); run result: {result:?}",
+                model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
+                model
+                    .accepted_followups
+                    .load(std::sync::atomic::Ordering::SeqCst),
             );
         }
     }
@@ -355,7 +362,8 @@ async fn scheduled_agent_timeout_cancels_its_blocked_child_before_history_settle
     });
     let _model =
         crate::inference::provider::factory::test_provider_override::install_model(model.clone());
-    let (_temp, _storage, _storage_guard, config, core, dispatch, job) = scheduled_agent_fixture(15);
+    let (_temp, _storage, _storage_guard, config, core, dispatch, job) =
+        scheduled_agent_fixture(15);
     let inspect_dispatch = dispatch.clone();
     let (child_started_tx, child_started_rx) = tokio::sync::oneshot::channel();
     *model.child_started.lock().unwrap() = Some(child_started_tx);
@@ -374,7 +382,9 @@ async fn scheduled_agent_timeout_cancels_its_blocked_child_before_history_settle
             panic!(
                 "scheduled child never reached its blocking model (spawns: {}, accepted followups: {})",
                 model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
-                model.accepted_followups.load(std::sync::atomic::Ordering::SeqCst),
+                model
+                    .accepted_followups
+                    .load(std::sync::atomic::Ordering::SeqCst),
             );
         }
     }

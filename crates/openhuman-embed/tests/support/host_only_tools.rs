@@ -123,16 +123,19 @@ fn host_only_spec(id: &str, provider: &MockServer, calls: Arc<AtomicUsize>) -> A
                 .tools(ToolScopeSpec::HostOnly),
         )
         .tools(move |_| {
-            HostTurnTools::advertised(vec![
-                Box::new(HostTool {
-                    name: "read_file",
-                    calls: calls.clone(),
-                }),
-                Box::new(HostTool {
-                    name: "find_documents",
-                    calls: calls.clone(),
-                }),
-            ])
+            let calls = calls.clone();
+            Box::pin(async move {
+                HostTurnTools::advertised(vec![
+                    Box::new(HostTool {
+                        name: "read_file",
+                        calls: calls.clone(),
+                    }),
+                    Box::new(HostTool {
+                        name: "find_documents",
+                        calls,
+                    }),
+                ])
+            })
         })
 }
 

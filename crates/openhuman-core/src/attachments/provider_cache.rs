@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 const MAX_CACHE_BYTES: u64 = 1024 * 1024;
 
 impl AttachmentModel {
-    pub(super) fn fallback_key(&self, path: &str, mime: &str, bytes: &[u8]) -> String {
+    pub(super) async fn fallback_key(&self, path: &str, mime: &str, bytes: &[u8]) -> String {
         let route = if mime.starts_with("image/") || mime == "application/pdf" {
             crate::inference::provider::factory::create_chat_model_with_model_id_in(
                 &self.dispatch_ctx(),
@@ -14,6 +14,7 @@ impl AttachmentModel {
                 &self.config,
                 0.0,
             )
+            .await
             .ok()
             .map(|(model, id)| {
                 format!(
@@ -76,7 +77,10 @@ impl AttachmentModel {
             &self.config.workspace_dir,
             &root,
         );
-        if !policy.is_resolved_path_allowed_for(&cache, true) {
+        if !policy
+            .path_allowed(crate::security::policy::PathKind::ResolvedWrite, &cache)
+            .await
+        {
             return None;
         }
         Some(cache)

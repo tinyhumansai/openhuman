@@ -551,7 +551,9 @@ async fn rpc_learn_invalidates_a_cached_prefetch_pack() {
             resumed,
             observed_actor,
             None,
+            None,
         )
+        .await
         .is_none());
         crate::memory::lifecycle::prefetch::settle_for_test(
             &dispatch, &config, &identity, thread, false,
@@ -572,7 +574,9 @@ async fn rpc_learn_invalidates_a_cached_prefetch_pack() {
                 resumed,
                 observed_actor,
                 None,
+                None,
             )
+            .await
             .is_some(),
             "the initial turn should consume its completed pack"
         );
@@ -600,7 +604,9 @@ async fn rpc_learn_invalidates_a_cached_prefetch_pack() {
                 resumed,
                 observed_actor,
                 None,
+                None,
             )
+            .await
             .is_none(),
             "a later turn must not consume a pack cached before RPC learn"
         );

@@ -36,6 +36,7 @@ const JSON_RPC_TARGETS = [
   "json_rpc_threads_e2e",
   "json_rpc_wallet_e2e",
   "json_rpc_flows_e2e",
+  "json_rpc_flows_builder_chat_e2e",
   "json_rpc_mcp_e2e",
   "json_rpc_inference_e2e",
   "json_rpc_auth_security_e2e",

@@ -63,7 +63,7 @@ pub(crate) fn spawn_progress_bridge(
 
         // #3886: structured tracing export (`progress_bridge_trace.rs`).
         let mut journal_trace_ctx =
-            trace::trace_context(&config, &metadata, &client_id, &thread_id, &request_id);
+            trace::trace_context(&config, &metadata, &client_id, &thread_id, &request_id).await;
 
         // #4270: emit a periodic liveness beat for the whole in-flight turn so
         // the frontend silence timer never false-fires during a long prefill or

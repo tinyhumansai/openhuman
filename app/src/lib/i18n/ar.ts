@@ -1616,6 +1616,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'فتح في اللوحة',
   'chat.flowProposal.dismiss': 'إغلاق',
   'chat.flowProposal.error': 'تعذّر حفظ سير العمل. حاول مرة أخرى.',
+  'chat.flowProposal.versionConflict':
+    'تغيّر سير العمل هذا بعد إعداد الاقتراح، لذا لم تتم الكتابة فوقه. اطلب مراجعة جديدة.',
   'chat.flowProposal.enableError':
     'تم حفظ سير العمل، لكن تعذّر تفعيله. حاول مرة أخرى، أو فعّله من صفحة سير العمل.',
   'chat.flowProposal.savedConfirmation': 'تم الحفظ',
@@ -3388,6 +3390,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'جارٍ تحميل النماذج…',
   'composer.voiceMode': 'وضع الصوت',
   'composer.humanMode': 'وضع الإنسان',
+  'voiceNote.record': 'تسجيل ملاحظة صوتية',
+  'voiceNote.stop': 'إيقاف التسجيل',
+  'voiceNote.discard': 'تجاهل الملاحظة الصوتية',
+  'voiceNote.send': 'إرسال الملاحظة الصوتية',
+  'voiceNote.recording': 'جارٍ التسجيل…',
+  'voiceNote.play': 'تشغيل الملاحظة الصوتية',
+  'voiceNote.pause': 'إيقاف الملاحظة الصوتية مؤقتًا',
+  'voiceNote.seek': 'التنقل داخل الملاحظة الصوتية',
+  'voiceNote.transcript': 'النص المكتوب',
+  'voiceNote.noTranscript': 'لا يتوفر نص مكتوب',
+  'voiceNote.label': 'ملاحظة صوتية {duration}',
+  'voiceNote.micDenied': 'تم رفض الوصول إلى الميكروفون أو أنه غير متاح.',
+  'voiceNote.transcribeFailed': 'تعذر تفريغ الملاحظة الصوتية إلى نص.',
+  'voiceNote.loadFailed': 'تعذر تحميل هذه الملاحظة الصوتية.',
+  'voiceNote.sendFailed': 'تعذر إرسال الملاحظة الصوتية.',
 
   // Sync budget dialog
 
@@ -4978,6 +4995,53 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'خفيف',
 
   'settings.layout.corners.round': 'مستدير',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'تشخيص السياسات غير مضمّن في هذا النظام الأساسي.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'سياسة الأمان النشطة',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'الاستقلالية',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'مساحة العمل فقط',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'الحد الأقصى للإجراءات في الساعة',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'طلب الموافقة للمخاطر المتوسطة',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'حظر الأوامر عالية المخاطر',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'الأوامر المسموح بها',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'لا توجد أوامر مسموح بها صراحةً.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'السياسة',
+  'settings.approvalHistory.judgeScores':
+    'النية {intent} · قابلية التراجع {reversible} · تسريب البيانات {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'من الذاكرة المؤقتة',
+  'settings.approvalHistory.judgeExpires': 'تنتهي الصلاحية {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'الأدوات المسموح بها دائمًا',
+  'keyring.settings.toolTrustDescription':
+    'يمكن تشغيل هذه الأدوات دون طلب موافقة ضمن نطاق الأمان هذا.',
+  'keyring.settings.toolTrustLoading': 'جارٍ تحميل الأدوات المسموح بها…',
+  'keyring.settings.toolTrustLoadFailed': 'تعذّر تحميل الأدوات المسموح بها.',
+  'keyring.settings.toolTrustRevokeFailed': 'تعذّر إلغاء الإذن لهذه الأداة.',
+  'keyring.settings.toolTrustEmpty': 'لا توجد أدوات مسموح بها دائمًا.',
+  'keyring.settings.toolTrustRetry': 'إعادة المحاولة',
+  'keyring.settings.toolTrustRevoke': 'إلغاء',
+  'keyring.settings.toolTrustRevoking': 'جارٍ الإلغاء…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'طلب الوصول إلى سلسلة المفاتيح',
+  'keyring.operation.description':
+    'يطلب TinySecurity الوصول إلى عنصر واحد في سلسلة المفاتيح. راجع العملية قبل اتخاذ القرار.',
+  'keyring.operation.access': 'الوصول',
+  'keyring.operation.requester': 'مقدم الطلب',
+  'keyring.operation.origin': 'المصدر',
+  'keyring.operation.purpose': 'الغرض',
+  'keyring.operation.name': 'عنصر سلسلة المفاتيح',
+  'keyring.operation.access.read': 'قراءة',
+  'keyring.operation.access.write': 'كتابة',
+  'keyring.operation.access.delete': 'حذف',
+  'keyring.operation.allow': 'السماح مرة واحدة',
+  'keyring.operation.deny': 'رفض',
+  'keyring.operation.submitting': 'جارٍ الإرسال…',
+  'keyring.operation.expires': 'ينتهي الطلب خلال {seconds} ثانية.',
+  'keyring.operation.error': 'تعذر إرسال قرارك. ربما انتهت صلاحية الطلب.',
 };
 
 export default messages;

@@ -1,5 +1,24 @@
 use super::*;
 
+struct RouteRuntimeHostCallback;
+
+#[tinybus::interface(name = "ai.tinyhumans.tinychannels.ChannelsHost")]
+impl RouteRuntimeHostCallback {
+    async fn dispatch_controller_backend(
+        &self,
+        _request: tinychannels_bus::ChannelBackendRequest,
+    ) -> tinybus::Result<tinychannels_bus::ChannelBackendResult> {
+        Err(tinybus::Error::failed("unused route test callback"))
+    }
+}
+
+async fn open_route_test_runtime() -> crate::modules::channel_runtime::ChannelRuntimeLease {
+    let client = crate::channels::module_fixture::client().await;
+    crate::modules::channel_runtime::ChannelRuntimeLease::open(client, RouteRuntimeHostCallback)
+        .await
+        .expect("retain the host callback for remote-control persistence")
+}
+
 #[tokio::test]
 async fn handle_runtime_command_set_model_clears_sender_history_and_persists_route_override() {
     let ctx = runtime_context(PathBuf::from("/tmp"));
@@ -156,12 +175,13 @@ async fn handle_runtime_command_telegram_sessions_reports_empty_store() {
     let sent = channel_impl.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent_text(&sent[0]).contains("No conversation threads yet. Send `/new` to create one."));
-    assert_eq!(sent[0].thread_id.as_deref(), Some("42"));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
 }
 
 #[tokio::test]
-#[ignore = "the linked tinychannels-module is given no storage backend here, so /new fails to persist the chat binding (host storage is unavailable); needs a storage fixture"]
 async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
+    let _storage = crate::channels::module_fixture::install_memory_storage();
+    let _runtime = open_route_test_runtime().await;
     let tempdir = tempfile::tempdir().unwrap();
     let ctx = runtime_context(tempdir.path().to_path_buf());
     let channel_impl = Arc::new(RecordingChannel::default());
@@ -210,19 +230,7 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
         },
     );
 
-    let subscriber = ChannelTurnStateSubscriber::new(tempdir.path().to_path_buf());
-    subscriber
-        .handle(&DomainEvent::ChannelMessageReceived {
-            channel: "telegram".into(),
-            message_id: "2".into(),
-            sender: "alice".into(),
-            reply_target: "chat-remote".into(),
-            content: "work".into(),
-            thread_ts: Some("42".into()),
-            inbound_envelope: None,
-            workspace_dir: tempdir.path().to_path_buf(),
-        })
-        .await;
+    let channel: Arc<dyn Channel> = channel_impl.clone();
 
     let status_msg = inbound(
         "3".into(),
@@ -262,7 +270,11 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
 
     let sent = channel_impl.sent.lock().unwrap();
     assert_eq!(sent.len(), 3);
-    assert!(sent_text(&sent[0]).contains("Started new session"));
+    assert!(
+        sent_text(&sent[0]).contains("Started new session"),
+        "unexpected /new reply: {}",
+        sent_text(&sent[0])
+    );
     assert!(sent_text(&sent[0]).contains("In-memory channel history cleared for this chat."));
 
     assert!(sent_text(&sent[1]).contains("**Status**"));
@@ -270,13 +282,13 @@ async fn handle_runtime_command_telegram_new_status_and_sessions_round_trip() {
     assert!(sent_text(&sent[1]).contains("Provider: `anthropic`"));
     assert!(sent_text(&sent[1]).contains("Model: `claude-3`"));
     assert!(sent_text(&sent[1]).contains("In-memory turns: 1"));
-    assert!(sent_text(&sent[1]).contains("Turn: in progress"));
+    assert!(sent_text(&sent[1]).contains("Turn: idle"));
 
     assert!(sent_text(&sent[2]).contains("**Recent sessions**"));
     assert!(sent_text(&sent[2]).contains("→ `Telegram"));
     assert!(sent
         .iter()
-        .all(|message| message.thread_id.as_deref() == Some("42")));
+        .all(|message| message.thread_ts.as_deref() == Some("42")));
 }
 
 #[tokio::test]
@@ -318,5 +330,5 @@ async fn handle_runtime_command_telegram_new_reports_unavailable_storage() {
     );
     assert!(sent_text(&sent[0]).contains("failed to persist the chat binding"));
     assert!(sent_text(&sent[0]).contains("host storage is unavailable"));
-    assert_eq!(sent[0].thread_id.as_deref(), Some("42"));
+    assert_eq!(sent[0].thread_ts.as_deref(), Some("42"));
 }

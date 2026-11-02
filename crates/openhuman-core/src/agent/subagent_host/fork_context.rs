@@ -14,10 +14,10 @@
 
 use crate::agent::tinyagents::TurnModelSource;
 use crate::config::AgentConfig;
-use crate::progress::AgentProgress;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tinyagents_harness::progress::AgentProgress;
 use tinyskills::Skill as Workflow;
 use tinytools::WorkspaceDescriptor;
 use tinytools::{Tool, ToolSpec};

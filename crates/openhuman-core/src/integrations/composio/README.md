@@ -161,7 +161,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - Task recency window: carried as `OpenHumanRunExt::task_recency_window` (`agent/tinyagents/host/run_context.rs`); `tools/execute.rs` reads it from the tool execution context and forwards it through the connector bus.
 - `tinytools`: `Tool`, `ToolResult`, `ToolCategory`, `PermissionLevel`, `ToolCallOptions`.
 - `crate::security`: `SecurityPolicy` / `ToolOperation` for direct-tool gating.
-- `crate::security::credentials`: encrypted store for the direct-mode API key.
+- `crate::credentials`: encrypted store for the direct-mode API key.
 - `crate::agent::prompts`, `agent::prompts`: prompt/profile injection of connected identities.
 - `crate::core::all`: `ControllerFuture` / `RegisteredController` registry types.
 - `crate::core::bus` (`BUS`) / `crate::core::events::DomainEvent`: event publish/subscribe.
@@ -177,7 +177,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - [`crates/openhuman-core/src/platform/socket/event_handlers.rs`](../../platform/socket/event_handlers.rs): parses `composio:trigger` and publishes `ComposioTriggerReceived`.
 - [`crates/openhuman-core/src/integrations/connected_identities.rs`](../../integrations/connected_identities.rs): renders connected identities into the agent prompt.
 - [`crates/openhuman-core/src/skills/preflight.rs`](../../skills/preflight.rs): identity gate via `connection_identity`.
-- [`crates/openhuman-core/src/security/credentials/ops/composio.rs`](../../security/credentials/ops/composio.rs): direct-mode API key storage.
+- [`crates/openhuman-core/src/credentials/ops/composio.rs`](../../credentials/ops/composio.rs): direct-mode API key storage.
 - [`crates/openhuman-core/src/channels/runtime/dispatch/routing.rs`](../../channels/runtime/dispatch/routing.rs): channel routing over connected integrations.
 - `crates/openhuman-core/src/flows/**` (`ops/catalog.rs`, `ops/connection_ref_gate.rs`, `ops/tool_contract_gate.rs`, [`ops/connections.rs`](./ops/connections.rs), `ops/wiring_warnings.rs`, `ops/approval_manifest.rs`, `ops/builder.rs`, `tinyflows/caps/tools/composio.rs`), workflow builder capability adapters over the catalog.
 - `crates/openhuman-core/src/integrations/task_sources/**`: re-exports `NormalizedTask`/`TaskContainer`/`TaskFetchFilter`/`TaskKind` from `contract/` (its fetch stage is stubbed since `ComposioProvider::fetch_tasks` went away).

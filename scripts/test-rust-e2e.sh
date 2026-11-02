@@ -236,6 +236,17 @@ else
   done
 fi
 
+# The native Telegram E2E loads TinyChannels and TinyVoice by file. The CI
+# installer exports both; stage the same pinned releases when it has not.
+if [ -z "${OPENHUMAN_CHANNELS_TEST_ARTIFACT:-}" ]; then
+  OPENHUMAN_CHANNELS_TEST_ARTIFACT="$(stage_release_artifact tinychannels "$module_platform" "$module_ext")"
+  export OPENHUMAN_CHANNELS_TEST_ARTIFACT
+fi
+if [ -z "${OPENHUMAN_VOICE_TEST_ARTIFACT:-}" ]; then
+  OPENHUMAN_VOICE_TEST_ARTIFACT="$(stage_release_artifact tinyvoice "$module_platform" "$module_ext")"
+  export OPENHUMAN_VOICE_TEST_ARTIFACT
+fi
+
 # Module-backed Composio coverage must use a staged artifact as well. Without
 # it the core resolves TinyConnectors through release metadata at run time,
 # turning an otherwise hermetic mock-backend suite into a network dependency
@@ -265,6 +276,7 @@ run_json_rpc_e2e_suite() {
   # partial list is never run as though it were complete.
   local target listing test_names test_name
   local -a targets=(json_rpc_threads_e2e json_rpc_wallet_e2e json_rpc_flows_e2e
+    json_rpc_flows_builder_chat_e2e
     json_rpc_mcp_e2e json_rpc_inference_e2e json_rpc_auth_security_e2e
     json_rpc_config_e2e json_rpc_agent_team_e2e json_rpc_web_chat_e2e
     json_rpc_misc_e2e)

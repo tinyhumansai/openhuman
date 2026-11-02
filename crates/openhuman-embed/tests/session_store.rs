@@ -1,5 +1,3 @@
-#![cfg(feature = "testkit")]
-
 //! End-to-end proof that a host session store owns every conversation.
 //!
 //! A stateless runtime with an [`InMemorySessionStores`] runs two agents
@@ -18,11 +16,11 @@ use std::sync::Arc;
 
 use common::{chat_requests, offline_config, provider, runtime, stub_backend};
 use openhuman_core::storage::DocumentStoreExt as _;
-use openhuman_embed::session_store::session_store_conformance;
 use openhuman_embed::{
-    Access, AgentSpec, InMemorySessionStores, Provider, Runtime, RuntimeError,
-    SessionStoreProvider, Workspace,
+    Access, AgentSpec, Provider, Runtime, RuntimeError, SessionStoreProvider, Workspace,
 };
+use tinyagents_session::port::InMemorySessionStores;
+use tinyagents_session::testkit::conformance::session_store_conformance;
 
 /// Every path under `root`, relative to it.
 fn files_under(root: &std::path::Path) -> Vec<String> {

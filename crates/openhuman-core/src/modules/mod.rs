@@ -50,6 +50,8 @@ pub mod accessibility;
 pub mod boot;
 #[cfg(feature = "modules")]
 pub mod browser;
+#[cfg(all(feature = "modules", feature = "security-module"))]
+mod browser_egress_host;
 #[cfg(feature = "modules")]
 pub mod browser_task;
 #[cfg(feature = "modules")]
@@ -90,6 +92,8 @@ pub mod schemas;
 pub mod search;
 #[cfg(feature = "modules")]
 mod search_path;
+#[cfg(feature = "security-module")]
+pub mod security;
 #[cfg(feature = "modules")]
 pub(crate) mod site_memory_host;
 mod source;
@@ -151,6 +155,8 @@ pub use ops::{ensure_loaded, ensure_loaded_within, state_of};
 pub use schemas::{all_controller_schemas, all_registered_controllers};
 #[doc(hidden)]
 pub use source::local_artifact;
+#[doc(hidden)]
+pub use source::staged_artifact;
 /// A `tinybus::module::ModuleClient` that loads modules lazily through the
 /// process-wide resolver (see [`ops`]). Constructing one starts nothing. In a
 /// build without the `modules` feature there is no loader, and every call is

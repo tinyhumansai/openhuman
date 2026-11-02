@@ -32,6 +32,13 @@ channels
 # The media_generate_* agent tools.
 media
 
+# WhatsApp Web (linked-device) channel provider. The adapter itself lives in the
+# loaded tinychannels module and is a native v2 adapter (typed media, push-to-talk
+# voice notes, reactions, quoted replies, read receipts, edit and unsend); this
+# gate marks the product as shipping it, and reports it in the runtime feature
+# list. Implies `channels`. WhatsApp Cloud needs no gate of its own: its webhook
+# POSTs reach the module through the host's HTTP route.
+
 # Compatibility marker for inference-backed features. Native microphone
 # permission checks execute through TinyComputer; `voice` requires this gate.
 inference
@@ -54,6 +61,7 @@ documents
 # this build trusts, and the `modules` RPC namespace. Required by `documents` —
 # without it the document tools have nothing to call.
 modules
+security-module
 
 # Saved automation graphs: create/run/schedule + the workflow_builder and
 # flow_discovery agents.

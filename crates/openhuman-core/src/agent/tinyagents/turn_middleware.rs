@@ -97,8 +97,10 @@ pub(super) struct TurnMiddlewareInputs {
     pub(super) run_mode: Option<RunModeHandle>,
     /// This turn's memory binding: the compaction summarizer recalls under it.
     pub(super) memory_turn: Option<Arc<crate::memory::lifecycle::hooks::MemoryTurn>>,
-    /// The context-window summarizer's model.
-    pub(super) summarizer_model: Arc<dyn tinyinference_llm::model::ChatModel<()>>,
+    /// The context-window summarizer: its model, the id it calls
+    /// (`[context] summarizer_model`, else the turn's model) and its
+    /// rendering and output cap.
+    pub(super) summarizer: super::context_wiring::CompactionSummarizer,
     /// Shared `call_id -> (success, failure, elapsed_ms, output_chars)` side
     /// channel: middleware records each outcome for the bridge's
     /// `ToolCallCompleted`.
@@ -169,7 +171,7 @@ pub(super) fn install_turn_middleware(
         pause_at_cap,
         run_mode,
         memory_turn,
-        summarizer_model,
+        summarizer,
         failure_map,
         provider_usage_carry,
         tool_outcome_sink,
@@ -477,7 +479,7 @@ pub(super) fn install_turn_middleware(
         compaction.trigger_tokens,
         compaction.strategy,
         microcompact_keep_recent,
-        summarizer_model,
+        summarizer,
         pause_at_cap && subagent_scope.is_none(),
         &tool_outcome_sink,
         memory_turn,

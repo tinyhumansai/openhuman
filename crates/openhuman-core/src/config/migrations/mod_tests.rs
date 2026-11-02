@@ -62,6 +62,7 @@ fn meta() -> TranscriptMeta {
         updated: "2026-05-01T00:00:00Z".into(),
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -106,6 +107,9 @@ async fn run_pending_skips_when_version_current() {
     let after = fs::read(&path).unwrap();
     assert_eq!(before, after, "transcript must be untouched");
 }
+
+#[path = "remove_autonomy_cost_cap_tests.rs"]
+mod remove_autonomy_cost_cap_tests;
 
 #[tokio::test]
 async fn run_pending_runs_phase_out_when_version_zero() {

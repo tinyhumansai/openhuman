@@ -63,7 +63,7 @@ the bus path because they keep their own history.
 ### A chat turn, end to end
 
 ```text
- web_chat::run_task (or cron, flows, mcp, ...)
+ web_chat::turn_host (or cron, flows, mcp, ...)
    | build or reuse OpenHumanSessionHost::from_config_for_agent(cfg, id)
    v
  run_single_with_origin(msg, origin)          session_host/runtime/run_loop.rs
@@ -135,7 +135,7 @@ In order:
    ([`tinyagents/observability/event_bridge.rs`](./tinyagents/observability/event_bridge.rs)), which turns it into an
    `AgentProgress` value ([`progress.rs`](./progress.rs)) on the session's `on_progress`
    channel and feeds usage to `platform::cost`. Web chat forwards that
-   stream to the socket in [`web_chat/progress_bridge.rs`](../web_chat/progress_bridge.rs). A `TurnJournal`
+   stream to the socket in [`web_chat/progress.rs`](../web_chat/progress.rs). A `TurnJournal`
    ([`tinyagents/journal.rs`](./tinyagents/journal.rs)) writes the same events to a durable JSONL
    store that the replay RPCs read.
 8. If the loop paused at its model-call cap without a conclusion, the driver

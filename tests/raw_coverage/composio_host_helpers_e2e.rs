@@ -35,7 +35,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
     };
 
     invalidate_connected_integrations_cache();
-    assert!(cached_active_integrations(&config).is_none());
+    assert!(cached_active_integrations(&config).await.is_none());
 
     let first = ConnectedIntegration {
         toolkit: "gmail".into(),
@@ -87,7 +87,7 @@ async fn composio_connected_integrations_public_helpers_handle_empty_auth_and_id
         FetchConnectedIntegrationsStatus::Unavailable
     ));
     assert!(fetch_connected_integrations(&config).await.is_empty());
-    assert!(cached_active_integrations(&config).is_none());
+    assert!(cached_active_integrations(&config).await.is_none());
 
     assert_eq!(connection_identity(&config, "   ").await, None);
     assert_eq!(connection_identity(&config, "unknown-toolkit").await, None);
@@ -173,8 +173,8 @@ async fn composio_action_tool_execute_reports_missing_route_without_network() {
     assert!(rendered.contains("proxy"), "{rendered}");
 }
 
-#[test]
-fn composio_client_factory_modes_are_deterministic_without_network() {
+#[tokio::test]
+async fn composio_client_factory_modes_are_deterministic_without_network() {
     crate::tinyhumans_boot::boot();
     let dir = tempdir().expect("tempdir");
     let mut config = Config {
@@ -184,26 +184,28 @@ fn composio_client_factory_modes_are_deterministic_without_network() {
     };
 
     config.composio.mode = String::new();
-    let backend_err = match resolve_composio_route(&config) {
+    let backend_err = match resolve_composio_route(&config).await {
         Ok(_) => panic!("backend without a session should fail"),
         Err(error) => error,
     };
     assert!(backend_err.to_string().contains("no backend session token"));
 
     config.composio.mode = "direct".into();
-    let direct_err = match resolve_composio_route(&config) {
+    let direct_err = match resolve_composio_route(&config).await {
         Ok(_) => panic!("direct mode without an api key should fail"),
         Err(error) => error,
     };
     assert!(direct_err.to_string().contains("no api key is configured"));
 
     config.composio.api_key = Some("  cmp_test_key  ".into());
-    let direct = resolve_composio_route(&config).expect("inline direct key builds a client");
+    let direct = resolve_composio_route(&config)
+        .await
+        .expect("inline direct key builds a client");
     assert_eq!(direct.mode(), "direct");
     assert!(matches!(direct, ComposioRoute::Direct(_)));
 
     config.composio.mode = "typo".into();
-    let unknown = match resolve_composio_route(&config) {
+    let unknown = match resolve_composio_route(&config).await {
         Ok(_) => panic!("unknown composio mode should fail"),
         Err(error) => error,
     };

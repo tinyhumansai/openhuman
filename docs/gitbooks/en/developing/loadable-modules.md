@@ -22,18 +22,22 @@ discovery before its first call. A build without the `modules` feature has no cl
 in configuration a call returns an explicit unavailable error.
 
 A `*-bus` crate contains serialized vocabulary, errors, identifiers, versions,
-schemas and static tool declarations. Parsing, provider dispatch, cryptography,
-processes and device access execute inside the compiled module. Hosts retain
-configuration, credentials, approvals and execution policy. They never link an
-implementation fallback when a module is unavailable. Stateful adapters release
-module-owned resources through explicit close, cancellation and shutdown calls.
+schemas and static tool declarations. Component behavior executes inside the
+compiled module. The host owns product configuration, credentials, user
+interaction and the orchestration around module calls. A module-backed feature
+has no implementation fallback when its module is unavailable. Stateful
+adapters release module-owned resources through explicit close, cancellation
+and shutdown calls.
 
 The remaining migration work and temporary dependency exceptions are tracked
 in [the module-boundary inventory](../../../module-boundary-inventory.md).
 
 ## The registry
 
-`crates/openhuman-core/src/modules/registry/` compiles eleven records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.
+`crates/openhuman-core/src/modules/registry/` contains the records enabled in a
+build. Feature gates control which optional records are compiled; only this
+registry may select an artifact. Nothing reads a module name from config and
+goes looking for an artifact.
 
 | Module | Provides |
 | --- | --- |
@@ -46,11 +50,16 @@ in [the module-boundary inventory](../../../module-boundary-inventory.md).
 | `tinymcp` | The MCP client and registry |
 | `tinyconnectors` | OAuth connector actions and triggers |
 | `tinybox` | Sandbox/resource lifecycle, bounded and supervised execution, jail and Docker operations, shell execution, file transfer and port forwarding |
+| `tinysecurity` | Security decisions: command and path policy, approvals and trust, action budgets, redaction and scans, privacy and egress, sandbox plans, audit, keyring and secret crypto, and device pairing |
 | `tinychannels` | Messaging channel transports |
 | `tinyflows` | Scheduled jobs: scheduler runtime, cron job store and schedule maths (`tinyflows-bus` schedule contract) |
 | `tinyhosts` | Hosting provider operations |
+| `tinyeventqueues` | Inbound queue contracts and providers |
 
-Each record carries a version, the release it came from, and one `PlatformAsset` per supported build. Seven records publish eleven builds: `ubuntu-24.04` and `ubuntu-22.04` on `x86_64` and `arm64`, `macos-26` and `macos-15` on `arm64` and `x86_64`, `windows-2025-x86_64`, `windows-2022-x86_64` and `windows-11-arm64`. TinyComputer publishes sixteen assets; TinyBox, TinyMCP and TinyWallet each publish seventeen, adding Arch Linux and Fedora builds. Asset availability is module-specific, so a release's count should not be inferred from another module's matrix.
+Each record carries a version, the release it came from, and a `PlatformAsset`
+for every supported build. Platform sets are module-specific; consult that
+module's record and release checksum rather than assuming every module ships
+the same targets.
 
 Every asset carries a SHA-256 copied verbatim from the published release's own checksum file. Do not compute a replacement pin from a local build. The digest must describe the artifact the release workflow signed, not the one on your machine.
 
@@ -80,6 +89,17 @@ These checks run in order, all before any module code runs:
 6. Initialize, take the vtable, attach the transport.
 
 Each module declares its interface in its own small `*-bus` contract crate: the interface name, the object path, one constant per member, and a contract version. The bind rule is that majors are equal and the module's minor is at least the host's. A newer module serves an older host, and the reverse is refused instead of half working. Never redeclare a contract type in OpenHuman, and call members through the contract's constants, not string literals.
+
+### TinySecurity
+
+The `security-module` feature adds the registry-pinned TinySecurity module and
+its `tinysecurity-bus` contract. TinySecurity owns security decisions, including
+command and path authorization, approval state and trust grants, redaction,
+privacy and egress checks, and sandbox planning. OpenHuman translates product
+configuration, serves the module's storage and prompt callbacks, presents
+approval UI, and executes authorized work through the host adapters. The host
+calls the bus contract only; it has no duplicate policy implementation. A
+missing, disabled or faulted module fails closed for security operations.
 
 ## Faults are terminal
 

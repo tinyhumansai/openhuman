@@ -48,7 +48,7 @@ Capability {
         name: "Send Voice Messages",
         domain: "conversation",
         category: CapabilityCategory::Conversation,
-        description: "Record or attach voice input and send it as a message.",
+        description: "Record voice messages with typed audio, keep and replay their transcripts and audio after reload, and play assistant speech replies. Dictation sends text only.",
         how_to: "Conversations > Voice input",
         status: CapabilityStatus::Beta,
         privacy: DERIVED_TO_BACKEND,

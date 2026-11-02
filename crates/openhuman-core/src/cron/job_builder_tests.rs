@@ -39,7 +39,7 @@ fn channel() -> JobOrigin {
         history_key: "telegram_alice_42".into(),
         sender: Some("alice".into()),
         thread_id: None,
-        session_identity: None,
+        channel_session: None,
     }
 }
 

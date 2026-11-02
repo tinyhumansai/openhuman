@@ -10,7 +10,7 @@ use crate::core::runtime::{DomainSet, SaasConfig};
 use crate::profiles::credentials::UserCredentialKind;
 use crate::profiles::OpenError;
 use crate::storage::lease::{LeaseRecord, LeaseStore};
-use crate::storage::{test_support::memory_backend, StorageBackend};
+use crate::storage::StorageBackend;
 
 fn saas(root: &std::path::Path, node: &str) -> SaasConfig {
     let mut saas = SaasConfig::new(root);

@@ -171,7 +171,13 @@ pub(crate) async fn build_builder_proposal(
     // in `run_flow_body`) consumes, so a run right after this proposal reads
     // the cached result instead of re-probing the network.
     let inference_readiness = evaluate_inference_readiness(ctx, config, graph).await;
-    let graph_value = graph.clone();
+    // The proposal's name is the one the builder resolved (its `name` argument,
+    // else the base graph's). A graph without its own name carried "" into the
+    // card and onto a save, so stamp the resolved name into the graph too.
+    let mut graph_value = graph.clone();
+    if let Some(graph_object) = graph_value.as_object_mut() {
+        graph_object.insert("name".to_string(), json!(name));
+    }
 
     tracing::info!(
         target: "flows",
@@ -214,6 +220,15 @@ pub(crate) async fn build_builder_proposal(
     }
     // Echo the persistence-state handles so the agent can iterate/persist
     // against the right ids (the draft the edit lives on; the flow it targets).
+    if let Some(flow_id) = flow_id.as_deref() {
+        // The version this revision was derived from, so a save onto the flow
+        // can refuse to overwrite a newer edit (`flows_update`'s
+        // `expected_version`). Omitted when it cannot be established; the card
+        // then asks for a new revision instead of saving last-write-wins.
+        if let Some(version) = source_flow_version(config, flow_id, draft_id.as_deref()) {
+            payload["flow_version"] = json!(version);
+        }
+    }
     if let Some(draft_id) = draft_id {
         payload["draft_id"] = json!(draft_id);
     }
@@ -221,6 +236,55 @@ pub(crate) async fn build_builder_proposal(
         payload["flow_id"] = json!(flow_id);
     }
     Ok(payload)
+}
+
+/// The version of `flow_id` a revision's graph was derived from.
+///
+/// A revision of a saved flow lives on a draft seeded from that flow, and the
+/// draft records no base version. The flow's current `updated_at` is the
+/// source version exactly when the flow has not changed since the draft was
+/// created; after a later edit it is not, and a version read now would let a
+/// stale graph pass `expected_version`. `None` when that cannot be shown.
+fn source_flow_version(config: &Config, flow_id: &str, draft_id: Option<&str>) -> Option<String> {
+    let flow = match store::get_flow(config, flow_id) {
+        Ok(Some(flow)) => flow,
+        Ok(None) => {
+            tracing::debug!(target: "flows", %flow_id, "[flows] source_flow_version: target flow not found");
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(target: "flows", %flow_id, %error, "[flows] source_flow_version: could not read target flow");
+            return None;
+        }
+    };
+    let Some(draft_id) = draft_id else {
+        tracing::debug!(target: "flows", %flow_id, "[flows] source_flow_version: no draft to date the revision");
+        return None;
+    };
+    let draft = match draft_store::get_draft(config, draft_id) {
+        Ok(Some(draft)) => draft,
+        Ok(None) => {
+            tracing::debug!(target: "flows", %draft_id, "[flows] source_flow_version: draft not found");
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(target: "flows", %draft_id, %error, "[flows] source_flow_version: could not read draft");
+            return None;
+        }
+    };
+    let flow_at = chrono::DateTime::parse_from_rfc3339(&flow.updated_at).ok()?;
+    let seeded_at = chrono::DateTime::parse_from_rfc3339(&draft.created_at).ok()?;
+    if flow_at <= seeded_at {
+        Some(flow.updated_at)
+    } else {
+        tracing::debug!(
+            target: "flows",
+            %flow_id,
+            %draft_id,
+            "[flows] source_flow_version: flow changed after the draft was seeded; no version"
+        );
+        None
+    }
 }
 
 /// Decode the Copilot bus's portable graph payload and run the host-owned

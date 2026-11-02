@@ -1,6 +1,7 @@
 //! Ephemeral provider request preparation for durable workspace attachments.
 use super::AttachmentAccessScope;
 use crate::config::Config;
+use crate::inference::host_controls::HostControlSlot;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::sync::Arc;
 use tinyinference_llm::{
@@ -13,12 +14,24 @@ use async_trait::async_trait;
 #[cfg(test)]
 use tinyinference_llm::model::{ModelResponse, ModelStream};
 
-pub(crate) fn wrap(
+pub(crate) async fn wrap(
     ctx: &crate::core::runtime::DispatchCtx,
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
     model: &str,
     provider: &str,
+) -> Arc<dyn ChatModel<()>> {
+    wrap_controlled(ctx, inner, config, model, provider, None)
+}
+
+/// [`wrap`] with the turn's spend controls placed beneath attachment rendering.
+pub(crate) fn wrap_controlled(
+    ctx: &crate::core::runtime::DispatchCtx,
+    inner: Arc<dyn ChatModel<()>>,
+    config: Arc<Config>,
+    model: &str,
+    provider: &str,
+    controls: Option<&HostControlSlot>,
 ) -> Arc<dyn ChatModel<()>> {
     let mut profile = inner.profile().cloned().unwrap_or_default();
     // Transport profiles describe serialization support, not selected-model facts.
@@ -50,7 +63,7 @@ pub(crate) fn wrap(
         format!("{provider}:{model}")
     };
     if let Some(request) =
-        crate::inference::context_window::model_limits_request("chat", &route, model, &config)
+        crate::inference::context_window::model_limits_request("chat", &route, model, &config).await
     {
         if let Some(inputs) = tinyinference_llm::model::discover::model_limits_cache()
             .get_variant(&request.endpoint, &request.model, &request.cache_variant())
@@ -70,7 +83,7 @@ pub(crate) fn wrap(
     }
     profile.modalities.image_in |=
         crate::inference::model_context::model_vision_enabled(model, &config);
-    owner::wrap(ctx, inner, config, Some(profile))
+    owner::wrap(ctx, inner, config, Some(profile), controls)
 }
 
 /// Injected models supply their own selected-model facts through ModelProfile.
@@ -80,8 +93,18 @@ pub(crate) fn wrap_injected(
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
 ) -> Arc<dyn ChatModel<()>> {
+    wrap_injected_controlled(ctx, inner, config, None)
+}
+
+/// [`wrap_injected`] with the turn's spend controls beneath attachment rendering.
+pub(crate) fn wrap_injected_controlled(
+    ctx: &crate::core::runtime::DispatchCtx,
+    inner: Arc<dyn ChatModel<()>>,
+    config: Arc<Config>,
+    controls: Option<&HostControlSlot>,
+) -> Arc<dyn ChatModel<()>> {
     let profile = inner.profile().cloned();
-    owner::wrap(ctx, inner, config, profile)
+    owner::wrap(ctx, inner, config, profile, controls)
 }
 
 struct AttachmentModel {
@@ -90,6 +113,7 @@ struct AttachmentModel {
     /// must not keep a tenant's context alive.
     core: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
     fallback_cache: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    controls: Option<HostControlSlot>,
 }
 
 const MAX_HISTORICAL_MEDIA_BLOCKS: usize = 8;
@@ -202,8 +226,8 @@ fn is_local_reference(source: &str) -> bool {
 }
 
 #[cfg(any(test, windows))]
-use crate::security::secure_open::normalize_windows_path_for_comparison;
-use crate::security::secure_open::secure_open;
+use crate::attachments::secure_open::normalize_windows_path_for_comparison;
+use crate::attachments::secure_open::secure_open;
 
 #[path = "provider_cache.rs"]
 mod cache;

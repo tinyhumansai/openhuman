@@ -663,33 +663,6 @@ fn a_profile_holds_web_and_relayed_channel_threads() {
     );
     assert_eq!(status, 200, "{body}");
 
-    // The web chat and relay share Alice's profile turn gate. Let the offline
-    // web turn finish before queuing the channel turn; this test covers
-    // profile/thread isolation, not same-profile turn scheduling. The backend
-    // is a closed port, so the turn fails before any progress event and leaves
-    // neither a turn snapshot nor a stored reply: it is over once the thread's
-    // queue has been idle for several consecutive polls.
-    let sent = Instant::now();
-    let deadline = sent + Duration::from_secs(90);
-    let mut idle_polls = 0;
-    while Instant::now() < deadline && idle_polls < 5 {
-        let (_, queue) = call(
-            "alice",
-            "openhuman.channel_web_queue_status",
-            json!({ "thread_id": "web-1" }),
-        );
-        if queue.to_string().contains("\"active\":true") {
-            idle_polls = 0;
-        } else if sent.elapsed() > Duration::from_secs(1) {
-            idle_polls += 1;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    assert!(
-        idle_polls >= 5,
-        "Alice's web turn did not settle before relay"
-    );
-
     // ...and the gateway relays a Telegram message of hers.
     let relayed = json!({
         "channel": "telegram",

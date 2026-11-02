@@ -1,12 +1,15 @@
 /**
  * Utilities for multimodal chat attachments.
  *
- * Images are embedded as `[IMAGE:<data-uri>]` markers. Other files
- * are embedded as `[FILE:<data-uri>]` markers. The Rust agent harness
- * (`agent/multimodal.rs`) parses, validates, and expands both shapes before
- * the provider call.
+ * Originals travel as typed `ContentPart`s ({@link attachmentsToParts}) next to
+ * the message text; the core stages them and returns durable opaque typed
+ * references. {@link parseAttachmentReferences} remains for legacy marker
+ * records. The `[IMAGE:]`/`[FILE:]` marker grammar is an internal staging
+ * format of the core and is no longer built here.
  */
 import debugFactory from 'debug';
+
+import type { ContentPart } from '../services/chatWire';
 
 const debug = debugFactory('chat:attachments');
 
@@ -306,18 +309,48 @@ export async function validateAndReadFile(
 }
 
 /**
- * Compose the final message string by appending `[IMAGE:<data-uri>]` markers
- * for image attachments and `[FILE:<data-uri>]` markers for other supported
- * files after the user's text. The Rust agent harness parses and strips these
- * markers before forwarding clean text and attachment payloads to the provider.
+ * The typed wire form of composer attachments (`ContentPart[]`): an `image`,
+ * `video` or `file` part whose media carries the original as a `data:` URI
+ * plus its name, type and size. Sent next to the message text through the
+ * `attachments` param of `channel.web_chat`, `threads.message_append` and
+ * `threads.edit_message`; the core stages the originals. The text is never
+ * touched, so no `[IMAGE:]`/`[FILE:]` marker is built here.
  */
-export function buildMessageWithAttachments(text: string, attachments: Attachment[]): string {
-  if (attachments.length === 0) return text;
-  const markers = attachments
-    .map(a => `[${a.kind === 'image' ? 'IMAGE' : 'FILE'}:${a.dataUri}]`)
-    .filter(marker => marker.length > 0)
-    .join(' ');
-  return text.trim() ? `${text.trim()} ${markers}` : markers;
+export function attachmentsToParts(attachments: Attachment[]): ContentPart[] {
+  return attachments.map((a): ContentPart => {
+    const media = {
+      url: a.dataUri,
+      contentType: a.mimeType,
+      fileName: a.file.name,
+      sizeBytes: a.originalSizeBytes,
+      codec: null,
+      durationMs: null,
+      height: null,
+      localCachePath: null,
+      path: null,
+      platformMessageId: null,
+      transcribed: false,
+      width: null,
+    };
+    if (a.kind === 'image') {
+      return { kind: 'image', altText: null, caption: null, media: { ...media, kind: 'image' } };
+    }
+    if (a.kind === 'video') {
+      return {
+        kind: 'video',
+        caption: null,
+        durationMs: null,
+        thumbnail: null,
+        media: { ...media, kind: 'video' },
+      };
+    }
+    return {
+      kind: 'file',
+      fileName: a.file.name,
+      caption: null,
+      media: { ...media, kind: 'document' },
+    };
+  });
 }
 
 /** Workspace references returned by the core after it has saved originals. */

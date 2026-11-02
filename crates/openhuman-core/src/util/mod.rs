@@ -1,8 +1,8 @@
 //! Utility functions for `OpenHuman`.
 //!
 //! Kernel family — always compiled, never gated. Self-contained helpers
-//! reused across domains; nothing here may reach into a domain (no `use
-//! crate::` anywhere in this directory).
+//! reused across domains. The URL log redactor is the narrow exception: it
+//! uses TinySecurity's Endpoint mode through the shared module adapter.
 //!
 //! - [`text`]     — UTF-8-safe truncation, char-boundary rounding, provenance tags
 //! - [`retry`]    — retry-with-backoff + transient-filesystem-error classification

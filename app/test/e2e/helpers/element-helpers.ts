@@ -394,6 +394,63 @@ export async function waitForTestId(
   return el;
 }
 
+/** Wait for an indexed match when a conversation contains repeated controls. */
+export async function waitForTestIdAtIndex(
+  testId: string,
+  index: number,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  if (!isTauriDriver()) {
+    throw new Error(`waitForTestIdAtIndex is only supported on tauri-driver: ${testId}`);
+  }
+
+  const selector = testIdSelector(testId);
+  await browser.waitUntil(async () => (await (await browser.$$(selector)).length) > index, {
+    timeout,
+    timeoutMsg: `data-testid="${testId}" index ${index} not found within ${timeout}ms`,
+  });
+  return (await browser.$$(selector))[index];
+}
+
+/** Count matching test-id elements through the DOM-backed driver. */
+export async function countTestId(testId: string): Promise<number> {
+  if (!isTauriDriver()) {
+    throw new Error(`countTestId is only supported on tauri-driver: ${testId}`);
+  }
+  return await (
+    await browser.$$(testIdSelector(testId))
+  ).length;
+}
+
+/** Wait until an audio element captured by an E2E Audio constructor has decoded data. */
+export async function waitForDecodedAudioAtIndex(
+  index: number,
+  timeout: number = 5_000
+): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      await browser.execute((audioIndex: number) => {
+        const audio = (window as Window & { __E2E_AUDIO_ELEMENTS?: HTMLAudioElement[] })
+          .__E2E_AUDIO_ELEMENTS?.[audioIndex];
+        return Boolean(
+          audio && audio.readyState >= 2 && Number.isFinite(audio.duration) && audio.duration > 0
+        );
+      }, index),
+    { timeout, timeoutMsg: `Audio ${index} did not decode before ${timeout}ms` }
+  );
+}
+
+/** Click an indexed repeated test-id control through the shared click path. */
+export async function clickTestIdAtIndex(
+  testId: string,
+  index: number,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  const el = await waitForTestIdAtIndex(testId, index, timeout);
+  await clickAtElement(el);
+  return el;
+}
+
 /** Wait until a selector is absent from the DOM. */
 export async function waitForElementAbsence(
   selector: string,

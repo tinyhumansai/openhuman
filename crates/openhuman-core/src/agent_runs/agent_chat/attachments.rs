@@ -20,6 +20,7 @@ pub(super) async fn stage_host_attachments(
     let scope = crate::attachments::AttachmentAccessScope {
         external_channel: false,
         workspace: cwd,
+        ..Default::default()
     };
     let references =
         crate::attachments::host::stage_host(attachments, session_id, &staging_config, &scope)

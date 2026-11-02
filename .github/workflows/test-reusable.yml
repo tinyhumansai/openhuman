@@ -121,6 +121,8 @@ jobs:
             pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+      - name: Verify generated chat wire types are current
+        run: bash scripts/ci-cancel-aware.sh pnpm chat-wire:check
       - name: Run tests with coverage
         run: bash scripts/ci-cancel-aware.sh pnpm test:coverage
         env:

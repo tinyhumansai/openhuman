@@ -327,7 +327,7 @@ impl Turn {
             .is_some_and(|k| !k.is_empty())
         {
             if let Some(endpoint) = self.request.inference_url.as_deref() {
-                if !is_safe_endpoint_for_bearer(endpoint) {
+                if !crate::security::is_safe_endpoint_for_bearer(endpoint) {
                     return Err(crate::error::CoreError::InsecureRoute {
                         method: AGENT_CHAT,
                         endpoint: sanitize_url_for_display(endpoint),
@@ -362,24 +362,25 @@ impl Turn {
         });
         // Everything the core honours for this turn rides one explicit value;
         // nothing is recovered from an ambient scope below this point.
+        // `HostTurnEnv` carries crate-private native channel fields, so it is
+        // built by assignment rather than a struct literal from this crate.
+        let mut host_env = openhuman_core::agent::turn_env::HostTurnEnv::default();
+        host_env.command_environment = self.tool_env.take();
+        host_env.model_budget = budget.clone();
+        host_env.dispatch_admission = self.dispatch_admission.take();
+        host_env.spawn_depth_limit = self.spawn_depth_limit;
+        host_env.cancellation = self.native_cancellation.clone();
+        host_env.hooks = std::mem::take(&mut self.hooks);
+        host_env.fresh_tool_snapshot = self.tools.is_some();
+        host_env.approval = openhuman_core::security::approval::ApprovalTurnContext {
+            flow_run: self.flow_run.take().map(|(flow_id, run_id)| {
+                openhuman_core::security::approval::FlowRunContext { flow_id, run_id }
+            }),
+            ..Default::default()
+        };
         let chat_env = openhuman_core::agent_runs::agent_chat::AgentChatEnv {
             progress: self.progress.take(),
-            host: openhuman_core::agent::turn_env::HostTurnEnv {
-                command_environment: self.tool_env.take(),
-                model_budget: budget.clone(),
-                dispatch_admission: self.dispatch_admission.take(),
-                spawn_depth_limit: self.spawn_depth_limit,
-                cancellation: self.native_cancellation.clone(),
-                hooks: std::mem::take(&mut self.hooks),
-                fresh_tool_snapshot: self.tools.is_some(),
-                approval: openhuman_core::security::approval::ApprovalTurnContext {
-                    flow_run: self.flow_run.take().map(|(flow_id, run_id)| {
-                        openhuman_core::security::approval::FlowRunContext { flow_id, run_id }
-                    }),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
+            host: host_env,
             run_queue: steering.queue(),
         };
         let options = AgentTurnOptions {
@@ -413,7 +414,7 @@ impl Turn {
 
         let reply = match self.origin {
             Some(origin) => {
-                openhuman_core::security::turn_origin::with_origin(origin, dispatch).await
+                openhuman_core::core::runtime::turn_origin::with_origin(origin, dispatch).await
             }
             None => dispatch.await,
         }

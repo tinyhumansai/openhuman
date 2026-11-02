@@ -297,6 +297,20 @@ pub(crate) async fn cancel_for_thread(
     ctx: &crate::core::runtime::DispatchCtx,
     thread_id: &str,
 ) -> Result<usize, String> {
+    cancel_for_thread_with_hook(ctx, thread_id, || async {}).await
+}
+
+/// [`cancel_for_thread`] with a hook that runs after a live job is selected and
+/// before it is cancelled, so tests can let the job settle inside that window.
+pub(crate) async fn cancel_for_thread_with_hook<F, Fut>(
+    ctx: &crate::core::runtime::DispatchCtx,
+    thread_id: &str,
+    mut before_cancel: F,
+) -> Result<usize, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     let Some(core_context) = ctx.resolved() else {
         return Err("cannot resolve core context to cancel thread-owned driver jobs".into());
     };
@@ -390,9 +404,22 @@ pub(crate) async fn cancel_for_thread(
             crate::agent::orchestration::completion_owners::finish_driver_task(ctx, &task_id);
         }
         for job in live_jobs {
+            before_cancel().await;
             match jobs.cancel_owned(job.id.as_str(), &owner_key) {
                 Ok(cancelled_job) => {
                     cancelled += usize::from(!cancelled_job.status.is_terminal());
+                }
+                // The job finished on its own after it was listed as live. It
+                // is settled, not stuck: fall through to the wait, which
+                // returns at once for a terminal job, and release its owner.
+                Err(tinyagents_orchestration::subagent::SubAgentJobError::Terminal {
+                    status,
+                    ..
+                }) => {
+                    log::debug!(
+                        "[running_subagents] cancel_for_thread job_id={} settled before cancel status={status:?}",
+                        job.id
+                    );
                 }
                 Err(error) => {
                     failures.push(format!(

@@ -1677,6 +1677,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Abrir en el lienzo',
   'chat.flowProposal.dismiss': 'Descartar',
   'chat.flowProposal.error': 'No se pudo guardar el flujo de trabajo. Inténtalo de nuevo.',
+  'chat.flowProposal.versionConflict':
+    'Este flujo de trabajo cambió después de crear la propuesta, así que no se sobrescribió. Pide una nueva revisión.',
   'chat.flowProposal.enableError':
     'Flujo de trabajo guardado, pero no se pudo activar. Inténtalo de nuevo o actívalo desde la página de Workflows.',
   'chat.flowProposal.savedConfirmation': 'Guardado',
@@ -3526,6 +3528,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Cargando modelos…',
   'composer.voiceMode': 'Modo de voz',
   'composer.humanMode': 'Modo humano',
+  'voiceNote.record': 'Grabar una nota de voz',
+  'voiceNote.stop': 'Detener la grabación',
+  'voiceNote.discard': 'Descartar nota de voz',
+  'voiceNote.send': 'Enviar nota de voz',
+  'voiceNote.recording': 'Grabando…',
+  'voiceNote.play': 'Reproducir nota de voz',
+  'voiceNote.pause': 'Pausar nota de voz',
+  'voiceNote.seek': 'Desplazarse por la nota de voz',
+  'voiceNote.transcript': 'Transcripción',
+  'voiceNote.noTranscript': 'No hay transcripción disponible',
+  'voiceNote.label': 'Nota de voz {duration}',
+  'voiceNote.micDenied': 'Se denegó el acceso al micrófono o no está disponible.',
+  'voiceNote.transcribeFailed': 'No se pudo transcribir la nota de voz.',
+  'voiceNote.loadFailed': 'No se pudo cargar esta nota de voz.',
+  'voiceNote.sendFailed': 'No se pudo enviar la nota de voz.',
 
   // Sync budget dialog
 
@@ -5178,6 +5195,57 @@ const messages: TranslationMap = {
   'flows.nodeKind.dedup': 'Omitir duplicados',
 
   'settings.layout.corners.round': 'Redondeado',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Los diagnósticos de políticas no están incluidos en este núcleo.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Política de seguridad activa',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomía',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Solo en el espacio de trabajo',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Máximo de acciones por hora',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Requerir aprobación para riesgo medio',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Bloquear comandos de alto riesgo',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Comandos permitidos',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'No hay comandos permitidos explícitamente.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Política',
+  'settings.approvalHistory.judgeScores':
+    'Intención {intent} · Reversible {reversible} · Exfiltración {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'en caché',
+  'settings.approvalHistory.judgeExpires': 'Caduca {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Herramientas siempre permitidas',
+  'keyring.settings.toolTrustDescription':
+    'Estas herramientas pueden ejecutarse sin pedir aprobación en este ámbito de seguridad.',
+  'keyring.settings.toolTrustLoading': 'Cargando herramientas permitidas…',
+  'keyring.settings.toolTrustLoadFailed': 'No se pudieron cargar las herramientas permitidas.',
+  'keyring.settings.toolTrustRevokeFailed': 'No se pudo revocar el permiso de esta herramienta.',
+  'keyring.settings.toolTrustEmpty': 'No hay herramientas siempre permitidas.',
+  'keyring.settings.toolTrustRetry': 'Reintentar',
+  'keyring.settings.toolTrustRevoke': 'Revocar',
+  'keyring.settings.toolTrustRevoking': 'Revocando…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Solicitud de acceso al llavero',
+  'keyring.operation.description':
+    'TinySecurity solicita acceso a un elemento del llavero. Revisa la operación antes de decidir.',
+  'keyring.operation.access': 'Acceso',
+  'keyring.operation.requester': 'Solicitado por',
+  'keyring.operation.origin': 'Origen',
+  'keyring.operation.purpose': 'Propósito',
+  'keyring.operation.name': 'Elemento del llavero',
+  'keyring.operation.access.read': 'Leer',
+  'keyring.operation.access.write': 'Escribir',
+  'keyring.operation.access.delete': 'Eliminar',
+  'keyring.operation.allow': 'Permitir una vez',
+  'keyring.operation.deny': 'Denegar',
+  'keyring.operation.submitting': 'Enviando…',
+  'keyring.operation.expires': 'La solicitud vence en {seconds}s.',
+  'keyring.operation.error':
+    'No se pudo enviar tu decisión. Es posible que la solicitud haya vencido.',
 };
 
 export default messages;

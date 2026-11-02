@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 use crate::security::secret_storage::backend::SecretBackend;
 use crate::security::secret_storage::error::SecretStorageError;
-use crate::security::secret_storage::{crypto, file_store};
+use crate::security::secret_storage::file_store;
+use tinystoragedrivers::secrets::crypto;
 use zeroize::Zeroizing;
 
 pub const MASTER_KEY_ENV: &str = "OPENHUMAN_KEYRING_MASTER_KEY";
@@ -26,10 +27,9 @@ fn parse_master_key_hex(hex: &str) -> Result<[u8; KEY_LEN], String> {
     if !hex.is_ascii() {
         return Err("value is not valid hex".to_string());
     }
-    let bytes = crypto::hex_decode(hex).map_err(|_| "value is not valid hex".to_string())?;
-    let mut key = [0u8; KEY_LEN];
-    key.copy_from_slice(&bytes);
-    Ok(key)
+    crypto::key_from_hex(hex)
+        .map(|key| *key)
+        .map_err(|_| "value is not valid hex".to_string())
 }
 
 #[path = "encrypted_file_backend/key_source.rs"]

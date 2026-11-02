@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn byte_policy_projects_a_parent_readable_artifact_before_the_result_cap() {
-    use crate::agent::subagent_host::types::{SubagentMode, SubagentRunStatus, SubagentUsage};
+    use crate::agent::subagent_host::types::{SubagentMode, SubagentRunStatus};
+    use crate::agent::subagent_host::SubagentUsage;
     use crate::core::runtime::agent_scope::test_agent_context;
     use crate::core::runtime::{CoreContext, DomainSet};
     use crate::security::{SecurityPolicy, TrustedAccess, TrustedRoot};

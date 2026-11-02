@@ -630,6 +630,8 @@ mod driver_reuse_tests;
 mod driver_tests;
 #[path = "tools_e2e_profile_cancel_tests.rs"]
 mod profile_cancel_tests;
+#[path = "tools_e2e_thread_cancel_settled_tests.rs"]
+mod thread_cancel_settled_tests;
 #[path = "tools_e2e_thread_delete_tests.rs"]
 mod thread_delete_tests;
 

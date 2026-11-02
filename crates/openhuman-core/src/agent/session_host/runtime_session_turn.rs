@@ -1,17 +1,22 @@
 use anyhow::Result;
 use tinyagents_runtime::{ResumeMode, SessionTurnRequest, TurnOptions};
+use tinyinference_llm::message::Message;
 
 use crate::agent::{
     message_convert::user_message_from_text, session_host::types::OpenHumanSessionHost,
     tinyagents::host::OpenHumanRunContext,
 };
 
+pub(super) fn prepare_prefix_for_turn(new_session: bool, prefix_is_frozen: bool) -> bool {
+    new_session || !prefix_is_frozen
+}
+
 impl OpenHumanSessionHost {
     /// Dispatch a turn with authority supplied by its owning entry point.
     pub async fn turn_with_origin(
         &mut self,
         user_message: &str,
-        origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Result<String> {
         self.turn_with_approval(user_message, origin, Default::default())
             .await
@@ -24,6 +29,30 @@ impl OpenHumanSessionHost {
     pub async fn turn_with_approval(
         &mut self,
         user_message: &str,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
+        approval: crate::security::approval::ApprovalTurnContext,
+    ) -> Result<String> {
+        self.turn_with_approval_input(user_message, None, origin, approval)
+            .await
+    }
+
+    /// Dispatch a turn whose media parts were resolved by the trusted host
+    /// against the exact persisted row immediately before execution.
+    pub(crate) async fn turn_with_approval_and_message(
+        &mut self,
+        user_message: &str,
+        input: Message,
+        origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+        approval: crate::security::approval::ApprovalTurnContext,
+    ) -> Result<String> {
+        self.turn_with_approval_input(user_message, Some(input), origin, approval)
+            .await
+    }
+
+    async fn turn_with_approval_input(
+        &mut self,
+        user_message: &str,
+        input: Option<Message>,
         origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
@@ -34,14 +63,20 @@ impl OpenHumanSessionHost {
             self.host_env.core = crate::core::runtime::DispatchCtx::ambient().downgrade();
         }
         self.ensure_runtime_session()?;
-        let staged = crate::attachments::stage_turn(
-            user_message,
-            self.runtime_config.as_deref(),
-            self.workspace_descriptor.as_ref(),
-            self.thread_id.as_deref(),
-            origin,
-        )
-        .await?;
+        let input = match input {
+            Some(input) => input,
+            None => user_message_from_text(
+                crate::attachments::stage_turn(
+                    user_message,
+                    self.runtime_config.as_deref(),
+                    self.workspace_descriptor.as_ref(),
+                    self.thread_id.as_deref(),
+                    origin,
+                )
+                .await?
+                .as_str(),
+            ),
+        };
         let mut host_env = self.host_env.clone();
         let headless = self.settle_headless_descendants;
         let root_cancellation = if headless {
@@ -109,9 +144,9 @@ impl OpenHumanSessionHost {
         };
         let mut options = TurnOptions {
             request_id: origin.and_then(|origin| match origin {
-                crate::security::turn_origin::AgentTurnOrigin::WebChat { request_id, .. } => {
-                    request_id.clone()
-                }
+                crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+                    request_id, ..
+                } => request_id.clone(),
                 _ => None,
             }),
             thread_id: self.thread_id.clone(),
@@ -192,10 +227,7 @@ impl OpenHumanSessionHost {
             .runtime_session
             .as_mut()
             .expect("runtime session initialized")
-            .turn(
-                SessionTurnRequest::new(user_message_from_text(staged.as_str())),
-                options,
-            );
+            .turn(SessionTurnRequest::new(input), options);
         let outcome = match Box::pin(turn).await {
             Ok(outcome) => outcome,
             Err(error) => {

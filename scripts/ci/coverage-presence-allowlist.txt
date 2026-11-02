@@ -51,3 +51,11 @@ crates/openhuman-core/src/storage/import/fixtures/legacy-v1-profile/generator/sr
 # `search/mod.rs` has module declarations and feature-gated re-exports only;
 # executable search behavior is in sibling modules.
 crates/openhuman-core/src/search/mod.rs
+
+# `host_internals.rs` is an explicit re-export facade. Its only executable
+# definitions are no-op WebSocket stubs behind `not(all(feature = "voice",
+# feature = "http-server"))`; both gates are enabled by the product coverage
+# build, so those stubs are compiled out. Re-export declarations have no
+# executable coverage mapping. Remove this entry if the facade gains runtime
+# behavior or the product feature set changes to compile the stubs.
+crates/openhuman-embed/src/host_internals.rs

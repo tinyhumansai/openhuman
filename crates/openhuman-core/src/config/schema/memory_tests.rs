@@ -402,3 +402,16 @@ fn observed_actor_is_off_by_default_and_unwritten_until_set() {
     let on: MemoryConfig = toml::from_str("observed_actor = true").unwrap();
     assert!(on.observed_actor);
 }
+
+#[test]
+fn recall_each_turn_is_an_optional_host_binding_in_milliseconds() {
+    assert_eq!(MemoryConfig::default().recall_each_turn_ms, None);
+    let unset = toml::to_string(&MemoryConfig::default()).expect("serializes");
+    assert!(!unset.contains("recall_each_turn_ms"), "{unset}");
+
+    let config: MemoryConfig =
+        toml::from_str("recall_each_turn_ms = 1500").expect("the binding parses");
+    assert_eq!(config.recall_each_turn_ms, Some(1_500));
+    let written = toml::to_string(&config).expect("serializes");
+    assert!(written.contains("recall_each_turn_ms = 1500"), "{written}");
+}

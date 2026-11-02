@@ -17,9 +17,8 @@
 use std::sync::Arc;
 use tinyagents_harness::run_queue::RunQueue;
 
-use crate::security::turn_origin::{with_origin, AgentTurnOrigin};
+use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
 
-use super::super::run_task::turn_error_discards_session;
 use super::super::session::{
     checkin_session_agent_if_vacant, checkout_session_agent, CheckedOutSession, CheckoutPolicy,
 };
@@ -96,7 +95,7 @@ pub async fn run_system_turn_on_thread(
     // Same rule as a user turn: a failed harness turn can leave the session
     // partially advanced, so let it drop and cold-boot from the durable
     // transcript on the next request.
-    if matches!(&result, Err(err) if turn_error_discards_session(err)) {
+    if result.is_err() {
         log::warn!(
             "[web-channel] dropping session agent after failed system \
              turn thread={} run_id={}",

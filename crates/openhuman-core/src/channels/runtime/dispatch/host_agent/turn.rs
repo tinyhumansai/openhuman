@@ -1,5 +1,6 @@
 //! Running one channel turn as a host agent.
 
+use tinyagents_harness::run_queue::RunQueue;
 use tokio::sync::mpsc;
 
 use super::posture;
@@ -7,30 +8,40 @@ use crate::agent::bus::AgentTurnResponse;
 use crate::agent::host_agents::HostAgent;
 use crate::progress::AgentProgress;
 use crate::security::turn_origin::AgentTurnOrigin;
-use tinyagents_session::transcript::TranscriptMessage;
 
 /// One channel message, as a host agent's turn needs it.
 pub(crate) struct HostChannelTurn {
-    /// Durable thread supplied explicitly by a hosted relay.
+    /// Existing trusted relay correlation used by scoped tools.
     pub(crate) relay_thread: Option<String>,
     /// The channel the message came in on (`"telegram"`).
     pub(crate) channel: String,
-    /// The chat's history key: the session the host belt is told about and
-    /// the event session id.
-    pub(crate) history_key: String,
-    /// This chat's prior turns, `(role, content)`, oldest first. The channel
-    /// owns them, as it does for the orchestrator, so the session is seeded
-    /// from them rather than from a durable transcript.
-    pub(crate) prior_turns: Vec<(String, String)>,
+    /// TinyChannels' canonical conversation identity, tenant-scoped by the
+    /// host before it reaches this runner.
+    pub(crate) session_key: String,
+    /// Stable event/approval identity retained by the existing channel
+    /// surface. It is attribution, not the transcript key.
+    pub(crate) event_session_id: String,
     /// The message the agent answers.
     pub(crate) message: String,
+    /// Scoped typed media input for this exact queued channel request.
+    pub(crate) message_input: Option<tinyinference_llm::message::Message>,
+    /// Exact staged native refs issued by the host for this user turn.
+    pub(crate) staged_parts: Vec<tinychannels_bus::ContentPart>,
+    pub(crate) staged_lease: Option<crate::threads::attachments::NativeStagedLease>,
+    pub(crate) staged_message_id: Option<String>,
     /// Who asked: the channel's `ExternalChannel` origin.
     pub(crate) origin: AgentTurnOrigin,
-    /// Live progress for the channel's draft updates.
+    /// Live progress projected through the compiled channel module.
     pub(crate) progress: Option<mpsc::Sender<AgentProgress>>,
+    pub(crate) run_queue: Option<std::sync::Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
     /// Where this turn's parked approvals surface; default for a channel
     /// without an approval surface.
     pub(crate) approval: crate::security::approval::ApprovalTurnContext,
+    pub(crate) cancellation: tinyagents_harness::CancellationToken,
+    pub(crate) turn_deadline: Option<std::time::Duration>,
+    /// Legacy SaaS relay history to adopt into the durable session once.
+    pub(crate) imported_history: Vec<tinyagents_session::transcript::TranscriptMessage>,
+    pub(crate) legacy_history: Option<crate::channels::providers::relay::LegacyHistoryImport>,
 }
 
 /// Run `turn` as `host`: its definition and host tools, inside its context,
@@ -42,12 +53,21 @@ pub(crate) async fn run_host_agent_turn(
     let HostChannelTurn {
         relay_thread,
         channel,
-        history_key,
-        prior_turns,
+        session_key,
+        event_session_id,
         message,
+        message_input,
+        staged_parts,
+        staged_lease,
+        staged_message_id,
         origin,
         progress,
+        run_queue,
         approval,
+        cancellation,
+        turn_deadline,
+        imported_history,
+        legacy_history,
     } = turn;
     let mut config = host.config.clone();
     let profile_ceiling = host
@@ -67,54 +87,39 @@ pub(crate) async fn run_host_agent_turn(
             .map(|tools| posture::guard_host_tools(tools, ceiling));
     }
     let agent_id = host.definition.id.clone();
-    let model = config.default_model.clone().unwrap_or_default();
     tracing::info!(
         channel = %channel,
         agent_id = %agent_id,
-        prior_turns = prior_turns.len(),
         "[channels::dispatch::host_agent] running channel turn as host agent"
     );
-
+    host.config = config;
     host.context = host
         .context
-        .derive_channel_turn(relay_thread.clone(), Some(origin.clone()));
-    let mut session = host.session_host(
-        &config,
-        Some(relay_thread.as_deref().unwrap_or(&history_key)),
-    )?;
-    session.set_thread_id(relay_thread.as_deref());
-    // The channel names the session, which also selects the channel's
-    // permission ceiling in the session's tool policy.
-    session.set_event_context(history_key, channel);
-    // The chat's history is the channel's, so the session holds exactly that
-    // and never resumes a transcript of its own.
-    session.clear_history();
-    session.seed_resume_from_messages(prior_turns, &message)?;
-    session.set_next_turn_overrides(crate::agent::TurnOverrides {
-        suppress_transcript_autoload: true,
-        ..Default::default()
-    });
-    session.set_on_progress(progress);
-
+        .derive_channel_turn(relay_thread, Some(origin.clone()));
+    let model = host.config.default_model.clone().unwrap_or_default();
     let text = host
-        .scope(session.run_single_with_approval(&message, Some(origin), approval))
+        .run_external_channel_turn(
+            &session_key,
+            &event_session_id,
+            &channel,
+            &message,
+            message_input,
+            origin,
+            approval,
+            progress,
+            run_queue,
+            cancellation,
+            turn_deadline,
+            &imported_history,
+            legacy_history,
+            staged_parts,
+            staged_lease,
+            staged_message_id,
+        )
         .await?;
     Ok(AgentTurnResponse::with_resolved_route(
         text,
         format!("agent:{agent_id}"),
         model,
     ))
-}
-
-/// The prior turns of a channel `history` (`[system, ..prior, user]`) as seed
-/// rows: the channel's own system prompt and the new message are dropped, the
-/// agent brings its own prompt and the message is the turn.
-pub(crate) fn seed_rows(history: &[TranscriptMessage]) -> Vec<(String, String)> {
-    let end = history.len().saturating_sub(1);
-    history
-        .get(1..end)
-        .unwrap_or_default()
-        .iter()
-        .map(|row| (row.role.clone(), row.content.clone()))
-        .collect()
 }

@@ -779,7 +779,6 @@ async fn telegram_bot_token_connect_reject_disconnect_and_reconnect_over_json_rp
 
     let pinned = openhuman_core::modules::registry::find("tinychannels")
         .expect("TinyChannels is registered in the module asset registry");
-    assert_eq!(pinned.version, "0.1.42", "use the pinned module release");
     assert!(
         std::env::var_os("OPENHUMAN_MODULE_SOURCE").is_none()
             && std::env::var_os("OPENHUMAN_MODULE_SOURCE_DIR").is_none()
@@ -994,7 +993,8 @@ async fn telegram_bot_token_connect_reject_disconnect_and_reconnect_over_json_rp
         .unwrap_or_else(|| panic!("modules_list omitted TinyChannels: {modules_response}"));
     assert_eq!(
         tinychannels.get("version").and_then(Value::as_str),
-        Some("0.1.42")
+        Some(pinned.version),
+        "the loaded TinyChannels must be the registry-pinned release"
     );
     assert_eq!(
         tinychannels.get("state").and_then(Value::as_str),

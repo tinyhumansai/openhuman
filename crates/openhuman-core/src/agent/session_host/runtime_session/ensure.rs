@@ -150,7 +150,8 @@ impl OpenHumanSessionHost {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .context_window = context_window;
-                        let original_user_message = user_text_with_markers(&request.input);
+                        let original_input = request.input.clone();
+                        let original_user_message = user_text_with_markers(&original_input);
                         prelude.begin_user_effects(request, &options.run_context.data);
                         let turn = state
                             .lock()
@@ -174,7 +175,21 @@ impl OpenHumanSessionHost {
                             )),
                         );
                         options.run_context.data.memory_turn = memory_turn;
-                        request.input = user_message_from_text(&enriched);
+                        // Keep trusted typed media (channel attachments, voice
+                        // notes) on the input; text-only turns stay strings.
+                        request.input = match enrichment::enriched_typed_user_input(
+                            &original_input,
+                            &original_user_message,
+                            &enriched,
+                        ) {
+                            Ok(Some(input)) => input,
+                            Ok(None) => user_message_from_text(&enriched),
+                            Err(()) => {
+                                return Err(tinyagents_runtime::RuntimeError::Driver(
+                                    "host enrichment could not preserve typed user media".into(),
+                                ));
+                            }
+                        };
                         let mut preparation = prelude
                             .prepare_turn(new_session, &view, &transcript_snapshot, request)
                             .await?;

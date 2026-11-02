@@ -783,4 +783,11 @@
 #                      duplicates are debt: unify core on the newer generation,
 #                      then ratchet back down. Every later main merge through
 #                      da6cec5b0e measures 331/303/3; native unchanged.
-flows:331:303:3
+# 341/312/3 2026-10-25 GROWTH, required by the harness tools now composed by
+#                      openhuman-core: fs, net, exec, media and plan-review
+#                      are enabled on tinyagents-harness-tools so the core can
+#                      expose the migrated generic tools. Current upstream/main
+#                      measures this floor. +10 packages / +9 unique names;
+#                      native unchanged. Measured with scripts/kernel-floor.sh
+#                      flows --json.
+flows:341:312:3

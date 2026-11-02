@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials;
+use crate::credentials;
 
 use super::memory::clear_channel_memory;
 use super::shared::credential_provider;

@@ -2,4 +2,4 @@
 //! attach to diagnostics (`id`, `name`, `email`).
 
 pub use openhuman_core::agent::prompts::UserIdentity;
-pub use openhuman_core::security::credentials::identity::peek_credential_user_identity;
+pub use openhuman_core::credentials::identity::peek_credential_user_identity;

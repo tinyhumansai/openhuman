@@ -122,7 +122,7 @@ if (args[0] === 'metadata') {
     );
     for (const targets of [
       [],
-      ["agent_harness_e2e", "json_rpc_threads_e2e", "mcp_registry_multi_server"],
+      ["agent_harness_e2e", "json_rpc_threads_e2e", "mcp_registry_multi_server", "doctor_e2e"],
     ]) {
       execFileSync(
         "bash",
@@ -150,6 +150,10 @@ if (args[0] === 'metadata') {
       assert.equal(
         generated.includes("[[profile.ci.overrides]]"),
         targets.length > 0,
+      );
+      assert.equal(
+        generated.includes("[[profile.default.overrides]]"),
+        targets.includes("doctor_e2e"),
       );
     }
   } finally {

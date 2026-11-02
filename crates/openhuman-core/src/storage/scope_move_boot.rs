@@ -142,7 +142,7 @@ fn import_inventory(
             }
         };
         let (scope_backend, profile_guard) =
-            backend_for_target_scope(backend, &target_scope, known, config)?;
+            backend_for_target_scope(backend, &target_scope, known, config, source_path)?;
         let marker = crate::storage::documents::Repo::on(
             &scope_backend,
             &target_scope,
@@ -276,11 +276,15 @@ fn backend_for_target_scope(
     target_scope: &Scope,
     known: &Known,
     config: &crate::config::Config,
+    source_path: &Path,
 ) -> anyhow::Result<BackendForScope> {
-    if target_scope.is_local() || target_scope.is_cluster() {
+    let parsed = target_scope.parsed()?;
+    if matches!(
+        parsed.tenant,
+        crate::storage::Tenant::Local | crate::storage::Tenant::Cluster
+    ) {
         return Ok((Arc::clone(backend), None));
     }
-    let parsed = target_scope.parsed()?;
     let crate::storage::Tenant::User(_) = parsed.tenant else {
         anyhow::bail!(
             "scope {} is not an admitted tenant scope",
@@ -299,6 +303,19 @@ fn backend_for_target_scope(
                 target_scope.as_str()
             )
         })?;
+    // During the profile layout migration, the importer is deliberately
+    // running against that profile's v1 database. Its own u:<profile> rows
+    // must be copied within this source before the database is checkpointed
+    // and moved to the v2 location. The profile migration lock is held by the
+    // caller, so this explicit source backend is the admitted destination for
+    // this one transition.
+    if let Some(target) = crate::storage::layout::Target::from_config(config) {
+        if target.user_id == *original_id
+            && source_path == crate::storage::layout::legacy::v1_db(&target)
+        {
+            return Ok((Arc::clone(backend), None));
+        }
+    }
     let Some(host) = crate::profiles::host::host() else {
         if let Some(target) = crate::storage::layout::Target::from_config(config) {
             let expected_url = format!("sqlite:{}", target.storage_db().display());

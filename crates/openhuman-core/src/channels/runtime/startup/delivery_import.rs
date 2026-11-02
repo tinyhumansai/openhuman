@@ -14,6 +14,11 @@
 //! not include) makes the import run once: a delivery completed afterwards is
 //! not resurrected from the untouched file. An unreadable file writes no marker
 //! and is retried at the next start.
+//!
+//! This persisted-data migration is independent of the TinyChannels v1/v2
+//! protocol shim. Keep it until a release explicitly closes the workspace-file
+//! migration window; removing it earlier could discard queued or failed
+//! deliveries from an upgraded workspace.
 
 use std::collections::BTreeMap;
 use std::path::Path;

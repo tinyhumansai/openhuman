@@ -22,7 +22,7 @@ use crate::web_chat::types::SessionCacheFingerprint;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools_agent::dialect::TranscriptEntry;
 
-pub(super) fn test_config(tmp: &tempfile::TempDir) -> Config {
+pub(super) async fn test_config(tmp: &tempfile::TempDir) -> Config {
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -30,7 +30,7 @@ pub(super) fn test_config(tmp: &tempfile::TempDir) -> Config {
         ..Config::default()
     };
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     config
 }
 
@@ -65,6 +65,7 @@ fn seed_legacy_thread_transcript(workspace_dir: &Path, stem: &str, thread_id: &s
         updated: "2026-09-20T15:36:32Z".into(),
         turn_count: rows.len() / 2,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -92,12 +93,13 @@ fn prose(history: &[TranscriptEntry]) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn host_seeded_with(config: &Config, marker: &str) -> OpenHumanSessionHost {
+pub(super) async fn host_seeded_with(config: &Config, marker: &str) -> OpenHumanSessionHost {
     let mut host = OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
         config,
         "orchestrator",
     )
+    .await
     .unwrap();
     host.seed_resume_from_messages(
         vec![
@@ -120,7 +122,7 @@ async fn evict(thread_id: &str) {
 #[tokio::test]
 async fn checkout_cold_boots_from_the_thread_transcript_and_checkin_keeps_it_warm() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("cold");
     seed_legacy_thread_transcript(
         &config.workspace_dir,
@@ -203,14 +205,14 @@ async fn checkout_cold_boots_from_the_thread_transcript_and_checkin_keeps_it_war
 #[tokio::test]
 async fn checkin_if_vacant_yields_to_a_turn_that_re_cached_meanwhile() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("vacant");
     let fingerprint =
         |c: &Config| super::build_session_fingerprint(c, None, None, "orchestrator".into(), "chat");
 
     // A user turn finished while the system turn was running and cached its
     // agent unconditionally.
-    let user_turn_agent = host_seeded_with(&config, "user-turn-history");
+    let user_turn_agent = host_seeded_with(&config, "user-turn-history").await;
     checkin_session_agent(
         &DispatchCtx::ambient(),
         &thread_id,
@@ -220,7 +222,7 @@ async fn checkin_if_vacant_yields_to_a_turn_that_re_cached_meanwhile() {
     .await;
 
     // The system turn must not clobber it.
-    let system_turn_agent = host_seeded_with(&config, "system-turn-history");
+    let system_turn_agent = host_seeded_with(&config, "system-turn-history").await;
     assert!(
         !checkin_session_agent_if_vacant(
             &DispatchCtx::ambient(),
@@ -245,7 +247,7 @@ async fn checkin_if_vacant_yields_to_a_turn_that_re_cached_meanwhile() {
     assert_eq!(prose(&agent.history()), vec!["user-turn-history", "ok"]);
 
     // Into a vacant slot it goes in.
-    let system_turn_agent = host_seeded_with(&config, "system-turn-history");
+    let system_turn_agent = host_seeded_with(&config, "system-turn-history").await;
     assert!(
         checkin_session_agent_if_vacant(
             &DispatchCtx::ambient(),
@@ -274,14 +276,14 @@ async fn checkin_if_vacant_yields_to_a_turn_that_re_cached_meanwhile() {
 #[tokio::test]
 async fn a_fork_never_takes_or_returns_the_cached_agent() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("fork");
     let fingerprint =
         super::build_session_fingerprint(&config, None, None, "orchestrator".into(), "chat");
     checkin_session_agent(
         &DispatchCtx::ambient(),
         &thread_id,
-        host_seeded_with(&config, "primary-history"),
+        host_seeded_with(&config, "primary-history").await,
         fingerprint,
     )
     .await;
@@ -313,7 +315,7 @@ async fn a_fork_never_takes_or_returns_the_cached_agent() {
 #[tokio::test]
 async fn a_system_turn_adopts_the_cached_agent_and_its_fingerprint() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("adopt");
     // The user's last turn pinned a temperature; a system turn has none and
     // would miss an exact fingerprint match.
@@ -322,7 +324,7 @@ async fn a_system_turn_adopts_the_cached_agent_and_its_fingerprint() {
     checkin_session_agent(
         &DispatchCtx::ambient(),
         &thread_id,
-        host_seeded_with(&config, "pinned-history"),
+        host_seeded_with(&config, "pinned-history").await,
         pinned.clone(),
     )
     .await;
@@ -366,7 +368,7 @@ async fn a_system_turn_adopts_the_cached_agent_and_its_fingerprint() {
 #[tokio::test]
 async fn a_thread_binds_one_stable_session_across_cold_boots() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("stable");
 
     let first = checkout_session_agent(
@@ -605,15 +607,15 @@ fn chat_agent_id_selects_the_web_chat_agent_and_defaults_to_the_orchestrator() {
 async fn a_system_turn_never_adopts_an_agent_from_another_workspace() {
     let tmp_a = tempfile::tempdir().unwrap();
     let tmp_b = tempfile::tempdir().unwrap();
-    let config_a = test_config(&tmp_a);
-    let config_b = test_config(&tmp_b);
+    let config_a = test_config(&tmp_a).await;
+    let config_b = test_config(&tmp_b).await;
     let thread_id = unique_thread("workspace");
     let built_for_a =
         super::build_session_fingerprint(&config_a, None, None, "orchestrator".into(), "chat");
     checkin_session_agent(
         &DispatchCtx::ambient(),
         &thread_id,
-        host_seeded_with(&config_a, "user-a-history"),
+        host_seeded_with(&config_a, "user-a-history").await,
         built_for_a,
     )
     .await;
@@ -655,7 +657,7 @@ fn fingerprint_diff_names_a_workspace_change() {
 #[tokio::test]
 async fn each_checkout_arms_the_reply_language_from_its_own_locale() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("locale");
     let checkout = |locale: Option<&'static str>| {
         let config = config.clone();
@@ -721,7 +723,7 @@ async fn each_checkout_arms_the_reply_language_from_its_own_locale() {
 #[tokio::test]
 async fn an_english_only_session_and_a_locale_less_turn_carry_no_directive() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let thread_id = unique_thread("english");
     for locale in [Some("en"), None] {
         let CheckedOutSession { agent, fingerprint } = checkout_session_agent(

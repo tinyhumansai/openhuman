@@ -23,34 +23,13 @@ fn a_well_formed_message_is_accepted() {
 
 #[test]
 fn the_thread_id_is_a_reserved_channel_id() {
-    let p = params();
-    let id = p.thread_id();
-    assert_eq!(id, "channel:telegram/42/-100123");
-    assert_eq!(
-        id,
-        tinychannels::channel::derive_inbound_thread_id(
-            "telegram",
-            Some("42"),
-            Some("-100123"),
-            None
-        ),
-        "the backend-relayed inbound path's derivation"
-    );
+    // The prepared module identity used by this relay fixture has this stable
+    // reserved ID. A user cannot choose it through `threads_upsert`.
+    let id = "channel:telegram/42/-100123";
     assert!(
-        crate::profiles::surface::validate_user_thread_id(&id).is_err(),
+        crate::profiles::surface::validate_user_thread_id(id).is_err(),
         "a user cannot choose it"
     );
-}
-
-#[test]
-fn distinct_chats_and_senders_get_distinct_threads() {
-    let base = params();
-    let mut other_chat = params();
-    other_chat.chat_id = "-100124".into();
-    let mut other_sender = params();
-    other_sender.sender_id = "43".into();
-    assert_ne!(base.thread_id(), other_chat.thread_id());
-    assert_ne!(base.thread_id(), other_sender.thread_id());
 }
 
 #[test]
@@ -134,15 +113,15 @@ fn every_field_is_checked() {
 }
 
 #[test]
-fn the_inbound_envelope_carries_the_relayed_facts() {
-    let msg = params().to_inbound_envelope();
-    assert_eq!(msg.channel.id, "telegram");
-    assert_eq!(msg.message_id, "m-1");
-    assert_eq!(msg.sender.id, "42");
-    assert_eq!(msg.conversation.id, "-100123");
-    assert_eq!(msg.text, "hello");
-    assert_eq!(msg.sender.name.as_deref(), Some("Ada"));
-    assert!(msg.conversation.thread_id.is_none());
+fn the_channel_message_carries_the_relayed_facts() {
+    let msg = params().to_channel_message();
+    assert_eq!(msg.channel, "telegram");
+    assert_eq!(msg.id, "m-1");
+    assert_eq!(msg.sender, "42");
+    assert_eq!(msg.reply_target, "-100123");
+    assert_eq!(msg.content, "hello");
+    assert_eq!(msg.sender_name.as_deref(), Some("Ada"));
+    assert!(msg.thread_ts.is_none());
 }
 
 #[test]
@@ -156,5 +135,4 @@ fn a_constructed_message_round_trips_through_the_wire_shape() {
     assert!(wire.get("attachments").is_none(), "{wire}");
     let back: RelayInboundParams = serde_json::from_value(wire).expect("deserialize");
     assert_eq!(back, built);
-    assert_eq!(back.thread_id(), params().thread_id());
 }

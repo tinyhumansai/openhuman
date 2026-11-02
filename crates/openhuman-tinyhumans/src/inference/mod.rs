@@ -85,7 +85,7 @@ pub(crate) fn build_chat_model(
     Ok((Arc::new(model), pinned))
 }
 
-fn build_chat_model_for_inspection(
+async fn build_chat_model_for_inspection(
     request: &ChatModelRequest<'_, ProviderContext>,
 ) -> anyhow::Result<InspectionChatModelBuild> {
     let config = &request.context.config;
@@ -102,7 +102,7 @@ fn build_chat_model_for_inspection(
         .filter(|model| !model.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| pinned.clone());
-    let bearer = managed_session::managed_bearer_for_inspection(config)?;
+    let bearer = managed_session::managed_bearer_for_inspection(config).await?;
     let model = managed_model::build_chat_model_for_inspection(
         config.api_url.as_deref(),
         &default_model,
@@ -179,17 +179,23 @@ pub(crate) fn register(_options: &InstallOptions) {
     );
     register_embedding(
         PROVIDER_OPENHUMAN,
-        Arc::new(|request: &EmbeddingRequest<'_, ProviderContext>| {
-            Ok(Box::new(managed_embedding::from_request(request)))
+        Arc::new(|request: EmbeddingRequest<ProviderContext>| {
+            Box::pin(async move {
+                Ok(Box::new(managed_embedding::from_request(request))
+                    as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+            })
         }),
     );
     register_inspection_chat_model(
         PROVIDER_OPENHUMAN,
-        Arc::new(build_chat_model_for_inspection),
+        Arc::new(|request| Box::pin(build_chat_model_for_inspection(request))),
     );
     register_inspection_embedding(PROVIDER_OPENHUMAN, |request| {
-        managed_embedding::from_request_for_inspection(request)
-            .map(|model| Box::new(model) as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+        Box::pin(async move {
+            managed_embedding::from_request_for_inspection(&request)
+                .await
+                .map(|model| Box::new(model) as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+        })
     });
     register_catalog(PROVIDER_OPENHUMAN, managed_catalog::entry());
     register_inspection_catalog(PROVIDER_OPENHUMAN, managed_catalog::inspection_entry());

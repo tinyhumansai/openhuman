@@ -5,7 +5,7 @@ mod helpers;
 
 impl OpenHumanSessionHost {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn build_session_agent_inner_with_turn_model_source(
+    pub(crate) async fn build_session_agent_inner_with_turn_model_source(
         ctx: &DispatchCtx,
         config: &Config,
         agent_id: &str,
@@ -25,9 +25,8 @@ impl OpenHumanSessionHost {
             &config.workspace_dir,
             &config.action_dir,
         ));
-        // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
-        let audit = crate::security::get_or_create_workspace_audit_logger(
-            crate::config::AuditConfig::default(),
+        let audit = crate::security::get_or_create_workspace_audit_sink(
+            config.audit.clone(),
             config.workspace_dir.clone(),
         )?;
 
@@ -77,7 +76,8 @@ impl OpenHumanSessionHost {
                         .as_ref()
                         .map(|descriptor| descriptor.root.as_path()),
                 )
-            });
+            })
+            .await;
 
         // Filter tools by the user preference loaded above.
         if !enabled_tools.is_empty() {
@@ -91,7 +91,8 @@ impl OpenHumanSessionHost {
                 agent_id,
                 target_def,
                 turn_model_source.as_ref(),
-            )?;
+            )
+            .await?;
         // Resolve the user-configured vision flag for the (now-final) model while
         // the full `Config` / `model_registry` is in scope — the turn engine only
         // sees `MultimodalConfig`. Stored on the session and surfaced to the image
@@ -148,7 +149,7 @@ impl OpenHumanSessionHost {
         // and then paying a repair pass on turn 1 just to recover the real
         // delegation surface.
         let prewarmed_integrations =
-            crate::integrations::composio::cached_active_integrations(config);
+            crate::integrations::composio::cached_active_integrations(config).await;
         let prewarmed_integrations_slice = prewarmed_integrations.as_deref().unwrap_or(&[]);
 
         // Resolve the per-agent deferred integration actions and visible-tool
@@ -402,7 +403,8 @@ impl OpenHumanSessionHost {
             session_id,
             &mut tools,
             &mut visible,
-        )?;
+        )
+        .await?;
         let session_definition =
             super::super::host_tools::scope_def(target_def, &merged_host_tools);
         let host_policy =
@@ -419,7 +421,7 @@ impl OpenHumanSessionHost {
             .tool_dispatcher(tool_dispatcher)
             .prompt_builder(prompt_builder)
             .config(effective_agent_config)
-            .context_config(config.context.clone())
+            .context_config(config.context.harness.clone())
             .model_name(model_name)
             .model_vision(model_vision)
             .temperature(effective_temperature)

@@ -59,8 +59,8 @@ fn migrated() -> &'static Mutex<HashSet<PathBuf>> {
 // ponytail: one process-wide lock; per-workspace if contention ever shows.
 static LEGACY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Test seam: make the migration of one toolkit's row fail, as a module error
-/// would, so a deferred (partial) migration can be driven deterministically.
+// Test seam: make the migration of one toolkit's row fail, as a module error
+// would, so a deferred (partial) migration can be driven deterministically.
 #[cfg(test)]
 thread_local! {
     static FAIL_MIGRATING: std::cell::RefCell<Option<String>> =

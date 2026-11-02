@@ -42,9 +42,6 @@ pub(crate) mod product_copy;
 // Tool surface for live voice sessions (`voice::live`).
 #[cfg(feature = "voice")]
 mod live_tools;
-#[cfg(test)]
-#[path = "resume_bound_session_tests.rs"]
-mod resume_bound_session_tests;
 mod runtime;
 mod runtime_session;
 mod session_key;
@@ -58,12 +55,16 @@ pub(crate) mod test_support;
 pub use codec::OpenHumanTranscriptCodec;
 pub type OpenHumanSessionHooks =
     tinyagents_runtime::FnSessionHooks<crate::agent::tinyagents::host::OpenHumanRunContext>;
+pub use runtime_session::{CompactOptions, CompactOutcome};
 pub use types::{OpenHumanSessionHost, SessionHostBuilder, TurnOverrides};
 
 // Re-export the duplicate-tool-spec guard for sibling harness modules
 // (`session::runtime`, `subagent_host`) so all provider call sites
 // share one tested implementation.
 
+#[cfg(test)]
+#[path = "imported_history_tests.rs"]
+mod imported_history_tests;
 #[cfg(test)]
 mod orphaned_head_resume_tests;
 #[cfg(test)]

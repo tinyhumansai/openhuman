@@ -129,7 +129,7 @@ static COMPOSIO_CACHE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::co
 
 /// Bind a snapshot to the calling profile/operator's scope and its
 /// credentials. SaaS work without a profile cannot read or populate the cache.
-pub(crate) fn checked_cache_key(config: &Config) -> Option<String> {
+pub(crate) async fn checked_cache_key(config: &Config) -> Option<String> {
     let prefix = current_cache_scope_prefix("cache_key")?;
     // The control-plane origin a host's config enricher resolved (empty when no
     // host resolved one, as with no hosted connection).
@@ -141,26 +141,28 @@ pub(crate) fn checked_cache_key(config: &Config) -> Option<String> {
         .unwrap_or_default();
     Some(format!(
         "{prefix}{}",
-        cache_key_with_backend_url(config, &backend_url)
+        cache_key_with_backend_url(config, &backend_url).await
     ))
 }
 
 /// Existing credential-cache tests always run under a valid single-user or
 /// explicitly scoped tenant context. Production callers use the checked API.
 #[cfg(test)]
-pub(crate) fn cache_key(config: &Config) -> String {
-    checked_cache_key(config).expect("integration cache test requires a valid scope")
+pub(crate) async fn cache_key(config: &Config) -> String {
+    checked_cache_key(config)
+        .await
+        .expect("integration cache test requires a valid scope")
 }
 
 /// Digest the configuration, endpoint and resolved credential identities.
-fn cache_key_with_backend_url(config: &Config, backend_url: &str) -> String {
+async fn cache_key_with_backend_url(config: &Config, backend_url: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"openhuman-integrations-cache-v3\0");
     digest.update(config.config_path.to_string_lossy().as_bytes());
     digest.update(b"\0");
     digest.update(backend_url.as_bytes());
     digest.update(b"\0");
-    match crate::security::credentials::session_support::resolve_backend_credential(config) {
+    match crate::credentials::backend_credential::resolve_backend_credential(config).await {
         Ok(credential) => {
             digest.update(if credential.is_api_key() {
                 b"api-key\0"
@@ -193,7 +195,9 @@ fn cache_key_with_backend_url(config: &Config, backend_url: &str) -> String {
             .map(str::trim)
             .filter(|key| !key.is_empty());
         if composio.mode.trim() == crate::config::schema::COMPOSIO_MODE_DIRECT {
-            if let Ok(Some(stored)) = crate::security::credentials::get_composio_api_key(config) {
+            if let Ok(Some(stored)) =
+                crate::integrations::composio::get_composio_api_key(config).await
+            {
                 digest.update(stored.as_bytes());
             } else if let Some(key) = inline_key {
                 digest.update(key.as_bytes());
@@ -244,24 +248,24 @@ pub fn invalidate_connected_integrations_cache() {
 ///
 /// Freshness is driven by connection events and the Settings connection-list
 /// reconciliation, never by an idle-time expiry on the chat critical path.
-pub fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
-    read_cached_integrations(config)
+pub async fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
+    read_cached_integrations(config).await
 }
 
 /// Read the caller's snapshot from the process cache without fetching.
-fn read_cached_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
-    read_cached_integrations_from(&INTEGRATIONS_CACHE, config)
+async fn read_cached_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
+    read_cached_integrations_from(&INTEGRATIONS_CACHE, config).await
 }
 
 /// [`read_cached_integrations`] over an explicit map, so the credential-keyed
 /// lookup can be exercised against a private map instead of the process-wide
 /// [`INTEGRATIONS_CACHE`], which unrelated code paths clear at any time (see
 /// [`invalidate_connected_integrations_cache`]).
-pub(crate) fn read_cached_integrations_from(
+pub(crate) async fn read_cached_integrations_from(
     cache: &RwLock<HashMap<String, CachedIntegrations>>,
     config: &Config,
 ) -> Option<Vec<ConnectedIntegration>> {
-    let key = checked_cache_key(config)?;
+    let key = checked_cache_key(config).await?;
     let guard = match cache.try_read() {
         Ok(g) => g,
         Err(_) => {

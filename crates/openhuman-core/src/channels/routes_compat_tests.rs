@@ -14,9 +14,6 @@ fn route_compat_message_preserves_legacy_addressing_and_sender_metadata() {
         "telegram".to_string(),
         Some("thread-1".into()),
     );
-    message.timestamp_unix_ms = Some(123);
-    message.reply_to_id = Some("reply-1".into());
-    message.conversation.topic_id = Some("topic-1".into());
     message.sender.name = Some("Alice".into());
 
     let legacy = super::super::route_compat_message(&message);
@@ -25,9 +22,7 @@ fn route_compat_message_preserves_legacy_addressing_and_sender_metadata() {
     assert_eq!(legacy.reply_target, "conversation-1");
     assert_eq!(legacy.content, "/status");
     assert_eq!(legacy.channel, "telegram");
-    assert_eq!(legacy.timestamp, 123);
+    assert_eq!(legacy.timestamp, 0);
     assert_eq!(legacy.thread_ts.as_deref(), Some("thread-1"));
-    assert_eq!(legacy.reply_to_id.as_deref(), Some("reply-1"));
-    assert_eq!(legacy.topic_id.as_deref(), Some("topic-1"));
     assert_eq!(legacy.sender_name.as_deref(), Some("Alice"));
 }

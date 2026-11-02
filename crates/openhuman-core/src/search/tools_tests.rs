@@ -32,10 +32,10 @@ fn classified_errors_become_actionable_messages() {
     assert_eq!(user_facing_error("boom"), "Web search failed: boom");
 }
 
-#[test]
-fn role_tools_are_built_for_usable_byok_providers() {
+#[tokio::test]
+async fn role_tools_are_built_for_usable_byok_providers() {
     let config = signed_out_byok_config();
-    let tools = build_search_tools(&config);
+    let tools = build_search_tools(&config).await;
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert!(names.contains(&"web_search_tool"), "{names:?}");
     assert!(names.contains(&"web_contents_tool"), "{names:?}");
@@ -50,11 +50,11 @@ fn role_tools_are_built_for_usable_byok_providers() {
     assert!(search.parameters_schema()["properties"]["query"].is_object());
 }
 
-#[test]
-fn no_tools_when_search_is_off_or_nothing_is_usable() {
+#[tokio::test]
+async fn no_tools_when_search_is_off_or_nothing_is_usable() {
     let mut config = signed_out_byok_config();
     config.search.enabled = Some(false);
-    assert!(build_search_tools(&config).is_empty());
+    assert!(build_search_tools(&config).await.is_empty());
 
     let mut managed_only = Config::default();
     managed_only.search.providers.insert(
@@ -65,7 +65,7 @@ fn no_tools_when_search_is_off_or_nothing_is_usable() {
         },
     );
     // No backend credential in a default test config.
-    assert!(build_search_tools(&managed_only).is_empty());
+    assert!(build_search_tools(&managed_only).await.is_empty());
 }
 
 #[test]
@@ -81,22 +81,24 @@ fn recorded_tools_keep_their_declaration() {
     assert_eq!(tool.exposure(), ToolExposure::Direct);
 }
 
-#[test]
-fn local_only_blocks_external_search_tool_dispatch() {
+#[tokio::test]
+async fn unavailable_privacy_module_refuses_external_search_tool_dispatch() {
     let _privacy =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::LocalOnly);
 
     let message = local_only_search_block("web_search_tool")
+        .await
         .expect("search requests must be blocked in LocalOnly mode");
     assert!(message.contains(tinytools::status::POLICY_BLOCKED_MARKER));
+    assert!(message.contains("tinysearch"));
 }
 
-#[test]
-fn standard_privacy_mode_allows_search_tool_dispatch() {
+#[tokio::test]
+async fn standard_privacy_mode_refuses_when_the_module_cannot_answer() {
     let _privacy =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::Standard);
 
-    assert!(local_only_search_block("web_search_tool").is_none());
+    assert!(local_only_search_block("web_search_tool").await.is_some());
 }
 
 // ---------------------------------------------------------------------------
@@ -140,23 +142,23 @@ fn the_unavailable_verdict_tells_the_model_to_stop_rather_than_wait() {
     );
 }
 
-#[test]
-fn a_tool_starts_with_nothing_recorded() {
+#[tokio::test]
+async fn a_tool_starts_with_nothing_recorded() {
     let config = nothing_usable_config();
     let tool = TinySearchTool::recorded(spec("web_search_tool"));
 
-    assert!(!tool.is_exhausted_for(tool.provider_signature(&config)));
+    assert!(!tool.is_exhausted_for(tool.provider_signature(&config).await));
 }
 
-#[test]
-fn the_refusal_answers_only_for_the_configuration_that_failed() {
+#[tokio::test]
+async fn the_refusal_answers_only_for_the_configuration_that_failed() {
     // The contract this module documents is that every call re-reads the live
     // config, so a provider or login change is honoured without rebuilding the
     // session. A refusal that outlived a config change would break it: the user
     // adds a key and search stays dead until the thread is abandoned.
     let dead = nothing_usable_config();
     let tool = TinySearchTool::recorded(spec("web_search_tool"));
-    let dead_signature = tool.provider_signature(&dead);
+    let dead_signature = tool.provider_signature(&dead).await;
 
     tool.mark_exhausted_for(dead_signature);
     assert!(tool.is_exhausted_for(dead_signature));
@@ -165,18 +167,18 @@ fn the_refusal_answers_only_for_the_configuration_that_failed() {
     fixed.search.brave.api_key = Some("added-after-the-failure".into());
 
     assert_ne!(
-        tool.provider_signature(&fixed),
+        tool.provider_signature(&fixed).await,
         dead_signature,
         "adding a provider key must change what the tool sees"
     );
     assert!(
-        !tool.is_exhausted_for(tool.provider_signature(&fixed)),
+        !tool.is_exhausted_for(tool.provider_signature(&fixed).await),
         "adding a key must clear the refusal"
     );
 }
 
-#[test]
-fn one_tools_dead_providers_do_not_answer_for_another() {
+#[tokio::test]
+async fn one_tools_dead_providers_do_not_answer_for_another() {
     // `build_search_tools` can offer provider-specific tools beside the role
     // tools, and the roles draw on different provider orders, so a shared
     // verdict would let one provider's outage disable unrelated ones.
@@ -184,9 +186,9 @@ fn one_tools_dead_providers_do_not_answer_for_another() {
     let failed = TinySearchTool::recorded(spec("web_search_tool"));
     let other = TinySearchTool::recorded(spec("web_answer_tool"));
 
-    failed.mark_exhausted_for(failed.provider_signature(&config));
+    failed.mark_exhausted_for(failed.provider_signature(&config).await);
 
-    assert!(!other.is_exhausted_for(other.provider_signature(&config)));
+    assert!(!other.is_exhausted_for(other.provider_signature(&config).await));
 }
 
 #[tokio::test]
@@ -196,7 +198,7 @@ async fn a_refused_call_does_not_reach_the_module() {
     // configuration rather than one per call.
     let config = nothing_usable_config();
     let tool = TinySearchTool::new(std::sync::Arc::new(config.clone()), spec("web_search_tool"));
-    tool.mark_exhausted_for(tool.provider_signature(&config));
+    tool.mark_exhausted_for(tool.provider_signature(&config).await);
 
     let result = tool
         .execute(serde_json::json!({"query": "anything"}))
@@ -275,7 +277,11 @@ async fn a_rejected_session_starts_re_authentication() {
         .get()
         .expect("event bus initialized")
         .receiver();
-    on_backend_unauthorized("test_marker_session_search", false);
+    on_backend_unauthorized(
+        "test_marker_session_search",
+        false,
+        Some(crate::credentials::backend_credential::credential_fingerprint("test-session-token")),
+    );
     assert!(session_expired_from(
         &mut rx,
         "search.test_marker_session_search"
@@ -291,18 +297,20 @@ async fn a_rejected_api_key_does_not_sign_the_user_out() {
         .get()
         .expect("event bus initialized")
         .receiver();
-    on_backend_unauthorized("test_marker_api_key_search", true);
+    on_backend_unauthorized("test_marker_api_key_search", true, None);
     assert!(!session_expired_from(
         &mut rx,
         "search.test_marker_api_key_search"
     ));
 }
 
-#[test]
-fn components_search_off_registers_no_search_tools() {
+#[tokio::test]
+async fn components_search_off_registers_no_search_tools() {
     let mut config = signed_out_byok_config();
-    assert!(!build_search_tools(&config).is_empty());
+    assert!(!build_search_tools(&config).await.is_empty());
     config.components.search = false;
-    assert!(build_search_tools(&config).is_empty());
-    assert!(crate::modules::search::configured_tool_specs(&config).is_empty());
+    assert!(build_search_tools(&config).await.is_empty());
+    assert!(crate::modules::search::configured_tool_specs(&config)
+        .await
+        .is_empty());
 }

@@ -74,7 +74,7 @@ export function parseRecords(src) {
     };
     const assets = [];
     const assetRe =
-      /PlatformAsset \{\s*host_key: "([^"]+)",\s*archive: "([^"]+)",\s*sha256: "([^"]+)",\s*\}/g;
+      /PlatformAsset \{\s*host_key: "([^"]+)",\s*archive: "([^"]+)",\s*sha256: "([^"]+)",\s*(?:library_sha256: (?:None|Some\("[^"]+"\)),\s*)?\}/g;
     for (const a of body.matchAll(assetRe)) {
       assets.push({ hostKey: a[1], archive: a[2], sha256: a[3] });
     }

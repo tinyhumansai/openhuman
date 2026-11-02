@@ -4,8 +4,8 @@
 
 use async_trait::async_trait;
 use openhuman_embed::__host::config::Config;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 use openhuman_embed::__host::memory_engines::BearerSource;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
 use reqwest::header::HeaderMap;
 use reqwest::Method;
 use serde_json::Value;

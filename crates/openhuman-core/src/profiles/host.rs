@@ -258,13 +258,31 @@ impl ProfileHost {
         {
             return Err(OpenError::NotProvisioned(id.clone()));
         }
-        let (closed, full) = {
+        let (closed, full, pinned) = {
             let mut open = self.lock();
             let closed = self.evict_locked(&mut open, Instant::now());
-            (closed, open.len() >= self.saas.max_profiles_open.max(1))
+            let pinned = open
+                .values()
+                .filter(|slot| in_use(slot))
+                .map(|slot| {
+                    (
+                        Arc::strong_count(&slot.state),
+                        Arc::strong_count(&slot.state.context),
+                        slot.state.context.tenant_in_use(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (
+                closed,
+                open.len() >= self.saas.max_profiles_open.max(1),
+                pinned,
+            )
         };
         profile_lease::release_all(self, closed).await;
         if full {
+            log::debug!(
+                "[profiles] no free profile slot; pinned counts (profile, context, tenant_in_use)={pinned:?}"
+            );
             return Err(OpenError::Full {
                 max: self.saas.max_profiles_open,
             });
@@ -465,7 +483,7 @@ impl ProfileHost {
         let id = meta.profile_id;
         let config = self.forced_config(&self.layout_of(&id), &id);
         let has_credential = CoreContext::scope(self.records_context(&id), async {
-            super::credentials::has(&config)
+            super::credentials::has(&config).await
         })
         .await;
         ProfileSummary {

@@ -230,7 +230,7 @@ impl PointedInference {
     pub fn install(base_url: &str) {
         use openhuman_embed::__host::inference_registry::{
             register_chat_model, ChatModelEntry, ChatModelRequest, ProviderContext,
-            PROVIDER_OPENHUMAN,
+            ProviderModelMetadata, PROVIDER_OPENHUMAN,
         };
         use tinyinference_llm::providers::openai::OpenAiModel;
 
@@ -243,7 +243,12 @@ impl PointedInference {
                 .to_string();
             // Like the hosted provider: the acting profile's own credential
             // rides as the bearer.
-            let token = openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(&request.context.config)
+            let config = &request.context.config;
+            let token = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential(config),
+                )
+            })
                 .map(|credential| credential.secret().to_string())
                 .map_err(tinyinference_llm::Error::Model)?;
             let wire =
@@ -258,7 +263,33 @@ impl PointedInference {
             ChatModelEntry {
                 build: std::sync::Arc::new(build),
                 probe: None,
-                models: None,
+                models: Some(ProviderModelMetadata {
+                    default_model: std::sync::Arc::new(|| Some("embed-test-model".to_string())),
+                    role_for_model: std::sync::Arc::new(|_| None),
+                    is_alias: std::sync::Arc::new(|_| false),
+                    is_raw_model: std::sync::Arc::new(|model| {
+                        !model.trim().is_empty() && !model.starts_with("hint:")
+                    }),
+                    supports_vision: std::sync::Arc::new(|_| false),
+                    resolve_model: std::sync::Arc::new(|_, config, model| {
+                        model
+                            .map(str::trim)
+                            .filter(|model| !model.is_empty() && !model.starts_with("hint:"))
+                            .map(str::to_string)
+                            .or_else(|| {
+                                config
+                                    .config
+                                    .default_model
+                                    .as_deref()
+                                    .filter(|model| !model.trim().is_empty())
+                                    .map(str::to_string)
+                            })
+                            .or_else(|| Some("embed-test-model".to_string()))
+                    }),
+                    context_window: std::sync::Arc::new(|_| None),
+                    default_pricing: std::sync::Arc::new(|| None),
+                    without_reasoning: std::sync::Arc::new(|request| request),
+                }),
             },
         );
     }

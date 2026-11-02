@@ -20,7 +20,7 @@ startup, and two are driven by events rather than calls. In boot order:
 ```text
  core/runtime/bootstrap.rs
    |- platform::cost::init_global(cfg.cost, workspace)    cost ledger singleton
-   |- platform::socket::set_global_socket_manager(..)    SocketManager singleton
+   |- platform::socket::set_global_socket_port(..)       host-owned socket port
  core/runtime/subscribers.rs
    |- platform::health::bus::register_health_subscriber()
    |- platform::service::bus::register_restart_subscriber()
@@ -51,7 +51,7 @@ The event-driven pieces:
   `ChannelInboundMessage`, device tunnel events) for other domains to handle.
 
 The top-level [`doctor`](../doctor) domain reads the daemon state file
-`service` writes and the memory engine status from `memory`. [`connectivity`](./connectivity) reads the `SocketManager` state to tell
+`service` writes and the memory engine status from `memory`. [`connectivity`](./connectivity) reads the socket port state to tell
 the frontend which of its connection channels is broken.
 
 ## Layout
@@ -77,7 +77,7 @@ There is no type shared across the family. The ones contributors touch most:
 - `CostTracker` and `cost::init_global` / `try_global` / `rebind_global`
   ([`cost/global.rs`](./cost/global.rs)). The tracker is bound to one workspace, and signing in or
   out rebinds it so usage lands in the right user's ledger.
-- `SocketManager` and `token_provider_from_config` ([`socket/`](./socket/)).
+- `SocketPort` and `token_provider_from_config` ([`socket/`](./socket/)).
 - `pick_listen_port_for_host` and its variants ([`connectivity/`](./connectivity/)), used by the
   RPC host when binding.
 - `ServiceStatus` and the restart and shutdown publishers ([`service/`](./service/)).

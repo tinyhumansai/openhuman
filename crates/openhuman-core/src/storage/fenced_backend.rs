@@ -91,6 +91,17 @@ impl FencedBackend {
             .map_err(|error| error.into_storage())?;
         Ok(Some((fence.clone(), fence.write_condition())))
     }
+
+    /// The handle `scope`'s collections are declared through: the inner
+    /// backend's, without the lease's driver condition, which MongoDB will
+    /// not declare under (#8422). The fence still checks its lease locally
+    /// before each declaration.
+    fn declarations(
+        &self,
+        scope: &Scope,
+    ) -> Result<Arc<dyn tinystoragedrivers_api::DocumentStore>, StorageError> {
+        Ok(Arc::clone(self.inner.for_scope(scope)?.documents()))
+    }
 }
 
 /// Wrap the process backend with its shared fence registry.
@@ -106,12 +117,20 @@ impl StorageBackend for FencedBackend {
     fn for_scope(&self, scope: &Scope) -> Result<Storage, StorageError> {
         match self.condition_for(scope)? {
             Some((fence, condition)) => {
-                let storage = match condition {
-                    Some(condition) => self.inner.for_scope_conditioned(scope, &condition)?,
-                    None => self.inner.for_scope(scope)?,
+                let (storage, declarations) = match condition {
+                    Some(condition) => (
+                        self.inner.for_scope_conditioned(scope, &condition)?,
+                        self.declarations(scope)?,
+                    ),
+                    None => {
+                        let storage = self.inner.for_scope(scope)?;
+                        let declarations = Arc::clone(storage.documents());
+                        (storage, declarations)
+                    }
                 };
                 Ok(super::fenced_ports::wrap(
                     storage,
+                    declarations,
                     fence,
                     Arc::clone(self.registry.as_ref().expect("fenced backend has a clock")),
                 ))
@@ -135,6 +154,7 @@ impl StorageBackend for FencedBackend {
                 };
                 Ok(super::fenced_ports::wrap(
                     storage,
+                    self.declarations(scope)?,
                     fence,
                     Arc::clone(self.registry.as_ref().expect("fenced backend has a clock")),
                 ))

@@ -6,14 +6,15 @@ use tinyinference_llm::ToolCall;
 fn external_channel_origin(
     channel: &str,
     message_id: &str,
-) -> crate::security::turn_origin::AgentTurnOrigin {
-    crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+) -> crate::core::runtime::turn_origin::AgentTurnOrigin {
+    crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         channel: channel.into(),
         sender: None,
         sender_name: None,
         reply_target: "chat".into(),
         message_id: message_id.into(),
         history_key: None,
+        channel_session: None,
     }
 }
 
@@ -31,7 +32,7 @@ fn logged_channel_keeps_normalized_custom_external_provider_ids() {
 
 #[test]
 fn logged_channel_is_none_for_non_channel_origins_none_and_cron_replays() {
-    use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
     assert_eq!(logged_channel(None), None);
     assert_eq!(logged_channel(Some(&AgentTurnOrigin::Cli)), None);
@@ -66,7 +67,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
         prelude: &mut OpenHumanTurnPrelude,
         engine: &tinymemory_api::conformance::ReferenceEngine,
         thread_id: &str,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         expected_channel: Option<&str>,
     ) {
         prelude.thread_id = Some(thread_id.into());
@@ -145,7 +146,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
     };
     config.memory.conversations.enabled = true;
     std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
     crate::memory::engine::install_test_engine(&config.workspace_dir, engine.clone());
 
@@ -154,6 +155,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
         &config,
         "orchestrator",
     )
+    .await
     .expect("host");
     host.ensure_runtime_session().expect("runtime session");
     let mut prelude = host
@@ -176,7 +178,7 @@ async fn session_pre_and_post_turn_use_the_external_channel_origin_not_event_lab
     )
     .await;
 
-    use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+    use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
     log_turn(
         &mut prelude,
         &engine,
@@ -311,7 +313,10 @@ async fn deferred_memory_commit_survives_the_turn_scope_without_pinning_the_prof
                 .as_deref(),
             Some(id.as_str())
         );
-        let binding = crate::memory::engine::resolve(&config).engine().unwrap();
+        let binding = crate::memory::engine::resolve(&config)
+            .await
+            .engine()
+            .unwrap();
         binding
             .engine
             .store(StoreItem::learning(

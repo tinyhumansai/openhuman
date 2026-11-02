@@ -170,6 +170,69 @@ async fn validate_workflow_by_draft_id_checks_the_draft_graph() {
     assert_eq!(parsed["structurally_valid"], true);
 }
 
+/// A draft whose graph differs from every other handle in the call: a dangling
+/// edge makes it structurally invalid, so a tool that reads the draft reports
+/// the invalid graph while one that reads the flow or inline graph passes.
+fn invalid_draft(config: &Arc<Config>, flow_id: Option<String>) -> String {
+    ops::flows_draft_create(
+        config,
+        flow_id,
+        "Broken draft".to_string(),
+        json!({
+            "nodes": [ { "id": "t", "kind": "trigger", "name": "Manual" } ],
+            "edges": [ { "from_node": "t", "to_node": "ghost" } ]
+        }),
+        tinyflows_bus::catalog::DraftOrigin::Chat,
+    )
+    .unwrap()
+    .value
+    .id
+}
+
+#[tokio::test]
+async fn dry_run_workflow_by_draft_id_runs_the_draft_not_the_saved_flow() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let flow = ops::flows_create(&config, "Runnable".to_string(), valid_graph(), false)
+        .await
+        .unwrap()
+        .value;
+    let draft_id = invalid_draft(&config, Some(flow.id.clone()));
+
+    let tool = dry_run_workflow_tool(config.clone());
+    let result = tool
+        .execute(json!({ "draft_id": draft_id, "flow_id": flow.id }))
+        .await
+        .unwrap();
+    // The saved flow dry-runs `ok` (see the flow_id test above); only the
+    // draft's dangling edge can produce this rejection.
+    assert!(result.is_error, "{}", result.output());
+    assert!(
+        result.output().contains("Cannot dry-run an invalid graph"),
+        "{}",
+        result.output()
+    );
+}
+
+#[tokio::test]
+async fn validate_workflow_prefers_draft_id_over_an_inline_graph() {
+    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let draft_id = invalid_draft(&config, None);
+
+    let tool = validate_workflow_tool(config.clone());
+    let result = tool
+        .execute(json!({ "draft_id": draft_id, "graph": valid_graph() }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    let parsed: Value = serde_json::from_str(&result.output()).unwrap();
+    // The inline graph is valid; `ok: false` means the draft was checked.
+    assert_eq!(parsed["ok"], false, "{parsed}");
+    assert_eq!(parsed["structurally_valid"], false, "{parsed}");
+}
+
 #[tokio::test]
 async fn save_workflow_by_draft_id_persists_the_draft_graph_onto_the_flow() {
     let tmp = TempDir::new().unwrap();

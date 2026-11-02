@@ -50,7 +50,7 @@ pub(crate) struct QueueGrant {
 
 const ROWS: &[Row] = &[
     Row {
-        module: tinychannels::MODULE_ID,
+        module: "tinychannels",
         owner: "channels",
         secrets: &[],
         queues: None,
@@ -184,6 +184,8 @@ fn stream_prefixes(owner: &str) -> Vec<String> {
 fn blob_prefixes(owner: &str) -> Vec<String> {
     match owner {
         "juice" => vec![format!("{}/", tinyjuice_bus::storage::CCR_PREFIX)],
+        // The module persists scoped channel media bytes under this prefix.
+        "channels" => vec![tinychannels_bus::storage::MEDIA_BLOB_PREFIX.to_owned()],
         _ => Vec::new(),
     }
 }

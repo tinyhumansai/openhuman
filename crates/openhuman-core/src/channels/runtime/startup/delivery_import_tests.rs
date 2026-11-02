@@ -8,9 +8,6 @@ fn entry(id: &str, at: u64) -> DeliveryQueueEntry {
         id,
         ChannelOutboundIntent {
             idempotency_key: id.to_owned(),
-            channel_ref: None,
-            conversation_ref: None,
-            turn_id: None,
             channel_id: "telegram".into(),
             conversation_id: "chat-1".into(),
             reply_to_id: None,
@@ -66,7 +63,6 @@ fn legacy_state() -> Value {
         id: "done".into(),
         intent_fingerprint: "fp".into(),
         completed_at_unix_ms: now_unix_ms(),
-        receipt: None,
     };
     let stale = DeliveryTerminalResult {
         id: "old".into(),

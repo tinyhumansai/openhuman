@@ -28,16 +28,18 @@ pub(crate) fn register() {
         TOOL_SOURCE_ID,
         ToolSourcePlacement::After(ANCHOR_AFTER_SEARCH),
         |ctx| {
-            let Some(generators) = managed_generators(ctx.root_config) else {
-                log::debug!("[tinyhumans] media: no managed generators; media tools skipped");
-                return Vec::new();
-            };
-            media_tools_for_config(
-                generators,
-                ctx.root_config,
-                ctx.action_dir,
-                Arc::clone(&ctx.security.media_artifact_paths),
-            )
+            Box::pin(async move {
+                let Some(generators) = managed_generators(ctx.root_config) else {
+                    log::debug!("[tinyhumans] media: no managed generators; media tools skipped");
+                    return Vec::new();
+                };
+                media_tools_for_config(
+                    generators,
+                    ctx.root_config,
+                    ctx.action_dir,
+                    Arc::clone(&ctx.security.media_artifact_paths),
+                )
+            })
         },
     );
 }

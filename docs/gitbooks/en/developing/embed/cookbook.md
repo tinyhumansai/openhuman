@@ -80,9 +80,9 @@ Run: `cargo run -p openhuman-embed --example lean_headless`
 
 Measure retained runtime-owned agents using loopback inference and two worker threads.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements. · feature: storage-sqlite
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements. · feature: mcp,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features --features storage-sqlite`
+Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features --features mcp,storage-sqlite`
 
 ## Connect an actual MCP protocol stub over loopback
 

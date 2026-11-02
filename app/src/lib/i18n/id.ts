@@ -1663,6 +1663,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Buka di kanvas',
   'chat.flowProposal.dismiss': 'Abaikan',
   'chat.flowProposal.error': 'Alur kerja tidak dapat disimpan. Silakan coba lagi.',
+  'chat.flowProposal.versionConflict':
+    'Alur kerja ini berubah setelah usulan dibuat, jadi tidak ditimpa. Minta revisi baru.',
   'chat.flowProposal.enableError':
     'Alur kerja disimpan, tetapi tidak dapat diaktifkan. Coba lagi, atau aktifkan dari halaman Workflows.',
   'chat.flowProposal.savedConfirmation': 'Tersimpan',
@@ -3485,6 +3487,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Memuat model…',
   'composer.voiceMode': 'Mode suara',
   'composer.humanMode': 'Mode manusia',
+  'voiceNote.record': 'Rekam pesan suara',
+  'voiceNote.stop': 'Hentikan perekaman',
+  'voiceNote.discard': 'Buang pesan suara',
+  'voiceNote.send': 'Kirim pesan suara',
+  'voiceNote.recording': 'Merekam…',
+  'voiceNote.play': 'Putar pesan suara',
+  'voiceNote.pause': 'Jeda pesan suara',
+  'voiceNote.seek': 'Geser pesan suara',
+  'voiceNote.transcript': 'Transkrip',
+  'voiceNote.noTranscript': 'Transkrip tidak tersedia',
+  'voiceNote.label': 'Pesan suara {duration}',
+  'voiceNote.micDenied': 'Akses mikrofon ditolak atau tidak tersedia.',
+  'voiceNote.transcribeFailed': 'Tidak dapat mentranskripsikan pesan suara.',
+  'voiceNote.loadFailed': 'Tidak dapat memuat pesan suara ini.',
+  'voiceNote.sendFailed': 'Tidak dapat mengirim pesan suara.',
 
   // Sync budget dialog
 
@@ -5119,6 +5136,56 @@ const messages: TranslationMap = {
   'flows.nodeKind.loop': 'Loop',
 
   'settings.layout.corners.round': 'Membulat',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Diagnostik kebijakan tidak disertakan dalam core ini.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Kebijakan keamanan aktif',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Otonomi',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Hanya ruang kerja',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maksimum tindakan per jam',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Perlu persetujuan untuk risiko sedang',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blokir perintah berisiko tinggi',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Perintah yang diizinkan',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Tidak ada perintah yang diizinkan secara eksplisit.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Kebijakan',
+  'settings.approvalHistory.judgeScores':
+    'Tujuan {intent} · Dapat dibatalkan {reversible} · Eksfiltrasi {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'tersimpan di cache',
+  'settings.approvalHistory.judgeExpires': 'Berakhir {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Alat yang selalu diizinkan',
+  'keyring.settings.toolTrustDescription':
+    'Alat ini dapat dijalankan tanpa meminta persetujuan dalam cakupan keamanan ini.',
+  'keyring.settings.toolTrustLoading': 'Memuat alat yang diizinkan…',
+  'keyring.settings.toolTrustLoadFailed': 'Alat yang diizinkan gagal dimuat.',
+  'keyring.settings.toolTrustRevokeFailed': 'Izin alat ini gagal dicabut.',
+  'keyring.settings.toolTrustEmpty': 'Tidak ada alat yang selalu diizinkan.',
+  'keyring.settings.toolTrustRetry': 'Coba lagi',
+  'keyring.settings.toolTrustRevoke': 'Cabut',
+  'keyring.settings.toolTrustRevoking': 'Mencabut…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Permintaan akses keyring',
+  'keyring.operation.description':
+    'TinySecurity meminta akses ke satu item keyring. Tinjau operasi sebelum memutuskan.',
+  'keyring.operation.access': 'Akses',
+  'keyring.operation.requester': 'Diminta oleh',
+  'keyring.operation.origin': 'Asal',
+  'keyring.operation.purpose': 'Tujuan',
+  'keyring.operation.name': 'Item keyring',
+  'keyring.operation.access.read': 'Baca',
+  'keyring.operation.access.write': 'Tulis',
+  'keyring.operation.access.delete': 'Hapus',
+  'keyring.operation.allow': 'Izinkan sekali',
+  'keyring.operation.deny': 'Tolak',
+  'keyring.operation.submitting': 'Mengirim…',
+  'keyring.operation.expires': 'Permintaan berakhir dalam {seconds} dtk.',
+  'keyring.operation.error': 'Keputusan tidak dapat dikirim. Permintaan mungkin sudah kedaluwarsa.',
 };
 
 export default messages;

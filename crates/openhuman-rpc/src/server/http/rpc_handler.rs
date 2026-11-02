@@ -14,6 +14,33 @@ use crate::core_host::core::StructuredRpcError;
 use super::super::classify::{classify_failure, FailureDisposition, USAGE_BACKOFF_CLIENT_MESSAGE};
 use crate::{RpcError, RpcFailure, RpcRequest, RpcSuccess, JSONRPC_VERSION, SERVER_ERROR_CODE};
 
+/// JSON-RPC entry point during config-secret preflight. It shares normal
+/// dispatch and auth but admits only version and the operator's approval list
+/// and decision methods until the host opens `PreflightGate`.
+pub(super) async fn preflight_rpc_handler(
+    State(state): State<AppState>,
+    ctx: Option<Extension<DispatchCtx>>,
+    Extension(gate): Extension<super::super::auth::PreflightGate>,
+    Json(req): Json<RpcRequest>,
+) -> Response {
+    if gate.is_active() && !super::super::auth::preflight_rpc_method_allowed(&req.method) {
+        return (
+            StatusCode::OK,
+            Json(RpcFailure {
+                jsonrpc: JSONRPC_VERSION,
+                id: req.id,
+                error: RpcError {
+                    code: -32601,
+                    message: "Method is unavailable during startup approval preflight".into(),
+                    data: None,
+                },
+            }),
+        )
+            .into_response();
+    }
+    rpc_handler(State(state), ctx, Json(req)).await
+}
+
 /// Axum handler for JSON-RPC POST requests.
 ///
 /// This function:
@@ -37,7 +64,9 @@ pub async fn rpc_handler(
     ctx: Option<Extension<DispatchCtx>>,
     Json(req): Json<RpcRequest>,
 ) -> Response {
-    let ctx = ctx.map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx);
+    let ctx = ctx
+        .map_or_else(DispatchCtx::unbound, |Extension(ctx)| ctx)
+        .with_authenticated_user_controller();
     let id = req.id.clone();
     let method = req.method.clone();
     let started = std::time::Instant::now();

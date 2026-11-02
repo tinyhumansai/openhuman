@@ -162,15 +162,15 @@ async fn production_github_preflight_skips_expired_profile_without_mutating_cred
     .to_string();
     std::fs::write(&profiles, &raw_profile).expect("seed isolated expired profile");
 
-    let loaded =
-        crate::security::credentials::session_support::load_app_session_profile_read_only(&config)
-            .expect("read-only profile fixture should parse");
+    let loaded = crate::credentials::session_state::load_app_session_profile_read_only(&config)
+        .await
+        .expect("read-only profile fixture should parse");
     assert!(matches!(
-        crate::security::credentials::session_support::classify_session_token(
+        crate::credentials::session_state::classify_session_token(
             loaded.as_ref(),
             chrono::Utc::now()
         ),
-        crate::security::credentials::session_support::SessionTokenCheck::Expired
+        crate::credentials::session_state::SessionTokenCheck::Expired
     ));
     let connector_state_before = crate::modules::ops::state_of("tinyconnectors");
 

@@ -7,7 +7,6 @@ mod tests;
 
 mod catalog;
 mod claude_code_handlers;
-mod oauth_handlers;
 mod prompt_handlers;
 mod settings_handlers;
 
@@ -20,7 +19,6 @@ use crate::core::Outcome;
 
 pub use catalog::schemas;
 use claude_code_handlers::*;
-use oauth_handlers::*;
 use prompt_handlers::*;
 use settings_handlers::*;
 
@@ -34,11 +32,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list_models"),
         schemas("provider_auth_errors"),
         schemas("diagnostics"),
-        schemas("openai_oauth_start"),
-        schemas("openai_oauth_complete"),
-        schemas("openai_oauth_import_codex_cli"),
-        schemas("openai_oauth_status"),
-        schemas("openai_oauth_disconnect"),
         schemas("summarize"),
         schemas("prompt"),
         schemas("vision_prompt"),
@@ -84,26 +77,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("diagnostics"),
             handler: handle_inference_diagnostics,
-        },
-        RegisteredController {
-            schema: schemas("openai_oauth_start"),
-            handler: handle_inference_openai_oauth_start,
-        },
-        RegisteredController {
-            schema: schemas("openai_oauth_complete"),
-            handler: handle_inference_openai_oauth_complete,
-        },
-        RegisteredController {
-            schema: schemas("openai_oauth_import_codex_cli"),
-            handler: handle_inference_openai_oauth_import_codex_cli,
-        },
-        RegisteredController {
-            schema: schemas("openai_oauth_status"),
-            handler: handle_inference_openai_oauth_status,
-        },
-        RegisteredController {
-            schema: schemas("openai_oauth_disconnect"),
-            handler: handle_inference_openai_oauth_disconnect,
         },
         RegisteredController {
             schema: schemas("summarize"),

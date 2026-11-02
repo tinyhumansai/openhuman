@@ -1630,6 +1630,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': '캔버스에서 열기',
   'chat.flowProposal.dismiss': '닫기',
   'chat.flowProposal.error': '워크플로를 저장할 수 없습니다. 다시 시도하세요.',
+  'chat.flowProposal.versionConflict':
+    '제안이 만들어진 후 이 워크플로가 변경되어 덮어쓰지 않았습니다. 새 수정안을 요청하세요.',
   'chat.flowProposal.enableError':
     '워크플로는 저장되었지만 활성화할 수 없습니다. 다시 시도하거나 Workflows 페이지에서 활성화하세요.',
   'chat.flowProposal.savedConfirmation': '저장됨',
@@ -3421,6 +3423,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': '모델 불러오는 중…',
   'composer.voiceMode': '음성 모드',
   'composer.humanMode': '휴먼 모드',
+  'voiceNote.record': '음성 메모 녹음',
+  'voiceNote.stop': '녹음 중지',
+  'voiceNote.discard': '음성 메모 삭제',
+  'voiceNote.send': '음성 메모 보내기',
+  'voiceNote.recording': '녹음 중…',
+  'voiceNote.play': '음성 메모 재생',
+  'voiceNote.pause': '음성 메모 일시정지',
+  'voiceNote.seek': '음성 메모 탐색',
+  'voiceNote.transcript': '텍스트 변환본',
+  'voiceNote.noTranscript': '사용 가능한 텍스트 변환본이 없습니다',
+  'voiceNote.label': '음성 메모 {duration}',
+  'voiceNote.micDenied': '마이크 접근이 거부되었거나 사용할 수 없습니다.',
+  'voiceNote.transcribeFailed': '음성 메모를 텍스트로 변환하지 못했습니다.',
+  'voiceNote.loadFailed': '이 음성 메모를 불러오지 못했습니다.',
+  'voiceNote.sendFailed': '음성 메모를 보내지 못했습니다.',
 
   // Sync budget dialog
 
@@ -5025,6 +5042,53 @@ const messages: TranslationMap = {
 
   'settings.layout.contrast.subtle': '은은하게',
   'settings.layout.contrast.default': '기본값',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': '이 코어에는 정책 진단이 포함되어 있지 않습니다.',
+  'devOptions.toolPolicyDiagnostics.policy.title': '활성 보안 정책',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '자율성',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': '작업 공간만',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '시간당 최대 작업 수',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '중간 위험 작업에 승인 필요',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '고위험 명령 차단',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '허용된 명령',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': '명시적으로 허용된 명령이 없습니다.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': '정책',
+  'settings.approvalHistory.judgeScores':
+    '의도 {intent} · 되돌릴 수 있음 {reversible} · 정보 유출 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': '캐시됨',
+  'settings.approvalHistory.judgeExpires': '{time} 만료',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '항상 허용된 도구',
+  'keyring.settings.toolTrustDescription':
+    '이 보안 범위에서 이 도구들은 승인 요청 없이 실행할 수 있습니다.',
+  'keyring.settings.toolTrustLoading': '허용된 도구를 불러오는 중…',
+  'keyring.settings.toolTrustLoadFailed': '허용된 도구를 불러오지 못했습니다.',
+  'keyring.settings.toolTrustRevokeFailed': '이 도구 권한을 취소하지 못했습니다.',
+  'keyring.settings.toolTrustEmpty': '항상 허용된 도구가 없습니다.',
+  'keyring.settings.toolTrustRetry': '다시 시도',
+  'keyring.settings.toolTrustRevoke': '취소',
+  'keyring.settings.toolTrustRevoking': '취소 중…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': '키링 액세스 요청',
+  'keyring.operation.description':
+    'TinySecurity가 키링 항목 하나에 대한 액세스를 요청합니다. 결정하기 전에 작업을 확인하세요.',
+  'keyring.operation.access': '액세스',
+  'keyring.operation.requester': '요청자',
+  'keyring.operation.origin': '출처',
+  'keyring.operation.purpose': '목적',
+  'keyring.operation.name': '키링 항목',
+  'keyring.operation.access.read': '읽기',
+  'keyring.operation.access.write': '쓰기',
+  'keyring.operation.access.delete': '삭제',
+  'keyring.operation.allow': '한 번 허용',
+  'keyring.operation.deny': '거부',
+  'keyring.operation.submitting': '전송 중…',
+  'keyring.operation.expires': '요청이 {seconds}초 후 만료됩니다.',
+  'keyring.operation.error': '결정을 보내지 못했습니다. 요청이 만료되었을 수 있습니다.',
 };
 
 export default messages;

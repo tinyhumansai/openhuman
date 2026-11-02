@@ -217,3 +217,19 @@ fn the_composio_connect_row_is_dropped_when_composio_is_off() {
     assert!(!off.contains("composio_connect"), "{off}");
     assert!(off.contains("keep") && off.contains("tail"));
 }
+
+/// The rendered prompt (not just the source file) keeps the async-wait rule
+/// and the proposal turn boundary: a model told neither sleeps or re-spawns
+/// to wait for a sub-agent, or keeps building after delivering a proposal.
+#[test]
+fn rendered_prompt_keeps_the_no_wait_rule_and_the_proposal_turn_boundary() {
+    let body = build(&ctx_with(&[])).unwrap();
+    assert!(
+        body.contains("never sleep, poll or re-spawn to wait for it"),
+        "the rendered orchestrator prompt lost the no-sleep/no-poll/no-respawn rule"
+    );
+    assert!(
+        body.contains("A delivered workflow proposal ends that turn"),
+        "the rendered orchestrator prompt lost the proposal turn boundary"
+    );
+}

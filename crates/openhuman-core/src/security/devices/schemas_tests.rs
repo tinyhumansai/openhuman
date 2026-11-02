@@ -6,8 +6,9 @@ use serde_json::json;
 
 #[test]
 fn legacy_handlers_keep_their_identity_and_order() {
-    let expected: [(&str, ControllerHandler); 3] = [
+    let expected: [(&str, ControllerHandler); 4] = [
         ("create_pairing", handle_create_pairing),
+        ("import_legacy", handle_import_legacy),
         ("list", handle_list),
         ("revoke", handle_revoke),
     ];
@@ -35,6 +36,12 @@ pub(super) fn parameter_contracts() -> Vec<ControllerParamContract> {
         },
         ControllerParamContract {
             method: "devices.list",
+            required: &[],
+            optional: &[],
+            examples: vec![json!({})],
+        },
+        ControllerParamContract {
+            method: "devices.import_legacy",
             required: &[],
             optional: &[],
             examples: vec![json!({})],
@@ -169,7 +176,7 @@ async fn device_handlers_load_config_before_parsing_or_running() {
     std::fs::create_dir(tmp.path().join("config.toml")).unwrap();
     let _env = EnvVarGuard::workspace_async(tmp.path()).await;
     let entries = runtime_device_entries().await;
-    assert_eq!(entries.len(), 3, "all runtime device entries are present");
+    assert_eq!(entries.len(), 4, "all runtime device entries are present");
     let ctx = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
 
     for (method, params) in [
@@ -181,6 +188,7 @@ async fn device_handlers_load_config_before_parsing_or_running() {
             "devices.list",
             Map::from_iter([("unexpected".into(), json!({"ignored": true}))]),
         ),
+        ("devices.import_legacy", Map::new()),
         (
             "devices.revoke",
             Map::from_iter([("channel_id".into(), json!(false))]),

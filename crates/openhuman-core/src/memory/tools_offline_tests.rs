@@ -11,7 +11,7 @@ async fn queued_writes_work_without_an_available_engine_but_not_when_explicitly_
     let config = config_in(&tmp);
     assert!(!crate::memory::engine::switched_off(&config));
     assert!(
-        !crate::memory::engine::is_on(&config),
+        !crate::memory::engine::is_on(&config).await,
         "the fixture has no credential or installed engine"
     );
     let facts = CallFacts::gather(&config, None);

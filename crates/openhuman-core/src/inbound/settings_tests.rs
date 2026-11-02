@@ -181,6 +181,6 @@ fn configured_sources_lead_the_pipeline_sources() {
     // The parsed pipeline agrees: the first match wins for the source.
     let policy = resolved.pipeline.source_policy("x:mentions");
     assert_eq!(policy.weight, 50);
-    assert_eq!(policy.coalesce.unwrap().max_events, Some(20));
+    assert_eq!(policy.cadence.as_deref(), Some("instant"));
     assert_eq!(resolved.pipeline.source_policy("composio:gmail").weight, 0);
 }

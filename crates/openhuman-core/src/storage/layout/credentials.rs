@@ -1,7 +1,9 @@
-//! The credential fallback files a profile keeps beside `config.toml`.
+//! Legacy credential fallback files beside `config.toml`.
 //!
-//! `auth-profiles.json` and `http-credentials.json` are the on-disk fallbacks
-//! the credential stores use when no storage backend holds them. Under layout
+//! `http-credentials.json` is an on-disk fallback the flow credential store
+//! uses when no storage backend holds it. Auth profiles now use their own
+//! profile-local `auth-profiles/secrets.enc` document and are imported by the
+//! auth-profile store. Under layout
 //! v2 they live as encrypted secrets (`tsd.secrets`, `enc2:` ChaCha20-Poly1305,
 //! a per-scope key derived from the process master key) in the profile's
 //! `local` scope. Step 2 of the migration imports them there, verifies the
@@ -24,8 +26,8 @@ use tinystoragedrivers::secrets::SecretStore as _;
 use super::state::LayoutError;
 #[cfg(feature = "legacy-import")]
 use super::Target;
-use crate::security::credentials::http_creds::{self, STORAGE_SECRET_NAME, STORE_FILENAME};
-use crate::security::credentials::profiles::{self, PROFILES_FILENAME, PROFILES_SECRET_NAME};
+#[cfg(feature = "flows")]
+use crate::flows::http_credentials::{self, STORAGE_SECRET_NAME, STORE_FILENAME};
 #[cfg(feature = "legacy-import")]
 use crate::storage;
 
@@ -33,11 +35,13 @@ use crate::storage;
 /// to tell it from an entry below `workspace/`.
 pub const PROFILE_PREFIX: &str = "@profile/";
 
-/// (file name beside `config.toml`, secret name on the storage backend).
-pub const FILES: [(&str, &str); 2] = [
-    (PROFILES_FILENAME, PROFILES_SECRET_NAME),
-    (STORE_FILENAME, STORAGE_SECRET_NAME),
-];
+/// Legacy credential files still owned by the generic storage-layout import.
+/// Auth profiles now have a profile-local `EncryptedFileSecrets` store and
+/// are imported by `AuthProfilesStore` itself.
+#[cfg(feature = "flows")]
+pub const FILES: &[(&str, &str)] = &[(STORE_FILENAME, STORAGE_SECRET_NAME)];
+#[cfg(not(feature = "flows"))]
+pub const FILES: &[(&str, &str)] = &[];
 
 /// A credential file the import would take: a regular file beside
 /// `config.toml` holding the document its store persists. `None` otherwise
@@ -66,11 +70,10 @@ fn eligible(
             return Err(e.into());
         }
     };
-    let valid = if file == PROFILES_FILENAME {
-        profiles::is_persisted_document(&bytes)
-    } else {
-        http_creds::is_persisted_document(&bytes)
-    };
+    #[cfg(feature = "flows")]
+    let valid = http_credentials::is_persisted_document(&bytes);
+    #[cfg(not(feature = "flows"))]
+    let valid = false;
     if !valid {
         tracing::warn!(target: "openhuman::storage", file, "[layout] credential file is not a valid credential document; left in place");
         return Ok(None);
@@ -86,9 +89,9 @@ pub fn candidates(profile_dir: &Path) -> Result<Vec<String>, LayoutError> {
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
-    for (file, _) in FILES {
+    for &(file, _) in FILES {
         if eligible(profile_dir, file)?.is_some() {
-            found.push(file.to_owned());
+            found.push(file.to_string());
         }
     }
     Ok(found)
@@ -108,7 +111,7 @@ pub fn candidates(profile_dir: &Path) -> Result<Vec<String>, LayoutError> {
 #[cfg(feature = "legacy-import")]
 pub async fn import(target: &Target) -> Result<Vec<String>, LayoutError> {
     let mut files = Vec::new();
-    for (file, secret) in FILES {
+    for &(file, secret) in FILES {
         if let Some(bytes) = eligible(&target.profile_dir, file)? {
             files.push((file, secret, bytes));
         }
@@ -152,12 +155,17 @@ pub async fn import(target: &Target) -> Result<Vec<String>, LayoutError> {
             }
         }
         tracing::info!(target: "openhuman::storage", file, "[layout] credential file imported");
-        imported.push(file.to_owned());
+        imported.push(file.to_string());
     }
     drop(backend);
     Ok(imported)
 }
 
-#[cfg(all(test, feature = "legacy-import", feature = "storage-sqlite"))]
+#[cfg(all(
+    test,
+    feature = "flows",
+    feature = "legacy-import",
+    feature = "storage-sqlite"
+))]
 #[path = "credentials_tests.rs"]
 mod tests;

@@ -53,9 +53,11 @@ pub fn step_id(kind: &str, id: &str) -> String {
 /// The owner name used by module importers.
 pub const HOST_OWNER: &str = "host";
 
-/// Returns a backend whose scope handles carry `condition` on every write.
-/// Calling `for_scope_conditioned` on the wrapped backend composes the
-/// condition with any profile-level condition before opening the target.
+/// Returns a backend whose scope handles carry `condition` on every write,
+/// except collection declarations, which every driver must accept from an
+/// importer (see `claim_bound`). Calling `for_scope_conditioned` on the
+/// wrapped backend composes the condition with any profile-level condition
+/// before opening the target.
 pub(crate) fn backend_with_condition(
     backend: std::sync::Arc<dyn StorageBackend>,
     condition: WriteCondition,
@@ -82,7 +84,7 @@ impl StorageBackend for ClaimBoundBackend {
     }
 
     fn for_scope(&self, scope: &tinystoragedrivers::Scope) -> Result<Storage, StorageError> {
-        self.backend.for_scope_conditioned(scope, &self.condition)
+        super::claim_bound::claim_bound(self.backend.as_ref(), scope, &self.condition)
     }
 
     fn for_scope_conditioned(
@@ -95,7 +97,7 @@ impl StorageBackend for ClaimBoundBackend {
             .clone()
             .and(condition.clone())
             .map_err(|error| StorageError::invalid_input(error.to_string()))?;
-        self.backend.for_scope_conditioned(scope, &condition)
+        super::claim_bound::claim_bound(self.backend.as_ref(), scope, &condition)
     }
 }
 

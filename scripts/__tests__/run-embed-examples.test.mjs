@@ -57,7 +57,7 @@ test("fleet measurements retain their declared release and minimal-feature invoc
   }});
   assert.ok(calls.get("linux_fleet").includes("--release"));
   assert.ok(calls.get("linux_fleet").includes("--no-default-features"));
-  assert.equal(featureArgument(calls.get("linux_fleet")), "storage-sqlite");
+  assert.equal(featureArgument(calls.get("linux_fleet")), "mcp,storage-sqlite");
   assert.equal(calls.get("mcp").includes("--release"), false);
   assert.equal(calls.get("mcp").includes("--no-default-features"), false);
   assert.ok(featureArgument(calls.get("mcp")).split(",").includes("mcp"));
@@ -76,6 +76,6 @@ test("a forced dev profile builds release-declared measurements in the dev profi
     assert.equal(args.includes("--profile"), false);
   }
   assert.ok(calls.get("linux_fleet").includes("--no-default-features"));
-  assert.equal(featureArgument(calls.get("linux_fleet")), "storage-sqlite");
+  assert.equal(featureArgument(calls.get("linux_fleet")), "mcp,storage-sqlite");
   assert.ok(featureArgument(calls.get("mcp")).split(",").includes("mcp"));
 });

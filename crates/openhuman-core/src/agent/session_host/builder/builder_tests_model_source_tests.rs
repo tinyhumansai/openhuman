@@ -1,8 +1,8 @@
 use super::*;
 use std::sync::Arc;
 
-#[test]
-fn builder_requires_a_model_when_no_host_policy_is_installed() {
+#[tokio::test]
+async fn builder_requires_a_model_when_no_host_policy_is_installed() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config_without_inference(&tmp);
     assert!(config.default_model.is_none());

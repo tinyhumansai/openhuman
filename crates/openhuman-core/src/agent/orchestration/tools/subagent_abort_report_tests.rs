@@ -92,6 +92,9 @@ fn completed(task_id: &str) -> AgentProgress {
         output_chars: 2,
         output: "ok".into(),
         usage: None,
+        worktree_path: None,
+        changed_files: Vec::new(),
+        dirty_status: None,
         stop: None,
     }
 }

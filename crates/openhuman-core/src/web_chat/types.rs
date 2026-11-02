@@ -1,50 +1,10 @@
 //! Shared state and RPC parameter types for the web chat turn: the cached
-//! `SessionEntry`/`SessionCacheFingerprint`, in-flight/parallel turn tracking
-//! (`InFlightEntry`, `ParallelEntry`), the turn result (`WebChatTaskResult`),
-//! and the `channel.web_*` request param structs.
+//! `SessionEntry`/`SessionCacheFingerprint`, the turn result
+//! (`WebChatTaskResult`), and the `channel.web_*` request param structs.
 
 use serde::Deserialize;
-use tinyagents_harness::run_queue::QueueLane;
 
 use crate::agent::OpenHumanSessionHost;
-
-/// How a web request arriving during an active turn is handled.
-///
-/// This is a web/orchestration disposition, not queue state. Only the three
-/// variants returned by [`Self::queue_lane`] are ever inserted into TinyAgents'
-/// run queue; interrupt and parallel are resolved by `start_chat` first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum QueueMode {
-    #[default]
-    Interrupt,
-    Steer,
-    Followup,
-    Collect,
-    Parallel,
-}
-
-impl QueueMode {
-    pub(super) fn queue_lane(self) -> Option<QueueLane> {
-        match self {
-            Self::Steer => Some(QueueLane::Steer),
-            Self::Followup => Some(QueueLane::Followup),
-            Self::Collect => Some(QueueLane::Collect),
-            Self::Interrupt | Self::Parallel => None,
-        }
-    }
-}
-
-impl std::fmt::Display for QueueMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Interrupt => "interrupt",
-            Self::Steer => "steer",
-            Self::Followup => "followup",
-            Self::Collect => "collect",
-            Self::Parallel => "parallel",
-        })
-    }
-}
 
 /// All inputs that the cached `SessionEntry`'s `Agent` was built from,
 /// captured at build time. The cache-hit predicate is a single
@@ -85,38 +45,6 @@ pub(super) struct SessionEntry {
     pub(super) fingerprint: SessionCacheFingerprint,
 }
 
-#[derive(Debug)]
-pub(super) struct InFlightEntry {
-    pub(super) request_id: String,
-    /// The client that started the turn, so a teardown that no client asked
-    /// for (a lost profile lease) still resolves that client's stream.
-    pub(super) client_id: String,
-    pub(super) handle: tokio::task::JoinHandle<()>,
-    pub(super) run_queue: std::sync::Arc<
-        tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>,
-    >,
-    /// Cooperative cancellation for this turn. Cancelling it makes the turn's
-    /// `tokio::select!` arm fire and drops the in-flight turn future (which
-    /// cancels the in-flight LLM request and releases locks at a safe await
-    /// point) — a graceful alternative to the abrupt `handle.abort()`. The
-    /// handle is retained only as a hard backstop if cooperative cancellation
-    /// does not land within a grace period.
-    pub(super) cancel_token: tokio_util::sync::CancellationToken,
-}
-
-/// A concurrent, forked (`QueueMode::Parallel`) turn on a thread. Tracked in a
-/// separate lane keyed by `request_id` so any number can run alongside the
-/// primary in-flight turn without participating in interrupt/steer/queue
-/// semantics. Carries `thread_id` so cancellation-by-thread can find it.
-#[derive(Debug)]
-pub(super) struct ParallelEntry {
-    pub(super) thread_id: String,
-    /// The client that started the turn (see [`InFlightEntry::client_id`]).
-    pub(super) client_id: String,
-    pub(super) handle: tokio::task::JoinHandle<()>,
-    pub(super) cancel_token: tokio_util::sync::CancellationToken,
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct WebChatTaskResult {
     pub(super) full_response: String,
@@ -138,29 +66,25 @@ pub(super) struct WebChatTaskResult {
     /// `wait_drained` — i.e. after the bridge has seen `TurnCompleted`.
     /// `None` for a synthetic result (budget-exhausted placeholder) that
     /// never ran a bridge, or a turn that errored before completing a round.
-    pub(super) timing: Option<super::turn_timing::TurnTimingSnapshot>,
+    pub(super) timing: Option<tinychannels_bus::web::TurnTimingSnapshot>,
 }
 
-/// Per-request metadata carried alongside a chat send. Currently used by the
-/// PTT flow (Task 4 wires it to `voice::reply_speech`); other voice surfaces
-/// can populate it the same way.
-#[derive(Debug, Default, Clone)]
-pub struct ChatRequestMetadata {
-    pub speak_reply: Option<bool>,
-    pub source: Option<String>,
-    pub session_id: Option<u64>,
-    /// Resolved agent definition id driving this turn (e.g. `"orchestrator"`,
-    /// a task executor's agent). Stamped by the run entrypoint once the agent
-    /// is resolved — used purely for trace attribution (Langfuse `agent.id` /
-    /// `agent.turn:<id>` trace name), never for routing.
-    pub agent_id: Option<String>,
-}
+/// Per-request metadata carried alongside a chat send (the PTT flow, the voice
+/// notes, trace attribution); the type is the web contract's.
+pub use tinychannels_bus::web::ChatRequestMetadata;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WebChatParams {
     pub(super) client_id: String,
     pub(super) thread_id: String,
     pub(super) message: String,
+    /// Typed media refs returned for a previously persisted user row. The
+    /// trusted runner resolves these refs against that exact row at execution.
+    #[serde(default)]
+    pub(super) attachments: Vec<tinychannels_bus::ContentPart>,
+    /// Persisted user message whose opaque attachment refs accompany this turn.
+    #[serde(default)]
+    pub(super) persisted_message_id: Option<String>,
     pub(super) model_override: Option<String>,
     pub(super) temperature: Option<f64>,
     /// BCP-47 locale of the frontend UI (e.g. `ar`, `zh-CN`). When set
@@ -219,3 +143,20 @@ pub(super) struct WebCancelParams {
     #[serde(default)]
     pub(super) request_id: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct VoiceNoteStoreParams {
+    pub(super) note_id: String,
+    pub(super) audio_base64: String,
+    #[serde(default)]
+    pub(super) mime: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct VoiceNoteReadParams {
+    pub(super) note_id: String,
+}
+
+#[cfg(test)]
+#[path = "types_tests.rs"]
+mod tests;

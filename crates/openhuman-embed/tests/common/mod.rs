@@ -50,6 +50,10 @@ pub fn offline_config() -> Config {
     // but unrelated to these tests' contracts and would race the final
     // ephemeral-workspace cleanup assertion.
     config.memory.conversations.enabled = false;
+    // These tests use canned providers and do not exercise jailed tool
+    // execution. Avoid recursively inspecting host toolchain trees for local
+    // jail grants on every test turn.
+    config.runtime.local_jail.toolchain_homes = false;
     // Session-store dual writes and shadow reads are also deliberately
     // fire-and-forget; leaving them on makes their detached filesystem work
     // race the synchronous ephemeral cleanup.
@@ -269,6 +273,20 @@ pub async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> 
 /// through the generic chat-model registry.
 pub struct PointedInference;
 
+struct PointedBearerSource(Config);
+
+#[async_trait::async_trait]
+impl tinyinference_llm::providers::BearerSource for PointedBearerSource {
+    async fn current(&self) -> tinyinference_llm::Result<Option<String>> {
+        openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential(
+            &self.0,
+        )
+        .await
+        .map(|credential| Some(credential.secret().to_string()))
+        .map_err(tinyinference_llm::Error::Model)
+    }
+}
+
 impl PointedInference {
     pub fn install(base_url: &str) {
         use openhuman_embed::__host::inference_registry::{
@@ -286,12 +304,16 @@ impl PointedInference {
                 .to_string();
             // Like the hosted provider: the acting profile's own credential
             // rides as the bearer.
-            let token = openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(&request.context.config)
-                .map(|credential| credential.secret().to_string())
-                .map_err(tinyinference_llm::Error::Model)?;
-            let wire =
-                OpenAiModel::compatible_provider("EmbedTest", token, base_url.clone(), &model)
-                    .with_native_tool_calling(request.native_tool_calling);
+            let wire = OpenAiModel::compatible_provider(
+                "EmbedTest",
+                "unused-static-token",
+                base_url.clone(),
+                &model,
+            )
+            .with_bearer_source(std::sync::Arc::new(PointedBearerSource(
+                request.context.config.clone(),
+            )))
+            .with_native_tool_calling(request.native_tool_calling);
             let wire: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
                 std::sync::Arc::new(wire);
             Ok((wire, model))

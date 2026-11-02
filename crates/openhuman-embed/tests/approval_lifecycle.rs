@@ -344,11 +344,16 @@ async fn removal_reserves_ids_until_cleanup_finishes(runtime: Arc<Runtime>, scra
                             .tools(ToolScopeSpec::HostOnly),
                     )
                     .tools(move |_| {
-                        HostTurnTools::advertised(vec![Box::new(RemovalTool {
-                            barrier: tool_barrier.clone(),
-                            started: started.clone(),
-                            dropping: dropping.clone(),
-                        })])
+                        let tool_barrier = tool_barrier.clone();
+                        let started = started.clone();
+                        let dropping = dropping.clone();
+                        Box::pin(async move {
+                            HostTurnTools::advertised(vec![Box::new(RemovalTool {
+                                barrier: tool_barrier,
+                                started,
+                                dropping,
+                            })])
+                        })
                     }),
             )
             .unwrap();

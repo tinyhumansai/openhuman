@@ -86,11 +86,13 @@ async fn a_legacy_memory_selector_does_not_resolve_the_normal_engine() {
         EngineEntry {
             build: Arc::new(move |_| {
                 normal_builds_in_closure.fetch_add(1, Ordering::SeqCst);
-                Binding::Off {
-                    engine: Some(engine_id.to_owned()),
-                    endpoint: None,
-                    reason: "test engine must not be resolved by doctor options".to_owned(),
-                }
+                Box::pin(async move {
+                    Binding::Off {
+                        engine: Some(engine_id.to_owned()),
+                        endpoint: None,
+                        reason: "test engine must not be resolved by doctor options".to_owned(),
+                    }
+                }) as EngineFuture<Binding>
             }),
             free_background: None,
         },

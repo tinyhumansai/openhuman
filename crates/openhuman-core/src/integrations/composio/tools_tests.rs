@@ -6,7 +6,7 @@ use tinytools::ToolResult;
 
 /// Minimal `Arc<Config>` for the agent-tool constructors. All five
 /// composio agent tools now resolve their client per call through
-/// `resolve_composio_route(&config)` rather than holding a pre-baked
+/// `resolve_composio_route(&config).await` rather than holding a pre-baked
 /// handle, so a `Config` is sufficient to instantiate them.
 ///
 /// Config defaults set `composio.mode = "backend"` and stash a

@@ -301,6 +301,7 @@ fn resumed<'a>(prefix: &'a PrefixSnapshot, history: &'a [Message]) -> SessionSta
         history,
         raw_history: &[],
         prefix,
+        prefix_is_frozen: !prefix.messages().is_empty(),
         transcript_target: None,
         committed_turns: 1,
         resumed: true,

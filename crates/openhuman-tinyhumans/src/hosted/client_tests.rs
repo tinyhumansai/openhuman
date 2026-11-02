@@ -114,27 +114,28 @@ fn envelope_and_route_errors_keep_context() {
     assert!(err.contains("not exposed"), "{err}");
 }
 
-#[test]
-fn offline_local_session_fails_before_any_request() {
+#[tokio::test]
+async fn offline_local_session_fails_before_any_request() {
     let tmp = TempDir::new().unwrap();
     // Unroutable: a request here would fail loudly, not return the sentinel.
     let config = test_config(&tmp, "http://127.0.0.1:9");
-    store_session(&config, "desktop.test.local");
+    store_session(&config, "desktop.test.local").await;
     let err = HostedClient::from_config(&config)
+        .await
         .err()
         .expect("local refuses");
     assert_eq!(
         err,
-        openhuman_embed::__host::security::credentials::session_support::LOCAL_SESSION_BACKEND_UNAVAILABLE
+        openhuman_embed::__host::credentials::backend_credential::LOCAL_SESSION_BACKEND_UNAVAILABLE
     );
     assert!(expected_error_kind(&err).is_some());
 }
 
-#[test]
-fn missing_credential_fails_before_any_request() {
+#[tokio::test]
+async fn missing_credential_fails_before_any_request() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp, "http://127.0.0.1:9");
-    assert!(HostedClient::from_config(&config).is_err());
+    assert!(HostedClient::from_config(&config).await.is_err());
 }
 
 #[test]
@@ -197,6 +198,62 @@ async fn api_key_client_sends_x_api_key_and_maps_401() {
         )
         .unwrap_err();
     assert!(is_api_key_rejected_message(&err), "{err}");
+}
+
+#[tokio::test]
+async fn session_401_publishes_the_fingerprint_of_the_hosted_request_credential() {
+    use openhuman_embed::__host::core::events::DomainEvent;
+
+    openhuman_embed::__host::core::bus::init()
+        .await
+        .expect("initialize event bus");
+    let mut events = openhuman_embed::__host::core::bus::BUS
+        .get()
+        .expect("event bus initialized")
+        .receiver();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/teams/me/usage"))
+        .and(header("authorization", "Bearer request-session-token"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": "Invalid token"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = HostedClient::with_credential(
+        &server.uri(),
+        BackendCredential::Session("request-session-token".into()),
+    )
+    .expect("loopback endpoint");
+    let err = client
+        .finish_value(
+            "GET /teams/me/usage",
+            client.sdk().teams().get_my_usage().await,
+        )
+        .expect_err("backend rejects the session credential");
+    assert!(is_session_expired_message(&err), "{err}");
+
+    let expected_fingerprint =
+        openhuman_embed::__host::credentials::backend_credential::credential_fingerprint(
+            "request-session-token",
+        );
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            match events.recv().await {
+                Some(DomainEvent::SessionExpired {
+                    credential_fingerprint: Some(fingerprint),
+                    ..
+                }) => break fingerprint,
+                Some(_) => continue,
+                None => panic!("hosted session 401 must publish expiry"),
+            }
+        }
+    })
+    .await
+    .expect("hosted session 401 publishes an expiry event");
+    assert_eq!(event, expected_fingerprint);
 }
 
 #[test]

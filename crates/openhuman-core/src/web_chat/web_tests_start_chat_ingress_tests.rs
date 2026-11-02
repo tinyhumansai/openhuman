@@ -136,10 +136,10 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
     let recv = timeout(Duration::from_secs(20), async move {
         loop {
             let event = rx.recv().await.expect("event stream should stay open");
-            if event.event != "chat_error" {
+            if event.event_name() != "chat_error" {
                 continue;
             }
-            if event.request_id != request_id {
+            if event.context().request_id != request_id {
                 continue;
             }
             return event;
@@ -152,8 +152,16 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
     // by the dedicated `network` arm (was the generic catch-all). The key property
     // this test guards — raw transport details must never leak into the
     // user-facing copy — still holds for the new arm.
-    assert_eq!(recv.error_type.as_deref(), Some("network"));
-    let message = recv.message.unwrap_or_default();
+    let crate::web_chat::WebChannelEvent::ChatError {
+        error_type: Some(error_type),
+        message,
+        ..
+    } = recv.wire_event()
+    else {
+        panic!("expected classified chat error: {recv:?}");
+    };
+    assert_eq!(error_type, "network");
+    let message = message.as_deref().unwrap_or_default();
     assert!(
         !message.contains("error sending request for url")
             && !message.contains("internal-api.example.invalid"),
@@ -626,19 +634,21 @@ fn timeout_bound_tag_separates_the_two_harness_ceilings() {
     // budget on real work vs one call wedged against its own ceiling. Tagging
     // them alike would rebuild the conflation in the dashboard (#5804).
     assert_eq!(
-        super::super::ops::timeout_bound_tag(
+        super::super::turn_events::timeout_bound_tag(
             "run timed out: tool call for run `agent_turn` exceeded its remaining wall-clock budget (26375 ms)"
         ),
         "run_remaining"
     );
     assert_eq!(
-        super::super::ops::timeout_bound_tag(
+        super::super::turn_events::timeout_bound_tag(
             "run timed out: model call for run `abc` exceeded its per-model-call ceiling (120000 ms)"
         ),
         "per_model_call"
     );
     assert_eq!(
-        super::super::ops::timeout_bound_tag("openrouter API error (500 Internal Server Error)"),
+        super::super::turn_events::timeout_bound_tag(
+            "openrouter API error (500 Internal Server Error)"
+        ),
         "none",
         "a non-timeout error must not carry a timeout bound"
     );
@@ -664,7 +674,10 @@ fn hosted_timeout_bound_reaches_the_sentry_tag_and_keeps_the_user_class() {
         };
         let err = crate::agent::tinyagents::hosted_error::run_error_from_hosted(hosted);
         let flattened = format!("run_chat_task failed error=tinyagents harness run failed: {err}");
-        assert_eq!(super::super::ops::timeout_bound_tag(&flattened), tag);
+        assert_eq!(
+            super::super::turn_events::timeout_bound_tag(&flattened),
+            tag
+        );
         assert_eq!(
             super::super::web_errors::classify_inference_error(&flattened).error_type,
             "turn_timeout"

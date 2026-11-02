@@ -5,7 +5,7 @@
 use log::{info, warn};
 use serde_json::{json, Value};
 
-use crate::platform::socket::manager::global_socket_manager;
+use crate::platform::socket::global_socket_manager;
 
 /// Chat thread + client id the voice turn scopes as its approval / routing
 /// surface, mirroring `deliver_voice_result_to_chat`. Setting these around the
@@ -51,14 +51,16 @@ pub(super) fn deliver_voice_result_to_chat(
         "[voice-harness] delivering deferred result to chat correlation={correlation_id} chars={} speak_back={allow_speak_back}",
         spoken.chars().count()
     );
-    crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-        event: "proactive_message".to_string(),
-        client_id: VOICE_CHAT_CLIENT_ID.to_string(),
-        thread_id: VOICE_CHAT_THREAD_ID.to_string(),
-        full_response: Some(spoken.to_string()),
-        success: Some(true),
-        ..Default::default()
-    });
+    crate::web_chat::publish_web_channel_event(
+        crate::web_chat::WebChannelEvent::ProactiveMessage {
+            context: crate::web_chat::event_context(VOICE_CHAT_CLIENT_ID, VOICE_CHAT_THREAD_ID, ""),
+            full_response: Some(spoken.to_string()),
+            message: None,
+            success: Some(true),
+            persisted_message_id: None,
+            parts: None,
+        },
+    );
 
     // Speak-back: push the finished answer to the renderer's LIVE voice session so
     // the agent can read it aloud. The frontend voice hook listens for `voice_speak`
@@ -66,12 +68,10 @@ pub(super) fn deliver_voice_result_to_chat(
     // session (a fast read-back turn). Skipped for read-back turns themselves to
     // avoid a loop; harmless if the call already ended (nobody is subscribed).
     if allow_speak_back {
-        crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-            event: "voice_speak".to_string(),
-            client_id: VOICE_CHAT_CLIENT_ID.to_string(),
+        crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent::VoiceSpeak {
+            context: crate::web_chat::event_context(VOICE_CHAT_CLIENT_ID, "", ""),
             full_response: Some(spoken.to_string()),
             success: Some(true),
-            ..Default::default()
         });
     }
 }
@@ -91,16 +91,18 @@ pub(super) fn deliver_voice_failure_to_chat(correlation_id: &str) {
     info!(
         "[voice-harness] delivering deferred failure notice to chat correlation={correlation_id}"
     );
-    crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-        event: "proactive_message".to_string(),
-        client_id: VOICE_CHAT_CLIENT_ID.to_string(),
-        thread_id: VOICE_CHAT_THREAD_ID.to_string(),
-        full_response: Some(
-            "Sorry — I couldn't finish that request just now. Please try again.".to_string(),
-        ),
-        success: Some(false),
-        ..Default::default()
-    });
+    crate::web_chat::publish_web_channel_event(
+        crate::web_chat::WebChannelEvent::ProactiveMessage {
+            context: crate::web_chat::event_context(VOICE_CHAT_CLIENT_ID, VOICE_CHAT_THREAD_ID, ""),
+            full_response: Some(
+                "Sorry — I couldn't finish that request just now. Please try again.".to_string(),
+            ),
+            message: None,
+            success: Some(false),
+            persisted_message_id: None,
+            parts: None,
+        },
+    );
 }
 
 pub(super) async fn emit_event(event: &str, payload: Value) {

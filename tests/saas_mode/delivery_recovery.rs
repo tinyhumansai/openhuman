@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use openhuman_core::profiles::{ProfileId, ProfileIdMode};
+use openhuman_core::profiles::{ProfileId, ProfileIdMode, ProfileLayout};
 use tinyagents_tasks::{
     CompletionRecord, CompletionResult, CompletionStatus, CompletionStore, DriverCompletionStore,
     NotifyMode,
@@ -121,10 +121,11 @@ fn seed_thread(node: &Node, user: &str) {
 /// completion queue.
 fn leave_undelivered_result(d: &Deployment, user: &str) {
     let id = ProfileId::for_user(user, ProfileIdMode::Raw).unwrap();
-    // The operator's storage backend, in the profile's own scope: the node
-    // installs the configured `storage_url` process-wide, so that is where the
-    // running core keeps (and looks for) every profile's completion queue.
+    let workspace = ProfileLayout::new(&d.root, &id).workspace_dir;
+    // SaaS nodes default to one deployment database with profile-scoped
+    // collections; seed the same backend that ProfileHost reads on restart.
     let url = format!("sqlite:{}/saas-storage.db", d.tmp.path().display());
+    std::fs::create_dir_all(workspace.join(openhuman_core::storage::config::DEFAULT_DIR)).unwrap();
     let backend = openhuman_core::storage::block_on_anyhow(async move {
         Ok(openhuman_core::storage::open(&url).await?)
     })

@@ -371,6 +371,7 @@ include!("spawn_subagent_preflight.rs");
 include!("spawn_subagent_host_impl.rs");
 include!("spawn_subagent_request.rs");
 include!("spawn_subagent_projection.rs");
+include!("spawn_subagent_workflow.rs");
 
 /// Format the user-facing acceptance text around a structured async sub-agent reference.
 ///
@@ -464,99 +465,6 @@ fn durable_task_key_source(
     }
 }
 
-/// Scan a finished child's history for the LAST `workflow_proposal` tool
-/// result (the workflow_builder's `propose_workflow` / `revise_workflow` /
-/// `edit_workflow` all return `{"type":"workflow_proposal", ...}` JSON).
-/// Returns the parsed payload, or `None` when the run produced no proposal.
-/// Lives here (not in `flows`) so the always-on orchestration path has no
-/// dependency on the feature-gated flows domain — it is a generic scan for a
-/// structured tool payload.
-pub(crate) fn extract_workflow_proposal_from_history(
-    history: &[TranscriptMessage],
-) -> Option<serde_json::Value> {
-    history
-        .iter()
-        .rev()
-        .filter(|message| message.role == "tool")
-        .find_map(|message| {
-            let value: serde_json::Value = serde_json::from_str(message.content.trim()).ok()?;
-            (value.get("type").and_then(|t| t.as_str()) == Some("workflow_proposal"))
-                .then_some(value)
-        })
-}
-
-/// Durably surface a workflow proposal found in a finished child's history:
-/// persist it as a parent-thread conversation message (metadata carries the
-/// full payload so the UI can rehydrate the proposal card after reload) and
-/// append a `[workflow_proposal]` envelope to the delivery summary so the
-/// follow-up turn presents it faithfully. Returns the (possibly extended)
-/// summary; on any persistence error the summary still carries the envelope —
-/// losing durability must not lose delivery.
-fn attach_workflow_proposal(
-    ctx: &DispatchCtx,
-    workspace_dir: &std::path::Path,
-    parent_thread_id: Option<&str>,
-    task_id: &str,
-    agent_id: &str,
-    final_history: &[TranscriptMessage],
-    summary: String,
-) -> String {
-    let Some(proposal) = extract_workflow_proposal_from_history(final_history) else {
-        return summary;
-    };
-    let proposal_json = match serde_json::to_string(&proposal) {
-        Ok(json) => json,
-        Err(err) => {
-            log::warn!(
-                "[spawn_subagent] workflow proposal re-serialize failed task_id={task_id} error={err}"
-            );
-            return summary;
-        }
-    };
-    let name = proposal
-        .get("name")
-        .and_then(|n| n.as_str())
-        .unwrap_or("Untitled workflow");
-    log::info!(
-        "[spawn_subagent] extracted workflow proposal '{name}' task_id={task_id} \
-         ({} chars) — persisting to parent thread {:?}",
-        proposal_json.len(),
-        parent_thread_id
-    );
-    if let Some(thread_id) = parent_thread_id {
-        let persisted = conversations::append_message(
-            ctx,
-            workspace_dir.to_path_buf(),
-            thread_id,
-            ConversationMessage {
-                id: format!("workflow-proposal:{task_id}"),
-                content: format!("Workflow proposal ready: {name}"),
-                message_type: "text".to_string(),
-                extra_metadata: json!({
-                    "scope": "workflow_proposal",
-                    "proposal": proposal,
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                }),
-                sender: "agent".to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-            },
-        );
-        if let Err(err) = persisted {
-            log::warn!(
-                "[spawn_subagent] workflow proposal persistence failed \
-                 thread_id={thread_id} task_id={task_id} error={err} — proposal still \
-                 rides the delivery notice"
-            );
-        }
-    }
-    format!(
-        "{summary}\n\n[workflow_proposal]\n{proposal_json}\n[/workflow_proposal]\n\
-         (The full proposal above was also saved to the chat thread; present it to the \
-         user for review — do not re-run the builder unless they ask for changes.)"
-    )
-}
-
 fn reusable_follow_up_message(prompt: &str, context: Option<&str>) -> String {
     let mut message = String::from("[Follow-up instruction for reusable sub-agent]\n");
     if let Some(context) = context.map(str::trim).filter(|s| !s.is_empty()) {
@@ -576,3 +484,7 @@ mod tests;
 #[cfg(test)]
 #[path = "spawn_subagent_tests.rs"]
 mod surface_tests;
+
+#[cfg(all(test, feature = "flows"))]
+#[path = "spawn_subagent_proposal_tests.rs"]
+mod proposal_tests;

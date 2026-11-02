@@ -59,6 +59,22 @@ the live state it renders changes, but never from integrations the session has
 not read yet. A prompt that fails to render, or a recorded prompt of unknown
 extent, keeps the recorded prompt. The recorded tool list is unaffected.
 
+An agent whose definition sets `memory_block` ends its system prompt with
+what long-term memory knows about the user, a `<memory>` … `</memory>`
+system message after every static prompt byte
+(`runtime_session/memory_block.rs`). The block belongs to the frozen prefix,
+so it is rendered only when a transcript generation starts: a new thread, a
+resumed thread recorded without one, a turn whose prefix changes anyway (a
+replaced prompt, a changed permanent-tool catalogue), and the first turn of a
+generation that carried its parent's block over unchanged (an in-turn or
+out-of-band compaction). Every other turn re-sends the recorded block
+verbatim. The block is excluded from the "did the prompt change" comparison
+like the catalogue, so a memory change alone never seals a generation or adds
+the note. Code that opens a generation outside a turn can put a fresh block
+into the successor's prefix with
+`OpenHumanSessionHost::memory_block_for_new_generation` and
+`memory_block::with_memory_block`; without it the next turn renders one.
+
 Compaction never erases history. It seals the current generation and opens
 the next one, recording the sealed generation as the new one's parent; the
 sealed file stays on disk. TinyAgents owns the generation chain and its

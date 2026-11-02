@@ -8,6 +8,13 @@ PDF rendering; OpenHuman calls it through the shared bus contract.
 
 ## Intake and durable references
 
+Clients send attachments as typed `ContentPart`s in the `attachments` param of
+`channel.web_chat`, `threads.message_append` and `threads.edit_message`
+(`parts.rs`, `fold_into_message`). Parts carry an inline `data:` URI or an http(s)
+url; local paths and non-media parts are refused. The RPC edge renders them into
+the marker grammar below once, so the marker is an internal staging format and
+no client splices it into message text.
+
 Web chat stages `[FILE:…]` and `[IMAGE:…]` sources before prompt scanning,
 history, memory, or queue persistence. `threads.message_append` also stages user
 uploads before writing a durable conversation row and removes upload bytes,
@@ -72,6 +79,19 @@ type and source representation. Unknown model capabilities do not imply
 multimodal support. Uploaded local references are read under policy and encoded
 for that request; the durable reference and original file remain unchanged. A
 native PDF follows this path without calling TinyDocs.
+
+A turn's spend budget and physical-dispatch admission sit beneath this
+wrapper, directly above the provider (`inference/host_controls.rs`). The turn
+models are built with an empty control slot that the turn fills once it is
+admitted, so the budget admits the request after attachments are rendered,
+not the raw image or document block. Image readouts are charged to the same
+ledger: one conservative call reservation, settled from the readout's measured
+usage, and admitted by the same dispatch policy. TinyInference's budgeted model
+admits text only, so while a monetary budget is active the wrapper treats every
+modality as unsupported natively: vision-capable models receive the image
+readout and document-capable models the extracted text instead of native media.
+Restoring native media under a budget needs a per-item media cost in
+TinyInference's budget admission.
 
 Factory-created models receive the scoped runtime configuration. Callers that
 inject a model use `SessionHostBuilder::chat_model_with_config` to bind the same

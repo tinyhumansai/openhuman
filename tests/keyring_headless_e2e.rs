@@ -1,5 +1,5 @@
-//! A headless core persists both secret slots and config ciphertext across
-//! process restarts with explicit encrypted storage, without an OS provider or key injection.
+//! A headless core persists secret slots across process restarts with explicit
+//! encrypted storage, without an OS provider or key injection.
 
 use openhuman_core::security::secret_storage;
 use std::process::Command;
@@ -13,27 +13,14 @@ fn headless_core_reuses_its_workspace_key_after_restart() {
         secret_storage::init_master_key().unwrap();
         assert_eq!(secret_storage::backend_name(), "encrypted_file");
         assert!(secret_storage::is_available());
-        let config_secrets = secret_storage::SecretStore::new(&workspace, true);
-        let ciphertext_path = workspace.join("config-secret.txt");
         if stage == "write" {
             secret_storage::set("test-user", "token", "persisted-token").unwrap();
-            std::fs::write(
-                &ciphertext_path,
-                config_secrets.encrypt("config-secret").unwrap(),
-            )
-            .unwrap();
         } else {
             assert_eq!(
                 secret_storage::get("test-user", "token")
                     .unwrap()
                     .as_deref(),
                 Some("persisted-token")
-            );
-            let ciphertext = std::fs::read_to_string(&ciphertext_path).unwrap();
-            assert!(ciphertext.starts_with("enc2:"));
-            assert_eq!(
-                config_secrets.decrypt(&ciphertext).unwrap(),
-                "config-secret"
             );
         }
         return;

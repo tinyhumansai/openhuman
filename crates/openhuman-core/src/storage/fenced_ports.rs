@@ -47,10 +47,21 @@ async fn classify_driver_refusal<T>(
     }
 }
 
-pub(super) fn wrap(storage: Storage, fence: Arc<LeaseFence>, clock: Arc<FenceRegistry>) -> Storage {
+/// `storage` guarded by `fence`. Collection declarations go through
+/// `declarations`, a handle without the lease's driver condition: a
+/// declaration is idempotent schema metadata, and drivers disagree on
+/// whether a conditioned handle may make one (MongoDB refuses, #8422). They
+/// still pass the fence's local lease check first.
+pub(super) fn wrap(
+    storage: Storage,
+    declarations: Arc<dyn DocumentStore>,
+    fence: Arc<LeaseFence>,
+    clock: Arc<FenceRegistry>,
+) -> Storage {
     Storage::new(
         Arc::new(GuardedDocuments {
             inner: Arc::clone(storage.documents()),
+            declarations,
             fence: Arc::clone(&fence),
             clock: Arc::clone(&clock),
         }),
@@ -80,6 +91,8 @@ pub(super) fn wrap(storage: Storage, fence: Arc<LeaseFence>, clock: Arc<FenceReg
 
 struct GuardedDocuments {
     inner: Arc<dyn DocumentStore>,
+    /// Collection declarations only, without the lease's driver condition.
+    declarations: Arc<dyn DocumentStore>,
     fence: Arc<LeaseFence>,
     clock: Arc<FenceRegistry>,
 }
@@ -99,14 +112,14 @@ impl DocumentStore for GuardedDocuments {
     async fn ensure_collection(&self, s: &CollectionSpec) -> Result<()> {
         check(&self.fence, &self.clock)?;
         classify_driver_refusal(
-            self.inner.ensure_collection(s).await,
+            self.declarations.ensure_collection(s).await,
             &self.fence,
             &self.clock,
         )
         .await
     }
     async fn validate_collection_spec(&self, s: &CollectionSpec) -> Result<()> {
-        self.inner.validate_collection_spec(s).await
+        self.declarations.validate_collection_spec(s).await
     }
     async fn get(&self, c: &str, id: &str) -> Result<Option<Versioned<Value>>> {
         self.inner.get(c, id).await

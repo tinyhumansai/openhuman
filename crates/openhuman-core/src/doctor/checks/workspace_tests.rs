@@ -196,7 +196,9 @@ async fn workspace_without_write_mode_bits_reports_effective_writability() {
         .find(|finding| finding.check_id == "workspace/writable")
         .expect("native workspace check produces a finding");
     assert_eq!(finding.severity, expected_severity);
-    assert_eq!(finding.config_path.as_deref(), Some("workspace_dir"));
+    // A passing probe (root writing past the mode bits) names no config key.
+    let expected_path = (expected_severity != FindingSeverity::Pass).then_some("workspace_dir");
+    assert_eq!(finding.config_path.as_deref(), expected_path);
     let serialized = serde_json::to_string(&report).expect("serialize doctor report");
     assert!(
         !serialized.contains(PRIVATE_WORKSPACE_MARKER),

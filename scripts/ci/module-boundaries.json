@@ -128,21 +128,6 @@
   "pendingContracts": [],
   "exceptions": [
     {
-      "scope": "tinychannels-bus",
-      "package": "anyhow",
-      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
-    },
-    {
-      "scope": "tinychannels-bus",
-      "package": "async-trait",
-      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
-    },
-    {
-      "scope": "tinychannels-bus",
-      "package": "tokio",
-      "reason": "tinychannels-bus (vendor/tinychannels) still carries a provider trait with async-trait/anyhow/tokio::sync; the contract needs to be split upstream in tinyhumansai/tinychannels before this edge can go (tracked under #7523)."
-    },
-    {
       "scope": "tinyconnectors-bus",
       "package": "hmac",
       "reason": "TinyConnectors #72 adds optional pure Composio webhook verification helpers to the bus contract for hosts that own the endpoint; this edge is enabled only by its opt-in webhook feature and is recorded for contract-boundary review."
@@ -156,6 +141,12 @@
       "scope": "tinyflows-bus",
       "package": "chrono",
       "reason": "tinyflows-bus schedule contract v3 carries the job, run and schedule records (CronJob, CronRun, Schedule, DeliveryConfig, ...) with their DateTime<Utc> fields so hosts redeclare none of them. chrono is time arithmetic and RFC3339 serde only, with no I/O or runtime; the schedule maths themselves (cron expressions, time zones) run in the module. Recorded for contract-boundary review (tinyflows#143, openhuman cron cutover #7397)."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyflows",
+      "parent": "openhuman",
+      "reason": "OpenHuman still uses TinyFlows graph types and compatibility helpers in the flows and run projection adapters while its implementation remains behind tinyflows-bus. Moving the remaining adapter surface and legacy import path is part of the openhuman core shrink tracked in #7390 (including the cron importer decision in #8055)."
     }
   ],
   "excludedSubsystems": [

@@ -200,12 +200,10 @@ pub(super) fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
 /// metadata-only rule in CLAUDE.md), so no secrets / PII leave the core.
 pub(super) fn publish_cron_user_error(kind: &str) {
     tracing::debug!("[cron] action=surface_user_error kind={kind}");
-    crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-        event: "user_error".to_string(),
-        client_id: "system".to_string(),
+    crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent::UserError {
+        context: crate::web_chat::event_context("system", "", ""),
         error_type: Some(kind.to_string()),
         error_source: Some("cron".to_string()),
-        ..Default::default()
     });
 }
 

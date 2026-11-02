@@ -211,6 +211,42 @@ pub(super) async fn finalize_committed_turn(
     let commit_started = std::time::Instant::now();
     // The turn's own context, taken before the receipt is dropped.
     let dispatch = receipt.options.context.dispatch_ctx();
+    if !receipt.options.context.native_staged_parts.is_empty() {
+        if let Some(message_id) = receipt.options.context.native_message_id.as_deref() {
+            if let Some(user) =
+                tinyagents_harness::summarization::last_user_message(&receipt.outcome.history)
+            {
+                let committed = crate::threads::attachments::native_parts_in_committed_message(
+                    &receipt.options.context.native_staged_parts,
+                    user,
+                );
+                if !committed.is_empty() {
+                    let thread_id = receipt
+                        .options
+                        .context
+                        .thread_id
+                        .as_deref()
+                        .unwrap_or_default();
+                    match crate::threads::attachments::commit_native_channel_parts(
+                        &dispatch, thread_id, &committed, message_id,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            if let Some(lease) =
+                                receipt.options.context.native_staged_lease.as_ref()
+                            {
+                                lease.mark_committed();
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!("[session-runtime] native attachment claim failed after commit: {error}");
+                        }
+                    }
+                }
+            }
+        }
+    }
     let output = receipt.outcome.output.clone().unwrap_or_default();
     // Skips compaction checkpoints (user-role, not the user's words).
     let input = tinyagents_harness::summarization::last_user_message(&receipt.outcome.history)

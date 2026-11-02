@@ -279,7 +279,7 @@ fn classifies_offline_local_session_refusal_as_backend_unavailable() {
     // Sentry 36649 — 5.5k events: hosted RPCs (`team_get_usage`,
     // `announcements_get_latest`, `billing_*`) invoked under the offline
     // local credential. The refusal must classify as expected.
-    let msg = crate::security::credentials::session_support::LOCAL_SESSION_BACKEND_UNAVAILABLE;
+    let msg = crate::credentials::backend_credential::LOCAL_SESSION_BACKEND_UNAVAILABLE;
     assert!(matches!(
         expected_error_kind(msg),
         Some(ExpectedErrorKind::BackendUnavailable)

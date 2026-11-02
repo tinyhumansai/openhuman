@@ -164,7 +164,7 @@ fn live_test_provider_controller() -> BoundRegisteredController {
 }
 
 fn run_live_providers(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
-    Box::pin(async move { to_value(ops::live_providers(&config).value) })
+    Box::pin(async move { to_value(ops::live_providers(&config).await.value) })
 }
 
 fn run_live_settings_get(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {

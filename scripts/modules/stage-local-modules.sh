@@ -25,15 +25,30 @@ stage_release_module() {
   if ! compgen -G "$dir/*.$ext" >/dev/null; then
     echo "Downloading the checksum-pinned ${id} test module ..." >&2
     mkdir -p "$dir"
-    curl --fail --location --silent --show-error "$url" --output "$archive"
+    # Callers run this in $(...), where errexit does not apply: a failed
+    # download or digest check must stop here, never fall through to tar.
+    curl --fail --location --silent --show-error "$url" --output "$archive" || return 1
     if command -v shasum >/dev/null 2>&1; then
-      echo "${sha}  $archive" | shasum -a 256 -c >&2
+      echo "${sha}  $archive" | shasum -a 256 -c >&2 || { rm -f "$archive"; return 1; }
     else
-      echo "${sha}  $archive" | sha256sum --check >&2
+      echo "${sha}  $archive" | sha256sum --check >&2 || { rm -f "$archive"; return 1; }
     fi
     tar --no-same-owner -xzf "$archive" -C "$dir"
   fi
   printf '%s\n' "$dir"
+}
+
+# stage_release_artifact <id> <host-platform> <ext>; prints the staged module
+# library itself, for tests that load a module by file rather than through
+# OPENHUMAN_MODULE_PATH.
+stage_release_artifact() {
+  local id="$1" dir
+  dir="$(stage_release_module "$id" "$2" "$3")" || return 1
+  if [ "$3" = "dll" ]; then
+    printf '%s\n' "$dir/${id}_module.dll"
+  else
+    printf '%s\n' "$dir/lib${id}_module.$3"
+  fi
 }
 
 # stage_source_modules <id>... : build from the pinned submodules into the

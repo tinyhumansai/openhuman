@@ -47,6 +47,7 @@ fn meta(agent: &str, agent_type: &str) -> TranscriptMeta {
         updated: "2026-10-15T00:00:00Z".into(),
         turn_count: 1,
         prefix_message_count: None,
+        prefix_reset: false,
         input_tokens: 0,
         output_tokens: 0,
         cached_input_tokens: 0,
@@ -84,7 +85,8 @@ async fn write_thread(ctx: &DispatchCtx) {
         .locator();
     let root_meta = meta("orchestrator", "root");
     let turn = vec![
-        TranscriptMessage::user("hello"),
+        TranscriptMessage::user("Current Date & Time: today\n\nhello"),
+        TranscriptMessage::assistant("Let me think through that."),
         TranscriptMessage::assistant("hi there"),
     ];
     locator
@@ -119,6 +121,207 @@ async fn write_thread(ctx: &DispatchCtx) {
             tools: None,
         })
         .unwrap();
+}
+
+#[tokio::test]
+async fn transcript_projection_includes_voice_metadata_from_persisted_thread_rows() {
+    use crate::threads::store::{blocking, ConversationMessage, CreateConversationThread};
+    use serde_json::json;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_for(dir.path(), None);
+    let workspace = dir.path().to_path_buf();
+    blocking::ensure_thread(
+        ctx.clone(),
+        workspace.clone(),
+        CreateConversationThread {
+            id: THREAD.into(),
+            title: "Voice notes".into(),
+            created_at: "2026-10-15T00:00:00Z".into(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+            working_dir: None,
+        },
+    )
+    .await
+    .unwrap();
+    for (id, content, sender, note_id, request_id) in [
+        (
+            "user-voice",
+            "hello",
+            "user",
+            Some("recording-1"),
+            Some("req-1"),
+        ),
+        (
+            "assistant-voice",
+            "hi there",
+            "agent",
+            Some("reply-1"),
+            Some("req-1"),
+        ),
+        ("user-plain", "hello", "user", None, Some("req-2")),
+        ("assistant-plain", "hi again", "agent", None, Some("req-2")),
+    ] {
+        blocking::append_message(
+            ctx.clone(),
+            workspace.clone(),
+            THREAD.into(),
+            ConversationMessage {
+                id: id.into(),
+                content: content.into(),
+                message_type: "text".into(),
+                extra_metadata: {
+                    let mut metadata = json!({});
+                    if let Some(note_id) = note_id {
+                        metadata["voiceNote"] = json!({"noteId": note_id, "durationMs": 5000});
+                    }
+                    if let Some(request_id) = request_id {
+                        metadata["requestId"] = json!(request_id);
+                    }
+                    metadata
+                },
+                sender: sender.into(),
+                created_at: "2026-10-15T00:00:02Z".into(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    write_thread(&ctx).await;
+    let locator = super::super::support::transcript_store(&ctx, THREAD)
+        .await
+        .unwrap()
+        .locator();
+    let root_meta = meta("orchestrator", "root");
+    let decorated_user = "Current Date & Time: today\n\nhello";
+    let prior = vec![
+        TranscriptMessage::user(decorated_user),
+        TranscriptMessage::assistant("Let me think through that."),
+        TranscriptMessage::assistant("hi there"),
+    ];
+    let complete = vec![
+        TranscriptMessage::user(decorated_user),
+        TranscriptMessage::assistant("Let me think through that."),
+        TranscriptMessage::assistant("hi there"),
+        TranscriptMessage::user("hello"),
+        TranscriptMessage::assistant("hi again"),
+    ];
+    locator
+        .open_session(
+            &SessionRef::scoped(THREAD, "orchestrator"),
+            root_meta.clone(),
+        )
+        .unwrap()
+        .append_turn(TranscriptTurn {
+            prev: &prior,
+            next: &complete,
+            meta: &root_meta,
+            turn_usage: Some(&usage(100, 10)),
+            request_id: Some("req-2"),
+            tools: None,
+        })
+        .unwrap();
+
+    let page = transcript_get(
+        &ctx,
+        TranscriptGetRequest {
+            thread_id: THREAD.into(),
+            cursor: None,
+            limit: None,
+        },
+    )
+    .await
+    .unwrap()
+    .value
+    .data
+    .unwrap();
+    let voice_user = page.items.iter().find_map(|item| match item {
+        tinyagents_session::transcript::view::DisplayItem::UserMessage {
+            content,
+            request_id,
+            extra_metadata,
+            ..
+        } if content == decorated_user && request_id.as_deref() == Some("req-1") => {
+            extra_metadata.as_ref()
+        }
+        _ => None,
+    });
+    let plain_duplicate_user = page.items.iter().find_map(|item| match item {
+        tinyagents_session::transcript::view::DisplayItem::UserMessage {
+            content,
+            request_id,
+            extra_metadata,
+            ..
+        } if content == "hello" && request_id.as_deref() == Some("req-2") => {
+            extra_metadata.as_ref()
+        }
+        _ => None,
+    });
+    let assistant = page.items.iter().find_map(|item| match item {
+        tinyagents_session::transcript::view::DisplayItem::AssistantMessage {
+            content,
+            extra_metadata,
+            ..
+        } if content == "hi there" => extra_metadata.as_ref(),
+        _ => None,
+    });
+    let narration = page.items.iter().find_map(|item| match item {
+        tinyagents_session::transcript::view::DisplayItem::AssistantMessage {
+            content,
+            extra_metadata,
+            ..
+        } if content == "Let me think through that." => extra_metadata.as_ref(),
+        _ => None,
+    });
+    assert_eq!(
+        voice_user.and_then(|value| value.pointer("/voiceNote/noteId")),
+        Some(&json!("recording-1"))
+    );
+    assert!(plain_duplicate_user.is_none_or(|value| value.get("voiceNote").is_none()));
+    assert_eq!(
+        assistant.and_then(|value| value.pointer("/voiceNote/noteId")),
+        Some(&json!("reply-1"))
+    );
+    assert!(narration.is_none_or(|value| value.get("voiceNote").is_none()));
+    let mut cursor = None;
+    let mut voice_reply_on_its_page = false;
+    loop {
+        let page = transcript_get(
+            &ctx,
+            TranscriptGetRequest {
+                thread_id: THREAD.into(),
+                cursor,
+                limit: Some(1),
+            },
+        )
+        .await
+        .unwrap()
+        .value
+        .data
+        .unwrap();
+        voice_reply_on_its_page |= page.items.iter().any(|item| {
+            matches!(
+                item,
+                tinyagents_session::transcript::view::DisplayItem::AssistantMessage {
+                    content,
+                    request_id,
+                    extra_metadata: Some(metadata),
+                    ..
+                } if content == "hi there" && request_id.as_deref() == Some("req-1")
+                    && metadata.pointer("/voiceNote/noteId") == Some(&json!("reply-1"))
+            )
+        });
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(
+        voice_reply_on_its_page,
+        "voice metadata survives paging to its assistant row"
+    );
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@ import {
 } from '../../../components/assistant-ui/elements/todo-list';
 import { useDisclosure } from '../../../components/assistant-ui/lib/useDisclosure';
 import { useT } from '../../../lib/i18n/I18nContext';
-import type { CoreTodoStatus } from '../../../store/threadTodosSlice';
+import type { TodoItem as CoreTodoItemWire } from '../../../types/threadWire.generated';
 
 /**
  * Adapts the core wire shape of a `todo` tool call — `{content, status,
@@ -33,13 +33,7 @@ export function mapCoreTodoStatus(status: unknown): TodoStatus {
   }
 }
 
-interface CoreTodoItem {
-  content?: unknown;
-  status?: unknown;
-  reason?: unknown;
-}
-
-function isCoreTodoItem(value: unknown): value is CoreTodoItem {
+function isCoreTodoItem(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
@@ -65,7 +59,7 @@ export function toAuiTodoItems(raw: unknown): TodoItem[] {
 
 /** Args/result shape the core sends for the `todo` tool call. */
 interface TodoToolArgs {
-  todos?: Array<{ content: string; status: CoreTodoStatus }>;
+  todos?: Array<Pick<CoreTodoItemWire, 'content' | 'status'>>;
 }
 
 /**

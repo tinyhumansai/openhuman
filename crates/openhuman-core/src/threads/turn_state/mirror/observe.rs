@@ -5,8 +5,8 @@
 //! `tinyagents_session::turn_state::TurnStateMirror`; this is the host-side
 //! progress projection over it.
 
-use crate::progress::AgentProgress;
 use crate::threads::turn_state::rpc_types::persisted_tool_failure;
+use tinyagents_harness::progress::AgentProgress;
 
 use tinyagents_session::turn_state::mirror::caps::{cap_persisted_args, cap_persisted_output};
 use tinyagents_session::turn_state::types::{

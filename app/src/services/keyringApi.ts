@@ -24,3 +24,14 @@ export const retryKeyringProbe = async (): Promise<KeyringStatus> => {
   });
   return response.result;
 };
+
+/** Resolve one exact TinySecurity keyring operation waiting for host approval. */
+export const respondToKeyringOperation = async (
+  requestId: string,
+  approved: boolean
+): Promise<void> => {
+  await callCoreRpc({
+    method: 'openhuman.keyring_consent_respond_operation',
+    params: { request_id: requestId, approved },
+  });
+};

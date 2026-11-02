@@ -1,55 +1,58 @@
-//! Web/desktop channel turn runner.
+//! Web/desktop channel host.
 //!
-//! Drives a chat turn from a Socket.IO `chat:start` event (or an inbound
-//! `channels/` provider message) through the agent harness to a delivered,
-//! durably-persisted reply: `start_chat` (`ops/start_chat.rs`) validates and
-//! preprocesses the message, applies the queue mode against the thread's
-//! in-flight state, and spawns `run_task::run_chat_task` under the cancel
-//! token / idle guard / wall-clock backstop / approval-context hand-off
-//! (`run_turn_under_cancel_and_deadline`, `ops/turn_guards.rs`). `run_chat_task`
-//! resolves or builds the cached session `Agent` (`session.rs`), spawns
-//! `spawn_progress_bridge` alongside the run, and returns the result; the
-//! spawning task then hands an `Ok` to `presentation::deliver_response`,
-//! which persists the reply (`reply_persistence.rs`) before announcing it,
-//! and an `Err` to `web_errors::classify_inference_error`. Exposes the
-//! `channel.web_*` RPC namespace (`schemas.rs`) and the `WebChannelEvent`
-//! broadcast bus (`event_bus.rs`) that both Socket.IO and the JSON-RPC
-//! `/events` SSE stream consume. See `README.md` for the full lifecycle and
-//! wiring.
+//! A thin host over two shared engines. TinyAgents' turn runner owns the
+//! lifecycle of a chat turn (ingress order, per-thread serialization, the
+//! queue modes, cancellation, the idle and wall-clock guards, reply
+//! persistence, one terminal event), and TinyChannels' compiled web module owns
+//! the projection of a turn's output onto the web wire. This module is what
+//! only OpenHuman can supply: the ports the runner calls (`ingress.rs`,
+//! `turn_host.rs`, `turn_events.rs`, state in `runner.rs`), the session
+//! checkout and fingerprint (`session.rs`), the single progress projection and
+//! its ledger, turn-state and tracing side effects (`progress*.rs`), reply
+//! delivery and persistence (`presentation.rs`, `reply_persistence.rs`), error
+//! copy (`web_errors*`), the surface subscribers on the domain bus
+//! (`event_bus.rs`) and the `channel.web_*` RPC (`schemas.rs`). See `README.md`
+//! for the lifecycle and wiring.
 //!
-//! Submodules: `ops*.rs` (request surface, session/in-flight state),
-//! `run_task.rs` (turn execution), `session.rs` (agent build/fingerprint),
-//! `progress_bridge.rs` (progress → socket event bridge), `turn_activity.rs`
-//! (per-turn inactivity record behind the idle guard), `presentation.rs`
-//! (reply delivery), `reply_persistence.rs` (durable reply write),
-//! `event_bus.rs` (broadcast + `DomainEvent` surface subscribers),
-//! `web_errors*.rs` (provider error classification), `schemas.rs` (RPC
-//! contract), `types.rs` (shared param/state types).
+//! The wire types are `tinychannels-bus`'s. OpenHuman adds only a host-private
+//! routing envelope around those typed events for its process-wide bus.
 
 mod channel_event;
+pub(crate) use channel_event::event_context;
 pub(crate) mod citations;
 mod egress_surface;
 mod event_bus;
 mod event_bus_channel;
+pub(crate) mod failure_details;
+mod ingress;
 mod ops;
+pub(crate) mod proactive;
 // Response delivery/segmentation for the web surface (folded in from the former
 // standalone `presentation` provider — it is the web channel's delivery formatter).
 pub mod presentation;
-pub(crate) mod progress_bridge;
+pub(crate) mod progress;
+mod progress_ledger;
+mod progress_map;
 mod reply_persistence;
 pub(crate) use reply_persistence::persist_delivered_reply;
-mod run_task;
+mod runner;
 mod schemas;
 mod session;
 mod suggestions;
+mod surface;
+pub(crate) use surface::{Surface, TurnIds};
 mod turn_activity;
 mod turn_close;
+mod turn_events;
 pub(crate) mod turn_guards;
-mod turn_timing;
+mod turn_host;
 mod types;
 
+mod voice_notes;
 mod web_errors;
-pub(crate) use web_errors::classify_inference_error;
+pub(crate) use web_errors::{
+    classify_inference_error, turn_idle_error_message, turn_timeout_error_message,
+};
 #[cfg(any(test, debug_assertions))]
 #[allow(unused_imports)]
 pub(crate) use web_errors::{
@@ -59,8 +62,9 @@ pub(crate) use web_errors::{
 
 // Public API — event bus
 pub use channel_event::{
-    ChatSuggestion, GuardrailPayload, GuardrailReason, QueueItemPayload, SubagentProgressDetail,
-    SubagentUsagePayload, TurnTimingPayload, TurnUsagePayload, WebChannelEvent,
+    ChatSuggestion, GuardrailPayload, GuardrailReason, QueueItemPayload, ScopedWebEvent,
+    SubagentProgressDetail, SubagentUsagePayload, TurnTimingPayload, TurnUsagePayload,
+    WebChannelEvent, WebEventContext,
 };
 pub use citations::{TurnCitation, TURN_CITATION_SNIPPET_CHARS};
 pub use egress_surface::register_egress_surface_subscriber;
@@ -70,7 +74,7 @@ pub use event_bus::{
     register_approval_surface_subscriber, register_artifact_surface_subscriber,
     register_memory_activity_surface_subscriber, subscribe_web_channel_events,
 };
-pub use progress_bridge::unix_epoch_ms;
+pub use progress::unix_epoch_ms;
 
 // Test-only: OnceLock-bypassing approval bridge for per-runtime integration tests.
 // Compiled only in debug builds so it cannot be linked into a release binary.
@@ -78,6 +82,7 @@ pub use progress_bridge::unix_epoch_ms;
 pub use event_bus::fresh_approval_surface_subscription;
 
 // Public API — operations
+pub(crate) use ops::channel_web_chat_with_stored_attachments;
 #[cfg(test)]
 pub use ops::drain_queued_turns_for_test;
 pub(crate) use ops::invalidate_thread_sessions_for_tenant;
@@ -93,6 +98,8 @@ pub use ops::{
     in_flight_entries_for_test, invalidate_thread_sessions, run_system_turn_on_thread, start_chat,
     StartChatError, SESSION_CHECKOUT_FAILURE, SYSTEM_CLIENT_ID,
 };
+#[cfg(test)]
+pub(crate) use ops::{last_run_chat_task_error_for_test, set_last_run_chat_task_error_for_test};
 pub use types::ChatRequestMetadata;
 
 // Public API — schemas / controllers
@@ -101,14 +108,14 @@ pub use schemas::{
 };
 
 // Helpers re-exported for tests
-#[cfg(any(test, debug_assertions))]
-#[allow(unused_imports)]
-pub(crate) use ops::sentry_suppression_reason;
 pub(crate) use ops::{event_session_id_for, key_for};
 #[cfg(test)]
 pub(crate) use ops::{key_in, unscope_in};
 #[cfg(feature = "flows")]
-pub(crate) use progress_bridge::spawn_progress_bridge;
+pub(crate) use progress::spawn_progress_bridge;
+#[cfg(any(test, debug_assertions))]
+#[allow(unused_imports)]
+pub(crate) use turn_events::sentry_suppression_reason;
 
 // Schema field helpers + session/error helpers re-exported for the `web_tests`
 // integration module (they moved into submodules during the module split but

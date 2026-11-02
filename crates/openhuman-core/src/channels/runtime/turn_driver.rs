@@ -52,7 +52,7 @@ pub(crate) async fn run_channel_turn(
     multimodal: MultimodalConfig,
     multimodal_files: MultimodalFileConfig,
     on_progress: Option<Sender<AgentProgress>>,
-    origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     sandbox_mode: tinyagents_definition::SandboxMode,
     approval: crate::security::approval::ApprovalTurnContext,
     memory_identity: tinymemory_tools::layout::identity::Identity,
@@ -84,7 +84,9 @@ pub(crate) async fn run_channel_turn(
     // Phase 3 / Motion A): the turn seam names crate model types only, and
     // reads native-tool / vision capability + telemetry id off the built bundle.
     let context_window = source.effective_context_window(model).await;
-    let turn_models = source.build(model, temperature, context_window, None)?;
+    let turn_models = source
+        .build(model, temperature, context_window, None)
+        .await?;
 
     // Native-tool support drives the durable history-suffix dispatcher (native
     // envelope vs prompt-guided text) at the end of this turn; capture it before
@@ -115,9 +117,12 @@ pub(crate) async fn run_channel_turn(
             let scope = crate::attachments::AttachmentAccessScope {
                 external_channel: matches!(
                     origin.as_ref(),
-                    Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                    Some(
+                        crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. }
+                    )
                 ),
                 workspace: workspace.clone(),
+                ..Default::default()
             };
             row.content =
                 crate::attachments::stage(&row.content, "channel", config, &scope).await?;

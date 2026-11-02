@@ -1091,7 +1091,10 @@ test("offline examples build in the dev profile so no release artifacts need cle
   for (const plan of plans()) {
     const lint = plan.lanes.find((lane) => lane.name === "rust-lint");
     const examples = lint.checks.find((c) => c.name === "embed-offline-examples");
-    assert.equal(examples.run, "node scripts/run-embed-examples.mjs --profile dev");
+    assert.equal(
+      examples.run,
+      "set -a && . ci-out/test-modules.env && set +a && node scripts/run-embed-examples.mjs --profile dev",
+    );
     assert.equal(
       lint.checks.some((c) => c.name === "release-example-cleanup"),
       false,
@@ -1100,6 +1103,17 @@ test("offline examples build in the dev profile so no release artifacts need cle
       lint.checks.some((c) => /cargo clean|--release/.test(c.run)),
       false,
     );
+  }
+});
+
+test("offline embed examples install staged modules in their own rust-lint job", () => {
+  for (const plan of plans()) {
+    const lint = plan.lanes.find((lane) => lane.name === "rust-lint");
+    const install = lint.checks.find((check) => check.name === "install-test-modules");
+    const examples = lint.checks.find((check) => check.name === "embed-offline-examples");
+    assert.ok(install, `${plan.profile} rust-lint must provision its module artifacts`);
+    assert.match(install.run, /install-test-modules\.sh/);
+    assert.deepEqual(examples.needs, ["install-test-modules"]);
   }
 });
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::security::secret_storage::file_store;
 use std::sync::Mutex;
 
 #[derive(Default)]
@@ -62,6 +63,34 @@ fn host_key_write_requires_matching_readback() {
         .unwrap_err()
         .to_string()
         .contains("verification failed"));
+}
+
+#[test]
+fn master_key_file_read_is_limited_to_4096_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("master.key");
+    std::fs::write(&path, vec![b'a'; 4096]).unwrap();
+    assert_eq!(read_master_key_file(&path).unwrap().len(), 4096);
+
+    std::fs::write(&path, vec![b'a'; 4097]).unwrap();
+    assert!(read_master_key_file(&path)
+        .unwrap_err()
+        .contains("4096-byte limit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn master_key_file_rejects_fifo_without_waiting_for_a_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("master-key.fifo");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .expect("mkfifo is available on Unix test hosts");
+    assert!(status.success());
+
+    let error = read_master_key_file(&path).unwrap_err();
+    assert!(error.contains("regular file"));
 }
 
 #[test]

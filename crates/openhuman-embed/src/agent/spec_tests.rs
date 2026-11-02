@@ -58,3 +58,15 @@ fn composio_credential_is_carried_to_the_build_step_and_kept_out_of_debug() {
     assert_eq!(credential.api_key(), "ck_secret_alpha");
     assert_eq!(credential.entity(), "tenant-a");
 }
+
+#[test]
+fn a_memory_binding_recalls_each_turn_only_when_asked() {
+    let binding = MemoryBinding::new("writer").root("team:acme");
+    assert_eq!(binding.recall_each_turn_timeout(), None);
+    let binding = binding.recall_each_turn(std::time::Duration::from_millis(1_500));
+    assert_eq!(
+        binding.recall_each_turn_timeout(),
+        Some(std::time::Duration::from_millis(1_500))
+    );
+    assert_eq!(binding.root_namespace(), Some("team:acme"));
+}

@@ -115,6 +115,7 @@ async fn setup_direct_config(base: &str) -> Harness {
 #[tokio::test]
 async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_execute() {
     let _lock = env_lock_async().await;
+    let _storage = crate::HostStorage::install(&_lock);
     invalidate_connected_integrations_cache();
 
     let state = MockState::default();
@@ -234,7 +235,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
             panic!("direct loopback integrations should be authoritative")
         }
     }
-    assert!(cached_active_integrations(&harness.config).is_some());
+    assert!(cached_active_integrations(&harness.config).await.is_some());
 
     let requests = state.requests.lock().expect("requests").clone();
     assert!(requests.iter().all(|request| {

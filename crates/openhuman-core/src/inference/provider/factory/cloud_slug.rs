@@ -2,19 +2,18 @@
 //! abstract-tier remapping, credentials, codex routing) and the crate-native builders.
 
 use super::{
-    access_gates::enforce_local_only_inference, cloud_spec, credentials::CredentialAccess,
-    local_runtime::OptionalChatModelResult, managed_backend::managed_chat_model_for,
-    openai_bearer_is_oauth, provider_for_role, redact_endpoint_origin, resolve_codex_routing,
-    InspectionOutputBudgetCapability, BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PREFIX,
-    CLAUDE_AGENT_SDK_PROVIDER, PROVIDER_OPENHUMAN,
+    access_gates::enforce_local_only_inference,
+    cloud_spec,
+    credentials::{CredentialAccess, RuntimeCredentialSnapshot},
+    local_runtime::OptionalChatModelResult,
+    managed_backend::managed_chat_model_for,
+    provider_for_role, redact_endpoint_origin, InspectionOutputBudgetCapability,
+    BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PREFIX, CLAUDE_AGENT_SDK_PROVIDER,
+    PROVIDER_OPENHUMAN,
 };
 use crate::config::ops::resolve_primary_cloud_provider_string;
 use crate::config::schema::cloud_providers::AuthStyle;
 use crate::config::Config;
-#[cfg(not(test))]
-use crate::inference::provider::factory::access_gates::verify_backend_session_active;
-#[cfg(not(test))]
-use crate::inference::provider::factory::access_gates::verify_session_active;
 use crate::inference::provider::fallback_diagnostics;
 use crate::inference::provider::openai_codex::resolve_openai_codex_routing_for_inspection;
 use crate::security::egress::EgressLedger;
@@ -60,23 +59,6 @@ pub(super) fn inspection_output_budget_capability(
     }
 }
 
-pub(crate) fn resolve_cloud_slug_for<'a>(
-    role: &str,
-    slug: &str,
-    model: &str,
-    config: &'a Config,
-    extensions: Option<&crate::core::slots::Extensions>,
-) -> anyhow::Result<CloudSlugResolution<'a>> {
-    resolve_cloud_slug_with_access(
-        role,
-        slug,
-        model,
-        config,
-        extensions,
-        CredentialAccess::Runtime,
-    )
-}
-
 /// The user-facing error for a failed credential lookup: the guidance, plus
 /// the expiry signal when the lookup reported one. The doctor's
 /// refresh-required check and the Codex reconnect classifier key on those
@@ -107,7 +89,8 @@ pub(super) fn resolve_cloud_slug_with_access<'a>(
     model: &str,
     config: &'a Config,
     extensions: Option<&crate::core::slots::Extensions>,
-    credential_access: CredentialAccess,
+    credential_access: CredentialAccess<'_>,
+    inspection_credential: Option<&super::credentials::ReadOnlyCloudCredential>,
 ) -> anyhow::Result<CloudSlugResolution<'a>> {
     let entry = config.cloud_providers.iter().find(|e| e.slug == slug);
 
@@ -240,24 +223,26 @@ pub(super) fn resolve_cloud_slug_with_access<'a>(
         )
     };
 
-    let (key, bearer_is_oauth, oauth_account_id) = if credential_access
-        == CredentialAccess::Inspection
-        && entry.auth_style == AuthStyle::OpenhumanJwt
-    {
-        // The managed model constructor receives its credential later, on
-        // invoke. Its hosted construction callback is config-only and offline.
-        (String::new(), false, None)
-    } else if credential_access == CredentialAccess::Inspection {
-        let credential = super::credentials::lookup_key_for_slug_read_only(slug, config)
-            .map_err(|error| lookup_failure(&error, missing_credentials()))?;
-        (credential.key, credential.is_oauth, credential.account_id)
-    } else {
-        let key = credential_access
-            .lookup_key_for_slug(slug, config)
-            .map_err(|error| lookup_failure(&error, missing_credentials()))?;
-        let is_oauth = slug == "openai" && credential_access.openai_bearer_is_oauth(config);
-        (key, is_oauth, None)
-    };
+    let (key, bearer_is_oauth, oauth_account_id) =
+        if credential_access.is_inspection() && entry.auth_style == AuthStyle::OpenhumanJwt {
+            // The managed model constructor receives its credential later, on
+            // invoke. Its hosted construction callback is config-only and offline.
+            (String::new(), false, None)
+        } else if credential_access.is_inspection() {
+            let credential = inspection_credential
+                .ok_or_else(|| anyhow::anyhow!("inspection credential was not pre-resolved"))?;
+            (
+                credential.key.clone(),
+                credential.is_oauth,
+                credential.account_id.clone(),
+            )
+        } else {
+            let key = credential_access
+                .lookup_key_for_slug(slug)
+                .map_err(|error| lookup_failure(&error, missing_credentials()))?;
+            let is_oauth = slug == "openai" && credential_access.openai_bearer_is_oauth();
+            (key, is_oauth, None)
+        };
 
     // A readable auth profile with no key for this slug returns `Ok("")`, which
     // would otherwise build a client with an empty bearer and surface as a raw
@@ -272,18 +257,16 @@ pub(super) fn resolve_cloud_slug_with_access<'a>(
     // Styles that carry no stored key (`OpenhumanJwt` injects a session JWT
     // downstream, `None` sends no auth header at all) are legitimately blank and
     // never trip this.
-    if (implicit_fallback || credential_access == CredentialAccess::Inspection)
+    if (implicit_fallback || credential_access.is_inspection())
         && key.trim().is_empty()
         && matches!(entry.auth_style, AuthStyle::Bearer | AuthStyle::Anthropic)
     {
         anyhow::bail!("{}", missing_credentials());
     }
     let codex = match credential_access {
-        CredentialAccess::Runtime => {
-            let bearer_is_oauth = slug == "openai" && openai_bearer_is_oauth(config);
-            resolve_codex_routing(config, slug, &entry.endpoint, &key, bearer_is_oauth)
-                .map_err(anyhow::Error::msg)?
-        }
+        CredentialAccess::Runtime(snapshot) => snapshot
+            .codex_routing(slug, &entry.endpoint, &key)
+            .map_err(anyhow::Error::msg)?,
         CredentialAccess::Inspection => resolve_openai_codex_routing_for_inspection(
             slug,
             &entry.endpoint,
@@ -324,22 +307,26 @@ pub(super) fn resolve_cloud_slug_with_access<'a>(
 /// `ModelRequest` (managed/local parity; the `@<temp>` suffix still bakes a fixed
 /// override).
 #[cfg(test)]
-pub(super) fn try_create_cloud_slug_chat_model(
+pub(super) async fn try_create_cloud_slug_chat_model(
     role: &str,
     config: &Config,
     egress: &EgressLedger,
 ) -> OptionalChatModelResult {
     let extensions = crate::core::runtime::CoreContext::current_extensions();
-    try_create_cloud_slug_chat_model_with_native_tools_for(
+    try_create_cloud_slug_chat_model_with_native_tools_and_access(
         role,
         config,
         true,
         egress,
         extensions.as_ref(),
+        CredentialAccess::Runtime(&RuntimeCredentialSnapshot::default()),
+        None,
+        None,
     )
+    .await
 }
 
-pub(super) fn try_create_cloud_slug_chat_model_with_native_tools_for(
+pub(super) async fn try_create_cloud_slug_chat_model_with_native_tools_for(
     role: &str,
     config: &Config,
     native_tool_calling: bool,
@@ -352,12 +339,14 @@ pub(super) fn try_create_cloud_slug_chat_model_with_native_tools_for(
         native_tool_calling,
         egress,
         extensions,
-        CredentialAccess::Runtime,
+        CredentialAccess::Runtime(&RuntimeCredentialSnapshot::default()),
+        None,
         None,
     )
+    .await
 }
 
-pub(super) fn try_create_cloud_slug_chat_model_for_inspection_with_identity(
+pub(super) async fn try_create_cloud_slug_chat_model_for_inspection_with_identity(
     role: &str,
     config: &Config,
     extensions: Option<&crate::core::slots::Extensions>,
@@ -367,6 +356,22 @@ pub(super) fn try_create_cloud_slug_chat_model_for_inspection_with_identity(
     if resolved.trim().is_empty() || resolved.trim() == "cloud" {
         resolved = resolve_primary_cloud_provider_string(config);
     }
+    let inspection_credential = if let Some((slug, _)) = resolved.split_once(':') {
+        let entry = config
+            .cloud_providers
+            .iter()
+            .find(|entry| entry.slug == slug.trim());
+        if entry.is_some_and(|entry| entry.auth_style != AuthStyle::OpenhumanJwt) {
+            match super::credentials::lookup_key_for_slug_read_only(slug.trim(), config).await {
+                Ok(credential) => Some(credential),
+                Err(error) => return Some(Err(error)),
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let result = try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         role,
         &resolved,
@@ -375,8 +380,10 @@ pub(super) fn try_create_cloud_slug_chat_model_for_inspection_with_identity(
         &EgressLedger::none(),
         extensions,
         CredentialAccess::Inspection,
+        inspection_credential.as_ref(),
         Some(&mut identity),
-    )?;
+    )
+    .await?;
     Some(result.and_then(|(model, model_id)| {
         let (endpoint, credential, wire_model, output_budget) = identity.ok_or_else(|| {
             anyhow::anyhow!("inspection route did not expose its frozen wire identity")
@@ -388,13 +395,14 @@ pub(super) fn try_create_cloud_slug_chat_model_for_inspection_with_identity(
     }))
 }
 
-fn try_create_cloud_slug_chat_model_with_native_tools_and_access(
+pub(super) async fn try_create_cloud_slug_chat_model_with_native_tools_and_access(
     role: &str,
     config: &Config,
     native_tool_calling: bool,
     egress: &EgressLedger,
     extensions: Option<&crate::core::slots::Extensions>,
-    credential_access: CredentialAccess,
+    credential_access: CredentialAccess<'_>,
+    inspection_credential: Option<&super::credentials::ReadOnlyCloudCredential>,
     inspection_identity: Option<
         &mut Option<(String, String, String, InspectionOutputBudgetCapability)>,
     >,
@@ -413,11 +421,13 @@ fn try_create_cloud_slug_chat_model_with_native_tools_and_access(
         egress,
         extensions,
         credential_access,
+        inspection_credential,
         inspection_identity,
     )
+    .await
 }
 
-pub(super) fn try_create_cloud_slug_chat_model_from_string(
+pub(super) async fn try_create_cloud_slug_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
@@ -426,9 +436,10 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string(
     try_create_cloud_slug_chat_model_from_string_with_native_tools(
         role, provider, config, true, egress,
     )
+    .await
 }
 
-pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
+pub(super) async fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
     role: &str,
     provider: &str,
     config: &Config,
@@ -443,12 +454,14 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools(
         native_tool_calling,
         egress,
         extensions.as_ref(),
-        CredentialAccess::Runtime,
+        CredentialAccess::Runtime(&RuntimeCredentialSnapshot::default()),
+        None,
         None,
     )
+    .await
 }
 
-pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for(
+pub(super) async fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for(
     role: &str,
     provider: &str,
     config: &Config,
@@ -463,19 +476,22 @@ pub(super) fn try_create_cloud_slug_chat_model_from_string_with_native_tools_for
         native_tool_calling,
         egress,
         extensions,
-        CredentialAccess::Runtime,
+        CredentialAccess::Runtime(&RuntimeCredentialSnapshot::default()),
+        None,
         None,
     )
+    .await
 }
 
-fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
+pub(super) async fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
     role: &str,
     provider: &str,
     config: &Config,
     native_tool_calling: bool,
     egress: &EgressLedger,
     extensions: Option<&crate::core::slots::Extensions>,
-    credential_access: CredentialAccess,
+    credential_access: CredentialAccess<'_>,
+    inspection_credential: Option<&super::credentials::ReadOnlyCloudCredential>,
     mut inspection_identity: Option<
         &mut Option<(String, String, String, InspectionOutputBudgetCapability)>,
     >,
@@ -509,9 +525,9 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
     if let Err(e) = enforce_local_only_inference(role, &p) {
         return Some(Err(e));
     }
-    if credential_access == CredentialAccess::Runtime {
+    if let CredentialAccess::Runtime(snapshot) = credential_access {
         #[cfg(not(test))]
-        if let Err(e) = verify_session_active(config) {
+        if let Err(e) = super::access_gates::verify_session_active_with_snapshot(config, snapshot) {
             return Some(Err(e));
         }
     }
@@ -528,6 +544,7 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
         config,
         extensions,
         credential_access,
+        inspection_credential,
     ) {
         Ok(r) => r,
         Err(e) => return Some(Err(e)),
@@ -580,16 +597,18 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
                 extensions, style,
             ) =>
         {
-            if credential_access == CredentialAccess::Runtime {
+            if let CredentialAccess::Runtime(snapshot) = credential_access {
                 #[cfg(not(test))]
-                if let Err(error) = verify_backend_session_active(config) {
-                    return Some(Err(error));
+                if !snapshot.backend_session_active() {
+                    return Some(Err(anyhow::anyhow!(
+                        "SESSION_EXPIRED: no backend session — sign in to use OpenHuman"
+                    )));
                 }
             }
             let model_override =
                 (!effective_model.trim().is_empty()).then_some(effective_model.as_str());
             return Some(match credential_access {
-                CredentialAccess::Runtime => managed_chat_model_for(
+                CredentialAccess::Runtime(_) => managed_chat_model_for(
                     extensions,
                     role,
                     config,
@@ -605,7 +624,9 @@ fn try_create_cloud_slug_chat_model_from_string_with_native_tools_and_access(
                         role,
                         config,
                         model_override,
-                    ) {
+                    )
+                    .await
+                    {
                         Ok(build) => {
                             if let Some(identity) = inspection_identity.as_deref_mut() {
                                 *identity = Some((

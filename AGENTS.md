@@ -455,7 +455,7 @@ sandboxing, timeouts, and progress events.
   `include_user_skills(true)`.
 - Library mode has no user login: the runtime's API key rides managed
   inference as `Authorization: Bearer` and backend REST as `x-api-key`
-  (`security::credentials::api_key`, `session_support::BackendCredential`).
+  (`credentials::api_key`, `session_state::BackendCredential`).
   Every backend caller resolves its credential through
   `resolve_backend_credential` (or `backend_bearer_secret` for bearer-only
   seams), never `get_session_token`, so the key covers integrations, voice,
@@ -468,7 +468,7 @@ sandboxing, timeouts, and progress events.
   need a signed-in user.
 - The core never obtains, validates, exchanges or refreshes a credential.
   It takes one — a session JWT, an API key, or the offline local token —
-  through `auth.set_credential` (`security::credentials::ops::credential`)
+  through `auth.set_credential` (`credentials::ops::credential`)
   and does only what it owns with it: user-dir activation, gated services,
   the scheduler gate, Sentry and prompt identity. Login-token exchange,
   `GET /auth/me` and the current-user cache belong to the host's session
@@ -599,6 +599,7 @@ Direct rendered submodules under `vendor/`:
 | `tinymemory` | Engine-neutral memory contracts, operations, and providers. Its nested TinyCortex submodule owns the TinyCortex memory engine. |
 | `tinystoragedrivers` | Storage ports, drivers (sqlite/file/mongodb/s3), secrets, storage bus contract; every module's tsd dependency is patched onto this checkout. |
 | `tinysearch` | Web-search module, provider dispatch, tool declarations, and execution behind its TinyBus contract. |
+| `tinysecurity` | Security decisions exposed by `tinysecurity-bus`: command and path policy, approval lifecycle and trust, action budgets, redaction and scans, privacy and egress, sandbox planning, audit, keyring and secret crypto, and device pairing. OpenHuman owns configuration translation, host callbacks, the approval surface, and execution orchestration. |
 | `tinyskills` | Host-independent skill/workflow bundle parsing, discovery, scope resolution, resource inventory, and safe reads. OpenHuman owns trust and execution policy. |
 | `tinyvoice` | Host-agnostic voice primitives such as audio framing, VAD, wake-word gating, routing, and STT hallucination detection. |
 | `tinywallet` | Multi-chain wallet: `tinywallet-crypto` (address, asset, chain, `rpc::Transport`, tx codec), `tinywallet-x402` (x402 wire, payment, spending ledger, `x402_request` tool), `tinywallet-web3` (wallet engine, per-chain build/sign/broadcast flows, swap/bridge/dapp quotes, agent tools) behind host seams (`WalletSigner`, `PaymentSigner`, `WalletAccounts`, `RpcEndpoints`, `QuoteScope`, `Web3Backend`, `ProxyPolicy`), and the loadable `tinywallet-module` that derives keys and signs. OpenHuman keeps keyring, consent, credentials, config, controllers and the seam impls under `web3/`. |
@@ -635,15 +636,17 @@ method constants, request and response types, and its contract version.
 | `tinymcp-bus` | `mcp` |
 | `tinychannels-bus` | channel vocabulary |
 | `tinyconnectors-bus` | OAuth connector (Composio) wire contract; called through `integrations/composio/module_client.rs` |
+| `tinysecurity-bus` | Security policy, approval, audit, redaction, egress, sandbox-plan, keyring, secret-cipher and device-pairing contracts; called through `modules/security/` |
 
 Rules:
 
 - Never redeclare a contract type in OpenHuman.
 - Call members through contract constants, not string literals.
 - Contract crates stay synchronous and free of I/O and runtime dependencies.
-- Shared wire vocabulary belongs in the contract. Component algorithms execute
-  in the compiled module. Runtime, config, and security
-  policy stay in the host.
+- Shared wire vocabulary belongs in the contract. Component algorithms and
+  security decisions execute in the compiled module. Runtime configuration,
+  host callbacks, user interaction, and external-effect execution stay in the
+  host.
 - Test the handwritten registry metadata against each contract's bus name and
   object path.
 - Initialize recursive submodules before building: `git submodule update

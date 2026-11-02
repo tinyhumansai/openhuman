@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-#[cfg(feature = "storage-sqlite")]
 use crate::storage::block_on_anyhow;
 use crate::storage::StorageBackend;
 
@@ -132,7 +131,6 @@ impl Drop for InstalledBackendGuard {
 /// as the fixture is retained. Use it for persistence, conditional-write,
 /// fence, and import-claim tests; the TSD memory backend does not emulate those
 /// capabilities.
-#[cfg(feature = "storage-sqlite")]
 pub struct SqliteBackend {
     _directory: tempfile::TempDir,
     /// The actual SQLite backend opened from [`Self::url`].
@@ -143,7 +141,6 @@ pub struct SqliteBackend {
 
 /// Opens an isolated on-disk SQLite backend for tests that need its real
 /// cross-process conditions or durable state.
-#[cfg(feature = "storage-sqlite")]
 pub fn sqlite_backend() -> anyhow::Result<SqliteBackend> {
     let directory = tempfile::tempdir()?;
     let url = format!("sqlite:{}", directory.path().join("storage").display());
@@ -152,7 +149,6 @@ pub fn sqlite_backend() -> anyhow::Result<SqliteBackend> {
 
 /// Opens a SQLite backend at `url`, retaining `directory` for the lifetime of
 /// the returned backend fixture.
-#[cfg(feature = "storage-sqlite")]
 pub fn sqlite_backend_in(
     directory: tempfile::TempDir,
     url: impl Into<String>,
@@ -167,4 +163,140 @@ pub fn sqlite_backend_in(
         backend,
         url,
     })
+}
+
+/// `inner`, but with conditioned document handles that refuse collection
+/// declarations the way MongoDB's driver does (#8422), so storage tests
+/// reproduce MongoDB without a server.
+pub(crate) fn refusing_conditioned_declarations(
+    inner: Arc<dyn StorageBackend>,
+) -> Arc<dyn StorageBackend> {
+    Arc::new(RefusesConditionedDeclarations(inner))
+}
+
+#[derive(Debug)]
+struct RefusesConditionedDeclarations(Arc<dyn StorageBackend>);
+
+impl StorageBackend for RefusesConditionedDeclarations {
+    fn capabilities(&self) -> tinystoragedrivers_types::Capabilities {
+        self.0.capabilities()
+    }
+
+    fn for_scope(
+        &self,
+        scope: &tinystoragedrivers::Scope,
+    ) -> Result<tinystoragedrivers_api::Storage, tinystoragedrivers::StorageError> {
+        self.0.for_scope(scope)
+    }
+
+    fn for_scope_conditioned(
+        &self,
+        scope: &tinystoragedrivers::Scope,
+        condition: &tinystoragedrivers::WriteCondition,
+    ) -> Result<tinystoragedrivers_api::Storage, tinystoragedrivers::StorageError> {
+        let storage = self.0.for_scope_conditioned(scope, condition)?;
+        Ok(tinystoragedrivers_api::Storage::new(
+            Arc::new(RefusingDeclarations(Arc::clone(storage.documents()))),
+            Arc::clone(storage.streams()),
+            Arc::clone(storage.kv()),
+            Arc::clone(storage.blobs()),
+            Arc::clone(storage.queues()),
+            Arc::clone(storage.secrets()),
+        ))
+    }
+}
+
+/// A conditioned document handle that refuses declarations and passes
+/// everything else through.
+#[derive(Debug)]
+struct RefusingDeclarations(Arc<dyn tinystoragedrivers_api::DocumentStore>);
+
+mod refusing_declarations {
+    use serde_json::Value;
+    use tinystoragedrivers_api::{DocumentStore, DocumentWatch};
+    use tinystoragedrivers_types::{
+        Capabilities, Capability, CollectionSpec, Filter, Page, Precondition, Query, ReadCheck,
+        Result, SearchHit, Sort, StorageError, Version, Versioned, WatchOptions, WriteOp,
+        WriteOptions, WriteResult,
+    };
+
+    #[async_trait::async_trait]
+    impl DocumentStore for super::RefusingDeclarations {
+        fn capabilities(&self) -> Capabilities {
+            self.0.capabilities()
+        }
+        async fn ensure_collection(&self, _: &CollectionSpec) -> Result<()> {
+            Err(StorageError::unsupported(
+                Capability::ConditionalWrites,
+                "conditioned MongoDB handles cannot mutate collection declarations",
+            ))
+        }
+        async fn get(&self, c: &str, id: &str) -> Result<Option<Versioned<Value>>> {
+            self.0.get(c, id).await
+        }
+        async fn put(&self, c: &str, id: &str, v: Value, p: Precondition) -> Result<Version> {
+            self.0.put(c, id, v, p).await
+        }
+        async fn put_with(
+            &self,
+            c: &str,
+            id: &str,
+            v: Value,
+            p: Precondition,
+            o: WriteOptions,
+        ) -> Result<Version> {
+            self.0.put_with(c, id, v, p, o).await
+        }
+        async fn delete(&self, c: &str, id: &str, p: Precondition) -> Result<bool> {
+            self.0.delete(c, id, p).await
+        }
+        async fn query(&self, c: &str, q: &Query) -> Result<Page<Versioned<Value>>> {
+            self.0.query(c, q).await
+        }
+        async fn count(&self, c: &str, f: &Filter) -> Result<u64> {
+            self.0.count(c, f).await
+        }
+        async fn delete_where(&self, c: &str, f: &Filter) -> Result<u64> {
+            self.0.delete_where(c, f).await
+        }
+        async fn claim(
+            &self,
+            c: &str,
+            f: &Filter,
+            s: &[Sort],
+            p: &Value,
+        ) -> Result<Option<Versioned<Value>>> {
+            self.0.claim(c, f, s, p).await
+        }
+        async fn atomic_batch(&self, o: Vec<WriteOp>) -> Result<Vec<WriteResult>> {
+            self.0.atomic_batch(o).await
+        }
+        async fn atomic_batch_checked(
+            &self,
+            c: Vec<ReadCheck>,
+            o: Vec<WriteOp>,
+        ) -> Result<Vec<WriteResult>> {
+            self.0.atomic_batch_checked(c, o).await
+        }
+        async fn validate_collection_spec(&self, s: &CollectionSpec) -> Result<()> {
+            self.0.validate_collection_spec(s).await
+        }
+        async fn search(&self, c: &str, t: &str, l: usize) -> Result<Vec<SearchHit>> {
+            self.0.search(c, t, l).await
+        }
+        async fn collections(&self, p: &str) -> Result<Vec<String>> {
+            self.0.collections(p).await
+        }
+        async fn watch(
+            &self,
+            c: &str,
+            f: &Filter,
+            o: &WatchOptions,
+        ) -> Result<Box<dyn DocumentWatch>> {
+            self.0.watch(c, f, o).await
+        }
+        async fn drop_collection(&self, c: &str) -> Result<()> {
+            self.0.drop_collection(c).await
+        }
+    }
 }

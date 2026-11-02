@@ -11,6 +11,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
+
 use std::sync::Arc;
 
 use crate::core::slots::HookSlot;
@@ -18,6 +20,99 @@ use tinyinference_providers::builtin::{
     BuiltinAuthStyle, BuiltinCloudProvider as UpstreamBuiltinCloudProvider, BuiltinPresets,
     BUILTIN_CLOUD_PROVIDERS as UPSTREAM_BUILTINS,
 };
+
+/// Counters returned by [`seed_cloud_providers`] for diagnostics.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct MigrationStats {
+    pub cloud_providers_seeded: usize,
+    pub primary_cloud_set: bool,
+    pub workload_fields_filled: usize,
+}
+
+/// Preserve a custom legacy inference endpoint and select it as the primary
+/// cloud provider when no explicit provider has been configured.
+///
+/// This is idempotent and is shared by workspace initialization and the
+/// schema-version migration for existing workspaces.
+pub(crate) fn seed_cloud_providers(config: &mut Config) -> MigrationStats {
+    let mut stats = MigrationStats::default();
+    seed_legacy_custom_provider(config, &mut stats);
+    set_primary_cloud(config, &mut stats);
+    stats
+}
+
+fn seed_legacy_custom_provider(config: &mut Config, stats: &mut MigrationStats) {
+    let hosts = crate::config::enrichers::managed_hosts_for(config);
+    if let Some(raw) = config.inference_url.as_deref() {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty()
+            && !looks_like_managed_backend(&hosts, trimmed)
+            && !config.cloud_providers.iter().any(|entry| {
+                entry
+                    .endpoint
+                    .trim()
+                    .trim_end_matches('/')
+                    .eq_ignore_ascii_case(trimmed.trim_end_matches('/'))
+            })
+        {
+            let default_model = config
+                .model_routes
+                .iter()
+                .find(|route| route.hint.eq_ignore_ascii_case("reasoning"))
+                .or_else(|| config.model_routes.first())
+                .map(|route| route.model.clone())
+                .filter(|model| !model.is_empty());
+            config.cloud_providers.push(CloudProviderCreds {
+                id: generate_provider_id("custom"),
+                slug: "custom".to_string(),
+                label: "Custom".to_string(),
+                endpoint: trimmed.to_string(),
+                auth_style: AuthStyle::Bearer,
+                default_model,
+            });
+            stats.cloud_providers_seeded += 1;
+            log::info!(
+                "[migrations][unify-ai] seeded Custom cloud_providers entry from legacy \
+                 inference_url_present=true"
+            );
+        }
+    }
+}
+
+fn set_primary_cloud(config: &mut Config, stats: &mut MigrationStats) {
+    if config.primary_cloud.is_some() {
+        return;
+    }
+    let hosts = crate::config::enrichers::managed_hosts_for(config);
+    let legacy_custom = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty() && !looks_like_managed_backend(&hosts, url))
+        .and_then(|url| {
+            let normalized = url.trim_end_matches('/').to_ascii_lowercase();
+            config.cloud_providers.iter().find(|entry| {
+                entry
+                    .endpoint
+                    .trim()
+                    .trim_end_matches('/')
+                    .to_ascii_lowercase()
+                    == normalized
+            })
+        });
+    if let Some(entry) = legacy_custom {
+        config.primary_cloud = Some(entry.id.clone());
+        stats.primary_cloud_set = true;
+        log::debug!(
+            "[migrations][unify-ai] primary_cloud set to legacy custom entry id={}",
+            entry.id
+        );
+    }
+}
+
+fn looks_like_managed_backend(hosts: &[String], url: &str) -> bool {
+    crate::config::schema::resolved_endpoints::host_matches_any(url, hosts)
+}
 
 static HOSTED_PRESETS: HookSlot<BuiltinCloudProvider> =
     HookSlot::new("config::hosted_cloud_presets");
@@ -218,7 +313,7 @@ impl AuthStyle {
 /// Endpoint config for one cloud LLM provider.
 ///
 /// **Note on secrets**: API keys are NOT stored on this struct. They live in
-/// `auth-profiles.json` via `security::credentials::AuthService`,
+/// `auth-profiles.json` via `credentials::AuthService`,
 /// keyed by `provider:<slug>` (falling back to bare `<slug>` for legacy
 /// entries). The factory looks up the token at call time via
 /// `inference::provider::factory::auth_key_for_slug`.

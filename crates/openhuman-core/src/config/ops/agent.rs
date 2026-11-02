@@ -18,7 +18,7 @@ pub struct AutonomySettingsPatch {
     /// (`AutonomyConfig::enabled`): with it off, classification, the approval
     /// gate, the allowlist, the action budget and containment are all inert,
     /// and every other field in this patch has no effect until it is `true`.
-    /// `is_always_forbidden` applies either way.
+    /// TinySecurity's protected-path floor applies either way.
     pub enabled: Option<bool>,
     /// `"readonly" | "supervised" | "full"` (case-insensitive).
     pub level: Option<String>,
@@ -58,20 +58,6 @@ pub struct AgentSettingsPatch {
     /// one of [`TOOL_DISPATCHER_CHOICES`](super::tool_dispatcher::TOOL_DISPATCHER_CHOICES). `None` leaves it
     /// unchanged. Applies to new sessions; resumed threads keep their dialect.
     pub tool_dispatcher: Option<String>,
-}
-
-/// Partial update for the agent's editable filesystem roots.
-///
-/// `action_dir` (issue #3240) and the files folder (#5505) are editable.
-/// `workspace_dir` and `projects_dir` are intentionally read-only.
-#[derive(Debug, Clone, Default)]
-pub struct AgentPathsPatch {
-    /// New action sandbox root. `Some("")`/whitespace clears the override and
-    /// reverts to the default; `Some(path)` sets it; `None` leaves it unchanged.
-    pub action_dir: Option<String>,
-    /// New folder for agent deliverables. Same `Some("")` / `Some(path)` /
-    /// `None` semantics as `action_dir`. Affects new artifacts only.
-    pub files_dir: Option<String>,
 }
 
 /// Updates the `[autonomy]` (agent access mode) settings in the configuration.
@@ -147,7 +133,7 @@ pub async fn apply_autonomy_settings(
     crate::security::live_policy::reload_from(&config.autonomy);
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::AutonomyConfigChanged);
 
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -266,7 +252,7 @@ pub async fn apply_agent_settings(
         effective
     );
 
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(

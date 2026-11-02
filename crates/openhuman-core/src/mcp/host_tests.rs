@@ -25,8 +25,8 @@ fn populated_server() -> HostServer {
     }
 }
 
-#[test]
-fn declared_server_fields_and_identity_survive_conversion() {
+#[tokio::test]
+async fn declared_server_fields_and_identity_survive_conversion() {
     let mut config = Config::default();
     config.mcp_client.servers.push(populated_server());
     config.mcp_client.client_identity.name = "openhuman-core".into();
@@ -34,7 +34,7 @@ fn declared_server_fields_and_identity_survive_conversion() {
     config.mcp_client.client_identity.version = "9.9.9".into();
     config.mcp_client.registry_auth.smithery_api_key = Some("smithery".into());
 
-    let converted = client_config(&config);
+    let converted = client_config(&config).await;
     let server = converted.servers.first().expect("the server");
     assert_eq!(server.name, "weather");
     assert_eq!(server.endpoint, "https://example.test/mcp");
@@ -63,8 +63,8 @@ fn declared_server_fields_and_identity_survive_conversion() {
     );
 }
 
-#[test]
-fn every_credential_kind_converts_without_shape_changes() {
+#[tokio::test]
+async fn every_credential_kind_converts_without_shape_changes() {
     let cases = [
         McpAuthConfig::None,
         McpAuthConfig::BearerToken { token: "t".into() },
@@ -99,22 +99,22 @@ fn every_credential_kind_converts_without_shape_changes() {
         let mut server = populated_server();
         server.auth = auth.clone();
         config.mcp_client.servers.push(server);
-        assert_eq!(client_config(&config).servers[0].auth, auth);
+        assert_eq!(client_config(&config).await.servers[0].auth, auth);
     }
 }
 
-#[test]
-fn credentialed_plaintext_remote_servers_are_not_passed_to_the_module() {
+#[tokio::test]
+async fn credentialed_plaintext_remote_servers_are_not_passed_to_the_module() {
     let mut config = Config::default();
     let mut server = populated_server();
     server.endpoint = "http://remote.example.test/mcp".into();
     config.mcp_client.servers.push(server);
-    assert!(client_config(&config).servers.is_empty());
+    assert!(client_config(&config).await.servers.is_empty());
 
     let mut server = populated_server();
     server.endpoint = "http://127.0.0.1:8080/mcp".into();
     config.mcp_client.servers.push(server);
-    assert_eq!(client_config(&config).servers.len(), 1);
+    assert_eq!(client_config(&config).await.servers.len(), 1);
 }
 
 #[test]
@@ -165,14 +165,14 @@ async fn ambient_config_follows_the_explicit_context() {
 }
 
 #[cfg(feature = "modules")]
-#[test]
-fn registry_stdio_servers_get_the_host_jail_and_are_never_operator_trusted() {
+#[tokio::test]
+async fn registry_stdio_servers_get_the_host_jail_and_are_never_operator_trusted() {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.workspace_dir = tmp.path().to_path_buf();
     config.mcp_client.servers.push(populated_server());
 
-    let converted = client_config(&config);
+    let converted = client_config(&config).await;
     let sandbox = converted
         .stdio_sandbox
         .as_ref()

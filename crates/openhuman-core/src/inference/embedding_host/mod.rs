@@ -13,6 +13,7 @@
 //! - **Custom**: Any OpenAI-compatible endpoint.
 //! - **Noop**: A fallback provider for keyword-only search.
 
+mod embedding_scope;
 mod factory;
 mod rpc;
 mod schemas;

@@ -145,7 +145,7 @@ pub(super) async fn resolve_target_agent(channel: &str) -> AgentScoping {
         // A transient backend failure must preserve the last-known connected
         // integrations rather than collapse tool-calling to an empty set.
         // The credential-scoped cache has no idle-time expiry.
-        let connected = connected_with_fallback(fetched, cached_active_integrations(&config));
+        let connected = connected_with_fallback(fetched, cached_active_integrations(&config).await);
         tracing::debug!(
             channel = %channel,
             target_agent = target_id,

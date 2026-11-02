@@ -92,9 +92,7 @@ pub async fn prepare_scope(storage: &Storage, scope: &Scope) -> Result<usize, St
 /// Idempotent. (The graph owner is gone with `tinyagents-graph`.)
 async fn migrate_owners(storage: &Storage, scope: &Scope) -> Result<(), StorageError> {
     let scoped = tinyagents_storage_kit::ScopedStorage::new(storage.clone(), scope.clone());
-    tinyagents_harness::storage::open_storage(scoped)
-        .await
-        .map(|_| ())
+    tinyagents_harness::storage::migrate_storage(scoped).await
 }
 
 /// Runs the harness owner migrations on `scope` again after an

@@ -243,7 +243,7 @@ fn str_at<'a>(value: &'a Value, pointer: &str) -> &'a str {
 /// The background-tasks drawer's Cancel control remains available; the old
 /// steer RPC is no longer part of the surface.
 #[tokio::test]
-async fn subagent_steer_is_method_not_found_and_cancel_remains_available() {
+async fn subagent_steer_is_method_not_found_and_cancel_requires_a_task_id() {
     let _lock = env_lock_async().await;
     let h = setup().await;
 
@@ -253,9 +253,12 @@ async fn subagent_steer_is_method_not_found_and_cancel_remains_available() {
     assert_eq!(unknown, "unknown method: openhuman.subagent_steer");
 
     let cancel = h
-        .ok(3505, "openhuman.subagent_cancel", json!({ "taskId": "sub-not-running" }))
+        .err(3505, "openhuman.subagent_cancel", json!({}))
         .await;
-    assert_eq!(cancel.get("cancelled").and_then(Value::as_bool), Some(false));
+    assert!(
+        cancel.starts_with("missing required param 'taskId'"),
+        "the registered cancel controller validates taskId: {cancel}"
+    );
 
     h.join.abort();
 }

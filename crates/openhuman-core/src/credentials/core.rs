@@ -1,0 +1,277 @@
+use super::profiles::{
+    profile_id, AuthProfile, AuthProfileKind, AuthProfilesData, AuthProfilesStore,
+};
+use crate::config::Config;
+use anyhow::Result;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+/// Provider id for the in-app session token profile (matches desktop/web handoff).
+pub const APP_SESSION_PROVIDER: &str = "app-session";
+/// Default named profile when none is specified.
+pub const DEFAULT_AUTH_PROFILE_NAME: &str = "default";
+
+const DEFAULT_PROFILE_NAME: &str = "default";
+
+#[derive(Clone)]
+pub struct AuthService {
+    store: AuthProfilesStore,
+}
+
+impl AuthService {
+    /// Reads one profile without mutating profile state. Keyring-backed
+    /// credentials use TinySecurity's operation-scoped consent path.
+    pub async fn get_profile_read_only(
+        config: &Config,
+        provider: &str,
+        profile_override: Option<&str>,
+    ) -> Result<Option<AuthProfile>, super::profiles::ReadOnlyAuthProfileError> {
+        super::profiles::load_profile_read_only(config, provider, profile_override).await
+    }
+
+    /// Reads the selected profile's bearer without mutating profile state.
+    /// Keyring-backed credentials use TinySecurity's operation-scoped consent path.
+    pub async fn get_provider_bearer_token_read_only(
+        config: &Config,
+        provider: &str,
+        profile_override: Option<&str>,
+    ) -> Result<Option<String>, super::profiles::ReadOnlyAuthProfileError> {
+        let Some(profile) = Self::get_profile_read_only(config, provider, profile_override).await?
+        else {
+            return Ok(None);
+        };
+        let credential = match profile.kind {
+            super::profiles::AuthProfileKind::Token => profile.token,
+            super::profiles::AuthProfileKind::OAuth => {
+                profile.token_set.map(|tokens| tokens.access_token)
+            }
+        };
+        Ok(credential.filter(|token| !token.trim().is_empty()))
+    }
+
+    pub fn from_config(config: &Config) -> Self {
+        let state_dir = state_dir_from_config(config);
+        Self {
+            store: AuthProfilesStore::new_with_config(&state_dir, config.secrets.encrypt, config),
+        }
+    }
+
+    pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
+        Self {
+            store: AuthProfilesStore::new(state_dir, encrypt_secrets),
+        }
+    }
+
+    pub async fn load_profiles(&self) -> Result<AuthProfilesData> {
+        self.store.load().await
+    }
+
+    pub async fn store_provider_token(
+        &self,
+        provider: &str,
+        profile_name: &str,
+        token: &str,
+        metadata: HashMap<String, String>,
+        set_active: bool,
+    ) -> Result<AuthProfile> {
+        let provider = normalize_provider(provider)?;
+        let mut profile = AuthProfile::new_token(&provider, profile_name, token.to_string());
+        profile.metadata.extend(metadata);
+        self.store
+            .upsert_profile(profile.clone(), set_active)
+            .await?;
+        Ok(profile)
+    }
+
+    pub async fn set_active_profile(
+        &self,
+        provider: &str,
+        requested_profile: &str,
+    ) -> Result<String> {
+        let provider = normalize_provider(provider)?;
+        let data = self.store.load().await?;
+        let profile_id = resolve_requested_profile_id(&provider, requested_profile);
+
+        let profile = data
+            .profiles
+            .get(&profile_id)
+            .ok_or_else(|| anyhow::anyhow!("Auth profile not found: {profile_id}"))?;
+
+        if profile.provider != provider {
+            anyhow::bail!(
+                "Profile {profile_id} belongs to provider {}, not {}",
+                profile.provider,
+                provider
+            );
+        }
+
+        self.store
+            .set_active_profile(&provider, &profile_id)
+            .await?;
+        Ok(profile_id)
+    }
+
+    /// Removes the requested profile, trying the bare key before its
+    /// `provider:`-namespaced legacy equivalent.
+    ///
+    /// The bare key wins when both forms exist; the namespaced key is only a
+    /// fallback for profiles written by older callers.
+    pub async fn remove_profile(&self, provider: &str, requested_profile: &str) -> Result<bool> {
+        let provider = normalize_provider(provider)?;
+        let profile_id = resolve_requested_profile_id(&provider, requested_profile);
+        if self.store.remove_profile(&profile_id).await? {
+            return Ok(true);
+        }
+        if !profile_id.starts_with("provider:") {
+            let namespaced = format!("provider:{profile_id}");
+            if self.store.remove_profile(&namespaced).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub async fn get_profile(
+        &self,
+        provider: &str,
+        profile_override: Option<&str>,
+    ) -> Result<Option<AuthProfile>> {
+        let provider = normalize_provider(provider)?;
+        let data = self.store.load().await?;
+        let Some(profile_id) = select_profile_id(&data, &provider, profile_override) else {
+            return Ok(None);
+        };
+        Ok(data.profiles.get(&profile_id).cloned())
+    }
+
+    pub async fn get_provider_bearer_token(
+        &self,
+        provider: &str,
+        profile_override: Option<&str>,
+    ) -> Result<Option<String>> {
+        let profile = self.get_profile(provider, profile_override).await?;
+        let Some(profile) = profile else {
+            return Ok(None);
+        };
+
+        let credential = match profile.kind {
+            AuthProfileKind::Token => profile.token,
+            AuthProfileKind::OAuth => profile.token_set.map(|t| t.access_token),
+        };
+
+        Ok(credential.filter(|t| !t.trim().is_empty()))
+    }
+}
+
+/// OpenHuman's persisted credential-provider namespace for channel accounts.
+///
+/// Keeping this host-owned key stable lets managed login and provider setup
+/// reuse existing profiles independently of the loaded module's lifecycle.
+pub fn channel_credential_provider(
+    channel_id: &str,
+    mode: tinychannels_bus::controllers::ChannelAuthMode,
+) -> String {
+    format!("channel:{channel_id}:{mode}")
+}
+
+pub fn normalize_provider(provider: &str) -> Result<String> {
+    let normalized = provider.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        anyhow::bail!("Provider name cannot be empty");
+    }
+    Ok(normalized)
+}
+
+pub fn state_dir_from_config(config: &Config) -> PathBuf {
+    config
+        .config_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+}
+
+/// The files holding OpenHuman's own credentials for `config`, at the paths
+/// their stores write: the encrypted keyring (`secrets.enc`), the auth
+/// profiles, the HTTP credentials and the account config. A path may not
+/// exist.
+#[cfg(any(feature = "modules", test))]
+pub(crate) fn credential_files(config: &Config) -> Vec<PathBuf> {
+    let state_dir = state_dir_from_config(config);
+    let mut files = vec![
+        crate::security::secret_storage::encrypted_file_backend::secrets_file(
+            &crate::security::secret_storage::store::workspace_dir_for_file_backend(),
+        ),
+        super::profiles::profiles_file(&state_dir),
+    ];
+    #[cfg(feature = "flows")]
+    files.push(crate::flows::http_credentials::store_file(&state_dir));
+    files.push(config.config_path.clone());
+    files
+}
+
+pub fn default_profile_id(provider: &str) -> String {
+    profile_id(provider, DEFAULT_PROFILE_NAME)
+}
+
+fn resolve_requested_profile_id(provider: &str, requested: &str) -> String {
+    if requested.contains(':') {
+        requested.to_string()
+    } else {
+        profile_id(provider, requested)
+    }
+}
+
+pub fn select_profile_id(
+    data: &AuthProfilesData,
+    provider: &str,
+    profile_override: Option<&str>,
+) -> Option<String> {
+    let normalized = provider.trim().to_ascii_lowercase();
+    let provider_key = if normalized.starts_with("provider:") {
+        normalized.clone()
+    } else {
+        format!("provider:{normalized}")
+    };
+
+    if let Some(override_profile) = profile_override {
+        let requested = resolve_requested_profile_id(&normalized, override_profile);
+        if data.profiles.contains_key(&requested) {
+            return Some(requested);
+        }
+        if !requested.starts_with("provider:") {
+            let namespaced = format!("provider:{requested}");
+            if data.profiles.contains_key(&namespaced) {
+                return Some(namespaced);
+            }
+        }
+        return None;
+    }
+
+    if let Some(active) = data
+        .active_profiles
+        .get(&normalized)
+        .or_else(|| data.active_profiles.get(&provider_key))
+    {
+        if data.profiles.contains_key(active) {
+            return Some(active.clone());
+        }
+    }
+
+    let default = default_profile_id(&normalized);
+    if data.profiles.contains_key(&default) {
+        return Some(default);
+    }
+    let namespaced_default = default_profile_id(&provider_key);
+    if data.profiles.contains_key(&namespaced_default) {
+        return Some(namespaced_default);
+    }
+
+    data.profiles.iter().find_map(|(id, profile)| {
+        (profile.provider.eq_ignore_ascii_case(&normalized)
+            || profile.provider.eq_ignore_ascii_case(&provider_key))
+        .then(|| id.clone())
+    })
+}
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;

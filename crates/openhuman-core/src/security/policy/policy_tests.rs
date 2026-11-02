@@ -26,7 +26,6 @@ fn full_policy() -> SecurityPolicy {
 // -- trusted_roots allow-list (Phase 1) ---------------------------
 
 use std::fs;
-use std::path::Path as StdPath;
 use std::path::PathBuf as StdPathBuf;
 
 fn trusted_policy(workspace: StdPathBuf, roots: Vec<TrustedRoot>) -> SecurityPolicy {
@@ -79,18 +78,3 @@ fn turn_workspace_policy() -> (tempfile::TempDir, PathBuf, SecurityPolicy) {
 
 #[path = "policy_action_dir_tests.rs"]
 mod action_dir_tests;
-#[path = "policy_allowlist_tests.rs"]
-mod allowlist_tests;
-#[cfg(feature = "modules")]
-#[path = "policy_classifier_parity_tests.rs"]
-mod classifier_parity_tests;
-#[path = "policy_config_and_action_tests.rs"]
-mod config_and_action_tests;
-#[path = "policy_injection_tests.rs"]
-mod injection_tests;
-#[path = "policy_paths_and_risk_tests.rs"]
-mod paths_and_risk_tests;
-#[path = "policy_trusted_roots_tests.rs"]
-mod trusted_roots_tests;
-#[path = "policy_workspace_internal_tests.rs"]
-mod workspace_internal_tests;

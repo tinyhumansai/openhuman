@@ -246,9 +246,54 @@ impl<T: Tool + 'static> Tool for MediaArtifactTool<T> {
         options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
+        if let Err(error) = check_media_reference_floor(&args).await {
+            return Ok(ToolResult::error(error));
+        }
         self.inner
             .execute_with_context(args, options, context)
             .await
+    }
+}
+
+async fn check_media_reference_floor(args: &Value) -> Result<(), String> {
+    let mut paths = args
+        .get("references")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    for key in ["first_frame", "last_frame"] {
+        if let Some(path) = args.get(key).and_then(Value::as_str) {
+            if !path.starts_with("https://") && !path.starts_with("http://") {
+                paths.push(PathBuf::from(path));
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Ok(());
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        Err(
+            "[policy-blocked] TinySecurity path authorization unavailable; media reference refused"
+                .into(),
+        )
+    }
+    #[cfg(feature = "security-module")]
+    {
+        let protected = crate::modules::security::gap::protected_paths(&paths)
+        .await
+        .map_err(|error| {
+            format!(
+                "[policy-blocked] TinySecurity path authorization unavailable; media reference refused: {error}"
+            )
+        })?;
+        if protected.len() != paths.len() || protected.iter().any(|denied| *denied) {
+            return Err("[policy-blocked] media reference is in a protected location".into());
+        }
+        Ok(())
     }
 }
 

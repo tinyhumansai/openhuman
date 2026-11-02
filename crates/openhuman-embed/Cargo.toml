@@ -25,6 +25,7 @@ documents = ["openhuman-core/documents"]
 hosting = ["openhuman-core/hosting"]
 inbound-queues = ["openhuman-core/inbound-queues"]
 modules = ["openhuman-core/modules", "tinybus/modules"]
+security-module = ["openhuman-core/security-module"]
 voice = ["openhuman-core/voice"]
 web3 = ["openhuman-core/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).

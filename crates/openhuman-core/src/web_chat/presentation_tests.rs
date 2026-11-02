@@ -22,7 +22,7 @@ fn single_bubble_delivery_emits_one_unsegmented_chat_done() {
     let mut mine = Vec::new();
     loop {
         match rx.try_recv() {
-            Ok(event) if event.request_id == request_id => mine.push(event),
+            Ok(event) if event.context().request_id == request_id => mine.push(event),
             Ok(_) => continue,
             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
@@ -30,13 +30,18 @@ fn single_bubble_delivery_emits_one_unsegmented_chat_done() {
     }
     assert_eq!(mine.len(), 1, "exactly one terminal event, no chat_segment");
     let done = &mine[0];
-    assert_eq!(done.event, "chat_done");
-    assert_eq!(done.client_id, "system");
-    assert_eq!(done.thread_id, "thread-1");
-    assert_eq!(done.full_response.as_deref(), Some(text));
-    assert_eq!(done.segment_total, None);
-    assert_eq!(done.segment_index, None);
-    assert!(done.usage.is_none());
+    assert_eq!(done.event_name(), "chat_done");
+    assert_eq!(done.context().client_id, "system");
+    assert_eq!(done.context().thread_id, "thread-1");
+    assert!(matches!(
+        done.wire_event(),
+        crate::web_chat::WebChannelEvent::ChatDone {
+            full_response: Some(response),
+            usage: None,
+            parts: None,
+            ..
+        } if response == text
+    ));
 }
 
 // ── chat_done.timing ──────────────────────────────────────────────────────
@@ -60,10 +65,11 @@ async fn chat_done_carries_timing_when_a_snapshot_is_supplied() {
         subagents: Vec::new(),
         reasoning_tokens: 0,
     };
-    let timing = crate::web_chat::turn_timing::TurnTimingSnapshot {
+    let timing = tinychannels_bus::web::TurnTimingSnapshot {
         first_token_ms: Some(120),
         first_tool_ms: None,
         total_ms: Some(2000),
+        ..Default::default()
     };
 
     test_support::deliver_response_with_timing_for_test(
@@ -79,7 +85,10 @@ async fn chat_done_carries_timing_when_a_snapshot_is_supplied() {
 
     let done = loop {
         match rx.try_recv() {
-            Ok(event) if event.request_id == request_id && event.event == "chat_done" => {
+            Ok(event)
+                if event.context().request_id == request_id
+                    && event.event_name() == "chat_done" =>
+            {
                 break event;
             }
             Ok(_) => continue,
@@ -88,14 +97,25 @@ async fn chat_done_carries_timing_when_a_snapshot_is_supplied() {
         }
     };
 
-    let payload = done.timing.expect("chat_done.timing must be Some");
+    let crate::web_chat::WebChannelEvent::ChatDone {
+        timing: Some(payload),
+        ..
+    } = done.wire_event()
+    else {
+        panic!("chat_done.timing must be Some");
+    };
     assert_eq!(payload.first_token_ms, Some(120));
     assert_eq!(payload.first_tool_ms, None);
     assert_eq!(payload.total_ms, Some(2000));
     // 40 output tokens / (2000ms / 1000) = 20 tokens/sec.
     assert_eq!(payload.tokens_per_second, Some(20.0));
     // The gauge numerator travels beside the spend totals, unsummed.
-    let usage = done.usage.expect("chat_done.usage must be Some");
+    let crate::web_chat::WebChannelEvent::ChatDone {
+        usage: Some(usage), ..
+    } = done.wire_event()
+    else {
+        panic!("chat_done.usage must be Some");
+    };
     assert_eq!((usage.input_tokens, usage.context_tokens), (100, 60));
 }
 
@@ -120,7 +140,10 @@ async fn chat_done_omits_timing_when_no_snapshot_is_supplied() {
 
     let done = loop {
         match rx.try_recv() {
-            Ok(event) if event.request_id == request_id && event.event == "chat_done" => {
+            Ok(event)
+                if event.context().request_id == request_id
+                    && event.event_name() == "chat_done" =>
+            {
                 break event;
             }
             Ok(_) => continue,
@@ -129,7 +152,10 @@ async fn chat_done_omits_timing_when_no_snapshot_is_supplied() {
         }
     };
 
-    assert!(done.timing.is_none());
+    assert!(matches!(
+        done.wire_event(),
+        crate::web_chat::WebChannelEvent::ChatDone { timing: None, .. }
+    ));
 }
 
 // ── Delivery persists before it announces (#6034) ───────────────────────

@@ -58,7 +58,7 @@ No `store.rs`. State is per-session and in-memory:
 
 ## Dependencies
 
-- `crate::config`: `ContextConfig` ([`config/schema/context.rs`](../../config/schema/context.rs)): `enabled`, `microcompact_enabled` / `microcompact_keep_recent`, `autocompact_enabled`, `compaction_trigger_tokens` (absolute summarization trigger for benchmarks; env `OPENHUMAN_COMPACTION_TRIGGER_TOKENS`), `compaction_strategy` (env `OPENHUMAN_COMPACTION_STRATEGY`), `compaction_enabled`, `tool_result_budget_bytes`, `prefer_markdown_tool_output`, `summarizer_model`, and the embedded `session_memory: SessionMemoryConfig`.
+- `crate::config`: `ContextSettings` ([`config/schema/context.rs`](../../config/schema/context.rs)), the whole `[context]` table: TinyAgents' `ContextConfig` flattened (reached through `Deref`, so `config.context.<field>` reads it) plus OpenHuman's `summarizer_tool_rendering` (`full` | `markers`; env `OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING`: `markers` sends the summarizer one `[used <tool>: …]` line per call and no tool results, for small summarization models) and `summarizer_max_output_tokens` (env `OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS`, `0` clears: the summary request's `max_tokens`). The free-form (`summary`) strategy applies both; `task_state` ignores them. `ContextConfig`: `enabled`, `microcompact_enabled` / `microcompact_keep_recent`, `autocompact_enabled`, `compaction_trigger_tokens` (absolute summarization trigger for benchmarks; env `OPENHUMAN_COMPACTION_TRIGGER_TOKENS`), `compaction_strategy` (env `OPENHUMAN_COMPACTION_STRATEGY`), `compaction_enabled`, `tool_result_budget_bytes`, `prefer_markdown_tool_output`, `summarizer_model` (env `OPENHUMAN_CONTEXT_SUMMARIZER_MODEL`: the model the compaction summarizer calls on the turn's own provider route; unset or blank uses the turn's model), and the embedded `session_memory: SessionMemoryConfig`.
 - `crate::inference::provider::UsageInfo`: fed into `record_usage`.
 - `crate::agent::prompts`: owns prompt rendering; `channels_prompt.rs` uses `inject_inline_content`.
 - `crate::skills::Workflow`: `channels_prompt.rs` renders the available-skills section from a `&[Workflow]`.
@@ -88,3 +88,15 @@ The TinyAgents host maps configured context options into harness middleware.
 Channel and agent prompts use `agent::prompts`; live transcript compaction and
 tool-result clearing run in TinyAgents. This module owns no persistence,
 controllers, tools, or event subscribers.
+
+## Compacting outside a turn
+
+`context_wiring::compact_history` drives the same compression middleware a
+turn installs over one request with no model turn: its `before_model` folds
+the history and its `after_agent` reports the folded transcript as a
+`CompactionCarry`, which is applied to the history exactly as the session
+driver applies a turn's. `OpenHumanSessionHost::compact_bound_history`
+(`agent/session_host/runtime_session/compact.rs`) runs it on a bound thread's
+head generation under the session's turn lock, then seals the head and opens
+the next generation with the folded history, as a compacting turn's commit
+does. The embed facade exposes it as `Agent::compact_thread`.

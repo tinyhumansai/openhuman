@@ -119,7 +119,7 @@ pub(super) async fn events_handler(
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
         move |item| -> Option<Result<Event, std::convert::Infallible>> {
             let event = item.ok()?;
-            if event.client_id != client_id {
+            if event.context().client_id != client_id {
                 return None;
             }
             if let Some(profile) = saas_profile.as_deref() {
@@ -128,7 +128,7 @@ pub(super) async fn events_handler(
                 }
             }
             let data = serde_json::to_string(&event).ok()?;
-            Some(Ok(Event::default().event(event.event).data(data)))
+            Some(Ok(Event::default().event(event.event_name()).data(data)))
         },
     );
 

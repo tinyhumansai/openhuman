@@ -5,6 +5,7 @@
 //! engine = "tinyhumans"            # "tinyhumans" | "cortexdb"
 //! # agent_id = "writer-7"          # host binding: every agent on this config is this memory agent
 //! # root = "team:acme"             # host binding: the layout root (one per tenant)
+//! # recall_each_turn_ms = 1500     # host binding: recall the current message, waiting this long
 //!
 //! [memory.engines.cortexdb]
 //! endpoint = "https://api-v1.cortexdb.ai"   # key in the keychain as "memory-cortexdb"
@@ -114,6 +115,13 @@ pub struct MemoryConfig {
     /// Unset is the default root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
+    /// Host binding: recall memory for the user's current message on every
+    /// turn and wait at most this many milliseconds for it before the first
+    /// model call. A late or failed recall leaves the turn without a memory
+    /// note. Unset (the default), a turn only reads the pack completed in the
+    /// background for an earlier turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recall_each_turn_ms: Option<u64>,
     /// Where memory sits on the engine: `legacy` (the shared
     /// `app:tinymemory` tree, the default) or `v3` (the signed-in person's
     /// own `org:<id>` subtree, chats pooled at `ws:main`). Switched by the
@@ -224,6 +232,7 @@ impl Default for MemoryConfig {
             engines: BTreeMap::new(),
             agent_id: None,
             root: None,
+            recall_each_turn_ms: None,
             layout: MemoryLayoutMode::Legacy,
             conversations: MemoryConversationsConfig::default(),
             recall: RecallSettings::default(),

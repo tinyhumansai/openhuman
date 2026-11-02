@@ -49,14 +49,28 @@ impl Tool for TenantTool {
         let thread = context
             .and_then(tinytools::ToolRunContext::thread_id)
             .expect("every hosted tool has its durable conversation key");
-        let expected = match openhuman_embed::current_turn_origin().unwrap() {
-            openhuman_embed::AgentTurnOrigin::WebChat { thread_id, .. } => thread_id,
+        match openhuman_embed::current_turn_origin().unwrap() {
+            openhuman_embed::AgentTurnOrigin::WebChat { thread_id, .. } => {
+                assert_eq!(thread, thread_id);
+            }
+            // A channel turn's durable conversation key is the tenant-scoped
+            // session key the channel module derived for the exact sender and
+            // conversation.
             openhuman_embed::AgentTurnOrigin::ExternalChannel { .. } => {
-                "channel:telegram/sender/chat".to_owned()
+                for segment in [
+                    "|namespace=p4:main|",
+                    "|channel=p8:telegram|",
+                    "|conversation=p4:chat|",
+                    "|participant=p6:sender",
+                ] {
+                    assert!(
+                        thread.contains(segment),
+                        "{segment} missing from {thread:?}"
+                    );
+                }
             }
             other => panic!("unexpected origin {other:?}"),
-        };
-        assert_eq!(thread, expected);
+        }
         self.execute(args).await
     }
     async fn execute(&self, _: Value) -> anyhow::Result<ToolResult> {
@@ -204,33 +218,36 @@ async fn scenario() {
         // synthetic expiry check cannot race a heartbeat.
         .configure(|config| config.lease_ttl_secs = 3600)
         .tools(move |turn| {
-            let profile = openhuman_embed::current_tenant().unwrap().profile.unwrap();
-            factory_sessions
-                .lock()
-                .unwrap()
-                .push((profile, turn.session_id().map(str::to_owned)));
-            HostTurnTools::advertised(
-                [
-                    "tenant_probe",
-                    "hidden",
-                    "shell",
-                    "spawn_subagent",
-                    "curl",
-                    "install_workflow_from_url",
-                    "http_request",
-                    "run_workflow",
-                    "delegate_to",
-                ]
-                .into_iter()
-                .map(|name| {
-                    Box::new(TenantTool {
-                        name,
-                        calls: factory_calls.clone(),
-                        relay_origins: factory_relay_origins.clone(),
-                    }) as Box<dyn Tool>
-                })
-                .collect(),
-            )
+            let session_id = turn.session_id().map(str::to_owned);
+            let factory_sessions = factory_sessions.clone();
+            let factory_calls = factory_calls.clone();
+            let factory_relay_origins = factory_relay_origins.clone();
+            Box::pin(async move {
+                let profile = openhuman_embed::current_tenant().unwrap().profile.unwrap();
+                factory_sessions.lock().unwrap().push((profile, session_id));
+                HostTurnTools::advertised(
+                    [
+                        "tenant_probe",
+                        "hidden",
+                        "shell",
+                        "spawn_subagent",
+                        "curl",
+                        "install_workflow_from_url",
+                        "http_request",
+                        "run_workflow",
+                        "delegate_to",
+                    ]
+                    .into_iter()
+                    .map(|name| {
+                        Box::new(TenantTool {
+                            name,
+                            calls: factory_calls.clone(),
+                            relay_origins: factory_relay_origins.clone(),
+                        }) as Box<dyn Tool>
+                    })
+                    .collect(),
+                )
+            })
         })
         .tool_scope(ToolScopeSpec::Named(vec![
             "tenant_probe".into(),
@@ -299,6 +316,7 @@ async fn scenario() {
                     openhuman_core::memory::engine::is_on(
                         handle.context().embedder_config().unwrap(),
                     )
+                    .await
                 })
                 .await,
             "expired profile memory must fail closed"
@@ -332,7 +350,7 @@ async fn scenario() {
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let event = events.recv().await.unwrap();
-                if event.event == "channel_outbound" {
+                if event.event_name() == "channel_outbound" {
                     break;
                 }
             }
@@ -349,15 +367,21 @@ async fn scenario() {
             "tenant_probe:bob"
         ]
     );
-    assert_eq!(
-        *sessions.lock().unwrap(),
-        [
-            ("alice".into(), Some("t1".into())),
-            ("bob".into(), Some("t1".into())),
-            ("alice".into(), Some("channel:telegram/sender/chat".into())),
-            ("bob".into(), Some("channel:telegram/sender/chat".into())),
-        ]
-    );
+    let recorded = sessions.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 4, "{recorded:?}");
+    assert_eq!(recorded[0], ("alice".into(), Some("t1".into())));
+    assert_eq!(recorded[1], ("bob".into(), Some("t1".into())));
+    // A relayed channel turn runs under the tenant-scoped session key the
+    // channel module derived for the sender and conversation.
+    for (index, profile) in [(2, "alice"), (3, "bob")] {
+        let (recorded_profile, key) = &recorded[index];
+        assert_eq!(recorded_profile, profile);
+        let key = key.as_deref().expect("a relayed turn has a session key");
+        assert!(
+            key.contains("|channel=p8:telegram|") && key.contains("|participant=p6:sender"),
+            "{key:?}"
+        );
+    }
     let executions_before_denied_turn = calls.lock().unwrap().len();
     assert!(
         handles[0]
@@ -495,7 +519,7 @@ async fn scenario() {
             .accepted
     );
     tokio::time::timeout(Duration::from_secs(30), async {
-        while events.recv().await.unwrap().event != "channel_outbound" {}
+        while events.recv().await.unwrap().event_name() != "channel_outbound" {}
     })
     .await
     .unwrap();
@@ -513,12 +537,15 @@ async fn scenario() {
     );
     {
         let reopened_sessions = sessions.lock().unwrap();
-        assert_eq!(
-            &reopened_sessions[reopened_sessions.len() - 2..],
-            [
-                ("alice".into(), Some("t1".into())),
-                ("alice".into(), Some("channel:telegram/sender/chat".into()))
-            ]
+        let tail = &reopened_sessions[reopened_sessions.len() - 2..];
+        assert_eq!(tail[0], ("alice".into(), Some("t1".into())));
+        let (profile, key) = &tail[1];
+        assert_eq!(profile, "alice");
+        assert!(
+            key.as_deref()
+                .is_some_and(|key| key.contains("|channel=p8:telegram|")
+                    && key.contains("|participant=p6:sender")),
+            "{key:?}"
         );
     }
     handles.insert(0, reopened);
@@ -662,13 +689,13 @@ async fn scenario() {
     escaped_config.memory.root = Some("user:bob".into());
     assert!(
         !handles[0]
-            .scope(async { openhuman_core::memory::engine::is_on(&escaped_config) })
+            .scope(async { openhuman_core::memory::engine::is_on(&escaped_config).await })
             .await
     );
     alice_profile.lease_fence().renewed(0);
     assert!(
         !handles[0]
-            .scope(async { openhuman_core::memory::engine::is_on(&forced_config) })
+            .scope(async { openhuman_core::memory::engine::is_on(&forced_config).await })
             .await,
         "an expired profile must not resolve the shared engine"
     );
@@ -676,7 +703,7 @@ async fn scenario() {
     alice_profile.lease_fence().fence();
     assert!(
         !handles[0]
-            .scope(async { openhuman_core::memory::engine::is_on(&forced_config) })
+            .scope(async { openhuman_core::memory::engine::is_on(&forced_config).await })
             .await,
         "a latched profile must not resolve the shared engine"
     );

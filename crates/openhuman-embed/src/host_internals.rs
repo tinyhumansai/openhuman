@@ -69,7 +69,7 @@ pub mod core {
     }
     pub mod events {
         // `DomainEvent` is matched variant by variant by the Socket.IO bridge.
-        pub use openhuman_core::core::events::DomainEvent;
+        pub use openhuman_core::core::events::{DomainEvent, KeyringAccessApprovalRequest};
     }
     pub mod invoke {
         pub use openhuman_core::core::invoke::{default_state, invoke_method};
@@ -248,33 +248,6 @@ pub mod security {
             EncryptedFileBackend, MasterKeySource, SecretBackend, SecretStorageError,
         };
     }
-    pub mod credentials {
-        pub use openhuman_core::security::credentials::{
-            channel_credential_provider, AuthService, APP_SESSION_PROVIDER,
-            DEFAULT_AUTH_PROFILE_NAME,
-        };
-        pub mod ops {
-            pub use openhuman_core::security::credentials::ops::{
-                list_provider_credentials, store_provider_credentials,
-            };
-        }
-        pub mod session_support {
-            pub use openhuman_core::security::credentials::session_support::{
-                build_session_state, check_session_backend, classify_session_token,
-                current_session_is_local, get_session_token, is_local_session_token,
-                load_app_session_profile, load_app_session_profile_read_only,
-                publish_local_session_expiry, resolve_backend_credential, session_token_for_config,
-                BackendCredential, SessionTokenCheck, LOCAL_SESSION_BACKEND_UNAVAILABLE,
-                LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE, SESSION_EXPIRES_AT_META,
-                SESSION_ISSUING_BACKEND_META,
-            };
-        }
-        pub mod api_key {
-            pub use openhuman_core::security::credentials::api_key::{
-                get_api_key, get_api_key_in, get_api_key_read_only, store_api_key, store_api_key_in,
-            };
-        }
-    }
     pub mod approval {
         pub use openhuman_core::security::approval::{
             ApprovalChatContext, ApprovalGate, ApprovalTurnContext,
@@ -288,6 +261,61 @@ pub mod security {
     }
     pub mod pairing {
         pub use openhuman_core::security::pairing::is_public_bind;
+    }
+    /// TinyHumans' hosted device-tunnel adapter and the semantic device events
+    /// it forwards into the core.
+    pub mod devices {
+        pub use openhuman_core::security::devices::tunnel_client::{
+            global_tunnel_client_port, publish_peer_status, publish_tunnel_frame,
+            set_global_tunnel_client_port, TunnelClientPort, TunnelRegistration,
+        };
+    }
+}
+
+/// Host credential custody and read-side auth helpers used by tinyhumans and rpc.
+pub mod credentials {
+    pub use openhuman_core::credentials::{
+        channel_credential_provider, clear_provider_credential_source,
+        install_provider_credential_source, provider_credential_source, state_dir_from_config,
+        AuthService, ProviderCredentialSource, ProviderOAuthStart, ProviderOAuthTokens,
+        APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+    };
+    pub mod openai_oauth {
+        pub use openhuman_core::credentials::openai_oauth::{
+            complete_openai_oauth, disconnect_openai_oauth, import_openai_oauth_from_codex_cli,
+            openai_oauth_status, persist_openai_oauth_token, persist_openai_oauth_tokens,
+            start_openai_oauth,
+        };
+    }
+    pub mod ops {
+        pub use openhuman_core::credentials::ops::{
+            list_provider_credentials, store_provider_credentials,
+        };
+    }
+    pub mod api_key {
+        pub use openhuman_core::credentials::api_key::{
+            get_api_key, get_api_key_in, get_api_key_read_only, store_api_key, store_api_key_in,
+        };
+    }
+    pub mod session_state {
+        pub use openhuman_core::credentials::session_state::{
+            build_session_state, check_session_backend, classify_session_token,
+            current_session_is_local, get_session_token, is_local_session_token,
+            load_app_session_profile, load_app_session_profile_read_only, local_session_user_id,
+            normalize_session_backend, parse_fields_value, profile_name_or_default,
+            require_live_session_token, session_state_from_profile, session_token_for_config,
+            session_token_from_profile, summarize_auth_profile, user_id_from_jwt_claims,
+            CredentialKind, SessionTokenCheck, LOCAL_SESSION_USER_ID, SESSION_EXPIRES_AT_META,
+            SESSION_ISSUING_BACKEND_META,
+        };
+    }
+    pub mod backend_credential {
+        pub use openhuman_core::credentials::backend_credential::{
+            ambient_config_has_api_key, backend_bearer_secret, credential_fingerprint,
+            credential_fingerprint_matches, direct_backend_credential, has_backend_credential,
+            publish_local_session_expiry, resolve_backend_credential, BackendCredential,
+            LOCAL_SESSION_BACKEND_UNAVAILABLE, LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE,
+        };
     }
 }
 
@@ -332,16 +360,15 @@ pub mod artifact_publisher {
     };
     // tinyhumans file-storage publisher: the protected-path guard it re-checks
     // before upload, and the store its tests save artifacts into.
-    pub use openhuman_core::artifacts::tiny_store::{
-        refused_path, version_files_dir, versioned_store,
-    };
+    pub use openhuman_core::artifacts::tiny_store::{version_files_dir, versioned_store};
 }
 
 /// Egress disclosure, for hosted calls that leave the machine.
 pub mod egress {
     pub use openhuman_core::security::egress::{
-        emit_external_transfer, emit_external_transfer_in, enforce_egress, local_only_blocks,
-        DataKind, EgressDescriptor, EgressLedger, EgressReason, IdentificationRisk,
+        data_class, emit_external_transfer, emit_external_transfer_in, enforce_egress,
+        enforce_egress_blocking, DataKind, EgressDescriptor, EgressLedger, EgressReason,
+        IdentificationRisk, PrivacyClass,
     };
 }
 
@@ -497,8 +524,19 @@ pub mod platform {
 
     /// tinyhumans: read-only view of the live Socket.IO connection state.
     pub mod socket {
-        pub use openhuman_core::platform::socket::global_socket_manager;
         pub use openhuman_core::platform::socket::models::ConnectionStatus;
+        pub use openhuman_core::platform::socket::models::SocketState;
+        pub use openhuman_core::platform::socket::{
+            dispatch_socket_event, global_socket_manager, global_socket_port,
+            set_global_socket_manager, set_global_socket_port, SocketIdentityRebindGuard,
+            SocketPort, TokenProvider,
+        };
+    }
+}
+
+pub mod skills {
+    pub mod webhooks {
+        pub use openhuman_core::skills::webhooks::WebhookRouter;
     }
 }
 
@@ -508,6 +546,12 @@ pub mod storage {
         install_for_url, installed, installed_url, open, url_from, StorageBackend, StorageUrl,
         STORAGE_URL_VAR,
     };
+
+    /// The installed storage backend's scoped secret-store interface used by
+    /// host-owned short-lived flows such as provider OAuth.
+    pub mod secrets {
+        pub use openhuman_core::storage::secrets::{current, MemorySecrets, SecretStore};
+    }
 
     /// The layout v1 -> v2 migration the host runs at boot when
     /// `[storage] auto_migrate_layout` is set. The core builds it only with
@@ -564,7 +608,8 @@ pub mod web_chat {
     pub use openhuman_core::web_chat::{
         approval_request_event, cancel_chat_scoped, plan_review_request_event,
         publish_web_channel_event, start_chat, subscribe_web_channel_events, unix_epoch_ms,
-        ChatRequestMetadata, GuardrailPayload, StartChatError, WebChannelEvent,
+        ChatRequestMetadata, GuardrailPayload, ScopedWebEvent, StartChatError, WebChannelEvent,
+        WebEventContext,
     };
 }
 

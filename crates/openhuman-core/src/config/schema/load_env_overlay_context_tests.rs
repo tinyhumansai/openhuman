@@ -201,3 +201,95 @@ fn unknown_unattended_browser_actions_are_counted_not_echoed() {
     assert!(line.contains("count=1"), "{line}");
     assert!(!line.contains("sk-live-not-an-action"), "{line}");
 }
+
+#[test]
+fn summarizer_tool_rendering_defaults_to_full_and_env_selects_markers() {
+    use tinyagents_harness::summarization::ToolRendering;
+    assert_eq!(
+        Config::default().context.summarizer_tool_rendering,
+        ToolRendering::Full
+    );
+
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING", " Markers "),
+    );
+    assert_eq!(
+        cfg.context.summarizer_tool_rendering,
+        ToolRendering::Markers
+    );
+
+    // Unknown and empty values leave the current rendering alone.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING", "terse"),
+    );
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING", ""),
+    );
+    assert_eq!(
+        cfg.context.summarizer_tool_rendering,
+        ToolRendering::Markers
+    );
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING", "full"),
+    );
+    assert_eq!(cfg.context.summarizer_tool_rendering, ToolRendering::Full);
+}
+
+#[test]
+fn summarizer_max_output_tokens_env_sets_clears_and_ignores_garbage() {
+    assert_eq!(Config::default().context.summarizer_max_output_tokens, None);
+
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS", " 4000 "),
+    );
+    assert_eq!(cfg.context.summarizer_max_output_tokens, Some(4_000));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS", "lots"),
+    );
+    assert_eq!(cfg.context.summarizer_max_output_tokens, Some(4_000));
+
+    // `0` clears a cap set in config.toml.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS", "0"),
+    );
+    assert_eq!(cfg.context.summarizer_max_output_tokens, None);
+}
+
+#[test]
+fn summarizer_settings_read_from_the_context_table_beside_the_harness_settings() {
+    use tinyagents_harness::summarization::ToolRendering;
+    let cfg: Config = toml::from_str(
+        "[context]\n\
+         compaction_strategy = \"summary\"\n\
+         summarizer_model = \"scaledown/summarize\"\n\
+         summarizer_tool_rendering = \"markers\"\n\
+         summarizer_max_output_tokens = 4000\n",
+    )
+    .unwrap();
+    assert_eq!(
+        cfg.context.compaction_strategy,
+        crate::config::CompactionStrategy::Summary
+    );
+    assert_eq!(
+        cfg.context.summarizer_model.as_deref(),
+        Some("scaledown/summarize")
+    );
+    let summarizer = cfg.context.summarizer_settings();
+    assert_eq!(summarizer.tool_rendering, ToolRendering::Markers);
+    assert_eq!(summarizer.max_output_tokens, Some(4_000));
+
+    // The written form keeps every key in the one `[context]` table.
+    let written = toml::to_string(&cfg.context).unwrap();
+    assert!(
+        written.contains("summarizer_tool_rendering = \"markers\""),
+        "{written}"
+    );
+    assert!(
+        written.contains("compaction_strategy = \"summary\""),
+        "{written}"
+    );
+}

@@ -112,6 +112,7 @@ tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-h
     "plan-review",
 ] }
 tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus", features = ["storage"] }
+tinybox-jail = { path = "../../vendor/tinybox/crates/tinybox-jail" }
 tiny-artifacts = { path = "../../vendor/tiny-artifacts/crates/tiny-artifacts" }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 # Live (realtime voice) agent sessions: `tinyagents-live` runs a
@@ -135,7 +136,8 @@ tinystoragedrivers-types = { git = "https://github.com/tinyhumansai/tinystoraged
 # The host config and secret adapters use the driver's established `enc2`
 # codec and per-scope key provider while storing through the v2 SecretStore
 # port. The backend itself still supplies the port implementation.
-tinystoragedrivers-secrets = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["document"] }
+tinystoragedrivers-secrets = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["document", "file"] }
+tinystoragedrivers-fence = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-fence" }
 # The storage bus: the wire contract and the reference host server that the
 # `modules::storage_host` interface answers loaded modules with. Modules only.
 tinystoragedrivers-bus = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", optional = true }
@@ -231,6 +233,11 @@ tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/t
 # --features flows` would carry `ureq` and the archive stack for a host that
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
+# The device tunnel's owner and wire crypto live in TinySecurity. The bus
+# contract and crypto crate use this same v0.17.1 checkout so tunnel handles
+# cannot be created from a second version of the pairing types.
+tinysecurity-bus = { path = "../../vendor/tinysecurity/crates/tinysecurity-bus" }
+# TODO(#657): move existing device-pairing callers behind tinysecurity-bus, then drop this exception.
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus", features = ["schemars"] }
 # Registry vocabulary is available even when the loader is disabled, so the
 # pre-core client can identify and report an unavailable module safely.
@@ -280,8 +287,6 @@ tinyeventqueues-bus = { path = "../../vendor/tinyeventqueues/crates/tinyeventque
 libc = "0.2"
 nu-ansi-term = "0.50"
 base64 = "0.22"
-aes-gcm = "0.10"
-argon2 = "0.5"
 rand = "0.10"
 dirs = "6"
 sha2 = "0.10"
@@ -301,13 +306,10 @@ flate2 = "1"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"
-chacha20poly1305 = "0.10"
 # Wipe master keys / decrypted secret buffers from memory on drop (audit C9).
 # Already present transitively (resolved to 1.8.x via the *-dalek / cipher
 # crates); declared directly so the keyring module can `use zeroize::Zeroizing`.
 zeroize = "1"
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-hkdf = "0.12"
 hex = "0.4"
 # The host-owned SaaS gateway signature uses HMAC with SHA-256.
 hmac = "0.12"
@@ -353,7 +355,7 @@ url = "2"
 tempfile = "3"
 fs2 = "0.4"
 # Streams the layout-migration archive (`storage::layout::archive`), a `.tar.zst`.
-zstd = "0.13"
+zstd = "0.14"
 # The scheduler gate's battery/AC probe (`platform::llm_gate::signals`),
 # behind the `scheduler-gate` feature. CPU sampling uses `sysinfo` above.
 starship-battery = { version = "0.12", optional = true }
@@ -478,7 +480,15 @@ windows-sys = { version = "0.61", features = [
 # pulling OpenSSL in as a runtime dependency on Linux.
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
+[target.'cfg(unix)'.dependencies]
+# Open operator-selected key files without blocking on raced FIFO/device paths.
+rustix = { version = "1.1", features = ["fs"] }
+
 [dev-dependencies]
+# Lib tests always link the SQLite driver, so the durable-storage test helpers
+# (`storage::test_support::sqlite_backend`, persistent workspace defaults)
+# compile under the default (contributor) feature set too.
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["sqlite"] }
 tinystoragedrivers-testkit = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["storage-drivers", "testkit"] }
 # Legacy TinyChannels provider/runtime fixtures remain available to tests only;
@@ -490,7 +500,6 @@ tinychannels-runtime = { path = "../../vendor/tinychannels/crates/tinychannels-r
 # the WhatsApp Web stack (whatsapp-rust, wacore, waproto) is never compiled here;
 # WhatsApp provider behaviour is tested in the tinychannels repository.
 tinychannels-module = { path = "../../vendor/tinychannels/crates/tinychannels-module", default-features = false, features = ["static-link"] }
-tinybox-core = { path = "../../vendor/tinybox/crates/tinybox-core" }
 # The TinyMemory reference engine (an in-memory `MemoryEngine`) and the
 # behavioural suite every engine must pass. Memory unit tests bind it as the
 # engine instead of talking to CortexDB.
@@ -599,7 +608,7 @@ secret-file = ["tinystoragedrivers-secrets/file"]
 # costs no new native builds. It matches `scripts/ci/product-features.txt`. This
 # does NOT move the kernel floor: that profile is
 # `--no-default-features --features flows` and never reads this list.
-default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "inbound-queues", "secret-file", "legacy-import"]
+default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "security-module", "inbound-queues", "secret-file", "legacy-import"]
 # The core's domain-owned HTTP surfaces (#5048): the `/v1` OpenAI-compatible
 # router (`inference::http`), the `openhuman text-input run` dev server, and the MCP
 # Streamable-HTTP transport (`mcp::server::http`, additionally gated by `mcp`).
@@ -688,6 +697,7 @@ modules = [
     "dep:tinystoragedrivers-busproxy",
     "dep:tinybus-module",
 ]
+security-module = ["modules"]
 # Voice domain: STT/TTS providers, reply speech, and live voice.
 # The desktop product enables voice explicitly; contributor defaults leave it
 # off. WAV framing moved to the `tinyvoice` module, removing the former `hound`

@@ -26,11 +26,12 @@
 //! the other.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Read;
+#[cfg(not(feature = "secret-file"))]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use fs2::FileExt;
 use sha2::{Digest, Sha256};
 
 use crate::security::secret_storage::error::SecretStorageError;
@@ -49,8 +50,14 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// [`write_atomic`] replaces the secrets file by rename — a lock taken on the
 /// old inode would guard nothing once the rename lands.
 pub struct WriteLock {
-    /// Kept alive purely for its lock; `fs2` releases on close.
-    _file: File,
+    _lock: LockGuard,
+}
+
+enum LockGuard {
+    #[cfg(feature = "secret-file")]
+    Driver(tinystoragedrivers::secrets::Locked),
+    #[cfg(not(feature = "secret-file"))]
+    Native(File),
 }
 
 /// Take the exclusive write lock covering `path`'s read → modify → write cycle.
@@ -69,62 +76,77 @@ pub struct WriteLock {
 /// the operation is deliberate: proceeding unlocked is what loses secrets.
 pub fn lock_for_write(path: &Path) -> Result<WriteLock, SecretStorageError> {
     let lock_path = lock_path_for(path);
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            SecretStorageError::Backend(format!(
-                "could not create {} for the keyring lock: {e}",
-                parent.display()
-            ))
-        })?;
-    }
-    let mut options = OpenOptions::new();
-    options.create(true).read(true).write(true).truncate(false);
-    #[cfg(unix)]
+    #[cfg(feature = "secret-file")]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        tinystoragedrivers::secrets::lock_file(&lock_path)
+            .map(|lock| WriteLock {
+                _lock: LockGuard::Driver(lock),
+            })
+            .map_err(|error| {
+                SecretStorageError::Backend(format!("could not lock keyring: {error}"))
+            })
     }
-    let file = options.open(&lock_path).map_err(|e| {
-        SecretStorageError::Backend(format!(
-            "could not open the keyring lock at {}: {e}",
-            lock_path.display()
-        ))
-    })?;
-    #[cfg(unix)]
+    #[cfg(not(feature = "secret-file"))]
     {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let metadata = file.metadata().map_err(|error| {
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                SecretStorageError::Backend(format!(
+                    "could not create {} for the keyring lock: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(&lock_path).map_err(|e| {
             SecretStorageError::Backend(format!(
-                "could not inspect the keyring lock at {}: {error}",
+                "could not open the keyring lock at {}: {e}",
                 lock_path.display()
             ))
         })?;
-        // A lock owned by another user is not authority over this store. Old
-        // OpenHuman lock files may have inherited wider modes, so tighten an
-        // owned regular file before the stricter TinyDrivers sidecar opens it.
-        if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
-            return Err(SecretStorageError::Backend(format!(
-                "keyring lock at {} is not a regular file owned by this user",
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let metadata = file.metadata().map_err(|error| {
+                SecretStorageError::Backend(format!(
+                    "could not inspect the keyring lock at {}: {error}",
+                    lock_path.display()
+                ))
+            })?;
+            // A lock owned by another user is not authority over this store. Old
+            // OpenHuman lock files may have inherited wider modes, so tighten an
+            // owned regular file before the stricter TinyDrivers sidecar opens it.
+            if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+                return Err(SecretStorageError::Backend(format!(
+                    "keyring lock at {} is not a regular file owned by this user",
+                    lock_path.display()
+                )));
+            }
+            if metadata.permissions().mode() & 0o777 != 0o600 {
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(|error| {
+                        SecretStorageError::Backend(format!(
+                            "could not restrict permissions on the keyring lock at {}: {error}",
+                            lock_path.display()
+                        ))
+                    })?;
+            }
+        }
+        fs2::FileExt::lock_exclusive(&file).map_err(|e| {
+            SecretStorageError::Backend(format!(
+                "could not lock the keyring at {}: {e}",
                 lock_path.display()
-            )));
-        }
-        if metadata.permissions().mode() & 0o777 != 0o600 {
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .map_err(|error| {
-                    SecretStorageError::Backend(format!(
-                        "could not restrict permissions on the keyring lock at {}: {error}",
-                        lock_path.display()
-                    ))
-                })?;
-        }
+            ))
+        })?;
+        Ok(WriteLock {
+            _lock: LockGuard::Native(file),
+        })
     }
-    file.lock_exclusive().map_err(|e| {
-        SecretStorageError::Backend(format!(
-            "could not lock the keyring at {}: {e}",
-            lock_path.display()
-        ))
-    })?;
-    Ok(WriteLock { _file: file })
 }
 
 /// The sidecar lock path for a secrets file.
@@ -199,6 +221,17 @@ fn parent_dir(path: &Path) -> &Path {
 /// Returns [`SecretStorageError::Backend`] when the parent directory cannot be
 /// created, or the temp file cannot be written or renamed.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SecretStorageError> {
+    #[cfg(feature = "secret-file")]
+    {
+        tinystoragedrivers::secrets::write_atomic_private(path, bytes)
+            .map_err(|error| SecretStorageError::Backend(format!("atomic keyring write: {error}")))
+    }
+    #[cfg(not(feature = "secret-file"))]
+    write_atomic_fallback(path, bytes)
+}
+
+#[cfg(not(feature = "secret-file"))]
+fn write_atomic_fallback(path: &Path, bytes: &[u8]) -> Result<(), SecretStorageError> {
     let parent = parent_dir(path);
     std::fs::create_dir_all(parent).map_err(|e| {
         SecretStorageError::Backend(format!(

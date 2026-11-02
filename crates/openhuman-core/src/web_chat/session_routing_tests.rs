@@ -223,13 +223,14 @@ fn unknown_qualified_models_keep_the_existing_route() {
     );
 }
 
-#[test]
-fn selected_managed_route_constructs_with_the_picker_model() {
+#[tokio::test]
+async fn selected_managed_route_constructs_with_the_picker_model() {
     // Wait out any test that has a mock chat model installed process-wide.
     let _serial = crate::inference::provider::factory::test_provider_override::exclusive();
     crate::agent::session_host::test_support::install_model_fixture();
     let config = Config::default();
-    crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+    crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+        .await
         .expect("store managed routing test credential");
     let selection = "openrouter/author/picked-model:free";
     let effective = effective_session_config(&config, Some(selection), None);
@@ -240,12 +241,13 @@ fn selected_managed_route_constructs_with_the_picker_model() {
             &effective,
             effective.default_temperature,
         )
+        .await
         .expect("managed picker selection should construct without network access");
     assert_eq!(resolved_model, selection);
 }
 
-#[test]
-fn selected_ollama_route_constructs_the_selected_model_without_network() {
+#[tokio::test]
+async fn selected_ollama_route_constructs_the_selected_model_without_network() {
     // Wait out any test that has a mock chat model installed process-wide.
     let _serial = crate::inference::provider::factory::test_provider_override::exclusive();
     let mut config = Config::default();
@@ -262,6 +264,7 @@ fn selected_ollama_route_constructs_the_selected_model_without_network() {
                 &effective,
                 effective.default_temperature,
             )
+            .await
             .expect("local model construction requires no provider request");
         assert_eq!(resolved_model, model);
     }
@@ -386,9 +389,10 @@ fn explicit_picker_model_keeps_its_fingerprint_when_saved_default_changes() {
     assert_eq!(first, second);
 }
 
-fn configured_huggingface_route() -> Config {
+async fn configured_huggingface_route() -> Config {
     let mut config = Config::default();
-    crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+    crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+        .await
         .expect("store routing test credential");
     config.chat_provider = Some("openai:gpt-4o".to_string());
     config
@@ -404,7 +408,7 @@ fn configured_huggingface_route() -> Config {
     config
 }
 
-fn assert_huggingface_model_builds(config: &Config, expected_model: &str) {
+async fn assert_huggingface_model_builds(config: &Config, expected_model: &str) {
     // Wait out any test that has a mock chat model installed process-wide.
     let _serial = crate::inference::provider::factory::test_provider_override::exclusive();
     let (_, resolved_model) =
@@ -414,14 +418,15 @@ fn assert_huggingface_model_builds(config: &Config, expected_model: &str) {
             config,
             0.0,
         )
+        .await
         .expect("case-insensitive cloud selection should resolve through its configured slug");
     assert_eq!(resolved_model, expected_model);
 }
 
-#[test]
-fn mixed_case_cloud_picker_uses_configured_slug_and_preserves_colon_suffix() {
+#[tokio::test]
+async fn mixed_case_cloud_picker_uses_configured_slug_and_preserves_colon_suffix() {
     let _guard = crate::inference::inference_test_guard();
-    let config = configured_huggingface_route();
+    let config = configured_huggingface_route().await;
     let original = serde_json::to_value(&config).expect("config serializes");
     let selected = "HuggingFace:org/model:version:variant";
     let effective = effective_session_config(&config, Some(selected), None);
@@ -431,7 +436,7 @@ fn mixed_case_cloud_picker_uses_configured_slug_and_preserves_colon_suffix() {
         Some("huggingface:org/model:version:variant")
     );
     assert_eq!(effective.default_model.as_deref(), Some(selected));
-    assert_huggingface_model_builds(&effective, "org/model:version:variant");
+    assert_huggingface_model_builds(&effective, "org/model:version:variant").await;
     assert_eq!(
         serde_json::to_value(&config).expect("config serializes"),
         original,
@@ -439,10 +444,10 @@ fn mixed_case_cloud_picker_uses_configured_slug_and_preserves_colon_suffix() {
     );
 }
 
-#[test]
-fn persisted_mixed_case_cloud_default_uses_configured_slug_after_restart() {
+#[tokio::test]
+async fn persisted_mixed_case_cloud_default_uses_configured_slug_after_restart() {
     let _guard = crate::inference::inference_test_guard();
-    let mut config = configured_huggingface_route();
+    let mut config = configured_huggingface_route().await;
     let selected = "HUGGINGFACE:org/model:version:variant";
     config.default_model = Some(selected.to_string());
     let original = serde_json::to_value(&config).expect("config serializes");
@@ -453,7 +458,7 @@ fn persisted_mixed_case_cloud_default_uses_configured_slug_after_restart() {
         Some("huggingface:org/model:version:variant")
     );
     assert_eq!(effective.default_model.as_deref(), Some(selected));
-    assert_huggingface_model_builds(&effective, "org/model:version:variant");
+    assert_huggingface_model_builds(&effective, "org/model:version:variant").await;
     assert_eq!(
         serde_json::to_value(&config).expect("config serializes"),
         original,
@@ -464,22 +469,19 @@ fn persisted_mixed_case_cloud_default_uses_configured_slug_after_restart() {
 #[tokio::test]
 async fn a_non_ascii_thread_id_builds_a_session_agent_without_panicking() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = super::session_checkout_tests::test_config(&tmp);
+    let config = super::session_checkout_tests::test_config(&tmp).await;
     // 11 ASCII bytes, then a 3-byte char: byte 12 falls inside '日'.
     let thread_id = "abcdefghijk日本";
-    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        super::build_session_agent(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            &config,
-            "client-1",
-            thread_id,
-            "orchestrator",
-            None,
-            None,
-        )
-        .map(|_| ())
-    }))
-    .expect("build_session_agent panicked on a non-ASCII thread id");
+    let built = super::build_session_agent(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        "client-1",
+        thread_id,
+        "orchestrator",
+        None,
+        None,
+    )
+    .await;
     // The label truncation only runs once the agent builds.
     if let Err(error) = built {
         panic!("session agent must build: {error:#}");

@@ -70,71 +70,80 @@ fn is_external_inference_path_matches_only_v1_routes() {
 }
 
 #[test]
-fn verify_external_inference_bearer_for_config_accepts_stored_key() {
-    // Keep a session_store test from installing a storage backend mid-test.
-    let _slot = crate::STORAGE_SLOT_TEST_LOCK.blocking_lock();
-    // This headless fixture exercises the encrypted profile without the
-    // operator's keychain or a caller-supplied master-key file.
-    struct FixtureKey {
-        key: Option<std::ffi::OsString>,
-        file: Option<std::ffi::OsString>,
-        workspace: Option<std::ffi::OsString>,
-        backend: Option<std::ffi::OsString>,
-    }
-    impl Drop for FixtureKey {
-        fn drop(&mut self) {
-            for (name, value) in [
-                ("OPENHUMAN_KEYRING_MASTER_KEY", self.key.take()),
-                ("OPENHUMAN_KEYRING_MASTER_KEY_FILE", self.file.take()),
-                ("OPENHUMAN_WORKSPACE", self.workspace.take()),
-                ("OPENHUMAN_KEYRING_BACKEND", self.backend.take()),
-            ] {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
-    }
-    let tmp = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700))
-            .expect("make test workspace private");
-    }
-    let _key = FixtureKey {
-        key: std::env::var_os("OPENHUMAN_KEYRING_MASTER_KEY"),
-        file: std::env::var_os("OPENHUMAN_KEYRING_MASTER_KEY_FILE"),
-        workspace: std::env::var_os("OPENHUMAN_WORKSPACE"),
-        backend: std::env::var_os("OPENHUMAN_KEYRING_BACKEND"),
-    };
-    std::env::remove_var("OPENHUMAN_KEYRING_MASTER_KEY_FILE");
-    std::env::set_var("OPENHUMAN_KEYRING_MASTER_KEY", "11".repeat(32));
-    std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
-    crate::embed::process::init_master_key().expect("initialize fixture master key");
-    let config = Config {
-        config_path: tmp.path().join("config.toml"),
-        ..Default::default()
-    };
-
-    let auth = AuthService::from_config(&config);
-    auth.store_provider_token(
-        EXTERNAL_OPENAI_COMPAT_PROVIDER,
-        "default",
-        "external-test-key",
-        std::collections::HashMap::new(),
-        true,
-    )
-    .unwrap();
-
-    assert!(verify_external_inference_bearer_for_config(
-        &config,
-        "external-test-key"
+fn startup_preflight_allows_only_health_and_approval_rpc_methods() {
+    assert!(super::preflight_http_path_allowed(
+        &axum::http::Method::GET,
+        "/health"
     ));
-    assert!(!verify_external_inference_bearer_for_config(
-        &config,
-        "wrong-key"
+    assert!(super::preflight_http_path_allowed(
+        &axum::http::Method::POST,
+        "/rpc"
+    ));
+    assert!(!super::preflight_http_path_allowed(
+        &axum::http::Method::GET,
+        "/schema"
+    ));
+    assert!(!super::preflight_http_path_allowed(
+        &axum::http::Method::GET,
+        "/events"
+    ));
+    assert!(!super::preflight_http_path_allowed(
+        &axum::http::Method::POST,
+        "/v1/chat/completions"
+    ));
+
+    assert!(super::preflight_rpc_method_allowed("core.version"));
+    assert!(super::preflight_rpc_method_allowed("core.ping"));
+    assert!(super::preflight_rpc_method_allowed(
+        "openhuman.service_status"
+    ));
+    assert!(super::preflight_rpc_method_allowed(
+        "openhuman.update_version"
+    ));
+    assert!(super::preflight_rpc_method_allowed(
+        "openhuman.approval_list_pending"
+    ));
+    assert!(super::preflight_rpc_method_allowed(
+        "openhuman.approval_decide"
+    ));
+    assert!(!super::preflight_rpc_method_allowed("core.config"));
+    assert!(!super::preflight_rpc_method_allowed("openhuman.config_get"));
+    assert!(!super::preflight_rpc_method_allowed(
+        "openhuman.update_check"
+    ));
+    assert!(!super::preflight_rpc_method_allowed(
+        "openhuman.approval_get_gate_state"
+    ));
+}
+
+#[test]
+fn startup_preflight_gate_opens_the_normal_surface_after_decryption() {
+    let gate = super::PreflightGate::new_active();
+    assert!(gate.is_active());
+    gate.open();
+    assert!(!gate.is_active());
+}
+
+#[test]
+fn external_inference_bearer_requires_a_matching_stored_key() {
+    assert!(external_inference_bearer_matches(
+        "external-test-key",
+        Some("external-test-key")
+    ));
+    assert!(external_inference_bearer_matches(
+        "external-test-key",
+        Some(" external-test-key ")
+    ));
+    assert!(!external_inference_bearer_matches(
+        "wrong-key",
+        Some("external-test-key")
+    ));
+    assert!(!external_inference_bearer_matches(
+        "external-test-key",
+        None
+    ));
+    assert!(!external_inference_bearer_matches(
+        " ",
+        Some("external-test-key")
     ));
 }

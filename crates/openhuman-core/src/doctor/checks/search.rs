@@ -23,7 +23,7 @@ impl SearchProviderResolver for ReadOnlyProviderResolver {
             .as_ref()
             .map(|binding| binding.effective_search(config))
             .unwrap_or_else(|| config.clone());
-        let managed_available = managed_credential_available(&effective);
+        let managed_available = managed_credential_available(&effective).await;
         crate::search::providers::resolve_with(&effective, managed_available)
     }
 }
@@ -163,10 +163,10 @@ fn direct_key_path(provider: &str) -> String {
 /// This deliberately avoids `resolve_backend_credential`, which may publish a
 /// session-expiry event, and never opens an auth-store writer or refreshes a
 /// token.
-fn managed_credential_available(config: &Config) -> bool {
-    use crate::security::credentials::{
+async fn managed_credential_available(config: &Config) -> bool {
+    use crate::credentials::{
         api_key,
-        session_support::{
+        session_state::{
             check_session_backend, classify_session_token, is_local_session_token,
             SessionTokenCheck,
         },
@@ -174,6 +174,7 @@ fn managed_credential_available(config: &Config) -> bool {
     };
 
     if api_key::get_api_key_read_only(config)
+        .await
         .ok()
         .flatten()
         .is_some_and(|key| !key.trim().is_empty())
@@ -181,6 +182,7 @@ fn managed_credential_available(config: &Config) -> bool {
         return true;
     }
     let profile = AuthService::get_profile_read_only(config, APP_SESSION_PROVIDER, None)
+        .await
         .ok()
         .flatten();
     if check_session_backend(config, profile.as_ref()).is_err() {

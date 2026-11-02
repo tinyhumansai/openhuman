@@ -8,7 +8,7 @@ mod detector;
 pub use detector::{
     enforce_prompt_input, scan_tool_definition, PromptEnforcementAction, PromptEnforcementContext,
     PromptEnforcementDecision, PromptInjectionReason, PromptInjectionVerdict,
-    ToolDefinitionScanHit,
+    ToolDefinitionScanHit, MAX_PROMPT_BYTES,
 };
 
 #[cfg(test)]

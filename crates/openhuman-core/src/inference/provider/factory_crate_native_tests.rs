@@ -14,20 +14,21 @@ fn isolated_config() -> (tempfile::TempDir, Config) {
     (tmp, config)
 }
 
-fn store_fixture_session(config: &Config) {
-    crate::security::credentials::AuthService::from_config(config)
+async fn store_fixture_session(config: &Config) {
+    crate::credentials::AuthService::from_config(config)
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::APP_SESSION_PROVIDER,
             "default",
             "fixture-session-token",
             Default::default(),
             true,
         )
+        .await
         .expect("store isolated fixture session");
 }
 
-fn store_fixture_cloud_key(config: &Config, slug: &str) {
-    crate::security::credentials::AuthService::from_config(config)
+async fn store_fixture_cloud_key(config: &Config, slug: &str) {
+    crate::credentials::AuthService::from_config(config)
         .store_provider_token(
             &format!("provider:{slug}"),
             "default",
@@ -35,6 +36,7 @@ fn store_fixture_cloud_key(config: &Config, slug: &str) {
             Default::default(),
             true,
         )
+        .await
         .expect("store isolated provider credential");
 }
 
@@ -48,21 +50,21 @@ fn fixture_library_dispatch() -> crate::core::runtime::DispatchCtx {
     )
 }
 
-fn with_fixture_library_context<R>(f: impl FnOnce() -> R) -> R {
+async fn with_fixture_library_context<F: std::future::Future>(f: impl FnOnce() -> F) -> F::Output {
     let context = crate::core::runtime::CoreContext::for_test_with_host_kind(
         crate::core::types::HostKind::Library,
         crate::core::runtime::DomainSet::full(),
         None,
     );
-    crate::core::runtime::CoreContext::sync_scope(context, f)
+    crate::core::runtime::CoreContext::scope(context, f()).await
 }
 
-#[test]
-fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
+#[tokio::test]
+async fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
     let _guard = crate::inference::inference_test_guard();
     let (_tmp, mut config) = isolated_config();
     config.cloud_providers.push(openai_entry("p_team", "team"));
-    store_fixture_cloud_key(&config, "team");
+    store_fixture_cloud_key(&config, "team").await;
     config.cloud_provider_ca_certs.insert(
         "team".into(),
         include_str!("../../util/tls/test-ca.pem").into(),
@@ -74,6 +76,7 @@ fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
         true,
         &EgressLedger::none(),
     )
+    .await
     .expect("configured provider")
     .expect("custom CA client should build");
     assert_eq!(model_id, "private-model");
@@ -82,8 +85,8 @@ fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
         Some("team".into())
     );
 }
-#[test]
-fn enforce_local_only_inference_errors_on_external_when_local_only() {
+#[tokio::test]
+async fn enforce_local_only_inference_errors_on_external_when_local_only() {
     // Drive the live-policy-backed wrapper: install a LocalOnly policy, then
     // assert an external provider is refused with the privacy message and a
     // local provider passes. Factory tests use `inference_test_guard`; take the
@@ -120,7 +123,9 @@ fn enforce_local_only_inference_errors_on_external_when_local_only() {
         "claude_agent_sdk:claude-sonnet-4-6",
         &Config::default(),
         0.0,
-    ) {
+    )
+    .await
+    {
         Err(error) => error,
         Ok(_) => panic!("direct Claude SDK model must preserve the privacy gate"),
     };
@@ -131,7 +136,9 @@ fn enforce_local_only_inference_errors_on_external_when_local_only() {
         "claude-code:claude-sonnet-4-6",
         &Config::default(),
         0.0,
-    ) {
+    )
+    .await
+    {
         Err(error) => error,
         Ok(_) => panic!("direct Claude Code model must preserve the privacy gate"),
     };
@@ -143,7 +150,7 @@ fn enforce_local_only_inference_errors_on_external_when_local_only() {
     // hit the managed resolver's privacy gate before any backend client exists.
     for route in ["openhuman", "openrouter/author/picked-model:free"] {
         let result = if route == "openhuman" {
-            create_chat_model_from_string("chat", route, &Config::default(), 0.0)
+            create_chat_model_from_string("chat", route, &Config::default(), 0.0).await
         } else {
             managed_backend::make_openhuman_backend_model_for_thread(
                 "chat",
@@ -195,6 +202,7 @@ async fn create_chat_model_uses_native_test_override() {
         &config,
         0.3,
     )
+    .await
     .expect("create_chat_model must build");
     let response = model
         .invoke(&(), ModelRequest::new(vec![Message::user("hi there")]))
@@ -242,6 +250,7 @@ async fn one_shot_chat_models_preserve_factory_temperature_as_request_default() 
         &config,
         0.3,
     )
+    .await
     .expect("role model");
     role_model
         .invoke(&(), ModelRequest::new(vec![Message::user("default")]))
@@ -249,6 +258,7 @@ async fn one_shot_chat_models_preserve_factory_temperature_as_request_default() 
         .expect("default-temperature invoke");
 
     let explicit_model = create_chat_model_from_string("chat", "openhuman", &config, 0.7)
+        .await
         .expect("explicit provider model");
     explicit_model
         .invoke(
@@ -273,7 +283,7 @@ async fn one_shot_cloud_sentinel_resolves_the_configured_byok_provider() {
     provider.default_model = Some("gpt-4o-mini".into());
     let mut config = config_with_providers_in_tempdir(&tmp, vec![provider]);
     config.primary_cloud = Some("p_openai".into());
-    store_byo_key(&config, "openai", "sk-fixture");
+    store_byo_key(&config, "openai", "sk-fixture").await;
     let library = crate::core::runtime::CoreContext::for_test_with_host_kind(
         crate::core::types::HostKind::Library,
         crate::core::runtime::DomainSet::full(),
@@ -284,6 +294,7 @@ async fn one_shot_cloud_sentinel_resolves_the_configured_byok_provider() {
         for provider in ["cloud", ""] {
             let (_, model) =
                 create_chat_model_from_string_with_model_id("chat", provider, &config, 0.2)
+                    .await
                     .expect("sentinel resolves to the configured BYOK route");
             assert_eq!(model, "gpt-4o-mini");
         }
@@ -296,8 +307,8 @@ async fn one_shot_cloud_sentinel_resolves_the_configured_byok_provider() {
 // crate-native `TinyHumansModel`, whose profile advertises the capabilities
 // that routing previously inferred through the provider adapter.
 
-#[test]
-fn resolves_to_managed_backend_for_default_config_but_not_for_local() {
+#[tokio::test]
+async fn resolves_to_managed_backend_for_default_config_but_not_for_local() {
     // A default config has no BYOK/cloud providers, so every chat-tier role
     // resolves to the managed OpenHuman backend.
     let managed = Config::default();
@@ -310,16 +321,17 @@ fn resolves_to_managed_backend_for_default_config_but_not_for_local() {
     assert!(!resolves_to_managed_backend("chat", &local));
 }
 
-#[test]
-fn create_chat_model_routes_managed_backend_to_crate_native() {
+#[tokio::test]
+async fn create_chat_model_routes_managed_backend_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     install_test_managed_provider();
     let (tmp, mut config) = isolated_config();
     config.workspace_dir = tmp.path().join("workspace");
     config.config_path = tmp.path().join("config.toml");
-    store_fixture_session(&config);
+    store_fixture_session(&config).await;
     let (_model, model_id) =
         create_chat_model_with_model_id_in(&fixture_library_dispatch(), "chat", &config, 0.7)
+            .await
             .expect("managed create_chat_model must build");
     assert_eq!(model_id, "fixture/managed-default");
     crate::inference::registry::unregister_chat_model(
@@ -327,8 +339,8 @@ fn create_chat_model_routes_managed_backend_to_crate_native() {
     );
 }
 
-#[test]
-fn create_chat_model_routes_local_runtime_to_crate_native() {
+#[tokio::test]
+async fn create_chat_model_routes_local_runtime_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     let mut config = Config::default();
     config.chat_provider = Some("ollama:qwen2.5".to_string());
@@ -338,6 +350,7 @@ fn create_chat_model_routes_local_runtime_to_crate_native() {
         &config,
         0.7,
     )
+    .await
     .expect("local create_chat_model must build");
     assert_eq!(model_id, "qwen2.5");
     // Motion B (#4727): a local runtime now builds a crate-native `OpenAiModel`
@@ -353,12 +366,13 @@ fn create_chat_model_routes_local_runtime_to_crate_native() {
     assert!(!profile.modalities.image_in, "Ollama is text-only here");
 }
 
-#[test]
-fn explicit_local_provider_string_routes_to_crate_native_model() {
+#[tokio::test]
+async fn explicit_local_provider_string_routes_to_crate_native_model() {
     let _guard = crate::inference::inference_test_guard();
     let config = Config::default();
     let (model, model_id) =
         create_chat_model_from_string_with_model_id("chat", "ollama:qwen2.5", &config, 0.7)
+            .await
             .expect("explicit local model must build");
     assert_eq!(model_id, "qwen2.5");
     assert_eq!(
@@ -369,8 +383,8 @@ fn explicit_local_provider_string_routes_to_crate_native_model() {
     );
 }
 
-#[test]
-fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
+#[tokio::test]
+async fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
     let _guard = crate::inference::inference_test_guard();
     // Default config resolves to the managed backend, not a local runtime.
     assert!(super::local_runtime::try_create_local_runtime_chat_model(
@@ -392,8 +406,8 @@ fn try_create_local_runtime_returns_none_for_managed_and_cloud() {
     .is_none());
 }
 
-#[test]
-fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
+#[tokio::test]
+async fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     // DeepSeek is a built-in chat-completions-only Bearer provider: no
     // `/v1/responses` fallback and no codex-oauth, so it is wire-equivalent and
@@ -401,9 +415,10 @@ fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
     let (_tmp, mut config) = isolated_config();
     config.cloud_providers.push(deepseek_entry("p_ds"));
     config.chat_provider = Some("deepseek:deepseek-reasoner".to_string());
-    store_fixture_cloud_key(&config, "deepseek");
+    store_fixture_cloud_key(&config, "deepseek").await;
     let (model, model_id) =
         create_chat_model_with_model_id_in(&fixture_library_dispatch(), "chat", &config, 0.7)
+            .await
             .expect("bearer cloud create_chat_model must build");
     assert_eq!(model_id, "deepseek-reasoner");
     let profile = model
@@ -415,25 +430,27 @@ fn create_chat_model_routes_plain_bearer_cloud_slug_to_crate_native() {
     assert!(profile.tool_calling);
 }
 
-#[test]
-fn explicit_cloud_provider_string_routes_to_crate_native_model() {
+#[tokio::test]
+async fn explicit_cloud_provider_string_routes_to_crate_native_model() {
     let _guard = crate::inference::inference_test_guard();
     let (_tmp, mut config) = isolated_config();
     config.cloud_providers.push(deepseek_entry("p_ds"));
-    store_fixture_cloud_key(&config, "deepseek");
-    let model_and_id = crate::core::runtime::CoreContext::sync_scope(
+    store_fixture_cloud_key(&config, "deepseek").await;
+    let model_and_id = crate::core::runtime::CoreContext::scope(
         fixture_library_dispatch()
             .resolved()
             .expect("library context"),
-        || {
+        async {
             create_chat_model_from_string_with_model_id(
                 "chat",
                 "deepseek:deepseek-reasoner",
                 &config,
                 0.7,
             )
+            .await
         },
-    );
+    )
+    .await;
     let (model, model_id) = model_and_id.expect("explicit cloud model must build");
     assert_eq!(model_id, "deepseek-reasoner");
     assert_eq!(
@@ -444,8 +461,8 @@ fn explicit_cloud_provider_string_routes_to_crate_native_model() {
     );
 }
 
-#[test]
-fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
+#[tokio::test]
+async fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
     let _guard = crate::inference::inference_test_guard();
     // Anthropic-auth cloud slugs are always wire-equivalent (their endpoints have
     // no `/v1/responses`, so the host's dormant fallback is behavior-neutral).
@@ -454,9 +471,10 @@ fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
         .cloud_providers
         .push(anthropic_entry("p_anth", "anthropic"));
     config.chat_provider = Some("anthropic:claude-sonnet-4-6".to_string());
-    store_fixture_cloud_key(&config, "anthropic");
+    store_fixture_cloud_key(&config, "anthropic").await;
     let (model, model_id) =
         create_chat_model_with_model_id_in(&fixture_library_dispatch(), "chat", &config, 0.7)
+            .await
             .expect("anthropic cloud create_chat_model must build");
     assert_eq!(model_id, "claude-sonnet-4-6");
     assert_eq!(
@@ -481,14 +499,14 @@ fn create_chat_model_routes_anthropic_auth_cloud_slug_to_crate_native() {
 /// Text mode (prompt-guided tools) is only implemented on the Chat Completions
 /// adapter, so an Anthropic slug asked for `native_tools = false` keeps the
 /// compat client rather than a native adapter that would ignore the request.
-#[test]
-fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
+#[tokio::test]
+async fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
     let _guard = crate::inference::inference_test_guard();
     let (_tmp, mut config) = isolated_config();
     config
         .cloud_providers
         .push(anthropic_entry("p_anth", "anthropic"));
-    store_fixture_cloud_key(&config, "anthropic");
+    store_fixture_cloud_key(&config, "anthropic").await;
     let (model, model_id) = try_create_cloud_slug_chat_model_from_string_with_native_tools(
         "chat",
         "anthropic:claude-sonnet-4-6",
@@ -496,6 +514,7 @@ fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
         false,
         &EgressLedger::none(),
     )
+    .await
     .expect("anthropic slug resolves")
     .expect("build");
     assert_eq!(model_id, "claude-sonnet-4-6");
@@ -507,8 +526,8 @@ fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
     assert!(model.profile().is_some_and(|p| !p.tool_calling));
 }
 
-#[test]
-fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
+#[tokio::test]
+async fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
     let _guard = crate::inference::inference_test_guard();
     install_test_managed_provider();
     let (_tmp, mut config) = isolated_config();
@@ -519,6 +538,7 @@ fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
 
     let (_model, model_id) =
         try_create_cloud_slug_chat_model("chat", &config, &EgressLedger::none())
+            .await
             .expect("registered host policy should recognize this route")
             .expect("registered model should build");
 
@@ -527,6 +547,7 @@ fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
     // A concrete catalog id is forwarded verbatim.
     config.chat_provider = Some("fixture-managed:vendor/pinned".to_string());
     let (_, pinned_id) = try_create_cloud_slug_chat_model("chat", &config, &EgressLedger::none())
+        .await
         .expect("registered host policy should recognize this route")
         .expect("registered model should build");
     assert_eq!(pinned_id, "vendor/pinned");
@@ -558,6 +579,7 @@ async fn openhuman_jwt_slug_discloses_pinned_model() {
         &config,
         &EgressLedger::none(),
     )
+    .await
     .expect("registered host policy should recognize this route")
     .expect("registered model should build");
 
@@ -596,97 +618,7 @@ async fn openhuman_jwt_slug_discloses_pinned_model() {
 }
 
 #[tokio::test]
-async fn native_claude_turn_routes_disclose_pinned_models() {
-    use crate::core::bus::BUS;
-    use crate::core::events::DomainEvent;
-    use crate::security::egress::EgressDescriptor;
-    use std::time::Duration;
-
-    let _guard = crate::inference::inference_test_guard_async().await;
-    let _storage = crate::storage::test_support::install_backend_for_test(
-        crate::storage::test_support::memory_backend(),
-    );
-    crate::core::bus::init().await.expect("bus init");
-    let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
-
-    let configured_sdk = "egress-sdk-configured-marker";
-    let pinned_sdk = "egress-sdk-pinned-marker";
-    let mut sdk_config = Config::default();
-    sdk_config.chat_provider = Some(format!("claude_agent_sdk:{configured_sdk}"));
-    crate::inference::turn_models::TurnModelSource::new_crate_native(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "chat",
-        Arc::new(sdk_config),
-    )
-    .build(pinned_sdk, 0.0, None, None)
-    .expect("Claude Agent SDK turn set should build");
-
-    let configured_code = "egress-code-configured-marker";
-    let pinned_code = "egress-code-pinned-marker";
-    let mut code_config = Config::default();
-    code_config.chat_provider = Some(format!("claude-code:{configured_code}"));
-    // Egress is disclosed once the effective model is selected, before the
-    // environment probe. The test therefore remains valid on hosts without the
-    // Claude Code CLI.
-    let _ = crate::inference::turn_models::TurnModelSource::new_crate_native(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "chat",
-        Arc::new(code_config),
-    )
-    .build(pinned_code, 0.0, None, None);
-
-    let sentinel = "egress-native-claude-sentinel-end";
-    BUS.publish(DomainEvent::ExternalTransferPending {
-        descriptor: EgressDescriptor::network_fetch(sentinel),
-        thread_id: None,
-        client_id: None,
-        request_id: None,
-    });
-
-    let mut sdk_count = 0usize;
-    let mut code_count = 0usize;
-    let mut configured_count = 0usize;
-    loop {
-        match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
-            Ok(Some(DomainEvent::ExternalTransferPending { descriptor, .. })) => {
-                match descriptor.service.as_str() {
-                    service if service == pinned_sdk => {
-                        assert_eq!(descriptor.provider_slug, "claude_agent_sdk");
-                        sdk_count += 1;
-                    }
-                    service if service == pinned_code => {
-                        assert_eq!(descriptor.provider_slug, "claude-code");
-                        code_count += 1;
-                    }
-                    service if service == configured_sdk || service == configured_code => {
-                        configured_count += 1;
-                    }
-                    service if service == sentinel => break,
-                    _ => {}
-                }
-            }
-            Ok(Some(_)) => continue,
-            Ok(None) => panic!("the bus closed before the sentinel arrived"),
-            Err(_) => panic!("timed out before egress sentinel arrived"),
-        }
-    }
-
-    assert_eq!(
-        sdk_count, 1,
-        "SDK route must disclose its pinned model once"
-    );
-    assert_eq!(
-        code_count, 1,
-        "Claude Code route must disclose its pinned model once"
-    );
-    assert_eq!(
-        configured_count, 0,
-        "native Claude routes must not disclose stale configured models"
-    );
-}
-
-#[test]
-fn openhuman_jwt_slug_preserves_forced_text_mode() {
+async fn openhuman_jwt_slug_preserves_forced_text_mode() {
     let _guard = crate::inference::inference_test_guard();
     let native_modes = install_test_managed_provider();
     let (_tmp, mut config) = isolated_config();
@@ -701,6 +633,7 @@ fn openhuman_jwt_slug_preserves_forced_text_mode() {
         false,
         &EgressLedger::none(),
     )
+    .await
     .expect("registered host policy should recognize this route")
     .expect("registered model should build");
 
@@ -710,8 +643,8 @@ fn openhuman_jwt_slug_preserves_forced_text_mode() {
     );
 }
 
-#[test]
-fn openhuman_jwt_slug_without_model_preserves_managed_role_tier() {
+#[tokio::test]
+async fn openhuman_jwt_slug_without_model_preserves_managed_role_tier() {
     let _guard = crate::inference::inference_test_guard();
     install_test_managed_provider();
     let (_tmp, mut config) = isolated_config();
@@ -725,6 +658,7 @@ fn openhuman_jwt_slug_without_model_preserves_managed_role_tier() {
         &config,
         &EgressLedger::none(),
     )
+    .await
     .expect("registered host policy should recognize this route")
     .expect("registered model should build");
 
@@ -739,3 +673,6 @@ mod cloud_tests;
 
 #[path = "factory_crate_native_defaults_tests.rs"]
 mod default_temperature_tests;
+
+#[path = "factory_crate_native_egress_tests.rs"]
+mod egress_tests;

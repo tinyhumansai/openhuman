@@ -170,6 +170,7 @@ impl Config {
                 );
             }
         }
+        self.apply_summarizer_env(env);
         let context_default =
             tinyagents_harness::config::TurnConfig::default().tool_result_budget_bytes;
         let context_env_set = env.contains("OPENHUMAN_CONTEXT_TOOL_RESULT_BUDGET_BYTES");
@@ -184,6 +185,56 @@ impl Config {
                  `context.tool_result_budget_bytes` in your config.toml"
             );
             self.context.tool_result_budget_bytes = self.agent.tool_result_budget_bytes;
+        }
+    }
+
+    /// The compaction summarizer's rendering and output cap.
+    fn apply_summarizer_env<E: EnvLookup + ?Sized>(&mut self, env: &E) {
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING") {
+            let rendering = match val.trim().to_ascii_lowercase().as_str() {
+                "" => None,
+                "full" => Some(tinyagents_harness::summarization::ToolRendering::Full),
+                "markers" => Some(tinyagents_harness::summarization::ToolRendering::Markers),
+                _ => {
+                    tracing::warn!(
+                        value = %val.trim(),
+                        "[config] ignoring unknown OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING (full | markers)"
+                    );
+                    None
+                }
+            };
+            if let Some(rendering) = rendering {
+                self.context.summarizer_tool_rendering = rendering;
+                self.record_env_override(
+                    env,
+                    "context.summarizer_tool_rendering",
+                    &["OPENHUMAN_CONTEXT_SUMMARIZER_TOOL_RENDERING"],
+                );
+            }
+        }
+        // `0` or an empty value clears a cap set in `config.toml`.
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS") {
+            let cap = match val.trim() {
+                "" | "0" => Some(None),
+                raw => match raw.parse::<u32>() {
+                    Ok(tokens) => Some(Some(tokens)),
+                    Err(_) => {
+                        tracing::warn!(
+                            value = raw,
+                            "[config] ignoring unparseable OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(cap) = cap {
+                self.context.summarizer_max_output_tokens = cap;
+                self.record_env_override(
+                    env,
+                    "context.summarizer_max_output_tokens",
+                    &["OPENHUMAN_CONTEXT_SUMMARIZER_MAX_OUTPUT_TOKENS"],
+                );
+            }
         }
     }
 }

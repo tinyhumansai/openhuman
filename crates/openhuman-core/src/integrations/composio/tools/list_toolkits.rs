@@ -53,7 +53,7 @@ impl Tool for ComposioListToolkitsTool {
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
 }
 
@@ -87,7 +87,7 @@ impl ComposioListToolkitsTool {
                 );
             }
         };
-        match resolve_composio_route(&live_config) {
+        match resolve_composio_route(&live_config).await {
             Ok(ComposioRoute::Backend) => {
                 tracing::debug!("[composio] list_toolkits.execute: backend variant");
             }

@@ -1,0 +1,360 @@
+use crate::config::{
+    runtime_proxy_config, set_runtime_proxy_config, Config, ProxyConfig, ProxyScope,
+};
+use crate::security::SecurityPolicy;
+use crate::util::MaybeSet;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::fs;
+use std::sync::Arc;
+use tinyagents_harness_tools::static_schema;
+use tinytools::{Tool, ToolResult};
+
+pub struct ProxyConfigTool {
+    config: Arc<Config>,
+    security: Arc<SecurityPolicy>,
+}
+
+impl ProxyConfigTool {
+    pub fn new(config: Arc<Config>, security: Arc<SecurityPolicy>) -> Self {
+        Self { config, security }
+    }
+
+    fn load_config_without_env(&self) -> anyhow::Result<Config> {
+        let contents = fs::read_to_string(&self.config.config_path).map_err(|error| {
+            anyhow::anyhow!(
+                "Failed to read config file {}: {error}",
+                self.config.config_path.display()
+            )
+        })?;
+
+        let mut parsed: Config =
+            crate::config::schema::config_from_toml_str(&contents).map_err(|error| {
+                anyhow::anyhow!(
+                    "Failed to parse config file {}: {error}",
+                    self.config.config_path.display()
+                )
+            })?;
+        parsed.config_path = self.config.config_path.clone();
+        parsed.workspace_dir = self.config.workspace_dir.clone();
+        Ok(parsed)
+    }
+
+    fn parse_scope(raw: &str) -> Option<ProxyScope> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "environment" | "env" => Some(ProxyScope::Environment),
+            "openhuman" | "internal" | "core" => Some(ProxyScope::OpenHuman),
+            "services" | "service" => Some(ProxyScope::Services),
+            _ => None,
+        }
+    }
+
+    fn parse_string_list(raw: &Value, field: &str) -> anyhow::Result<Vec<String>> {
+        if let Some(raw_string) = raw.as_str() {
+            return Ok(raw_string
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect());
+        }
+
+        if let Some(array) = raw.as_array() {
+            let mut out = Vec::new();
+            for item in array {
+                let value = item
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("'{field}' array must only contain strings"))?;
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    out.push(trimmed.to_string());
+                }
+            }
+            return Ok(out);
+        }
+
+        anyhow::bail!("'{field}' must be a string or string[]")
+    }
+
+    fn parse_optional_string_update(args: &Value, field: &str) -> anyhow::Result<MaybeSet<String>> {
+        let Some(raw) = args.get(field) else {
+            return Ok(MaybeSet::Unset);
+        };
+
+        if raw.is_null() {
+            return Ok(MaybeSet::Null);
+        }
+
+        let value = raw
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("'{field}' must be a string or null"))?
+            .trim()
+            .to_string();
+
+        let output = if value.is_empty() {
+            MaybeSet::Null
+        } else {
+            MaybeSet::Set(value)
+        };
+        Ok(output)
+    }
+
+    fn env_snapshot() -> Value {
+        json!({
+            "HTTP_PROXY": std::env::var("HTTP_PROXY").ok(),
+            "HTTPS_PROXY": std::env::var("HTTPS_PROXY").ok(),
+            "ALL_PROXY": std::env::var("ALL_PROXY").ok(),
+            "NO_PROXY": std::env::var("NO_PROXY").ok(),
+        })
+    }
+
+    fn proxy_json(proxy: &ProxyConfig) -> Value {
+        json!({
+            "enabled": proxy.enabled,
+            "scope": proxy.scope,
+            "http_proxy": proxy.http_proxy,
+            "https_proxy": proxy.https_proxy,
+            "all_proxy": proxy.all_proxy,
+            "no_proxy": proxy.normalized_no_proxy(),
+            "services": proxy.normalized_services(),
+        })
+    }
+
+    fn handle_get(&self) -> anyhow::Result<ToolResult> {
+        let file_proxy = self.load_config_without_env()?.proxy;
+        let runtime_proxy = runtime_proxy_config();
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "proxy": Self::proxy_json(&file_proxy),
+            "runtime_proxy": Self::proxy_json(&runtime_proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
+    }
+
+    fn handle_list_services(&self) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "supported_service_keys": ProxyConfig::supported_service_keys(),
+            "supported_selectors": ProxyConfig::supported_service_selectors(),
+            "usage_example": {
+                "action": "set",
+                "scope": "services",
+                "services": ["provider.openai", "tool.http_request", "channel.telegram"]
+            }
+        }))?))
+    }
+
+    async fn handle_set(&self, args: &Value) -> anyhow::Result<ToolResult> {
+        let mut cfg = Config::load_from_config_path_without_env(
+            &self.config.config_path,
+            &self.config.workspace_dir,
+        )
+        .await?;
+        let previous_scope = cfg.proxy.scope;
+        let mut proxy = cfg.proxy.clone();
+        let mut touched_proxy_url = false;
+
+        if let Some(enabled) = args.get("enabled") {
+            proxy.enabled = enabled
+                .as_bool()
+                .ok_or_else(|| anyhow::anyhow!("'enabled' must be a boolean"))?;
+        }
+
+        if let Some(scope_raw) = args.get("scope") {
+            let scope = scope_raw
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("'scope' must be a string"))?;
+            proxy.scope = Self::parse_scope(scope).ok_or_else(|| {
+                anyhow::anyhow!("Invalid scope '{scope}'. Use environment|openhuman|services")
+            })?;
+        }
+
+        match Self::parse_optional_string_update(args, "http_proxy")? {
+            MaybeSet::Set(update) => {
+                proxy.http_proxy = Some(update);
+                touched_proxy_url = true;
+            }
+            MaybeSet::Null => {
+                proxy.http_proxy = None;
+                touched_proxy_url = true;
+            }
+            MaybeSet::Unset => {}
+        }
+
+        match Self::parse_optional_string_update(args, "https_proxy")? {
+            MaybeSet::Set(update) => {
+                proxy.https_proxy = Some(update);
+                touched_proxy_url = true;
+            }
+            MaybeSet::Null => {
+                proxy.https_proxy = None;
+                touched_proxy_url = true;
+            }
+            MaybeSet::Unset => {}
+        }
+
+        match Self::parse_optional_string_update(args, "all_proxy")? {
+            MaybeSet::Set(update) => {
+                proxy.all_proxy = Some(update);
+                touched_proxy_url = true;
+            }
+            MaybeSet::Null => {
+                proxy.all_proxy = None;
+                touched_proxy_url = true;
+            }
+            MaybeSet::Unset => {}
+        }
+
+        if let Some(no_proxy_raw) = args.get("no_proxy") {
+            proxy.no_proxy = Self::parse_string_list(no_proxy_raw, "no_proxy")?;
+            touched_proxy_url = true;
+        }
+
+        if let Some(services_raw) = args.get("services") {
+            proxy.services = Self::parse_string_list(services_raw, "services")?;
+        }
+
+        if args.get("enabled").is_none() && touched_proxy_url {
+            // Keep auto-enable behavior when users provide a proxy URL, but
+            // auto-disable when all proxy URLs are cleared in the same update.
+            proxy.enabled = proxy.has_any_proxy_url();
+        }
+
+        proxy.no_proxy = proxy.normalized_no_proxy();
+        proxy.services = proxy.normalized_services();
+        proxy.validate()?;
+
+        cfg.proxy = proxy.clone();
+        cfg.save().await?;
+        set_runtime_proxy_config(proxy.clone());
+
+        if proxy.enabled && proxy.scope == ProxyScope::Environment {
+            proxy.apply_to_process_env();
+        } else if previous_scope == ProxyScope::Environment {
+            ProxyConfig::clear_process_env();
+        }
+
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy configuration updated",
+            "proxy": Self::proxy_json(&proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
+    }
+
+    async fn handle_disable(&self, args: &Value) -> anyhow::Result<ToolResult> {
+        let mut cfg = Config::load_from_config_path_without_env(
+            &self.config.config_path,
+            &self.config.workspace_dir,
+        )
+        .await?;
+        let clear_env_default = cfg.proxy.scope == ProxyScope::Environment;
+        cfg.proxy.enabled = false;
+        cfg.save().await?;
+
+        set_runtime_proxy_config(cfg.proxy.clone());
+
+        let clear_env = args
+            .get("clear_env")
+            .and_then(Value::as_bool)
+            .unwrap_or(clear_env_default);
+        if clear_env {
+            ProxyConfig::clear_process_env();
+        }
+
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy disabled",
+            "proxy": Self::proxy_json(&cfg.proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
+    }
+
+    fn handle_apply_env(&self) -> anyhow::Result<ToolResult> {
+        let cfg = self.load_config_without_env()?;
+        let proxy = cfg.proxy;
+        proxy.validate()?;
+
+        if !proxy.enabled {
+            anyhow::bail!("Proxy is disabled. Use action 'set' with enabled=true first");
+        }
+
+        if proxy.scope != ProxyScope::Environment {
+            anyhow::bail!(
+                "apply_env only works when proxy.scope is 'environment' (current: {:?})",
+                proxy.scope
+            );
+        }
+
+        proxy.apply_to_process_env();
+        set_runtime_proxy_config(proxy.clone());
+
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy environment variables applied",
+            "proxy": Self::proxy_json(&proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
+    }
+
+    fn handle_clear_env(&self) -> anyhow::Result<ToolResult> {
+        ProxyConfig::clear_process_env();
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy environment variables cleared",
+            "environment": Self::env_snapshot(),
+        }))?))
+    }
+}
+
+#[async_trait]
+impl Tool for ProxyConfigTool {
+    fn exposure(&self) -> tinytools::ToolExposure {
+        tinytools::ToolExposure::Deferred
+    }
+
+    fn name(&self) -> &str {
+        "proxy_config"
+    }
+
+    fn description(&self) -> &str {
+        "Manage OpenHuman proxy settings (scope: environment | openhuman | services), including runtime and process env application"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        static_schema!(include_str!("parameters/proxy_config.json"))
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let action = args
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("get")
+            .to_ascii_lowercase();
+
+        let result = match action.as_str() {
+            "get" => self.handle_get(),
+            "list_services" => self.handle_list_services(),
+            "set" | "disable" | "apply_env" | "clear_env" => {
+
+                match action.as_str() {
+                    "set" => self.handle_set(&args).await,
+                    "disable" => self.handle_disable(&args).await,
+                    "apply_env" => self.handle_apply_env(),
+                    "clear_env" => self.handle_clear_env(),
+                    _ => unreachable!("handled above"),
+                }
+            }
+            _ => anyhow::bail!(
+                "Unknown action '{action}'. Valid: get, set, disable, list_services, apply_env, clear_env"
+            ),
+        };
+
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => Ok(ToolResult::error(error.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "proxy_tool_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "proxy_tool_schema_tests.rs"]
+mod schema_tests;

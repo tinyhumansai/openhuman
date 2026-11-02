@@ -10,7 +10,7 @@ async fn channel_test_handler_requires_module_before_provider_field_validation()
         &config,
         TestParams {
             channel: " telegram ".into(),
-            auth_mode: "bot_token".into(),
+            auth_mode: ChannelAuthMode::BotToken,
             credentials: Value::Null,
         },
     )
@@ -61,7 +61,7 @@ fn deserialize_connect_params() {
     }))
     .unwrap();
     assert_eq!(params.channel, "telegram");
-    assert_eq!(params.auth_mode, "bot_token");
+    assert_eq!(params.auth_mode, ChannelAuthMode::BotToken);
     assert!(params.credentials.is_none());
 }
 
@@ -176,7 +176,7 @@ async fn channel_connect_handler_requires_module_before_provider_field_validatio
         &config,
         ConnectParams {
             channel: " telegram ".into(),
-            auth_mode: "bot_token".into(),
+            auth_mode: ChannelAuthMode::BotToken,
             credentials: Some(Value::Null),
         },
     )

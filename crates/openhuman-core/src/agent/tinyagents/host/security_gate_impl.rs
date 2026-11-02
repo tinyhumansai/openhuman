@@ -77,7 +77,8 @@ impl SecurityGate for OpenHumanSecurityGate {
                 user_id: None,
                 session_id: None,
             },
-        );
+        )
+        .await;
 
         match decision.action {
             PromptEnforcementAction::Allow => {

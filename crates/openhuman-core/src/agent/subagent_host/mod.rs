@@ -67,9 +67,13 @@ pub(crate) use lifecycle::spawn_async_via_driver_tool;
 #[cfg(test)]
 pub(crate) use lifecycle::spawn_async_via_driver_tool_with_jobs;
 pub use lifecycle::OpenHumanSubagentHost;
+/// Token + cost totals for one sub-agent run. TinyAgents owns the type
+/// (`AgentProgress::SubagentCompleted` carries it); re-exported under its
+/// historical host path.
+pub use tinyagents_harness::progress::SubagentUsage;
 pub use types::{
     SubagentCheckpointData, SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
-    SubagentRunStatus, SubagentUsage,
+    SubagentRunStatus, SubagentUsageExt,
 };
 
 pub(crate) use ops::resolve_subagent_source;

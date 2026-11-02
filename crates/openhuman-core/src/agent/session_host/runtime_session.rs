@@ -3,6 +3,12 @@
 //! Host hooks carry product state; `tinyagents_runtime` owns history,
 //! transcripts, prefixes, snapshots, resume, and persistence.
 
+mod bound_history;
+mod compact;
+pub use compact::{CompactOptions, CompactOutcome};
+#[path = "runtime_session_enrichment.rs"]
+mod enrichment;
+pub(super) mod memory_block;
 mod permanent;
 mod post_commit;
 #[path = "runtime_session/prelude.rs"]
@@ -291,6 +297,10 @@ mod goal_tests;
 mod parent_snapshot;
 #[path = "../../integrations/prelude_integrations.rs"]
 mod prelude_integrations;
+
+#[cfg(test)]
+#[path = "runtime_session_enrichment_tests.rs"]
+mod enrichment_tests;
 
 #[cfg(test)]
 #[path = "runtime_session_tests.rs"]

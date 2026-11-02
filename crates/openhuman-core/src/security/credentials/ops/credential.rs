@@ -313,6 +313,19 @@ pub async fn set_credential(
         effective
     };
 
+    if !refresh {
+        crate::integrations::composio::invalidate_connected_integrations_cache();
+        // Rebind before the session is stored. With a storage backend the auth
+        // profiles live in the installed backend, and the default backend
+        // belongs to the profile (`users/<id>/storage.db`): a session stored
+        // first would land in the previous profile's database and read back
+        // as absent once the rebind installs this user's. A failed rebind
+        // stores nothing, so a retry takes this install path again rather
+        // than the refresh fast-path that skips the bind.
+        rebind_after_credential_change(&effective_config, "credential installed")?;
+        logs.push("process globals rebound after credential install".to_string());
+    }
+
     let auth = AuthService::from_config(&effective_config);
     auth.store_provider_token(
         APP_SESSION_PROVIDER,
@@ -325,19 +338,6 @@ pub async fn set_credential(
     logs.push(format!("{} credential stored", resolved.kind.as_str()));
 
     if !refresh {
-        crate::integrations::composio::invalidate_connected_integrations_cache();
-        if let Err(error) =
-            rebind_after_credential_change(&effective_config, "credential installed")
-        {
-            // A retry of the same credential takes the refresh fast-path, so
-            // leaving its profile behind would let it skip this required bind.
-            auth.remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
-                .map_err(|rollback| {
-                    format!("credential rebind failed: {error}; rollback failed: {rollback}")
-                })?;
-            return Err(error);
-        }
-        logs.push("process globals rebound after credential install".to_string());
         start_credential_gated_services(ctx, &effective_config).await;
         logs.push("credential-gated services started".to_string());
     }
@@ -383,6 +383,24 @@ pub async fn clear_credential(
     config: &Config,
     kind: Option<CredentialKind>,
 ) -> Result<Outcome<Value>, String> {
+    clear_credential_with(ctx, config, kind, |to, key| {
+        api_key::store_api_key(to, key).map(|_| ())
+    })
+    .await
+}
+
+/// [`clear_credential`] with the carry of the API key into the signed-out
+/// workspace passed in, so a test can make it fail. Production passes
+/// [`api_key::store_api_key`].
+pub(crate) async fn clear_credential_with<F>(
+    ctx: &DispatchCtx,
+    config: &Config,
+    kind: Option<CredentialKind>,
+    carry: F,
+) -> Result<Outcome<Value>, String>
+where
+    F: FnOnce(&Config, &str) -> anyhow::Result<()>,
+{
     refuse_process_credential_in_saas("clear_credential")?;
     let _mutation = CREDENTIAL_MUTATION_LOCK.lock().await;
     let mut logs = Vec::new();
@@ -410,56 +428,71 @@ pub async fn clear_credential(
 
     let mut effective_config = config.clone();
     let mut cleared_source_api_key = false;
-    let mut carried_api_key = false;
     if matches!(
         kind,
         None | Some(CredentialKind::Session) | Some(CredentialKind::Local)
     ) {
-        let outcome = clear_session_credential(ctx, config).await?;
-        removed_session = outcome.value;
+        // Remove the key at its source while the source's store is still the
+        // installed one. The teardown below rebinds storage, and with the
+        // default backend (one database per profile) the signed-out
+        // workspace is another database: after it the source copy can no
+        // longer be reached, and left behind it would resurrect on the next
+        // login to this account (#6318). With a shared store or the
+        // per-directory files this is the same record or file the carry below
+        // writes again.
+        if source_api_key.is_some() {
+            cleared_source_api_key = api_key::clear_api_key(config).map_err(|e| e.to_string())?;
+        }
+
+        // A failure from here on puts the key back where it was, but only
+        // while that store is still the installed one: profiles follow the
+        // installed backend, so after a rebind to another database a write
+        // through `config` would land in the signed-out store under this
+        // user's secret namespace, where nothing reads it.
+        // A teardown can fail before its rebind (the source is still
+        // installed) or after it (a later rebind step); the check covers both.
+        let source_url = crate::storage::installed_url();
+        let fail = |reason: &str, error: String| -> String {
+            let Some(key) = source_api_key.as_deref() else {
+                return error;
+            };
+            if crate::storage::installed_url() == source_url {
+                restore_api_key(config, Some(key), reason);
+                return error;
+            }
+            tracing::error!(
+                domain = "credentials",
+                operation = "clear_credential",
+                reason,
+                "{LOG_PREFIX} api key lost: the sign-out failed after storage moved off its source"
+            );
+            format!("{error}; the API key could not be kept and must be entered again")
+        };
+        let outcome = clear_session_credential(ctx, config)
+            .await
+            .map_err(|error| fail("teardown failed", error))?;
+        let (removed, signed_out_config) = outcome.value;
+        removed_session = removed;
         logs.extend(outcome.logs);
 
-        if removed_session {
-            // Follow the same process globals the teardown just rebound to,
-            // so the api-key checks below agree with `auth.get_state`.
-            effective_config = reload_config_or(ctx, config).await?;
-            if let Some(key) = source_api_key.as_deref() {
-                if matches!(
-                    kind,
-                    Some(CredentialKind::Session) | Some(CredentialKind::Local)
-                ) {
-                    // A session/local-only clear preserves the key that was
-                    // actually active (the source): carry it forward to the
-                    // post-teardown workspace before the source copy is
-                    // removed below, overwriting whatever the destination
-                    // already held. This RPC is only removing the session —
-                    // an unrelated, stale key sitting at the pre-login
-                    // workspace must never silently outrank the key that was
-                    // the effective credential a moment ago (#6318).
-                    api_key::store_api_key(&effective_config, key).map_err(|e| e.to_string())?;
-                    logs.push("api key carried forward to the signed-out workspace".to_string());
-                    carried_api_key = true;
-                }
-                // With a storage backend the auth profiles are one secret in
-                // the acting scope (`profiles::persistence::STORAGE_SECRET_NAME`),
-                // not a file per state directory, so the source and the
-                // destination above are the same record: clearing the
-                // "source" would delete the key just carried forward.
-                let shares_store =
-                    carried_api_key && matches!(crate::storage::secrets::current(), Ok(Some(_)));
-                if shares_store {
-                    log::debug!("[credentials] api key kept: the storage profile store is shared");
-                } else {
-                    // Either the key was just moved to the post-teardown config
-                    // above, or `kind` is `None` and it must be removed outright.
-                    // `config` here is still the pre-teardown, user-scoped
-                    // reference, so this clears the *source* location — never
-                    // leave that copy behind, or a later login to the same
-                    // account (or an api-key clear against the wrong location)
-                    // would silently resurrect it (#6318).
-                    cleared_source_api_key =
-                        api_key::clear_api_key(config).map_err(|e| e.to_string())?;
-                }
+        // The teardown rebound every process global to the signed-out
+        // workspace whether or not a session profile was found; follow it so
+        // the api-key checks below agree with `auth.get_state`.
+        effective_config = signed_out_config;
+        if let Some(key) = source_api_key.as_deref() {
+            if matches!(
+                kind,
+                Some(CredentialKind::Session) | Some(CredentialKind::Local)
+            ) {
+                // A session/local-only clear preserves the key that was
+                // actually active: carry it to the signed-out workspace,
+                // overwriting whatever the destination already held. This RPC
+                // is only removing the session — an unrelated, stale key at
+                // the pre-login workspace must never silently outrank the key
+                // that was the effective credential a moment ago (#6318).
+                carry(&effective_config, key)
+                    .map_err(|error| fail("carry failed", error.to_string()))?;
+                logs.push("api key carried forward to the signed-out workspace".to_string());
             }
         }
     }
@@ -516,6 +549,30 @@ pub async fn clear_credential(
     ))
 }
 
+/// Puts back an API key `clear_credential` took out of its source for a move
+/// that then failed, where the process can read it now. Logged rather than
+/// returned: the caller reports the error that stopped the move.
+fn restore_api_key(config: &Config, key: Option<&str>, reason: &str) {
+    let Some(key) = key else {
+        return;
+    };
+    match api_key::store_api_key(config, key) {
+        Ok(_) => tracing::warn!(
+            domain = "credentials",
+            operation = "clear_credential",
+            reason,
+            "{LOG_PREFIX} api key restored after a failed sign-out"
+        ),
+        Err(error) => tracing::error!(
+            domain = "credentials",
+            operation = "clear_credential",
+            reason,
+            %error,
+            "{LOG_PREFIX} api key could not be restored after a failed sign-out; it must be entered again"
+        ),
+    }
+}
+
 /// The session teardown: gate closed first so no worker fires at a backend
 /// about to be invalidated, then profile removal, socket / workflow-bridge
 /// teardown, user-dir deactivation, service stop, rebind to the signed-out
@@ -524,7 +581,7 @@ pub async fn clear_credential(
 async fn clear_session_credential(
     ctx: &DispatchCtx,
     config: &Config,
-) -> Result<Outcome<bool>, String> {
+) -> Result<Outcome<(bool, Config)>, String> {
     let mut logs = Vec::new();
     crate::platform::llm_gate::set_signed_out(true);
     #[cfg(feature = "web3")]
@@ -570,23 +627,22 @@ async fn clear_session_credential(
     // Every process-global store must follow the now-active pre-login
     // workspace, or a signed-out caller keeps reading the previous account's
     // context until the process restarts.
-    match ctx.load_config().await {
-        Ok(signed_out_config) => {
-            logs.extend(rebind_after_credential_change(
-                &signed_out_config,
-                "credential cleared",
-            )?);
-            logs.push(format!(
-                "process globals rebound to signed-out workspace {}",
-                signed_out_config.workspace_dir.display()
-            ));
-        }
-        Err(error) => return Err(format!("failed to resolve signed-out workspace: {error}")),
-    }
+    let signed_out_config = ctx
+        .load_config()
+        .await
+        .map_err(|error| format!("failed to resolve signed-out workspace: {error}"))?;
+    logs.extend(rebind_after_credential_change(
+        &signed_out_config,
+        "credential cleared",
+    )?);
+    logs.push(format!(
+        "process globals rebound to signed-out workspace {}",
+        signed_out_config.workspace_dir.display()
+    ));
 
     sentry_scope::clear();
     logs.push("session cleared".to_string());
-    Ok(Outcome::new(removed, logs))
+    Ok(Outcome::new((removed, signed_out_config), logs))
 }
 
 /// Historical entry point: install a session (or local) credential from a

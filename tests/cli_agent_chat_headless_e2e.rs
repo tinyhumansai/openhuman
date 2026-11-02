@@ -301,7 +301,7 @@ fn one_shot_cli_waits_for_and_returns_its_spawned_child_result() {
         probes
             .iter()
             .any(|(probe, streaming)| probe.contains(CHILD_PROMPT) && *streaming),
-        "no actual streaming primary LLM request carried the child prompt: {probes:#?}"
+        "no actual streaming primary LLM request carried the child prompt: {probes:#?}\nstdout: {stdout}\nstderr: {stderr}"
     );
     let response: Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|error| panic!("CLI stdout is not JSON ({error}): {stdout}"));

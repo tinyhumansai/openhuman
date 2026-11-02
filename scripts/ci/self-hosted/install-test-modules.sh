@@ -25,6 +25,7 @@ host_key="${OH_MODULE_HOST_KEY:-ubuntu-22.04-x86_64}"
 blobs="${CI_CACHE_DIR:+${CI_CACHE_DIR}/blobs}"
 blobs="${blobs:-${dest}/.blobs}"
 mkdir -p "${blobs}" "${dest}"
+dest="$(cd "${dest}" && pwd -P)"
 
 verify() { echo "$1  $2" | sha256sum --check --status; }
 
@@ -78,10 +79,19 @@ if [ -z "${tinychannels_artifact}" ]; then
   echo "::error::the tinychannels release holds no module library" >&2
   exit 1
 fi
+# TinyVoice stays off the search path so no other suite starts loading it;
+# the native Telegram voice-note E2E loads it by file.
+tinyvoice_artifact="$(find "${dest}/tinyvoice" -maxdepth 2 -type f \
+  \( -name libtinyvoice_module.so -o -name libtinyvoice_module.dylib -o -name tinyvoice_module.dll \) | head -n 1)"
+if [ -z "${tinyvoice_artifact}" ]; then
+  echo "::error::the tinyvoice release holds no module library" >&2
+  exit 1
+fi
 {
   echo "OPENHUMAN_MODULE_PATH=${module_dirs}${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
   echo "OPENHUMAN_TINYMCP_TEST_MODULE=${tinymcp_artifact}"
   echo "OPENHUMAN_CHANNELS_TEST_ARTIFACT=${tinychannels_artifact}"
+  echo "OPENHUMAN_VOICE_TEST_ARTIFACT=${tinyvoice_artifact}"
   echo "OPENHUMAN_TEST_MODULES_STAGED=1"
 } > "${env_file}"
 log "wrote ${env_file}"

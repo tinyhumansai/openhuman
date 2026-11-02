@@ -8,8 +8,10 @@ mod crud;
 mod edit;
 mod live_state;
 mod purge;
+mod queued_attachments;
 mod search;
 mod support;
+mod thread_delete;
 mod title_generation;
 mod transcript;
 mod turn_state_ops;
@@ -30,6 +32,7 @@ pub use live_state::{
 pub use purge::threads_purge;
 #[cfg(test)]
 pub(crate) use purge::threads_purge_inner_with_snapshot_hook;
+pub(crate) use queued_attachments::persist_queued_user_message;
 pub use search::{thread_search, ThreadSearchHit, ThreadSearchRequest, ThreadSearchResponse};
 pub use title_generation::thread_generate_title;
 pub use transcript::{transcript_get, TranscriptGetRequest};

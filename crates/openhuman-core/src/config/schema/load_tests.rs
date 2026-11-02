@@ -91,6 +91,34 @@ async fn load_or_init_for_workspace(root: &std::path::Path) -> Config {
         .unwrap()
 }
 
+#[tokio::test]
+async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready() {
+    let root = tempfile::tempdir().unwrap();
+    let config_path = root.path().join("config.toml");
+    let sealed = format!("enc2:{}", "00".repeat(32));
+    let config = Config {
+        config_path: config_path.clone(),
+        workspace_dir: root.path().join("workspace"),
+        secrets: crate::config::schema::SecretsConfig { encrypt: true },
+        api_key: Some(sealed.clone()),
+        ..Config::default()
+    };
+    tokio::fs::write(&config_path, toml::to_string(&config).unwrap())
+        .await
+        .unwrap();
+    let env = MapEnv::default();
+
+    let loaded = Config::load_or_init_unsealed_with_env_lookup(
+        root.path(),
+        &root.path().join("workspace"),
+        &env,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(loaded.api_key.as_deref(), Some(sealed.as_str()));
+}
+
 // ── non-UTF-8 (binary) config recovery (#5167) ──────────────────────────
 
 /// Helper: write binary (non-UTF-8) bytes to a file.

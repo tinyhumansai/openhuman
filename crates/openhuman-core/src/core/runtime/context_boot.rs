@@ -85,7 +85,7 @@ impl CoreContext {
         // 2. Load the master encryption key before any config/credential op that
         //    needs to decrypt secrets. No-op if already called (e.g. from
         //    run_core_from_args for the CLI).
-        if boot_mode == crate::core::runtime::CoreBootMode::Normal {
+        if boot_mode != crate::core::runtime::CoreBootMode::Inspection {
             if let Some(config) = &preloaded_config {
                 crate::security::secret_storage::init_workspace(&config.workspace_dir);
             }
@@ -140,17 +140,15 @@ impl CoreContext {
         // Kept for the context: `preloaded_config` is consumed below, and the
         // whole point is that handlers can reach it after boot.
         let embedder_config = preloaded_config.clone();
-        let latest_embedder_config = embedder_config.clone().map(|config| {
-            let snapshot = Arc::new(std::sync::Mutex::new(config));
-            crate::config::Config::bind_context_snapshot(&snapshot);
-            snapshot
-        });
         let loaded = match preloaded_config {
             // A supplied config is authoritative: no disk read, no env overlay,
             // and no `Err` arm to reach, because there was nothing to fail.
             Some(cfg) => {
                 log::debug!("[core-context] init: using caller-supplied config (scoped workspace)");
                 Ok(cfg)
+            }
+            None if boot_mode == crate::core::runtime::CoreBootMode::SecretPreflight => {
+                crate::config::Config::load_or_init_unsealed().await
             }
             None => crate::config::Config::load_or_init().await,
         };
@@ -164,7 +162,7 @@ impl CoreContext {
         log::debug!("[core-context] init: components={components:?} effective domains={domains:?}");
         let config = match loaded {
             Ok(cfg) => {
-                if boot_mode == crate::core::runtime::CoreBootMode::Normal {
+                if boot_mode != crate::core::runtime::CoreBootMode::Inspection {
                     init_stores(&cfg, domains).await;
                 }
                 Some(cfg)
@@ -181,6 +179,22 @@ impl CoreContext {
                 None
             }
         };
+        // The desktop's restricted preflight loads config internally before
+        // it can decrypt config secrets. Keep that resolved config available
+        // as the context snapshot so successful decryption can replace it
+        // before the normal router is opened.
+        let latest_embedder_config = embedder_config
+            .clone()
+            .or_else(|| {
+                (boot_mode == crate::core::runtime::CoreBootMode::SecretPreflight)
+                    .then(|| config.clone())
+                    .flatten()
+            })
+            .map(|config| {
+                let snapshot = Arc::new(std::sync::Mutex::new(config));
+                crate::config::Config::bind_context_snapshot(&snapshot);
+                snapshot
+            });
         let workspace_dir = config.as_ref().map(|cfg| cfg.workspace_dir.clone());
 
         // Construct the runtime context before bootstrap. Inspection contexts
@@ -233,12 +247,13 @@ impl CoreContext {
         //    background jobs start later, from CoreRuntime::start_services(), after a transport binds
         //    succeeds.
         let runtime_config = config.clone();
-        if boot_mode == crate::core::runtime::CoreBootMode::Normal {
+        if boot_mode != crate::core::runtime::CoreBootMode::Inspection {
             crate::core::runtime::bootstrap::bootstrap_core_runtime(
                 host_kind,
                 config,
                 domains,
                 &crate::core::runtime::DispatchCtx::new(ctx.clone()),
+                boot_mode == crate::core::runtime::CoreBootMode::SecretPreflight,
             )
             .await;
         }

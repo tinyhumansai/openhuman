@@ -38,13 +38,13 @@ async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(), String> 
     if !url.starts_with("http") {
         return Err("Langfuse backend proxy URL is unavailable".to_string());
     }
-    let token = match crate::security::credentials::session_support::direct_backend_credential(
+    let token = match crate::credentials::backend_credential::direct_backend_credential(
         config,
         "langfuse otlp push",
-    ) {
-        Some(crate::security::credentials::session_support::BackendCredential::Session(token)) => {
-            token
-        }
+    )
+    .await
+    {
+        Some(crate::credentials::backend_credential::BackendCredential::Session(token)) => token,
         _ => return Ok(()),
     };
     let client = LangfuseClient::proxy_with_transport(
@@ -223,7 +223,7 @@ pub(crate) async fn export_subagent_journal_trace(
     if !config.observability.share_usage_data {
         return;
     }
-    if !crate::core::observability::telemetry::langfuse::journal_push_ready(config) {
+    if !crate::core::observability::telemetry::langfuse::journal_push_ready(config).await {
         log::debug!(
             "[agent-tracing] child trace export skipped: push not possible run_id={journal_run_id}"
         );
@@ -270,7 +270,7 @@ pub(crate) fn build_subagent_trace(
     let Some(first) = observations.first() else {
         return Vec::new();
     };
-    let user_id = crate::security::credentials::identity::peek_credential_user_identity()
+    let user_id = crate::credentials::identity::peek_credential_user_identity()
         .and_then(|identity| identity.id.or(identity.email));
     let trace_ctx = TraceContext::new(format!("subagent:{}", first.run_id.as_str()), user_id)
         .with_session_group(thread_id.unwrap_or(task_id).to_string())

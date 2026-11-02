@@ -18,8 +18,6 @@ use crate::threads::{
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
-use crate::web_chat as web_channel;
-use std::path::PathBuf;
 
 /// Lists all conversation threads.
 pub async fn threads_list(
@@ -73,7 +71,8 @@ pub async fn thread_create_new(
     request: CreateConversationThreadRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, String> {
     let dir = workspace_dir().await?;
-    let working_dir = super::working_dir::validate_working_dir(request.action_dir.as_deref())?;
+    let working_dir =
+        super::working_dir::validate_working_dir(request.action_dir.as_deref()).await?;
     let id = format!("thread-{}", uuid::Uuid::new_v4());
     let now = chrono::Local::now();
     let title = format!("Chat {} {}", now.format("%b %-d"), now.format("%-I:%M %p"));
@@ -192,17 +191,79 @@ pub async fn message_append(
         .load_config()
         .await
         .map_err(|error| ThreadsError::Message(format!("load config: {error}")))?;
-    let persistence_dir = workspace_dir().await.map_err(ThreadsError::Message)?;
+    let persistence_dir = config.workspace_dir.clone();
     message_append_with_config(ctx, request, &config, origin.as_ref(), &persistence_dir).await
 }
 
-async fn message_append_with_config(
+pub(super) async fn message_append_with_config(
     ctx: &DispatchCtx,
     mut request: AppendConversationMessageRequest,
     config: &crate::config::Config,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
     persistence_dir: &std::path::Path,
 ) -> Result<Outcome<ApiEnvelope<ConversationMessageRecord>>, ThreadsError> {
+    // Reserve the private path map for values minted after core staging. A
+    // caller may send arbitrary public metadata but never storage authority.
+    crate::threads::attachments::strip_private_metadata(&mut request.message.extra_metadata);
+    let typed_attachments = if request.message.sender == "user" {
+        std::mem::take(&mut request.attachments)
+    } else {
+        Vec::new()
+    };
+    let typed_media_count = typed_attachments
+        .iter()
+        .filter(|part| {
+            matches!(
+                part,
+                tinychannels_bus::ContentPart::Image { .. }
+                    | tinychannels_bus::ContentPart::Audio { .. }
+                    | tinychannels_bus::ContentPart::Video { .. }
+                    | tinychannels_bus::ContentPart::File { .. }
+            )
+        })
+        .count();
+    let staged_refs = if !typed_attachments.is_empty()
+        && crate::threads::attachments::validate_opaque_parts(&typed_attachments).is_ok()
+    {
+        request.message.attachments = crate::threads::attachments::bind_staged_refs(
+            ctx,
+            &request.thread_id,
+            config,
+            &typed_attachments,
+            &request.message.id,
+            &mut request.message.extra_metadata,
+        )
+        .await
+        .map_err(ThreadsError::Message)?;
+        Some(typed_attachments.clone())
+    } else {
+        None
+    };
+    if typed_attachments
+        .iter()
+        .any(|part| matches!(part, tinychannels_bus::ContentPart::VoiceNote { .. }))
+    {
+        return Err(ThreadsError::Message(
+            "voice notes must be sent through channel.web_chat".into(),
+        ));
+    }
+    let original_content = request.message.content.clone();
+    if !typed_attachments.is_empty()
+        && (original_content.contains("[IMAGE:")
+            || original_content.contains("[FILE:")
+            || !crate::attachments::parse(&original_content).1.is_empty())
+    {
+        return Err(ThreadsError::Message(
+            "typed attachments cannot be combined with legacy attachment markers".into(),
+        ));
+    }
+    if !typed_attachments.is_empty() && staged_refs.is_none() {
+        request.message.content = crate::attachments::parts::fold_into_message(
+            &request.message.content,
+            &typed_attachments,
+        )
+        .map_err(|error| ThreadsError::Message(error.to_string()))?;
+    }
     if request.message.sender == "user" {
         let raw_upload = request.message.content.contains("[IMAGE:")
             || request.message.content.contains("[FILE:");
@@ -241,7 +302,9 @@ async fn message_append_with_config(
                 || (image_count > 0 && config.multimodal.max_images == 0)
                 || matches!(
                     origin,
-                    Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                    Some(
+                        crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. }
+                    )
                 )
             {
                 return Err(ThreadsError::Message(
@@ -252,9 +315,12 @@ async fn message_append_with_config(
                 let scope = crate::attachments::AttachmentAccessScope {
                     external_channel: matches!(
                         origin,
-                        Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                        Some(
+                            crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. }
+                        )
                     ),
                     workspace: Some(workspace.clone()),
+                    ..Default::default()
                 };
                 let path = crate::attachments::resolve_path(config, &file.path, &scope)
                     .await
@@ -298,7 +364,7 @@ async fn message_append_with_config(
                 "user upload bytes require attachment markers before persistence".into(),
             ));
         }
-        request.message.content = crate::attachments::stage_turn(
+        let staged_content = crate::attachments::stage_turn(
             &request.message.content,
             Some(config),
             Some(&tinytools::WorkspaceDescriptor::new(workspace)),
@@ -307,6 +373,22 @@ async fn message_append_with_config(
         )
         .await
         .map_err(|error| ThreadsError::Message(format!("stage user attachments: {error}")))?;
+        if typed_media_count > 0 && staged_refs.is_none() {
+            let (clean_content, staged_files) = crate::attachments::parse(&staged_content);
+            if staged_files.len() != typed_media_count {
+                return Err(ThreadsError::Message(
+                    "typed attachment staging did not preserve media order".into(),
+                ));
+            }
+            let entries =
+                crate::threads::attachments::from_staged_parts(&typed_attachments, &staged_files)
+                    .map_err(ThreadsError::Message)?;
+            request.message.attachments =
+                crate::threads::attachments::save(&mut request.message.extra_metadata, entries);
+            request.message.content = clean_content.trim().to_string();
+        } else {
+            request.message.content = staged_content;
+        }
         if raw_upload || durable_upload {
             if let Some(metadata) = request.message.extra_metadata.as_object_mut() {
                 for field in byte_fields {
@@ -315,6 +397,10 @@ async fn message_append_with_config(
             }
         }
     }
+    let expected_id = request.message.id.clone();
+    let expected_sender = request.message.sender.clone();
+    let expected_content = request.message.content.clone();
+    let expected_attachments = request.message.attachments.clone();
     let message = conversations::blocking::append_message(
         ctx.clone(),
         persistence_dir.to_path_buf(),
@@ -323,16 +409,44 @@ async fn message_append_with_config(
     )
     .await
     .map_err(|err| ThreadsError::from_thread_scoped_store_error(&request.thread_id, err))?;
-    Ok(envelope(
-        message_to_record(message),
-        Some(counts([("num_messages", 1)])),
-        None,
-    ))
+    let message = message_to_record(message);
+    if message.id != expected_id
+        || message.sender != expected_sender
+        || message.content != expected_content
+        || message.attachments != expected_attachments
+    {
+        if let Some(staged_refs) = &staged_refs {
+            let _ = crate::threads::attachments::discard_staged_parts(
+                ctx,
+                &request.thread_id,
+                staged_refs,
+            )
+            .await;
+        }
+        return Err(ThreadsError::Message(
+            "message ID conflicts with an existing persisted row".into(),
+        ));
+    }
+    if let Some(staged_refs) = staged_refs {
+        crate::threads::attachments::consume_staged_parts(
+            ctx,
+            &request.thread_id,
+            &staged_refs,
+            &message.id,
+        )
+        .await
+        .map_err(ThreadsError::Message)?;
+    }
+    Ok(envelope(message, Some(counts([("num_messages", 1)])), None))
 }
 
 #[cfg(test)]
 #[path = "crud_message_append_tests.rs"]
 mod message_append_tests;
+
+#[cfg(test)]
+#[path = "crud_queued_attachment_tests.rs"]
+mod queued_attachment_tests;
 
 /// Updates labels for a conversation thread.
 ///
@@ -400,14 +514,30 @@ pub async fn message_update(
     ctx: &DispatchCtx,
     request: UpdateConversationMessageRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationMessageRecord>>, String> {
-    let dir = workspace_dir().await?;
+    if request
+        .extra_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("__openhumanStoredAttachments"))
+        .is_some()
+    {
+        return Err("private attachment storage metadata is reserved".into());
+    }
+    let dir = ctx
+        .load_config()
+        .await
+        .map_err(|error| format!("load config: {error}"))?
+        .workspace_dir;
     let message = conversations::blocking::update_message(
         ctx.clone(),
         dir,
         request.thread_id.clone(),
         request.message_id.clone(),
         ConversationMessagePatch {
-            extra_metadata: request.extra_metadata,
+            // Merge public metadata inside the store's CAS retry. This keeps
+            // the private attachment path map invisible to callers while
+            // preventing an ordinary UI metadata update from erasing it.
+            merge_extra_metadata: request.extra_metadata,
+            ..Default::default()
         },
     )
     .await?;
@@ -460,142 +590,7 @@ pub async fn thread_delete(
     run_to_completion(
         ctx,
         "thread_delete",
-        thread_delete_inner(ctx.clone(), config, request),
+        super::thread_delete::thread_delete_inner(ctx.clone(), config, request),
     )
     .await
-}
-
-async fn thread_delete_inner(
-    ctx: DispatchCtx,
-    config: crate::config::Config,
-    request: DeleteConversationThreadRequest,
-) -> Result<Outcome<ApiEnvelope<DeleteConversationThreadResponse>>, String> {
-    let dir: PathBuf = config.workspace_dir.clone();
-    crate::agent::orchestration::completion_owners::begin_thread_deletion(
-        &ctx,
-        &dir,
-        &request.thread_id,
-    )?;
-    let deleted = match conversations::blocking::delete_thread(
-        ctx.clone(),
-        dir.clone(),
-        request.thread_id.clone(),
-        request.deleted_at.clone(),
-    )
-    .await
-    {
-        Ok(deleted) => deleted,
-        Err(error) => {
-            crate::agent::orchestration::completion_owners::release_thread_deletion(
-                &ctx,
-                &dir,
-                &request.thread_id,
-            );
-            return Err(error);
-        }
-    };
-    // Invalidate the in-process web-channel session BEFORE the
-    // turn-state cleanup. The snapshot deletion is fallible and
-    // returns early on error; if invalidation ran after, an active
-    // session for the now-deleted thread could linger and try to
-    // append to a thread index row that no longer exists.
-    web_channel::invalidate_thread_sessions(&ctx, &request.thread_id).await;
-    // Cancel any detached sub-agents this thread spawned BEFORE clearing their
-    // queued results: abort the in-flight ones first so a child can't record a
-    // completion in the gap between the two calls, then discard anything already
-    // queued for delivery. Both target a thread that's being deleted, so there's
-    // nowhere left to deliver to — abort + cleanup is the whole behavior.
-    let (cancelled_legacy, cancelled_driver) = if ctx.resolved().is_none() {
-        if !crate::agent::orchestration::completion_owners::driver_tasks_for_thread(
-            &ctx,
-            &dir,
-            &request.thread_id,
-        )
-        .is_empty()
-        {
-            crate::agent::orchestration::background_completions::delete_parent_for_thread(
-                &ctx,
-                &dir,
-                &request.thread_id,
-            )?;
-            return Err("cannot resolve core context to settle thread-owned driver jobs".into());
-        }
-        (0, 0)
-    } else {
-        let cancelled_legacy =
-            match crate::agent::orchestration::running_subagents::cancel_for_thread(
-                &ctx,
-                &request.thread_id,
-            )
-            .await
-            {
-                Ok(cancelled) => cancelled,
-                Err(error) => {
-                    crate::agent::orchestration::background_completions::delete_parent_for_thread(
-                        &ctx,
-                        &dir,
-                        &request.thread_id,
-                    )
-                    .map_err(|close_error| format!("{error}; {close_error}"))?;
-                    return Err(error);
-                }
-            };
-        let jobs = crate::core::runtime::slot_for::<
-            tinyagents_orchestration::subagent::SubAgentJobRegistry,
-        >(&ctx);
-        let cancelled_driver =
-            crate::agent::orchestration::subagent_sessions::cancel_driver_jobs_for_thread(
-                &crate::agent::orchestration::subagent_sessions::SubagentSessionStore::new(
-                    dir.clone(),
-                ),
-                &dir,
-                &jobs,
-                &request.thread_id,
-            )
-            .len();
-        (cancelled_legacy, cancelled_driver)
-    };
-    let cancelled = cancelled_legacy + cancelled_driver;
-    let discarded = crate::agent::orchestration::background_completions::delete_parent_for_thread(
-        &ctx,
-        &dir,
-        &request.thread_id,
-    )?;
-    log::debug!(
-        "[threads] thread_delete thread_id={} cancelled_subagents={} discarded_completions={}",
-        request.thread_id,
-        cancelled,
-        discarded
-    );
-    // The thread's conversation memory goes too, for good (by `memory_ids`).
-    // Record its deletion obligation before the fallible snapshot cleanup can
-    // return early. Memory off or a failed forget queues it for the next
-    // sign-in rather than failing the delete: the thread itself is already gone.
-    let forgotten = crate::memory::deletion::forget_thread(&config, &request.thread_id).await;
-    log::debug!(
-        "[threads] thread_delete thread_id={} memory_items_forgotten={}",
-        request.thread_id,
-        forgotten
-    );
-    // Drop any persisted in-flight turn snapshot for this thread —
-    // otherwise `threads_turn_state_list` keeps surfacing it (as
-    // `Interrupted` on next restart) for a thread that no longer
-    // exists. Failure here is surfaced as an RPC error so callers
-    // can't observe a thread "deleted" while its snapshot (which
-    // mirrors conversation-derived state) remains on disk; the
-    // thread row itself is already gone at this point so the caller
-    // sees a partial failure they can act on instead of silent drift.
-    crate::storage::sessions::turn_states_for(&dir)
-        .delete(&request.thread_id)
-        .map_err(|err| {
-            format!(
-                "thread {} deleted but turn-snapshot cleanup failed: {err}",
-                request.thread_id
-            )
-        })?;
-    Ok(envelope(
-        DeleteConversationThreadResponse { deleted },
-        None,
-        None,
-    ))
 }

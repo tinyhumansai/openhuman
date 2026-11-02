@@ -78,9 +78,10 @@ pub use bus::{
 };
 pub use identity::connection_identity;
 pub use ops::{
-    cached_active_integrations, connected_set_hash, fetch_connected_integrations,
-    fetch_connected_integrations_status, invalidate_connected_integrations_cache,
-    FetchConnectedIntegrationsStatus,
+    cached_active_integrations, clear_composio_api_key, connected_set_hash,
+    fetch_connected_integrations, fetch_connected_integrations_status, get_composio_api_key,
+    invalidate_connected_integrations_cache, rpc_store_composio_api_key, store_composio_api_key,
+    FetchConnectedIntegrationsStatus, COMPOSIO_DIRECT_PROVIDER,
 };
 pub(crate) use schemas::all_controller_entries as all_composio_controller_entries;
 pub use schemas::{

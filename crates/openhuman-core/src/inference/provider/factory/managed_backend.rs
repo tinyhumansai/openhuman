@@ -101,16 +101,16 @@ pub(super) fn managed_chat_model_for(
 /// Build a managed model only through the host's explicitly inspection-safe
 /// callback. This path never falls back to the runtime factory: doing so could
 /// defer mutable credential access until invoke/stream.
-pub(super) fn managed_chat_model_for_inspection(
+pub(super) async fn managed_chat_model_for_inspection(
     role: &str,
     config: &Config,
     model_override: Option<&str>,
 ) -> anyhow::Result<ManagedChatModel> {
-    let build = managed_chat_model_build_for_inspection(None, role, config, model_override)?;
+    let build = managed_chat_model_build_for_inspection(None, role, config, model_override).await?;
     Ok((build.model, build.model_id))
 }
 
-pub(super) fn managed_chat_model_build_for_inspection(
+pub(super) async fn managed_chat_model_build_for_inspection(
     extensions: Option<&crate::core::slots::Extensions>,
     role: &str,
     config: &Config,
@@ -145,7 +145,7 @@ pub(super) fn managed_chat_model_build_for_inspection(
         thread_id: None,
         context: &context,
     };
-    (factory)(&request)
+    (factory)(&request).await
 }
 
 /// Construct a managed turn model with the explicit OpenHuman thread attached.

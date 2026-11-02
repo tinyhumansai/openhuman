@@ -1,5 +1,3 @@
-#![cfg(feature = "testkit")]
-
 //! A refused tool call must not rewrite an earlier turn's result. Providers
 //! reuse tool-call ids across turns (`call_1` again), so a failure in this turn
 //! used to mark the earlier turn's successful `cron` result as failed; the
@@ -15,10 +13,11 @@ use std::sync::Arc;
 use common::{chat_completion, chat_requests, runtime_without_master_key, PointedInference};
 use openhuman_embed::seams::ToolHookDecision;
 use openhuman_embed::{
-    DirectProfileProvider, InMemorySessionStores, PermissionLevel, ProfileRuntime, SaasConfig,
-    SessionStoreProvider, ToolScopeSpec,
+    DirectProfileProvider, PermissionLevel, ProfileRuntime, SaasConfig, SessionStoreProvider,
+    ToolScopeSpec,
 };
 use serde_json::{json, Value};
+use tinyagents_session::port::InMemorySessionStores;
 use wiremock::matchers::{header, method, path_regex};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 

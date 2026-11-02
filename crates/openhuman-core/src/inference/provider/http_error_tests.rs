@@ -338,7 +338,7 @@ async fn publish_backend_session_expired_emits_sanitized_session_expired() {
     let mut reason_seen: Option<String> = None;
     loop {
         match rx.try_recv() {
-            Ok(DomainEvent::SessionExpired { source, reason }) => {
+            Ok(DomainEvent::SessionExpired { source, reason, .. }) => {
                 if source == "llm_provider.openhuman_backend" && reason.contains("TEST_MARKER_A") {
                     reason_seen = Some(reason);
                     break;

@@ -73,6 +73,7 @@ export function auditGraph(metadata, roots, policy, contract = null) {
   const { packages, edges } = graph(metadata);
   const violations = [];
   const exceptions = [];
+  const reportedEdges = new Set();
   for (const root of roots) {
     const candidates = [...packages.values()].filter(pkg => pkg.name === root);
     if (candidates.length !== 1) throw new Error(`expected exactly one root package ${root}`);
@@ -81,8 +82,6 @@ export function auditGraph(metadata, roots, policy, contract = null) {
     for (let at = 0; at < queue.length; at++) {
       const path = queue[at];
       const id = path.at(-1);
-      if (seen.has(id)) continue;
-      seen.add(id);
       const name = packages.get(id).name;
       // The one crate that may link module implementations (local development
       // only). It is a legitimate edge only directly under an allowed host
@@ -101,15 +100,28 @@ export function auditGraph(metadata, roots, policy, contract = null) {
           isImplementation(name, policy) || sourceMismatch;
         if (forbidden) {
           const scope = contract ?? 'hosts';
-          const exemption = policy.exceptions.find(item => item.scope === scope && item.package === name);
+          const parent = path.length > 1 ? packages.get(path.at(-2)).name : null;
+          const exemption = policy.exceptions.find(item =>
+            item.scope === scope && item.package === name &&
+            (!item.parent || item.parent === parent));
           const finding = { scope, package: name, path: path.map(id => packages.get(id).name) };
-          (exemption ? exceptions : violations).push(finding);
+          const findings = exemption ? exceptions : violations;
+          const reportKey = `${exemption ? 'exception' : 'violation'}:${scope}:${id}`;
+          if (!reportedEdges.has(reportKey)) {
+            reportedEdges.add(reportKey);
+            findings.push(finding);
+          }
           // Contract exceptions pin the first unsafe dependency. Its implementation
           // closure is deliberately NOT approved vocabulary and must disappear
           // with this edge. Hosts still traverse it to catch indirect implementations.
           if (contract) continue;
         }
       }
+      // Exceptions apply to incoming edges, not to package identities. A
+      // second path can have a different parent and must be checked even when
+      // this package's descendants have already been traversed.
+      if (seen.has(id)) continue;
+      seen.add(id);
       for (const next of edges(id)) {
         if (!contract && packages.get(next).name === policy.linkedHost?.package) {
           const parent = packages.get(id).name;
@@ -250,7 +262,8 @@ export function validatePolicy(policy) {
   const seen = new Set();
   for (const item of policy.exceptions) {
     const key = `${item.scope}:${item.package}`;
-    if (!item.reason?.trim() || !item.package || !item.scope || seen.has(key)) {
+    if (!item.reason?.trim() || !item.package || !item.scope ||
+        (item.parent !== undefined && !item.parent) || seen.has(key)) {
       throw new Error(`invalid or duplicate exception ${key}`);
     }
     if (item.scope === 'hosts' ? !isImplementation(item.package, policy) :

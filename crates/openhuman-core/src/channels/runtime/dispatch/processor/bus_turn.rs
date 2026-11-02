@@ -4,19 +4,19 @@
 use crate::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
 use crate::channels::context::{ChannelRouteSelection, ChannelRuntimeContext};
 use crate::core::bus::BUS;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::progress::AgentProgress;
-use crate::security::turn_origin::AgentTurnOrigin;
 use std::sync::Arc;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinybus::NativeRequestError;
-use tinychannels_bus::ChannelInboundEnvelope;
+use tinychannels_bus as traits;
 
 use super::super::routing::resolve_target_agent;
 
 /// Run `msg`'s turn as the orchestrator over the bus.
 pub(super) async fn dispatch_bus_turn(
     ctx: &ChannelRuntimeContext,
-    msg: &ChannelInboundEnvelope,
+    msg: &traits::ChannelMessage,
     route: &ChannelRouteSelection,
     history: Vec<TranscriptMessage>,
     active_turn_model_source: Option<crate::agent::tinyagents::TurnModelSource>,
@@ -36,7 +36,7 @@ pub(super) async fn dispatch_bus_turn(
     // Pick the active agent for this turn (always orchestrator) and
     // synthesise its delegation tool surface. Fresh disk read of
     // `Config::onboarding_completed` happens inside `resolve_target_agent`.
-    let scoping = resolve_target_agent(&msg.channel.id).await;
+    let scoping = resolve_target_agent(&msg.channel).await;
 
     // A channel's explicitly-registered `tools_registry` tools are always visible
     // to the model. The resolved agent's visible-tool scope is meant to filter the
@@ -73,7 +73,7 @@ pub(super) async fn dispatch_bus_turn(
         model: route.model.clone(),
         temperature: ctx.temperature,
         silent: true,
-        channel_name: msg.channel.id.clone(),
+        channel_name: msg.channel.clone(),
         multimodal: ctx.multimodal.clone(),
         // Channel-sourced text is untrusted (Slack / Discord / Telegram
         // / WhatsApp / etc. — anyone who can DM the bot can put bytes
@@ -88,7 +88,7 @@ pub(super) async fn dispatch_bus_turn(
         // operator config; the desktop / web-chat path (where the user
         // owns the local filesystem) goes through a different turn
         // builder and keeps the operator default. Mirrors the triage-arm
-        // hardening in `triage::evaluator`.
+        // hardening in `agent::triage::evaluator`.
         multimodal_files: crate::config::MultimodalFileConfig::for_untrusted_channel_input(),
         max_tool_iterations: ctx.max_tool_iterations,
         on_delta: None, // on_progress handles text deltas now
@@ -100,7 +100,7 @@ pub(super) async fn dispatch_bus_turn(
         approval,
     };
     tracing::debug!(
-        channel = %msg.channel.id,
+        channel = %msg.channel,
         provider = %route.provider,
         model = %route.model,
         "[channels::dispatch] dispatching {AGENT_RUN_TURN_METHOD} via native bus"
@@ -123,4 +123,34 @@ pub(super) async fn dispatch_bus_turn(
             // startup wiring bugs are immediately obvious in logs.
             other => anyhow::anyhow!("[agent.run_turn dispatch] {other}"),
         })
+}
+
+/// Keep the injected orchestrator graph available to processor unit fixtures
+/// without leaving a second production execution path behind.
+#[cfg(test)]
+pub(super) async fn dispatch_test_turn(
+    ctx: &ChannelRuntimeContext,
+    msg: &traits::ChannelMessage,
+    route: &ChannelRouteSelection,
+    message: &str,
+    active_turn_model_source: Option<crate::agent::tinyagents::TurnModelSource>,
+    progress_tx: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
+    turn_origin: AgentTurnOrigin,
+    approval: crate::security::approval::ApprovalTurnContext,
+) -> anyhow::Result<AgentTurnResponse> {
+    let history = vec![
+        TranscriptMessage::system(ctx.system_prompt.current().as_str()),
+        TranscriptMessage::user(message),
+    ];
+    dispatch_bus_turn(
+        ctx,
+        msg,
+        route,
+        history,
+        active_turn_model_source,
+        progress_tx,
+        turn_origin,
+        approval,
+    )
+    .await
 }

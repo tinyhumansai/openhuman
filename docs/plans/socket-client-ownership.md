@@ -149,7 +149,7 @@ event routing remain in core:
 | `core/runtime/bootstrap.rs`, `core/runtime/services.rs` | Initialize the manager and auto-connect only when `ServiceSet::socketio` is on and a resolved endpoint plus stored session exist. |
 | `platform/socket/schemas.rs`, `core/all.rs` | Keep the `socket` RPC namespace and controller registration. |
 | `platform/connectivity/rpc.rs` | Keep connected state, last error, active retry-loop, and terminal-failure diagnostics. |
-| `security/credentials/ops/credential.rs` | Reuse the live connection for credential-related notifications. |
+| `credentials/ops/credential.rs` | Reuse the live connection for credential-related notifications. |
 | `security/devices/tunnel_client.rs` | Emit device tunnel registration, frames, and peer operations. |
 | `skills/webhooks/{ops.rs,bus.rs}` | Route incoming webhook requests and emit correlated responses. |
 | `voice/realtime_harness/chat_delivery.rs` | Deliver live voice harness events through the shared manager. |

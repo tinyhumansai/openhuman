@@ -181,6 +181,7 @@ impl ChatModel<()> for SummarizerSourceModel<'_> {
         let model = self
             .source
             .build_summarizer(self.model, self.temperature, self.thread_id)
+            .await
             .map_err(|error| tinyinference_llm::Error::Model(error.to_string()))?;
         let mut call = self
             .trace
@@ -204,6 +205,7 @@ impl ChatModel<()> for SummarizerSourceModel<'_> {
         let model = self
             .source
             .build_summarizer(self.model, self.temperature, self.thread_id)
+            .await
             .map_err(|error| tinyinference_llm::Error::Model(error.to_string()))?;
         let mut call = self
             .trace

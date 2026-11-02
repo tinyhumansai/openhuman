@@ -5,6 +5,8 @@
 //! this module owns the RPC surface and controller registry.
 
 pub mod artifact_rows;
+pub(crate) mod attachments;
+pub(crate) mod channel_projection;
 pub mod error;
 pub mod ops;
 pub mod rpc_models;
@@ -14,6 +16,7 @@ pub mod store;
 #[cfg(test)]
 mod transcript_host_tests;
 pub mod turn_state;
+pub mod wire_schema;
 
 pub use error::{ThreadsError, THREAD_NOT_FOUND_KIND};
 pub use rpc_models::*;

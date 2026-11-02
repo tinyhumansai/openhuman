@@ -359,6 +359,7 @@ async fn reserved_channel_thread_id_survives_metadata_edit_without_prefix_collis
             message_id.into(),
             ConversationMessagePatch {
                 extra_metadata: Some(json!({"scope": "web"})),
+                merge_extra_metadata: None,
             },
         )
         .await

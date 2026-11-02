@@ -1,5 +1,5 @@
 use super::*;
-use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
 #[test]
 fn local_offline_token_never_constructs_a_hosted_integration_client() {
