@@ -169,3 +169,22 @@ fn plan_request_carries_openhuman_owned_credential_paths_to_tinysecurity() {
         .any(|path| path.ends_with("auth-profiles/secrets.enc")));
     assert!(denied.iter().any(|path| path.ends_with("secrets.enc")));
 }
+
+#[test]
+fn an_openshell_spawn_requires_the_container_backend_and_asks_for_no_bounds() {
+    let openshell = options(&policy(SandboxBackendKind::OpenShell), false);
+    assert_eq!(openshell.preferred_backend, Some(SandboxBackend::Docker));
+    assert!(openshell.require_preferred_backend);
+    let mut bounded = with_overrides(Some(2.0), Some(256));
+    bounded.backend = SandboxBackendKind::OpenShell;
+    assert_eq!(limits(&bounded), ResourceLimits2::default());
+}
+
+#[tokio::test]
+async fn an_openshell_spawn_declares_only_the_openshell_executor() {
+    let declared = probe(&Config::default(), &policy(SandboxBackendKind::OpenShell))
+        .await
+        .unwrap();
+    assert_eq!(declared.len(), 1);
+    assert_eq!(declared[0].executor_id, OPENSHELL_EXECUTOR);
+}
