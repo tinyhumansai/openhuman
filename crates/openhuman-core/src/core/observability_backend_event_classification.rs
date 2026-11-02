@@ -382,6 +382,36 @@ pub fn is_windows_file_system_limitation_event(event: &sentry::protocol::Event<'
         .any(|exception| exception.value.as_deref().is_some_and(check))
 }
 
+/// Defense-in-depth `before_send` filter for host disk-full failures
+/// (ENOSPC / `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` / `StorageFull` /
+/// `SQLITE_FULL`, any OS locale — see [`is_disk_full_error`]).
+///
+/// The primary suppression lives at the emit site via `expected_error_kind` →
+/// `ExpectedErrorKind::DiskFull` (called by `report_error_or_expected`). This
+/// filter catches a call site that bypasses it with `report_error` or a bare
+/// `tracing::error!` — keeping TAURI-RUST-15PJ (`transcript persistence
+/// failed: … (os error 112)`, 2,278 events / 1 user, #8508) and its siblings
+/// off Sentry. Mirrors [`is_windows_file_system_limitation_event`].
+#[cfg(feature = "crash-reporting")]
+pub fn is_disk_full_event(event: &sentry::protocol::Event<'_>) -> bool {
+    if event.message.as_deref().is_some_and(is_disk_full_error) {
+        return true;
+    }
+    if event
+        .logentry
+        .as_ref()
+        .map(|log| log.message.as_str())
+        .is_some_and(is_disk_full_error)
+    {
+        return true;
+    }
+    event
+        .exception
+        .values
+        .iter()
+        .any(|exception| exception.value.as_deref().is_some_and(is_disk_full_error))
+}
+
 #[cfg(feature = "crash-reporting")]
 fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) -> bool {
     if event

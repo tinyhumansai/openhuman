@@ -126,6 +126,8 @@ mod crash_filter_messages;
 mod error_classification_composio_backoff;
 #[path = "observability_error_classification_core_tests.rs"]
 mod error_classification_core;
+#[path = "observability_error_classification_disk_full_tests.rs"]
+mod error_classification_disk_full;
 #[path = "observability_error_classification_network_tests.rs"]
 mod error_classification_network;
 #[path = "observability_error_classification_provider_tests.rs"]
