@@ -351,7 +351,7 @@ impl ModuleChannel {
         &self,
         message: &tinychannels_bus::channel::ChannelOutboundMessage,
     ) -> anyhow::Result<tinychannels_bus::channel::ChannelSendOutcome> {
-        self.send_progressive_typed(message, None).await
+        self.send_progressive_typed(message).await
     }
 
     pub(super) async fn health_check(&self) -> bool {
@@ -416,7 +416,7 @@ impl ModuleChannel {
 
     pub(super) fn capabilities(&self) -> tinychannels_bus::ChannelCapabilities {
         let legacy = self.interaction.capabilities;
-        let mut capabilities = tinychannels_bus::ChannelCapabilities::NONE;
+        let mut capabilities = tinychannels_bus::ChannelCapabilities::unknown();
         capabilities.remote_control = legacy.remote_control;
         capabilities.chat_approvals = legacy.chat_approvals;
         capabilities.progressive_edits = legacy.progressive_edits;
@@ -433,7 +433,6 @@ impl ModuleChannel {
     pub(super) async fn send_progressive_typed(
         &self,
         message: &tinychannels_bus::channel::ChannelOutboundMessage,
-        text: Option<String>,
     ) -> anyhow::Result<tinychannels_bus::channel::ChannelSendOutcome> {
         let intent = tinychannels_bus::channel::ChannelOutboundIntent {
             idempotency_key: message.idempotency_key.clone(),
@@ -446,7 +445,6 @@ impl ModuleChannel {
             turn_id: message.turn_id.clone(),
             durability: tinychannels_bus::channel::DeliveryDurability::Required,
             payload: tinychannels_bus::channel::OutboundPayload::Parts {
-                text,
                 parts: message.parts.clone(),
             },
         };
@@ -490,7 +488,7 @@ impl ModuleChannel {
         }
         Ok(tinychannels_bus::channel::ChannelSendOutcome {
             receipt,
-            error: None,
+            error: result.error,
         })
     }
 

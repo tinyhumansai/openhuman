@@ -29,7 +29,7 @@ impl ProgressiveChannelTransport for ModuleChannel {
                 segment_index: _,
                 idempotency_key,
                 parts,
-                text,
+                ..
             } => {
                 let channel_id = channel_ref
                     .as_ref()
@@ -53,7 +53,7 @@ impl ProgressiveChannelTransport for ModuleChannel {
                     parts,
                 };
                 let outcome = self
-                    .send_progressive_typed(&outbound, Some(text))
+                    .send_progressive_typed(&outbound)
                     .await
                     .map_err(|_| tinybus::Error::failed("progressive channel send failed"))?;
                 Ok(Result::Outcome(Box::new(outcome)))
@@ -84,7 +84,7 @@ impl ProgressiveChannelTransport for ModuleChannel {
                     outbound.idempotency_key = key;
                 }
                 let outcome = self
-                    .send_progressive_typed(&outbound, Some(legacy.content))
+                    .send_progressive_typed(&outbound)
                     .await
                     .map_err(|_| tinybus::Error::failed("progressive channel send failed"))?;
                 Ok(Result::Outcome(Box::new(outcome)))
@@ -128,25 +128,7 @@ impl ProgressiveChannelTransport for ModuleChannel {
                     thread_id: receipt.thread_id.clone(),
                     turn_id,
                     durability: tinychannels_bus::channel::DeliveryDurability::Required,
-                    payload: tinychannels_bus::channel::OutboundPayload::Text {
-                        text: text.clone(),
-                    },
-                };
-                let intent = tinychannels_bus::channel::ChannelOutboundMessage {
-                    channel_id: intent.channel_id,
-                    conversation_id: intent.conversation_id,
-                    channel_ref: intent.channel_ref,
-                    thread_id: intent.thread_id,
-                    conversation_ref: intent.conversation_ref,
-                    reply_to_id: intent.reply_to_id,
-                    turn_id: intent.turn_id,
-                    idempotency_key: intent.idempotency_key,
-                    parts: vec![tinychannels_bus::OutboundContentPart::Content {
-                        part: tinychannels_bus::ContentPart::Text {
-                            text,
-                            markdown_dialect: None,
-                        },
-                    }],
+                    payload: tinychannels_bus::channel::OutboundPayload::Text { text },
                 };
                 match self
                     .object
@@ -156,7 +138,7 @@ impl ProgressiveChannelTransport for ModuleChannel {
                             channel: self.name.clone(),
                             interaction: ChannelInteraction::EditMessage {
                                 receipt: Box::new(receipt),
-                                intent,
+                                intent: Box::new(intent),
                             },
                         },
                     )
@@ -228,6 +210,13 @@ fn map_edit_outcome(
 
     match outcome.error.as_ref().map(|error| error.kind) {
         Some(SendErrorKind::NotFound) => Result::MessageGone,
+        _ if outcome
+            .error
+            .as_ref()
+            .is_some_and(|error| error.unsupported) =>
+        {
+            Result::EditUnsupported
+        }
         _ => Result::Outcome(Box::new(outcome)),
     }
 }

@@ -405,7 +405,7 @@ impl ChannelHostCallbacks {
             ChannelBackendRequest::ProgressiveTransport(request) => self
                 .dispatch_progressive_transport(*request)
                 .await
-                .map(ChannelBackendResult::ProgressiveTransport),
+                .map(|result| ChannelBackendResult::ProgressiveTransport(Box::new(result))),
             request => {
                 crate::channels::controllers::OpenHumanChannelBackend::new((*self.config).clone())
                     .dispatch_callback(request)
@@ -447,6 +447,9 @@ impl ChannelHostCallbacks {
             let conversation = conversation.as_ref().ok_or_else(|| {
                 Error::failed("progressive output conversation identity is required")
             })?;
+            let turn_id = turn_id
+                .as_deref()
+                .ok_or_else(|| Error::failed("progressive output turn identity is required"))?;
             if conversation.id.is_empty() || turn_id.is_empty() {
                 return Err(Error::failed("progressive output scope is invalid"));
             }

@@ -237,7 +237,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&reset),
         RemoteHostRequest::ClearHistory {
-            sender_key: forged.session_key,
+            session_scope: forged,
         },
     )
     .await
@@ -258,7 +258,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&reset),
         RemoteHostRequest::ClearHistory {
-            sender_key: reset.history_key.clone(),
+            session_scope: scope,
         },
     )
     .await
@@ -309,7 +309,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&reset),
         RemoteHostRequest::ClearHistory {
-            sender_key: reset.history_key.clone(),
+            session_scope: remote_session_scope(canonical),
         },
     )
     .await
@@ -342,7 +342,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         &cancellation,
         Some(&empty_reset),
         RemoteHostRequest::ClearHistory {
-            sender_key: empty_reset.history_key.clone(),
+            session_scope: empty_scope,
         },
     )
     .await

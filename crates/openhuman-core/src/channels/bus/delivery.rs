@@ -41,9 +41,9 @@ impl SlotTransport {
             return Err(tinybus::Error::failed("callback capability unavailable"));
         };
         if request_channel(&request) != self.channel {
-            return Ok(ChannelBackendResult::ProgressiveTransport(
+            return Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Failed,
-            ));
+            )));
         }
         let ctx = crate::channels::callback_slot::ChannelCallbackCtx {
             config: self.config.clone(),
@@ -54,15 +54,15 @@ impl SlotTransport {
         tokio::select! {
             biased;
             _ = self.session.cancelled() => Ok(ChannelBackendResult::ProgressiveTransport(
-                ProgressiveTransportResult::Unavailable,
+                Box::new(ProgressiveTransportResult::Unavailable),
             )),
             result = call => match result {
                 Ok(result) => Ok(result),
                 Err(error) => {
                     tracing::debug!(%error, "[channels][delivery] registered callback failed");
-                    Ok(ChannelBackendResult::ProgressiveTransport(
+                    Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
                         ProgressiveTransportResult::Failed,
-                    ))
+                    )))
                 }
             },
         }

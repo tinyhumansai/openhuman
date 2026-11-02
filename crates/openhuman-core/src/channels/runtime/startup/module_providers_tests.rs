@@ -185,6 +185,7 @@ async fn prepared_module_handle_keeps_progressive_send_alive() {
     let rejected = adapter
         .dispatch_progressive(ProgressiveTransportRequest::Delete {
             channel: "telegram".into(),
+            turn_id: Some("compiled-module-turn".into()),
             channel_ref: Some(channel_ref),
             conversation: Some(wrong_scope),
             message_id: "991".into(),
@@ -472,7 +473,7 @@ async fn dropped_scoped_media_read_lease_aborts_the_compiled_module_handle() {
     let read: tinychannels_bus::MediaReadInfo = object
         .call_confidential(
             tinychannels_bus::methods::BEGIN_MEDIA_READ,
-            (tinychannels_bus::module_media::MediaReadBegin {
+            (tinychannels_bus::MediaReadBegin {
                 instance: "telegram".into(),
                 scope,
                 media,
@@ -484,7 +485,7 @@ async fn dropped_scoped_media_read_lease_aborts_the_compiled_module_handle() {
     let first_chunk: tinychannels_bus::MediaReadChunkResult = object
         .call_confidential(
             tinychannels_bus::methods::READ_MEDIA_CHUNK,
-            (tinychannels_bus::module_media::MediaReadChunk {
+            (tinychannels_bus::MediaReadChunk {
                 handle: read.handle.clone(),
                 sequence: 0,
             },),
@@ -495,16 +496,14 @@ async fn dropped_scoped_media_read_lease_aborts_the_compiled_module_handle() {
     let replay: tinychannels_bus::MediaReadChunkResult = object
         .call_confidential(
             tinychannels_bus::methods::READ_MEDIA_CHUNK,
-            (tinychannels_bus::module_media::MediaReadChunk {
+            (tinychannels_bus::MediaReadChunk {
                 handle: read.handle.clone(),
                 sequence: 0,
             },),
         )
         .await
         .expect("the module retains the last chunk for retry before lease drop");
-    assert_eq!(replay.sequence, first_chunk.sequence);
-    assert_eq!(replay.done, first_chunk.done);
-    assert_eq!(replay.bytes, first_chunk.bytes);
+    assert_eq!(replay, first_chunk);
     let handle = read.handle.clone();
     crate::channels::runtime::dispatch::drop_media_read_lease_for_test(
         runtime.lease.object().clone(),
@@ -517,7 +516,7 @@ async fn dropped_scoped_media_read_lease_aborts_the_compiled_module_handle() {
             let chunk = object
                 .call_confidential::<tinychannels_bus::MediaReadChunkResult>(
                     tinychannels_bus::methods::READ_MEDIA_CHUNK,
-                    (tinychannels_bus::module_media::MediaReadChunk {
+                    (tinychannels_bus::MediaReadChunk {
                         handle: handle.clone(),
                         sequence: 0,
                     },),

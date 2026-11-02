@@ -27,6 +27,7 @@ fn every_transport_operation_carries_the_channel_scoped_by_the_host() {
             turn_id: None,
             channel_ref: None,
             conversation: None,
+            sequence: None,
             idempotency_key: None,
             message: json!({"text":"hello"}),
         },
@@ -52,6 +53,7 @@ fn every_transport_operation_carries_the_channel_scoped_by_the_host() {
         },
         ProgressiveTransportRequest::Delete {
             channel: "discord:fixture".into(),
+            turn_id: None,
             channel_ref: None,
             conversation: None,
             receipt: None,
@@ -59,6 +61,7 @@ fn every_transport_operation_carries_the_channel_scoped_by_the_host() {
         },
         ProgressiveTransportRequest::Typing {
             channel: "discord:fixture".into(),
+            turn_id: None,
             channel_ref: None,
             conversation: None,
         },
@@ -66,7 +69,7 @@ fn every_transport_operation_carries_the_channel_scoped_by_the_host() {
             channel: "discord:fixture".into(),
             channel_ref: None,
             conversation: None,
-            turn_id: "turn".into(),
+            turn_id: Some("turn".into()),
             sequence: 1,
             event: Box::new(ChannelOutputEvent::TextDelta {
                 text: "hello".into(),

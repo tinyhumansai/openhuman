@@ -75,7 +75,7 @@ impl RelayProgressiveTransport {
             } => {
                 self.check_scope(
                     &channel,
-                    Some(&turn_id),
+                    turn_id.as_deref(),
                     channel_ref.as_ref(),
                     conversation.as_ref(),
                 )?;
@@ -157,9 +157,9 @@ impl RelayProgressiveTransport {
                 "hosted relay callback capability unavailable",
             ));
         };
-        Ok(ChannelBackendResult::ProgressiveTransport(
+        Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
             self.dispatch(*request).await?,
-        ))
+        )))
     }
 }
 

@@ -144,6 +144,7 @@ async fn handle_linked_runtime_command(
                             account_id: Some(account_id),
                         },
                         message_id: msg.id.clone(),
+                        reply_to_id: msg.reply_to_id.clone(),
                         conversation: tinychannels_bus::ConversationRef {
                             id: canonical_conversation_id
                                 .unwrap_or(&msg.reply_target)
@@ -206,6 +207,11 @@ async fn module_route_help_response(
 
     let request = ChannelControlRequest::Route {
         workspace_dir: workspace_dir.to_string_lossy().into_owned(),
+        capabilities: Some(Box::new({
+            let mut capabilities = tinychannels_bus::ChannelCapabilities::unknown();
+            capabilities.remote_control = true;
+            capabilities
+        })),
         message: Box::new(ChannelMessage {
             reply_to_id: None,
             topic_id: None,
@@ -223,6 +229,8 @@ async fn module_route_help_response(
             model: "gpt-5".into(),
         },
         history_len: 0,
+        session_scope: None,
+        configured_channel: None,
         providers,
     };
     let response: ChannelControlResult = crate::channels::module_fixture::client()

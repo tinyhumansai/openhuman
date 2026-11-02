@@ -160,23 +160,28 @@ fn channel_activity_emits_atomic_keyed_merge_patches() {
     use tinychannels_bus::{ChannelEvent, ChannelEventKind, ChannelReaction, ChannelRef};
 
     let event = |kind| ChannelEvent {
+        version: 2,
         event_id: "outer-event-id".into(),
+        source_event_id: None,
+        source_timestamp: None,
         channel: ChannelRef {
             id: "telegram".into(),
             account_id: Some("account".into()),
         },
         conversation: None,
         event: kind,
-        timestamp_unix_ms: Some(42),
     };
     let reaction = ChannelReaction {
         value: "🔥".into(),
         custom_emoji_id: None,
-        custom: false,
     };
     let added = event(ChannelEventKind::ReactionAdded {
         message_id: "provider-target".into(),
-        actor_id: Some("alice".into()),
+        provider_message_id: None,
+        actor: tinychannels_bus::SenderRef {
+            id: "alice".into(),
+            ..Default::default()
+        },
         reaction: reaction.clone(),
     });
     let patch = channel_activity_merge_patch(&added).unwrap();
@@ -193,7 +198,6 @@ fn channel_activity_emits_atomic_keyed_merge_patches() {
         &ChannelReaction {
             value: "c".into(),
             custom_emoji_id: None,
-            custom: false,
         },
     )
     .unwrap();
@@ -202,7 +206,6 @@ fn channel_activity_emits_atomic_keyed_merge_patches() {
         &ChannelReaction {
             value: "b|c".into(),
             custom_emoji_id: None,
-            custom: false,
         },
     )
     .unwrap();
@@ -212,7 +215,6 @@ fn channel_activity_emits_atomic_keyed_merge_patches() {
         &ChannelReaction {
             value: "🔥".into(),
             custom_emoji_id: Some("provider-custom-1".into()),
-            custom: true,
         },
     )
     .unwrap();
@@ -220,8 +222,11 @@ fn channel_activity_emits_atomic_keyed_merge_patches() {
 
     let read = event(ChannelEventKind::ReadReceipt {
         message_id: "provider-target".into(),
-        actor_id: Some("bob".into()),
-        read_at_unix_ms: Some(42),
+        actor: Some(tinychannels_bus::SenderRef {
+            id: "bob".into(),
+            ..Default::default()
+        }),
+        timestamp: Some(42),
     });
     let read_patch = channel_activity_merge_patch(&read).unwrap();
     let read_entries = read_patch["channelActivity"]["readReceipts"]
@@ -233,7 +238,11 @@ fn channel_activity_emits_atomic_keyed_merge_patches() {
 
     let removed = event(ChannelEventKind::ReactionRemoved {
         message_id: "provider-target".into(),
-        actor_id: Some("alice".into()),
+        provider_message_id: None,
+        actor: tinychannels_bus::SenderRef {
+            id: "alice".into(),
+            ..Default::default()
+        },
         reaction,
     });
     let remove_patch = channel_activity_merge_patch(&removed).unwrap();
@@ -253,7 +262,7 @@ async fn persisted_activity_merges_concurrent_events_for_the_exact_scoped_row() 
     use crate::threads::store::{self, ConversationMessage, CreateConversationThread};
     use tinychannels_bus::{
         ChannelEvent, ChannelEventKind, ChannelReaction, ChannelRef, ConversationKind,
-        ConversationRef,
+        ConversationRef, SenderRef,
     };
 
     let temp = tempfile::tempdir().unwrap();
@@ -348,21 +357,26 @@ async fn persisted_activity_merges_concurrent_events_for_the_exact_scoped_row() 
         row_id: row_id.clone(),
     };
     let event = |event_id: &str, kind| ChannelEvent {
+        version: 2,
         event_id: event_id.into(),
+        source_event_id: None,
+        source_timestamp: None,
         channel: channel.clone(),
         conversation: Some(conversation.clone()),
         event: kind,
-        timestamp_unix_ms: Some(1_792_444_800),
     };
     let reaction = event(
         "event-reaction",
         ChannelEventKind::ReactionAdded {
             message_id: provider_message_id.into(),
-            actor_id: Some("reader-alice".into()),
+            provider_message_id: None,
+            actor: SenderRef {
+                id: "reader-alice".into(),
+                ..Default::default()
+            },
             reaction: ChannelReaction {
                 value: "👍".into(),
                 custom_emoji_id: Some("provider-emoji-1".into()),
-                custom: true,
             },
         },
     );
@@ -370,8 +384,11 @@ async fn persisted_activity_merges_concurrent_events_for_the_exact_scoped_row() 
         "event-read",
         ChannelEventKind::ReadReceipt {
             message_id: provider_message_id.into(),
-            actor_id: Some("reader-bob".into()),
-            read_at_unix_ms: Some(1_792_444_800),
+            actor: Some(SenderRef {
+                id: "reader-bob".into(),
+                ..Default::default()
+            }),
+            timestamp: Some(1_792_444_800),
         },
     );
 

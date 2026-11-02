@@ -7,6 +7,7 @@ use tinychannels_bus::module_progressive::{
 fn typing(channel: &str) -> ChannelBackendRequest {
     ChannelBackendRequest::ProgressiveTransport(Box::new(ProgressiveTransportRequest::Typing {
         channel: channel.to_string(),
+        turn_id: None,
         channel_ref: None,
         conversation: None,
     }))
@@ -21,9 +22,9 @@ fn answering(
     move |_, _| {
         let value = value.clone();
         Box::pin(async move {
-            Ok(ChannelBackendResult::ProgressiveTransport(
+            Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Success(value),
-            ))
+            )))
         })
     }
 }
@@ -61,7 +62,7 @@ async fn a_registered_callback_serves_the_progressive_transport_before_the_refus
     else {
         panic!("expected the registered callback's result");
     };
-    match served {
+    match *served {
         ProgressiveTransportResult::Success(value) => {
             assert_eq!(value, serde_json::json!({"ok": true}));
         }
@@ -76,9 +77,9 @@ async fn the_callback_is_told_the_config_it_serves() {
     register_channel_callback("ctx", move |ctx, _| {
         *sink.lock().unwrap() = Some(ctx.config.api_url.clone());
         Box::pin(async {
-            Ok(ChannelBackendResult::ProgressiveTransport(
+            Ok(ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Failed,
-            ))
+            )))
         })
     });
     let config = Config {
