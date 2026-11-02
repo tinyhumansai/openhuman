@@ -147,6 +147,13 @@ disabled (the default), most policy checks are inert; see the project
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
 
+A job whose `agent_id` is not live is first offered to the host through
+`HostAgentResolver::open` (an embedding host sets it with
+`RuntimeBuilder::on_missing_agent`). If the host opens the agent the job runs as
+it, and the opened agent is held only for that run. If the host has no opener or
+declines, the job fails with a logged error; it never runs as the canonical
+orchestrator or any other agent.
+
 An agent failure is classified before anything is logged. The user sees a
 canned string from `classify_agent_anyhow_for_user`
 ([`scheduler/failure_classification.rs`](./scheduler/failure_classification.rs)); the full error chain goes only to
