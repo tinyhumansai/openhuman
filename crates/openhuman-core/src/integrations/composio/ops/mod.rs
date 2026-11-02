@@ -100,8 +100,8 @@ pub(crate) use crate::config::Config;
 pub(crate) use connections::enrich_connections_with_identity;
 #[cfg(test)]
 pub(crate) use error_utils::{
-    backend_mode_without_session, classify_composio_failure_tag, direct_mode_without_key,
-    extract_backend_returned_status,
+    backend_mode_without_session, classify_composio_failure_tag, composio_op_report_message,
+    direct_mode_without_key, extract_backend_returned_status,
 };
 #[cfg(test)]
 #[path = "../ops_tests.rs"]
