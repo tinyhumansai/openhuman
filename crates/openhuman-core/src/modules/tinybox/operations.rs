@@ -124,6 +124,17 @@ pub async fn exec(
     call(config, EXEC, (request,), true).await
 }
 
+/// [`exec`] that waits up to `deadline` for the reply instead of the module
+/// call default, for a long command whose caller enforces its own deadline.
+pub async fn exec_within(
+    config: &Config,
+    request: contract::ExecRequest,
+    deadline: Duration,
+) -> Result<contract::ExecOutput, String> {
+    let client = crate::modules::client(config.clone()).with_timeout(deadline);
+    call_with_client(&client, EXEC, (request,), true).await
+}
+
 /// Inspect a module-owned resource.
 pub async fn inspect(
     config: &Config,

@@ -17,6 +17,9 @@ use crate::modules::tinybox::contract::JailStatus;
 pub(crate) const JAIL_EXECUTOR: &str = "tinybox-jail";
 /// The Docker executor's identity on the bus.
 pub(crate) const DOCKER_EXECUTOR: &str = "tinybox-docker";
+/// The OpenShell executor's identity on the bus. It is declared as a container
+/// backend, so a plan that selects it names it by this id.
+pub(crate) const OPENSHELL_EXECUTOR: &str = "tinybox-openshell";
 
 fn enforcement(reported: &str) -> ConstraintEnforcement2 {
     match reported.trim() {
@@ -86,6 +89,27 @@ pub(crate) fn docker(available: bool) -> SandboxExecutor2 {
         capability_id: "tinybox-docker|run|fs:mounts|net:network|mem|cpu".into(),
         backend: SandboxBackend::Docker,
         available,
+        isolation: IsolationLevel2::Kernel,
+        constraints: vec![
+            support(SandboxConstraint2::Filesystem, enforced),
+            support(SandboxConstraint2::Network, enforced),
+            support(SandboxConstraint2::Memory, enforced),
+            support(SandboxConstraint2::CpuMillicores, enforced),
+        ],
+    }
+}
+
+/// A tenant's long-lived OpenShell box: a container on the gateway, with its own
+/// workspace and egress denied, bounded by `[runtime.openshell]`'s CPU and memory.
+/// Nothing on the host is mounted into it. Whether the gateway accepts boxes
+/// shows when the tenant's first box is created, so it is declared available.
+pub(crate) fn openshell() -> SandboxExecutor2 {
+    let enforced = ConstraintEnforcement2::Enforced;
+    SandboxExecutor2 {
+        executor_id: OPENSHELL_EXECUTOR.into(),
+        capability_id: "tinybox-openshell|box|fs:own|net:denied|mem|cpu".into(),
+        backend: SandboxBackend::Docker,
+        available: true,
         isolation: IsolationLevel2::Kernel,
         constraints: vec![
             support(SandboxConstraint2::Filesystem, enforced),
