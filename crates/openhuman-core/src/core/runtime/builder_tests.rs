@@ -175,3 +175,25 @@ fn boot_jobs_are_independent_from_runtime_service_flags() {
     assert!(!headless.integrations);
     assert!(!headless.memory_sync);
 }
+
+/// Inspection boot refuses to start without a caller-supplied config and a
+/// fixed bearer, before it touches any process state.
+#[tokio::test]
+async fn inspection_boot_rejects_missing_config_and_env_token() {
+    let refusal = |result: anyhow::Result<super::CoreRuntime>| match result {
+        Ok(_) => panic!("inspection boot must refuse"),
+        Err(error) => error.to_string(),
+    };
+    let inspection = || CoreBuilder::new(HostKind::Cli).boot_mode(CoreBootMode::Inspection);
+
+    let error = refusal(inspection().build().await);
+    assert!(error.contains("caller-supplied config"), "{error}");
+
+    let error = refusal(
+        inspection()
+            .config(crate::config::Config::default())
+            .build()
+            .await,
+    );
+    assert!(error.contains("fixed RPC bearer"), "{error}");
+}

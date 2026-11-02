@@ -1,6 +1,7 @@
 //! `channel_relay_inbound`: record a relayed message and run its turn.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -9,14 +10,55 @@ use super::channel::RelayChannel;
 use super::params::RelayInboundParams;
 use super::store::{self, Recorded};
 use crate::channels::context::MAX_CHANNEL_HISTORY;
-use crate::channels::outbound::text_message;
 use crate::channels::runtime::{
     build_channel_turn_parts, prepare_runtime_limits, process_channel_runtime_message,
-    runtime_context, PromptToolDescs, RuntimeChannelMessage,
+    runtime_context, PromptToolDescs,
 };
 use crate::config::Config;
 use crate::core::Outcome;
 use crate::security::SecurityPolicy;
+
+/// Deferred one-time import of the relay's older conversation-row history.
+/// The durable TinyAgents session is checked first by the session host, so a
+/// failure in this legacy store cannot block an already-established session.
+#[derive(Clone, Debug)]
+pub(crate) struct LegacyHistoryImport {
+    workspace_dir: PathBuf,
+    thread_id: String,
+    message_id: String,
+    limit: usize,
+}
+
+impl LegacyHistoryImport {
+    pub(crate) fn new(
+        workspace_dir: PathBuf,
+        thread_id: String,
+        message_id: String,
+        limit: usize,
+    ) -> Self {
+        Self {
+            workspace_dir,
+            thread_id,
+            message_id,
+            limit,
+        }
+    }
+
+    pub(crate) async fn load(
+        &self,
+        ctx: &crate::core::runtime::DispatchCtx,
+    ) -> Result<Vec<tinyagents_session::transcript::TranscriptMessage>, String> {
+        let rows = store::prior_turns(
+            ctx,
+            &self.workspace_dir,
+            &self.thread_id,
+            &self.message_id,
+            self.limit,
+        )
+        .await?;
+        Ok(rows)
+    }
+}
 
 /// Accept one relayed message: validate it, record it on its thread under the
 /// caller's workspace, and start its turn in the background. Answers at once,
@@ -106,17 +148,18 @@ pub(crate) async fn run_relay_turn(
     thread_id: String,
     request_id: String,
 ) -> Vec<String> {
-    // One turn at a time per profile: wait behind its chat and cron turns.
-    let _turn = crate::profiles::turn_gate::acquire(&dispatch_ctx).await;
     let workspace_dir = config.workspace_dir.clone();
-    // The thread is busy for the whole turn, so a background result due on it
-    // waits instead of landing mid-turn. The pipeline's session id does not
-    // name the thread, so the guard is taken on the thread itself; this task
-    // runs in the caller's scope, which keys it to the caller's profile.
+    // Keep background deliveries off this thread through the adapter's
+    // durable reply-recording tail. Execution, profile serialization,
+    // cancellation and progressive delivery are owned by the shared runner.
     let busy = crate::agent::orchestration::busy_guard::TurnBusy::start_on_thread(
         &dispatch_ctx,
         &thread_id,
     );
+    // The thread is busy for the whole turn, so a background result due on it
+    // waits instead of landing mid-turn. The pipeline's session id does not
+    // name the thread, so the guard is taken on the thread itself; this task
+    // runs in the caller's scope, which keys it to the caller's profile.
     let channel = Arc::new(RelayChannel::new(
         params.channel.clone(),
         params.client_id(),
@@ -132,13 +175,10 @@ pub(crate) async fn run_relay_turn(
             Ok(limits) => limits,
             Err(error) => {
                 tracing::warn!("relayed channel runtime limits unavailable: {error}");
-                let reply =
-                    "⚠️ This chat's assistant is not available right now. Please try again later.";
-                let _ = tinychannels_bus::Channel::send_typed(
-                    channel.as_ref(),
-                    &text_message(&params.channel, &params.chat_id, reply, None),
-                )
-                .await;
+                let reply = crate::channels::failure_copy::generic_failure(Some(&config));
+                let _ = channel
+                    .send(&crate::channels::SendMessage::new(&reply, &params.chat_id))
+                    .await;
                 record(
                     &dispatch_ctx,
                     &workspace_dir,
@@ -169,13 +209,10 @@ pub(crate) async fn run_relay_turn(
                 %error,
                 "[channels::relay] could not build the turn"
             );
-            let reply =
-                "⚠️ This chat's assistant is not available right now. Please try again later.";
-            let _ = tinychannels_bus::Channel::send_typed(
-                channel.as_ref(),
-                &text_message(&params.channel, &params.chat_id, reply, None),
-            )
-            .await;
+            let reply = crate::channels::failure_copy::generic_failure(Some(&config));
+            let _ = channel
+                .send(&crate::channels::SendMessage::new(&reply, &params.chat_id))
+                .await;
             record(
                 &dispatch_ctx,
                 &workspace_dir,
@@ -188,29 +225,38 @@ pub(crate) async fn run_relay_turn(
         }
     };
 
-    let mut channels_by_name: HashMap<String, Arc<dyn crate::channels::Channel>> = HashMap::new();
-    channels_by_name.insert(params.channel.clone(), channel.clone());
+    let mut channels_by_name: HashMap<String, Arc<crate::channels::runtime::ChannelHandle>> =
+        HashMap::new();
+    channels_by_name.insert(
+        params.channel.clone(),
+        Arc::new(crate::channels::runtime::ChannelHandle::Relay(
+            channel.clone(),
+        )),
+    );
     let mut runtime = runtime_context(
         &dispatch_ctx,
         &config,
         parts,
         Arc::new(channels_by_name),
+        Arc::new(HashMap::new()),
         message_timeout_secs,
     );
     runtime.relay_thread = Some(thread_id.clone());
     let ctx = Arc::new(runtime);
 
-    // The thread is the conversation's memory: seed the pipeline's per-chat
-    // history from it, since this runtime context lives for one message.
-    let message = params.to_inbound_envelope();
+    // The relay's legacy conversation rows are imported into the selected
+    // agent's durable session on its first resume. Subsequent calls are
+    // idempotent and existing session history remains authoritative.
+    let message = params.to_channel_message();
     let prepared = match crate::modules::channel_controller::prepare_inbound(
         &crate::modules::client(config.clone()),
         tinychannels_bus::module_inbound::PrepareChannelInboundRequest {
-            source: tinychannels_bus::module_inbound::ChannelInboundSource::Envelope {
-                envelope: message.clone(),
-                timestamp: 0,
+            source: tinychannels_bus::module_inbound::ChannelInboundSource::Legacy {
+                message: message.clone(),
+                envelope: None,
             },
             namespace: "main".into(),
+            preparation_mode: Default::default(),
             session_policy: Default::default(),
         },
     )
@@ -219,31 +265,47 @@ pub(crate) async fn run_relay_turn(
         Ok(prepared) => prepared,
         Err(error) => {
             tracing::warn!("relayed channel preparation failed: {error}");
+            let reply = crate::channels::failure_copy::generic_failure(Some(&config));
+            let _ = channel
+                .send(&crate::channels::SendMessage::new(&reply, &params.chat_id))
+                .await;
+            record(
+                &dispatch_ctx,
+                &workspace_dir,
+                &params,
+                &thread_id,
+                &channel.sent(),
+            )
+            .await;
             return channel.sent();
         }
     };
-    match store::prior_turns(
-        &dispatch_ctx,
-        &workspace_dir,
-        &thread_id,
-        &params.message_id,
-        MAX_CHANNEL_HISTORY,
-    )
-    .await
-    {
-        Ok(prior) if !prior.is_empty() => {
-            ctx.conversation_histories
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(prepared.history_key.clone(), prior);
+    let tenant = match dispatch_ctx.tenant() {
+        Ok(tenant) => tenant,
+        Err(error) => {
+            tracing::warn!("relayed channel turn lost its tenant scope: {error}");
+            return channel.sent();
         }
-        Ok(_) => {}
-        Err(error) => tracing::warn!(
-            thread_id = %thread_id,
-            %error,
-            "[channels::relay] could not read the thread's history; running without it"
-        ),
-    }
+    };
+    let mut channel_ref = prepared.envelope.channel.clone();
+    channel_ref.id = params.channel.clone();
+    // A hosted relay has no local provider account. Bind the host callback to
+    // an account scope derived from the trusted tenant and provider instead;
+    // this value is never accepted from relay parameters or model metadata.
+    channel_ref.account_id = Some(crate::core::runtime::tenant::tenant_key(
+        &tenant,
+        &format!("hosted-channel:{}", params.channel),
+    ));
+    let progressive_target = Arc::new(crate::channels::runtime::dispatch::hosted_relay_target(
+        &dispatch_ctx,
+        &config,
+        Arc::clone(&channel),
+        channel_ref,
+        prepared.envelope.conversation.clone(),
+        params.client_id().to_owned(),
+        thread_id.clone(),
+        request_id.clone(),
+    ));
 
     tracing::debug!(
         channel = %params.channel,
@@ -251,11 +313,15 @@ pub(crate) async fn run_relay_turn(
         request_id = %request_id,
         "[channels::relay] dispatching relayed turn"
     );
-    let runtime_message = RuntimeChannelMessage {
-        message,
-        authenticated_relay: false,
-        prepared_inbound: Some(prepared),
-    };
+    let mut runtime_message = crate::channels::runtime::RuntimeChannelMessage::from(message);
+    runtime_message.prepared_inbound = Some(prepared);
+    runtime_message.legacy_history = Some(LegacyHistoryImport::new(
+        workspace_dir.clone(),
+        thread_id.clone(),
+        params.message_id.clone(),
+        MAX_CHANNEL_HISTORY,
+    ));
+    runtime_message.progressive_target = Some(progressive_target);
     let turn = process_channel_runtime_message(ctx, runtime_message);
     if let Some(context) = dispatch_ctx.core() {
         crate::core::runtime::CoreContext::scope(

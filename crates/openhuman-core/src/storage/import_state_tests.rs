@@ -218,6 +218,35 @@ fn a_legacy_marker_row_is_honoured_and_removed() {
 }
 
 #[test]
+fn try_claim_returns_at_once_while_another_holder_is_live() {
+    let repo = repo();
+    let (started_tx, started_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let holder_repo = repo.clone();
+    let holder = std::thread::spawn(move || {
+        with_claim(&holder_repo, OWNER, "m", |_| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+        .unwrap()
+    });
+    started_rx.recv().unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let rival_repo = repo.clone();
+    std::thread::spawn(move || {
+        let _ = done_tx.send(try_claim(&rival_repo, OWNER, "m", |_| Ok(())).unwrap());
+    });
+    let attempt = done_rx.recv_timeout(Duration::from_secs(2));
+    release_tx.send(()).unwrap();
+    assert!(
+        matches!(attempt, Ok(None)),
+        "a live rival claim must not make the caller wait: {attempt:?}"
+    );
+    assert_eq!(holder.join().unwrap(), Some(()));
+}
+
+#[test]
 fn a_waiting_process_runs_once_the_holder_releases() {
     let repo = repo();
     let (started_tx, started_rx) = mpsc::channel::<()>();

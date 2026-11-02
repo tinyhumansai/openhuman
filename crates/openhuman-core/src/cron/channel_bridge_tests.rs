@@ -1,101 +1,175 @@
 use super::*;
-use async_trait::async_trait;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tinychannels_bus::ChannelOutboundMessage;
-#[allow(
-    deprecated,
-    reason = "the v22 Channel trait retains these required compatibility signatures"
-)]
-use tinychannels_bus::{ChannelMessage, SendMessage};
-use tokio::sync::mpsc;
+use tinyflows_bus::schedule::ChannelConversationIdentity;
 
-struct MockChannel {
-    sends: Arc<AtomicUsize>,
-    last_target: Arc<Mutex<String>>,
+#[test]
+fn conversation_ref_preserves_full_provider_scope() {
+    let identity = ChannelConversationIdentity {
+        kind: "group".into(),
+        id: "room-1".into(),
+        scope_id: Some("account-scope".into()),
+        parent_id: Some("parent-1".into()),
+        thread_id: Some("thread-2".into()),
+        topic_id: Some("topic-3".into()),
+    };
+    let conversation = conversation_ref(&identity).unwrap();
+    assert_eq!(conversation.kind, ConversationKind::Group);
+    assert_eq!(conversation.id, "room-1");
+    assert_eq!(conversation.scope_id.as_deref(), Some("account-scope"));
+    assert_eq!(conversation.parent_id.as_deref(), Some("parent-1"));
+    assert_eq!(conversation.thread_id.as_deref(), Some("thread-2"));
+    assert_eq!(conversation.topic_id.as_deref(), Some("topic-3"));
 }
 
-#[async_trait]
-impl Channel for MockChannel {
-    fn name(&self) -> &str {
-        "telegram"
-    }
-    #[allow(
-        deprecated,
-        reason = "the v22 Channel trait retains this required compatibility method"
-    )]
-    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
-        self.sends.fetch_add(1, Ordering::SeqCst);
-        *self.last_target.lock().unwrap() = format!(
-            "{}|{}",
-            message.recipient,
-            message.idempotency_key.clone().unwrap_or_default()
-        );
-        Ok(())
-    }
-    async fn send_typed(&self, message: &ChannelOutboundMessage) -> anyhow::Result<()> {
-        self.sends.fetch_add(1, Ordering::SeqCst);
-        *self.last_target.lock().unwrap() = format!(
-            "{}|{}|{}|{}",
-            message.conversation_id,
-            message.thread_id.as_deref().unwrap_or_default(),
-            message.idempotency_key,
-            message.channel_id,
-        );
-        Ok(())
-    }
-    #[allow(
-        deprecated,
-        reason = "the v22 Channel trait retains this required compatibility method"
-    )]
-    async fn listen(&self, _tx: mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        Ok(())
+#[test]
+fn conversation_ref_rejects_unknown_kind_claims() {
+    let identity = ChannelConversationIdentity {
+        kind: "invented".into(),
+        id: "room-1".into(),
+        scope_id: None,
+        parent_id: None,
+        thread_id: None,
+        topic_id: None,
+    };
+    assert!(conversation_ref(&identity).is_err());
+}
+
+fn session(
+    provider: &str,
+    account: Option<&str>,
+    conversation: &str,
+) -> tinyflows_bus::schedule::ChannelSessionIdentity {
+    tinyflows_bus::schedule::ChannelSessionIdentity {
+        tenant_key: "t".into(),
+        agent_id: "orchestrator".into(),
+        session_key: "s".into(),
+        provider: provider.into(),
+        account_id: account.map(str::to_owned),
+        conversation: ChannelConversationIdentity {
+            kind: "dm".into(),
+            id: conversation.into(),
+            scope_id: None,
+            parent_id: None,
+            thread_id: None,
+            topic_id: None,
+        },
     }
 }
 
-// One test: the bridge is process-global, so keep its steps sequential.
 #[tokio::test]
-async fn bridge_reads_appends_trims_and_sends() {
-    let _bridge_lock = TEST_BRIDGE_LOCK.lock().await;
-    let histories: ChannelHistories = Arc::new(Mutex::new(HashMap::new()));
-    histories.lock().unwrap().insert(
-        "k".into(),
-        vec![ChatMessage::user("remind me"), ChatMessage::assistant("ok")],
-    );
-    let sends = Arc::new(AtomicUsize::new(0));
-    let last_target = Arc::new(Mutex::new(String::new()));
-    let ch: Arc<dyn Channel> = Arc::new(MockChannel {
-        sends: Arc::clone(&sends),
-        last_target: Arc::clone(&last_target),
-    });
-    let channels = Arc::new(HashMap::from([("telegram".to_string(), ch)]));
-    register_channel_bridge(Arc::clone(&histories), channels, 3);
-
+async fn sends_and_announces_fail_closed_without_a_running_runtime() {
+    clear_channel_bridge();
+    let id = session("telegram", Some("telegram"), "42");
     assert_eq!(
-        history_messages("k"),
-        vec![
-            ("user".to_string(), "remind me".to_string()),
-            ("assistant".to_string(), "ok".to_string())
-        ]
+        send_to_channel("telegram", &id, "42", "hi", "k")
+            .await
+            .unwrap_err(),
+        "channel runtime is not running"
     );
-    assert!(history_messages("missing").is_empty());
-
-    assert!(append_assistant_message("k", "drink water"));
-    assert!(append_assistant_message("k", "again"));
-    let got = history_messages("k");
-    assert_eq!(got.len(), 3, "trimmed to the registered maximum");
-    assert_eq!(got.last().unwrap().1, "again");
-    assert_eq!(got[0].1, "ok");
-
-    send_to_channel("Telegram", "42", None, "hi", "cron:j:r1")
-        .await
-        .unwrap();
-    assert_eq!(sends.load(Ordering::SeqCst), 1);
     assert_eq!(
-        *last_target.lock().unwrap(),
-        "42||cron:j:r1|telegram",
-        "the typed send carries its address and run-specific idempotency key"
+        announce_to_channel("telegram", "42", None, "hi", "k")
+            .await
+            .unwrap_err(),
+        "channel runtime is not running"
     );
-    assert!(send_to_channel("slack", "42", None, "hi", "k")
+}
+
+#[tokio::test]
+async fn send_rejects_identities_that_do_not_match_the_trusted_route() {
+    let linked = crate::channels::runtime::test_support::linked_telegram_runtime().await;
+    let objects = linked.module_objects();
+    let account = objects
+        .keys()
+        .find(|k| tinychannels_bus::provider_id(k) == "telegram")
+        .unwrap()
+        .clone();
+    register_channel_bridge(objects);
+
+    let mismatch = send_to_channel(
+        "telegram",
+        &session("slack", Some(&account), "42"),
+        "42",
+        "x",
+        "k",
+    )
+    .await;
+    assert_eq!(
+        mismatch.unwrap_err(),
+        "channel origin provider does not match the captured session"
+    );
+
+    let no_account =
+        send_to_channel("telegram", &session("telegram", None, "42"), "42", "x", "k").await;
+    assert_eq!(
+        no_account.unwrap_err(),
+        "channel origin has no configured account identity"
+    );
+
+    let foreign_account = send_to_channel(
+        "telegram",
+        &session("telegram", Some("slack:team"), "42"),
+        "42",
+        "x",
+        "k",
+    )
+    .await;
+    assert_eq!(
+        foreign_account.unwrap_err(),
+        "channel origin has no configured account identity"
+    );
+
+    let other_room = send_to_channel(
+        "telegram",
+        &session("telegram", Some(&account), "42"),
+        "99",
+        "x",
+        "k",
+    )
+    .await;
+    assert_eq!(
+        other_room.unwrap_err(),
+        "channel origin recipient does not match the captured conversation"
+    );
+
+    let missing = send_to_channel(
+        "telegram",
+        &session("telegram", Some("telegram:ghost"), "42"),
+        "42",
+        "x",
+        "k",
+    )
+    .await;
+    assert_eq!(
+        missing.unwrap_err(),
+        "configured channel module is unavailable"
+    );
+
+    let mut bad_kind = session("telegram", Some(&account), "42");
+    bad_kind.conversation.kind = "invented".into();
+    let invalid = send_to_channel("telegram", &bad_kind, "42", "x", "k").await;
+    assert_eq!(
+        invalid.unwrap_err(),
+        "channel origin conversation kind is invalid"
+    );
+
+    let unconfigured = announce_to_channel("discord", "42", Some("thread"), "x", "k").await;
+    assert_eq!(
+        unconfigured.unwrap_err(),
+        "channel discord is not configured"
+    );
+
+    let ok = send_to_channel(
+        "telegram",
+        &session("telegram", Some(&account), "42"),
+        "42",
+        "sent",
+        "k-ok",
+    )
+    .await;
+    clear_channel_bridge();
+    ok.expect("a matching identity is delivered through the module");
+    assert!(linked
+        .provider_request_paths()
         .await
-        .is_err());
+        .iter()
+        .any(|p| p.ends_with("/sendMessage")));
 }

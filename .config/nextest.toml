@@ -3,11 +3,17 @@
 # process, in parallel, which isolates the core's process globals (event bus,
 # registries, env vars, one-shot OnceLocks) without changing them.
 
+[profile.default]
+# No test may run longer than 5 minutes: flag it slow after 60 s, kill it at
+# the fifth period. A hang (a self-deadlock on the storage-slot lock, a wait
+# with no deadline) is a failure, not a stalled run.
+slow-timeout = { period = "60s", terminate-after = 5 }
+
 [profile.ci]
 # Report every failure, never stop at the first.
 fail-fast = false
-# Flag a slow test after 60 s; a hung one is killed after 10 minutes.
-slow-timeout = { period = "60s", terminate-after = 10 }
+# Flag a slow test after 60 s; a hung one is killed after 5 minutes.
+slow-timeout = { period = "60s", terminate-after = 5 }
 # Print failures at the end, where the lane log's tail shows them.
 failure-output = "final"
 success-output = "never"
@@ -24,6 +30,7 @@ final-status-level = "slow"
 agent-harness-e2e = { max-threads = 1 }
 json-rpc-e2e = { max-threads = 1 }
 mcp-registry = { max-threads = 1 }
+doctor-e2e = { max-threads = 1 }
 
 [[profile.ci.overrides]]
 filter = 'binary(/^agent_harness_e2e$/)'
@@ -38,3 +45,15 @@ test-group = 'json-rpc-e2e'
 [[profile.ci.overrides]]
 filter = 'binary(/^mcp_registry_multi_server$/)'
 test-group = 'mcp-registry'
+
+# doctor_e2e shares one mock backend when the lane supplies BACKEND_URL
+# (scripts/test-rust-with-mock.sh), and every case resets that mock's state and
+# asserts on its request log. Run in separate processes in parallel they reset
+# each other mid-test, so keep the binary serial.
+[[profile.ci.overrides]]
+filter = 'binary(/^doctor_e2e$/)'
+test-group = 'doctor-e2e'
+
+[[profile.default.overrides]]
+filter = 'binary(/^doctor_e2e$/)'
+test-group = 'doctor-e2e'

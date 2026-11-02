@@ -46,12 +46,12 @@ async fn two_agents_with_the_same_thread_id_get_their_own_cache_slots() {
     assert_ne!(scoped_key(Some("a"), "bc"), scoped_key(Some("ab"), "c"));
 
     let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let fingerprint =
         super::build_session_fingerprint(&config, None, None, "orchestrator".into(), "chat");
     for (ctx, key) in [(&asha, &key_a), (&ravi, &key_b)] {
         let entry = crate::web_chat::types::SessionEntry {
-            agent: host_seeded_with(&config, "x"),
+            agent: host_seeded_with(&config, "x").await,
             fingerprint: fingerprint.clone(),
         };
         {

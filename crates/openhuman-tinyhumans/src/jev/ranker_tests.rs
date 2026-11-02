@@ -59,8 +59,8 @@ async fn no_credential_is_a_backend_error_naming_the_gap() {
 /// A config whose embedding provider is `none` disables the Jev search
 /// outright — the harness's BM25 answers — rather than quietly retrieving
 /// lexically.
-#[test]
-fn no_embedding_provider_disables_the_search() {
+#[tokio::test]
+async fn no_embedding_provider_disables_the_search() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -70,6 +70,7 @@ fn no_embedding_provider_disables_the_search() {
     };
     config.memory.embedding_provider = "none".into();
     let err = retriever_for(&config, None, &default_embedder())
+        .await
         .err()
         .map(|e| e.to_string());
     assert!(
@@ -95,8 +96,10 @@ fn recording_embedder(
 ) -> EmbedderFactory {
     Arc::new(move |config, chat| {
         seen.lock().unwrap().push(chat.clone());
-        openhuman_embed::__host::inference::embedding_host::default_embedding_provider_for_chat(
-            config, chat,
+        Box::pin(
+            openhuman_embed::__host::inference::embedding_host::default_embedding_provider_for_chat(
+                config, chat,
+            ),
         )
     })
 }

@@ -167,44 +167,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                  via `issues`.",
             )],
         },
-        "openai_oauth_start" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_start",
-            description: "Begin ChatGPT/Codex OAuth (PKCE) for the openai cloud provider.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "OAuth start payload with authUrl.")],
-        },
-        "openai_oauth_complete" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_complete",
-            description: "Complete ChatGPT/Codex OAuth using the browser callback URL.",
-            inputs: vec![required_string(
-                "callback_url",
-                "Redirect URL after sign-in (http://127.0.0.1:1455/auth/callback?...).",
-            )],
-            outputs: vec![json_output("result", "OAuth completion payload.")],
-        },
-        "openai_oauth_import_codex_cli" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_import_codex_cli",
-            description: "Import the existing Codex CLI ChatGPT login from ~/.codex/auth.json.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "OAuth import payload.")],
-        },
-        "openai_oauth_status" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_status",
-            description: "Whether ChatGPT OAuth credentials are stored for openai.",
-            inputs: vec![],
-            outputs: vec![json_output("status", "OAuth connection status.")],
-        },
-        "openai_oauth_disconnect" => ControllerSchema {
-            namespace: "inference",
-            function: "openai_oauth_disconnect",
-            description: "Remove stored ChatGPT OAuth credentials.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "Disconnect result.")],
-        },
         "summarize" => ControllerSchema {
             namespace: "inference",
             function: "summarize",
@@ -295,7 +257,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "claude_code_settings" => ControllerSchema {
             namespace: "inference",
             function: "claude_code_settings",
-            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Self-contained per-install state kept in its own claude_code_settings.json beside config.toml in the OpenHuman config directory — not inside the central config file, and not under the internal workspace dir (config.workspace_dir).",
+            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Kept in the workspace's host storage (its own KV namespace), not inside the central config file.",
             inputs: vec![],
             outputs: vec![json_output(
                 "settings",

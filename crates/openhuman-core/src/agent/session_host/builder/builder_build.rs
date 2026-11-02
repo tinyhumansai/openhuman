@@ -1,10 +1,10 @@
 //! `SessionHostBuilder::build` — validates and assembles the final [`OpenHumanSessionHost`].
 
-use super::{dedup_visible_tool_specs, visible_tool_specs_for_policy};
+use super::visible_tool_specs_for_policy;
 use crate::agent::session_host::types::{OpenHumanSessionHost, SessionHostBuilder};
 use anyhow::Result;
 use std::sync::Arc;
-use tinytools::{Tool, ToolSpec};
+use tinytools::{Tool, ToolPolicyEngine, ToolSpec};
 
 impl SessionHostBuilder {
     /// Validates the configuration and constructs a new `OpenHumanSessionHost` instance.
@@ -32,7 +32,7 @@ impl SessionHostBuilder {
             pack_registry_handle = Some(crate::tools::toolpacks::append_pack_tools(&mut tools));
         }
         // Advertise only the spawnable ids on the wire: see
-        // `SpawnAsyncSubagentTool::scoped` for why the spec-view narrowing
+        // `SpawnSubagentTool::scoped` for why the spec-view narrowing
         // alone did not reach a native-tool-calling provider.
         let spawn_scope_id = self
             .session_definition
@@ -44,15 +44,15 @@ impl SessionHostBuilder {
             if !allowed.is_empty() {
                 if let Some(slot) = tools
                     .iter_mut()
-                    .find(|tool| tool.name() == "spawn_async_subagent")
+                    .find(|tool| tool.name() == "spawn_subagent")
                 {
                     tracing::debug!(
                         agent = %agent_id,
                         ids = allowed.len(),
-                        "[tools] scoping spawn_async_subagent schema to the subagent allowlist"
+                        "[tools] scoping spawn_subagent schema to the subagent allowlist"
                     );
                     *slot = Box::new(
-                        crate::agent::orchestration::tools::SpawnAsyncSubagentTool::scoped(allowed),
+                        crate::agent::orchestration::tools::SpawnSubagentTool::scoped(allowed),
                     );
                 }
             }
@@ -228,7 +228,7 @@ impl SessionHostBuilder {
             .chain(synthesized_tools.iter())
             .map(|tool| tool.as_ref())
             .collect();
-        let mut tool_policy_session = crate::tools::policy_session::build_policy_session(
+        let mut tool_policy_session = ToolPolicyEngine::build_session_from_refs(
             &agent_definition_name,
             &event_channel,
             "session",
@@ -254,7 +254,7 @@ impl SessionHostBuilder {
         // `tool_policy_session` marks both channel-blocked and role-hidden tools
         // as restricted, so deriving the child ceiling from it would reintroduce
         // exactly that conflation.
-        let channel_policy_session = crate::tools::policy_session::build_policy_session(
+        let channel_policy_session = ToolPolicyEngine::build_session_from_refs(
             &agent_definition_name,
             &event_channel,
             "session",
@@ -264,11 +264,22 @@ impl SessionHostBuilder {
         );
         let mut subagent_tool_ceiling_names = self.subagent_tool_ceiling_names.unwrap_or_default();
         if channel_policy_session.has_restrictions() {
-            let policy_allowed: std::collections::HashSet<String> = tool_specs
+            let mut policy_allowed: std::collections::HashSet<String> = tool_specs
                 .iter()
                 .filter(|spec| channel_policy_session.is_allowed(&spec.name))
                 .map(|spec| spec.name.clone())
                 .collect();
+            // Packed tools are the owning specialist's belt, not this agent's:
+            // they are absent from `tool_specs` (reached through `use_skill` or a
+            // hand-off), so a ceiling taken from that list alone would strip a
+            // child of its own tools (`skill_setup` could not search or install).
+            // The child builds its own policy session, which still applies the
+            // channel's permission levels to them.
+            policy_allowed.extend(
+                crate::tools::toolpacks::all_packed_tool_names()
+                    .into_iter()
+                    .map(str::to_owned),
+            );
             if subagent_tool_ceiling_names.is_empty() {
                 subagent_tool_ceiling_names = policy_allowed;
             } else {
@@ -292,7 +303,7 @@ impl SessionHostBuilder {
         // accept duplicates, which hid this bug until #1710's per-role
         // routing started sending the same tool list to Anthropic.
         let visible_tool_specs: Vec<Arc<ToolSpec>> =
-            dedup_visible_tool_specs(visible_tool_specs_unfiltered);
+            tinyagents_runtime::dedup_visible_tool_specs(visible_tool_specs_unfiltered);
 
         let visible_names_list: Vec<&str> =
             visible_tool_specs.iter().map(|s| s.name.as_str()).collect();
@@ -460,6 +471,7 @@ impl SessionHostBuilder {
             task_recency_window: None,
             autonomous_iter_cap: None,
             host_env: crate::agent::turn_env::HostTurnEnv::default(),
+            settle_headless_descendants: false,
             thread_id: None,
             agent_definition_name: agent_definition_name.clone(),
             // Canonical registry id — captured here at build time

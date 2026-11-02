@@ -20,7 +20,7 @@ identities after deleting stale and retired entries. Regeneration requires an
 existing baseline, refuses new findings, and can only remove fixed sites.
 Canonical merge-base validation also rejects baseline growth.
 
-`storage-bypass-extension.json` contains **60** reviewed identities for the
+`storage-bypass-extension.json` contains **57** reviewed identities for the
 broader coverage. Each records its rule, path, source line, occurrence,
 classification, reason, and owning issue. These are identities, not independent
 stores or completed migrations. The initial extension must already exist at the

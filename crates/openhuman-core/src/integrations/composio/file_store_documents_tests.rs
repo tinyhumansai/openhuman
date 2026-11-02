@@ -163,7 +163,7 @@ fn an_unchanged_update_writes_nothing_and_returns_its_result() {
 #[test]
 fn the_import_marker_is_a_migrations_entry_and_stops_a_second_import() {
     let storage = crate::storage::test_support::sqlite_backend().unwrap();
-    let docs = docs_in(&storage.backend, &Scope::local());
+    let docs = Docs::on_backend(&storage.backend, &Scope::local()).unwrap();
     assert!(!docs.legacy_imported(path()).unwrap());
     assert!(docs
         .import_if_absent(path(), serde_json::json!({ "gmail": 5 }))

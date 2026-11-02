@@ -307,21 +307,23 @@ without fencing).
   backend through `flows::catalog_storage` and its `CatalogStorage` bus
   contract; the Schedule service accesses cron documents through
   `cron::documents_port`. The modules own their schemas, migrations, flow state,
-  and run checkpoints. The delegation graph's checkpointer uses
-  tinyagents-graph's `DriverCheckpointer`.
+  and run checkpoints. TinyFlows' `DriverCheckpointer` schema and migrations
+  are declared by `tinyflows_drivers::graph_checkpoint_schema()`.
 - `block_on_anyhow(future)`: `block_on` for those stores, whose errors are
   `anyhow::Error`.
 - Approvals (`security::approval`), through `store_documents.rs`.
 - Secrets (`storage::secrets`): the keyring's user secrets
-  (`security::secret_storage::get` / `set` / `delete`) and the credential stores'
-  files (`auth-profiles.json`, `http-credentials.json`) become encrypted
-  documents (`DocumentSecrets`, `enc2:`) in the acting agent's scope. Each
+  (`security::secret_storage::get` / `set` / `delete`) and the flow store's
+  `http-credentials.json` become encrypted documents (`DocumentSecrets`,
+  `enc2:`) in the acting agent's scope. Auth profiles use their own
+  profile-local `EncryptedFileSecrets` document at `auth-profiles/secrets.enc`.
+  Each
   scope's data key is derived with HKDF-SHA256 from the keyring master key
   (`OPENHUMAN_KEYRING_MASTER_KEY` / `_FILE`, else the OS keychain); with no
   master key they fail closed. The config encryption key stays on the
   process keyring, because `config.toml` is loaded before any agent acts.
   The layout migration (`storage/layout/credentials.rs`) imports the profile's
-  `auth-profiles.json` and `http-credentials.json` into the `local` scope's
+  `http-credentials.json` into the `local` scope's
   secrets, verifies the read-back, archives them (`profile/` in the archive,
   restored beside `config.toml`) and deletes them. It skips them (files stay,
   adopted lazily) when no master key is resolvable without minting one, or
@@ -378,6 +380,6 @@ storage itself.
 
 - `scope.rs`: the one scope grammar (`tenant_scope`, `scope_for_profile`, `scope_for_agent`, `scope_for_module`), built on tsd's `Scope::tenant/local/agent/module`.
 - `schema.rs`: `collection_owners()` validates linked crates' `CollectionSpec` declarations without merging owners; `module_collections(owner)` feeds module grants.
-- `boot.rs`: `prepare_and_migrate`, called by `open`, ensures each linked crate's collections in the host's local and cluster scopes. Tenant, agent and module scopes are prepared by their owners when opened.
+- `boot.rs`: `prepare_and_migrate`, called by `open`, ensures each linked crate's collections in the host's local and cluster scopes and runs the tinyagents graph and harness owner migrations there (a failure is logged and retried at the next boot). Tenant, agent and module scopes are prepared (`prepare_scope`, the same migrations included) by their owners when opened.
 - `scope_move.rs`: the resumable copy of v1 scopes (`profile:`, `<profile>~<agent>`, raw agent ids, `module:<id>@<base>`, the `*-sha256:` fallbacks) into the v2 scopes.
 - The generated reference is `docs/storage-schema.md`; `node scripts/ci/check-storage-schema.mjs` lints the current collection names, indexes, expiry fields and search fields.

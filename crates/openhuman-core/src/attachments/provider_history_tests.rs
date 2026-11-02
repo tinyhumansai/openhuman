@@ -19,7 +19,8 @@ async fn missing_historical_media_does_not_block_latest_valid_media() {
         Arc::new(config),
         "gpt-4o",
         "openai",
-    );
+    )
+    .await;
     let image = |path: &str| {
         Message::User(tinyinference_llm::message::UserMessage {
             content: vec![ContentBlock::Image(ImageRef {

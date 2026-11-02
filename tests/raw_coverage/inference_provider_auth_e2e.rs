@@ -31,7 +31,7 @@ use crate::env_guard::EnvVarGuard;
 use crate::rpc_harness::payload;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use axum::http::header::AUTHORIZATION;
@@ -60,7 +60,8 @@ fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 /// `core::auth::RPC_TOKEN`
@@ -851,6 +852,9 @@ async fn inference_claude_code_auth_status_prefers_the_env_key_then_reads_the_cl
 #[tokio::test]
 async fn inference_claude_code_full_access_toggle_round_trips_through_the_workspace() {
     let _lock = env_lock_async().await;
+    // A host installs its storage backend; the toggle and the Claude provider
+    // both read it from there.
+    let _storage = crate::HostStorage::install(&_lock);
     let harness = setup("").await;
 
     // The safe posture is the default, and it must be the default on a fresh
@@ -880,30 +884,9 @@ async fn inference_claude_code_full_access_toggle_round_trips_through_the_worksp
         payload(&enabled, "set_full_access true").get("full_access"),
         Some(&json!(true))
     );
-    // NOTE: despite the RPC description ("stored under the workspace") and the
-    // helper's name (`workspace_dir_from_config`), the file lands in the
-    // **config** directory — the function returns `config.config_path.parent()`,
-    // i.e. `~/.openhuman`. Asserting the real location so this test documents
-    // where the toggle actually is; the wording mismatch is filed in
-    // ~/tinyhuman/bugs/e2e-wave-inference-stale-vision-and-workspace-docs.md.
-    let settings_file = harness
-        .home()
-        .join(".openhuman")
-        .join("claude_code_settings.json");
-    assert!(
-        settings_file.exists(),
-        "the toggle must land on disk at {}",
-        settings_file.display()
-    );
-    let on_disk: Value =
-        serde_json::from_str(&std::fs::read_to_string(&settings_file).expect("read settings file"))
-            .expect("settings file must be JSON");
-    assert_eq!(
-        on_disk.get("full_access"),
-        Some(&json!(true)),
-        "the persisted file must agree with the reply: {on_disk}"
-    );
-
+    // The toggle is persisted in the workspace's host storage (the
+    // `tinyagents-harness` / `claude_code_settings` KV namespace, e15c33a68f),
+    // not a JSON file, so persistence is proven by reading it back.
     let read_back = harness
         .rpc(
             75_003,
@@ -938,21 +921,6 @@ async fn inference_claude_code_full_access_toggle_round_trips_through_the_worksp
     assert_eq!(
         payload(&read_back, "claude_code_settings after disable").get("full_access"),
         Some(&json!(false))
-    );
-
-    // A corrupt settings file must fail *safe* — defaults, not full access.
-    std::fs::write(&settings_file, "{ this is not json").expect("corrupt the settings file");
-    let corrupt = harness
-        .rpc(
-            75_006,
-            "openhuman.inference_claude_code_settings",
-            json!({}),
-        )
-        .await;
-    assert_eq!(
-        payload(&corrupt, "claude_code_settings corrupt").get("full_access"),
-        Some(&json!(false)),
-        "a corrupt settings file must never fail open into bypassPermissions"
     );
 
     // Failure path: `enabled` is required and must be a bool.

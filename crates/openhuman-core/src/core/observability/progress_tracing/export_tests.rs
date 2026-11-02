@@ -129,7 +129,7 @@ async fn child_export_obeys_sharing_and_readiness_gates_before_reading() {
 
     config.observability.share_usage_data = true;
     config.api_url = Some("https://external.invalid/api".into());
-    assert!(!crate::core::observability::telemetry::langfuse::journal_push_ready(&config));
+    assert!(!crate::core::observability::telemetry::langfuse::journal_push_ready(&config).await);
     crate::core::observability::progress_tracing::export_subagent_journal_trace(
         &dispatch,
         &config,

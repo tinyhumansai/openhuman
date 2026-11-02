@@ -184,7 +184,7 @@ impl MemoryTool {
                 }) {
                     return ToolResult::error(render_error(error));
                 }
-                let engine = match super::engine::resolve(&self.config).engine() {
+                let engine = match super::engine::resolve(&self.config).await.engine() {
                     Ok(bound) => bound.engine,
                     Err(error) => return ToolResult::error(render_error(error)),
                 };
@@ -260,7 +260,7 @@ impl Tool for MemoryTool {
     }
 
     fn parameters_schema(&self) -> Value {
-        crate::tools::schema_cache::static_schema!(include_str!("parameters/memory.json"))
+        tinyagents_harness_tools::static_schema!(include_str!("parameters/memory.json"))
     }
 
     fn permission_level(&self) -> PermissionLevel {

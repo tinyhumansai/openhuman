@@ -371,7 +371,9 @@ async fn inspection_reports_refresh_required_without_refreshing_or_publishing_se
         "vision",
         &config,
         config.default_temperature,
-    ) {
+    )
+    .await
+    {
         Err(error) => error,
         Ok(_) => panic!("an expired OAuth credential must not pass static inspection"),
     };
@@ -435,14 +437,18 @@ async fn a_fully_configured_managed_default_constructs_cleanly() {
     let build_constructions = Arc::clone(&constructions);
     let model_generations = Arc::clone(&generations);
     let inspection_factory: InspectionChatModelFactory = Arc::new(move |_| {
-        build_constructions.fetch_add(1, Ordering::SeqCst);
-        Ok(crate::inference::registry::InspectionChatModelBuild {
-            model: Arc::new(ManagedModel {
-                generations: Arc::clone(&model_generations),
-            }) as Arc<dyn ChatModel<()>>,
-            model_id: "managed-test-model".to_owned(),
-            endpoint: "https://api.openhuman.invalid/openai/v1".to_owned(),
-            credential: "doctor-test-session-token".to_owned(),
+        let build_constructions = Arc::clone(&build_constructions);
+        let model_generations = Arc::clone(&model_generations);
+        Box::pin(async move {
+            build_constructions.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::inference::registry::InspectionChatModelBuild {
+                model: Arc::new(ManagedModel {
+                    generations: Arc::clone(&model_generations),
+                }) as Arc<dyn ChatModel<()>>,
+                model_id: "managed-test-model".to_owned(),
+                endpoint: "https://api.openhuman.invalid/openai/v1".to_owned(),
+                credential: "doctor-test-session-token".to_owned(),
+            })
         })
     });
     crate::inference::registry::register_inspection_chat_model_in(
@@ -589,8 +595,11 @@ async fn embedding_only_configuration_does_not_construct_a_chat_model_for_embedd
     let roles = Arc::new(std::sync::Mutex::new(Vec::new()));
     let seen_roles = Arc::clone(&roles);
     let factory: InspectionChatModelFactory = Arc::new(move |request| {
-        seen_roles.lock().unwrap().push(request.role.to_owned());
-        anyhow::bail!("test construction marker")
+        let seen_roles = Arc::clone(&seen_roles);
+        Box::pin(async move {
+            seen_roles.lock().unwrap().push(request.role.to_owned());
+            anyhow::bail!("test construction marker")
+        })
     });
     register_inspection_chat_model(
         crate::inference::provider::factory::PROVIDER_OPENHUMAN,
@@ -630,23 +639,13 @@ async fn an_out_of_range_temperature_reports_the_role_setting() {
 }
 
 #[tokio::test]
-async fn invalid_role_and_agent_temperatures_report_their_config_paths() {
+async fn invalid_role_and_route_temperatures_report_their_config_paths() {
     let mut config = Config::default();
     config.chat_provider = Some("openai:gpt-4o@-0.1".to_owned());
     config.model_routes = vec![crate::config::ModelRouteConfig {
         hint: "reasoning".to_owned(),
         model: "openai:o3@2.5".to_owned(),
     }];
-    config.agents.insert(
-        "delegate-test".to_owned(),
-        crate::config::DelegateAgentConfig {
-            model: "openrouter/example".to_owned(),
-            system_prompt: None,
-            temperature: Some(f64::NAN),
-            max_depth: 3,
-        },
-    );
-
     let findings = run_only(config, TEMPERATURE).await;
     let paths = findings
         .iter()
@@ -654,11 +653,7 @@ async fn invalid_role_and_agent_temperatures_report_their_config_paths() {
         .filter_map(|result| result.config_path.as_deref())
         .collect::<Vec<_>>();
 
-    for expected in [
-        "chat_provider",
-        "model_routes[0].model",
-        "agents[0].temperature",
-    ] {
+    for expected in ["chat_provider", "model_routes[0].model"] {
         assert!(
             paths.contains(&expected),
             "missing {expected} temperature finding: {findings:#?}"

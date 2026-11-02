@@ -43,7 +43,7 @@ with its own store (or a test binary with an in-memory engine) runs the
 whole lifecycle without a TinyHumans session or a CortexDB key.
 
 Whatever engine is bound, TinyMemory's native `EngineBinder` wraps it in a
-scrubbing decorator using `security::scrub::host_policy` and a timing
+scrubbing decorator using `memory::host_policy::host_policy` and a timing
 decorator. Every text a `StoreItem` carries is scrubbed before the engine sees
 it. This also covers writes TinyMemory makes through its own types
 (`AgentMemory::pre_turn`, `Brain::ingest`, background ingests). The timing
@@ -166,6 +166,19 @@ preserving queued logs; engine/credential invalidation also clears pending
 refreshes. Scoped spawns retain the caller's core context; the key carries the
 resolved identity, so queued work needs nothing ambient.
 
+A host can ask for recall of the **current** message instead
+(`[memory] recall_each_turn_ms`, set by embed's `MemoryBinding::recall_each_turn`).
+`pre_turn` then queues the same work, and waits at most that long for its
+pack while the rest of turn setup runs (the session host joins the two). In
+time, the pack reaches `MemoryPackMiddleware` like any other and its
+citations are recorded; late, missing or skipped, the turn gets no note
+(`[memory:recall] deadline` at debug for a timeout, warn for work that ended
+without an answer) and the work still finishes into the cache.
+`RecallEachTurn::excluding` is the seam for de-duplicating against memory a
+host already puts in the system prompt: a pack whose every cited hit it
+excludes is left out (TinyMemory renders the pack, so single lines cannot be
+dropped yet).
+
 The live prelude and compaction summarizer call the underlying work directly
 from the scoped prefetch workers. Their background deadlines bound engine I/O
 without a second manual timeout wrapper.
@@ -181,7 +194,9 @@ module to forget only that channel's conversations. With
 in `lifecycle::date_hint` for one small model call to work out which days the
 user means; a late or bad answer just leaves the pack in its normal order.
 The web chat citation sink records citations only when a cached pack is
-returned to the turn and drained for the chat's memory chips.
+returned to the turn and drained for the chat's memory chips. An agent with a
+`memory_block` also gets beliefs then learnings rendered into its system
+prompt by [`lifecycle/memory_block.rs`](./lifecycle/memory_block.rs), only when a transcript generation starts.
 
 ### Background work
 
@@ -301,6 +316,7 @@ trusted call facts; queued writes retain that call's narrower reach.
 | [`lifecycle/hooks.rs`](./lifecycle/hooks.rs)                                                             | Lifecycle operations and bounded manual wrappers; `TurnPack`, `MemoryTurn`.                                                                                                                                                                                                                                 |
 | [`lifecycle/prefetch.rs`](./lifecycle/prefetch.rs)                                                       | Host adapter over `tinymemory_tools::prefetch::Prefetcher`: the key (workspace, config fingerprint, identity, thread), the per-context cache registry, the tokio runtime port and the turn-pack work.                                                                                                       |
 | [`lifecycle/jobs.rs`](./lifecycle/jobs.rs)                                                               | Host adapter over `tinymemory_tools::queue::JobQueue`: a file `QueueStore` over `memory/jobs.json`, one queue per workspace, the engine and build delay, and the `memory_background` cron run.                                                                                                              |
+| [`lifecycle/memory_block.rs`](./lifecycle/memory_block.rs) | Reads beliefs then learnings for an identity and renders the system prompt's `<memory>` block within a token budget. |
 | [`lifecycle/views.rs`](./lifecycle/views.rs)                                                             | Policy get/set, pack preview, agents list, jobs list/run for the UI.                                                                                                                                                                                                                                        |
 | [`lifecycle/sender.rs`](./lifecycle/sender.rs)                                                           | Maps a channel message's sender to an observed actor.                                                                                                                                                                                                                                                       |
 | [`lifecycle/date_hint.rs`](./lifecycle/date_hint.rs)                                                     | Optional model call that works out which days a turn refers to.                                                                                                                                                                                                                                             |
@@ -334,8 +350,8 @@ trusted call facts; queued writes retain that call's narrower reach.
   `scope::identity_pins` (`scope.rs`): derive and resolve the acting identity
   a turn's run context carries.
 - `lifecycle::prefetch::pre_turn` and `compaction`
-  (`lifecycle/prefetch.rs`): synchronous reads of completed packs plus scoped
-  background refresh. `lifecycle::hooks` contains the underlying operations;
+  (`lifecycle/prefetch.rs`): reads of completed packs plus scoped background
+  refresh, or a deadline-bounded wait for the current message's pack. `lifecycle::hooks` contains the underlying operations;
   `post_turn` is spawned after durable commit.
 - `lifecycle::jobs::enqueue` and `run_due` (`lifecycle/jobs.rs`): the
   background queue.
@@ -435,7 +451,7 @@ sits in the app directory shared by all accounts
   middleware and the compaction summarizer live under `agent/`.
 - Chat transcripts are owned by `threads`; this folder only reads them for
   backfill and forgets their memory on delete.
-- Credentials come from `security::credentials` and the host's session
+- Credentials come from `credentials` and the host's session
   owner. The core does not sign in or refresh anything here.
 - Cron scheduling is `cron`'s; this folder only handles the due events.
 

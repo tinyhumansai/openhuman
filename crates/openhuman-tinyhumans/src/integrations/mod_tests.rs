@@ -39,8 +39,8 @@ fn integration_pricing_ignores_retired_apify_and_twilio_entries() {
     assert!(pricing.integrations.parallel.unwrap().available);
 }
 
-#[test]
-fn build_client_returns_none_when_no_auth_token() {
+#[tokio::test]
+async fn build_client_returns_none_when_no_auth_token() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = openhuman_embed::__host::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -48,7 +48,7 @@ fn build_client_returns_none_when_no_auth_token() {
         config_path: tmp.path().join("config.toml"),
         ..openhuman_embed::__host::config::Config::default()
     };
-    assert!(build_client(&config).is_none());
+    assert!(build_client(&config).await.is_none());
 }
 
 #[test]

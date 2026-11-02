@@ -1666,6 +1666,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Otwórz na kanwie',
   'chat.flowProposal.dismiss': 'Odrzuć',
   'chat.flowProposal.error': 'Nie udało się zapisać przepływu pracy. Spróbuj ponownie.',
+  'chat.flowProposal.versionConflict':
+    'Ten przepływ pracy zmienił się po utworzeniu propozycji, więc nie został nadpisany. Poproś o nową wersję.',
   'chat.flowProposal.enableError':
     'Przepływ pracy zapisany, ale nie udało się go włączyć. Spróbuj ponownie lub włącz go na stronie Workflows.',
   'chat.flowProposal.savedConfirmation': 'Zapisano',
@@ -1859,11 +1861,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} z {total}',
   'chat.todos.receipt': 'Zaktualizowano postęp · {done}/{total}',
   'chat.subagents.ranFor': 'Trwało {duration}',
-  'chat.subagents.ofTotal': '{complete} z {total}',
-  'chat.subagents.runningCount': 'W toku: {count}',
-  'chat.subagents.failedCount': 'Nieudane: {count}',
-  'chat.subagents.incompleteCount': '{count} niedokończonych',
-  'chat.subagents.settled': 'Zadania podrzędne zakończone. Przetwarzanie ich wyników.',
   'conversations.planReview.title': 'Przejrzyj plan',
   'conversations.planReview.subtitle':
     'Zatwierdź, aby go uruchomić, odrzuć, aby go odrzucić, lub wyślij opinię, aby go poprawić.',
@@ -1899,7 +1896,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Zezwól',
   'conversations.mcpUi.confirmDeny': 'Odmów',
   'conversations.tools.delegatedTo': 'Przekazano do {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Agregowanie wyników',
   'conversations.tools.openInBrowser': 'Otwórz w przeglądarce',
   'conversations.tools.status.running': 'w toku',
   'conversations.tools.status.done': 'gotowe',
@@ -1969,22 +1965,6 @@ const messages: TranslationMap = {
     'Ponowna próba się nie powiodła. Pobierz najnowszą wersję aplikacji i spróbuj ponownie.',
   'daemon.serviceBlockingGate.retrying': 'Ponawianie...',
   'daemon.serviceBlockingGate.title': 'Rdzeń OpenHuman jest niedostępny',
-  'worktree.label': 'Drzewo pracy',
-  'worktree.dirty': 'Niezatwierdzone zmiany',
-  'worktree.clean': 'Czyste',
-  'worktree.removing': 'Usuwanie…',
-  'worktree.removeFailed': 'Nie udało się usunąć worktree',
-  'worktree.diffFailed': 'Nie udało się załadować diffa',
-  'worktree.diffLoading': 'Ładowanie diffa…',
-  'worktree.diffEmpty': 'Brak zmian względem HEAD.',
-  'worktree.dirtyConfirm':
-    'To worktree ma niezatwierdzone zmiany. Jego usunięcie odrzuci tę pracę. Gałąź workera zostaje zachowana.',
-  'worktree.action.open': 'Otwórz folder',
-  'worktree.action.diff': 'Różnica',
-  'worktree.action.hideDiff': 'Ukryj diff',
-  'worktree.action.remove': 'Usuń',
-  'worktree.action.removeAnyway': 'Odrzuć i usuń',
-  'worktree.action.preserve': 'Zachowaj',
   'notifications.card.dismiss': 'Odrzuć powiadomienie',
   'notifications.card.importanceTitle': 'Ważność: {pct}%',
   'notifications.center.empty': 'Brak powiadomień',
@@ -3530,6 +3510,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Ładowanie modeli…',
   'composer.voiceMode': 'Tryb głosowy',
   'composer.humanMode': 'Tryb człowieka',
+  'voiceNote.record': 'Nagraj wiadomość głosową',
+  'voiceNote.stop': 'Zatrzymaj nagrywanie',
+  'voiceNote.discard': 'Odrzuć wiadomość głosową',
+  'voiceNote.send': 'Wyślij wiadomość głosową',
+  'voiceNote.recording': 'Nagrywanie…',
+  'voiceNote.play': 'Odtwórz wiadomość głosową',
+  'voiceNote.pause': 'Wstrzymaj wiadomość głosową',
+  'voiceNote.seek': 'Przewiń wiadomość głosową',
+  'voiceNote.transcript': 'Transkrypcja',
+  'voiceNote.noTranscript': 'Brak dostępnej transkrypcji',
+  'voiceNote.label': 'Wiadomość głosowa {duration}',
+  'voiceNote.micDenied': 'Odmówiono dostępu do mikrofonu lub jest on niedostępny.',
+  'voiceNote.transcribeFailed': 'Nie udało się przepisać wiadomości głosowej.',
+  'voiceNote.loadFailed': 'Nie udało się wczytać tej wiadomości głosowej.',
+  'voiceNote.sendFailed': 'Nie udało się wysłać wiadomości głosowej.',
 
   // Sync budget dialog
 
@@ -4897,8 +4892,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'Zaktualizowano wnioski',
   'conversations.tools.delegateTask.active': 'Przekazywanie zadania',
   'conversations.tools.delegateTask.done': 'Przekazano zadanie',
-  'conversations.tools.runAgentsInParallel.active': 'Równoległe uruchamianie agentów',
-  'conversations.tools.runAgentsInParallel.done': 'Uruchomiono agentów równolegle',
   'conversations.tools.messageAgent.active': 'Wysyłanie wiadomości do agenta',
   'conversations.tools.messageAgent.done': 'Wysłano wiadomość do agenta',
   'conversations.tools.waitForAgent.active': 'Oczekiwanie na agenta',
@@ -4935,6 +4928,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Sprawdzono cel',
   'conversations.tools.completeGoal.active': 'Realizowanie celu',
   'conversations.tools.completeGoal.done': 'Zrealizowano cel',
+  'conversations.tools.resumeGoal.active': 'Wznawianie celu',
+  'conversations.tools.resumeGoal.done': 'Wznowiono cel',
   'conversations.tools.scheduleTask.active': 'Planowanie zadania',
   'conversations.tools.scheduleTask.done': 'Zaplanowano zadanie',
   'conversations.tools.checkSchedules.active': 'Sprawdzanie harmonogramów',
@@ -5168,6 +5163,56 @@ const messages: TranslationMap = {
   'settings.layout.corners.round': 'Zaokrąglone',
   'settings.layout.contrast.subtle': 'Subtelny',
   'settings.layout.contrast.default': 'Domyślne',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Diagnostyka zasad nie jest dostępna w tym rdzeniu.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Aktywne zasady bezpieczeństwa',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomia',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Tylko w obszarze roboczym',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour':
+    'Maksymalna liczba działań na godzinę',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Wymagaj zatwierdzenia przy średnim ryzyku',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blokuj polecenia wysokiego ryzyka',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Dozwolone polecenia',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Żadne polecenia nie są jawnie dozwolone.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Zasady',
+  'settings.approvalHistory.judgeScores':
+    'Intencja {intent} · Odwracalność {reversible} · Eksfiltracja {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'z pamięci podręcznej',
+  'settings.approvalHistory.judgeExpires': 'Wygasa {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Zawsze dozwolone narzędzia',
+  'keyring.settings.toolTrustDescription':
+    'Te narzędzia mogą działać bez pytania o zgodę w tym zakresie bezpieczeństwa.',
+  'keyring.settings.toolTrustLoading': 'Wczytywanie dozwolonych narzędzi…',
+  'keyring.settings.toolTrustLoadFailed': 'Nie udało się wczytać dozwolonych narzędzi.',
+  'keyring.settings.toolTrustRevokeFailed': 'Nie udało się cofnąć tego uprawnienia narzędzia.',
+  'keyring.settings.toolTrustEmpty': 'Brak narzędzi zawsze dozwolonych.',
+  'keyring.settings.toolTrustRetry': 'Ponów',
+  'keyring.settings.toolTrustRevoke': 'Cofnij',
+  'keyring.settings.toolTrustRevoking': 'Cofanie…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Prośba o dostęp do pęku kluczy',
+  'keyring.operation.description':
+    'TinySecurity prosi o dostęp do jednego elementu pęku kluczy. Sprawdź operację przed podjęciem decyzji.',
+  'keyring.operation.access': 'Dostęp',
+  'keyring.operation.requester': 'Prosi',
+  'keyring.operation.origin': 'Źródło',
+  'keyring.operation.purpose': 'Cel',
+  'keyring.operation.name': 'Element pęku kluczy',
+  'keyring.operation.access.read': 'Odczyt',
+  'keyring.operation.access.write': 'Zapis',
+  'keyring.operation.access.delete': 'Usunięcie',
+  'keyring.operation.allow': 'Zezwól raz',
+  'keyring.operation.deny': 'Odmów',
+  'keyring.operation.submitting': 'Wysyłanie…',
+  'keyring.operation.expires': 'Prośba wygaśnie za {seconds}s.',
+  'keyring.operation.error': 'Nie udało się wysłać decyzji. Prośba mogła wygasnąć.',
 };
 
 export default messages;

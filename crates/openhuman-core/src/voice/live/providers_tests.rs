@@ -11,10 +11,10 @@ fn key_slugs_cover_only_byok_providers() {
     assert_eq!(key_slug(LIVE_PROVIDER_ELEVENLABS_HOSTED), None);
 }
 
-#[test]
-fn catalogue_lists_only_the_byok_providers_when_no_hosted_one_is_registered() {
+#[tokio::test]
+async fn catalogue_lists_only_the_byok_providers_when_no_hosted_one_is_registered() {
     let config = Config::default();
-    let infos = provider_infos(&config);
+    let infos = provider_infos(&config).await;
     let ids: Vec<_> = infos.iter().map(|i| i.id.as_str()).collect();
     let byok: Vec<_> = LIVE_PROVIDERS
         .iter()

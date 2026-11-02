@@ -1,9 +1,8 @@
 use super::*;
-use crate::config::DelegateAgentConfig;
 use crate::tools::ops::default_tools;
 
-#[test]
-fn all_tools_includes_browser_when_enabled() {
+#[tokio::test]
+async fn all_tools_includes_browser_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
 
@@ -19,13 +18,13 @@ fn all_tools_includes_browser_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     // The browser tools are the `modules` gate's (tools/ops.rs): present when
     // it is compiled in, absent in a gates-off build.
@@ -38,8 +37,8 @@ fn all_tools_includes_browser_when_enabled() {
     assert!(names.contains(&"proxy_config"));
 }
 
-#[test]
-fn computer_component_off_unregisters_desktop_and_browser_tools() {
+#[tokio::test]
+async fn computer_component_off_unregisters_desktop_and_browser_tools() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig {
@@ -56,13 +55,13 @@ fn computer_component_off_unregisters_desktop_and_browser_tools() {
     let tools = all_tools(
         Arc::new(root),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert!(!names.contains(&"browser_open"), "{names:?}");
     assert!(!names.contains(&"browser"), "{names:?}");
@@ -72,8 +71,8 @@ fn computer_component_off_unregisters_desktop_and_browser_tools() {
     );
 }
 
-#[test]
-fn default_tools_all_have_descriptions() {
+#[tokio::test]
+async fn default_tools_all_have_descriptions() {
     let security = Arc::new(SecurityPolicy::default());
     let tools = default_tools(security);
     for tool in &tools {
@@ -85,8 +84,8 @@ fn default_tools_all_have_descriptions() {
     }
 }
 
-#[test]
-fn default_tools_all_have_schemas() {
+#[tokio::test]
+async fn default_tools_all_have_schemas() {
     let security = Arc::new(SecurityPolicy::default());
     let tools = default_tools(security);
     for tool in &tools {
@@ -104,65 +103,8 @@ fn default_tools_all_have_schemas() {
     }
 }
 
-#[test]
-fn all_tools_includes_delegate_when_agents_configured() {
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let mut agents = HashMap::new();
-    agents.insert(
-        "researcher".to_string(),
-        DelegateAgentConfig {
-            model: "llama3".to_string(),
-            system_prompt: None,
-            temperature: None,
-            max_depth: 3,
-        },
-    );
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &agents,
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(names.contains(&"delegate"));
-}
-
-#[test]
-fn all_tools_excludes_delegate_when_no_agents() {
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-
-    let browser = BrowserConfig::default();
-    let http = crate::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        AuditLogger::disabled(),
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(!names.contains(&"delegate"));
-}
-
-#[test]
-fn all_tools_registers_no_hosted_integration_families_without_a_tool_source() {
+#[tokio::test]
+async fn all_tools_registers_no_hosted_integration_families_without_a_tool_source() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -173,18 +115,18 @@ fn all_tools_registers_no_hosted_integration_families_without_a_tool_source() {
     cfg.integrations.parallel.enabled = true;
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
-    store_test_session_token(&cfg);
+    store_test_session_token(&cfg).await;
 
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
 
     // The hosted families (Google Places, stock data, file storage, managed
@@ -220,11 +162,11 @@ fn all_tools_registers_no_hosted_integration_families_without_a_tool_source() {
     );
 }
 
-#[test]
-fn all_tools_registers_brave_engine_and_lsp_when_enabled() {
+#[tokio::test]
+async fn all_tools_registers_brave_engine_when_enabled() {
     // Search registers one tool per capability role from the TinySearch
     // catalog; a usable BYOK Brave key yields the `search` role tool
-    // alongside lsp.
+    // alongside the builtin tool set.
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -236,38 +178,28 @@ fn all_tools_registers_brave_engine_and_lsp_when_enabled() {
     );
     cfg.search.brave.api_key = Some("test-brave-key".into());
 
-    let _env_guard = crate::config::TEST_ENV_LOCK.blocking_lock();
-    unsafe {
-        std::env::set_var(crate::tools::implementations::LSP_ENABLED_ENV, "1");
-    }
-
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
     assert_contains_all(
         &names,
         &[
             #[cfg(feature = "modules")]
             "web_search_tool",
-            "lsp",
         ],
     );
-
-    unsafe {
-        std::env::remove_var(crate::tools::implementations::LSP_ENABLED_ENV);
-    }
 }
 
-#[test]
-fn all_tools_registers_querit_as_the_search_role_when_enabled() {
+#[tokio::test]
+async fn all_tools_registers_querit_as_the_search_role_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -282,13 +214,13 @@ fn all_tools_registers_querit_as_the_search_role_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
     #[cfg(feature = "modules")]
     assert_contains_all(&names, &["web_search_tool"]);
@@ -299,8 +231,8 @@ fn all_tools_registers_querit_as_the_search_role_when_enabled() {
     );
 }
 
-#[test]
-fn all_tools_omits_search_surface_when_search_is_disabled() {
+#[tokio::test]
+async fn all_tools_omits_search_surface_when_search_is_disabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let browser = BrowserConfig::default();
@@ -311,18 +243,18 @@ fn all_tools_omits_search_surface_when_search_is_disabled() {
     cfg.search.brave.api_key = Some("test-brave-key".into());
     cfg.search.querit.api_key = Some("test-querit-key".into());
     cfg.integrations.tinyfish.enabled = true;
-    store_test_session_token(&cfg);
+    store_test_session_token(&cfg).await;
 
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
         &browser,
         &http,
         tmp.path(),
-        &HashMap::new(),
         &cfg,
-    );
+    )
+    .await;
     let names = tool_names(&tools);
 
     for search_tool in [

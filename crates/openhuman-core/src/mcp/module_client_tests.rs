@@ -338,7 +338,7 @@ async fn doctor_status_reads_only_an_open_client_for_the_exact_config() {
     let scratch = tempfile::tempdir().expect("create isolated client workspace");
     let mut host_config = Config::default();
     host_config.workspace_dir = scratch.path().to_path_buf();
-    let client_config = crate::mcp::host::client_config(&host_config);
+    let client_config = crate::mcp::host::client_config(&host_config).await;
     let port = FakePort::default();
     let opened = Arc::clone(&port.opened);
     let calls = Arc::clone(&port.calls);
@@ -402,7 +402,7 @@ async fn doctor_status_skips_mismatched_retiring_and_absent_clients_without_open
     let client = McpConfiguredClient::install_test_port(&selected, Box::new(port.clone()))
         .expect("install the selected workspace client");
     let mut state = ConfiguredLifecycle::new();
-    state.open_step(&crate::mcp::host::client_config(&stale));
+    state.open_step(&crate::mcp::host::client_config(&stale).await);
     state.open_replied(Ok(OpenConfiguredResponse {
         object_path: "/workspace/ambient-a".to_owned(),
         transition_id: "fixture-open".to_owned(),
@@ -442,7 +442,7 @@ async fn existing_status_preserves_read_failures_without_reopening_the_client() 
     let scratch = tempfile::tempdir().expect("create isolated client workspace");
     let mut config = Config::default();
     config.workspace_dir = scratch.path().to_path_buf();
-    let client_config = crate::mcp::host::client_config(&config);
+    let client_config = crate::mcp::host::client_config(&config).await;
     let port = FakePort::default();
     port.fail_status
         .store(true, std::sync::atomic::Ordering::SeqCst);

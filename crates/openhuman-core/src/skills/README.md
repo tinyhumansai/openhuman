@@ -228,7 +228,7 @@ rather than re-implementing it:
 Other owners: the orchestrator prompt renders the catalog
 (`agent_registry/agents/orchestrator/prompt.rs`), channel turns render their
 own skills list (`agent/context/channels_prompt.rs`), fork context carries the
-parent's skill list to sub-agents (`agent/harness/fork_context.rs`), and the
+parent's skill list to sub-agents (`agent/subagent_host/fork_context.rs`), and the
 flows domain contributes `Flow`-scope entries (`flows/catalogue.rs`).
 
 ## Gotchas

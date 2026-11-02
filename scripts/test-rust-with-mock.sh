@@ -183,6 +183,14 @@ else
 fi
 export OPENHUMAN_CHANNELS_TEST_ARTIFACT="$tinychannels_artifact"
 
+# The native Telegram voice-note E2E loads the released TinyVoice by file, as
+# the CI installer exports it. It stays off OPENHUMAN_MODULE_PATH so no other
+# suite starts loading it.
+if [ -z "${OPENHUMAN_VOICE_TEST_ARTIFACT:-}" ]; then
+  OPENHUMAN_VOICE_TEST_ARTIFACT="$(stage_release_artifact tinyvoice "$wallet_platform" "$module_ext")"
+  export OPENHUMAN_VOICE_TEST_ARTIFACT
+fi
+
 # The MCP registry E2E targets exercise real TinyMCP lifecycle calls through
 # the host's module adapter, so they load the released, checksum-pinned module
 # just as the self-hosted CI installer does (source mode builds it instead).
@@ -297,6 +305,7 @@ run_json_rpc_e2e() {
   # provider route persisted by one scenario cannot affect another one.
   local target listing test_names test_name matched_count=0
   local -a targets=(json_rpc_threads_e2e json_rpc_wallet_e2e json_rpc_flows_e2e
+    json_rpc_flows_builder_chat_e2e
     json_rpc_mcp_e2e json_rpc_inference_e2e json_rpc_auth_security_e2e
     json_rpc_config_e2e json_rpc_agent_team_e2e json_rpc_web_chat_e2e
     json_rpc_misc_e2e)

@@ -3,6 +3,7 @@ use tinyagents_harness::error::Result as TaResult;
 use tinyagents_harness::host::security_gate::{
     ContentOrigin, GateDecision, ScreenOutcome, SecurityGate, ToolCallRequest,
 };
+use tinyinference_llm::message::{ContentBlock, Message};
 
 use super::OpenHumanSecurityGate;
 use crate::security::prompt_injection::{
@@ -54,12 +55,8 @@ impl SecurityGate for OpenHumanSecurityGate {
     /// The reason string carries the verdict and the rule codes only — never
     /// the screened text, which is the thing suspected of being hostile.
     ///
-    /// TODO(phase4): no [`ScreenOutcome::Redacted`] is ever returned. Producing
-    /// one needs a free-text redactor; `tinymemory_api::safety::scan` detects spans but
-    /// returns no rewritten string, and `approval::redact::scrub_paths` is
-    /// private and shaped for JSON argument maps. Either lift a public
-    /// `redact_text(&str) -> String` out of `approval::redact` or add one to
-    /// `tinymemory_api::safety`, then map "PII found, injection clean" to `Redacted`.
+    /// Credential patterns are rewritten by TinyInference's shared scrubber,
+    /// which is also used by OpenHuman's credential-scrub middleware.
     async fn screen_input(&self, text: &str, origin: ContentOrigin) -> TaResult<ScreenOutcome> {
         if !self.screens_input {
             return Ok(ScreenOutcome::Pass);
@@ -80,10 +77,27 @@ impl SecurityGate for OpenHumanSecurityGate {
                 user_id: None,
                 session_id: None,
             },
-        );
+        )
+        .await;
 
         match decision.action {
-            PromptEnforcementAction::Allow => Ok(ScreenOutcome::Pass),
+            PromptEnforcementAction::Allow => {
+                // Tool output has already crossed OpenHuman's tool-aware
+                // credential middleware. Re-running the generic scrubber
+                // here would redact the browser's host-minted confirmation
+                // token in a NeedsConfirmation response. Keep this gate's
+                // credential rewrite on user input; other origins retain the
+                // injection screen while their owning adapter handles secrets.
+                if origin != ContentOrigin::User {
+                    return Ok(ScreenOutcome::Pass);
+                }
+                let redacted = tinyinference_core::sanitize::scrub_credentials(text);
+                if redacted == text {
+                    Ok(ScreenOutcome::Pass)
+                } else {
+                    Ok(ScreenOutcome::Redacted(redacted))
+                }
+            }
             PromptEnforcementAction::Blocked | PromptEnforcementAction::ReviewBlocked => {
                 let codes: Vec<&str> = decision.reasons.iter().map(|r| r.code.as_str()).collect();
                 tracing::warn!(
@@ -105,5 +119,44 @@ impl SecurityGate for OpenHumanSecurityGate {
                 )))
             }
         }
+    }
+}
+
+impl OpenHumanSecurityGate {
+    /// Screens only the newly appended user row before the session driver
+    /// snapshots its seed history. This uses the same gate implementation and
+    /// outcome handling as the hosted harness, so a redaction is durable and a
+    /// block cannot fall back to the raw row on cancellation.
+    pub(crate) async fn screen_new_user_row(
+        &self,
+        history: &mut [Message],
+    ) -> TaResult<(bool, Option<String>)> {
+        let Some(Message::User(user)) = history.last_mut() else {
+            return Ok((false, None));
+        };
+        for block in &mut user.content {
+            match block {
+                ContentBlock::Text(text) | ContentBlock::Thinking { text, .. } => {
+                    match self.screen_input(text, ContentOrigin::User).await? {
+                        ScreenOutcome::Pass => {}
+                        ScreenOutcome::Redacted(redacted) => *text = redacted,
+                        ScreenOutcome::Block { reason } => return Ok((true, Some(reason))),
+                    }
+                }
+                ContentBlock::Json(value) | ContentBlock::ProviderExtension(value) => {
+                    let rendered = value.to_string();
+                    match self.screen_input(&rendered, ContentOrigin::User).await? {
+                        ScreenOutcome::Pass => {}
+                        ScreenOutcome::Redacted(redacted) => {
+                            *value = serde_json::from_str(&redacted)
+                                .unwrap_or(serde_json::Value::String(redacted));
+                        }
+                        ScreenOutcome::Block { reason } => return Ok((true, Some(reason))),
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok((true, None))
     }
 }

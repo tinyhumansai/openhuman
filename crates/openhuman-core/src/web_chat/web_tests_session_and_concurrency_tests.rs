@@ -608,79 +608,15 @@ fn classify_genuine_param_400_keeps_model_mismatch_copy_not_glitch() {
     assert!(!c.message.contains("cleared it"), "got: {}", c.message);
 }
 
-/// The Stop button must reach a thread's detached background sub-agents. They
-/// run on their own tasks and drop the spawning turn's cancellation, so before
-/// this the parent turn stopped but the child kept working — and its result
-/// later started a fresh delivery turn on the thread. A scoped cancel (one named
-/// request) must leave them alone.
-#[tokio::test]
-async fn unscoped_cancel_stops_the_threads_detached_subagents() {
-    let _serial = FORCED_ERROR_TEST_LOCK.lock().await;
-    let _registry = crate::config::TEST_ENV_LOCK.lock().await;
-    use crate::agent::orchestration::running_subagents;
-
-    let thread_id = "stop-detached-subagent-thread";
-    let workspace = tempfile::tempdir().expect("workspace");
-    let child = tokio::spawn(std::future::pending::<()>());
-    let (_status_tx, status_rx) = running_subagents::status_channel();
-    running_subagents::register(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "task-web-stop-1".into(),
-        "researcher".into(),
-        "session-web-stop".into(),
-        None,
-        None,
-        workspace.path().to_path_buf(),
-        Some(thread_id.into()),
-        std::sync::Arc::new(tinyagents_harness::run_queue::RunQueue::new()),
-        child.abort_handle(),
-        status_rx,
-    )
-    .expect("fixture registration admitted");
-
-    // A scoped cancel for some other request is not a Stop: the child lives.
-    let scoped = channel_web_cancel(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "stop-client",
-        thread_id,
-        Some("req-unrelated"),
-    )
-    .await
-    .expect("scoped cancel");
-    assert_eq!(scoped.value["cancelled"], serde_json::json!(false));
-    assert_eq!(scoped.value["subagents_cancelled"], serde_json::json!(0));
-    assert!(
-        !child.is_finished(),
-        "scoped cancel must not stop sub-agents"
-    );
-
-    // The Stop button: no turn in flight, but the detached child is stopped.
-    let stop = channel_web_cancel(
-        &crate::core::runtime::DispatchCtx::ambient(),
-        "stop-client",
-        thread_id,
-        None,
-    )
-    .await
-    .expect("stop");
-    assert_eq!(stop.value["cancelled"], serde_json::json!(true));
-    assert_eq!(stop.value["request_id"], serde_json::Value::Null);
-    assert_eq!(stop.value["subagents_cancelled"], serde_json::json!(1));
-    let joined = tokio::time::timeout(std::time::Duration::from_secs(2), child)
-        .await
-        .expect("aborted child finishes promptly");
-    assert!(joined.expect_err("child aborted").is_cancelled());
-}
-
 /// The terminal event (`chat_done` or `chat_error`) for `request_id`.
 async fn terminal_event(
-    rx: &mut tokio::sync::broadcast::Receiver<crate::web_chat::WebChannelEvent>,
+    rx: &mut tokio::sync::broadcast::Receiver<crate::web_chat::ScopedWebEvent>,
     request_id: &str,
-) -> crate::web_chat::WebChannelEvent {
+) -> crate::web_chat::ScopedWebEvent {
     loop {
         let event = rx.recv().await.expect("event stream should stay open");
-        if event.request_id == request_id
-            && matches!(event.event.as_str(), "chat_done" | "chat_error")
+        if event.context().request_id == request_id
+            && matches!(event.event_name(), "chat_done" | "chat_error")
         {
             return event;
         }
@@ -688,13 +624,25 @@ async fn terminal_event(
 }
 
 /// A graceful, retryable `turn_timeout` whose user copy hides the marker.
-fn assert_turn_timeout(event: &crate::web_chat::WebChannelEvent) {
-    assert_eq!(event.event, "chat_error", "{event:?}");
-    assert_eq!(event.error_type.as_deref(), Some("turn_timeout"));
-    assert_eq!(event.error_retryable, Some(true));
-    let message = event.message.clone().unwrap_or_default();
+fn assert_turn_timeout(event: &crate::web_chat::ScopedWebEvent) {
+    assert_eq!(event.event_name(), "chat_error", "{event:?}");
+    let crate::web_chat::WebChannelEvent::ChatError {
+        error_type,
+        error_retryable,
+        message,
+        ..
+    } = event.wire_event()
+    else {
+        panic!("expected chat_error event: {event:?}");
+    };
+    assert_eq!(error_type.as_deref(), Some("turn_timeout"));
+    assert_eq!(*error_retryable, Some(true));
+    let message = message.clone();
     assert!(
-        !message.contains("openhuman_turn_wall_clock_timeout"),
-        "internal marker must not leak into user copy: {message}"
+        !message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("openhuman_turn_wall_clock_timeout"),
+        "internal marker must not leak into user copy: {message:?}"
     );
 }

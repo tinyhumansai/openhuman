@@ -32,6 +32,7 @@ pub mod live;
 mod ops;
 #[cfg(feature = "voice")]
 pub mod realtime_harness;
+pub mod reply_synthesis;
 #[cfg(feature = "voice")]
 mod schemas;
 #[cfg(feature = "voice")]

@@ -5,8 +5,8 @@ use crate::config::schema::{COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT};
 use crate::config::Config;
 use crate::modules::registry;
 
-#[test]
-fn the_module_is_registered_under_the_contract_s_identity() {
+#[tokio::test]
+async fn the_module_is_registered_under_the_contract_s_identity() {
     // The bus name and object path are the module's address. A record that
     // disagrees with the contract does not fail to compile — it fails at
     // runtime, on a user's machine, as a name nobody owns.
@@ -15,8 +15,8 @@ fn the_module_is_registered_under_the_contract_s_identity() {
     assert_eq!(record.object_path, tinyconnectors_bus::OBJECT_PATH);
 }
 
-#[test]
-fn the_registered_version_matches_the_compiled_contract() {
+#[tokio::test]
+async fn the_registered_version_matches_the_compiled_contract() {
     // The module-pin gate checks the artifact against the submodule; this
     // checks the record against the crate this build actually links.
     let record = registry::find(MODULE_ID).expect("tinyconnectors is registered");
@@ -30,8 +30,8 @@ fn the_registered_version_matches_the_compiled_contract() {
     );
 }
 
-#[test]
-fn the_module_is_lazy() {
+#[tokio::test]
+async fn the_module_is_lazy() {
     // A user with no connected accounts should not pay to load it, and most
     // sessions never touch a connector. Safe because the module loads without
     // configuration and still answers the capability members.
@@ -42,8 +42,8 @@ fn the_module_is_lazy() {
     );
 }
 
-#[test]
-fn every_member_this_host_names_is_one_the_module_serves() {
+#[tokio::test]
+async fn every_member_this_host_names_is_one_the_module_serves() {
     // Spelled through the contract rather than as string literals, so a rename
     // upstream is a compile error here rather than an unknown method at
     // runtime. This asserts the names resolve to members the artifact declares.
@@ -70,15 +70,17 @@ fn bare_config() -> Config {
     Config::default()
 }
 
-#[test]
-fn direct_mode_takes_the_api_key_from_the_config_file() {
+#[tokio::test]
+async fn direct_mode_takes_the_api_key_from_the_config_file() {
     // The keychain is the source of truth, but `config.toml` is the documented
     // fallback for power users — and the only one reachable in a unit test.
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("  sk-from-file  ".to_string());
 
-    let blob = module_config(&config).expect("direct mode with a key resolves");
+    let blob = module_config(&config)
+        .await
+        .expect("direct mode with a key resolves");
     assert_eq!(blob["route"], "direct");
     assert_eq!(blob["api_key"], "sk-from-file", "the key is trimmed");
     assert_eq!(blob["entity_id"], config.composio.entity_id);
@@ -119,8 +121,8 @@ impl Drop for DirectBaseScrub {
     }
 }
 
-#[test]
-fn direct_mode_hands_the_module_the_hosts_proxy_policy() {
+#[tokio::test]
+async fn direct_mode_hands_the_module_the_hosts_proxy_policy() {
     // Part of the route description, so a proxy change reconfigures the module.
     use crate::config::schema::{ProxyConfig, ProxyScope};
 
@@ -148,8 +150,11 @@ fn direct_mode_hands_the_module_the_hosts_proxy_policy() {
             ..ProxyConfig::default()
         },
     )
+    .await
     .expect("resolves");
-    let plain = module_config_with_proxy(&config, &ProxyConfig::default()).expect("resolves");
+    let plain = module_config_with_proxy(&config, &ProxyConfig::default())
+        .await
+        .expect("resolves");
 
     assert_eq!(proxied["transport"]["proxy_url"], "http://127.0.0.1:3128");
     assert_eq!(proxied["transport"]["no_proxy"][0], "localhost");
@@ -166,41 +171,45 @@ fn direct_mode_hands_the_module_the_hosts_proxy_policy() {
     );
 }
 
-#[test]
-fn direct_mode_without_a_key_is_refused() {
+#[tokio::test]
+async fn direct_mode_without_a_key_is_refused() {
     // Rather than silently falling back to the backend route, which would send
     // the user's requests somewhere they did not choose.
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = None;
 
-    let error = module_config(&config).expect_err("no key must be refused");
+    let error = module_config(&config)
+        .await
+        .expect_err("no key must be refused");
     assert!(error.contains("no api key"), "{error}");
 }
 
-#[test]
-fn a_blank_api_key_is_not_a_key() {
+#[tokio::test]
+async fn a_blank_api_key_is_not_a_key() {
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("   ".to_string());
 
-    assert!(module_config(&config).is_err());
+    assert!(module_config(&config).await.is_err());
 }
 
-#[test]
-fn an_unknown_mode_fails_loudly_and_names_the_alternatives() {
+#[tokio::test]
+async fn an_unknown_mode_fails_loudly_and_names_the_alternatives() {
     // A typo in config.toml must not silently downgrade to a working route.
     let mut config = bare_config();
     config.composio.mode = "backnd".to_string();
 
-    let error = module_config(&config).expect_err("a typo must be refused");
+    let error = module_config(&config)
+        .await
+        .expect_err("a typo must be refused");
     assert!(error.contains("backnd"), "{error}");
     assert!(error.contains(COMPOSIO_MODE_BACKEND), "{error}");
     assert!(error.contains(COMPOSIO_MODE_DIRECT), "{error}");
 }
 
-#[test]
-fn an_empty_mode_is_treated_as_the_backend_default() {
+#[tokio::test]
+async fn an_empty_mode_is_treated_as_the_backend_default() {
     // `serde(default)` already gives "backend" for a missing field, but a
     // literal empty string in TOML would otherwise be rejected.
     crate::integrations::composio::test_backend_route::register();
@@ -208,30 +217,32 @@ fn an_empty_mode_is_treated_as_the_backend_default() {
     config.composio.mode = String::new();
 
     // No session in a bare config, so this reports that rather than a bad mode.
-    let error = module_config(&config).expect_err("no session");
+    let error = module_config(&config).await.expect_err("no session");
     assert!(error.contains("session"), "{error}");
     assert!(!error.contains("unknown composio mode"), "{error}");
 }
 
-#[test]
-fn the_backend_route_is_unavailable_without_a_registered_target() {
+#[tokio::test]
+async fn the_backend_route_is_unavailable_without_a_registered_target() {
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_BACKEND.to_string();
 
-    let error = module_config(&config).expect_err("no proxy target is registered");
+    let error = module_config(&config)
+        .await
+        .expect_err("no proxy target is registered");
     assert!(
         error.starts_with(crate::core::observability::BACKEND_UNAVAILABLE_PREFIX),
         "{error}"
     );
 }
 
-#[test]
-fn the_backend_route_needs_a_session() {
+#[tokio::test]
+async fn the_backend_route_needs_a_session() {
     crate::integrations::composio::test_backend_route::register();
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_BACKEND.to_string();
 
-    let error = module_config(&config).expect_err("no session token");
+    let error = module_config(&config).await.expect_err("no session token");
     assert!(error.contains("Sign in"), "{error}");
 }
 
@@ -249,8 +260,8 @@ async fn reconciling_the_route_of_a_module_that_is_not_serving_loads_nothing() {
     assert_eq!(crate::modules::ops::state_of(MODULE_ID), before);
 }
 
-#[test]
-fn unclassified_connector_faults_do_not_expose_remote_content() {
+#[tokio::test]
+async fn unclassified_connector_faults_do_not_expose_remote_content() {
     let error = tinybus::Error::MethodFailed {
         name: "private-provider".into(),
         message: "secret-token /home/private-user/document.txt".into(),
@@ -262,8 +273,8 @@ fn unclassified_connector_faults_do_not_expose_remote_content() {
 }
 
 #[cfg(feature = "crash-reporting")]
-#[test]
-fn classified_provider_errors_remain_product_output_and_emit_one_sanitized_event() {
+#[tokio::test]
+async fn classified_provider_errors_remain_product_output_and_emit_one_sanitized_event() {
     let provider_message =
         "[composio:error:auth] private-test-token /home/private-user/document.txt";
     let error = tinybus::Error::MethodFailed {
@@ -289,8 +300,8 @@ fn classified_provider_errors_remain_product_output_and_emit_one_sanitized_event
     );
 }
 
-#[test]
-fn direct_auth_refusals_preserve_the_provider_status_and_prevent_duplicate_reports() {
+#[tokio::test]
+async fn direct_auth_refusals_preserve_the_provider_status_and_prevent_duplicate_reports() {
     let error =
         tinybus::Error::failed("Composio v3 connected_accounts failed: HTTP 401: Invalid API key");
     let message = super::bus_failure(methods::LIST_CONNECTIONS_DIRECT, &error);
@@ -300,8 +311,8 @@ fn direct_auth_refusals_preserve_the_provider_status_and_prevent_duplicate_repor
     ));
 }
 
-#[test]
-fn a_host_pinned_credential_outranks_the_mode_and_the_store() {
+#[tokio::test]
+async fn a_host_pinned_credential_outranks_the_mode_and_the_store() {
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_BACKEND.into();
     config.composio.pin_host_credential(
@@ -309,22 +320,26 @@ fn a_host_pinned_credential_outranks_the_mode_and_the_store() {
             .entity_id("tenant-7")
             .base_urls("http://127.0.0.1:1/v2", "http://127.0.0.1:1/v3"),
     );
-    let route = module_config(&config).expect("pinned credential names a route");
+    let route = module_config(&config)
+        .await
+        .expect("pinned credential names a route");
     assert_eq!(route["route"], "direct");
     assert_eq!(route["api_key"], "ck_pinned");
     assert_eq!(route["entity_id"], "tenant-7");
     assert_eq!(route["base_url"], "http://127.0.0.1:1/v3");
 }
 
-#[test]
-fn the_offered_toolkit_lists_reach_the_module_in_its_load_blob() {
+#[tokio::test]
+async fn the_offered_toolkit_lists_reach_the_module_in_its_load_blob() {
     let mut config = bare_config();
     config.composio.mode = COMPOSIO_MODE_DIRECT.into();
     config.composio.api_key = Some("ck_test".into());
     config.composio.offered_toolkits_allow = vec!["gmail".into(), "slack".into()];
     config.composio.offered_toolkits_deny = vec!["slack".into()];
 
-    let blob = module_config(&config).expect("direct mode with a key resolves");
+    let blob = module_config(&config)
+        .await
+        .expect("direct mode with a key resolves");
     assert_eq!(
         blob["offered_toolkits"],
         serde_json::json!({ "allow": ["gmail", "slack"], "deny": ["slack"] })
@@ -336,22 +351,22 @@ fn the_offered_toolkit_lists_reach_the_module_in_its_load_blob() {
     assert!(!policy.permits("slack"));
 }
 
-#[test]
-fn an_unconfigured_route_still_carries_the_offered_toolkit_policy() {
+#[tokio::test]
+async fn an_unconfigured_route_still_carries_the_offered_toolkit_policy() {
     let mut config = bare_config();
     config.composio.offered_toolkits_deny = vec!["twitter".into()];
     // No session and no key: no route can be named, but the load blob the
     // module falls back to must not drop the operator's policy.
-    assert!(module_config(&config).is_err());
-    let fallback = super::ops::module_config_for_test(&config, MODULE_ID);
+    assert!(module_config(&config).await.is_err());
+    let fallback = super::ops::module_config(&config, MODULE_ID).await;
     assert_eq!(
         fallback["offered_toolkits"]["deny"],
         serde_json::json!(["twitter"])
     );
 }
 
-#[test]
-fn offered_toolkits_default_to_unrestricted_and_parse_from_toml() {
+#[tokio::test]
+async fn offered_toolkits_default_to_unrestricted_and_parse_from_toml() {
     let defaults = Config::default();
     assert!(defaults.composio.offered_toolkits_allow.is_empty());
     assert!(defaults.composio.offered_toolkits_deny.is_empty());

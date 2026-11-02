@@ -215,3 +215,24 @@ fn an_operator_layer_cannot_be_named_into_an_agent_layer() {
         "the operator layer is still inherited whatever its author named it"
     );
 }
+
+/// A parent whose rules are permissive can still carry a permission ceiling
+/// (the pack ceiling of a `use_skill` run). The child must keep it: dropping
+/// the policy because the rules alone are permissive lifted the ceiling.
+#[test]
+fn a_child_keeps_the_parents_ceiling_when_no_rules_restrict_it() {
+    let parent = turn_rule_policy(
+        Arc::new(session_rule_set(None, None)),
+        rule_context(None, Some("orchestrator"), None),
+    )
+    .with_permission_ceiling(PermissionLevel::ReadOnly);
+    assert!(
+        parent.rules.is_permissive(),
+        "precondition: no rule restricts"
+    );
+
+    let child = child_rule_policy(Some(&parent), None, &definition("worker"))
+        .expect("the parent's ceiling still restricts the child");
+    assert_eq!(child.permission_ceiling, Some(PermissionLevel::ReadOnly));
+    assert_eq!(child.context.get("agent"), Some("worker"));
+}

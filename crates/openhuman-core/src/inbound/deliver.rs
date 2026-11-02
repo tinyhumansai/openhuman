@@ -33,13 +33,16 @@
 //! A turn of a source configured under `[inbound.sources.*]` skips triage
 //! altogether: it runs on the source's pinned agent ([`super::pinned`]), and
 //! `ClassifySalience` answers `actionable` for its events without triaging.
+//! A turn mixing sources (a digest that collected a spilled burst) is split:
+//! each pinned source's events run on its agent, at most `max_batch` a turn,
+//! under ids derived from the turn's, and only the rest is triaged.
 //!
 //! One decision per turn: the triage timeout stays under the module's
 //! callback deadline (`[inbound] triage_timeout_ms`, at most 25 s), and a
 //! turn that was already accepted is accepted again without triage, so a
 //! redelivery that raced a slow answer never applies a second decision.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -296,6 +299,53 @@ impl Deliverer {
         Some((first.source.clone(), source))
     }
 
+    /// `turn`'s events of pinned sources, one group per source and
+    /// conversation key, as turns of at most the source's `max_batch` events,
+    /// and the turn of the other events (`None` when there are none). Each
+    /// group is oldest first (event id breaks ties), and a part's id names
+    /// its first and last event, so a redelivery derives the same ids and a
+    /// changed `max_batch` derives new ones instead of reusing a finished id
+    /// for a different set of events.
+    async fn split_pinned(
+        &self,
+        turn: &Turn,
+    ) -> (Vec<(Turn, String, InboundSourceConfig)>, Option<Turn>) {
+        let inbound = self.inbound().await;
+        let mut pinned: BTreeMap<(String, String), (InboundSourceConfig, Vec<InboundEvent>)> =
+            BTreeMap::new();
+        let mut rest = Vec::new();
+        for event in &turn.events {
+            match inbound.source(&event.source) {
+                Ok(source) => pinned
+                    .entry((event.source.clone(), event.conversation_key.clone()))
+                    .or_insert_with(|| (source.clone(), Vec::new()))
+                    .1
+                    .push(event.clone()),
+                Err(_) => rest.push(event.clone()),
+            }
+        }
+        let mut parts = Vec::new();
+        for ((name, key), (source, mut events)) in pinned {
+            events.sort_by(|a, b| {
+                (a.received_at_ms, &a.event_id).cmp(&(b.received_at_ms, &b.event_id))
+            });
+            let max = usize::try_from(source.max_batch.max(1)).unwrap_or(usize::MAX);
+            for chunk in events.chunks(max) {
+                let (first, last) = (&chunk[0].event_id, &chunk[chunk.len() - 1].event_id);
+                let mut part = turn.clone();
+                part.turn_id = format!("{}:{name}:{key}:{first}..{last}", turn.turn_id);
+                part.events = chunk.to_vec();
+                parts.push((part, name.clone(), source.clone()));
+            }
+        }
+        let rest = (!rest.is_empty()).then(|| {
+            let mut left = turn.clone();
+            left.events = rest;
+            left
+        });
+        (parts, rest)
+    }
+
     /// What runs pinned turns: given, or the production agent over the
     /// workspace's results store.
     async fn pinned(&self) -> Option<Pinned> {
@@ -419,6 +469,42 @@ impl Deliverer {
             let status = self.deliver_pinned(&turn, &name, &source, remaining).await;
             return DeliverResponse::new(status);
         }
+        let (parts, rest) = self.split_pinned(&turn).await;
+        for (index, (part, name, source)) in parts.iter().enumerate() {
+            if index > 0 && started.elapsed() >= self.budget {
+                // Don't start another part with no budget left; the redelivery
+                // skips the finished parts and resumes here.
+                return DeliverResponse::new(self.retry(
+                    &turn,
+                    None,
+                    "delivery budget spent on pinned parts",
+                ));
+            }
+            let remaining = self.budget.saturating_sub(started.elapsed());
+            let status = self.deliver_pinned(part, name, source, remaining).await;
+            // Retried before the rest is triaged, so the rest is decided once;
+            // the parts already finished are not run again on redelivery.
+            if status != DeliverStatus::Accepted {
+                return DeliverResponse::new(status);
+            }
+        }
+        if !parts.is_empty() && rest.is_some() && started.elapsed() >= self.budget {
+            // The pinned parts used the whole budget: triage the rest on the
+            // redelivery, where the finished parts are skipped.
+            return DeliverResponse::new(self.retry(
+                &turn,
+                None,
+                "delivery budget spent on pinned parts",
+            ));
+        }
+        let turn = match rest {
+            Some(rest) => rest,
+            None if parts.is_empty() => turn,
+            None => {
+                self.accepted().remember(&turn.turn_id);
+                return DeliverResponse::new(DeliverStatus::Accepted);
+            }
+        };
         let (envelope, first) = match self.envelope(&turn) {
             Ok(found) => found,
             Err(detail) => {
@@ -434,7 +520,11 @@ impl Deliverer {
         let outcome = match cached {
             Some(run) => Ok(Ok(TriageOutcome::Decision(run))),
             None => {
-                let timeout = self.timeout().await;
+                // Within what is left of the delivery's budget.
+                let timeout = self
+                    .timeout()
+                    .await
+                    .min(self.budget.saturating_sub(started.elapsed()));
                 tokio::time::timeout(timeout, self.runner.run(&self.ctx, &envelope)).await
             }
         };

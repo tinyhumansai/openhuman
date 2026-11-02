@@ -187,7 +187,7 @@ pub(super) async fn run_in_policy(
         command_environment.as_deref(),
     );
     // Apply the same Git config hardening to local and sandboxed shells.
-    extra_env.extend(tinytools_std::filesystem::shell_git_env());
+    extra_env.extend(tinyagents_harness_tools::fs::filesystem::shell_git_env());
     // And the same Python defaults the native path sets.
     for (var, val) in super::shell_support::python_env_defaults(|name| {
         command_environment
@@ -206,12 +206,13 @@ pub(super) async fn run_in_policy(
     // Sandbox backends require a finite deadline. Without an explicit
     // `timeout_secs`, substitute the generous effective-unbounded cap so a
     // long command isn't killed while still bounding a wedged sandbox.
-    let explicit_timeout = tinytools_std::timeout::explicit_call_timeout_duration(
+    let explicit_timeout = tinyagents_harness_tools::exec::timeout::explicit_call_timeout_duration(
         requested_timeout,
-        tinytools_std::timeout::MAX_TIMEOUT_SECS,
+        tinyagents_harness_tools::exec::timeout::MAX_TIMEOUT_SECS,
     );
-    let effective = explicit_timeout
-        .unwrap_or_else(|| Duration::from_secs(tinytools_std::timeout::SANDBOX_UNBOUNDED_CAP_SECS));
+    let effective = explicit_timeout.unwrap_or_else(|| {
+        Duration::from_secs(tinyagents_harness_tools::exec::timeout::SANDBOX_UNBOUNDED_CAP_SECS)
+    });
     let (slot, yield_after, effective) = come_back(request, context, command, effective);
     let deadline_instead = request
         .deadline_instead(requested_timeout)
@@ -252,12 +253,23 @@ pub(super) async fn run_in_policy(
 
 /// The call's audit entry, to be written once by whoever learns the outcome.
 pub(super) fn audit_once(
-    audit: Arc<crate::security::AuditLogger>,
+    audit: Arc<crate::security::AuditSink>,
+    ctx: crate::core::runtime::DispatchCtx,
+    config: Option<Arc<crate::config::Config>>,
     command: String,
     approved: bool,
 ) -> AuditOnce {
     Mutex::new(Some(Box::new(move |allowed, success, duration_ms| {
-        super::shell::record_audit(&audit, &command, approved, allowed, success, duration_ms);
+        super::shell::record_audit(
+            &audit,
+            ctx,
+            config,
+            &command,
+            approved,
+            allowed,
+            success,
+            duration_ms,
+        );
     })))
 }
 

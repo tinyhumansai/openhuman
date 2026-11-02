@@ -11,7 +11,7 @@
 //! [`ComposioActionTool::deferred`] builds the same tool as a
 //! `ToolExposure::Deferred` registration for a parent session:
 //! every action of every connected toolkit is synthesised beside the
-//! delegation tools (`tools::orchestrator_tools`), stays off the wire, and
+//! delegation tools (`integrations::composio::orchestrator_actions`), stays off the wire, and
 //! is found through the harness's `tool_search` bridge — so one clear action
 //! ("send Alex a Slack message") is a search and a call, not a sub-agent
 //! run. Those instances have no spawn-time config to anchor to and resolve
@@ -241,7 +241,7 @@ impl Tool for ComposioActionTool {
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) =
             Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None)).await;
-        super::tools::redact_composio_outcome(&config, outcome)
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
     async fn execute_with_context(
         &self,
@@ -255,7 +255,7 @@ impl Tool for ComposioActionTool {
             sandbox_mode_for_tool(context),
         ))
         .await;
-        super::tools::redact_composio_outcome(&config, outcome)
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
 }
 

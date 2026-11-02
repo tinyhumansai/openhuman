@@ -8,6 +8,9 @@
 //   Rule 1: a first-party package (path or git source, not a registry dep)
 //           that is NOT a tsd crate and NOT a composition root reaches a
 //           forbidden engine crate through any normal or build dependency.
+//           The walk stops at composition roots (what a root reaches is its
+//           own), and the exact edges in ENGINE_EXCEPTIONS are excused; a
+//           stale exception fails.
 //
 //   Rule 2: a first-party package not in tsd is named  `*-sqlite`,
 //           `*-mongodb` or `*-file`.
@@ -86,6 +89,39 @@ export const ALLOWLIST = {
   tinyjuice:          'bin target, bundles engine',
 };
 
+/**
+ * Known engine reaches that are not composition roots, each an exact
+ * (package, engine) dependency edge with a reason and its follow-up. Only that
+ * edge is excused: any other package or engine still fails, and an entry that
+ * no longer matches anything fails as stale (when checking real metadata).
+ */
+export const ENGINE_EXCEPTIONS = [
+  {
+    package: 'tinyagents-harness-tools',
+    engine: 'fs2',
+    reason: 'advisory file locking for the workspace lock file (the `fs` tools)',
+    followUp: 'tinyagents: drop fs2 from tinyagents-harness-tools',
+  },
+  {
+    package: 'tinymemory-integrations',
+    engine: 'rusqlite',
+    reason: 'reads legacy memory SQLite directly',
+    followUp: "tinymemory: route tinymemory-integrations' sqlite through the storage owner",
+  },
+];
+
+const exceptionKey = (pkg, engine) => `${pkg} -> ${engine}`;
+const EXCEPTION_KEYS = new Set(ENGINE_EXCEPTIONS.map(e => exceptionKey(e.package, e.engine)));
+
+/** One `stale-exception` violation for every exception not in `used`. */
+export function staleExceptions(used) {
+  return ENGINE_EXCEPTIONS.filter(e => !used.has(exceptionKey(e.package, e.engine))).map(e => ({
+    package: e.package,
+    kind: 'stale-exception',
+    detail: `ENGINE_EXCEPTIONS entry ${exceptionKey(e.package, e.engine)} no longer matches; remove it`,
+  }));
+}
+
 export const FORBIDDEN_CRATE_NAME = /-(sqlite|mongodb|file)$/;
 
 export const MANIFESTS = ['Cargo.toml', 'crates/openhuman-app/Cargo.toml'];
@@ -137,15 +173,18 @@ const TSD_GIT = /^git\+https?:\/\/[^?#]*\/tinystoragedrivers(?:\.git)?\?tag=([^#
 // ---------------------------------------------------------------------------
 
 /**
- * Walk the resolved normal+build dependency graph starting from `roots`
- * (composition roots — always allowed) and report every first-party non-root
- * package that reaches a forbidden engine.
+ * Walk the resolved normal+build dependency graph and report every
+ * first-party non-root package that reaches a forbidden engine. The walk does
+ * not pass through a composition root (`roots`): what a root reaches is the
+ * root's to own. An edge listed in ENGINE_EXCEPTIONS is not reported; its key
+ * is added to `used`.
  *
  * @param {object} metadata  - cargo metadata document
  * @param {string[]} roots   - package names that are composition roots
+ * @param {Set<string>} [used] - collects the ENGINE_EXCEPTIONS keys that matched
  * @returns {{ package: string, kind: string, engine: string, path: string[], detail: string }[]}
  */
-export function checkEngineClosure(metadata, roots) {
+export function checkEngineClosure(metadata, roots, used = new Set()) {
   const packages = Object.fromEntries(
     (metadata.packages ?? []).map(p => [p.id, p])
   );
@@ -180,26 +219,32 @@ export function checkEngineClosure(metadata, roots) {
       if (!node) continue;
 
       for (const dep of node.deps ?? []) {
-        // Only normal and build edges count.
-        // dep_kinds may be absent (defaults to normal per cargo convention).
+        // Only normal and build edges count. `cargo metadata` reports a normal
+        // edge as `kind: null` ("dev", "build", or null); dep_kinds may also be
+        // absent, which is a normal edge too.
         const dep_kinds = dep.dep_kinds ?? [{ kind: null }];
         const has_normal_or_build = dep_kinds.some(
-          dk => dk.kind === undefined || dk.kind === 'normal' || dk.kind === 'build'
+          dk => dk.kind == null || dk.kind === 'normal' || dk.kind === 'build'
         );
         if (!has_normal_or_build) continue;
 
         const dep_id = dep.pkg;
-        if (seen.has(dep_id)) continue;
-        seen.add(dep_id);
-
         const dep_pkg = packages[dep_id];
         if (!dep_pkg) continue;
 
         const dep_name = dep_pkg.name;
         const new_path = [...path, dep_name];
 
-        // Forbidden engine found — report it.
+        // A composition root owns what it reaches; do not walk past it.
+        if (roots.includes(dep_name)) continue;
+
+        // Forbidden engine found — report it, unless this exact edge is excepted.
         if (isForbiddenDep(dep_name) || isForbiddenTsdEngine(dep_name)) {
+          const key = exceptionKey(current_name, dep_name);
+          if (EXCEPTION_KEYS.has(key)) {
+            used.add(key);
+            continue;
+          }
           violations.push({
             package: pkg.name,
             kind: 'engine-reach',
@@ -214,7 +259,11 @@ export function checkEngineClosure(metadata, roots) {
         // Continue the walk through this dep, regardless of whether it's
         // first-party, owner-owned, or a registry crate.  The BFS always
         // continues so that we can trace a path all the way to a forbidden
-        // crate even when it passes through tsd engine crates.
+        // crate even when it passes through tsd engine crates. `seen` only
+        // stops re-walking a package: every edge into an engine is checked
+        // above, so an excepted edge never hides another path to it.
+        if (seen.has(dep_id)) continue;
+        seen.add(dep_id);
         queue.push([dep_id, dep_name, new_path]);
       }
     }
@@ -310,11 +359,11 @@ export function checkVendoredOwner(metadata, root = REPO_ROOT) {
 // Top-level check
 // ---------------------------------------------------------------------------
 
-export function checkMetadata(metadata, root = REPO_ROOT) {
+export function checkMetadata(metadata, root = REPO_ROOT, used = new Set()) {
   const allowlistKeys = Object.keys(ALLOWLIST);
 
   // Rule 1: engine closure
-  const closureViolations = checkEngineClosure(metadata, allowlistKeys);
+  const closureViolations = checkEngineClosure(metadata, allowlistKeys, used);
 
   // Rule 2: crate naming
   const namingViolations = checkCrateNaming(metadata);
@@ -379,12 +428,16 @@ export function main(argv) {
   }
 
   const seen = new Set();
+  const used = new Set();
   const violations = docs
-    .flatMap(d => checkMetadata(d, root))
+    .flatMap(d => checkMetadata(d, root, used))
     .filter(v => {
       const key = `${v.package}|${v.kind}|${v.detail}`;
       return !seen.has(key) && seen.add(key);
     });
+  // An exception must still match the workspace it was written for. Fixture
+  // runs (--metadata) check their own inputs, not this workspace.
+  if (!files.length) violations.push(...staleExceptions(used));
 
   console.log(formatReport(violations));
   return violations.length ? 1 : 0;

@@ -99,3 +99,50 @@ async fn the_same_agent_key_is_isolated_between_operator_and_profile_scopes() {
         Some(serde_json::json!("escaped"))
     );
 }
+
+#[test]
+fn reserved_generation_writes_use_the_tenant_backends_atomic_condition() {
+    use tinyagents_session::transcript::{
+        SessionRef, TranscriptMessage, TranscriptMeta, TranscriptTurn,
+    };
+
+    let fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let router = TenantSessionStores::new(Arc::clone(&fixture.backend), false).unwrap();
+    let stores = router.for_agent("planner");
+    let session = SessionRef::scoped("conditioned-generation", "planner");
+    let meta: TranscriptMeta = serde_json::from_value(serde_json::json!({
+        "agent_name": "planner",
+        "agent_id": "planner",
+        "dispatcher": "native",
+        "created": "2026-01-01T00:00:00Z",
+        "updated": "2026-01-01T00:00:00Z",
+        "turn_count": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_input_tokens": 0,
+        "charged_amount_usd": 0.0,
+        "thread_id": "conditioned-generation"
+    }))
+    .unwrap();
+    let (successor, history) = stores
+        .transcripts
+        .begin_generation(&session, meta.clone())
+        .unwrap();
+    let next = vec![TranscriptMessage::user("carried context")];
+
+    history
+        .append_turn(TranscriptTurn {
+            prev: &[],
+            next: &next,
+            meta: &meta,
+            turn_usage: None,
+            request_id: None,
+            tools: None,
+        })
+        .expect("the SQLite backend supports atomic lease-conditioned writes");
+
+    assert!(stores
+        .transcripts
+        .read_session_transcript(&successor)
+        .is_some());
+}

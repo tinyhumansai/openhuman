@@ -1,5 +1,5 @@
 //! Controller schema + JSON-RPC dispatcher for user-driven control of detached
-//! background sub-agents (`spawn_async_subagent`).
+//! background sub-agents (`spawn_subagent`).
 //!
 //! Exposes `openhuman.subagent_cancel`: the frontend "Cancel" affordance in the
 //! background-tasks drawer calls this to abort a still-running detached
@@ -16,32 +16,24 @@
 
 use crate::core::runtime::DispatchCtx;
 use serde_json::{json, Map, Value};
-use tinyagents_orchestration::steering::SteerError;
 
 use crate::agent::orchestration::running_subagents::CancelledSubagent;
 use crate::agent::orchestration::{background_completions, running_subagents, subagent_sessions};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use tinyagents_harness::run_queue::QueueLane;
 
 /// Controller schemas exposed for detached sub-agent control.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
-    vec![schema_for("subagent_cancel"), schema_for("subagent_steer")]
+    vec![schema_for("subagent_cancel")]
 }
 
 /// Registered controllers (schema + handler) for detached sub-agent control.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
-    vec![
-        RegisteredController {
-            schema: schema_for("subagent_cancel"),
-            handler: handle_subagent_cancel,
-        },
-        RegisteredController {
-            schema: schema_for("subagent_steer"),
-            handler: handle_subagent_steer,
-        },
-    ]
+    vec![RegisteredController {
+        schema: schema_for("subagent_cancel"),
+        handler: handle_subagent_cancel,
+    }]
 }
 
 fn schema_for(function: &str) -> ControllerSchema {
@@ -68,28 +60,6 @@ fn schema_for(function: &str) -> ControllerSchema {
                 "{ cancelled: bool, taskId: string, outcome?: \"completed\" | \"failed\" | \"unknown\" } \
                  — cancelled=false if nothing was running; outcome then says how the run had \
                  ended, or \"unknown\" if the core no longer knows the task.",
-            )],
-        },
-        "subagent_steer" => ControllerSchema {
-            namespace: "subagent",
-            function: "steer",
-            description: "Inject a message into a still-running detached background sub-agent by \
-                          spawn task id. This trusted RPC control mirrors the steer_subagent agent \
-                          tool and returns immediately after the message is queued.",
-            inputs: vec![
-                required_str(
-                    "taskId",
-                    "Spawn task id (`sub-…`) of the running background sub-agent.",
-                ),
-                required_str(
-                    "message",
-                    "Instruction or context to queue for the running sub-agent.",
-                ),
-                optional_str("mode", "Optional queue mode: steer (default) or collect."),
-            ],
-            outputs: vec![json_output(
-                "result",
-                "{ steered: bool, taskId: string, mode: string }.",
             )],
         },
         _ => ControllerSchema {
@@ -120,7 +90,8 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
             &task_id,
             None,
             reason.as_deref(),
-        )?;
+        )
+        .await?;
         if cancelled_subagent.is_none()
             && ctx.resolved().is_none()
             && !crate::core::runtime::is_saas()
@@ -135,7 +106,8 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
                 &task_id,
                 Some(&config.workspace_dir),
                 reason.as_deref(),
-            )?;
+            )
+            .await?;
         }
         let (cancelled, outcome) = match cancelled_subagent {
             // Finished before the click landed (it stays registered until the
@@ -160,9 +132,21 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
                     // A paused job has already returned from that hook, so this
                     // handler settles and reports that one terminal transition.
                     if let Some(paused) = meta.driver_pause.as_ref() {
-                        settle_paused_driver_cancel(&ctx, paused, reason.as_deref()).await?;
+                        let transitioned = settle_paused_driver_cancel(
+                            &ctx,
+                            paused,
+                            meta.parent_epoch,
+                            reason.as_deref(),
+                        )
+                        .await?;
+                        if !transitioned {
+                            (false, Some("unknown"))
+                        } else {
+                            (true, None)
+                        }
+                    } else {
+                        (true, None)
                     }
-                    (true, None)
                 } else {
                     let summary = match reason.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
                         Some(r) => format!(
@@ -174,7 +158,7 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
                     // The thread is still alive (unlike the delete path), so we
                     // record a completion that flows through the same idle-gated
                     // delivery and surfaces the cancellation in chat.
-                    background_completions::record_completion(
+                    background_completions::record_outcome_with_parent_epoch(
                         &ctx,
                         &meta.workspace_dir,
                         &meta.parent_session,
@@ -182,6 +166,8 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
                         meta.agent_id.clone(),
                         summary,
                         meta.parent_thread_id.clone(),
+                        meta.parent_epoch,
+                        background_completions::BackgroundAgentOutcome::Completed,
                     )
                     .await;
                     if let Some(subagent_session_id) = meta.subagent_session_id.as_deref() {
@@ -220,75 +206,50 @@ fn handle_subagent_cancel(ctx: DispatchCtx, params: Map<String, Value>) -> Contr
 async fn settle_paused_driver_cancel(
     ctx: &DispatchCtx,
     paused: &subagent_sessions::DriverTaskCancellation,
+    parent_epoch: Option<u64>,
     reason: Option<&str>,
 ) -> Result<bool, String> {
-    let store = subagent_sessions::SubagentSessionStore::new(paused.workspace_dir.clone());
-    let transitioned = subagent_sessions::mark_driver_pause_cancelled(&store, paused)
+    if paused.lifecycle_key.is_none() {
+        return Err("subagent_cancel: paused driver child has no lifecycle key".into());
+    }
+    let store = subagent_sessions::open_for_context(
+        ctx,
+        paused.workspace_dir.clone(),
+        paused.parent_session.clone(),
+        paused.parent_thread_id.clone(),
+        None,
+    )
+    .map_err(|error| format!("subagent_cancel: failed to open paused child store: {error}"))?;
+    let error = match reason.map(str::trim).filter(|reason| !reason.is_empty()) {
+        Some(reason) => format!("cancelled by user. Reason: {reason}"),
+        None => "cancelled by user".to_string(),
+    };
+    let transitioned = store
+        .mark_failed(&paused.subagent_session_id, &paused.task_id, error.clone())
+        .await
         .map_err(|error| format!("subagent_cancel: failed to settle paused child: {error}"))?;
     if transitioned {
-        let error = match reason.map(str::trim).filter(|reason| !reason.is_empty()) {
-            Some(reason) => format!("cancelled by user. Reason: {reason}"),
-            None => "cancelled by user".to_string(),
-        };
-        background_completions::record_failure(
+        crate::agent::orchestration::completion_owners::finish_driver_task(ctx, &paused.task_id);
+        let parent_epoch = paused
+            .parent_thread_id
+            .as_ref()
+            .map(|_| parent_epoch.unwrap_or(0));
+        background_completions::record_outcome_with_parent_epoch(
             ctx,
             &paused.workspace_dir,
             &paused.parent_session,
             &paused.task_id,
             &paused.agent_id,
-            &error,
+            format!(
+                "[SUBAGENT_FAILED] the async sub-agent errored before producing a result: {error}"
+            ),
             paused.parent_thread_id.clone(),
+            parent_epoch,
+            background_completions::BackgroundAgentOutcome::Failed,
         )
         .await;
     }
     Ok(transitioned)
-}
-
-fn handle_subagent_steer(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        let task_id = require_str(&params, "taskId")?;
-        let message = require_str(&params, "message")?;
-        let (lane, mode) = match opt_str(&params, "mode").as_deref() {
-            Some("collect") => (QueueLane::Collect, "collect"),
-            _ => (QueueLane::Steer, "steer"),
-        };
-        log::debug!(
-            target: "subagent_control_rpc",
-            "[subagent_control_rpc][{cid}] steer.entry task_id={task_id} mode={mode} chars={}",
-            message.chars().count()
-        );
-
-        match running_subagents::steer_control(&ctx, &task_id, message, lane).await {
-            Ok(()) => {
-                log::debug!(
-                    target: "subagent_control_rpc",
-                    "[subagent_control_rpc][{cid}] steer.done task_id={task_id} mode={mode} steered=true"
-                );
-                to_json(json!({ "steered": true, "taskId": task_id, "mode": mode }))
-            }
-            Err(err) => {
-                let reason = match err {
-                    SteerError::Unknown => "unknown",
-                    // SaaS user controls check the captured worker profile,
-                    // independently of the caller-supplied task ID.
-                    SteerError::NotOwned => "not_owned",
-                    SteerError::UnsupportedLane => "unsupported_lane",
-                    _ => "steer_failed",
-                };
-                log::debug!(
-                    target: "subagent_control_rpc",
-                    "[subagent_control_rpc][{cid}] steer.done task_id={task_id} mode={mode} steered=false reason={reason}"
-                );
-                to_json(json!({
-                    "steered": false,
-                    "taskId": task_id,
-                    "mode": mode,
-                    "reason": reason,
-                }))
-            }
-        }
-    })
 }
 
 fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {

@@ -11,14 +11,14 @@ pub(super) use tinychannels::runtime::select_acknowledgment_reaction;
 
 pub(super) fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
     if let Err(error) = result {
-        tracing::warn!("{}", traits::context::worker_crash_message(&error));
+        tracing::warn!("Channel message worker crashed: {error}");
     }
 }
 
 /// Start the portable typing lifecycle with OpenHuman's configured interval.
 pub(super) fn spawn_typing_task(
     dispatch: &crate::core::runtime::DispatchCtx,
-    channel: std::sync::Arc<dyn crate::channels::Channel>,
+    channel: std::sync::Arc<crate::channels::runtime::ChannelHandle>,
     recipient: String,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
@@ -54,17 +54,15 @@ pub(super) fn spawn_typing_task(
 /// Reminders and scheduled tasks created from this chat are delivered back to
 /// it automatically (the job records its origin), so the model is told only
 /// that, not a target to copy.
-pub(super) fn build_channel_context_block(
-    msg: &tinychannels_bus::ChannelInboundEnvelope,
-) -> String {
-    let channel = msg.channel.id.trim();
+pub(crate) fn build_channel_context_block(msg: &traits::ChannelMessage) -> String {
+    let channel = msg.channel.trim();
     if channel.is_empty()
         || channel.eq_ignore_ascii_case("web")
         || channel.eq_ignore_ascii_case("cli")
     {
         return String::new();
     }
-    let reply_target = msg.conversation.id.trim();
+    let reply_target = msg.reply_target.trim();
     if reply_target.is_empty() {
         return String::new();
     }

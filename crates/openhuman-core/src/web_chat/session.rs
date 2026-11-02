@@ -144,7 +144,7 @@ fn effective_session_config(
     effective
 }
 
-pub(super) fn build_session_agent(
+pub(super) async fn build_session_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     client_id: &str,
@@ -169,7 +169,8 @@ pub(super) fn build_session_agent(
         &effective,
         target_agent_id,
         Some(thread_id),
-    );
+    )
+    .await;
 
     agent_result
         .map(|mut agent| {
@@ -177,11 +178,7 @@ pub(super) fn build_session_agent(
                 json!({"client_id": client_id, "thread_id": thread_id}).to_string(),
                 "web_channel",
             );
-            let short_thread = if thread_id.len() > 12 {
-                &thread_id[..12]
-            } else {
-                thread_id
-            };
+            let short_thread: String = thread_id.chars().take(12).collect();
             agent.set_agent_definition_name(format!("{target_agent_id}_{short_thread}"));
             // Bind the conversation's durable identity here, not after
             // checkout: everything downstream — resume, transcript binding,
@@ -471,7 +468,8 @@ pub(crate) async fn checkout_session_agent(
                     &target_agent_id,
                     model_override,
                     temperature,
-                )?,
+                )
+                .await?,
                 fingerprint,
             )
         }
@@ -484,7 +482,8 @@ pub(crate) async fn checkout_session_agent(
                 &target_agent_id,
                 model_override,
                 temperature,
-            )?,
+            )
+            .await?,
             fingerprint,
         ),
     };

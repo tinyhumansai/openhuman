@@ -17,7 +17,7 @@
 //! (see [`current_scope`] / [`legacy_session_key`]) so an in-flight list isn't
 //! dropped by the rekey.
 
-use crate::agent::harness::fork_context::ParentExecutionContext;
+use crate::agent::subagent_host::ParentExecutionContext;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;

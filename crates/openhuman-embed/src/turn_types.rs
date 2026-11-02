@@ -116,35 +116,6 @@ pub(crate) fn sanitize_url_for_display(url: &str) -> String {
     out.to_string()
 }
 
-/// True when `endpoint` is safe to carry a bearer credential.
-///
-/// A bearer must never cross a cleartext channel to a remote party, so an
-/// `https:` endpoint is always accepted. `http:` is accepted only for a
-/// loopback host (`127.0.0.1`, `::1`, `localhost`), where the traffic never
-/// leaves the machine and the "credential in the clear" concern does not
-/// apply — local, self-hosted OpenAI-compatible servers are a supported
-/// embedder configuration. Falls back to `false` when the value does not
-/// parse as an absolute URL, so an unparseable route is refused rather than
-/// silently allowed.
-pub(crate) fn is_safe_endpoint_for_bearer(endpoint: &str) -> bool {
-    let Ok(url) = url::Url::parse(endpoint) else {
-        return false;
-    };
-    if url.scheme() == "https" {
-        return true;
-    }
-    if url.scheme() != "http" {
-        return false;
-    }
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    matches!(
-        host,
-        "127.0.0.1" | "localhost" | "::1" | "[::1]" | "[0:0:0:0:0:0:0:1]" | "0:0:0:0:0:0:0:1"
-    ) || host.starts_with("127.")
-}
-
 impl Route {
     /// An OpenAI-compatible endpoint and the bearer that authenticates it.
     pub fn openai_compatible(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {

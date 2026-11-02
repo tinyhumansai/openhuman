@@ -393,6 +393,8 @@ pub async fn run_from_source(
     use anyhow::Context;
 
     let path = source_db.to_owned();
+    // Inventory reads only the explicit legacy file; `copy_inventory` uses
+    // the supplied backend and `Known` scopes for tenant data.
     let inventory = tokio::task::spawn_blocking(move || {
         crate::storage::import::scope_move::LegacyScopeInventory::read(&path)
     })

@@ -78,8 +78,12 @@ impl OpenHumanTurnPrelude {
     /// compares equal to the one its transcript recorded.
     pub(super) async fn cold_prompt_prefix(&self) -> Result<tinyagents_runtime::PrefixSnapshot> {
         let flow_archetype_text = super::prompt::flow_archetype_text(self, true).await?;
-        let tiered =
-            self.build_system_prompt_tiered_with_flow_archetype(flow_archetype_text.as_deref())?;
+        let connected_identities_md =
+            crate::integrations::render_connected_identities_async(&self.dispatch_ctx()).await;
+        let tiered = self.build_system_prompt_tiered_with_flow_archetype_and_connected_identities(
+            flow_archetype_text.as_deref(),
+            &connected_identities_md,
+        )?;
         Ok(tinyagents_runtime::PrefixSnapshot::new(
             tiered
                 .system_messages()
@@ -93,9 +97,21 @@ impl OpenHumanTurnPrelude {
         self.build_system_prompt_tiered_with_flow_archetype(None)
     }
 
-    pub(super) fn build_system_prompt_tiered_with_flow_archetype(
+    pub(crate) fn build_system_prompt_tiered_with_flow_archetype(
         &self,
         flow_archetype_text: Option<&str>,
+    ) -> Result<crate::agent::prompts::TieredPrompt> {
+        let connected_identities_md = self.connected_identities_md();
+        self.build_system_prompt_tiered_with_flow_archetype_and_connected_identities(
+            flow_archetype_text,
+            &connected_identities_md,
+        )
+    }
+
+    fn build_system_prompt_tiered_with_flow_archetype_and_connected_identities(
+        &self,
+        flow_archetype_text: Option<&str>,
+        connected_identities_md: &str,
     ) -> Result<crate::agent::prompts::TieredPrompt> {
         use crate::agent::prompts::{PromptContext, PromptTool};
         let surface = self
@@ -162,13 +178,34 @@ impl OpenHumanTurnPrelude {
             visible_tool_names: &visible_tool_names,
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             connected_integrations: &mutable.connected_integrations,
-            connected_identities_md: self.connected_identities_md(),
-            user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
+            connected_identities_md: connected_identities_md.to_string(),
+            user_identity: crate::credentials::identity::peek_credential_user_identity(),
             personality_roster: vec![],
             agents_md_global: agents_md.global,
             agents_md_local: agents_md.local,
         };
-        self.prompt_builder.build_tiered(&context)
+        let mut tiered = self.prompt_builder.build_tiered(&context)?;
+        // Appended, not prepended (#5704): every line of the boundary is
+        // session-scoped (agent id, channel, entry point, risk level), so
+        // putting it first would move the prompt's first diverging byte to
+        // offset 0 and cost the backend's prefix cache everything behind it.
+        // It rides the volatile tier, which is the tail of the system prompt.
+        if let Some(boundary) =
+            tinytools::render_tool_policy_boundary(&surface.tool_policy_session, 2048)
+        {
+            let boundary = boundary.trim_end().to_string();
+            if !tiered.text.is_empty() && !tiered.text.ends_with('\n') {
+                tiered.text.push('\n');
+            }
+            tiered.text.push('\n');
+            tiered.text.push_str(&boundary);
+            tiered.text.push('\n');
+            tiered.parts.push((
+                tinyagents_harness::prompt::PromptTier::Volatile,
+                format!("\n\n{boundary}"),
+            ));
+        }
+        Ok(tiered)
     }
 
     pub(super) fn drain_host_events(&self) -> bool {
@@ -232,8 +269,9 @@ impl OpenHumanTurnPrelude {
         let active_goal = if turn.overrides.suppress_active_goal {
             None
         } else {
-            crate::agent::goals::runtime::load_for_thread(
+            crate::agent::goals::load_for_thread(
                 &self.workspace_dir,
+                &self.dispatch_ctx(),
                 self.thread_id.as_deref(),
             )
             .await
@@ -249,40 +287,21 @@ impl OpenHumanTurnPrelude {
                 }
             }
             if let Some(hook) = tinyagents_hooks::stop::GoalBudgetStopHook::for_goal(
-                crate::storage::sessions::stores_or_ephemeral(&self.workspace_dir).kv,
+                crate::agent::goals::goal_store(&self.workspace_dir, &self.dispatch_ctx())
+                    .backing_store(),
                 goal,
             ) {
                 run_context.stop_hooks.push(Arc::new(hook));
             }
         }
-        // Build the roster from this turn's *effective* visible tool set
-        // (snapshotted under the tool-surface lock, then released), not the
-        // definition's static scope: a hide or named restriction can narrow what
-        // this turn can call, and the roster must not advertise a control it cannot invoke.
-        let turn_fleet = {
-            let visible = self
-                .tool_surface
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .visible_tool_names
-                .clone();
-            if visible.is_empty() {
-                crate::agent::orchestration::fleet_tools::FleetToolSet::for_parent(
-                    &self.agent_definition_id,
-                )
-            } else {
-                crate::agent::orchestration::fleet_tools::FleetToolSet::from_visible_tool_names(
-                    &visible,
-                )
-            }
-        };
         if let Some(block) =
             crate::agent::orchestration::running_subagents::active_subagents_context_block(
                 &self.dispatch_ctx(),
                 &self.event_session_id,
                 &self.workspace_dir,
-                &turn_fleet,
+                self.workspace_descriptor.as_ref(),
             )
+            .await
         {
             context.push_str(&block);
         }
@@ -354,6 +373,7 @@ impl OpenHumanTurnPrelude {
         let finished_plan = crate::agent::tinyagents::state_block::close_finished_plan(
             &self.workspace_dir,
             self.thread_id.as_deref(),
+            &self.dispatch_ctx(),
         )
         .await;
         self.memory_post_turn(receipt, finished_plan);
@@ -376,7 +396,7 @@ fn granted_tool_specs(
     deferred: &std::collections::HashSet<String>,
     has_thread: bool,
 ) -> Vec<tinytools::ToolSpec> {
-    let specs = visible
+    let specs: Vec<tinytools::ToolSpec> = visible
         .iter()
         .chain(
             registered
@@ -389,7 +409,10 @@ fn granted_tool_specs(
         })
         .map(|spec| spec.as_ref().clone())
         .collect();
-    super::super::builder::dedup_visible_tool_specs(specs)
+    tinyagents_runtime::dedup_visible_tool_specs(specs.into_iter().map(Arc::new).collect())
+        .into_iter()
+        .map(|spec| spec.as_ref().clone())
+        .collect()
 }
 
 #[cfg(test)]

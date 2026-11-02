@@ -20,7 +20,6 @@
 //! there is exactly one thread-id derivation again rather than a copy and a
 //! promise, and this file's behaviour is untouched by the move — which matters,
 //! because it decides the id under which channel turns are persisted.
-
 use crate::core::runtime::DispatchCtx;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -32,9 +31,8 @@ use serde_json::json;
 use crate::core::events::DomainEvent;
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
-use tinychannels_bus::{
-    ChannelInboundEnvelope, ChannelRef, ContentPart, ConversationRef, SenderRef,
-};
+use tinychannels_bus::channel::{ChannelRef, ConversationRef, SenderRef};
+use tinychannels_bus::ChannelInboundEnvelope;
 #[cfg(test)]
 use tinychannels_runtime::context::conversation_history_key_parts;
 
@@ -352,6 +350,89 @@ struct ChannelTurnDescriptor<'a> {
     source: &'a str,
 }
 
+/// Persist one channel message under the trusted dispatch scope and return the
+/// OpenHuman row ID. User rows bind the provider receipt only after the row is
+/// durable; assistant rows deliberately remain outside the provider receipt
+/// index because no provider delivery receipt is available here.
+pub(crate) async fn persist_channel_message(
+    ctx: &DispatchCtx,
+    workspace_dir: &Path,
+    channel: &tinychannels_bus::ChannelRef,
+    conversation: &tinychannels_bus::ConversationRef,
+    thread_id: &str,
+    title: &str,
+    provider_message_id: &str,
+    role: &str,
+    content: &str,
+    mut extra_metadata: serde_json::Value,
+) -> Result<String, String> {
+    if !matches!(role, "user" | "assistant") {
+        return Err("channel message role must be user or assistant".into());
+    }
+    if workspace_dir.as_os_str().is_empty()
+        || thread_id.is_empty()
+        || provider_message_id.is_empty()
+    {
+        return Err("channel message scope and provider ID must be non-empty".into());
+    }
+    if !extra_metadata.is_object() {
+        extra_metadata = serde_json::json!({});
+    }
+    let metadata = extra_metadata.as_object_mut().expect("object established");
+    metadata.insert("scope".into(), serde_json::json!("channel"));
+    metadata.insert(
+        "sourceMessageId".into(),
+        serde_json::json!(provider_message_id),
+    );
+    // Preserve the established channel-row ID contract for retry idempotence;
+    // the provider receipt is still bound separately to this persisted row.
+    let row_id = format!("{role}:{provider_message_id}");
+    let now = chrono::Utc::now().to_rfc3339();
+    let workspace = workspace_dir.to_path_buf();
+    ensure_thread(
+        ctx,
+        workspace.clone(),
+        CreateConversationThread {
+            id: thread_id.to_string(),
+            title: title.to_string(),
+            created_at: now.clone(),
+            parent_thread_id: None,
+            labels: Some(vec!["general".to_string()]),
+            personality_id: None,
+            working_dir: None,
+        },
+    )?;
+    let exists = get_messages(ctx, workspace.clone(), thread_id)?
+        .iter()
+        .any(|message| message.id == row_id);
+    if !exists {
+        append_message(
+            ctx,
+            workspace,
+            thread_id,
+            ConversationMessage {
+                id: row_id.clone(),
+                content: content.to_string(),
+                message_type: "text".into(),
+                extra_metadata: serde_json::Value::Object(metadata.clone()),
+                sender: role.to_string(),
+                created_at: now,
+            },
+        )?;
+    }
+    if role == "user" {
+        crate::threads::channel_projection::bind_row(
+            ctx,
+            channel,
+            conversation,
+            provider_message_id,
+            thread_id,
+            &row_id,
+        )?;
+    }
+    Ok(row_id)
+}
+
 /// Project the older event fields into the v22 envelope used by the module
 /// persistence contract. Match TinyChannels' legacy projection, including its
 /// Telegram topic interpretation, while keeping deprecated wire DTOs out of
@@ -385,10 +466,6 @@ fn legacy_descriptor_envelope(descriptor: &ChannelTurnDescriptor<'_>) -> Channel
             ..Default::default()
         },
         text: descriptor.content.to_owned(),
-        parts: vec![ContentPart::Text {
-            text: descriptor.content.to_owned(),
-            markdown_dialect: None,
-        }],
         ..Default::default()
     }
 }
@@ -425,6 +502,7 @@ async fn persist_channel_turn(
             (
                 tinychannels_bus::module_inbound::PrepareChannelInboundRequest {
                     namespace: "main".into(),
+                    preparation_mode: Default::default(),
                     session_policy: Default::default(),
                     source: tinychannels_bus::module_inbound::ChannelInboundSource::Envelope {
                         envelope: descriptor
@@ -441,7 +519,9 @@ async fn persist_channel_turn(
         .await
         .map_err(|error| error.to_string())?;
     let thread_id = format!("channel:{}", prepared.history_key);
-    let history_key_ignores_thread = prepared.history_key_ignores_thread;
+    let history_key_ignores_thread =
+        tinychannels_bus::capabilities::capabilities_for(descriptor.channel)
+            .history_key_ignores_thread;
     let session_key = descriptor.inbound_envelope.map(|_| prepared.session_key);
     let title = channel_thread_title(
         descriptor.channel,

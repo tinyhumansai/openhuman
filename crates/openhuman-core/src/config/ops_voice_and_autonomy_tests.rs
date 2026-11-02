@@ -467,3 +467,33 @@ async fn apply_agent_settings_updates_timeout_and_persists_snapshot() {
     // With no env override, the live runtime now reflects the saved value.
     assert_eq!(crate::tools::timeout::tool_execution_timeout_secs(), 300);
 }
+
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_a_relative_or_empty_trusted_root() {
+    let _g = ENV_LOCK.lock().await;
+    for root in ["", "  ", ".", "rel/dir"] {
+        let tmp = tempdir().unwrap();
+        let mut cfg = tmp_config(&tmp);
+        let enabled_before = cfg.autonomy.enabled;
+        let err = apply_autonomy_settings(
+            &mut cfg,
+            AutonomySettingsPatch {
+                // A rejected patch must not half-apply its other fields.
+                enabled: Some(!enabled_before),
+                trusted_roots: Some(vec![crate::security::TrustedRoot {
+                    path: root.into(),
+                    access: crate::security::TrustedAccess::ReadWrite,
+                }]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a non-absolute trusted root must be refused");
+        assert!(
+            err.contains("absolute"),
+            "expected validation error, got: {err}"
+        );
+        assert!(cfg.autonomy.trusted_roots.is_empty());
+        assert_eq!(cfg.autonomy.enabled, enabled_before, "patch half-applied");
+    }
+}

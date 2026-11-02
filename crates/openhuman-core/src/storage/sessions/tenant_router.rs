@@ -13,7 +13,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tinyagents_harness::store::SchemaAdmission;
-use tinyagents_session::port::{AgentStorageFactory, AgentStores, SessionStoreProvider};
+use tinyagents_session::port::{
+    AgentStorageFactory, AgentStores, ConditionedAgentStorageFactory, SessionStoreLease,
+    SessionStoreLeaseError, SessionStoreProvider,
+};
 use tinyagents_session::DriverSessionStores;
 use tinyagents_storage_kit::{Blocking, Scope as PortScope, ScopedStorage};
 use tinystoragedrivers::{StorageBackend, StorageError};
@@ -82,6 +85,15 @@ impl TenantSessionStores {
         ))
     }
 
+    /// Stores over a fixed workspace backend without joining any process-wide
+    /// rebind registry. The workspace fallback owns this provider directly.
+    pub(super) fn new_workspace_local(
+        backend: Arc<dyn StorageBackend>,
+        recover_on_open: bool,
+    ) -> Result<Self, StorageError> {
+        Self::new(backend, recover_on_open)
+    }
+
     /// The provider of the tenant `key` belongs to, and the agent id within it.
     fn route(&self, key: &str) -> (Arc<DriverSessionStores>, String) {
         let (profile, mut agent) = crate::core::runtime::split_session_key(key);
@@ -101,17 +113,30 @@ impl TenantSessionStores {
             let scope = PortScope::new(owner_scope.as_str())?;
             let storage = backend.for_scope(&owner_scope)?;
             let prepare_storage = storage.clone();
+            let prepare_scope = scope.clone();
             super::super::block_on(async move {
-                crate::storage::boot::prepare_scope(&prepare_storage).await
+                crate::storage::boot::prepare_scope(&prepare_storage, &prepare_scope).await
             })?;
             Ok(ScopedStorage::new(storage, scope))
         });
+        let backend = Arc::clone(&self.backend);
+        let tenant_for_conditioned_factory = tenant.clone();
+        let conditioned_factory: ConditionedAgentStorageFactory =
+            Arc::new(move |agent_id, condition| {
+                let owner_scope =
+                    crate::storage::scope::Scope::new(tenant_for_conditioned_factory.as_str())?
+                        .agent(agent_id)?;
+                let scope = PortScope::new(owner_scope.as_str())?;
+                let storage = backend.for_scope_conditioned(&owner_scope, condition)?;
+                Ok(ScopedStorage::new(storage, scope))
+            });
         let provider = Arc::new(
             DriverSessionStores::with_bridge_and_schema_admission(
                 factory,
                 self.bridge.clone(),
                 self.admission,
             )
+            .with_conditioned_storage_factory(conditioned_factory)
             .recover_on_open(self.recover_on_open),
         );
         tracing::debug!(
@@ -131,6 +156,18 @@ impl TenantSessionStores {
             .cloned()
             .collect()
     }
+
+    /// Drops the session provider captured for one profile's current lease.
+    /// Existing handles keep their old fenced backend, so in-flight work
+    /// still fails closed after a takeover; the next open builds fresh handles
+    /// against the new lease epoch.
+    pub fn release_profile(&self, profile: &str) {
+        let tenant = crate::storage::tenant_scope(Some(profile));
+        self.tenants
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&tenant);
+    }
 }
 
 impl SessionStoreProvider for TenantSessionStores {
@@ -142,6 +179,11 @@ impl SessionStoreProvider for TenantSessionStores {
     fn try_for_agent(&self, agent_id: &str) -> Result<AgentStores, StorageError> {
         let (provider, agent) = self.route(agent_id);
         provider.try_for_agent(&agent)
+    }
+
+    fn lease_for_agent(&self, agent_id: &str) -> Result<SessionStoreLease, SessionStoreLeaseError> {
+        let (provider, agent) = self.route(agent_id);
+        provider.lease_for_agent(&agent)
     }
 
     fn bind_actor(

@@ -52,6 +52,12 @@ const DENIED_PATHS = [
 // the module contract correctly. Keep exceptions tied to both file and path.
 const ALLOWLIST = new Map([
   [
+    'crates/openhuman-core/src/inference/host_runtime/ops/runtime_ops_tests.rs',
+    new Map([
+      ['tinyinference_local::service::', 'Tests the OpenHuman status-poll adapter against the service type it accepts; assertions cover host coalescing and status projection.'],
+    ]),
+  ],
+  [
     'crates/openhuman-core/src/agent/tinyagents/host/run_context_tests.rs',
     new Map([
       ['tinymemory_tools::lifecycle::window::', 'Asserts OpenHuman maps memory-window state into the TinyAgents run context.'],

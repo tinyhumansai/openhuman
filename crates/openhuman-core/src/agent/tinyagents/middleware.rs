@@ -1,11 +1,11 @@
-//! openhuman context concerns expressed as tinyagents graph middlewares
+//! OpenHuman context concerns expressed as TinyAgents harness middlewares
 //! (issue #4249).
 //!
 //! Historically these ran in the in-house engine's tool/prompt plumbing
 //! (`agent_tool_exec`, the session context adapter). The tinyagents turn path bypassed
 //! them, so they were effectively dead on the live loop. Re-expressing them as
 //! [`Middleware`](tinyagents_harness::middleware::Middleware) hooks restores the
-//! behaviour and makes the graph the single place cross-cutting context
+//! behaviour and makes the harness the single place cross-cutting context
 //! concerns live:
 //!
 //! - `MicrocompactMiddleware` (`before_model`) — clear the bodies of older

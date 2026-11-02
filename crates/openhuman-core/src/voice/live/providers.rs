@@ -57,8 +57,9 @@ pub(crate) fn key_slug(provider: &str) -> Option<&'static str> {
 }
 
 /// The stored key for `slug`, or `None` when none is stored.
-pub(crate) fn stored_key(slug: &str, config: &Config) -> Option<String> {
+pub(crate) async fn stored_key(slug: &str, config: &Config) -> Option<String> {
     crate::inference::provider::factory::lookup_key_for_slug(slug, config)
+        .await
         .ok()
         .filter(|key| !key.trim().is_empty())
 }
@@ -68,44 +69,45 @@ fn strings(items: &[&str]) -> Vec<String> {
 }
 
 /// The provider catalogue with each provider's readiness.
-pub(crate) fn provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
-    let mut infos = built_in_provider_infos(config);
-    super::registry::merge_provider_infos(&mut infos, config);
+pub(crate) async fn provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
+    let mut infos = built_in_provider_infos(config).await;
+    super::registry::merge_provider_infos(&mut infos, config).await;
     infos
 }
 
-fn built_in_provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
-    LIVE_PROVIDERS
-        .iter()
-        .filter(|id| key_slug(id).is_some())
-        .map(|id| {
-            let slug = key_slug(id);
-            let (label, kind, voices, languages) = match *id {
-                LIVE_PROVIDER_GEMINI => (
-                    "Gemini Live (Google API key)",
-                    LiveProviderKind::Byok,
-                    strings(GEMINI_VOICES),
-                    strings(GEMINI_LANGUAGES),
-                ),
-                _ => (
-                    "Sarvam AI",
-                    LiveProviderKind::Byok,
-                    strings(SARVAM_SPEAKERS),
-                    strings(SARVAM_LANGUAGES),
-                ),
-            };
-            let configured = slug.is_some_and(|slug| stored_key(slug, config).is_some());
-            LiveProviderInfo {
-                id: (*id).to_string(),
-                label: label.to_string(),
-                kind,
-                configured,
-                key_slug: slug.map(str::to_string),
-                voices,
-                languages,
-            }
-        })
-        .collect()
+async fn built_in_provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
+    let mut infos = Vec::new();
+    for id in LIVE_PROVIDERS.iter().filter(|id| key_slug(id).is_some()) {
+        let slug = key_slug(id);
+        let (label, kind, voices, languages) = match *id {
+            LIVE_PROVIDER_GEMINI => (
+                "Gemini Live (Google API key)",
+                LiveProviderKind::Byok,
+                strings(GEMINI_VOICES),
+                strings(GEMINI_LANGUAGES),
+            ),
+            _ => (
+                "Sarvam AI",
+                LiveProviderKind::Byok,
+                strings(SARVAM_SPEAKERS),
+                strings(SARVAM_LANGUAGES),
+            ),
+        };
+        let configured = match slug {
+            Some(slug) => stored_key(slug, config).await.is_some(),
+            None => false,
+        };
+        infos.push(LiveProviderInfo {
+            id: (*id).to_string(),
+            label: label.to_string(),
+            kind,
+            configured,
+            key_slug: slug.map(str::to_string),
+            voices,
+            languages,
+        });
+    }
+    infos
 }
 
 /// The session configuration for `provider`, from the user's settings.
@@ -162,7 +164,7 @@ pub(crate) async fn prepare(
     }
     match provider {
         LIVE_PROVIDER_GEMINI => {
-            let key = stored_key("google", config).ok_or_else(|| {
+            let key = stored_key("google", config).await.ok_or_else(|| {
                 LiveVoiceError::not_configured("add a Google API key for Gemini Live")
             })?;
             Ok(PreparedProvider {
@@ -172,6 +174,7 @@ pub(crate) async fn prepare(
         }
         LIVE_PROVIDER_SARVAM => {
             let key = stored_key("sarvam", config)
+                .await
                 .ok_or_else(|| LiveVoiceError::not_configured("add a Sarvam API key"))?;
             Ok(PreparedProvider {
                 provider: Box::new(SarvamCascade::new(key)),

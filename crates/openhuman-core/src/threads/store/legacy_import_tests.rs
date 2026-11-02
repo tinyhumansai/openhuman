@@ -53,8 +53,10 @@ fn snapshot(root: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
 }
 
 #[test]
+#[cfg(feature = "storage-sqlite")]
 fn legacy_jsonl_conversations_are_imported_and_the_files_stay_byte_identical() {
     let dir = tempfile::tempdir().unwrap();
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let root = backend::legacy_root(dir.path());
     let (m1, m2) = (
         message("m1", "hello", "2026-01-01T00:00:01Z"),
@@ -169,8 +171,10 @@ fn legacy_tsd_v1_threads_and_messages_are_migrated_before_owner_reads() {
 }
 
 #[test]
+#[cfg(feature = "storage-sqlite")]
 fn legacy_import_runs_once_even_when_the_files_change_afterwards() {
     let dir = tempfile::tempdir().unwrap();
+    crate::storage::local::use_persistent_default_for_test(dir.path());
     let root = backend::legacy_root(dir.path());
     let m1 = message("m1", "hello", "2026-01-01T00:00:01Z");
     write_legacy(&root, &[&upsert("t1", "First")], &[("t1", &[m1.as_str()])]);

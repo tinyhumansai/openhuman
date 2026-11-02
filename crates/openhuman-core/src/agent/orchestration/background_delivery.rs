@@ -28,16 +28,12 @@
 //! `chat_done`, so a reconnect cannot lose a completed delegated result.
 
 use crate::core::runtime::DispatchCtx;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-#[cfg(test)]
-use std::{collections::HashSet, future::Future, sync::Mutex};
 
 use async_trait::async_trait;
-use serde_json::json;
-#[cfg(test)]
-use tinyagents_tasks::CompletionRouter;
 use tinyagents_tasks::{
     CompletionDelivery, CompletionDeliveryConfig, CompletionRecord, DeliveryOutcome,
     DeliveryTarget, ThreadDeliveryLeases,
@@ -48,23 +44,17 @@ use crate::core::events::DomainEvent;
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
 
-#[cfg(test)]
-mod slot;
-#[cfg(test)]
-use slot::DeliverySlot;
+mod persistence;
+use persistence::{persist_delivery_reply, persist_then_announce};
 
 use super::background_completions;
 use super::busy_guard::is_busy;
-#[cfg(test)]
-use super::busy_guard::{busy, clear_busy_for_thread, TurnBusy};
 use super::completion_notice::build_undelivered_notice;
 use super::completion_owners;
-use super::delivery_drain::{DrainFence, RECOVERY_BUSY_POLL};
+use super::delivery_drain::DrainFence;
 #[path = "delivery_events.rs"]
 mod delivery_events;
 use crate::core::runtime::CoreContext;
-#[cfg(test)]
-pub(super) use delivery_events::drain_schedule;
 #[cfg(test)]
 pub(super) use delivery_events::Drain;
 pub(super) use delivery_events::{drain_schedule_in, owning_profiles};
@@ -75,14 +65,6 @@ const DEBOUNCE: Duration = Duration::from_secs(3);
 /// How long after boot a recovered, never-delivered completion waits before its
 /// delivery turn, so providers and the session store are up first.
 const RECOVERY_DELAY: Duration = Duration::from_secs(15);
-
-/// Threads whose delivery turn is in flight — prevents two concurrent turns.
-/// Keyed by the tenant profile derived from the thread id, for the same reason.
-#[cfg(test)]
-fn delivering() -> &'static Mutex<HashSet<String>> {
-    static D: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    D.get_or_init(|| Mutex::new(HashSet::new()))
-}
 
 /// Ask for a delivery attempt on `thread_id` soon (after a Stop cleared a stale
 /// busy mark, or anything else that may have left a drain without its trigger).
@@ -150,35 +132,39 @@ fn schedule_delivery_inner(
     wait_idle: bool,
     fence: DrainFence,
 ) {
-    #[cfg(test)]
-    scheduled_for_test()
-        .lock()
-        .expect("scheduled")
-        .push((thread_id.clone(), delay));
-    #[cfg(not(test))]
-    let _ = delay; // The owner applies debounce/recovery timing inside its delivery API.
-                   // Scoped: the thread -> workspace table is keyed per profile, so the
-                   // delayed task must run under the profile that scheduled it.
+    // Scoped: the thread -> workspace table is keyed per profile, so the delayed
+    // task must run under the profile that scheduled it.
     ctx.clone().spawn(async move {
-        let outcome = try_deliver(ctx.clone(), thread_id.clone(), fence.clone(), wait_idle).await;
-        if outcome == DeliveryOutcome::Busy {
+        let outcome = try_deliver(
+            ctx.clone(),
+            thread_id.clone(),
+            fence.clone(),
+            wait_idle,
+            delay,
+            |ctx, workspace, thread_id, notice| async move {
+                run_system_turn_on_thread(&ctx, workspace, thread_id, notice)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            },
+        )
+        .await;
+        if outcome == DeliveryOutcome::ParentBusy {
             // Still running past the ceiling: leave the record pending and
             // wait again rather than overlap the user's turn.
             log::debug!(
                 "[background_delivery] recovered drain still busy; waiting again \
                  thread_id={thread_id}"
             );
-            schedule_delivery_inner(ctx, thread_id, RECOVERY_BUSY_POLL, true, fence);
+            schedule_delivery_inner(
+                ctx,
+                thread_id,
+                CompletionDeliveryConfig::default().busy_poll,
+                true,
+                fence,
+            );
         }
     });
-}
-
-/// Every drain the handler scheduled, so a test can assert the event ->
-/// schedule wiring without running a delivery turn.
-#[cfg(test)]
-fn scheduled_for_test() -> &'static Mutex<Vec<(String, Duration)>> {
-    static SCHEDULED: OnceLock<Mutex<Vec<(String, Duration)>>> = OnceLock::new();
-    SCHEDULED.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// Boot recovery: redeliver completions a previous process finished but never
@@ -238,37 +224,20 @@ pub(crate) fn recover_on_open(ctx: &DispatchCtx, workspace_dir: &Path, fence: Dr
     scheduled
 }
 
-/// Claim everything ready for a thread **right now** (sync, testable): `None`
-/// (queue untouched) when the thread is busy or nothing is pending. A claimed
-/// batch stays leased until the caller settles it with `mark_delivered` /
-/// `mark_failed` / `release`.
-#[cfg(test)]
-fn claim_ready(
-    ctx: &DispatchCtx,
-    router: &CompletionRouter,
-    thread_id: &str,
-) -> Option<Vec<CompletionRecord>> {
-    if is_busy(ctx, thread_id) {
-        return None;
-    }
-    match router.claim_pending(thread_id, usize::MAX) {
-        Ok(batch) if !batch.is_empty() => Some(batch),
-        Ok(_) => None,
-        Err(error) => {
-            log::error!("[background_delivery] claim failed thread_id={thread_id} error={error}");
-            None
-        }
-    }
-}
-
 /// Drain + deliver pending completions for a thread — if idle and not already
 /// delivering. Batches everything ready at this instant into one system turn.
-async fn try_deliver(
+async fn try_deliver<D, Fut>(
     busy_ctx: DispatchCtx,
     thread_id: String,
     fence: DrainFence,
     recovering: bool,
-) -> DeliveryOutcome {
+    initial_delay: Duration,
+    run_turn: D,
+) -> DeliveryOutcome
+where
+    D: Fn(DispatchCtx, PathBuf, String, String) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
     if !fence.admits() {
         log::info!(
             "[background_delivery] profile lease lost; not delivering thread_id={thread_id}"
@@ -283,11 +252,11 @@ async fn try_deliver(
     let router = background_completions::router_for_workspace_ctx(&busy_ctx, &workspace_dir);
     let delivery = CompletionDelivery::new(
         CompletionDeliveryConfig {
-            debounce: DEBOUNCE,
+            debounce: initial_delay,
             recovery_delay: RECOVERY_DELAY,
             retry_backoff: Duration::from_secs(2),
-            busy_poll: RECOVERY_BUSY_POLL,
-            max_busy_polls: super::delivery_drain::RECOVERY_BUSY_POLLS,
+            busy_poll: CompletionDeliveryConfig::default().busy_poll,
+            max_busy_polls: CompletionDeliveryConfig::default().max_busy_polls,
             batch_size: usize::MAX,
         },
         delivery_leases().clone(),
@@ -299,22 +268,22 @@ async fn try_deliver(
     let turn_thread_id = thread_id.clone();
     let give_up_thread_id = thread_id.clone();
     let give_up_log_thread_id = thread_id.clone();
-    let scoped_thread = crate::core::runtime::tenant::profile_key_in(
-        &super::busy_guard::caller(&busy_ctx),
-        &thread_id,
-    );
+    let owner = match busy_ctx.tenant() {
+        Ok(tenant) => tenant.profile_only(),
+        Err(error) => {
+            log::debug!("[background_delivery] no tenant for completion delivery: {error}");
+            return DeliveryOutcome::Fenced;
+        }
+    };
+    let tenant_key = crate::core::runtime::tenant::profile_key_in(&owner, "");
+    let scoped_thread = crate::core::runtime::tenant::profile_key_in(&owner, &thread_id);
+    let run_turn = &run_turn;
     let deliver = move |records: &[CompletionRecord]| {
         let notice = format_router.formatter().format_batch(records);
         let ctx = ctx.clone();
         let workspace_dir = turn_workspace.clone();
         let thread_id = turn_thread_id.clone();
-        async move {
-            let result = run_system_turn_on_thread(&ctx, workspace_dir, thread_id, notice)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string());
-            result
-        }
+        run_turn(ctx, workspace_dir, thread_id, notice)
     };
     let write_undelivered = move |records: &[CompletionRecord], error: &str| {
         let attempts = records
@@ -342,6 +311,7 @@ async fn try_deliver(
     let target = DeliveryTarget {
         router: &router,
         parent_key: &thread_id,
+        tenant_key: &tenant_key,
         thread_key: &scoped_thread,
     };
     let outcome = if recovering {
@@ -392,197 +362,6 @@ fn delivery_leases() -> &'static ThreadDeliveryLeases {
     LEASES.get_or_init(ThreadDeliveryLeases::default)
 }
 
-/// One pass of the delivery loop whose turn only counts itself, for tests
-/// outside this module.
-#[cfg(test)]
-pub(super) async fn try_deliver_for_test(
-    ctx: DispatchCtx,
-    thread_id: String,
-    router: Arc<CompletionRouter>,
-    turns: Arc<std::sync::atomic::AtomicU32>,
-) -> Option<Duration> {
-    try_deliver_with(
-        &ctx,
-        thread_id,
-        router,
-        move |_, _| {
-            turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async { Ok(String::new()) }
-        },
-        |_, _| async {},
-    )
-    .await
-}
-
-/// Backoff before retrying a delivery whose record has now failed `attempts` times.
-#[cfg(test)]
-fn retry_backoff(attempts: u32) -> Duration {
-    Duration::from_secs(2u64.saturating_pow(attempts.min(5)))
-}
-
-/// Last resort when the delivery turn has failed [`DEFAULT_MAX_ATTEMPTS`]
-/// times: append the results to the thread directly, with no model turn.
-///
-/// This is the whole point of the ceiling — retries stop, but the user is still
-/// told. If even this append fails there is nowhere left to put the result, so
-/// it is logged at error and the chain ends; that is the one path on which a
-/// result is genuinely lost, and it requires the conversation store to be
-/// failing as well as the agent.
-#[cfg(test)]
-async fn persist_undelivered(ctx: DispatchCtx, dir: PathBuf, thread_id: String, notice: String) {
-    let run_id = format!("bgdeliver-undelivered-{}", uuid::Uuid::new_v4());
-    match persist_delivery_reply(&ctx, dir, &thread_id, &run_id, notice, false) {
-        Ok(()) => log::warn!(
-            "[background_delivery] delivery turn gave up; wrote results into the thread \
-             verbatim instead thread_id={thread_id} run_id={run_id}"
-        ),
-        Err(error) => log::error!(
-            "[background_delivery] undelivered results LOST — could not append them to the \
-             thread thread_id={thread_id} run_id={run_id} error={error}"
-        ),
-    }
-}
-
-/// Delivery-loop core with an injected router, turn executor and give-up
-/// sink. Keeping the queue and retry boundary independent from host execution
-/// lets tests prove a failed durable append releases the batch before any
-/// terminal announcement is observable, and that a record which exhausts its
-/// attempts is handed to `on_undeliverable` rather than dropped.
-#[cfg(test)]
-async fn try_deliver_with<F, Fut, G, GFut>(
-    ctx: &DispatchCtx,
-    thread_id: String,
-    router: Arc<CompletionRouter>,
-    mut deliver: F,
-    on_undeliverable: G,
-) -> Option<Duration>
-where
-    F: FnMut(String, String) -> Fut,
-    Fut: Future<Output = Result<String, String>>,
-    G: FnOnce(String, String) -> GFut,
-    GFut: Future<Output = ()>,
-{
-    let mut retry_after = None;
-    if is_busy(ctx, &thread_id) {
-        return None;
-    }
-    // Claim the delivery slot — held for the WHOLE delivery (including the
-    // awaited turn) so a concurrent completion can't start a second delivery
-    // turn on the same thread. Skip if a delivery is already in flight. The
-    // guard frees the slot, and any lease still held, even if this future is
-    // dropped mid-turn.
-    let mut slot = DeliverySlot::claim(ctx, &thread_id, router.clone())?;
-
-    // A busy thread defers *before* the claim: the claim counts a delivery
-    // attempt, and a user who keeps typing must not burn a record's budget.
-    if let Some(batch) = claim_ready(ctx, &router, &thread_id) {
-        let task_ids: Vec<String> = batch.iter().map(|c| c.task_id.clone()).collect();
-        slot.hold(&task_ids);
-        // A user turn can start between the idle check inside `claim_ready` and
-        // the awaited turn below; re-check so a system turn is never streamed
-        // concurrently with it. Dropping the slot releases the lease (the claim
-        // already counted one attempt; this window is narrow).
-        if is_busy(ctx, &thread_id) {
-            log::debug!(
-                "[background_delivery] thread became busy after the claim; deferring \
-                 thread_id={thread_id}"
-            );
-            return None;
-        }
-        let notice = router.formatter().format_batch(&batch);
-        log::info!(
-            "[background_delivery] delivering {} batched background result(s) thread_id={thread_id}",
-            batch.len()
-        );
-        match deliver(thread_id.clone(), notice).await {
-            Ok(_) => {
-                if let Err(error) = router.mark_delivered(&task_ids) {
-                    // The reply is already in the thread; the record stays
-                    // pending, so a later drain or a restart delivers it again
-                    // (at-least-once).
-                    log::error!(
-                        "[background_delivery] delivered but could not settle records \
-                         thread_id={thread_id} tasks=[{}] error={error}",
-                        task_ids.join(",")
-                    );
-                }
-            }
-            Err(e) => {
-                // A `SESSION_CHECKOUT_FAILURE`-prefixed error (the session could
-                // not be checked out, so no turn ran at all) counts the same as a
-                // turn that ran and failed. That is deliberate: the budget
-                // measures "the result was not delivered", which is equally true
-                // either way, and giving up is not lossy — the record is written
-                // into the thread rather than discarded. A checkout failure
-                // publishes no `AgentError`, so it cannot drive the self-retrigger
-                // loop on its own; it only ever spends the budget.
-                match router.mark_failed(&task_ids) {
-                    Ok(gave_up) if !gave_up.is_empty() => {
-                        // Stop retrying, but do NOT drop: the results exist and
-                        // the user is owed them. Hand them to the give-up sink,
-                        // which writes them into the thread verbatim along with
-                        // an explicit statement that delivery failed and why.
-                        let attempts = gave_up.iter().map(|r| r.attempts).max().unwrap_or(0);
-                        log::warn!(
-                            "[background_delivery] giving up on the delivery turn after \
-                             {attempts} attempts; writing {} result(s) into the thread \
-                             instead thread_id={thread_id} tasks=[{}] error={e}",
-                            gave_up.len(),
-                            gave_up
-                                .iter()
-                                .map(|c| c.task_id.as_str())
-                                .collect::<Vec<_>>()
-                                .join(","),
-                        );
-                        if let Some(undelivered) = build_undelivered_notice(&gave_up, attempts, &e)
-                        {
-                            on_undeliverable(thread_id.clone(), undelivered).await;
-                        }
-                    }
-                    Ok(_) => {
-                        log::warn!(
-                            "[background_delivery] delivery turn failed thread_id={thread_id} \
-                             tasks=[{}] max_attempts={} error={e}",
-                            task_ids.join(","),
-                            router.max_attempts()
-                        );
-                        let attempts = router
-                            .pending_for(&thread_id)
-                            .iter()
-                            .map(|r| r.attempts)
-                            .max()
-                            .unwrap_or(1);
-                        retry_after = Some(retry_backoff(attempts));
-                    }
-                    Err(error) => {
-                        log::error!(
-                            "[background_delivery] could not record the failed delivery \
-                             thread_id={thread_id} error={error}"
-                        );
-                        router.release(&task_ids);
-                    }
-                }
-                // A batch can mix records at different attempt counts: some gave
-                // up above, the rest are still pending. Nothing else would wake a
-                // quiet thread for them, so ask for a retry.
-                if retry_after.is_none() {
-                    if let Some(attempts) = router
-                        .pending_for(&thread_id)
-                        .iter()
-                        .map(|r| r.attempts)
-                        .max()
-                    {
-                        retry_after = Some(retry_backoff(attempts));
-                    }
-                }
-            }
-        }
-    }
-
-    // The slot is released only AFTER the turn settles (on drop).
-    retry_after
-}
-
 /// Run one system-authored delivery turn on an existing conversation thread.
 /// It only delivers a detached sub-agent result already produced by
 /// the completion router.
@@ -605,7 +384,7 @@ async fn run_system_turn_on_thread(
         &thread_id,
         &run_id,
         &prompt,
-        crate::security::turn_origin::AgentTurnOrigin::Cli,
+        crate::core::runtime::turn_origin::AgentTurnOrigin::Cli,
     )
     .await;
 
@@ -629,69 +408,27 @@ async fn run_system_turn_on_thread(
             Ok(response) => crate::web_chat::presentation::deliver_response_single_bubble(
                 ctx, "system", &thread_id, &run_id, response, None,
             ),
-            Err(error) => {
-                crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-                    event: "chat_error".to_string(),
-                    client_id: "system".to_string(),
-                    thread_id: thread_id.clone(),
-                    request_id: run_id.clone(),
+            Err(error) => crate::web_chat::publish_web_channel_event(
+                crate::web_chat::WebChannelEvent::ChatError {
+                    context: crate::web_chat::event_context(
+                        "system",
+                        thread_id.clone(),
+                        run_id.clone(),
+                    ),
                     message: Some(error.clone()),
                     error_type: Some("agent_error".to_string()),
-                    ..Default::default()
-                })
-            }
+                    error_source: None,
+                    error_retryable: None,
+                    error_retry_after_ms: None,
+                    error_provider: None,
+                    error_fallback_available: None,
+                    copy_key: None,
+                    copy_params: None,
+                    guardrail: None,
+                },
+            ),
         },
     )
-}
-
-/// Persist a terminal reply, then announce it. A persistence failure returns
-/// before `announce` runs, allowing the outer delivery loop to requeue the
-/// completed background batch without publishing a phantom terminal event.
-fn persist_then_announce<P, A>(
-    result: Result<String, String>,
-    persist: P,
-    announce: A,
-) -> Result<String, String>
-where
-    P: FnOnce(&str, bool) -> Result<(), String>,
-    A: FnOnce(&Result<String, String>),
-{
-    let (content, success) = match &result {
-        Ok(text) => (text.trim().to_string(), true),
-        Err(error) => (format!("Run failed: {error}"), false),
-    };
-    if !content.is_empty() {
-        persist(&content, success)?;
-    }
-    announce(&result);
-    result
-}
-
-/// Durably append a background-delivery reply before publishing its terminal
-/// chat event. Callers must propagate failures: publishing `chat_done` or
-/// `chat_error` without a stored row loses the result across reconnects.
-fn persist_delivery_reply(
-    ctx: &DispatchCtx,
-    workspace_dir: std::path::PathBuf,
-    thread_id: &str,
-    run_id: &str,
-    content: String,
-    success: bool,
-) -> Result<(), String> {
-    crate::threads::store::append_message(
-        ctx,
-        workspace_dir,
-        thread_id,
-        crate::threads::store::ConversationMessage {
-            id: crate::threads::store::run_reply_message_id(run_id),
-            content,
-            message_type: "text".to_string(),
-            extra_metadata: json!({"scope": "background_delivery", "success": success, "requestId": run_id}),
-            sender: "agent".to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-        },
-    )
-    .map(|_| ())
 }
 
 /// Register the delivery subscriber on the global event bus. Keeps the
@@ -704,7 +441,3 @@ pub(crate) fn register_background_delivery() {
 #[cfg(test)]
 #[path = "background_delivery_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "background_delivery_slots_tests.rs"]
-mod slots_tests;

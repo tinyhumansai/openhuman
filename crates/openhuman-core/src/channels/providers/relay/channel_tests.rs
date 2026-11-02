@@ -11,34 +11,30 @@ fn sink() -> RelayChannel {
     )
 }
 
-fn text_message(text: &str, recipient: &str) -> tinychannels_bus::ChannelOutboundMessage {
-    crate::channels::outbound::text_message("telegram", recipient, text, None)
-}
-
 #[test]
 fn the_outbound_event_names_the_chat_and_carries_the_text() {
-    let event = sink()
-        .outbound_event(&text_message("hi there", "-100"))
-        .unwrap();
-    assert_eq!(event.event, CHANNEL_OUTBOUND_EVENT);
-    assert_eq!(event.client_id, "gw-1");
-    assert_eq!(event.thread_id, "channel:telegram/42/-100");
-    assert_eq!(event.request_id, "req-1");
-    assert_eq!(event.full_response.as_deref(), Some("hi there"));
-    let structured = event.structured.expect("structured");
+    let event = sink().outbound_event(&SendMessage::new("hi there", "-100"));
+    assert_eq!(event.event_name(), CHANNEL_OUTBOUND_EVENT);
+    assert_eq!(event.context().client_id, "gw-1");
+    assert_eq!(event.context().thread_id, "channel:telegram/42/-100");
+    assert_eq!(event.context().request_id, "req-1");
+    let (full_response, structured) = match event {
+        crate::web_chat::WebChannelEvent::ChannelOutbound {
+            full_response,
+            structured,
+            ..
+        } => (full_response, structured),
+        other => panic!("expected channel_outbound event, got {other:?}"),
+    };
+    assert_eq!(full_response.as_deref(), Some("hi there"));
+    let structured = structured.expect("structured");
     assert_eq!(structured["kind"], CHANNEL_OUTBOUND_EVENT);
     assert_eq!(structured["channel"], "telegram");
     assert_eq!(structured["chat_id"], "-100");
     assert_eq!(structured["reply_to_message_id"], "m-1");
-    assert!(event.agent.is_none(), "stamped at publish, not here");
-    assert!(event.profile.is_none(), "stamped at publish, not here");
 
-    let wire = serde_json::to_value(
-        sink()
-            .outbound_event(&text_message("x", "-100"))
-            .expect("event"),
-    )
-    .expect("serialize");
+    let wire = serde_json::to_value(sink().outbound_event(&SendMessage::new("x", "-100")))
+        .expect("serialize");
     assert!(
         wire.get("agent").is_none(),
         "the routing stamp is not on the wire"
@@ -69,7 +65,7 @@ async fn send_publishes_under_the_callers_stamp_and_records_the_text() {
     let sender = Arc::clone(&channel);
     crate::core::runtime::CoreContext::scope(context, async move {
         sender
-            .send_typed(&text_message("reply one", "2"))
+            .send(&SendMessage::new("reply one", "2"))
             .await
             .expect("send");
     })
@@ -77,29 +73,19 @@ async fn send_publishes_under_the_callers_stamp_and_records_the_text() {
 
     let event = loop {
         let event = events.recv().await.expect("event");
-        if event.request_id == "req-stamp" {
+        if event.context().request_id == "req-stamp" {
             break event;
         }
     };
-    assert_eq!(event.event, CHANNEL_OUTBOUND_EVENT);
-    assert_eq!(event.agent.as_deref(), Some("u-relay-test"));
+    assert_eq!(event.event_name(), CHANNEL_OUTBOUND_EVENT);
     assert!(event.belongs_to("u-relay-test"));
     assert!(!event.belongs_to("u-someone-else"));
-    assert_eq!(event.profile.as_deref(), Some("p-relay-test"));
     assert!(event.belongs_to_profile("p-relay-test"));
     assert!(!event.belongs_to_profile("p-someone-else"));
     assert_eq!(channel.sent(), vec!["reply one".to_string()]);
 }
 
-#[tokio::test]
-async fn a_relay_has_no_listener() {
-    let (tx, _rx) = tokio::sync::mpsc::channel(1);
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v0.1.39 has no typed listener method for a no-listener adapter"
-    )]
-    let result = sink().listen(tx).await;
-    assert!(result.is_err());
+#[test]
+fn a_relay_does_not_support_draft_updates() {
     assert_eq!(sink().name(), "telegram");
-    assert!(!sink().supports_draft_updates());
 }

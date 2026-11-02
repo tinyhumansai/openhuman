@@ -161,7 +161,8 @@ impl OpenHumanHostBundleFactory {
         let mut security = OpenHumanSecurityGate::new(inputs.security_policy, inputs.tool_sets)
             .with_input_screening(!turn.untrusted_input_turn)
             .with_approval(turn.approval.clone())
-            .with_dispatch(turn.dispatch_ctx());
+            .with_dispatch(turn.dispatch_ctx())
+            .with_headless_descendant_settlement(turn.headless_descendant_settlement);
         if let Some(policy) = inputs.tool_policy {
             security = security.with_tool_policy(policy);
         }

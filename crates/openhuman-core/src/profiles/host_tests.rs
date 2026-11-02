@@ -36,7 +36,7 @@ fn snapshot_tree(root: &std::path::Path) -> BTreeMap<std::path::PathBuf, Vec<u8>
 
 #[tokio::test]
 #[cfg(feature = "storage-sqlite")]
-async fn inspecting_an_unprovisioned_profile_does_not_run_storage_migrations() {
+async fn inspecting_an_unprovisioned_profile_does_not_provision_or_claim_it() {
     let tmp = tempfile::tempdir().unwrap();
     let fixture = sqlite_backend().unwrap();
     let backend = Arc::clone(&fixture.backend);
@@ -57,7 +57,9 @@ async fn inspecting_an_unprovisioned_profile_does_not_run_storage_migrations() {
     let layout = host.layout_of(&id);
     let default_context = CoreContext::default_context();
 
-    assert!(docs.validate_collection_spec(&registry_spec).await.is_err());
+    // The host declares its registry during construction. Inspection must
+    // still leave the profile absent and must not claim its lease.
+    assert!(docs.validate_collection_spec(&registry_spec).await.is_ok());
     assert!(docs.validate_collection_spec(&lease_spec).await.is_err());
     assert_eq!(
         host.inspect_for_doctor(&id).await,
@@ -93,12 +95,12 @@ async fn inspecting_an_unprovisioned_profile_does_not_run_storage_migrations() {
     );
 
     assert!(
-        docs.validate_collection_spec(&registry_spec).await.is_err(),
-        "a profile check must not create or migrate the registry schema"
+        docs.validate_collection_spec(&registry_spec).await.is_ok(),
+        "inspection leaves the host's registry schema available"
     );
     assert!(
         docs.validate_collection_spec(&lease_spec).await.is_err(),
-        "a profile check must not create or migrate the lease schema"
+        "inspection must not create or migrate the lease schema"
     );
 }
 
@@ -146,11 +148,12 @@ async fn selected_doctor_context_keeps_config_storage_credentials_and_provider_b
         (
             config.config_path.clone(),
             crate::storage::current_scope().unwrap(),
-            crate::security::credentials::api_key::get_api_key_read_only(config).unwrap(),
-            crate::security::credentials::session_support::load_app_session_profile_read_only(
-                config,
-            )
-            .unwrap(),
+            crate::credentials::api_key::get_api_key_read_only(config)
+                .await
+                .unwrap(),
+            crate::credentials::session_state::load_app_session_profile_read_only(config)
+                .await
+                .unwrap(),
             crate::profiles::provider_settings::ProfileProviderSettings::in_ctx(
                 &DispatchCtx::ambient(),
             )
@@ -166,11 +169,12 @@ async fn selected_doctor_context_keeps_config_storage_credentials_and_provider_b
         (
             config.config_path.clone(),
             crate::storage::current_scope().unwrap(),
-            crate::security::credentials::api_key::get_api_key_read_only(config).unwrap(),
-            crate::security::credentials::session_support::load_app_session_profile_read_only(
-                config,
-            )
-            .unwrap(),
+            crate::credentials::api_key::get_api_key_read_only(config)
+                .await
+                .unwrap(),
+            crate::credentials::session_state::load_app_session_profile_read_only(config)
+                .await
+                .unwrap(),
             crate::profiles::provider_settings::ProfileProviderSettings::in_ctx(
                 &DispatchCtx::ambient(),
             )
@@ -245,7 +249,20 @@ fn host(tmp: &tempfile::TempDir, max_open: usize, idle_secs: u64) -> ProfileHost
     let mut saas = SaasConfig::new(tmp.path());
     saas.max_profiles_open = max_open;
     saas.idle_evict_secs = idle_secs;
-    ProfileHost::new(saas, CoreContext::for_test(DomainSet::full(), None))
+    let backend_path = tmp.path().join("profile-storage");
+    let backend_url = format!("sqlite:{}", backend_path.display());
+    let backend = crate::storage::block_on_anyhow(async move {
+        crate::storage::open(&backend_url)
+            .await
+            .map_err(anyhow::Error::from)
+    })
+    .expect("profile test SQLite backend opens");
+    ProfileHost::with_backend(
+        saas,
+        CoreContext::for_test(DomainSet::full(), None),
+        Some(backend),
+    )
+    .expect("profile test host uses conditional SQLite leases")
 }
 
 fn profile(name: &str) -> ProfileId {
@@ -431,6 +448,7 @@ async fn a_reprovisioned_profile_does_not_inherit_the_old_credential() {
         "old-session",
         None,
     )
+    .await
     .unwrap();
     assert!(host.summary(&id).await.unwrap().unwrap().has_credential);
     host.deprovision(&id).await.unwrap();
@@ -445,6 +463,10 @@ async fn a_reprovisioned_profile_does_not_inherit_the_old_credential() {
 async fn a_clean_reopen_does_not_recover_but_a_takeover_does() {
     let tmp = tempfile::tempdir().unwrap();
     let host = host(&tmp, 4, 0);
+    let previous = crate::storage::install(Arc::clone(
+        host.backend.as_ref().expect("test host has shared storage"),
+    ));
+    let _restore_storage = RestoreInstalledStorage(previous);
     let id = profile(&format!("recover-{}", uuid::Uuid::new_v4()));
     host.provision(&id).await.unwrap();
     let workspace = host.layout_of(&id).workspace_dir;
@@ -480,12 +502,46 @@ async fn a_clean_reopen_does_not_recover_but_a_takeover_does() {
     );
 
     // A second host on the same root (a restarted process) finds the lease
-    // never released once the first is gone, and recovers.
+    // never released once the first is gone. Expire the persisted lease
+    // explicitly so takeover does not depend on waiting for the TTL.
     let holder = host;
     let second = self::host(&tmp, 4, 0);
     let refused = second.open(&id).await.unwrap_err();
     assert!(matches!(refused, OpenError::HeldElsewhere(_)), "{refused}");
     drop(holder);
+
+    let backend = second
+        .backend
+        .as_ref()
+        .expect("test host has shared storage");
+    let cluster = backend
+        .for_scope(&crate::storage::Scope::new(crate::storage::lease::CLUSTER_SCOPE).unwrap())
+        .unwrap();
+    let lease_id = tinystoragedrivers::Key::new(format!(
+        "{}/{}",
+        crate::storage::lease::LEASE_OWNER,
+        id.as_str()
+    ))
+    .unwrap();
+    let lease = cluster
+        .documents()
+        .get(crate::storage::lease::LEASE_COLLECTION, lease_id.as_str())
+        .await
+        .unwrap()
+        .expect("the crashed holder's lease remains recorded");
+    let mut expired = lease.doc.clone();
+    expired["expires_ms"] = 0.into();
+    cluster
+        .documents()
+        .put(
+            crate::storage::lease::LEASE_COLLECTION,
+            lease_id.as_str(),
+            expired,
+            tinystoragedrivers::Precondition::Version(lease.version),
+        )
+        .await
+        .unwrap();
+
     drop(second.open(&id).await.unwrap());
     assert_eq!(
         lifecycle("t1"),
@@ -550,7 +606,10 @@ async fn opening_an_open_profile_sweeps_the_idle_ones() {
 #[tokio::test]
 async fn one_unreadable_profile_does_not_hide_the_rest() {
     let tmp = tempfile::tempdir().unwrap();
-    let host = host(&tmp, 4, 60);
+    let host = ProfileHost::new(
+        SaasConfig::new(tmp.path()),
+        CoreContext::for_test(DomainSet::full(), None),
+    );
     let (a, b) = (profile("alice"), profile("bob"));
     host.provision(&a).await.unwrap();
     host.provision(&b).await.unwrap();

@@ -311,9 +311,40 @@ pub async fn call_bare<Reply: serde::de::DeserializeOwned>(
 #[cfg(test)]
 pub(crate) static MODULE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Take the module lock for the rest of the test.
+/// The module lock, and the storage the module keeps its preferences in.
 #[cfg(test)]
-pub(crate) async fn module_guard() -> tokio::sync::MutexGuard<'static, ()> {
+pub(crate) struct ModuleGuard {
+    // Fields drop in order: the previous module storage comes back before the
+    // next test may take the module. Without the module loader there are no
+    // module calls to serve.
+    #[cfg(feature = "modules")]
+    _storage: crate::modules::storage_host::backend_choice::TestModuleStorage,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+}
+
+/// Take the module lock for the rest of the test.
+///
+/// The module refuses a preference call when the host serves no storage, and
+/// a module call carries no workspace for the host to fall back to, so the
+/// guard serves module calls a fresh memory backend, restored on drop. It is
+/// not installed in the process slot: that would make it every concurrent
+/// test's storage (MAIN-57).
+#[cfg(test)]
+pub(crate) async fn module_guard() -> ModuleGuard {
+    let lock = module_lock_guard().await;
+    ModuleGuard {
+        #[cfg(feature = "modules")]
+        _storage: crate::modules::storage_host::backend_choice::serve_test_module_storage(
+            crate::storage::test_support::memory_backend(),
+        ),
+        _lock: lock,
+    }
+}
+
+/// The module lock without [`module_guard`]'s storage, for tests of the
+/// process keyring: an installed backend moves user secrets into storage.
+#[cfg(test)]
+pub(crate) async fn module_lock_guard() -> tokio::sync::MutexGuard<'static, ()> {
     // Tests that take the module drive its backend mode against a local mock;
     // give this thread the stand-in route a host would register.
     super::test_backend_route::register();

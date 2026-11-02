@@ -1,7 +1,5 @@
 use super::*;
-use crate::agent::session_host::turn_checkpoint::{
-    build_deterministic_final_summary, CheckpointToolResult,
-};
+use tinyagents_harness::close::CloseToolResult as CheckpointToolResult;
 
 fn result(name: &str, success: bool, content: &str) -> CheckpointToolResult {
     CheckpointToolResult {
@@ -19,7 +17,7 @@ const TRANSIENT_HALT: &str = "Stopping after 3 attempt(s): failure class `transi
 /// whose raw body carried the user's email and IP.
 #[test]
 fn a_halted_turn_gives_one_reason_and_collapses_identical_failures() {
-    let out = build_deterministic_final_summary(
+    let out = deterministic_final_summary(
         &[
             result(
                 "get_profile",
@@ -64,7 +62,7 @@ fn a_halted_turn_gives_one_reason_and_collapses_identical_failures() {
 #[test]
 fn an_error_line_is_scrubbed_of_identifiers_and_truncated() {
     let long_tail = "x".repeat(400);
-    let out = build_deterministic_final_summary(
+    let out = deterministic_final_summary(
         &[
             result(
                 "send_report",
@@ -92,7 +90,7 @@ fn an_error_line_is_scrubbed_of_identifiers_and_truncated() {
 
 #[test]
 fn a_secret_in_an_error_line_is_not_repeated() {
-    let out = build_deterministic_final_summary(
+    let out = deterministic_final_summary(
         &[result(
             "http_request",
             false,
@@ -112,7 +110,7 @@ fn a_secret_in_an_error_line_is_not_repeated() {
 
 #[test]
 fn a_successful_repeat_halt_does_not_claim_failure() {
-    let out = build_deterministic_final_summary(
+    let out = deterministic_final_summary(
         &[
             result("list_items", true, "3 items"),
             result("list_items", true, "3 items"),
@@ -208,11 +206,12 @@ fn a_policy_refusal_class_halt_names_the_security_settings() {
 /// most recent ones so the failure that stopped the turn stays visible.
 #[test]
 fn a_capped_summary_keeps_the_most_recent_groups() {
-    let mut results: Vec<_> = (0..MAX_LISTED + 2)
+    // The user-facing summary shows the newest eight groups.
+    let mut results: Vec<_> = (0..10)
         .map(|i| result(&format!("early_tool_{i}"), true, "ok"))
         .collect();
     results.push(result("final_blocker", false, "boom happened"));
-    let out = build_deterministic_final_summary(&results, Some(TRANSIENT_HALT));
+    let out = deterministic_final_summary(&results, Some(TRANSIENT_HALT));
     assert!(out.contains("final_blocker"), "{out}");
     assert!(!out.contains("early_tool_0`"), "{out}");
     assert!(out.contains("more tool call(s)"), "{out}");

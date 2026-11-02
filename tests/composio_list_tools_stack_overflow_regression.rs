@@ -3,10 +3,9 @@
 //! ## What crashed
 //!
 //! While a user chat went through
-//! `web_channel → orchestrator turn → delegate_to_integrations_agent
-//! → integrations_agent → composio_list_tools` (that specialist has since
-//! been removed — the orchestrator searches for and calls the action itself
-//! — but the sub-agent runner path below is the one every delegation takes), the
+//! `web_channel → orchestrator turn → delegation → sub-agent
+//! → composio_list_tools` (the sub-agent runner path below is the one every
+//! delegation takes), the
 //! in-process core
 //! aborted with `EXC_BAD_ACCESS (SIGBUS) — KERN_PROTECTION_FAILURE`
 //! at an address inside the **stack guard page** of a `tokio-rt-worker`
@@ -22,7 +21,7 @@
 //!   ← Config::load_or_init_with_env_lookup
 //!   ← config::ops::load_config_with_timeout
 //!   ← ComposioListToolsTool::execute
-//!   ← subagent_runner::run_inner_loop / run_typed_mode / run_subagent
+//!   ← subagent runner inner loop / run_typed_mode / direct child host
 //!   ← SkillDelegationTool::execute   (delegate_to_integrations_agent, since removed)
 //!   ← Agent::execute_tool_call / execute_tools / turn
 //!   ← web_chat::run_chat_task
@@ -56,7 +55,7 @@
 //! rebuild the upper chat-channel layers (`web_chat::
 //! run_chat_task → Agent::turn → execute_tools → <delegation tool>`)
 //! without standing up an HTTP + Socket.IO stack. We drive the production
-//! path from `run_subagent` downward — i.e. everything below a delegation
+//! path from direct child execution downward — i.e. everything below a delegation
 //! tool's `execute` — on a small tokio worker stack (`SUBAGENT_TOWER_STACK_BYTES`).
 //!
 //! **Caveat — what this test does and does not catch.** Because the
@@ -71,7 +70,7 @@
 //!   * **What this test does NOT catch:** a re-introduction of the
 //!     specific stack-overflow trigger (re-inlining the TOML parse onto
 //!     the worker). The production crash needed the full tower above
-//!     `run_subagent` to push 2 MB over.
+//!     direct child execution to push 2 MB over.
 //!
 //! The actual stack-overflow fix is in
 //! [`crates/openhuman-core/src/config/schema/load.rs`](`parse_config_with_recovery`)
@@ -94,13 +93,14 @@
 //!     frame growth in the tower is caught long before it threatens production,
 //!   * `OPENHUMAN_WORKSPACE` pointed at a tempdir with a representative
 //!     `config.toml` so the TOML parser does real work,
-//!   * `run_subagent(critic)` exactly like a delegation tool
+//!   * direct child execution on a test-owned worker exactly like a delegation tool
 //!     does, with a stubbed `ChatModel`
 //!     that emits one `composio_list_tools` tool call on iteration 1
 //!     and stops on iteration 2.
 //!
-//! Assertion is implicit: cargo reports the test as failed when the
-//! tokio runtime aborts with stack overflow.
+//! The test also asserts that the real Composio handler ran once and the
+//! stub model received its second call. Cargo reports a stack regression as
+//! process abort when the tokio worker overflows.
 
 // This stress target is still compiled by normal cargo test. Under llvm-cov,
 // coverage instrumentation makes the already-large integration-test binary
@@ -108,25 +108,27 @@
 #![cfg(not(coverage))]
 
 use async_trait::async_trait;
-use openhuman_core::agent::harness::ParentExecutionContext;
-use openhuman_core::agent::subagent_host::{run_subagent, SubagentRunOptions};
+use openhuman_core::agent::subagent_host::ParentExecutionContext;
+use openhuman_core::agent::subagent_host::{OpenHumanSubagentHost, SubagentRunOptions};
 use openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry;
 use openhuman_core::config::AgentConfig;
+use openhuman_core::integrations::composio::tools::ComposioListToolsTool;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::tempdir;
-use tinyagents_definition::ModelSpec;
+use tinyagents_definition::{ModelSpec, PromptSource, ToolScope};
 use tinyinference_llm::message::AssistantMessage;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall;
+use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 use tinytools_agent::dialect::ToolCallFormat;
 
 /// Worker stack for this guard: 3 MiB, deliberately far below the production
 /// `AGENT_WORKER_STACK_BYTES` (16 MiB, which stays the real budget).
 ///
 /// Measured in an unoptimised build (#6379): before the async-frame work the
-/// sub-agent tower (`run_subagent` → `run_subagent_direct` → config load →
+/// sub-agent tower (direct host lifecycle → child execution → config load →
 /// `Config::save`) needed between 3.5 and 4 MiB; it overflowed at 3 MiB. It
 /// now peaks near 1.6 MiB (passes at 1664 KiB, overflows at 1536 KiB). 3 MiB
 /// leaves ~85% headroom for unrelated growth while still failing on the old
@@ -194,7 +196,7 @@ chat_onboarding_completed = true
 [agent]
 [orchestrator]
 [composio]
-mode = "backend"
+mode = "disabled"
 entity_id = "test-entity"
 "#;
 
@@ -203,6 +205,43 @@ entity_id = "test-entity"
 struct StubModel {
     iter: Arc<Mutex<usize>>,
     profile: ModelProfile,
+}
+
+struct CountedComposioTool {
+    inner: ComposioListToolsTool,
+    executions: Arc<std::sync::atomic::AtomicUsize>,
+    output: Arc<Mutex<Option<String>>>,
+}
+
+#[async_trait]
+impl Tool for CountedComposioTool {
+    fn name(&self) -> &str {
+        "composio_list_tools"
+    }
+
+    fn description(&self) -> &str {
+        "List Composio tools for the stack regression."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Workflow
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.executions
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let result = self.inner.execute(args).await?;
+        *self.output.lock() = Some(result.output().to_string());
+        Ok(result)
+    }
 }
 
 #[async_trait]
@@ -301,17 +340,35 @@ async fn drive_subagent() {
         tool_calling: true,
         ..Default::default()
     };
+    let model_calls = Arc::new(Mutex::new(0));
     let model = Arc::new(StubModel {
-        iter: Arc::new(Mutex::new(0)),
+        iter: model_calls.clone(),
         profile,
     });
 
+    let executions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let tool_output = Arc::new(Mutex::new(None));
+    let workspace =
+        std::path::PathBuf::from(std::env::var("OPENHUMAN_WORKSPACE").expect("test workspace set"));
+    let tool_config = openhuman_core::config::Config {
+        config_path: workspace.join("config.toml"),
+        workspace_dir: workspace,
+        ..Default::default()
+    };
+    let composio_tool = CountedComposioTool {
+        inner: ComposioListToolsTool::new(Arc::new(tool_config)),
+        executions: executions.clone(),
+        output: tool_output.clone(),
+    };
+    let composio_spec = Arc::new(composio_tool.spec());
     let parent = ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
-        allowed_subagent_ids: ["critic".to_string()].into_iter().collect(),
+        allowed_subagent_ids: ["stack_regression_worker".to_string()]
+            .into_iter()
+            .collect(),
         turn_model_source: openhuman_core::agent::tinyagents::TurnModelSource::from_model(model),
-        all_tools: Arc::new(vec![]),
-        all_tool_specs: Arc::new(vec![]),
+        all_tools: Arc::new(vec![Box::new(composio_tool)]),
+        all_tool_specs: Arc::new(vec![composio_spec]),
         // #6145: empty means "same surface as `all_tool_specs`" — the
         // catalogue falls back to it, so these stubs keep the behaviour
         // they had before the parent's visible set became its own field.
@@ -338,21 +395,53 @@ async fn drive_subagent() {
 
     let mut def = AgentDefinitionRegistry::global()
         .expect("registry initialised")
-        .get("critic")
-        .expect("critic built-in must exist")
+        .get("vision_agent")
+        .expect("vision worker built-in must exist")
         .clone();
-    // A shipped definition with a `model.hint` would otherwise build a
-    // fresh model via the workload factory and try to hit the real
-    // backend. Override to Inherit so the stub model above receives the
-    // request — same trick used in `tests/calendar_grounding_e2e.rs`.
+    // Give the worker a test-owned identity and a narrow, neutral surface.
+    // Inherit keeps the stub model above on the direct child host path.
+    def.id = "stack_regression_worker".into();
+    def.display_name = Some("Stack regression worker".into());
+    def.when_to_use = "Read the supplied request for this stack regression.".into();
+    def.delegate_name = None;
+    def.subagents.clear();
+    def.max_iterations = 6;
+    def.tools = ToolScope::Named(vec!["composio_list_tools".into()]);
     def.model = ModelSpec::Inherit;
+    def.system_prompt = PromptSource::Inline(
+        "You are a read-only test worker. Use the available tool once, then report its result."
+            .into(),
+    );
+    def.extensions.prompt_builder = None;
 
-    // The assertion is implicit: if the worker thread overflows its
-    // stack the cargo-test process aborts (SIGABRT / SIGBUS) and no
-    // test report is emitted. We don't care whether the sub-agent
-    // semantically "succeeded" — only that the runtime did not abort.
+    // The worker must execute the real tool handler and return to the stub
+    // model. If its thread overflows, the cargo-test process aborts
+    // (SIGABRT / SIGBUS) before these assertions can run.
     // The parent is an explicit value on the run options, not ambient state.
     let mut options = SubagentRunOptions::default();
     options.run_context.parent = Some(parent);
-    let _ = run_subagent(&def, "list available gmail actions", options).await;
+    let parent =
+        options
+            .run_context
+            .clone()
+            .into_tinyagents(tinyagents_harness::context::RunConfig::new(
+                "composio-stack-regression-subagent",
+            ));
+    let _ = OpenHumanSubagentHost::new(def, options)
+        .run(&parent, "list available gmail actions".into())
+        .await;
+    assert_eq!(
+        executions.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the stub model's tool call must execute the real Composio list handler"
+    );
+    assert_eq!(
+        *model_calls.lock(),
+        2,
+        "the model must continue after the tool result"
+    );
+    assert!(tool_output
+        .lock()
+        .as_deref()
+        .is_some_and(|output| output.contains("composio is disabled")));
 }

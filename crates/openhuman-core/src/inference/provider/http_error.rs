@@ -24,9 +24,10 @@ pub fn should_report_provider_http_failure(status: reqwest::StatusCode) -> bool 
     should_report_provider_http_status(status.as_u16())
 }
 
-/// Whether this is the OpenHuman backend rejecting the app session JWT.
+/// Whether this is the OpenHuman backend rejecting the app session JWT. This
+/// path only sends the session credential, so `api_key` is always false.
 pub fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 401 | 403)
+    crate::core::session_expiry::backend_status_means_session_expired(status.as_u16(), false)
         && classify_backend_error(Some(provider), "").is_some_and(|result| result.provider_owned)
 }
 
@@ -102,7 +103,7 @@ pub fn log_byo_provider_auth_failure(
     }
 }
 
-/// Publish `SessionExpired` for a backend 401/403 and skip the Sentry report.
+/// Publish `SessionExpired` for a backend session 401 and skip the Sentry report.
 /// `message` is re-sanitized before it reaches the subscriber's logs.
 pub fn publish_backend_session_expired(
     operation: &str,
@@ -120,6 +121,10 @@ pub fn publish_backend_session_expired(
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
         source: "llm_provider.openhuman_backend".to_string(),
         reason: sanitize_api_error(message),
+        // Generic provider errors do not retain the request bearer. Without
+        // request-time provenance the credentials subscriber must not sign
+        // out whichever session happens to be current now.
+        credential_fingerprint: None,
     });
 }
 
@@ -183,7 +188,9 @@ impl ErrorReporter for HostErrorReporter<'_> {
         };
         let decision = select_demotion(&facts, is_backend, self.backend_error_code_owned);
 
-        if matches!(status, 401 | 403) && is_backend {
+        if is_backend
+            && crate::core::session_expiry::backend_status_means_session_expired(status, false)
+        {
             publish_backend_session_expired(operation, provider, status_code, self.message);
         } else {
             match decision {
@@ -259,14 +266,38 @@ impl ErrorReporter for HostErrorReporter<'_> {
     }
 }
 
+/// An error body is only classified and quoted (a few hundred characters at
+/// most), so read no more than this: a misbehaving endpoint must not make the
+/// client buffer an unbounded body.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
+/// The first [`MAX_ERROR_BODY_BYTES`] of a failed response's body.
+async fn read_error_body(mut response: reqwest::Response) -> String {
+    let mut body = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = MAX_ERROR_BODY_BYTES - body.len();
+                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                if body.len() == MAX_ERROR_BODY_BYTES {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) if body.is_empty() => {
+                return "<failed to read provider error body>".to_string();
+            }
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&body).into_owned()
+}
+
 /// Build a sanitized provider error from a failed HTTP response, classifying
 /// it upstream and routing the reaction through [`HostErrorReporter`].
 pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::Error {
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .unwrap_or_else(|_| "<failed to read provider error body>".to_string());
+    let body = read_error_body(response).await;
     let message = format!(
         "{provider} API error ({status}): {}",
         sanitize_api_error(&body)

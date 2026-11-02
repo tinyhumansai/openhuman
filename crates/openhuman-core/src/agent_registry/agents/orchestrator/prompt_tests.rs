@@ -452,8 +452,8 @@ fn build_routes_prompt_heavy_domains_to_specialists() {
     // twice per turn. What must survive is the routing *policy* — delegate
     // rather than improvise — and the pointer to the withheld ones.
     assert!(
-        body.contains("- Specialists: delegate tools or `use_skill`."),
-        "the routing must still send specialist work to delegates or packed hand-offs"
+        body.contains("- Specialists: use `spawn_subagent` with the specialist's `agent_id`"),
+        "the routing must direct specialist work through the single spawn tool"
     );
     assert!(
         !body.contains("## Presentation generation"),

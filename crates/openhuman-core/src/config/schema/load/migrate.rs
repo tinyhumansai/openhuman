@@ -349,8 +349,7 @@ pub(crate) fn migrate_legacy_memory_backend(config: &mut Config, raw: &str) {
 
 /// One-shot migration of the legacy per-dependency switches into
 /// `[components]` (`hosting.enabled`, `search.enabled`, `mcp_client.enabled`,
-/// `memory.engine = "none"`, `OPENHUMAN_TINYMEMES`, `composio.mode =
-/// "disabled"`). `composio.enabled` was never read and is simply dropped with
+/// `memory.engine = "none"`, `composio.mode = "disabled"`). `composio.enabled` was never read and is simply dropped with
 /// its field; `composio.mode` stays as the route selector.
 ///
 /// A legacy switch is read from the raw TOML (so an unset key keeps its
@@ -358,14 +357,6 @@ pub(crate) fn migrate_legacy_memory_backend(config: &mut Config, raw: &str) {
 /// name, which makes the migration idempotent: once saved, the explicit
 /// `components.*` key wins and the legacy key is never consulted again.
 pub(crate) fn migrate_components(config: &mut Config, raw: &str) {
-    #[cfg(feature = "tinymemes")]
-    let tinymemes = std::env::var(crate::tinymemes::FLAG_ENV).ok();
-    #[cfg(not(feature = "tinymemes"))]
-    let tinymemes: Option<String> = None;
-    migrate_components_with(config, raw, tinymemes.as_deref());
-}
-
-pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes: Option<&str>) {
     let value = toml::from_str::<toml::Value>(raw).ok();
     let explicit = |name: &str| {
         value
@@ -406,14 +397,6 @@ pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes:
         .and_then(toml::Value::as_str)
         .is_some_and(|e| e.trim().eq_ignore_ascii_case("none"));
     disable(config, "memory", engine_none.then_some(false));
-    #[cfg(feature = "tinymemes")]
-    let memes_on = tinymemes
-        .filter(|v| !v.trim().is_empty())
-        .map(crate::tinymemes::flag_enabled);
-    // Without the `tinymemes` gate there is no legacy flag to migrate.
-    #[cfg(not(feature = "tinymemes"))]
-    let memes_on = tinymemes.and(None::<bool>);
-    disable(config, "memes", memes_on);
     // The old tool-output compaction master switch, `[tokenjuice]
     // router_enabled = false`, becomes `[components] juice = false`. The
     // switch stays as a sub-setting of the on state.
@@ -466,7 +449,6 @@ pub(crate) fn migrate_components_with(config: &mut Config, raw: &str, tinymemes:
                 "mcp" => &["mcp_client.enabled"],
                 "connectors" => &["composio.mode"],
                 "memory" => &["memory.engine"],
-                "memes" => &["OPENHUMAN_TINYMEMES"],
                 "juice" => &["tokenjuice.router_enabled"],
                 "voice" => &[
                     "dictation.enabled",

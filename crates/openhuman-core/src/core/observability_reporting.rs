@@ -46,6 +46,11 @@ pub fn report_error_or_expected<E: Display + ?Sized>(
 }
 
 fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str, operation: &str) {
+    // Same redaction as `report_error_message`: these lines reach the log
+    // sinks (and Sentry breadcrumbs) too. Classification ran on the raw text.
+    let raw = message;
+    let scrubbed = crate::core::log_redaction::scrub_secrets(raw);
+    let message = scrubbed.as_str();
     match kind {
         ExpectedErrorKind::LocalAiDisabled => {
             tracing::info!(
@@ -444,9 +449,12 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
         ExpectedErrorKind::BackendErrorCodeOwned => {
             // The classifier's canonical token aids triage without re-parsing
             // provider-specific strings in this generic module.
-            let code = crate::inference::registry::classify_backend_error(None, message)
+            // Classify the raw text: scrubbing can swallow the code next to a secret.
+            let code = crate::inference::registry::classify_backend_error(None, raw)
                 .and_then(|classification| classification.token)
                 .unwrap_or_default();
+            // The token echoes the backend's errorCode verbatim; scrub it too.
+            let code = crate::core::log_redaction::scrub_secrets(&code);
             tracing::warn!(
                 domain = domain,
                 operation = operation,
@@ -472,7 +480,7 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
         }
         ExpectedErrorKind::ApprovalNoPendingRace => {
             // Benign approval race (TAURI-RUST-5EH): the request_id was already
-            // decided / lazily expired / superseded — `store::get_decision`
+            // decided / lazily expired / superseded — the approval engine
             // confirmed a persisted decision exists, so this is a double-tap,
             // two-operator, or expiry-while-live race classified benign by the
             // inline-approvals design spec, not a lost registration. Demote at

@@ -1,6 +1,6 @@
 use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::Config;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -133,6 +133,7 @@ pub(crate) async fn configure_openrouter_workspace(
         HashMap::new(),
         true,
     )
+    .await
     .expect("store provider key");
     config
 }

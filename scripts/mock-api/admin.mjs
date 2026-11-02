@@ -8,12 +8,14 @@ import {
   listSocketSessions,
   getMockBehavior,
   getMockConversations,
+  getMockCronJobs,
   getMockMessages,
   listMockLlmThreads,
   getMockWebhookTriggers,
   getRequestLog,
   resetMockBehavior,
   resetMockConversations,
+  resetMockCronJobs,
   resetMockMessages,
   resetMockLlmThreads,
   resetSocketSessions,
@@ -45,6 +47,7 @@ export function handleAdmin(ctx) {
       data: {
         requestCount: getRequestLog().length,
         conversations: getMockConversations(),
+        cronJobs: getMockCronJobs(),
         messages: getMockMessages(),
         webhookTriggers: getMockWebhookTriggers(),
         llmThreads: listMockLlmThreads(),
@@ -69,6 +72,7 @@ export function handleAdmin(ctx) {
     if (!keepRequests) clearRequestLog();
     resetMockTunnels();
     resetMockConversations();
+    resetMockCronJobs();
     resetMockMessages();
     resetMockMemory();
     resetMockWebhookTriggers();

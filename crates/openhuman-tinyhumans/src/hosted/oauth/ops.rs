@@ -45,7 +45,7 @@ pub async fn oauth_connect(
     encryption_mode: Option<&str>,
 ) -> Result<Outcome<Value>, String> {
     let provider = require_provider(provider)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let query = [
         ("skillId", non_empty(skill_id)),
         ("responseType", non_empty(response_type)),
@@ -75,7 +75,7 @@ pub async fn oauth_connect(
 
 /// `GET /auth/integrations` — the user's active integrations.
 pub async fn oauth_list_integrations(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let value = client.finish_value(
         "GET /auth/integrations",
         client.sdk().auth().list_integrations().await,
@@ -102,7 +102,7 @@ pub async fn oauth_fetch_integration_tokens(
     encryption_key: &str,
 ) -> Result<Outcome<Value>, String> {
     let id = require_integration_id(integration_id)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let request = IntegrationTokenRequest {
         key: encryption_key.trim().to_string(),
     };
@@ -137,7 +137,7 @@ pub async fn oauth_revoke_integration(
     if id.is_empty() {
         return Err("integration id is required".to_string());
     }
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     client.finish_value(
         "DELETE /auth/integrations/{integrationId}",
         client.sdk().auth().delete_integration(id).await,
@@ -161,7 +161,7 @@ pub async fn oauth_fetch_client_key(
     integration_id: &str,
 ) -> Result<Outcome<Value>, String> {
     let id = require_integration_id(integration_id)?;
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     if client.kind() != CredentialKind::Session {
         return Err("session JWT required".to_string());
     }

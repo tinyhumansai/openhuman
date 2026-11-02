@@ -56,3 +56,20 @@ fn tinyjuice_ccr_blobs_stay_inside_the_juice_owner_namespace() {
         [tinyjuice_bus::storage::SAVINGS_COLLECTION]
     );
 }
+
+#[test]
+fn tiny_artifacts_collections_compose_with_host_artifact_collections() {
+    let owners = collection_owners().expect("the owners compose");
+    let host = owners
+        .iter()
+        .find(|owner| owner.crate_name == "openhuman-core")
+        .expect("the host collection owner is present");
+    for name in ["artifacts.records", "artifacts.args", "artifacts.versions"] {
+        assert!(
+            host.collections
+                .iter()
+                .any(|collection| collection.name == name),
+            "missing host artifact collection {name}"
+        );
+    }
+}

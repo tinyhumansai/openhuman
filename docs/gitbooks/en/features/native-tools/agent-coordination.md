@@ -5,27 +5,21 @@ icon: sitemap
 
 # Agent coordination
 
-Besides doing the work, the agent has tools for organizing it: planning multi-step jobs, delegating to specialists, spawning sub-agents, and pausing to ask you when something is genuinely unclear.
+Besides doing the work, the agent has tools for organizing it: planning multi-step jobs, spawning sub-agents, and pausing to ask you when something is unclear.
 
 ## Tools in this family
 
-| Tool                                | What it does                                                                                                           |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `todo`                              | Rewrites the session to-do list across a long task. The chat shows it as a checklist that ticks off as work progresses. |
-| `spawn_subagent`                    | Delegates to a reusable async specialist. It creates a fresh worker only when the work is incompatible or you ask.     |
-| `spawn_async_subagent`              | A lower-level reusable async delegation tool with the same durable session identity.                                   |
-| `steer_subagent`, `wait_subagent`   | Message or collect a running worker by durable `subagent_session_id` or transient `task_id`.                           |
-| `list_subagents`, `close_subagent`  | Inspect the reusable workers for the parent thread, or retire one.                                                     |
-| `spawn_worker_thread`               | Explicit background work tracked as a separate worker thread.                                                          |
-| `delegate`                          | Hands a task to a specialist, such as an archetype with different prompts, tools or permissions.                       |
-| `spawn_parallel_agents`             | Fans one task out to several specialists at once and merges what they return.                                          |
-| `use_skill`                         | Loads an inline skill's playbook and tools (coding, web3, system, scheduling, docs, mcp) so the agent can call them.   |
-| `ask_user_clarification`            | Pauses and asks you a precise question instead of guessing.                                                            |
-| `plan_exit`                         | Leaves the planning phase and starts executing.                                                                        |
+| Tool                       | What it does                                                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `todo`                     | Rewrites the session to-do list across a long task. The chat shows it as a checklist that ticks off as work progresses. |
+| `spawn_subagent`           | Starts an asynchronous child selected by `agent_id`; use `task_key` to resume a compatible child, including a paused one. |
+| `use_skill`                | Loads an inline skill's playbook and tools (coding, web3, system, scheduling, docs, mcp) so the agent can call them.   |
+| `ask_user_clarification`   | Pauses and asks you a precise question instead of guessing.                                                            |
+| `plan_exit`                | Leaves the planning phase and starts executing.                                                                        |
 
-`spawn_subagent` and archetype delegation calls accept an optional `model` field to pin an exact model for one call. If you leave it out, the harness uses per-agent pins from config when present, and otherwise falls back to normal model-routing hints. Model, sandbox mode, parent thread, action root and task key all affect whether a sub-agent can be reused, so materially different work gets its own worker.
+`spawn_subagent` accepts an `agent_id` to choose a specialist, an optional `model` to pin that child to a model for one call, and an optional `task_key` to reuse a compatible child. If `model` is omitted, model selection uses the configured pin or normal routing hints. Calls return an asynchronous task reference; they do not wait for the child. Reusing the same `task_key` continues a compatible child and resumes a clarification-paused child when its checkpoint is available. Set `fresh: true` when the task needs a new child instead of reusing a matching session. Without a chat delivery thread, the child still runs asynchronously and its completion is recorded in the parent run log.
 
-Reusable delegation returns a transient `task_id` and a durable `subagent_session_id`. Use the durable id for follow-ups in later turns. Pass `fresh: true` only when you or the task needs a clean worker. Pass `blocking: true` only when the parent must wait for the child's result.
+The returned task reference identifies the asynchronous child. Its result is delivered to the parent chat when a delivery thread is available; headless runs retain the result in the run log.
 
 ## Why these are tools
 

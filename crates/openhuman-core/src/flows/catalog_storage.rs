@@ -281,8 +281,9 @@ fn path_for(key: &RegistrationKey) -> String {
 
 /// Catalog-owned collections and their legacy migration sources. Keep this
 /// list aligned with the released module adapter; shared TSD collections are
-/// further restricted to flow-owned record keys below.
-const COLLECTIONS: [&str; 16] = [
+/// further restricted to flow-owned record keys below. The graph checkpointer
+/// migration reads its legacy collections through this same scoped port.
+const COLLECTIONS: [&str; 25] = [
     "flows.definitions",
     "flows.revisions",
     "flows.runs",
@@ -291,6 +292,15 @@ const COLLECTIONS: [&str; 16] = [
     "graph.checkpoints",
     "graph.threads",
     "graph.writes",
+    "graph_checkpoints",
+    "graph_threads",
+    "graph_writes",
+    "delegation_graph_checkpoints",
+    "delegation_graph_threads",
+    "delegation_graph_writes",
+    "flows_graph_checkpoints",
+    "flows_graph_threads",
+    "flows_graph_writes",
     "flows_definitions",
     "flows_revisions",
     "flows_runs",
@@ -304,13 +314,22 @@ const COLLECTIONS: [&str; 16] = [
 const SHARED_COLLECTIONS: [&str; 4] = ["tsd.kv", "tsd.leases", "tsd.counters", "tsd.migrations"];
 const GRAPH_COLLECTIONS: [&str; 3] = ["graph.checkpoints", "graph.threads", "graph.writes"];
 const FLOW_KEY_PREFIX: &str = "flows/";
-const FLOW_MIGRATION_IDS: [&str; 6] = [
+const FLOW_MIGRATION_IDS: [&str; 15] = [
     "flows/flows.definitions/definitions_v2",
     "flows/flows.revisions/revisions_v2",
     "flows/flows.runs/runs_v2",
     "flows/flows.suggestions/suggestions_v2",
     "flows/flows.drafts/drafts_v2",
     "flows/kv_import",
+    "graph/graph.checkpoints/checkpoints_graph_v2",
+    "graph/graph.checkpoints/checkpoints_delegation_v2",
+    "graph/graph.checkpoints/checkpoints_flows_v2",
+    "graph/graph.threads/threads_graph_v2",
+    "graph/graph.threads/threads_delegation_v2",
+    "graph/graph.threads/threads_flows_v2",
+    "graph/graph.writes/writes_graph_v2",
+    "graph/graph.writes/writes_delegation_v2",
+    "graph/graph.writes/writes_flows_v2",
 ];
 
 fn allowed_collection(collection: &str) -> Result<(), StorageError> {
@@ -330,7 +349,17 @@ fn allowed_record(collection: &str, id: &str) -> Result<(), StorageError> {
             "record is outside the catalog migration progress keys",
         ));
     }
-    if (SHARED_COLLECTIONS.contains(&collection) || GRAPH_COLLECTIONS.contains(&collection))
+    if GRAPH_COLLECTIONS.contains(&collection)
+        && ![FLOW_KEY_PREFIX, "graph/", "delegation/"]
+            .iter()
+            .any(|prefix| id.starts_with(prefix))
+    {
+        return Err(StorageError::invalid_input(
+            "record is outside the workflow catalog owner's keys",
+        ));
+    }
+    if SHARED_COLLECTIONS.contains(&collection)
+        && collection != "tsd.migrations"
         && !id.starts_with(FLOW_KEY_PREFIX)
     {
         return Err(StorageError::invalid_input(

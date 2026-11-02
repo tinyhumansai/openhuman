@@ -1,6 +1,5 @@
 use super::*;
 use crate::modules::tinybox::host_runtime::{NativeRuntime, RuntimeAdapter};
-use crate::security::policy::CommandClass;
 use crate::security::{AutonomyLevel, SecurityPolicy};
 
 fn test_security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
@@ -16,28 +15,13 @@ fn test_runtime() -> Arc<dyn RuntimeAdapter> {
     Arc::new(NativeRuntime::new())
 }
 
-fn test_audit() -> Arc<AuditLogger> {
-    AuditLogger::disabled()
-}
-
-fn audit_with_tempdir() -> (Arc<AuditLogger>, tempfile::TempDir) {
-    use crate::config::AuditConfig;
-    let tmp = tempfile::tempdir().expect("create tempdir");
-    let logger = AuditLogger::new(
-        AuditConfig {
-            enabled: true,
-            log_path: "audit.log".into(),
-            max_size_mb: 10,
-        },
-        tmp.path().to_path_buf(),
-    )
-    .expect("create audit logger");
-    (Arc::new(logger), tmp)
+fn test_audit() -> Arc<AuditSink> {
+    AuditSink::disabled()
 }
 
 /// Build a `ToolExecutionContext` carrying a `WorkspaceDescriptor` rooted
 /// at `root`, mirroring what the tinyagents harness threads into every tool
-/// call of a worktree-isolated worker (`RunContext::with_workspace` →
+/// call with an explicit workspace (`RunContext::with_workspace` →
 /// `ToolExecutionContext::from_run_context`).
 fn tool_context_with_workspace(
     root: &std::path::Path,
@@ -45,7 +29,7 @@ fn tool_context_with_workspace(
     use tinyagents_harness::context::{RunConfig, RunContext};
     use tinyagents_harness::tool::ToolExecutionContext;
     use tinytools::WorkspaceDescriptor;
-    let ws = WorkspaceDescriptor::new(root.to_path_buf()).with_policy_id("test-worktree");
+    let ws = WorkspaceDescriptor::new(root.to_path_buf()).with_policy_id("test-workspace");
     let ctx: RunContext = RunContext::new(RunConfig::new("test-run"), ()).with_workspace(ws);
     ToolExecutionContext::from_run_context(&ctx, tinyagents_harness::ids::CallId::new("test-call"))
 }

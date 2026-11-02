@@ -19,7 +19,7 @@
 //! core vouches for ([`FileRoots`], built by the caller or from config — never
 //! taken from the record), and the file must be absolute, free of `..`,
 //! strictly inside that root (after resolving symlinks when it exists), and never a
-//! path [`SecurityPolicy::is_always_forbidden`] rejects. That last check is the
+//! path TinySecurity's protected-path policy rejects. That last check is the
 //! same floor the agent's own file tools keep when the autonomy policy is off,
 //! so a hand-edited record cannot reach further than the agent already could.
 //! (`artifacts/` is deliberately not a workspace-internal dir: the agent reads
@@ -167,7 +167,7 @@ pub(crate) async fn reserve_file(
             Err(e) => {
                 return Err(format!(
                     "[artifacts] failed to reserve {candidate:?} for id={id}: {e}"
-                ))
+                ));
             }
         }
     }
@@ -188,12 +188,13 @@ pub(crate) async fn resolve_file(
     let Some(file) = meta.file.as_deref() else {
         let root = artifacts_root(workspace_dir).await?;
         let resolved = root.join(&meta.path);
-        if has_parent_component(Path::new(&meta.path)) || !resolved.starts_with(&root) {
-            return Err(format!(
-                "[artifacts] meta.path {:?} escapes artifacts root for id={}",
+        check_protected_artifact_path(&resolved).await?;
+        check_within(&root, &resolved).map_err(|reason| {
+            format!(
+                "[artifacts] meta.path {:?} escapes artifacts root for id={}: {reason}",
                 meta.path, meta.id
-            ));
-        }
+            )
+        })?;
         return Ok(resolved);
     };
     let file = PathBuf::from(file);
@@ -208,6 +209,7 @@ pub(crate) async fn resolve_file(
             meta.id
         ));
     }
+    check_protected_artifact_path(&file).await?;
     check_within(&root, &file).map_err(|reason| {
         format!(
             "[artifacts] file for id={} rejected by the escape guard: {reason}",
@@ -217,12 +219,25 @@ pub(crate) async fn resolve_file(
     Ok(file)
 }
 
+async fn check_protected_artifact_path(path: &Path) -> Result<(), String> {
+    if SecurityPolicy::is_always_forbidden_async(path).await {
+        return Err("[artifacts] file is in a protected location".into());
+    }
+    if let Ok(canonical) = tokio::fs::canonicalize(path).await {
+        if SecurityPolicy::is_always_forbidden_async(&canonical).await {
+            return Err("[artifacts] file resolves to a protected location".into());
+        }
+    }
+    Ok(())
+}
+
 fn has_parent_component(path: &Path) -> bool {
     path.components().any(|c| matches!(c, Component::ParentDir))
 }
 
-/// The escape guard for a recorded `file` against its `file_root`.
-fn check_within(root: &Path, file: &Path) -> Result<(), &'static str> {
+/// The escape guard for a recorded `file` against its `file_root` (or a
+/// legacy record's bytes against the artifacts root).
+pub(super) fn check_within(root: &Path, file: &Path) -> Result<(), &'static str> {
     if !root.is_absolute() || !file.is_absolute() {
         return Err("path is not absolute");
     }
@@ -231,9 +246,6 @@ fn check_within(root: &Path, file: &Path) -> Result<(), &'static str> {
     }
     if file == root || !file.starts_with(root) {
         return Err("file is outside its files folder");
-    }
-    if SecurityPolicy::is_always_forbidden(file) {
-        return Err("file is in a protected location");
     }
     // A symlink inside the folder must not lead out of it. Fail closed: when
     // anything is at the path, both sides must resolve, so a dangling or
@@ -249,9 +261,7 @@ fn check_within(root: &Path, file: &Path) -> Result<(), &'static str> {
             else {
                 return Err("file could not be resolved");
             };
-            if !canon_file.starts_with(&canon_root)
-                || SecurityPolicy::is_always_forbidden(&canon_file)
-            {
+            if !canon_file.starts_with(&canon_root) {
                 return Err("file resolves outside its files folder");
             }
         }

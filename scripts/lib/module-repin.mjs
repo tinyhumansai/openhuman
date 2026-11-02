@@ -57,7 +57,7 @@ const ASSET_RE =
  * `checksums`. Returns `{ src, changed }`, or `{ src, changed: false }` when
  * the file does not hold the record. Throws when an asset has no checksum.
  */
-export function rewriteRecord(src, id, newVersion, checksums) {
+export function rewriteRecord(src, id, newVersion, checksums, releaseUrl) {
   let changed = false;
   const out = src.replace(RECORD_RE, (whole, head, body, tail) => {
     if (!new RegExp(`^\\s*id: "${id}",`, "m").test(body)) return whole;
@@ -70,7 +70,7 @@ export function rewriteRecord(src, id, newVersion, checksums) {
       .replace(
         /^(\s*release_url: ")([^"]*)(")/m,
         (_, a, url, c) =>
-          `${a}${url.replace(/\/tag\/v[^/]+$/, `/tag/v${newVersion}`)}${c}`,
+          `${a}${releaseUrl ?? url.replace(/\/tag\/v[^/]+$/, `/tag/v${newVersion}`)}${c}`,
       );
     next = next.replace(
       ASSET_RE,

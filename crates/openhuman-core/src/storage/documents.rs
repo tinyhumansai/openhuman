@@ -72,6 +72,42 @@ type PreparedKey = (usize, String);
 static PREPARED_SCOPES: LazyLock<Mutex<HashMap<PreparedKey, Weak<dyn StorageBackend>>>> =
     LazyLock::new(Mutex::default);
 
+/// Prepares `scope` on `backend` ([`super::boot::prepare_scope`]: owner
+/// collections and the graph and harness migrations) once per process, for
+/// sync stores that open a scope directly.
+///
+/// # Errors
+///
+/// When the backend refuses the scope or the preparation fails; the next
+/// call retries.
+pub(crate) fn prepare_once(
+    backend: &Arc<dyn StorageBackend>,
+    scope: &tinystoragedrivers::Scope,
+) -> Result<(), StorageError> {
+    let prepared_key = (backend_addr(backend), scope.as_str().to_owned());
+    let already_prepared = PREPARED_SCOPES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&prepared_key)
+        .and_then(Weak::upgrade)
+        .is_some_and(|alive| Arc::ptr_eq(&alive, backend));
+    if already_prepared {
+        return Ok(());
+    }
+    let to_prepare = backend.for_scope(scope)?;
+    let scope = scope.clone();
+    block_on(async move {
+        super::boot::prepare_scope(&to_prepare, &scope).await?;
+        Ok(())
+    })?;
+    let mut prepared = PREPARED_SCOPES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    prepared.retain(|_, weak| weak.strong_count() > 0);
+    prepared.insert(prepared_key, Arc::downgrade(backend));
+    Ok(())
+}
+
 /// The backend and scope a [`Repo`] was opened on, for declaring its
 /// collections once per process instead of on every call.
 #[derive(Clone)]
@@ -142,26 +178,8 @@ impl Repo {
         let scoped = backend
             .for_scope(scope)
             .with_context(|| format!("[{domain}] open the storage scope"))?;
-        let prepared_key = (backend_addr(backend), scope.as_str().to_owned());
-        let already_prepared = PREPARED_SCOPES
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&prepared_key)
-            .and_then(Weak::upgrade)
-            .is_some_and(|alive| Arc::ptr_eq(&alive, backend));
-        if !already_prepared {
-            let to_prepare = scoped.clone();
-            block_on(async move {
-                super::boot::prepare_scope(&to_prepare).await?;
-                Ok(())
-            })
+        prepare_once(backend, scope)
             .with_context(|| format!("[{domain}] prepare owner collections"))?;
-            let mut prepared = PREPARED_SCOPES
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            prepared.retain(|_, weak| weak.strong_count() > 0);
-            prepared.insert(prepared_key, Arc::downgrade(backend));
-        }
         let mut repo = Self::over(&scoped, domain, collections);
         repo.origin = Some(Origin {
             backend: Arc::clone(backend),
@@ -197,7 +215,8 @@ impl Repo {
 
     /// Opens the same owner scope with an additional storage-driver write
     /// condition. The backend remains responsible for composing any host
-    /// profile fence with `condition` atomically.
+    /// profile fence with `condition` atomically. Collection declarations
+    /// are not bound to it (see `claim_bound`).
     ///
     /// Repos made with [`Repo::over`] have no backend/scope origin and cannot
     /// be rebound safely; callers must use an explicitly opened repo for
@@ -211,9 +230,7 @@ impl Repo {
         })?;
         let scope = Scope::new(&origin.scope)
             .with_context(|| format!("[{}] parse the storage scope", self.domain))?;
-        let scoped = origin
-            .backend
-            .for_scope_conditioned(&scope, condition)
+        let scoped = super::claim_bound::claim_bound(origin.backend.as_ref(), &scope, condition)
             .with_context(|| {
                 format!("[{}] bind the import claim to storage writes", self.domain)
             })?;

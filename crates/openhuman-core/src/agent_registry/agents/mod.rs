@@ -30,16 +30,12 @@ mod loader;
 #[path = "fleet_prompt_tests.rs"]
 mod fleet_prompt_tests;
 
-#[path = "critic/prompt.rs"]
-pub mod critic;
 #[path = "image_agent/prompt.rs"]
 pub mod image_agent;
 #[path = "morning_briefing/prompt.rs"]
 pub mod morning_briefing;
 #[path = "orchestrator/prompt.rs"]
 pub mod orchestrator;
-#[path = "planner/prompt.rs"]
-pub mod planner;
 #[path = "presentation_agent/prompt.rs"]
 pub mod presentation_agent;
 #[path = "summarizer/prompt.rs"]

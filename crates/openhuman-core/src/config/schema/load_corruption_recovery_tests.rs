@@ -397,6 +397,36 @@ async fn load_or_init_falls_back_to_defaults_when_no_backup() {
 }
 
 #[tokio::test]
+async fn a_second_corruption_keeps_the_first_corrupted_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let first = root.join("config.toml.corrupted");
+    write_file(&first, "first corrupted copy").await;
+    write_file(&root.join("config.toml"), CORRUPTED_TOML).await;
+
+    load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        tokio::fs::read_to_string(&first).await.unwrap(),
+        "first corrupted copy",
+        "the earlier corrupted copy must not be overwritten"
+    );
+    let mut later = Vec::new();
+    let mut entries = tokio::fs::read_dir(root).await.unwrap();
+    while let Some(e) = entries.next_entry().await.unwrap() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with("config.toml.corrupted.") {
+            later.push(tokio::fs::read_to_string(e.path()).await.unwrap());
+        }
+    }
+    assert_eq!(
+        later,
+        vec![CORRUPTED_TOML.to_string()],
+        "the new corruption gets its own copy"
+    );
+}
+
+#[tokio::test]
 async fn load_or_init_does_not_trigger_recovery_on_valid_config() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

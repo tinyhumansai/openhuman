@@ -37,7 +37,7 @@
 ///   peer (or an intercepting firewall / antivirus / corporate TLS proxy)
 ///   closes the TCP connection mid-TLS-handshake, surfacing as
 ///   `"TLS error: native-tls error: unexpected EOF during handshake"`
-///   wrapped by `socket::ws_loop::run_connection` into
+///   wrapped by the SDK socket supervisor into
 ///   `"WebSocket connect: …"` (`TAURI-RUST-4ZD`, first seen on
 ///   `openhuman@0.56.0`, Windows). The existing `"tls handshake"` anchor
 ///   misses it because the words aren't contiguous (`"tls error"` …
@@ -133,7 +133,7 @@ fn is_channel_supervisor_restart_message(lower: &str) -> bool {
 ///
 /// Also matches the second canonical wire shape: tungstenite's
 /// `WsError::Http(response)` Display, which renders as `"HTTP error: <status>"`
-/// (and which `socket::ws_loop::run_connection` wraps as
+/// (and which the SDK socket supervisor wraps as
 /// `"WebSocket connect: HTTP error: 502 Bad Gateway"`). Per
 /// OPENHUMAN-TAURI-5P (~110 events) and -EZ (~51 events), backend
 /// staging/production load balancers emit HTTP 502/504 during the WebSocket
@@ -240,7 +240,7 @@ fn is_upstream_edge_block_message(lower: &str) -> bool {
 /// 5xx is intentionally **not** classified here — server-side failures from
 /// our backend are real bugs that should reach Sentry. The transient
 /// 502/503/504 deduplication is handled by the threshold logic in callers
-/// (see e.g. `crate::platform::socket::ws_loop::FAIL_ESCALATE_THRESHOLD`).
+/// (see e.g. the SDK socket supervisor's retry escalation threshold).
 fn is_backend_user_error_message(lower: &str) -> bool {
     let Some(rest) = lower.split_once("backend returned ").map(|(_, r)| r) else {
         return false;

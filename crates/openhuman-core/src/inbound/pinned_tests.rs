@@ -108,3 +108,29 @@ fn the_turn_events_belong_to_the_inbound_domain_and_say_what_ran() {
         Some("x:mentions/mentions turn t1: provider down")
     );
 }
+
+#[tokio::test]
+async fn a_failed_turn_stores_its_detail_scrubbed() {
+    let results = memory_results();
+    results
+        .start(&Stored::running(
+            "t-fail",
+            "x:mentions",
+            "mentions",
+            "teeny-mentions",
+            vec!["1".into()],
+            "msg",
+            5,
+        ))
+        .unwrap();
+    let agent = ScriptedAgent::new([]);
+    let pinned = Pinned::new(agent as Arc<dyn PinnedAgent>, results.clone());
+    pinned.fail(
+        "t-fail",
+        "provider said 401 for Bearer sk-live-SECRETSECRETSECRET1234",
+    );
+    let stored = results.get("t-fail").unwrap().unwrap();
+    let error = stored.result.error.unwrap();
+    assert!(!error.contains("SECRETSECRET"), "{error}");
+    assert!(error.contains("[REDACTED]"), "{error}");
+}

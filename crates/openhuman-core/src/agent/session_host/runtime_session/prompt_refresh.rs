@@ -5,11 +5,14 @@
 //! provider's prefix cache warm across a restart. A turn can still offer a
 //! replacement, which the runtime applies only when it differs from what is
 //! recorded; a thread-bound session then seals the transcript generation it
-//! was on and carries its conversation into the next. Two things offer one:
+//! was on and carries its conversation into the next. Three things offer one:
 //!
 //! - the permanent-tool catalogue (`permanent.rs`), whenever it changes;
 //! - the whole prompt, rendered afresh, when the agent's definition sets
-//!   `refresh_prompt_on_resume`, so prompt edits reach existing threads too.
+//!   `refresh_prompt_on_resume`, so prompt edits reach existing threads too;
+//! - the memory block (`memory_block.rs`), when a generation starts; it is
+//!   left out of the comparison below like the catalogue, so a memory change
+//!   alone never seals a generation or adds the note.
 //!
 //! Whatever is offered, the turn's transcript snapshot boundary moves with
 //! it: the request starts with the offered prefix, not the recorded one.
@@ -29,9 +32,20 @@ use tinyagents_runtime::{
 };
 use tinyinference_llm::message::Message;
 
+use super::memory_block::is_memory_block;
+use super::permanent::PERMANENT_TOOLS_MARKER;
 use super::OpenHumanTurnPrelude;
 use crate::agent::message_convert::{user_message_from_text, user_text_with_markers};
 use crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshotSink;
+
+/// A prefix's messages without the permanent-tool catalogue and the memory
+/// block, which the recorded prefix carries and a freshly rendered prompt
+/// does not.
+fn prompt_messages(prefix: &PrefixSnapshot) -> impl Iterator<Item = &Message> {
+    prefix.messages().iter().filter(|message| {
+        !message.text().starts_with(PERMANENT_TOOLS_MARKER) && !is_memory_block(message)
+    })
+}
 
 fn prompt_refresh_log_fields(prompt_changed: bool) -> (&'static str, &'static str) {
     if prompt_changed {
@@ -59,8 +73,12 @@ impl OpenHumanTurnPrelude {
         snapshot: &TranscriptSnapshotSink,
         request: &mut SessionTurnRequest,
     ) -> Result<TurnPreparation, RuntimeError> {
+        // Imported conversations can already be durable while lacking the
+        // prefix the first host turn must commit. Only an authoritative or
+        // inferred frozen prefix suppresses prompt preparation.
+        let cold = super::turn::prepare_prefix_for_turn(new_session, view.prefix_is_frozen);
         let mut preparation = self
-            .prepare(new_session)
+            .prepare(cold)
             .await
             .map_err(|error| RuntimeError::Driver(error.to_string()))?;
         // Whether this turn rendered the current prompt. Only then can a
@@ -72,7 +90,18 @@ impl OpenHumanTurnPrelude {
         } else {
             false
         };
+        // Compared before the catalogue refresh below, which changes the
+        // prefix of a kept prompt too, and without the catalogue the recorded
+        // prefix carries: only the rendered prompt itself counts.
+        let changed = rendered
+            && preparation
+                .prefix
+                .as_ref()
+                .is_some_and(|prefix| !prompt_messages(prefix).eq(prompt_messages(view.prefix)));
         self.refresh_permanent_prefix(&mut preparation, view.prefix);
+        // Last, so the block follows everything else the prefix carries.
+        self.refresh_memory_block(&mut preparation, view, cold)
+            .await;
         if let Some(prefix) = preparation.prefix.as_ref() {
             // The runtime sends `prefix` in place of the recorded one, so the
             // rounds this run produces start that much further on (or back).
@@ -83,10 +112,6 @@ impl OpenHumanTurnPrelude {
                 + prefix.messages().len();
         }
         if rendered {
-            let changed = preparation
-                .prefix
-                .as_ref()
-                .is_some_and(|prefix| prefix.messages() != view.prefix.messages());
             let (prefix_in_use, reason) = prompt_refresh_log_fields(changed);
             if changed {
                 tracing::info!(

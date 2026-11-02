@@ -194,7 +194,8 @@ pub(super) fn container_environment(
         crate::sandbox::ops::SANDBOX_ENV_PASSTHROUGH
             .iter()
             .filter_map(|name| {
-                tinytools_std::timeout::CommandEnvironment::var_os(name).map(|value| (*name, value))
+                tinyagents_harness_tools::exec::timeout::CommandEnvironment::var_os(name)
+                    .map(|value| (*name, value))
             })
             .collect::<Vec<_>>()
     } else {
@@ -207,7 +208,9 @@ pub(super) fn container_environment(
             .or_else(|| {
                 explicit
                     .is_none()
-                    .then(|| tinytools_std::timeout::CommandEnvironment::var_os(name))
+                    .then(|| {
+                        tinyagents_harness_tools::exec::timeout::CommandEnvironment::var_os(name)
+                    })
                     .flatten()
             })
     }));

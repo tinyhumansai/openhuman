@@ -141,7 +141,7 @@ async fn cached_report(
     };
     let report = PromptSizeReport::build(options)
         .await
-        .map_err(|e| format!("failed to build prompt-size report for {agent_id}: {e}"))?;
+        .map_err(|e| format!("failed to build prompt-size report for {agent_id}: {e:#}"))?;
 
     REPORT_CACHE
         .lock()

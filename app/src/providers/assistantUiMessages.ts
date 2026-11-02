@@ -567,7 +567,9 @@ function assistantParts(
   for (const [index, item] of transcript.entries()) {
     if (item.kind === 'thinking') {
       if (item.text.trim().length > 0) {
-        parts.push(reasoningPart(item.text, item.startedAt, item.endedAt));
+        parts.push(
+          reasoningPart(item.text, item.startedAt ?? undefined, item.endedAt ?? undefined)
+        );
       }
       continue;
     }

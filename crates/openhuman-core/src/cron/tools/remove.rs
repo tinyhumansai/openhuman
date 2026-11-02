@@ -3,7 +3,7 @@ use crate::cron;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use tinytools::{PermissionLevel, Tool, ToolExposure, ToolResult};
+use tinytools::{PermissionLevel, Tool, ToolResult};
 
 pub struct CronRemoveTool {
     config: Arc<Config>,
@@ -17,14 +17,6 @@ impl CronRemoveTool {
 
 #[async_trait]
 impl Tool for CronRemoveTool {
-    /// Superseded by the `cron` tool, which dispatches every scheduler
-    /// operation on one `action` field. Kept registered and dispatchable so a
-    /// replayed transcript or a saved skill naming `cron_*` keeps working;
-    /// hidden from the wire so six schemas do not ship where one does.
-    fn exposure(&self) -> ToolExposure {
-        ToolExposure::Hidden
-    }
-
     fn name(&self) -> &str {
         "cron_remove"
     }

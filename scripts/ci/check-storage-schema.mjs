@@ -32,8 +32,27 @@ export const REPO_ROOT = resolve(HERE, '..', '..');
 export const DOC_PATH = resolve(REPO_ROOT, 'docs', 'storage-schema.md');
 
 const COLLECTION = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
-const LEGACY_COLLECTIONS = new Set(['remix_markers', 'tinymemes_documents']);
 const TIME_SUFFIX = /(_at|_ns|_us|_secs|_ts|_time)$/;
+
+// TinyChannels keeps these historical source names in its collection grants
+// so the owner-local migrations can copy old rows. They are read-only inputs,
+// not v2 collection names; renaming them would orphan persisted data.
+const LEGACY_SOURCE_COLLECTIONS = new Set([
+  'tinychannels-bus\0channels_delivery_pending',
+  'tinychannels-bus\0channels_delivery_failed',
+  'tinychannels-bus\0channels_delivery_results',
+  'tinychannels-bus\0channel_remote_bindings',
+  'tinychannels-bus\0channel_remote_busy',
+  'tinychannels-bus\0channel_remote_meta',
+  'tinychannels-bus\0whatsapp_device',
+  'tinychannels-bus\0whatsapp_identity',
+  'tinychannels-bus\0whatsapp_session',
+  'tinychannels-bus\0whatsapp_prekey',
+  'tinychannels-bus\0whatsapp_signed_prekey',
+  'tinychannels-bus\0whatsapp_sender_key',
+  'tinychannels-bus\0whatsapp_sync_key',
+  'tinychannels-bus\0whatsapp_lid_mapping',
+]);
 
 /** Features the dump is built with: the contributor set plus the wallet owner. */
 export const DUMP_FEATURES = 'web3';
@@ -43,9 +62,8 @@ export const DUMP_FEATURES = 'web3';
  * dump with the feature set of an existing plain build so Cargo reuses it
  * instead of compiling the core again: a comma list, or `core-product` for
  * `scripts/ci/product-features.sh --core` (what the plain `openhuman-cli`
- * builds use). The schema is only gated on flows, skills, modules, web3 and
- * tinymemes, all of which are in the default set plus web3 and in the product
- * set, so the dump is identical; the wallet owner (web3) must be in any
+ * builds use). The schema is only gated on flows, skills, modules and web3,
+ * all of which are in the default set plus web3 and in the product set, so the dump is identical; the wallet owner (web3) must be in any
  * override.
  */
 export function dumpFeatures(env = process.env, root = REPO_ROOT) {
@@ -100,7 +118,7 @@ export function lint(dump) {
     crates.add(owner.crate);
     for (const collection of owner.collections ?? []) {
       const { name, indexes = [], ttl_field: ttlField, search } = collection;
-      if (!COLLECTION.test(name) && !LEGACY_COLLECTIONS.has(name)) {
+      if (!COLLECTION.test(name) && !LEGACY_SOURCE_COLLECTIONS.has(`${owner.crate}\0${name}`)) {
         problems.push(`${owner.crate}: collection "${name}" must be <owner>.<entity> with a snake_case entity`);
       }
       const key = `${owner.crate}\0${name}`;

@@ -762,4 +762,32 @@
 #                      used by storage diagnostics. These add two resolved
 #                      packages and crate names; native builds are unchanged.
 #                      Measured: scripts/kernel-floor.sh flows.
-flows:320:300:3
+# 331/303/3 2026-10-24 GROWTH, recorded rather than shed. Measured with
+#                      scripts/kernel-floor.sh flows on every first-parent main
+#                      merge since the 320/300/3 ratchet (bd5a6c89c1, Linux):
+#                      #8179 (b56f31fb7f) 320/300, version bumps only;
+#                      #8198 (84d6cdafee) 322/302, adds `tinyjuice-host` and
+#                      `tinystoragedrivers-types`; #8229 + #8231 (495efc6844)
+#                      331/303 (adb2b6d162 alone cannot be checked out, so the
+#                      pair is measured together). The TinyStorageDrivers v2
+#                      split adds cmov, ctutils, tinyagents-storage-kit and
+#                      tinystoragedrivers-{api,blob,document,kv,queue}, and
+#                      drops fs4, tinyflows-import and
+#                      tinystoragedrivers-{client,core,file,schema,sqlite}: net
+#                      +1 name. The other +8 packages are a second RustCrypto
+#                      generation: tinystoragedrivers-secrets 2.1.0 needs
+#                      chacha20poly1305 0.11 and hkdf 0.13 (with hmac 0.13,
+#                      cipher 0.5, aead 0.6, poly1305 0.9, universal-hash 0.6,
+#                      inout 0.2) while openhuman-core still pins
+#                      chacha20poly1305 0.10, hkdf 0.12 and hmac 0.12. Those
+#                      duplicates are debt: unify core on the newer generation,
+#                      then ratchet back down. Every later main merge through
+#                      da6cec5b0e measures 331/303/3; native unchanged.
+# 341/312/3 2026-10-25 GROWTH, required by the harness tools now composed by
+#                      openhuman-core: fs, net, exec, media and plan-review
+#                      are enabled on tinyagents-harness-tools so the core can
+#                      expose the migrated generic tools. Current upstream/main
+#                      measures this floor. +10 packages / +9 unique names;
+#                      native unchanged. Measured with scripts/kernel-floor.sh
+#                      flows --json.
+flows:341:312:3

@@ -14,8 +14,10 @@ import type { ReactNode } from 'react';
 import { Provider } from 'react-redux';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { editMessage } from '../../services/chatService';
+import type { ContentPart } from '../../services/chatWire';
 import chatRuntimeReducer from '../../store/chatRuntimeSlice';
-import threadReducer from '../../store/threadSlice';
+import threadReducer, { loadThreadMessages } from '../../store/threadSlice';
 import { registerChatSurface } from '../chatSurfaceHandlers';
 import { useOpenHumanExternalStore } from '../useOpenHumanExternalStore';
 
@@ -31,6 +33,10 @@ vi.mock('../../services/api/threadApi', () => ({
         hasTranscript: false,
       }),
   },
+}));
+vi.mock('../../services/chatService', () => ({
+  editMessage: vi.fn().mockResolvedValue(undefined),
+  regenerateMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
 const THREAD_ID = 't-quote';
@@ -55,10 +61,9 @@ function withQuote(text: string): AppendMessage {
   } as unknown as Partial<AppendMessage>);
 }
 
-function mount() {
-  const store = configureStore({
-    reducer: { thread: threadReducer, chatRuntime: chatRuntimeReducer },
-  });
+function mount(
+  store = configureStore({ reducer: { thread: threadReducer, chatRuntime: chatRuntimeReducer } })
+) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <Provider store={store}>{children}</Provider>
   );
@@ -108,5 +113,67 @@ describe('a quoted excerpt reaching the core', () => {
     await result.current.onNew(withQuote('   \n  '));
 
     expect(sent).toEqual(['what does this mean?']);
+  });
+
+  it('keeps the source row opaque attachments when editing its text', async () => {
+    const store = configureStore({
+      reducer: { thread: threadReducer, chatRuntime: chatRuntimeReducer },
+    });
+    const attachment: ContentPart = {
+      kind: 'image' as const,
+      media: {
+        opaqueId: 'stored-image-1',
+        contentType: 'image/png',
+        codec: null,
+        durationMs: null,
+        fileName: null,
+        height: null,
+        kind: 'image',
+        localCachePath: null,
+        path: null,
+        platformMessageId: null,
+        sizeBytes: null,
+        transcribed: false,
+        url: null,
+        width: null,
+      },
+      caption: null,
+      altText: null,
+    };
+    store.dispatch(
+      loadThreadMessages.fulfilled(
+        {
+          threadId: THREAD_ID,
+          messages: [
+            {
+              id: 'user-image-row',
+              content: 'describe this',
+              type: 'text',
+              extraMetadata: {},
+              sender: 'user',
+              createdAt: new Date().toISOString(),
+              attachments: [attachment],
+            },
+          ],
+        },
+        'load-image-row',
+        THREAD_ID
+      )
+    );
+    const { result } = mount(store);
+
+    await result.current.onEdit(
+      appended({
+        sourceId: 'user-image-row',
+        content: [{ type: 'text', text: 'describe this more carefully' }],
+      })
+    );
+
+    expect(editMessage).toHaveBeenCalledWith({
+      threadId: THREAD_ID,
+      messageId: 'user-image-row',
+      content: 'describe this more carefully',
+      attachments: [attachment],
+    });
   });
 });

@@ -190,6 +190,10 @@ scripts:
   - 'app/scripts/e2e-ports.sh'
   - 'app/scripts/e2e-web-build.sh'
   - 'app/scripts/e2e-web-session.sh'
+  # The native E2E runners, whose schedule and shard lists
+  # scripts/__tests__/e2e-run-shards.test.mjs cross-checks.
+  - 'app/scripts/e2e-run-all-flows.sh'
+  - 'app/scripts/e2e-run-shards.sh'
   # Shared logic behind the gate CLIs, and the module-pin gate's own
   # files. Without these a change to the checking logic would skip
   # the lane that tests it — the gate would stop watching itself.
@@ -258,7 +262,7 @@ storage:
   - 'crates/openhuman-core/src/security/approval/**'
   - 'crates/openhuman-core/src/security/devices/**'
   - 'crates/openhuman-core/src/security/secret_storage/**'
-  - 'crates/openhuman-core/src/security/credentials/**'
+  - 'crates/openhuman-core/src/credentials/**'
   - 'crates/openhuman-core/src/desktop/notifications/**'
   - 'crates/openhuman-core/src/integrations/task_sources/**'
   - 'crates/openhuman-core/src/agent/orchestration/**'

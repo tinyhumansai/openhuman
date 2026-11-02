@@ -1,12 +1,13 @@
 use super::*;
 use crate::hosted::test_support;
-use openhuman_embed::__host::memory_engines::Binding;
-use openhuman_embed::__host::security::credentials::session_support::{
-    BackendCredential, SESSION_EXPIRES_AT_META, SESSION_ISSUING_BACKEND_META,
+use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
+use openhuman_embed::__host::credentials::session_state::{
+    SESSION_EXPIRES_AT_META, SESSION_ISSUING_BACKEND_META,
 };
-use openhuman_embed::__host::security::credentials::{
+use openhuman_embed::__host::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
+use openhuman_embed::__host::memory_engines::Binding;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -38,8 +39,8 @@ fn request<'a>(
     openhuman_embed::__host::memory_engines::EngineRequest { config, root }
 }
 
-fn store_key(config: &openhuman_embed::__host::config::Config, key: &str) {
-    test_support::store_session(config, key);
+async fn store_key(config: &openhuman_embed::__host::config::Config, key: &str) {
+    test_support::store_session(config, key).await;
 }
 
 fn off_reason(binding: Binding) -> String {
@@ -51,11 +52,11 @@ fn off_reason(binding: Binding) -> String {
 
 // ── engine ──────────────────────────────────────────────────────────────────
 
-#[test]
-fn without_a_credential_the_engine_is_off_and_reports_its_endpoint() {
+#[tokio::test]
+async fn without_a_credential_the_engine_is_off_and_reports_its_endpoint() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, "https://memory.example.test");
-    match engine::bind(&request(&config, None)) {
+    match engine::bind(&request(&config, None)).await {
         Binding::Off {
             engine, endpoint, ..
         } => {
@@ -66,17 +67,17 @@ fn without_a_credential_the_engine_is_off_and_reports_its_endpoint() {
     }
 }
 
-#[test]
-fn a_local_session_token_is_off() {
+#[tokio::test]
+async fn a_local_session_token_is_off() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, "https://memory.example.test");
-    store_key(&config, "desktop.test.local");
-    let reason = off_reason(engine::bind(&request(&config, None)));
+    store_key(&config, "desktop.test.local").await;
+    let reason = off_reason(engine::bind(&request(&config, None)).await);
     assert!(reason.contains("sign in"), "{reason}");
 }
 
-#[test]
-fn the_host_credential_binds_below_the_endpoint_and_is_cached() {
+#[tokio::test]
+async fn the_host_credential_binds_below_the_endpoint_and_is_cached() {
     // The engine cache is keyed by a fingerprint that includes the attribution
     // headers, which derive from the process-global product identity and the
     // shell-version variable. Hold both locks so neither changes between the
@@ -85,14 +86,14 @@ fn the_host_credential_binds_below_the_endpoint_and_is_cached() {
     let _env = crate::backend::url::backend_env_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, "https://memory.example.test");
-    store_key(&config, "jwt.memory.test");
-    let first = match engine::bind(&request(&config, None)) {
+    store_key(&config, "jwt.memory.test").await;
+    let first = match engine::bind(&request(&config, None)).await {
         Binding::On(bound) => bound,
         Binding::Off { reason, .. } => panic!("expected bound: {reason}"),
     };
     assert_eq!(first.id, TINYHUMANS_ENGINE);
     assert_eq!(first.endpoint, "https://memory.example.test");
-    let second = match engine::bind(&request(&config, None)) {
+    let second = match engine::bind(&request(&config, None)).await {
         Binding::On(bound) => bound,
         Binding::Off { reason, .. } => panic!("expected bound: {reason}"),
     };
@@ -102,13 +103,13 @@ fn the_host_credential_binds_below_the_endpoint_and_is_cached() {
     );
 }
 
-#[test]
-fn the_layout_root_gets_its_own_cached_engine() {
+#[tokio::test]
+async fn the_layout_root_gets_its_own_cached_engine() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_endpoint(&tmp, "https://memory.example.test");
-    store_key(&config, "jwt.memory.layout");
-    let legacy = engine::bind(&request(&config, None));
-    let rooted = engine::bind(&request(&config, Some("org:42")));
+    store_key(&config, "jwt.memory.layout").await;
+    let legacy = engine::bind(&request(&config, None)).await;
+    let rooted = engine::bind(&request(&config, Some("org:42"))).await;
     match (legacy, rooted) {
         (Binding::On(legacy), Binding::On(rooted)) => {
             assert!(!std::sync::Arc::ptr_eq(&legacy.engine, &rooted.engine));
@@ -143,7 +144,7 @@ async fn host_bearer_reads_the_credential_per_request() {
         openhuman_embed::memory::api::Error::Unauthorized(_)
     ));
 
-    store_key(&config, "jwt.bearer.test");
+    store_key(&config, "jwt.bearer.test").await;
     assert_eq!(
         openhuman_embed::__host::memory_engines::BearerSource::bearer(&source)
             .await
@@ -164,8 +165,9 @@ async fn host_bearer_rejects_a_local_session_token() {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .ok();
-    store_key(&config, "desktop.test.local");
+    store_key(&config, "desktop.test.local").await;
     let source = HostBearer {
         config: std::sync::Arc::new(config),
     };
@@ -577,17 +579,17 @@ async fn a_backend_without_the_route_is_an_error_read_as_not_free() {
 }
 
 /// The hosted engine bound for `config` (which must hold a credential).
-fn bound_for(
+async fn bound_for(
     config: &openhuman_embed::__host::config::Config,
 ) -> openhuman_embed::__host::memory_engines::BoundEngine {
-    match engine::bind(&request(config, None)) {
+    match engine::bind(&request(config, None)).await {
         Binding::On(bound) => bound,
         Binding::Off { reason, .. } => panic!("expected bound: {reason}"),
     }
 }
 
 async fn registered_free_period(config: openhuman_embed::__host::config::Config) -> bool {
-    let bound = bound_for(&config);
+    let bound = bound_for(&config).await;
     billing::free_period_active(config, bound).await
 }
 
@@ -600,7 +602,7 @@ async fn the_engines_own_endpoint_is_asked_not_the_apps() {
     )
     .await;
     let config = config_with_endpoint(&tmp, &server.uri());
-    store_key(&config, "jwt.endpoint.test");
+    store_key(&config, "jwt.endpoint.test").await;
     assert!(registered_free_period(config).await);
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
@@ -615,7 +617,7 @@ async fn each_account_keeps_its_own_answer_on_the_hosted_engine() {
     for key in ["jwt.account.a", "jwt.account.b"] {
         let tmp = tempfile::tempdir().unwrap();
         let config = config_with_endpoint(&tmp, &server.uri());
-        store_key(&config, key);
+        store_key(&config, key).await;
         assert!(registered_free_period(config).await);
     }
     assert_eq!(
@@ -629,9 +631,49 @@ async fn each_account_keeps_its_own_answer_on_the_hosted_engine() {
 async fn a_signed_out_account_is_not_free() {
     let tmp = tempfile::tempdir().unwrap();
     let signed_in = config_with_endpoint(&tmp, "http://127.0.0.1:9");
-    store_key(&signed_in, "jwt.signed.out");
-    let bound = bound_for(&signed_in);
+    store_key(&signed_in, "jwt.signed.out").await;
+    let bound = bound_for(&signed_in).await;
     let other = tempfile::tempdir().unwrap();
     let signed_out = config_with_endpoint(&other, "http://127.0.0.1:9");
     assert!(!billing::free_period_active(signed_out, bound).await);
+}
+
+#[tokio::test]
+async fn readonly_health_refuses_to_send_an_api_key_to_a_foreign_endpoint() {
+    let _registry = crate::registry_test_lock_async().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_endpoint(&tmp, "https://not-tinyhumans.example.test");
+    // A plaintext schema-1 profile, as the session fixtures above use: the
+    // read-only engine reads the selected store without unlocking a keyring.
+    let state_dir = config.config_path.parent().expect("config state directory");
+    std::fs::create_dir_all(state_dir).expect("create profile fixture directory");
+    std::fs::write(
+        state_dir.join("auth-profiles.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "active_profiles": {},
+            "profiles": {
+                "api-key:default": {
+                    "provider": "api-key",
+                    "profile_name": "default",
+                    "kind": "token",
+                    "token": "th_test_key",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "metadata": { "kind": "tinyhumans-api-key" },
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .expect("write API-key profile fixture");
+
+    let health = read_only_health_probe(config).await;
+
+    let refused = openhuman_embed::__host::memory_engines::ReadOnlyEngineError::EndpointUnavailable
+        .safe_message();
+    assert!(
+        matches!(&health, EngineHealth::Down(message) if message == refused),
+        "an API key must not be sent to a non-managed endpoint: {health:?}"
+    );
 }

@@ -12,6 +12,7 @@ import {
 import { handleAuth } from "./routes/auth.mjs";
 import { handleAudio } from "./routes/audio.mjs";
 import { handleConversations } from "./routes/conversations.mjs";
+import { handleCronJobs } from "./routes/cron_jobs.mjs";
 import { handleIntegrations } from "./routes/integrations.mjs";
 import { handleInvites } from "./routes/invites.mjs";
 import { handleLlmCompletions, handleModelListing } from "./routes/llm.mjs";
@@ -58,6 +59,7 @@ const ROUTE_HANDLERS = [
   handleMemory,
   handleIntegrations,
   handleWebhooks,
+  handleCronJobs,
   handleConversations,
   handleVersion,
 ];

@@ -1899,6 +1899,8 @@ const en: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Open in canvas',
   'chat.flowProposal.dismiss': 'Dismiss',
   'chat.flowProposal.error': 'Could not save the workflow. Please try again.',
+  'chat.flowProposal.versionConflict':
+    'This workflow changed after the proposal was made, so it was not overwritten. Ask for a new revision.',
   'chat.flowProposal.enableError':
     'Workflow saved, but could not enable it. Try again, or enable it from the Workflows page.',
   // Terminal success state (issue B36): shown once the flow is saved and
@@ -2110,11 +2112,6 @@ const en: TranslationMap = {
   'chat.todos.ofTotal': '{done} of {total}',
   'chat.todos.receipt': 'Progress updated · {done}/{total}',
   'chat.subagents.ranFor': 'Ran for {duration}',
-  'chat.subagents.ofTotal': '{complete} of {total}',
-  'chat.subagents.runningCount': '{count} running',
-  'chat.subagents.failedCount': '{count} failed',
-  'chat.subagents.incompleteCount': '{count} incomplete',
-  'chat.subagents.settled': 'Child runs finished. Processing their results.',
   'conversations.planReview.title': 'Review plan',
   'conversations.planReview.subtitle':
     'Approve to run it, reject to discard, or send feedback to revise.',
@@ -2151,7 +2148,6 @@ const en: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Allow',
   'conversations.mcpUi.confirmDeny': 'Deny',
   'conversations.tools.delegatedTo': 'Delegated to {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Aggregating results',
   'conversations.tools.openInBrowser': 'Open in browser',
   'conversations.tools.status.running': 'running',
   'conversations.tools.status.done': 'done',
@@ -2249,25 +2245,6 @@ const en: TranslationMap = {
     'Retry failed. Download the latest app build and try again.',
   'daemon.serviceBlockingGate.retrying': 'Retrying...',
   'daemon.serviceBlockingGate.title': 'OpenHuman core is unavailable',
-  // Worktree manager (#3376): isolated worker git worktrees
-  'worktree.label': 'Worktree',
-  'worktree.dirty': 'Uncommitted changes',
-  'worktree.clean': 'Clean',
-  'worktree.removing': 'Removing…',
-  'worktree.removeFailed': 'Failed to remove worktree',
-  'worktree.diffFailed': 'Failed to load diff',
-  'worktree.diffLoading': 'Loading diff…',
-  'worktree.diffEmpty': 'No changes vs HEAD.',
-  'worktree.dirtyConfirm':
-    'This worktree has uncommitted changes. Removing it discards that work. The worker branch is kept.',
-  'worktree.action.open': 'Open folder',
-  'worktree.action.diff': 'Diff',
-  'worktree.action.hideDiff': 'Hide diff',
-  'worktree.action.remove': 'Remove',
-  'worktree.action.removeAnyway': 'Discard & remove',
-  'worktree.action.preserve': 'Preserve',
-  // Orchestration tab (#3375): multi-agent workflow runs.
-  'orchestration.detail.stop': 'Stop',
   'notifications.card.dismiss': 'Dismiss notification',
   'notifications.card.importanceTitle': 'Importance: {pct}%',
   'notifications.center.empty': 'No notifications yet',
@@ -4044,6 +4021,21 @@ const en: TranslationMap = {
   'composer.settings.loadingModels': 'Loading models…',
   'composer.voiceMode': 'Voice mode',
   'composer.humanMode': 'Human mode',
+  'voiceNote.record': 'Record a voice note',
+  'voiceNote.stop': 'Stop recording',
+  'voiceNote.discard': 'Discard voice note',
+  'voiceNote.send': 'Send voice note',
+  'voiceNote.recording': 'Recording…',
+  'voiceNote.play': 'Play voice note',
+  'voiceNote.pause': 'Pause voice note',
+  'voiceNote.seek': 'Seek in voice note',
+  'voiceNote.transcript': 'Transcript',
+  'voiceNote.noTranscript': 'No transcript available',
+  'voiceNote.label': 'Voice note {duration}',
+  'voiceNote.micDenied': 'Microphone access was denied or is unavailable.',
+  'voiceNote.transcribeFailed': 'Could not transcribe the voice note.',
+  'voiceNote.loadFailed': 'Could not load this voice note.',
+  'voiceNote.sendFailed': 'Could not send the voice note.',
   // Sync budget dialog
 
   // Sync confirm dialog
@@ -5149,11 +5141,10 @@ const en: TranslationMap = {
   'conversations.tools.reviewLearnings.active': 'Reviewing what I learned',
   'conversations.tools.reviewLearnings.done': 'Reviewed what I learned',
   'conversations.tools.updateLearnings.active': 'Updating what I learned',
+  'orchestration.detail.stop': 'Stop',
   'conversations.tools.updateLearnings.done': 'Updated what I learned',
   'conversations.tools.delegateTask.active': 'Delegating task',
   'conversations.tools.delegateTask.done': 'Delegated task',
-  'conversations.tools.runAgentsInParallel.active': 'Running agents in parallel',
-  'conversations.tools.runAgentsInParallel.done': 'Ran agents in parallel',
   'conversations.tools.messageAgent.active': 'Messaging agent',
   'conversations.tools.messageAgent.done': 'Messaged agent',
   'conversations.tools.waitForAgent.active': 'Waiting for agent',
@@ -5190,6 +5181,8 @@ const en: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Checked goal',
   'conversations.tools.completeGoal.active': 'Completing goal',
   'conversations.tools.completeGoal.done': 'Completed goal',
+  'conversations.tools.resumeGoal.active': 'Resuming goal',
+  'conversations.tools.resumeGoal.done': 'Resumed goal',
   'conversations.tools.scheduleTask.active': 'Scheduling task',
   'conversations.tools.scheduleTask.done': 'Scheduled task',
   'conversations.tools.checkSchedules.active': 'Checking schedules',
@@ -5374,6 +5367,54 @@ const en: TranslationMap = {
   'settings.appearance.showChatMascot': 'Show Tiny on the message box',
 
   'settings.layout.corners.round': 'Rounded',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Policy diagnostics are not built into this core.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Active security policy',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomy',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Workspace only',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maximum actions per hour',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'Require approval for medium risk',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Block high-risk commands',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Allowed commands',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'No commands are explicitly allowed.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Policy',
+  'settings.approvalHistory.judgeScores':
+    'Intent {intent} · Reversible {reversible} · Exfiltration {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'cached',
+  'settings.approvalHistory.judgeExpires': 'Expires {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Always-allowed tools',
+  'keyring.settings.toolTrustDescription':
+    'These tools can run without an approval prompt in this security scope.',
+  'keyring.settings.toolTrustLoading': 'Loading allowed tools…',
+  'keyring.settings.toolTrustLoadFailed': 'Could not load allowed tools.',
+  'keyring.settings.toolTrustRevokeFailed': 'Could not revoke this tool grant.',
+  'keyring.settings.toolTrustEmpty': 'No tools are always allowed.',
+  'keyring.settings.toolTrustRetry': 'Retry',
+  'keyring.settings.toolTrustRevoke': 'Revoke',
+  'keyring.settings.toolTrustRevoking': 'Revoking…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Keyring access request',
+  'keyring.operation.description':
+    'TinySecurity is requesting access to one keyring item. Review the operation before deciding.',
+  'keyring.operation.access': 'Access',
+  'keyring.operation.requester': 'Requested by',
+  'keyring.operation.origin': 'Origin',
+  'keyring.operation.purpose': 'Purpose',
+  'keyring.operation.name': 'Keyring item',
+  'keyring.operation.access.read': 'Read',
+  'keyring.operation.access.write': 'Write',
+  'keyring.operation.access.delete': 'Delete',
+  'keyring.operation.allow': 'Allow once',
+  'keyring.operation.deny': 'Deny',
+  'keyring.operation.submitting': 'Sending…',
+  'keyring.operation.expires': 'Request expires in {seconds}s.',
+  'keyring.operation.error': 'Could not send your decision. The request may have expired.',
 };
 
 export default en;

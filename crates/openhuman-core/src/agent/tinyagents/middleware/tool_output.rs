@@ -211,7 +211,7 @@ pub(crate) struct ToolOutputMiddleware {
     /// Calls that only print files the agent can read again (`cat`, `sed -n`,
     /// `file_read`, ...), keyed by call id; the same `before_tool` →
     /// `after_tool` seam. Their results skip the LLM summary. See
-    /// `tinytools_std::filesystem::is_read_only_call`.
+    /// `tinyagents_harness_tools::fs::filesystem::is_read_only_call`.
     pub(crate) file_reads: Mutex<std::collections::HashSet<String>>,
 }
 
@@ -284,7 +284,7 @@ impl OutputCapPolicy for ToolOutputMiddleware {
     /// An artifact nobody can read back is worse than the processed copy, so
     /// a body larger than `file_read` will open is not kept whole.
     fn max_persistable_bytes(&self) -> u64 {
-        tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES
+        tinyagents_harness_tools::fs::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES
     }
 }
 
@@ -462,7 +462,8 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for Too
                 reads.insert(call.id.clone(), read);
             }
         }
-        if tinytools_std::filesystem::is_read_only_call(&call.name, &call.arguments) {
+        if tinyagents_harness_tools::fs::filesystem::is_read_only_call(&call.name, &call.arguments)
+        {
             tracing::debug!(
                 tool = %call.name,
                 call_id = %call.id,
@@ -577,7 +578,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for Too
             );
         }
         // A file read within the budget goes in verbatim; past it, it never
-        // gets an LLM summary (see `tinytools_std::filesystem::is_read_only_call`).
+        // gets an LLM summary (see `tinyagents_harness_tools::fs::filesystem::is_read_only_call`).
         let verbatim_file_read =
             file_read && (plan.budget_bytes == 0 || content.len() <= plan.budget_bytes);
         if file_read {

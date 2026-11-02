@@ -80,7 +80,7 @@ test("the operator-trust file maps the artifact name to the sha256 of its bytes"
 
 test("every registry record carries a SourceSpec whose manifest exists in its submodule", () => {
   const specs = parseSourceSpecs(readRegistry(DEFAULT_ROOT));
-  assert.equal(specs.size, 14);
+  assert.equal(specs.size, 13);
   for (const spec of specs.values()) {
     assert.equal(spec.submodule, spec.id);
     const manifest = join(DEFAULT_ROOT, "vendor", spec.submodule, spec.manifest);

@@ -42,7 +42,11 @@ pub use connections::{
     active_connection_ids, composio_authorize, composio_delete_connection,
     composio_list_connections, ComposioDeleteResult,
 };
-pub use direct_mode::{composio_clear_api_key, composio_get_mode, composio_set_api_key};
+pub use direct_mode::{
+    clear_composio_api_key, composio_clear_api_key, composio_get_mode, composio_set_api_key,
+    get_composio_api_key, rpc_store_composio_api_key, store_composio_api_key,
+    COMPOSIO_DIRECT_PROVIDER,
+};
 pub(crate) use error_utils::{report_composio_op_error, should_forward_tags};
 pub use execute::composio_execute;
 pub use providers_ops::{
@@ -59,7 +63,7 @@ pub use triggers::{
 };
 // The `composio.{get,set}_user_scopes` handlers' storage half.
 pub(crate) use scope_prefs::{
-    ensure_migrated as ensure_user_scopes_migrated, load_or_default as load_user_scope_pref,
+    ensure_migrated as ensure_user_scopes_migrated, load as load_user_scope_pref,
     save as save_user_scope_pref,
 };
 

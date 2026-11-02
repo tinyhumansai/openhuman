@@ -27,14 +27,13 @@ pub(crate) fn spawn_progress_bridge(
     let timing_snapshot_for_task = timing_snapshot.clone();
     dispatch_ctx.clone().spawn(async move {
         log::debug!(
-            "[web_channel][bridge] spawned client_id={} thread_id={} request_id={} speak_reply={:?} source={:?} session_id={:?} hold_text_stream={}",
+            "[web_channel][bridge] spawned client_id={} thread_id={} request_id={} speak_reply={:?} source={:?} session_id={:?}",
             client_id,
             thread_id,
             request_id,
             metadata.speak_reply,
             metadata.source,
             metadata.session_id,
-            metadata.hold_text_stream,
         );
         let mut round: u32 = 0;
         // Accumulates the parent agent's streamed narration for the current
@@ -64,7 +63,7 @@ pub(crate) fn spawn_progress_bridge(
 
         // #3886: structured tracing export (`progress_bridge_trace.rs`).
         let mut journal_trace_ctx =
-            trace::trace_context(&config, &metadata, &client_id, &thread_id, &request_id);
+            trace::trace_context(&config, &metadata, &client_id, &thread_id, &request_id).await;
 
         // #4270: emit a periodic liveness beat for the whole in-flight turn so
         // the frontend silence timer never false-fires during a long prefill or

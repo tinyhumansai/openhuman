@@ -16,6 +16,25 @@ fn a_recorded_key_moves_under_the_threads_owner_keeping_its_body() {
 }
 
 #[test]
+fn channel_attachment_and_viseme_records_are_declared_in_the_threads_owner() {
+    let names: Vec<String> = collection_specs()
+        .iter()
+        .map(|spec| spec.name.clone())
+        .collect();
+    for name in [
+        TRANSCRIPT_KEYS,
+        CHANNEL_MESSAGES,
+        STAGED_ATTACHMENTS,
+        REPLY_VISEME_TIMELINES,
+    ] {
+        assert!(
+            names.iter().any(|declared| declared == name),
+            "missing {name} collection: {names:?}"
+        );
+    }
+}
+
+#[test]
 fn the_schema_composes_under_its_owner() {
     for spec in collection_specs() {
         spec.validate().unwrap();

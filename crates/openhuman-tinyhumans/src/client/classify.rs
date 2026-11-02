@@ -18,6 +18,10 @@ use super::error::HostedApiError;
 /// Bounded so a body with pathologically many keys can't bloat the event.
 pub(super) const BACKEND_API_BODY_SHAPE_MAX_BYTES: usize = 120;
 
+/// Max bytes of a non-2xx response body carried in the returned error, which
+/// reaches the RPC error string and the logs.
+pub(super) const BACKEND_API_ERROR_BODY_MAX_BYTES: usize = 512;
+
 /// PII-safe classification of a non-2xx response body for telemetry.
 ///
 /// The report message is written to daily logs before any Sentry scrubbing, so
@@ -255,9 +259,10 @@ impl BackendClient {
             );
         }
         anyhow::bail!(
-            "{} {} failed ({status}): {text}",
+            "{} {} failed ({status}): {}",
             method.as_str(),
-            url.path()
+            url.path(),
+            truncate_at_byte_boundary(&text, BACKEND_API_ERROR_BODY_MAX_BYTES)
         )
     }
 }

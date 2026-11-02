@@ -65,7 +65,7 @@ pub(crate) async fn run(run: NativeShellRun) -> anyhow::Result<ShellRunOutcome> 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    tinytools_std::timeout::own_process_group(command.as_std_mut());
+    tinyagents_harness_tools::exec::timeout::own_process_group(command.as_std_mut());
     let mut child = command
         .spawn()
         .map_err(|error| anyhow::anyhow!("Failed to execute command: {error}"))?;
@@ -109,7 +109,7 @@ pub(crate) async fn run(run: NativeShellRun) -> anyhow::Result<ShellRunOutcome> 
             // Stop the command and everything it started, then give the
             // readers a moment to drain what is left in the pipes.
             if let Some(pid) = pid {
-                tinytools_std::timeout::kill_process_group(pid);
+                tinyagents_harness_tools::exec::timeout::kill_process_group(pid);
             }
             let _ = child.start_kill();
             let _ = tokio::time::timeout(Duration::from_secs(2), async {
@@ -195,7 +195,7 @@ impl FixtureLive {
     /// the pipes.
     async fn stop(&mut self) {
         if let Some(pid) = self.pid {
-            tinytools_std::timeout::kill_process_group(pid);
+            tinyagents_harness_tools::exec::timeout::kill_process_group(pid);
         }
         let _ = self.child.start_kill();
         let _ = tokio::time::timeout(Duration::from_secs(2), async {
@@ -221,7 +221,7 @@ impl Drop for FixtureLive {
     fn drop(&mut self) {
         if !self.ended {
             if let Some(pid) = self.pid {
-                tinytools_std::timeout::kill_process_group(pid);
+                tinyagents_harness_tools::exec::timeout::kill_process_group(pid);
             }
             let _ = self.child.start_kill();
         }

@@ -237,12 +237,15 @@ impl OpenHumanBudgetGate {
         } else {
             Some(est.model.clone())
         };
-        let Some(model) = model else {
+        // With no model to name, the call still counts against every budget
+        // that doesn't depend on it (global, thread, agent, user agent);
+        // model-scoped budgets skip an empty model (`budget::bucket_of`).
+        let model = model.unwrap_or_else(|| {
             log::debug!(
-                "[tinyagents][budget] no model available for estimate; skipping budget check"
+                "[tinyagents][budget] no model for estimate; checking model-independent budgets"
             );
-            return None;
-        };
+            String::new()
+        });
         let call = cost::budget::CallUnderCheck {
             model: &model,
             scope: &scope,

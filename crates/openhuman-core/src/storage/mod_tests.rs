@@ -400,3 +400,40 @@ mod storage_runtime {
         }
     }
 }
+
+/// A backend one test installs is not another concurrent test's storage: the
+/// slot is visible to its installer's thread only (MAIN-57).
+#[test]
+fn a_test_installed_slot_is_hidden_from_other_test_threads() {
+    let ready = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let installer = {
+        let (ready, done) = (ready.clone(), done.clone());
+        std::thread::Builder::new()
+            .name("storage::slot_probe::installer".into())
+            .spawn(move || {
+                let _guard = crate::storage::test_support::install_backend_for_test(
+                    crate::storage::test_support::memory_backend(),
+                );
+                let mine = crate::storage::installed().is_some();
+                ready.wait();
+                done.wait();
+                assert!(mine, "the installer sees its own slot");
+            })
+            .unwrap()
+    };
+    let other = std::thread::Builder::new()
+        .name("storage::slot_probe::other".into())
+        .spawn(move || {
+            ready.wait();
+            let seen = installed_url().is_some() || crate::storage::installed().is_some();
+            done.wait();
+            seen
+        })
+        .unwrap();
+    installer.join().unwrap();
+    assert!(
+        !other.join().unwrap(),
+        "another test's thread must not see the installer's backend"
+    );
+}

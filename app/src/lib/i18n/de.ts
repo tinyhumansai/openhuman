@@ -1694,6 +1694,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.dismiss': 'Verwerfen',
   'chat.flowProposal.error':
     'Der Workflow konnte nicht gespeichert werden. Bitte versuchen Sie es erneut.',
+  'chat.flowProposal.versionConflict':
+    'Dieser Workflow wurde nach dem Vorschlag geändert und daher nicht überschrieben. Fordern Sie eine neue Überarbeitung an.',
   'chat.flowProposal.enableError':
     'Workflow gespeichert, konnte aber nicht aktiviert werden. Versuchen Sie es erneut oder aktivieren Sie ihn auf der Workflows-Seite.',
   'chat.flowProposal.savedConfirmation': 'Gespeichert',
@@ -1889,11 +1891,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} von {total}',
   'chat.todos.receipt': 'Fortschritt aktualisiert · {done}/{total}',
   'chat.subagents.ranFor': 'Lief {duration}',
-  'chat.subagents.ofTotal': '{complete} von {total}',
-  'chat.subagents.runningCount': '{count} laufen',
-  'chat.subagents.failedCount': '{count} fehlgeschlagen',
-  'chat.subagents.incompleteCount': '{count} unvollständig',
-  'chat.subagents.settled': 'Unteraufgaben beendet. Ergebnisse werden verarbeitet.',
   'conversations.planReview.title': 'Plan prüfen',
   'conversations.planReview.subtitle':
     'Genehmigen zum Ausführen, ablehnen zum Verwerfen oder Feedback zum Überarbeiten senden.',
@@ -1929,7 +1926,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Erlauben',
   'conversations.mcpUi.confirmDeny': 'Ablehnen',
   'conversations.tools.delegatedTo': 'An {agent} delegiert',
-  'conversations.tools.parallelAgentsAggregating': 'Ergebnisse werden zusammengeführt',
   'conversations.tools.openInBrowser': 'Im Browser öffnen',
   'conversations.tools.status.running': 'läuft',
   'conversations.tools.status.done': 'fertig',
@@ -1999,22 +1995,6 @@ const messages: TranslationMap = {
     'Wiederholungsversuch fehlgeschlagen. Lade den neuesten App-Build herunter und versuche es erneut.',
   'daemon.serviceBlockingGate.retrying': 'Erneuter Versuch...',
   'daemon.serviceBlockingGate.title': 'OpenHuman Kern ist nicht verfügbar',
-  'worktree.label': 'Arbeitsbaum',
-  'worktree.dirty': 'Nicht committete Änderungen',
-  'worktree.clean': 'Sauber',
-  'worktree.removing': 'Wird entfernt…',
-  'worktree.removeFailed': 'Worktree konnte nicht entfernt werden',
-  'worktree.diffFailed': 'Diff konnte nicht geladen werden',
-  'worktree.diffLoading': 'Diff wird geladen…',
-  'worktree.diffEmpty': 'Keine Änderungen gegenüber HEAD.',
-  'worktree.dirtyConfirm':
-    'Dieser Worktree hat nicht committete Änderungen. Beim Entfernen geht diese Arbeit verloren. Der Worker-Branch bleibt erhalten.',
-  'worktree.action.open': 'Ordner öffnen',
-  'worktree.action.diff': 'Diff',
-  'worktree.action.hideDiff': 'Diff ausblenden',
-  'worktree.action.remove': 'Entfernen',
-  'worktree.action.removeAnyway': 'Verwerfen & entfernen',
-  'worktree.action.preserve': 'Beibehalten',
   'notifications.card.dismiss': 'Benachrichtigung verwerfen',
   'notifications.card.importanceTitle': 'Wichtigkeit: {pct}%',
   'notifications.center.empty': 'Noch keine Benachrichtigungen',
@@ -3581,6 +3561,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Modelle werden geladen…',
   'composer.voiceMode': 'Sprachmodus',
   'composer.humanMode': 'Mensch-Modus',
+  'voiceNote.record': 'Sprachnachricht aufnehmen',
+  'voiceNote.stop': 'Aufnahme beenden',
+  'voiceNote.discard': 'Sprachnachricht verwerfen',
+  'voiceNote.send': 'Sprachnachricht senden',
+  'voiceNote.recording': 'Aufnahme läuft…',
+  'voiceNote.play': 'Sprachnachricht abspielen',
+  'voiceNote.pause': 'Sprachnachricht pausieren',
+  'voiceNote.seek': 'In der Sprachnachricht springen',
+  'voiceNote.transcript': 'Transkript',
+  'voiceNote.noTranscript': 'Kein Transkript verfügbar',
+  'voiceNote.label': 'Sprachnachricht {duration}',
+  'voiceNote.micDenied': 'Der Mikrofonzugriff wurde verweigert oder ist nicht verfügbar.',
+  'voiceNote.transcribeFailed': 'Die Sprachnachricht konnte nicht transkribiert werden.',
+  'voiceNote.loadFailed': 'Diese Sprachnachricht konnte nicht geladen werden.',
+  'voiceNote.sendFailed': 'Die Sprachnachricht konnte nicht gesendet werden.',
 
   // Sync budget dialog
 
@@ -5008,8 +5003,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'Gelerntes aktualisiert',
   'conversations.tools.delegateTask.active': 'Aufgabe wird delegiert',
   'conversations.tools.delegateTask.done': 'Aufgabe delegiert',
-  'conversations.tools.runAgentsInParallel.active': 'Agenten laufen parallel',
-  'conversations.tools.runAgentsInParallel.done': 'Agenten parallel ausgeführt',
   'conversations.tools.messageAgent.active': 'Nachricht an Agenten wird gesendet',
   'conversations.tools.messageAgent.done': 'Nachricht an Agenten gesendet',
   'conversations.tools.waitForAgent.active': 'Wartet auf Agenten',
@@ -5046,6 +5039,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Ziel geprüft',
   'conversations.tools.completeGoal.active': 'Ziel wird abgeschlossen',
   'conversations.tools.completeGoal.done': 'Ziel abgeschlossen',
+  'conversations.tools.resumeGoal.active': 'Ziel wird fortgesetzt',
+  'conversations.tools.resumeGoal.done': 'Ziel fortgesetzt',
   'conversations.tools.scheduleTask.active': 'Aufgabe wird geplant',
   'conversations.tools.scheduleTask.done': 'Aufgabe geplant',
   'conversations.tools.checkSchedules.active': 'Zeitpläne werden geprüft',
@@ -5247,6 +5242,57 @@ const messages: TranslationMap = {
 
   'settings.layout.corners.round': 'Abgerundet',
   'settings.layout.contrast.subtle': 'Dezent',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Richtliniendiagnosen sind in diesem Core nicht enthalten.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Aktive Sicherheitsrichtlinie',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomie',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Nur im Arbeitsbereich',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maximale Aktionen pro Stunde',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Genehmigung bei mittlerem Risiko erforderlich',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Befehle mit hohem Risiko blockieren',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Erlaubte Befehle',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Es sind keine Befehle ausdrücklich erlaubt.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Richtlinie',
+  'settings.approvalHistory.judgeScores':
+    'Absicht {intent} · Umkehrbar {reversible} · Datenabfluss {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'im Cache',
+  'settings.approvalHistory.judgeExpires': 'Läuft ab: {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Immer erlaubte Tools',
+  'keyring.settings.toolTrustDescription':
+    'Diese Tools können in diesem Sicherheitsbereich ohne Genehmigungsabfrage ausgeführt werden.',
+  'keyring.settings.toolTrustLoading': 'Erlaubte Tools werden geladen…',
+  'keyring.settings.toolTrustLoadFailed': 'Erlaubte Tools konnten nicht geladen werden.',
+  'keyring.settings.toolTrustRevokeFailed': 'Die Tool-Freigabe konnte nicht widerrufen werden.',
+  'keyring.settings.toolTrustEmpty': 'Es sind keine Tools immer erlaubt.',
+  'keyring.settings.toolTrustRetry': 'Erneut versuchen',
+  'keyring.settings.toolTrustRevoke': 'Widerrufen',
+  'keyring.settings.toolTrustRevoking': 'Wird widerrufen…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Anfrage für Schlüsselbundzugriff',
+  'keyring.operation.description':
+    'TinySecurity möchte auf einen Schlüsselbund-Eintrag zugreifen. Prüfe den Vorgang, bevor du entscheidest.',
+  'keyring.operation.access': 'Zugriff',
+  'keyring.operation.requester': 'Angefordert von',
+  'keyring.operation.origin': 'Ursprung',
+  'keyring.operation.purpose': 'Zweck',
+  'keyring.operation.name': 'Schlüsselbund-Eintrag',
+  'keyring.operation.access.read': 'Lesen',
+  'keyring.operation.access.write': 'Schreiben',
+  'keyring.operation.access.delete': 'Löschen',
+  'keyring.operation.allow': 'Einmal erlauben',
+  'keyring.operation.deny': 'Ablehnen',
+  'keyring.operation.submitting': 'Wird gesendet…',
+  'keyring.operation.expires': 'Die Anfrage läuft in {seconds}s ab.',
+  'keyring.operation.error':
+    'Deine Entscheidung konnte nicht gesendet werden. Die Anfrage ist möglicherweise abgelaufen.',
 };
 
 export default messages;

@@ -76,3 +76,7 @@ pub async fn post_json_rpc(
     );
     Ok(HttpRpcResponse { status, body })
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

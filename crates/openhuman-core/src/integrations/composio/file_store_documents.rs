@@ -79,6 +79,17 @@ impl Docs {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn on_backend(
+        backend: &std::sync::Arc<dyn crate::storage::StorageBackend>,
+        scope: &crate::storage::Scope,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            repo: Repo::on(backend, scope, DOMAIN, Vec::new)?,
+            state: StateKv::on_backend(backend, scope, KV_OWNER, KV_NS)?,
+        })
+    }
+
     /// The value stored stored under `name`, or `T::default()`.
     pub(super) fn load<T: DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
         let stored: Option<Value> = self.state.get(name)?;

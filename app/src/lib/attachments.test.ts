@@ -8,7 +8,7 @@ import {
   ATTACHMENT_MAX_IMAGES,
   ATTACHMENT_MAX_VIDEO_SIZE_BYTES,
   attachmentKindForMime,
-  buildMessageWithAttachments,
+  attachmentsToParts,
   extractVideoFrames,
   fileToDataUri,
   formatFileSize,
@@ -296,9 +296,19 @@ describe('video attachments', () => {
     expect('attachment' in result).toBe(true);
     if ('attachment' in result) {
       expect(result.attachment.dataUri).toBe('data:video/mp4;name=clip.mp4;base64,AQIDBA==');
-      expect(buildMessageWithAttachments('', [result.attachment])).toBe(
-        '[FILE:data:video/mp4;name=clip.mp4;base64,AQIDBA==]'
-      );
+      expect(attachmentsToParts([result.attachment])).toEqual([
+        {
+          kind: 'video',
+          caption: null,
+          durationMs: null,
+          thumbnail: null,
+          media: expect.objectContaining({
+            url: 'data:video/mp4;name=clip.mp4;base64,AQIDBA==',
+            contentType: 'video/mp4',
+            fileName: 'clip.mp4',
+          }),
+        },
+      ]);
     }
     expect(decode).not.toHaveBeenCalled();
   });
@@ -414,9 +424,9 @@ describe('extractVideoFrames (DOM-mocked)', () => {
   });
 });
 
-describe('buildMessageWithAttachments', () => {
-  it('returns text unchanged when no attachments', () => {
-    expect(buildMessageWithAttachments('hello', [])).toBe('hello');
+describe('attachmentsToParts', () => {
+  it('returns no parts when there are no attachments', () => {
+    expect(attachmentsToParts([])).toEqual([]);
   });
 
   it('sends the original video even when optional preview frames exist', () => {
@@ -428,44 +438,73 @@ describe('buildMessageWithAttachments', () => {
       previewUri: 'data:image/jpeg;base64,f1',
       frames: ['data:image/jpeg;base64,f1', 'data:image/jpeg;base64,f2'],
     });
-    const result = buildMessageWithAttachments('watch', [video]);
-    expect(result).toBe('watch [FILE:data:video/mp4;base64,original]');
+    const [part] = attachmentsToParts([video]);
+    expect(part.kind).toBe('video');
+    expect(part).toMatchObject({ media: { url: 'data:video/mp4;base64,original' } });
   });
 
-  it('appends IMAGE markers after the text', () => {
-    const a = makeAttachment({ dataUri: 'data:image/png;base64,abc' });
-    const result = buildMessageWithAttachments('describe this', [a]);
-    expect(result).toBe('describe this [IMAGE:data:image/png;base64,abc]');
+  it('maps an image to a typed image part carrying name, type and size', () => {
+    const a = makeAttachment({
+      dataUri: 'data:image/png;base64,abc',
+      file: makeFile('shot.png', 'image/png'),
+      mimeType: 'image/png',
+      originalSizeBytes: 321,
+    });
+    expect(attachmentsToParts([a])).toEqual([
+      {
+        kind: 'image',
+        altText: null,
+        caption: null,
+        media: {
+          kind: 'image',
+          url: 'data:image/png;base64,abc',
+          contentType: 'image/png',
+          fileName: 'shot.png',
+          sizeBytes: 321,
+          codec: null,
+          durationMs: null,
+          height: null,
+          localCachePath: null,
+          path: null,
+          platformMessageId: null,
+          transcribed: false,
+          width: null,
+        },
+      },
+    ]);
   });
 
-  it('emits only markers when text is empty', () => {
-    const a = makeAttachment({ dataUri: 'data:image/png;base64,abc' });
-    const result = buildMessageWithAttachments('', [a]);
-    expect(result).toBe('[IMAGE:data:image/png;base64,abc]');
-  });
-
-  it('handles multiple attachments', () => {
+  it('keeps the order of multiple attachments', () => {
     const a1 = makeAttachment({ id: '1', dataUri: 'data:image/png;base64,a' });
     const a2 = makeAttachment({ id: '2', dataUri: 'data:image/jpeg;base64,b' });
-    const result = buildMessageWithAttachments('look', [a1, a2]);
-    expect(result).toBe('look [IMAGE:data:image/png;base64,a] [IMAGE:data:image/jpeg;base64,b]');
+    const urls = attachmentsToParts([a1, a2]).map(p => (p as { media: { url: string } }).media.url);
+    expect(urls).toEqual(['data:image/png;base64,a', 'data:image/jpeg;base64,b']);
   });
 
-  it('emits FILE markers for non-image attachments', () => {
+  it('maps non-image attachments to file parts with the file name', () => {
     const a = makeAttachment({
       kind: 'file',
       file: makeFile('doc.pdf', 'application/pdf'),
       dataUri: 'data:application/pdf;base64,abc',
       mimeType: 'application/pdf',
     });
-    const result = buildMessageWithAttachments('read this', [a]);
-    expect(result).toBe('read this [FILE:data:application/pdf;base64,abc]');
+    expect(attachmentsToParts([a])).toEqual([
+      {
+        kind: 'file',
+        fileName: 'doc.pdf',
+        caption: null,
+        media: expect.objectContaining({
+          kind: 'document',
+          url: 'data:application/pdf;base64,abc',
+          fileName: 'doc.pdf',
+        }),
+      },
+    ]);
   });
 
-  it('trims leading/trailing whitespace from text', () => {
-    const a = makeAttachment({ dataUri: 'data:image/png;base64,x' });
-    const result = buildMessageWithAttachments('  hi  ', [a]);
-    expect(result).toBe('hi [IMAGE:data:image/png;base64,x]');
+  it('never emits upload markers', () => {
+    const a = makeAttachment({ dataUri: 'data:image/png;base64,abc' });
+    expect(JSON.stringify(attachmentsToParts([a]))).not.toMatch(/\[(IMAGE|FILE):/);
   });
 });
 

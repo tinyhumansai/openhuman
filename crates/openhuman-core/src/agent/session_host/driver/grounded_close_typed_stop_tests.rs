@@ -151,7 +151,7 @@ fn classified_halt_maps_all_typed_stop_categories_and_aliases() {
             close.usage.model_calls, 0,
             "typed `{class}` cause closes without another model call"
         );
-        let stop = crate::agent::session_host::stop_summary::classify_stop_with_cause(
+        let stop = crate::agent::session_host::stop_policy::classify_stop_with_cause(
             outcome.breaker_halt.as_deref(),
             outcome.failure_cause.clone(),
             false,
@@ -202,7 +202,7 @@ async fn typed_cause_without_halt_note_still_closes_and_keeps_operation() {
         "typed cause closes deterministically without calling the provider"
     );
 
-    let stop = crate::agent::session_host::stop_summary::classify_stop_with_cause(
+    let stop = crate::agent::session_host::stop_policy::classify_stop_with_cause(
         None,
         outcome.failure_cause,
         false,

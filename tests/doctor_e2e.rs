@@ -527,28 +527,23 @@ async fn assert_expired_session_is_seeded(home: &Path) {
     .expect("resolve isolated doctor profile read-only")
     .config;
     let profile =
-        openhuman_core::security::credentials::session_support::load_app_session_profile_read_only(
-            &config,
-        )
-        .expect("read session profile without mutation")
-        .expect("synthetic session profile exists");
-    let token = openhuman_core::security::credentials::session_support::session_token_from_profile(
-        Some(&profile),
-    )
-    .expect("session profile carries a token");
+        openhuman_core::credentials::session_state::load_app_session_profile_read_only(&config)
+            .await
+            .expect("read session profile without mutation")
+            .expect("synthetic session profile exists");
+    let token =
+        openhuman_core::credentials::session_state::session_token_from_profile(Some(&profile))
+            .expect("session profile carries a token");
     let now = chrono::Utc::now();
     assert!(
-        openhuman_core::security::credentials::jwt::decode_jwt_exp(&token)
+        openhuman_core::credentials::jwt::decode_jwt_exp(&token)
             .expect("synthetic JWT has an expiration")
             < now,
         "fixture JWT itself is expired"
     );
     assert_eq!(
-        openhuman_core::security::credentials::session_support::classify_session_token(
-            Some(&profile),
-            now,
-        ),
-        openhuman_core::security::credentials::session_support::SessionTokenCheck::Expired,
+        openhuman_core::credentials::session_state::classify_session_token(Some(&profile), now,),
+        openhuman_core::credentials::session_state::SessionTokenCheck::Expired,
         "the read-only session classifier sees an expired profile before doctor runs"
     );
     assert_unchanged(&before, &snapshot_tree(home));

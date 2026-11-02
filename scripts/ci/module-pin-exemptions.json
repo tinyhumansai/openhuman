@@ -13,30 +13,5 @@
     "Delete an entry the moment the pins are reconciled. An exemption that has",
     "stopped being true fails the gate too — `expect` must still match."
   ],
-  "exemptions": [
-    {
-      "id": "tinyjuice",
-      "expect": "v0.10.8-13-g598b7d17",
-      "reason": "TinyJuice PR #102 is merged upstream at 598b7d171f4abc721b2045fbcd454974dd2bc9d0. Its only source change is the compress unit-test file; this exact attestation retains the v0.10.8 registry artifact and rejects any other tree or head.",
-      "sourceParity": {
-        "tag": "v0.10.8",
-        "releaseCommit": "7c43eedd7d7917fa41ea1bd488649fe233d00531",
-        "candidateCommit": "598b7d171f4abc721b2045fbcd454974dd2bc9d0",
-        "assetsSha256": "502797c2eccf693e5aa024afc9908b6b3cc2e94c0cacbe1ecaf498bc9c59738c",
-        "testFile": {
-          "path": "src/compress_tests.rs",
-          "releaseMode": "100644",
-          "releaseBlob": "3ea48874bb6c8af4a0573fc12cee693454ca5ce0",
-          "candidateMode": "100644",
-          "candidateBlob": "bbb10c8aa18c9c1e61a7e4f11f40159b1495e0d3"
-        },
-        "unchangedTreeSha256": "08611ddb48d72b70476230462b1853856d5af5f0af507094406faa7786feb784",
-        "binding": {
-          "modulePath": "src/compress.rs",
-          "moduleBlob": "6e9c47e86d26f299b0e8fb959839a598619ff82b",
-          "testPath": "src/compress_tests.rs"
-        }
-      }
-    }
-  ]
+  "exemptions": []
 }

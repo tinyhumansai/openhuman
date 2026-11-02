@@ -79,6 +79,23 @@ pub fn bind_synthesized_pack_registry(
     );
 }
 
+/// Apply `edit` to every pack tool's handle in `tools`, returning how many.
+fn for_each_pack_tool(
+    tools: &Arc<Vec<Box<dyn Tool>>>,
+    mut edit: impl FnMut(&PackRegistryHandle),
+) -> usize {
+    let mut bound = 0usize;
+    for tool in tools.iter() {
+        if tool.name() != USE_SKILL {
+            continue;
+        }
+        if let Some(handle) = crate::tools::host_extensions::pack_registry_handle(tool.as_ref()) {
+            edit(&handle);
+            bound += 1;
+        }
+    }
+    bound
+}
 /// Remove packed tool names from an agent's advertised set.
 ///
 /// This is the whole compression: the tools stay registered and executable, but
@@ -127,17 +144,8 @@ pub fn strip_packed_from_visible(visible: &mut HashSet<String>, agent_id: &str) 
 /// Is `tool` withheld from `agent_id` by the pack table right now?
 ///
 /// The predicate behind [`strip_packed_from_visible`], exposed for callers that
-/// build a *listing* of tools rather than a visible set — today the collapsed
-/// `delegate_to` tool, whose `agent` enum is an advertised surface that no
-/// `visible` subtraction can reach.
-///
-/// That distinction is load-bearing. Collapsing the archetype delegates without
-/// it silently re-advertised seven routes the pack table deliberately withholds
-/// (`do_crypto`, `use_mcp_server`, `setup_skills`,
-/// `run_skill`, `build_workflow`, `discover_workflows`): each one stopped being
-/// a tool — so `strip_packed_from_visible` had nothing to remove — and became a
-/// string inside another tool's schema instead. A collapse must never widen
-/// what the pack posture narrowed.
+/// build a listing of tools rather than a visible set. This keeps packed tools
+/// out of listings while preserving their registered dispatch paths.
 pub fn is_withheld_from(agent_id: &str, tool: &str) -> bool {
     let groups = super::groups::current();
     groups.mode_for_tool(tool) == super::groups::GroupMode::Withheld
@@ -156,54 +164,43 @@ pub fn is_withheld_from(agent_id: &str, tool: &str) -> bool {
 /// guessed at tool names, and never handed off. Closing the raw tools leaves the
 /// hand-off as the route, and the pack listing then names it (`route_sentence`).
 ///
-/// A pack closes only when all of this holds:
-/// * it is withheld from `agent_id` (a pack's owner keeps its own belt),
-/// * one of the pack's owners is the [`delegation_target`] of a hand-off this
-///   agent carries **unpacked** — a delegate no pack withholds, and therefore
-///   one it advertises by construction.
-///
-/// [`delegation_target`]: crate::tools::host_extensions::delegation_target
-///
-/// Inside a closed pack, a tool that is itself a hand-off (e.g. `create_skill`)
-/// stays reachable: it is a route, not a raw tool. A tool whose group an embedder
-/// advertised is on the wire, not withheld, and is left alone too.
-///
-/// **Deliberately not keyed on the visible set.** It used to be, and that made
-/// the rule true in tests and false in production. An agent with
-/// `ToolScope::Named` is built with `visible` = its named list, which cannot
-/// contain a *synthesised* delegate like `setup_skills`; those names arrive
-/// later, when `refresh_delegation_tools` inserts them. So at build time no
-/// hand-off looked reachable and nothing closed, while a harness agent — whose
-/// empty visible set is seeded from every tool, synthesised ones included —
-/// closed correctly. The live orchestrator kept its raw `skill_registry_*` /
-/// `mcp_registry_*` route the whole time (#6302). Pack membership is knowable
-/// the moment the tools exist, so the answer no longer depends on when the
-/// visible set is filled in.
+/// Close packs whose task family this agent can reach through its
+/// `spawn_subagent` schema. The schema's agent-id enum is the same allowlist
+/// enforced during execution. The host's explicit closure-owner table is used
+/// instead of every `ToolPack::owners` entry because some agents own only
+/// auxiliary tools in a broader pack.
 pub fn closed_by_direct_handoff(agent_id: &str, tools: &[&dyn Tool]) -> Vec<&'static str> {
-    let reachable_owners: HashSet<&str> = tools
+    let reachable_owners: HashSet<String> = tools
         .iter()
-        .filter(|tool| registry::pack_for_tool(tool.name()).is_none())
-        .filter_map(|tool| crate::tools::host_extensions::delegation_target(*tool))
+        .filter(|tool| tool.name() == "spawn_subagent")
+        .flat_map(|tool| {
+            let schema = tool.parameters_schema();
+            schema
+                .pointer("/properties/agent_id/enum")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
         .collect();
     if reachable_owners.is_empty() {
         return Vec::new();
     }
-    let handoffs: HashSet<&str> = tools
-        .iter()
-        .filter(|tool| crate::tools::host_extensions::delegation_target(**tool).is_some())
-        .map(|tool| tool.name())
-        .collect();
     let groups = super::groups::current();
     registry::PACKS
         .iter()
         .filter(|pack| !pack.is_owner(agent_id))
         .filter(|pack| {
-            pack.owners
+            registry::DIRECT_HANDOFF_PACK_OWNERS
                 .iter()
-                .any(|owner| reachable_owners.contains(owner))
+                .find(|(pack_id, _)| *pack_id == pack.id)
+                .is_some_and(|(_, owners)| {
+                    owners.iter().any(|owner| reachable_owners.contains(*owner))
+                })
         })
         .flat_map(|pack| pack.tools.iter().copied())
-        .filter(|name| !handoffs.contains(name))
         .filter(|name| groups.mode_for_tool(name) == super::groups::GroupMode::Withheld)
         .collect()
 }

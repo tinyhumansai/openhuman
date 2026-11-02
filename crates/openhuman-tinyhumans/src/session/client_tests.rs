@@ -36,6 +36,24 @@ fn base_url_is_normalised_and_validated() {
 }
 
 #[test]
+fn fetch_me_error_from_sdk_rejects_only_a_401() {
+    let status = |status| tinyhumans_sdk::Error::Status {
+        status,
+        body: Value::Null,
+    };
+    assert!(matches!(
+        FetchMeError::from_sdk(status(401)),
+        FetchMeError::Rejected(_)
+    ));
+    for code in [400, 402, 403, 404, 429, 500, 503] {
+        assert!(
+            FetchMeError::from_sdk(status(code)).is_availability_failure(),
+            "{code} must keep the session"
+        );
+    }
+}
+
+#[test]
 fn fetch_me_error_classification() {
     assert!(FetchMeError::Transient("503".into()).is_availability_failure());
     assert!(FetchMeError::Transport("timeout".into()).is_availability_failure());
@@ -186,4 +204,34 @@ async fn validation_budget_honours_new_then_legacy_env() {
     assert_eq!(validation_budget().as_millis(), 250);
     std::env::remove_var(VALIDATION_BUDGET_ENV);
     std::env::remove_var(LEGACY_VALIDATION_BUDGET_ENV);
+}
+
+#[tokio::test]
+async fn fetch_me_does_not_follow_a_cross_origin_redirect_with_the_api_key() {
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let elsewhere = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(me_user()))
+        .mount(&elsewhere)
+        .await;
+    let backend = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/auth/me", elsewhere.uri())),
+        )
+        .mount(&backend)
+        .await;
+
+    let client = SessionClient::new(&backend.uri(), &headers()).unwrap();
+    let _ = client.fetch_me(&Credential::api_key("sk-1")).await;
+
+    assert_eq!(backend.received_requests().await.unwrap().len(), 1);
+    let leaked = elsewhere.received_requests().await.unwrap();
+    assert!(
+        leaked.iter().all(|r| !r.headers.contains_key("x-api-key")),
+        "the redirect target received the API key"
+    );
 }

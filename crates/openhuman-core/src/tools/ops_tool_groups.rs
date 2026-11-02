@@ -140,15 +140,12 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         || matches!(
             name,
             "ask_user_clarification"
-                | "delegate"
-                | "delegate_graph"
                 | "delegate_to_personality"
                 | "todo"
                 | "wait"
                 | "wait_loop"
                 | "request_plan_review"
                 | "plan_exit"
-                | "spawn_parallel_agents"
         )
     {
         return DomainGroup::Agent;

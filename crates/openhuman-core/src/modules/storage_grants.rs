@@ -317,9 +317,14 @@ fn is_write(object: Object, selector: &str) -> bool {
             "Put" | "Delete" | "DeleteWhere" | "Claim" | "AtomicBatch" | "AtomicBatchChecked"
         ) | (
             Object::Streams,
-            "Append" | "AppendBatch" | "AppendBatchIfOffset" | "TruncateBefore" | "DeleteStream"
+            "Append"
+                | "AppendBatch"
+                | "AppendBatchIfOffset"
+                | "TruncateBefore"
+                | "DeleteStream"
+                | "Seal"
         ) | (Object::Blobs, "Put" | "PutStream" | "Delete" | "PresignPut")
-            | (Object::Secrets, "Set" | "Delete")
+            | (Object::Secrets, "Set" | "SetIf" | "Delete")
             | (
                 Object::Queues,
                 "EnsureQueue"
@@ -416,12 +421,17 @@ fn batch(grant: &StorageGrant, request: &Value) -> Result<Plan, Denied> {
 
 fn streams(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, Denied> {
     match selector {
-        "ReadWindow" | "Len" => {
+        "ReadWindow" | "Len" | "Info" => {
             let name = text(request, "stream")?;
             StorageGrant::prefixed(&grant.stream_prefixes, name)?;
             Ok(forward(name))
         }
-        "Append" | "AppendBatch" | "AppendBatchIfOffset" | "TruncateBefore" | "DeleteStream" => {
+        "Append"
+        | "AppendBatch"
+        | "AppendBatchIfOffset"
+        | "TruncateBefore"
+        | "DeleteStream"
+        | "Seal" => {
             let name = text(request, "stream")?;
             StorageGrant::prefixed(&grant.stream_prefixes, name)?;
             Ok(forward(name))
@@ -431,6 +441,8 @@ fn streams(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan
             let granted = StorageGrant::prefixed(&grant.stream_prefixes, prefix)?;
             Ok(forward(granted))
         }
+        // The client probes each port it was granted when it connects.
+        "Capabilities" => Ok(forward("")),
         _ => Err(Denied::Malformed),
     }
 }
@@ -450,7 +462,7 @@ fn blobs(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, 
             let granted = StorageGrant::prefixed(&grant.blob_prefixes, key)?;
             Ok(forward(granted))
         }
-        "List" => {
+        "List" | "ListPage" => {
             let prefix = text(request, "prefix")?;
             let granted = StorageGrant::prefixed(&grant.blob_prefixes, prefix)?;
             Ok(forward(granted))
@@ -462,11 +474,11 @@ fn blobs(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, 
 
 fn secrets(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan, Denied> {
     match selector {
-        "Get" => {
+        "Get" | "GetVersioned" => {
             let granted = StorageGrant::prefixed(&grant.secret_prefixes, text(request, "name")?)?;
             Ok(forward(granted))
         }
-        "Set" | "Delete" => {
+        "Set" | "SetIf" | "Delete" => {
             let granted = StorageGrant::prefixed(&grant.secret_prefixes, text(request, "name")?)?;
             Ok(forward(granted))
         }
@@ -474,6 +486,8 @@ fn secrets(grant: &StorageGrant, selector: &str, request: &Value) -> Result<Plan
             let granted = StorageGrant::prefixed(&grant.secret_prefixes, text(request, "prefix")?)?;
             Ok(forward(granted))
         }
+        // The client probes each port it was granted when it connects.
+        "Capabilities" => Ok(forward("")),
         _ => Err(Denied::Malformed),
     }
 }

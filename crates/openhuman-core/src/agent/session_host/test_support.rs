@@ -102,6 +102,14 @@ pub(crate) fn install_model_fixture() {
     crate::inference::registry::register_chat_model(PROVIDER_OPENHUMAN, model_fixture_entry());
 }
 
+/// Configure a managed-provider session fixture with its required test credential.
+pub(crate) async fn install_managed_model_fixture(config: &crate::config::Config) {
+    install_model_fixture();
+    crate::credentials::api_key::store_api_key(config, "test-session-fixture-key")
+        .await
+        .expect("store the managed inference fixture credential");
+}
+
 pub(crate) fn install_scripted_model(model: Arc<dyn ChatModel<()>>) {
     crate::inference::registry::register_chat_model(
         PROVIDER_OPENHUMAN,

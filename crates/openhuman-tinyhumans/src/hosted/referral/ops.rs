@@ -13,7 +13,7 @@ use openhuman_embed::__host::core::Outcome;
 use crate::hosted::client::HostedClient;
 
 pub async fn get_stats(config: &Config) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let data = client.finish_value(
         "GET /referral/stats",
         client.sdk().referral().get_referral_stats().await,
@@ -29,7 +29,7 @@ pub async fn claim_referral(
     code: &str,
     device_fingerprint: Option<&str>,
 ) -> Result<Outcome<Value>, String> {
-    let client = HostedClient::from_config(config)?;
+    let client = HostedClient::from_config(config).await?;
     let request = ClaimReferralRequest {
         code: code.trim().to_string(),
         device_fingerprint: device_fingerprint

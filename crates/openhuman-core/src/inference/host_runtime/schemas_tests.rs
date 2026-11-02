@@ -8,7 +8,7 @@ fn runtime_schema_catalog_matches_registered_controllers() {
     assert_schema_controller_parity(
         &all_controller_schemas(),
         &all_registered_controllers(),
-        "agent_chat",
+        "transcribe",
     );
 }
 
@@ -59,20 +59,6 @@ fn deserialize_params_errors_on_invalid_shape() {
     m.insert("message".into(), Value::Bool(true));
     let err = deserialize_params::<AgentChatParams>(m).unwrap_err();
     assert!(err.contains("invalid params"));
-}
-
-/// `agent_id` is a declared, optional input of `inference.agent_chat` — the
-/// embed crate pins its `TurnRequest` field names against this schema, so a
-/// param the controller accepts but never declares would be unreachable.
-#[test]
-fn agent_chat_declares_an_optional_agent_id() {
-    let schema = schemas("agent_chat");
-    let field = schema
-        .inputs
-        .iter()
-        .find(|f| f.name == "agent_id")
-        .expect("agent_chat declares agent_id");
-    assert!(!field.required, "agent_id must stay optional");
 }
 
 #[test]

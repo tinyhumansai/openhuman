@@ -65,10 +65,6 @@ async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
     // through the host's scoped CatalogStorage callback. The successful
     // create/list round-trip above exercises that boundary.
 
-    // The delegation graph's checkpointer lives on the backend too.
-    let delegation_config = config.clone();
-    openhuman_core::agent::orchestration::open_delegation_checkpointer(&delegation_config).unwrap();
-
     // A job's scheduling policy lives on the backend too.
     let policy_config = config.clone();
     tokio::task::spawn_blocking(move || {
@@ -114,7 +110,6 @@ async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
         "cron/schedule.db",
         "flows/flows.db",
         "flows/catalog.db",
-        "graph_checkpoints.db",
     ] {
         assert!(
             !workspace.path().join(path).exists(),
@@ -140,7 +135,6 @@ async fn a_configured_backend_holds_cron_jobs_and_flow_catalog() {
         1
     );
     assert_eq!(fallback_flow.name, "Fallback");
-    openhuman_core::agent::orchestration::open_delegation_checkpointer(&config).unwrap();
 }
 
 /// The stores TinyFlows used to write (`jobs.db`, `flows.db`, `checkpoints.db`,

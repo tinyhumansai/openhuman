@@ -5,7 +5,7 @@
 //! the RPC response shapes are unchanged.
 
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::session_support::{
+use openhuman_embed::__host::credentials::backend_credential::{
     resolve_backend_credential, BackendCredential,
 };
 use serde_json::Value;
@@ -58,8 +58,10 @@ where
 
 /// The client and credential for `config`, or the sentinel-bearing error the
 /// RPC error channel classifies.
-fn prepare(config: &Config) -> anyhow::Result<(BackendClient, BackendCredential)> {
-    let credential = resolve_backend_credential(config).map_err(anyhow::Error::msg)?;
+async fn prepare(config: &Config) -> anyhow::Result<(BackendClient, BackendCredential)> {
+    let credential = resolve_backend_credential(config)
+        .await
+        .map_err(anyhow::Error::msg)?;
     let client = BackendClient::from_config(config)?;
     Ok((client, credential))
 }
@@ -69,7 +71,7 @@ pub(super) async fn send_reaction(
     channel: &str,
     reaction: Value,
 ) -> anyhow::Result<ChannelReactionResult> {
-    let (client, credential) = prepare(config)?;
+    let (client, credential) = prepare(config).await?;
     log::debug!("[tinyhumans][channels] sending reaction to channel '{channel}'");
     let value = client
         .send_channel_reaction(channel, credential, reaction)
@@ -88,7 +90,7 @@ pub(super) async fn create_thread(
     channel: &str,
     title: &str,
 ) -> anyhow::Result<ChannelThreadResult> {
-    let (client, credential) = prepare(config)?;
+    let (client, credential) = prepare(config).await?;
     log::debug!("[tinyhumans][channels] creating thread in channel '{channel}'");
     let value = client
         .create_channel_thread(channel, credential, title)
@@ -108,7 +110,7 @@ pub(super) async fn update_thread(
     thread_id: &str,
     action: &str,
 ) -> anyhow::Result<ChannelThreadResult> {
-    let (client, credential) = prepare(config)?;
+    let (client, credential) = prepare(config).await?;
     log::debug!(
         "[tinyhumans][channels] updating thread '{thread_id}' in channel '{channel}' action='{action}'"
     );
@@ -129,7 +131,7 @@ pub(super) async fn list_threads(
     channel: &str,
     active: Option<bool>,
 ) -> anyhow::Result<ChannelThreadListResult> {
-    let (client, credential) = prepare(config)?;
+    let (client, credential) = prepare(config).await?;
     log::debug!("[tinyhumans][channels] listing threads in channel '{channel}' active={active:?}");
     let value = client
         .list_channel_threads(channel, credential, active)

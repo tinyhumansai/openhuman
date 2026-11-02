@@ -85,6 +85,7 @@ impl ChatModel<()> for ScriptedProvider {
                 tool_calls: vec![],
                 usage: None,
                 reasoning_content: None,
+                finish_reason: None,
             }
         } else {
             guard.remove(0)
@@ -269,6 +270,7 @@ fn tool_response(calls: Vec<NativeToolCall>) -> ChatResponse {
         tool_calls: calls,
         usage: None,
         reasoning_content: None,
+        finish_reason: None,
     }
 }
 
@@ -279,6 +281,7 @@ fn text_response(text: &str) -> ChatResponse {
         tool_calls: vec![],
         usage: None,
         reasoning_content: None,
+        finish_reason: None,
     }
 }
 
@@ -291,6 +294,7 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
         tool_calls: vec![],
         usage: None,
         reasoning_content: None,
+        finish_reason: None,
     }
 }
 

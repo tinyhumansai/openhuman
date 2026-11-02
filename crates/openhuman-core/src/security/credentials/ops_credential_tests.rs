@@ -389,7 +389,7 @@ async fn set_and_clear_api_key_credential() {
 async fn clearing_the_session_preserves_a_coexisting_api_key() {
     // Reaches the connector module, whose route is process-wide: hold the module
     // lock (before TEST_ENV_LOCK, the established order) for the whole test.
-    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
@@ -477,7 +477,7 @@ async fn clearing_the_session_preserves_a_coexisting_api_key() {
 async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_key() {
     // Reaches the connector module, whose route is process-wide: hold the module
     // lock (before TEST_ENV_LOCK, the established order) for the whole test.
-    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
@@ -568,7 +568,7 @@ async fn clearing_the_session_preserves_the_active_key_over_a_stale_destination_
 async fn clearing_without_a_kind_removes_a_user_scoped_api_key_at_its_source() {
     // Reaches the connector module, whose route is process-wide: hold the module
     // lock (before TEST_ENV_LOCK, the established order) for the whole test.
-    let _module = crate::integrations::composio::module_client::module_guard().await;
+    let _module = crate::integrations::composio::module_client::module_lock_guard().await;
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
@@ -660,91 +660,4 @@ async fn clear_credential_without_a_kind_removes_everything() {
             .value
             .is_authenticated
     );
-}
-
-// ── set_credential (local session) ─────────────────────────────
-
-/// A local session token requires a non-empty user payload — the backend
-/// fetch path is bypassed entirely, so there is no fallback to derive the
-/// user from an API response.
-#[tokio::test]
-async fn store_session_local_token_rejects_missing_user_payload() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
-    let tmp = TempDir::new().unwrap();
-    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
-    let _home = EnvVarGuard::set("HOME", tmp.path());
-    let config = test_config(&tmp);
-    let local_token = "header.payload.local";
-    let err = store_session(
-        &DispatchCtx::process_default(),
-        &config,
-        local_token,
-        None,
-        None,
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        err.contains("local session requires a user payload"),
-        "expected 'local session requires a user payload', got: {err}"
-    );
-}
-
-/// A local session token with a user payload must be accepted without any
-/// network call, must force a deterministic `local-<device>` user id
-/// regardless of what the caller passes, and must return a stored profile
-/// summary.
-#[tokio::test]
-async fn store_session_local_token_succeeds_without_network_and_forces_local_user_id() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
-    let tmp = TempDir::new().unwrap();
-    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
-    let _home = EnvVarGuard::set("HOME", tmp.path());
-    let config = test_config(&tmp);
-    let local_token = "header.payload.local";
-    let user = serde_json::json!({
-        "id": "local",
-        "name": "Local User",
-        "email": "local@openhuman.local"
-    });
-    // Pass a different user_id to verify it is overridden.
-    let result = store_session(
-        &DispatchCtx::process_default(),
-        &config,
-        local_token,
-        Some("should-be-overridden".to_string()),
-        Some(user),
-    )
-    .await
-    .unwrap();
-    // The credential is installed (no network call was required).
-    assert!(result.value.is_authenticated);
-    assert_eq!(result.value.credential.as_deref(), Some("local"));
-    // Logs must mention that backend validation was skipped.
-    let log_text = result.logs.join(" ");
-    assert!(
-        log_text.contains("local session accepted without backend validation"),
-        "expected log confirming no backend call, got: {log_text}"
-    );
-    let expected_local_user_id = local_session_user_id();
-    assert!(
-        log_text.contains(&format!(
-            "user directory activated for {expected_local_user_id}"
-        )),
-        "expected user-directory activation log for deterministic local uid, got: {log_text}"
-    );
-    assert!(
-        log_text.contains("onboarding left incomplete for local session setup"),
-        "expected local session to remain in onboarding, got: {log_text}"
-    );
-    // The forced local user id wins over the caller's hint, and the user
-    // payload's id fields are rewritten to match.
-    assert_eq!(
-        result.value.user_id.as_deref(),
-        Some(expected_local_user_id.as_str())
-    );
-    let user = result.value.user.unwrap();
-    assert_eq!(user["id"], expected_local_user_id);
-    assert_eq!(user["_id"], expected_local_user_id);
-    assert_eq!(user["name"], "Local User");
 }

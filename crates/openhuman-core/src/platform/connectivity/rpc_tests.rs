@@ -7,14 +7,16 @@ fn reserve_port() -> std::net::TcpListener {
 }
 
 async fn spawn_openhuman_probe_listener(
-    port: u16,
+    listener: std::net::TcpListener,
 ) -> (
     tokio::task::JoinHandle<()>,
     tokio::sync::oneshot::Sender<()>,
 ) {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .expect("bind probe listener");
+    listener
+        .set_nonblocking(true)
+        .expect("set probe listener non-blocking");
+    let listener =
+        tokio::net::TcpListener::from_std(listener).expect("adopt reserved probe listener");
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let task = tokio::spawn(async move {
@@ -70,9 +72,8 @@ async fn pick_listen_port_preferred_free() {
 async fn pick_listen_port_openhuman_listener_requests_takeover() {
     let holder = reserve_port();
     let preferred = holder.local_addr().expect("preferred local addr").port();
-    drop(holder);
 
-    let (server_task, shutdown_tx) = spawn_openhuman_probe_listener(preferred).await;
+    let (server_task, shutdown_tx) = spawn_openhuman_probe_listener(holder).await;
 
     let result = pick_listen_port_with_policy(
         "127.0.0.1",
@@ -100,15 +101,15 @@ async fn pick_listen_port_openhuman_listener_requests_takeover() {
 async fn pick_listen_port_openhuman_listener_falls_back_when_asked() {
     let holder = reserve_port();
     let preferred = holder.local_addr().expect("preferred local addr").port();
-    drop(holder);
     // Use the same neighbouring-port candidates as production instead of
-    // sampling and releasing one ephemeral port. Other parallel tests can
-    // claim a released ephemeral port before this listener binds it.
+    // sampling and releasing one ephemeral port. Keep the OS reservation
+    // until the probe listener adopts it so other test processes cannot race
+    // the bind.
     let fallbacks: Vec<u16> = (1..=10)
         .filter_map(|delta| preferred.checked_add(delta))
         .collect();
 
-    let (server_task, shutdown_tx) = spawn_openhuman_probe_listener(preferred).await;
+    let (server_task, shutdown_tx) = spawn_openhuman_probe_listener(holder).await;
 
     let picked = pick_listen_port_with_policy(
         "127.0.0.1",

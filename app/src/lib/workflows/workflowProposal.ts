@@ -45,6 +45,10 @@ export function coerceWorkflowProposal(parsed: unknown): WorkflowProposal | null
     // here too — keeps the client's fallback in lockstep with the server's.
     requireApproval: obj.require_approval !== false,
     summary: { trigger: typeof summary.trigger === 'string' ? summary.trigger : '', steps },
+    ...(typeof obj.flow_id === 'string' && obj.flow_id ? { flowId: obj.flow_id } : {}),
+    ...(typeof obj.flow_version === 'string' && obj.flow_version
+      ? { flowVersion: obj.flow_version }
+      : {}),
   };
 }
 
@@ -68,23 +72,34 @@ export function maybeParseWorkflowProposalTool(
 }
 
 /**
- * Rehydrate the newest unconsumed workflow proposal from a thread's persisted
- * messages. The Rust core appends a message with
+ * Rehydrate a thread's live workflow proposal from its persisted messages. The
+ * Rust core appends a message with
  * `extraMetadata: { scope: 'workflow_proposal', proposal, task_id, ... }`
  * when an async `workflow_builder` run finishes; once the user saves or
  * dismisses the card the message is marked `consumed: true` so it does not
  * resurrect on the next load.
+ *
+ * Only the newest proposal message counts: a later proposal supersedes every
+ * earlier one, so an older unconsumed revision never comes back as a fresh,
+ * savable card (each such card used to create another copy of the flow).
+ * A `saved_flow_id` recorded on the message carries over, so a card whose
+ * flow was saved but not yet enabled resumes at the enable step.
  */
 export function extractWorkflowProposalFromMessages(
   messages: ThreadMessage[]
 ): WorkflowProposal | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const meta = messages[i].extraMetadata;
-    if (!meta || meta.scope !== 'workflow_proposal' || meta.consumed === true) continue;
+    if (!meta || meta.scope !== 'workflow_proposal') continue;
+    if (meta.consumed === true) return null;
     const proposal = coerceWorkflowProposal(meta.proposal);
-    if (proposal) {
-      return { ...proposal, sourceMessageId: messages[i].id };
-    }
+    if (!proposal) return null;
+    const savedFlowId = typeof meta.saved_flow_id === 'string' ? meta.saved_flow_id : undefined;
+    return {
+      ...proposal,
+      sourceMessageId: messages[i].id,
+      ...(savedFlowId ? { savedFlowId } : {}),
+    };
   }
   return null;
 }

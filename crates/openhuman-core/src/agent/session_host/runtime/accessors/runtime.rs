@@ -1,6 +1,10 @@
 use super::*;
 
 impl OpenHumanSessionHost {
+    pub(crate) fn enable_headless_descendant_settlement(&mut self) {
+        self.settle_headless_descendants = true;
+    }
+
     /// Restricts integration task-fetch tools to tasks touched within `window`
     /// on every later turn of this agent; `None` clears the restriction.
     pub fn set_task_recency_window(&mut self, window: Option<std::time::Duration>) {
@@ -166,6 +170,11 @@ impl OpenHumanSessionHost {
     /// from a config whose `action_dir` already permits it.
     pub fn set_workspace_descriptor(&mut self, descriptor: Option<tinytools::WorkspaceDescriptor>) {
         self.workspace_descriptor = descriptor;
+    }
+
+    /// The current workspace binding used by this session's tools.
+    pub(crate) fn live_workspace_descriptor(&self) -> Option<tinytools::WorkspaceDescriptor> {
+        self.workspace_descriptor.clone()
     }
 
     /// Attach an active-run queue for mid-turn steering.

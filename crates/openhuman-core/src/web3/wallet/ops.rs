@@ -335,7 +335,7 @@ pub async fn reveal_recovery_phrase(
 
     debug!("{LOG_PREFIX} reveal_recovery_phrase decrypting mnemonic");
 
-    let phrase = crate::security::credentials::ops::decrypt_secret(&config, &ciphertext)
+    let phrase = crate::credentials::ops::decrypt_secret(&config, &ciphertext)
         .await
         .map_err(|e| {
             log::warn!("{LOG_PREFIX} reveal_recovery_phrase decrypt failed: {e}");

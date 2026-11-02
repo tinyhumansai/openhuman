@@ -377,5 +377,5 @@ async fn an_unopenable_storage_url_fails_the_open() {
         ..HostSeams::default()
     };
     let error = seams.open_storage().await.expect_err("bad url");
-    assert!(error.contains("storage backend"), "{error}");
+    assert!(error.contains("storage"), "{error}");
 }

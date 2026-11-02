@@ -41,7 +41,7 @@ fn host_repl_tools(
         source,
         limits,
         artifacts_dir,
-        tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES,
+        tinyagents_harness_tools::fs::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES,
         None,
     )
 }
@@ -104,7 +104,7 @@ pub(crate) fn repl_tools_for_recorded(
         Some(crate::security::policy::tool_result_artifacts_dir(
             workspace_dir,
         )),
-        tinytools_std::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES,
+        tinyagents_harness_tools::fs::filesystem::FileReadTool::MAX_FILE_SIZE_BYTES,
         None,
     )
 }

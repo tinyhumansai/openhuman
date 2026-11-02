@@ -3,9 +3,9 @@
 //! One storage URL decides where every conversation lives
 //! (`OPENHUMAN_STORAGE_URL`, else `[storage] url`, else the default
 //! `sqlite:<workspace>/storage`). The backend is opened and made the process's
-//! storage backend, and TinyAgents' `DriverSessionStores` goes in over it
-//! ([`ReboundSessionStores`], so a different user signing in can move it to
-//! their workspace's backend without reinstalling the provider): every agent's
+//! storage backend, and TinyAgents' rebindable tenant router goes in over it,
+//! so a different user signing in can move it to their workspace's backend
+//! without reinstalling the provider: every agent's
 //! transcripts, turn states, records, run ledger and journal in that backend,
 //! one storage scope per agent. There is no file layout beside it; what older
 //! installs wrote is imported once, read-only, by `storage::import` at boot.
@@ -50,7 +50,7 @@ use crate::core_host::agent::session_store::{ReboundSessionStores, WorkspaceSess
 ///
 /// The backend is opened and made the process's storage backend
 /// ([`crate::core_host::storage::install_for_url`]), and TinyAgents'
-/// `DriverSessionStores` is installed over it.
+/// TinyAgents' rebindable tenant router is installed over it.
 ///
 /// A single-process backend (SQLite, memory, files) also interrupts an
 /// agent's in-flight turns the first time it is opened, since only an earlier
@@ -106,13 +106,17 @@ async fn configured_storage_url() -> anyhow::Result<Option<String>> {
                 anyhow::anyhow!("loading the config to resolve the storage url: {error}")
             })
     };
-    let mut config = load().await?;
+    let config = load().await?;
     // `[storage] auto_migrate_layout`: move a layout-v1 profile to v2 before
     // the backend opens, then re-read the config, whose workspace is now the
-    // profile's `files/` directory.
-    if crate::core_host::storage::layout::auto_migrate(&config).await {
-        config = load().await?;
-    }
+    // profile's `files/` directory. The migration exists only with
+    // `legacy-import`.
+    #[cfg(feature = "legacy-import")]
+    let config = if crate::core_host::storage::layout::auto_migrate(&config).await {
+        load().await?
+    } else {
+        config
+    };
     Ok(storage_url_from(env, &config))
 }
 

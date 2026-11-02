@@ -1685,6 +1685,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Ouvrir dans le canevas',
   'chat.flowProposal.dismiss': 'Ignorer',
   'chat.flowProposal.error': "Impossible d'enregistrer le workflow. Veuillez réessayer.",
+  'chat.flowProposal.versionConflict':
+    "Ce workflow a été modifié après la proposition, il n'a donc pas été écrasé. Demandez une nouvelle révision.",
   'chat.flowProposal.enableError':
     "Workflow enregistré, mais impossible de l'activer. Réessayez, ou activez-le depuis la page Workflows.",
   'chat.flowProposal.savedConfirmation': 'Enregistré',
@@ -1878,11 +1880,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} sur {total}',
   'chat.todos.receipt': 'Progression mise à jour · {done}/{total}',
   'chat.subagents.ranFor': 'A duré {duration}',
-  'chat.subagents.ofTotal': '{complete} sur {total}',
-  'chat.subagents.runningCount': '{count} en cours',
-  'chat.subagents.failedCount': '{count} en échec',
-  'chat.subagents.incompleteCount': '{count} incomplets',
-  'chat.subagents.settled': 'Sous-tâches terminées. Traitement de leurs résultats.',
   'conversations.planReview.title': 'Examiner le plan',
   'conversations.planReview.subtitle':
     'Approuvez pour l’exécuter, rejetez pour l’abandonner ou envoyez un retour pour le réviser.',
@@ -1918,7 +1915,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Autoriser',
   'conversations.mcpUi.confirmDeny': 'Refuser',
   'conversations.tools.delegatedTo': 'Délégué à {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Agrégation des résultats',
   'conversations.tools.openInBrowser': 'Ouvrir dans le navigateur',
   'conversations.tools.status.running': 'en cours',
   'conversations.tools.status.done': 'terminé',
@@ -1987,22 +1983,6 @@ const messages: TranslationMap = {
     "Nouvelle tentative échouée. Télécharge la dernière version de l'app et réessaie.",
   'daemon.serviceBlockingGate.retrying': 'Nouvelle tentative…',
   'daemon.serviceBlockingGate.title': 'Le core OpenHuman est indisponible',
-  'worktree.label': 'Arbre de travail',
-  'worktree.dirty': 'Modifications non validées',
-  'worktree.clean': 'Propre',
-  'worktree.removing': 'Suppression…',
-  'worktree.removeFailed': 'Échec de la suppression du worktree',
-  'worktree.diffFailed': 'Échec du chargement du diff',
-  'worktree.diffLoading': 'Chargement du diff…',
-  'worktree.diffEmpty': 'Aucune modification par rapport à HEAD.',
-  'worktree.dirtyConfirm':
-    'Ce worktree contient des modifications non validées. Le supprimer abandonne ce travail. La branche du worker est conservée.',
-  'worktree.action.open': 'Ouvrir le dossier',
-  'worktree.action.diff': 'Différence',
-  'worktree.action.hideDiff': 'Masquer le diff',
-  'worktree.action.remove': 'Supprimer',
-  'worktree.action.removeAnyway': 'Abandonner et supprimer',
-  'worktree.action.preserve': 'Conserver',
   'notifications.card.dismiss': 'Ignorer la notification',
   'notifications.card.importanceTitle': 'Importance : {pct} %',
   'notifications.center.empty': "Aucune notification pour l'instant",
@@ -3562,6 +3542,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Chargement des modèles…',
   'composer.voiceMode': 'Mode vocal',
   'composer.humanMode': 'Mode humain',
+  'voiceNote.record': 'Enregistrer un message vocal',
+  'voiceNote.stop': 'Arrêter l’enregistrement',
+  'voiceNote.discard': 'Supprimer le message vocal',
+  'voiceNote.send': 'Envoyer le message vocal',
+  'voiceNote.recording': 'Enregistrement…',
+  'voiceNote.play': 'Lire le message vocal',
+  'voiceNote.pause': 'Mettre le message vocal en pause',
+  'voiceNote.seek': 'Parcourir le message vocal',
+  'voiceNote.transcript': 'Transcription',
+  'voiceNote.noTranscript': 'Aucune transcription disponible',
+  'voiceNote.label': 'Message vocal {duration}',
+  'voiceNote.micDenied': 'L’accès au microphone a été refusé ou est indisponible.',
+  'voiceNote.transcribeFailed': 'Impossible de transcrire le message vocal.',
+  'voiceNote.loadFailed': 'Impossible de charger ce message vocal.',
+  'voiceNote.sendFailed': 'Impossible d’envoyer le message vocal.',
 
   // Sync budget dialog
 
@@ -4953,8 +4948,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'Apprentissages mis à jour',
   'conversations.tools.delegateTask.active': 'Délégation de la tâche',
   'conversations.tools.delegateTask.done': 'Tâche déléguée',
-  'conversations.tools.runAgentsInParallel.active': "Exécution d'agents en parallèle",
-  'conversations.tools.runAgentsInParallel.done': 'Agents exécutés en parallèle',
   'conversations.tools.messageAgent.active': "Envoi d'un message à l'agent",
   'conversations.tools.messageAgent.done': "Message envoyé à l'agent",
   'conversations.tools.waitForAgent.active': "Attente de l'agent",
@@ -4991,6 +4984,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Objectif vérifié',
   'conversations.tools.completeGoal.active': "Réalisation de l'objectif",
   'conversations.tools.completeGoal.done': 'Objectif atteint',
+  'conversations.tools.resumeGoal.active': "Reprise de l'objectif",
+  'conversations.tools.resumeGoal.done': 'Objectif repris',
   'conversations.tools.scheduleTask.active': 'Planification de la tâche',
   'conversations.tools.scheduleTask.done': 'Tâche planifiée',
   'conversations.tools.checkSchedules.active': 'Vérification des planifications',
@@ -5222,6 +5217,56 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'Discret',
 
   'settings.layout.contrast.subtle': 'Discret',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Les diagnostics de stratégie ne sont pas inclus dans ce noyau.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Stratégie de sécurité active',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomie',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Espace de travail uniquement',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Nombre maximal d’actions par heure',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Approbation requise pour les risques moyens',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Bloquer les commandes à haut risque',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Commandes autorisées',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Aucune commande n’est explicitement autorisée.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Politique',
+  'settings.approvalHistory.judgeScores':
+    'Intention {intent} · Réversible {reversible} · Exfiltration {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'en cache',
+  'settings.approvalHistory.judgeExpires': 'Expire le {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Outils toujours autorisés',
+  'keyring.settings.toolTrustDescription':
+    'Ces outils peuvent s’exécuter sans demander d’approbation dans ce périmètre de sécurité.',
+  'keyring.settings.toolTrustLoading': 'Chargement des outils autorisés…',
+  'keyring.settings.toolTrustLoadFailed': 'Impossible de charger les outils autorisés.',
+  'keyring.settings.toolTrustRevokeFailed': 'Impossible de révoquer cette autorisation d’outil.',
+  'keyring.settings.toolTrustEmpty': 'Aucun outil n’est toujours autorisé.',
+  'keyring.settings.toolTrustRetry': 'Réessayer',
+  'keyring.settings.toolTrustRevoke': 'Révoquer',
+  'keyring.settings.toolTrustRevoking': 'Révocation…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Demande d’accès au trousseau',
+  'keyring.operation.description':
+    'TinySecurity demande l’accès à un élément du trousseau. Vérifiez l’opération avant de décider.',
+  'keyring.operation.access': 'Accès',
+  'keyring.operation.requester': 'Demandé par',
+  'keyring.operation.origin': 'Origine',
+  'keyring.operation.purpose': 'Motif',
+  'keyring.operation.name': 'Élément du trousseau',
+  'keyring.operation.access.read': 'Lire',
+  'keyring.operation.access.write': 'Écrire',
+  'keyring.operation.access.delete': 'Supprimer',
+  'keyring.operation.allow': 'Autoriser une fois',
+  'keyring.operation.deny': 'Refuser',
+  'keyring.operation.submitting': 'Envoi…',
+  'keyring.operation.expires': 'La demande expire dans {seconds}s.',
+  'keyring.operation.error': 'Impossible d’envoyer votre décision. La demande a peut-être expiré.',
 };
 
 export default messages;

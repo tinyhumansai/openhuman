@@ -1,9 +1,31 @@
 use super::*;
-use crate::security::turn_origin::{with_origin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{with_origin, TrustedAutomationSource};
 use serde_json::json;
 use tinyflows_bus::schedule::types::Schedule;
+use tinyflows_bus::schedule::{ChannelConversationIdentity, ChannelSessionIdentity};
 
-fn channel_turn(history_key: Option<&str>) -> AgentTurnOrigin {
+fn test_channel_session() -> ChannelSessionIdentity {
+    ChannelSessionIdentity {
+        tenant_key: "profile:alice".into(),
+        agent_id: "orchestrator".into(),
+        session_key: "main:telegram:bot-a:group:room-42".into(),
+        provider: "telegram".into(),
+        account_id: Some("telegram:bot-a".into()),
+        conversation: ChannelConversationIdentity {
+            kind: "group".into(),
+            id: "room-42".into(),
+            scope_id: Some("guild-1".into()),
+            parent_id: Some("parent-1".into()),
+            thread_id: Some("thread-1".into()),
+            topic_id: Some("topic-1".into()),
+        },
+    }
+}
+
+fn channel_turn_with_session(
+    history_key: Option<&str>,
+    channel_session: Option<ChannelSessionIdentity>,
+) -> AgentTurnOrigin {
     AgentTurnOrigin::ExternalChannel {
         sender_name: None,
         channel: "telegram".into(),
@@ -11,7 +33,12 @@ fn channel_turn(history_key: Option<&str>) -> AgentTurnOrigin {
         reply_target: "42".into(),
         message_id: "m1".into(),
         history_key: history_key.map(str::to_string),
+        channel_session,
     }
+}
+
+fn channel_turn(history_key: Option<&str>) -> AgentTurnOrigin {
+    channel_turn_with_session(history_key, Some(test_channel_session()))
 }
 
 fn web_turn(thread_id: &str) -> AgentTurnOrigin {
@@ -44,7 +71,7 @@ fn channel_turn_maps_to_channel_origin_with_history_key() {
             history_key: "telegram_alice_42".into(),
             sender: Some("alice".into()),
             thread_id: None,
-            session_identity: None,
+            channel_session: Some(Box::new(test_channel_session())),
         })
     );
 }
@@ -53,6 +80,14 @@ fn channel_turn_maps_to_channel_origin_with_history_key() {
 fn channel_labelled_turn_without_history_key_has_no_origin() {
     // MCP server callers, triage and voice are ExternalChannel but not a chat.
     assert_eq!(job_origin_from_turn(&channel_turn(None)), None);
+}
+
+#[test]
+fn legacy_channel_history_key_cannot_authorize_a_durable_job_origin() {
+    assert_eq!(
+        job_origin_from_turn(&channel_turn_with_session(Some("legacy-history-key"), None,)),
+        None
+    );
 }
 
 #[test]
@@ -73,11 +108,11 @@ fn other_origins_have_no_job_origin() {
 #[tokio::test]
 async fn current_job_origin_reads_the_scoped_turn() {
     assert_eq!(
-        current_job_origin(crate::security::turn_origin::current().as_ref()),
+        current_job_origin(crate::core::runtime::turn_origin::current().as_ref()),
         None
     );
     let got = with_origin(web_turn("t-9"), async {
-        current_job_origin(crate::security::turn_origin::current().as_ref())
+        current_job_origin(crate::core::runtime::turn_origin::current().as_ref())
     })
     .await;
     assert!(matches!(got, Some(JobOrigin::Web { thread_id, .. }) if thread_id == "t-9"));
@@ -117,7 +152,7 @@ fn channel_origin_job_runs_as_external_channel_turn() {
         history_key: "k".into(),
         sender: Some("alice".into()),
         thread_id: None,
-        session_identity: None,
+        channel_session: Some(Box::new(test_channel_session())),
     }));
     match turn_origin_for_job_run(&job, "run-1") {
         AgentTurnOrigin::ExternalChannel {
@@ -127,12 +162,14 @@ fn channel_origin_job_runs_as_external_channel_turn() {
             reply_target,
             message_id,
             history_key,
+            channel_session,
         } => {
             assert_eq!(channel, "telegram");
             assert_eq!(sender.as_deref(), Some("alice"));
             assert_eq!(reply_target, "42");
             assert_eq!(message_id, format!("cron:{}:run-1", job.id));
             assert_eq!(history_key.as_deref(), Some("k"));
+            assert_eq!(channel_session, Some(test_channel_session()));
         }
         other => panic!("expected ExternalChannel, got {other:?}"),
     }

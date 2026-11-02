@@ -212,6 +212,28 @@ test("parses a crate-visible record definition", () => {
   assert.equal(records.get("TINYTEST")?.id, "tinytest");
 });
 
+test("parses assets with an optional library digest", () => {
+  const records = parseRecords(`const TINYTEST: ModuleRecord = ModuleRecord {
+    id: "tinytest",
+    version: "1.2.3",
+    assets: &[
+        PlatformAsset {
+            host_key: "linux-x86_64",
+            archive: "tinytest.tar.gz",
+            sha256: "${"a".repeat(64)}",
+            library_sha256: None,
+        },
+    ],
+};`);
+  assert.deepEqual(records.get("TINYTEST")?.assets, [
+    {
+      hostKey: "linux-x86_64",
+      archive: "tinytest.tar.gz",
+      sha256: "a".repeat(64),
+    },
+  ]);
+});
+
 // ── Provider records ──────────────────────────────────────────────────────────
 
 const SHA_A = "a".repeat(40);
@@ -693,62 +715,6 @@ test("the existing exact-drift exemption is proof-checked and keeps ahead visibl
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
-});
-
-test("TinyJuice's canonical owner merge matches its recorded release-tree attestation", () => {
-  const exemption = JSON.parse(
-    readFileSync(
-      join(REPO_ROOT, "scripts/ci/module-pin-exemptions.json"),
-      "utf8",
-    ),
-  ).exemptions.find((entry) => entry.id === "tinyjuice");
-  const assets = [...parseRecords(readRegistry()).values()].find(
-    (record) => record.id === "tinyjuice",
-  ).assets;
-  const candidateCommit = exemption.sourceParity.candidateCommit;
-  const result = validateTestOnlySourceParity({
-    repoPath: join(REPO_ROOT, "vendor/tinyjuice"),
-    version: "0.10.8",
-    assets,
-    actualHead: candidateCommit,
-    proof: exemption.sourceParity,
-    runGit: (args) =>
-      args[0] === "rev-parse" && args[1] === "HEAD"
-        ? candidateCommit
-        : execFileSync("git", args, {
-            cwd: join(REPO_ROOT, "vendor/tinyjuice"),
-            encoding: "utf8",
-          }).trim(),
-  });
-  assert.equal(result.ok, true, result.message);
-});
-
-test("TinyChannels' merged owner commit matches its exact test-set attestation", () => {
-  const exemption = JSON.parse(
-    readFileSync(
-      join(REPO_ROOT, "scripts/ci/module-pin-exemptions.json"),
-      "utf8",
-    ),
-  ).exemptions.find((entry) => entry.id === "tinychannels");
-  const assets = [...parseRecords(readRegistry()).values()].find(
-    (record) => record.id === "tinychannels",
-  ).assets;
-  const candidateCommit = exemption.sourceParity.candidateCommit;
-  const result = validateTestOnlySourceParity({
-    repoPath: join(REPO_ROOT, "vendor/tinychannels"),
-    version: "0.1.38",
-    assets,
-    actualHead: candidateCommit,
-    proof: exemption.sourceParity,
-    runGit: (args) =>
-      args[0] === "rev-parse" && args[1] === "HEAD"
-        ? candidateCommit
-        : execFileSync("git", args, {
-            cwd: join(REPO_ROOT, "vendor/tinychannels"),
-            encoding: "utf8",
-          }).trim(),
-  });
-  assert.equal(result.ok, true, result.message);
 });
 
 test("source parity proof rejects production, manifest, build, lock, and unknown changes", () => {

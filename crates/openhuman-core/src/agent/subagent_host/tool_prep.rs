@@ -7,10 +7,20 @@
 use super::types::SubagentRunError;
 use crate::agent::prompts::PromptContext;
 use crate::agent_registry::host_definition::AgentDefinition;
+use std::sync::Arc;
 use tinyagents_definition::{PromptSource, ToolScope};
 use tinyagents_harness::tool::ToolSnapshot;
 use tinyagents_orchestration::subagent::{restrict_tools_with_scope, SubagentRole};
 use tinytools::Tool;
+
+/// Adapts the owned host catalogue to TinyAgents' shared Arc-backed
+/// deduplication surface and returns the owned specs expected by dispatch.
+pub(crate) fn dedup_owned_tool_specs(specs: Vec<tinytools::ToolSpec>) -> Vec<tinytools::ToolSpec> {
+    tinyagents_runtime::dedup_visible_tool_specs(specs.into_iter().map(Arc::new).collect())
+        .into_iter()
+        .map(|spec| Arc::try_unwrap(spec).expect("newly wrapped spec has one owner"))
+        .collect()
+}
 
 // ── Prompt dialect selection ────────────────────────────────────────────
 
@@ -35,37 +45,10 @@ pub(crate) fn subagent_prompt_protocol(
 /// delegates. Nested spawns would create a recursion tree the harness
 /// is not designed to budget, cost, or observe.
 ///
-/// Matches:
-/// * the generic `spawn_subagent` meta-tool (arbitrary archetype by id);
-/// * every synthesised per-archetype `delegate_*` tool
-///   ([`crate::tools::orchestrator_tools::collect_orchestrator_tools`]
-///   emits `delegate_code_executor`, `delegate_planner`, …).
-///
-/// Kept as a tight prefix/exact match rather than a registry lookup so
-/// the strip is cheap to run inside [`super::ops::run_typed_mode`]'s
-/// filter pass. If the delegation-tool naming scheme changes, update
-/// this function and the corresponding generator in
-/// `orchestrator_tools.rs` together.
+/// Matches TinyAgents' shared spawn-tool list and OpenHuman's single spawn
+/// tool. Specialist allowlist entries are arguments to that tool, not aliases.
 pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
-    if name == "spawn_subagent" || name.starts_with("delegate_") {
-        return true;
-    }
-    // Synthesised delegation tools are named by the target agent's
-    // `delegate_name` override, which mostly does NOT carry the `delegate_`
-    // prefix (`manage_tasks`, `create_image`, `setup_skills`,
-    // `build_workflow`, …). The prefix check above misses every one of them,
-    // which let wildcard-scoped children inherit the orchestrator's spawn
-    // surface. Resolve the override names via the registry so the strip
-    // stays in lockstep with `collect_orchestrator_tools`'s naming.
-    if let Some(registry) =
-        crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
-    {
-        return registry
-            .list()
-            .iter()
-            .any(|def| def.delegate_name.as_deref() == Some(name));
-    }
-    false
+    crate::agent::tinyagents::turn_policy::is_subagent_spawn_tool(name)
 }
 
 /// Returns indices into `parent_tools` for the tools the sub-agent may
@@ -81,13 +64,24 @@ pub(super) fn filter_tool_indices(
     disallowed: &[String],
     skill_filter: Option<&str>,
 ) -> Vec<usize> {
+    filter_tool_indices_with_nested_spawn(parent_tools, scope, disallowed, skill_filter, false)
+}
+
+/// Filters child tools with an explicit, host-validated nested-spawn grant.
+pub(super) fn filter_tool_indices_with_nested_spawn(
+    parent_tools: &[Box<dyn Tool>],
+    scope: &ToolScope,
+    disallowed: &[String],
+    skill_filter: Option<&str>,
+    nested_spawn_granted: bool,
+) -> Vec<usize> {
     let mut first_specs = std::collections::HashMap::new();
     let mut specs = Vec::new();
     let mut disallowed_recovery = std::collections::HashSet::new();
-    let mut delegation_tools = vec!["spawn_worker_thread".to_string()];
+    let mut delegation_tools = Vec::new();
     for tool in parent_tools {
         let name = tool.name();
-        if is_subagent_spawn_tool(name) || name == "spawn_worker_thread" {
+        if is_subagent_spawn_tool(name) {
             delegation_tools.push(name.to_string());
         }
         if crate::tools::rules::glob_list_matches(disallowed, name) {
@@ -106,7 +100,11 @@ pub(super) fn filter_tool_indices(
     };
     let restricted = restrict_tools_with_scope(
         &snapshot,
-        SubagentRole::Leaf,
+        if nested_spawn_granted {
+            SubagentRole::Orchestrator
+        } else {
+            SubagentRole::Leaf
+        },
         None,
         &delegation_tools,
         Some(scope),
@@ -139,6 +137,88 @@ pub(super) fn filter_tool_indices(
         .collect()
 }
 
+pub(super) struct DefinitionToolFilter {
+    pub indices: Vec<usize>,
+    pub nested_spawn_ids: Vec<String>,
+    pub nested_spawn_tools: std::collections::HashSet<String>,
+}
+
+/// Applies a child's definition scope, denylist, and checked host grant to
+/// the parent's registered tools before the inherited visibility ceiling.
+pub(super) fn filter_definition_tool_indices(
+    parent_tools: &[Box<dyn Tool>],
+    definition: &AgentDefinition,
+    skill_filter: Option<&str>,
+    nested_spawn_depth_available: bool,
+    parent_visible: &std::collections::HashSet<String>,
+) -> DefinitionToolFilter {
+    let nested_spawn_ids = definition.allowed_subagent_ids();
+    let explicitly_declares_nested_spawn = |name: &str| {
+        is_subagent_spawn_tool(name)
+            && (definition.extra_tools.iter().any(|tool| tool == name)
+                || matches!(
+                    &definition.tools,
+                    ToolScope::Named(names) if names.iter().any(|tool| tool == name)
+                ))
+    };
+    let nested_spawn_tools: std::collections::HashSet<String> = parent_tools
+        .iter()
+        .map(|tool| tool.name())
+        .filter(|name| {
+            nested_spawn_depth_available
+                && !nested_spawn_ids.is_empty()
+                && explicitly_declares_nested_spawn(name)
+        })
+        .map(str::to_owned)
+        .collect();
+    let nested_spawn_granted = !nested_spawn_tools.is_empty();
+    let mut allowed = filter_tool_indices_with_nested_spawn(
+        parent_tools,
+        &definition.tools,
+        &definition.disallowed_tools,
+        skill_filter,
+        nested_spawn_granted,
+    );
+
+    let before = allowed.len();
+    allowed.retain(|&index| {
+        let name = parent_tools[index].name();
+        !is_subagent_spawn_tool(name) || nested_spawn_tools.contains(name)
+    });
+    let stripped = before - allowed.len();
+    if stripped > 0 {
+        tracing::debug!(
+            agent_id = %definition.id,
+            stripped,
+            "[subagent_host] removed sub-agent spawn tools from sub-agent's tool surface"
+        );
+    }
+
+    for (index, tool) in parent_tools.iter().enumerate() {
+        let name = tool.name();
+        if definition.extra_tools.iter().any(|extra| extra == name)
+            && !allowed.contains(&index)
+            && !crate::tools::rules::glob_list_matches(&definition.disallowed_tools, name)
+            && (!is_subagent_spawn_tool(name) || nested_spawn_tools.contains(name))
+        {
+            allowed.push(index);
+        }
+    }
+
+    retain_parent_visible_tool_indices(
+        &mut allowed,
+        parent_tools,
+        parent_visible,
+        nested_spawn_granted,
+    );
+
+    DefinitionToolFilter {
+        indices: allowed,
+        nested_spawn_ids,
+        nested_spawn_tools,
+    }
+}
+
 /// Intersect a child definition's tool indices with the tools the parent turn
 /// actually exposes. An empty parent set is the legacy "unknown/unrestricted"
 /// sentinel used by internal callers and older tests.
@@ -146,6 +226,7 @@ pub(super) fn retain_parent_visible_tool_indices(
     indices: &mut Vec<usize>,
     parent_tools: &[Box<dyn Tool>],
     parent_visible: &std::collections::HashSet<String>,
+    nested_spawn_granted: bool,
 ) {
     if parent_visible.is_empty() {
         return;
@@ -174,7 +255,11 @@ pub(super) fn retain_parent_visible_tool_indices(
     };
     let narrowed = restrict_tools_with_scope(
         &snapshot,
-        SubagentRole::Leaf,
+        if nested_spawn_granted {
+            SubagentRole::Orchestrator
+        } else {
+            SubagentRole::Leaf
+        },
         Some(&ceiling),
         &[],
         None,
@@ -297,7 +382,7 @@ pub(super) fn load_prompt_source(
             // file write — so we re-use that scaffolding by reading from
             // `<workspace>/<filename>` after the parent agent has
             // bootstrapped its workspace files. For sub-agent
-            // archetype prompts (e.g. `archetypes/critic.md`),
+            // archetype prompts (e.g. `archetypes/<agent_id>.md`),
             // we look up by basename in the workspace, then accept
             // missing files as an empty body (the runner will fall
             // back to a generic role hint).

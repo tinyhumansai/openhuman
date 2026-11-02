@@ -164,7 +164,7 @@ async fn doctor_lookup_does_not_migrate_legacy_profile_or_lease_records() {
     assert!(docs
         .validate_collection_spec(&CollectionSpec::new(REGISTRY_COLLECTION))
         .await
-        .is_err());
+        .is_ok());
     assert!(docs
         .validate_collection_spec(&CollectionSpec::new(
             crate::storage::lease::LEASE_COLLECTION

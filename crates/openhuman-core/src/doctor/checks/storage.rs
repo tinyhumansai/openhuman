@@ -84,18 +84,29 @@ async fn inspect_storage_config(check_id: &str, config: StorageConfig) -> Vec<Fi
         StorageConfig::MongoDb { uri, database } => {
             #[cfg(feature = "storage-mongodb")]
             {
-                let config = StorageConfig::MongoDb { uri, database };
-                match tinystoragedrivers::open(&config).await {
-                    Ok(storage) => {
-                        drop(storage);
-                        vec![Finding::pass(
-                            check_id,
-                            "The selected MongoDB server answered a read-only hello request.",
-                        )]
-                    }
+                // `hello`, then a collection listing to prove the credential
+                // can read the selected database. `tinystoragedrivers::open`
+                // would create the driver's collections and indexes, which a
+                // read-only probe must not do and a read-only credential can't.
+                let probe = async {
+                    let connection =
+                        tinystoragedrivers_connect::MongoConnection::connect(&uri, &database)
+                            .await
+                            .map_err(|_| ())?;
+                    connection
+                        .database()
+                        .list_collection_names()
+                        .await
+                        .map_err(|_| ())
+                };
+                match probe.await {
+                    Ok(_) => vec![Finding::pass(
+                        check_id,
+                        "The selected MongoDB database answered read-only hello and listing requests.",
+                    )],
                     Err(_) => vec![Finding::error(
                         check_id,
-                        "The selected MongoDB server could not be reached.",
+                        "The selected MongoDB database could not be reached or read.",
                         "Check the selected MongoDB endpoint and credentials.",
                     )],
                 }

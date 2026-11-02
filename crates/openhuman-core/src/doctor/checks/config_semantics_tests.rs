@@ -258,7 +258,9 @@ async fn action_directory_without_write_mode_bits_reports_effective_writability(
         findings[0].severity, expected_severity,
         "action-directory probe should reflect effective write access"
     );
-    assert_eq!(findings[0].config_path.as_deref(), Some("action_dir"));
+    // A passing probe (root writing past the mode bits) names no config key.
+    let expected_path = (expected_severity != FindingSeverity::Pass).then_some("action_dir");
+    assert_eq!(findings[0].config_path.as_deref(), expected_path);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
@@ -357,6 +359,8 @@ async fn invalid_module_override_is_reported_without_echoing_its_path() {
     assert!(!warning.message.contains("/private/libmodule.so"));
 }
 
+// Without `modules` there are no module statuses, so no fallback to report.
+#[cfg(feature = "modules")]
 #[tokio::test]
 async fn source_fallback_is_reported_without_loading_modules() {
     use crate::config::schema::ModuleSourceMode;

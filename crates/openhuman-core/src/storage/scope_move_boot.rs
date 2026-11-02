@@ -142,7 +142,7 @@ fn import_inventory(
             }
         };
         let (scope_backend, profile_guard) =
-            backend_for_target_scope(backend, &target_scope, known, config)?;
+            backend_for_target_scope(backend, &target_scope, known, config, source_path)?;
         let marker = crate::storage::documents::Repo::on(
             &scope_backend,
             &target_scope,
@@ -202,6 +202,7 @@ fn import_inventory(
                 found += inventory_scope_counts(inventory, &source_scope);
             }
             Some(Some(scope_report)) => {
+                remigrate_copied_scope(&scope_backend, &target_scope);
                 let scope_found = inventory_scope_counts(inventory, &source_scope);
                 found += scope_found;
                 written += usize::try_from(
@@ -241,6 +242,28 @@ fn import_inventory(
     }
 }
 
+/// The copy wrote v1 graph and harness records into a scope whose owner
+/// migrations already ran when it was prepared; run them again so the v2
+/// readers see the records. Best effort: a failure is logged, and the cleared
+/// steps re-run on the next preparation of the scope.
+#[cfg(feature = "legacy-import")]
+fn remigrate_copied_scope(backend: &Arc<dyn StorageBackend>, scope: &Scope) {
+    let result = backend.for_scope(scope).and_then(|storage| {
+        let target = scope.to_storage_scope();
+        crate::storage::block_on(async move {
+            crate::storage::boot::remigrate_owners(&storage, &target).await
+        })
+    });
+    if let Err(error) = result {
+        tracing::warn!(
+            target: "openhuman::storage",
+            scope = scope.as_str(),
+            %error,
+            "[storage][scope_move] owner migration after the copy failed; retried when the scope is next prepared"
+        );
+    }
+}
+
 #[cfg(feature = "legacy-import")]
 type BackendForScope = (
     Arc<dyn StorageBackend>,
@@ -253,11 +276,15 @@ fn backend_for_target_scope(
     target_scope: &Scope,
     known: &Known,
     config: &crate::config::Config,
+    source_path: &Path,
 ) -> anyhow::Result<BackendForScope> {
-    if target_scope.is_local() || target_scope.is_cluster() {
+    let parsed = target_scope.parsed()?;
+    if matches!(
+        parsed.tenant,
+        crate::storage::Tenant::Local | crate::storage::Tenant::Cluster
+    ) {
         return Ok((Arc::clone(backend), None));
     }
-    let parsed = target_scope.parsed()?;
     let crate::storage::Tenant::User(_) = parsed.tenant else {
         anyhow::bail!(
             "scope {} is not an admitted tenant scope",
@@ -276,6 +303,19 @@ fn backend_for_target_scope(
                 target_scope.as_str()
             )
         })?;
+    // During the profile layout migration, the importer is deliberately
+    // running against that profile's v1 database. Its own u:<profile> rows
+    // must be copied within this source before the database is checkpointed
+    // and moved to the v2 location. The profile migration lock is held by the
+    // caller, so this explicit source backend is the admitted destination for
+    // this one transition.
+    if let Some(target) = crate::storage::layout::Target::from_config(config) {
+        if target.user_id == *original_id
+            && source_path == crate::storage::layout::legacy::v1_db(&target)
+        {
+            return Ok((Arc::clone(backend), None));
+        }
+    }
     let Some(host) = crate::profiles::host::host() else {
         if let Some(target) = crate::storage::layout::Target::from_config(config) {
             let expected_url = format!("sqlite:{}", target.storage_db().display());

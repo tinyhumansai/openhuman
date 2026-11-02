@@ -3,7 +3,7 @@
 //! The agent domain publishes one native request handler, `agent.run_turn`,
 //! which executes a single end-to-end agentic turn (LLM call → tool calls →
 //! loop until final text) on the tinyagents harness via
-//! [`run_channel_turn_via_graph`](crate::agent::harness::run_channel_turn_via_graph)
+//! [`run_channel_turn`](crate::channels::runtime::turn_driver::run_channel_turn)
 //! (issue #4249; the legacy `run_tool_call_loop` was removed).
 //!
 //! Consumers call it via [`crate::core::bus::BUS.native().request`]
@@ -22,18 +22,18 @@ use tokio::sync::mpsc;
 
 use crate::config::MultimodalConfig;
 use crate::core::bus::BUS;
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use crate::progress::AgentProgress;
 use crate::security::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
-use crate::security::turn_origin::{self, AgentTurnOrigin};
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
 
-use super::harness::run_channel_turn_via_graph;
 use crate::agent_registry::host_definition::AgentDefinitionRegistry;
+use crate::channels::run_channel_turn;
 use tinyagents_definition::SandboxMode;
-use tinytools_std::file_state::with_file_state_agent_id;
+use tinyagents_harness_tools::fs::file_state::with_file_state_agent_id;
 
 /// Method name used to dispatch an agentic turn through the native bus.
 pub const AGENT_RUN_TURN_METHOD: &str = "agent.run_turn";
@@ -238,7 +238,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
                 user_id: Some(channel_name.as_str()),
                 session_id: target_agent_id.as_deref(),
             },
-        );
+        )
+        .await;
         if !matches!(decision.action, PromptEnforcementAction::Allow) {
             tracing::warn!(
                 channel = %channel_name,
@@ -313,7 +314,7 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
             // `on_delta` (raw Sender<String>) is superseded by
             // `on_progress` text deltas, so it's intentionally unused.
             let _ = (&provider_name, silent, &channel_name, on_delta);
-            run_channel_turn_via_graph(
+            run_channel_turn(
                 turn_model_source.clone(),
                 &mut history,
                 tools_registry.clone(),

@@ -241,12 +241,12 @@ pub(super) fn classic_path(root: &Path, stem: &str) -> PathBuf {
 
 /// Imports the classic files placed under the workspace's `session_raw/` into
 /// the root's store, as the first start after an upgrade does.
-pub(super) fn import_placed(root: &Path) {
+pub(super) fn import_placed(root: &Path) -> (usize, usize, usize) {
     crate::storage::import::sessions::import_transcript_groups(
         store_provider(root).as_ref(),
         &root.join("workspace"),
     )
-    .expect("import the placed fixtures");
+    .expect("import the placed fixtures")
 }
 
 /// Everything the root's store holds for `session`'s thread, by stem: the
@@ -286,7 +286,12 @@ pub(super) fn store_tree(
 /// `variant` selects an alternate on-disk generation of a head fixture
 /// (`""` the committed legacy capture, `".typed"` the same rows re-written in
 /// the typed row form).
-pub(super) fn place_fixture(root: &Path, scenario: &Scenario, stem: &str, variant: &str) {
+pub(super) fn place_fixture(
+    root: &Path,
+    scenario: &Scenario,
+    stem: &str,
+    variant: &str,
+) -> (usize, usize, usize) {
     let name = scenario.name;
     match scenario.layout {
         Layout::Head => {
@@ -314,7 +319,7 @@ pub(super) fn place_fixture(root: &Path, scenario: &Scenario, stem: &str, varian
             }
         }
     }
-    import_placed(root);
+    import_placed(root)
 }
 
 fn place(from: PathBuf, to: PathBuf) {
@@ -574,13 +579,13 @@ fn assert_retired_tool_replay(identity_bound: bool) {
         let live = crate::tools::ops::all_tools(
             Arc::new(config.clone()),
             &security,
-            crate::security::AuditLogger::disabled(),
+            crate::security::AuditSink::disabled(),
             &config.browser,
             &config.http_request,
             root.path(),
-            &std::collections::HashMap::new(),
             &config,
-        );
+        )
+        .await;
         assert!(
             !live.iter().any(|tool| tool.name() == RETIRED),
             "retired tool must not be restored to the live registry"

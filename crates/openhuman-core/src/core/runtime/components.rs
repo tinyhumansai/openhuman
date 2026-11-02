@@ -21,7 +21,6 @@ pub const COMPONENT_DISABLED: &str = "COMPONENT_DISABLED";
 pub struct ComponentSet {
     pub flows: bool,
     pub tinyflows: bool,
-    pub memes: bool,
     pub documents: bool,
     pub search: bool,
     pub mcp: bool,
@@ -55,7 +54,6 @@ impl ComponentSet {
         Self {
             flows: c.flows,
             tinyflows: c.tinyflows,
-            memes: c.memes,
             documents: c.documents,
             search: c.search,
             mcp: c.mcp,
@@ -83,7 +81,6 @@ impl ComponentSet {
         ComponentsConfig {
             flows: self.flows,
             tinyflows: self.tinyflows,
-            memes: self.memes,
             documents: self.documents,
             search: self.search,
             mcp: self.mcp,

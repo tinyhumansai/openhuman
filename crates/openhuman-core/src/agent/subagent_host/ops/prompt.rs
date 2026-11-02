@@ -9,7 +9,7 @@ use tinyagents_harness::artifacts::{
     render_artifact_offload_contract, should_render_offload_contract, ARTIFACT_OFFLOAD_HEADING,
 };
 
-/// Compose the leaf role framing with the host's artifact-tool prompt policy.
+/// Compose child role framing with the host's artifact-tool prompt policy.
 pub(crate) fn compose_subagent_system_prompt(
     base_prompt: String,
     agent_id: &str,
@@ -17,17 +17,25 @@ pub(crate) fn compose_subagent_system_prompt(
     task_prompt: &str,
     spawn_depth: usize,
 ) -> String {
+    let role = if visible_tool_names
+        .iter()
+        .any(|name| crate::agent::subagent_host::tool_prep::is_subagent_spawn_tool(name))
+    {
+        tinyagents_orchestration::subagent::SubagentRole::Orchestrator
+    } else {
+        tinyagents_orchestration::subagent::SubagentRole::Leaf
+    };
     let framed = format!(
         "{}\n\n{}",
         base_prompt.trim_end(),
-        tinyagents_orchestration::subagent::subagent_framing(
-            tinyagents_orchestration::subagent::SubagentRole::Leaf,
-            spawn_depth,
-            task_prompt,
-        )
+        tinyagents_orchestration::subagent::subagent_framing(role, spawn_depth, task_prompt,)
     );
     append_artifact_offload_contract(framed, agent_id, visible_tool_names)
 }
+
+#[cfg(test)]
+#[path = "prompt_tests.rs"]
+mod tests;
 
 /// Append the filesystem-offload contract (#3883), but only for a sub-agent
 /// that actually holds a file-write tool.

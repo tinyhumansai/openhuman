@@ -117,7 +117,7 @@ pub async fn read_confined(
     ctx.spawn_blocking(move || {
         use std::io::Read;
         let file =
-            crate::security::secure_open::secure_open(&resolved, &root).map_err(|error| {
+            crate::attachments::secure_open::secure_open(&resolved, &root).map_err(|error| {
                 tracing::debug!(?error, "[mcp_ui] show_ui refused the file open");
                 "the file is not inside the workspace or a skill bundle".to_string()
             })?;

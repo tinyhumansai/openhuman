@@ -16,6 +16,7 @@ let mockBehavior = {};
 let mockTunnels = [];
 let mockConversations = [];
 let mockMessages = [];
+let mockCronJobs = [];
 let mockWebhookTriggers = [];
 let socketEventLog = [];
 let mockLlmThreads = new Map();
@@ -169,6 +170,14 @@ export function setMockMessages(next) {
 
 export function resetMockMessages() {
   mockMessages = [];
+}
+
+export function getMockCronJobs() {
+  return mockCronJobs;
+}
+
+export function resetMockCronJobs() {
+  mockCronJobs = [];
 }
 
 export function getMockWebhookTriggers() {

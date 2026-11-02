@@ -60,32 +60,34 @@ pub(crate) enum LiveHandle {
 impl LiveHandle {
     /// Read until the process ends or `wait` passes, whichever is first.
     pub(crate) async fn read(&mut self, wait: Duration) -> anyhow::Result<LiveRead> {
-        match self {
+        // `*self`, not `self`: without `modules` (outside tests) the enum has no
+        // variants, and only a match on the place itself is exhaustive then.
+        match *self {
             #[cfg(feature = "modules")]
-            Self::TinyBox(live) => live.read(wait).await,
+            Self::TinyBox(ref mut live) => live.read(wait).await,
             #[cfg(test)]
-            Self::Fixture(live) => live.read(wait).await,
+            Self::Fixture(ref mut live) => live.read(wait).await,
         }
     }
 
     /// Whether the process has stopped and its resource is released, so a
     /// failed read leaves nothing running.
     pub(crate) fn finished(&self) -> bool {
-        match self {
+        match *self {
             #[cfg(feature = "modules")]
-            Self::TinyBox(live) => live.released,
+            Self::TinyBox(ref live) => live.released,
             #[cfg(test)]
-            Self::Fixture(live) => live.finished(),
+            Self::Fixture(ref live) => live.finished(),
         }
     }
 
     /// Stop the process and return what it wrote since the previous read.
     pub(crate) async fn kill(&mut self) -> anyhow::Result<LiveRead> {
-        match self {
+        match *self {
             #[cfg(feature = "modules")]
-            Self::TinyBox(live) => live.kill().await,
+            Self::TinyBox(ref mut live) => live.kill().await,
             #[cfg(test)]
-            Self::Fixture(live) => live.kill().await,
+            Self::Fixture(ref mut live) => live.kill().await,
         }
     }
 }

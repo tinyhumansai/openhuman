@@ -17,7 +17,6 @@ fn controller_schema_inventory_is_stable() {
             "get_definition",
             "reload_definitions",
             "triage_evaluate",
-            "graph_topologies",
             "registry_snapshot",
             "context_breakdown",
         ]
@@ -65,48 +64,29 @@ fn deserialize_params_preserves_chat_overrides_and_missing_definition_error() {
 }
 
 #[tokio::test]
-async fn graph_topologies_handler_exports_structural_reports() {
-    let result = handle_graph_topologies(DispatchCtx::process_default(), Map::new())
+async fn registry_snapshot_omits_retired_graphs() {
+    let result = handle_registry_snapshot(DispatchCtx::process_default(), Map::new())
         .await
-        .expect("topology export is infallible");
-    let graphs = result
-        .get("graphs")
+        .expect("registry snapshot is available");
+    let components = result
+        .get("components")
         .and_then(Value::as_array)
-        .expect("graphs array");
-    assert!(!graphs.is_empty(), "at least one custom graph is exported");
-    for g in graphs {
-        assert!(g.get("name").and_then(Value::as_str).is_some());
-        assert_eq!(g.get("ok").and_then(Value::as_bool), Some(true));
-        assert!(g
-            .get("mermaid")
-            .and_then(Value::as_str)
-            .unwrap()
-            .contains("flowchart"));
-        assert!(
-            g.get("topology").map(|t| !t.is_null()).unwrap_or(false),
-            "topology embeds as structured JSON"
-        );
-    }
-    let names: Vec<_> = graphs
+        .expect("component snapshot");
+    let ids: Vec<_> = components
         .iter()
-        .filter_map(|g| g.get("name").and_then(Value::as_str))
+        .filter_map(|component| component.get("id").and_then(Value::as_str))
         .collect();
-    assert!(names.contains(&"delegation"), "saw {names:?}");
     assert!(
-        names.contains(&"workflow_runs:scheduler_preview"),
-        "saw {names:?}"
+        !ids.contains(&"delegation"),
+        "snapshot includes the retired delegation graph: {ids:?}"
     );
-    let agents = result
-        .get("agents")
-        .and_then(Value::as_array)
-        .expect("agents array");
-    let orchestrator = agents
-        .iter()
-        .find(|agent| agent.get("id").and_then(Value::as_str) == Some("orchestrator"))
-        .expect("orchestrator graph resolution");
-    assert_eq!(
-        orchestrator.get("graph").and_then(Value::as_str),
-        Some("default")
+    assert!(
+        !ids.iter().any(|id| id.starts_with("agent_teams:")),
+        "snapshot includes a retired team graph: {ids:?}"
+    );
+    assert!(
+        !ids.iter().any(|id| id.starts_with("workflow_runs:")),
+        "snapshot includes a retired workflow graph: {ids:?}"
     );
 }
 

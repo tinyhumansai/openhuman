@@ -3,6 +3,24 @@
 use super::*;
 
 impl OpenHumanSessionHost {
+    /// Render the prompt from the same current-turn prelude that prepares a
+    /// cold runtime turn. Callers must refresh the prompt surface first when
+    /// they need live integrations or synthesized tools.
+    pub fn render_current_turn_prompt(&self) -> Result<String> {
+        self.render_current_turn_prompt_with_flow_archetype(None)
+    }
+
+    pub(crate) fn render_current_turn_prompt_with_flow_archetype(
+        &self,
+        flow_archetype_text: Option<&str>,
+    ) -> Result<String> {
+        let prelude = self.create_turn_prelude(false);
+        Ok(prelude
+            .build_system_prompt_tiered_with_flow_archetype(flow_archetype_text)?
+            .system_messages()
+            .join(""))
+    }
+
     pub(super) fn create_turn_prelude(
         &self,
         force_integration_refresh: bool,

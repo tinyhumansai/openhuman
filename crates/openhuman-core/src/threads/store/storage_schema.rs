@@ -5,6 +5,9 @@
 //! | v1 | v2 | scope |
 //! |---|---|---|
 //! | `threads_transcript_keys` (id = thread id) | `threads.transcript_keys` (id `Key::of([thread_id])`) | tenant |
+//! | — | `threads.channel_messages` | tenant |
+//! | — | `threads.staged_attachments` | agent |
+//! | — | `threads.reply_viseme_timelines` | agent |
 //!
 //! The importer marker `threads_import` is not a collection any more: the
 //! legacy JSONL import is a `tsd.migrations` entry
@@ -19,6 +22,12 @@ use crate::storage::schema_support::{
 };
 
 pub(super) const TRANSCRIPT_KEYS: &str = "threads.transcript_keys";
+/// Channel-message projection rows (tenant scope).
+pub(crate) const CHANNEL_MESSAGES: &str = "threads.channel_messages";
+/// Staged native attachments (agent scope).
+pub(crate) const STAGED_ATTACHMENTS: &str = "threads.staged_attachments";
+/// Viseme timelines of spoken replies (agent scope).
+pub(crate) const REPLY_VISEME_TIMELINES: &str = "threads.reply_viseme_timelines";
 pub(super) const LEGACY_TRANSCRIPT_KEYS: &str = "threads_transcript_keys";
 /// Converts legacy transcript-key rows into the current owner shape.
 pub(crate) fn upgrade_records(
@@ -33,7 +42,12 @@ pub(super) fn spec() -> CollectionSpec {
 
 /// Collections owned by the thread host alongside TinyAgents' transcript store.
 pub(crate) fn collection_specs() -> Vec<CollectionSpec> {
-    vec![spec()]
+    vec![
+        spec(),
+        CollectionSpec::new(CHANNEL_MESSAGES),
+        CollectionSpec::new(STAGED_ATTACHMENTS),
+        CollectionSpec::new(REPLY_VISEME_TIMELINES),
+    ]
 }
 
 fn transcript_keys_v2(batch: Vec<SourceRecord>) -> Result<Vec<TargetRecord>> {

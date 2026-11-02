@@ -71,18 +71,6 @@ fn runtime_settings(config: &Config) -> Vec<Finding> {
         }
     }
 
-    let mut agent_names = config.agents.keys().collect::<Vec<_>>();
-    agent_names.sort();
-    for (index, agent_name) in agent_names.into_iter().enumerate() {
-        if config.agents[agent_name].model.trim().is_empty() {
-            findings.push(warning(
-                &format!("agents[{index}].model"),
-                "A delegated agent has no model configured.",
-                "Set a model for the delegated agent at the reported index.",
-            ));
-        }
-    }
-
     if config.components.channels {
         if has_configured_channel(config) {
             findings.push(pass(
@@ -107,9 +95,7 @@ fn has_configured_channel(config: &Config) -> bool {
         || channels.discord.is_some()
         || channels.slack.is_some()
         || channels.mattermost.is_some()
-        || channels.webhook.is_some()
         || channels.imessage.is_some()
-        || channels.matrix.is_some()
         || channels.signal.is_some()
         || channels.whatsapp.is_some()
         || channels.linq.is_some()

@@ -29,10 +29,10 @@ pub async fn try_invoke_registered_rpc(
     method: &str,
     params: Map<String, Value>,
 ) -> Option<Result<Value, String>> {
-    let core = ctx.into_core().or_else(CoreContext::current);
+    let core = ctx.core().cloned().or_else(CoreContext::current);
     let ctx = match &core {
-        Some(core) => DispatchCtx::new(core.clone()),
-        None => DispatchCtx::unbound(),
+        Some(core) => ctx.with_resolved_core(core.clone()),
+        None => ctx,
     };
     // Boxed so the concrete `TaskLocalFuture` type does not escape into this
     // fn's future: without the type erasure the `Send` auto-trait solver

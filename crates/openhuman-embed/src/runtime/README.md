@@ -58,10 +58,12 @@ still claimed, restores the previous session store if it still owns the
 slot, drops its handle on an ephemeral workspace, and releases `RUNTIME_LIVE`.
 The ephemeral root (`EphemeralRoot`) is removed with a short retry loop
 (background writers can recreate subdirectories just after a turn returns)
-when its last holder drops. A dropped agent's deferred MCP cleanup holds that
-root, never the `CoreGuard`: an embedded host runs no shutdown hook, so a close
-the module never acknowledges would otherwise hold the process slot forever and
-every later `Runtime::builder().build()` would fail with `AlreadyRunning`.
+when its last holder drops. A dropped agent's deferred MCP cleanup retains the
+`CoreGuard` and ephemeral root while it retries the close, keeping process
+admission reserved until cleanup completes. If those bounded retries fail, the
+workspace is preserved for an explicit retry from a live runtime or manual
+reclamation after the runtime is gone; retained cleanup metadata does not keep
+the runtime guard alive.
 
 ## Layout
 

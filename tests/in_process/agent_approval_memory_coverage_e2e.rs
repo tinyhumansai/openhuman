@@ -237,7 +237,7 @@ async fn approval_get_gate_state_returns_a_consistent_boot_snapshot() {
 /// same binary, making the pair order-dependent — the identical reason
 /// `tool_registry_approval_e2e.rs` gives for skipping this path.
 /// Grant idempotency ("already-trusted tools are reported, not re-granted") is
-/// covered by the unit tests in `approval::rpc` / `approval::store`, which own
+/// covered by the unit tests in `approval::rpc` / `approval::gate`, which own
 /// the gate lifecycle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn approval_preauthorize_flow_succeeds_without_a_gate_installed() {
@@ -584,45 +584,8 @@ async fn agent_runs_active_accepts_every_filter_combination() {
 }
 
 // ---------------------------------------------------------------------------
-// agent.graph_topologies / agent.registry_snapshot
+// agent.registry_snapshot
 // ---------------------------------------------------------------------------
-
-/// `agent_graph_topologies` exports structure only. The contract in its own
-/// schema is explicit — "never closure bodies or run state" — so this asserts
-/// the negative as well as the positive: a topology export that started leaking
-/// prompt text or run state would be a privacy regression that a
-/// shape-only check would not catch.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn agent_graph_topologies_exports_structure_without_run_state() {
-    let _lock = env_lock_async().await;
-    let harness = setup().await;
-
-    let response = rpc(
-        &harness.rpc_base,
-        18,
-        "openhuman.agent_graph_topologies",
-        json!({}),
-    )
-    .await;
-    let body = payload(&response, "agent_graph_topologies");
-
-    // `is_some()` would accept `null` or a scalar, so a schema regression that
-    // dropped the field could still pass. Require the array itself — the handler
-    // builds `graphs` as a `Vec<Value>` and returns
-    // `json!({ "graphs": graphs, "agents": agents })`
-    // (`crates/openhuman-core/src/agent/schemas.rs:486`), so it is an array, not an object.
-    body.get("graphs")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("graph_topologies must return a `graphs` array: {body}"));
-
-    let serialized = body.to_string();
-    for leaked in ["system_prompt", "prompt_text", "api_key", "tool_arguments"] {
-        assert!(
-            !serialized.contains(leaked),
-            "graph topology export is structure-only but contained {leaked:?}"
-        );
-    }
-}
 
 /// `agent_registry_snapshot` projects the capability registry as metadata only.
 /// `counts` must agree with the length of `components` — they are derived from

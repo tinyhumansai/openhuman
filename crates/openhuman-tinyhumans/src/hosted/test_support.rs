@@ -1,7 +1,7 @@
 //! Test fixtures shared by the hosted domains' `*_tests.rs`.
 
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::{AuthService, APP_SESSION_PROVIDER};
+use openhuman_embed::__host::credentials::{AuthService, APP_SESSION_PROVIDER};
 use tempfile::TempDir;
 
 /// A config rooted in `tmp` whose backend is `api_url`.
@@ -17,7 +17,7 @@ pub fn config(tmp: &TempDir, api_url: &str) -> Config {
 }
 
 /// Store `token` as the app-session credential for `config`.
-pub fn store_session(config: &Config, token: &str) {
+pub async fn store_session(config: &Config, token: &str) {
     // The core is a dependency here, so its cfg(test) plaintext keyring is
     // unavailable. Boot the encrypted store with an isolated fixture key just
     // as a headless host does, before the first credential operation.
@@ -52,11 +52,12 @@ pub fn store_session(config: &Config, token: &str) {
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store session token");
 }
 
 /// A signed-in config against `api_url` (session token `jwt.test`).
-pub fn signed_in(tmp: &TempDir, api_url: &str) -> Config {
+pub async fn signed_in(tmp: &TempDir, api_url: &str) -> Config {
     crate::install(
         crate::InstallOptions::default()
             .hosted_controllers(false)
@@ -64,14 +65,14 @@ pub fn signed_in(tmp: &TempDir, api_url: &str) -> Config {
     )
     .expect("install SDK backend transport for hosted mock");
     let config = config(tmp, api_url);
-    store_session(&config, "jwt.test");
+    store_session(&config, "jwt.test").await;
     config
 }
 
 /// A config signed in with the offline local credential ("Continue locally").
-pub fn local_session(tmp: &TempDir) -> Config {
+pub async fn local_session(tmp: &TempDir) -> Config {
     // Unroutable: any request would fail loudly instead of returning the sentinel.
     let config = config(tmp, "http://127.0.0.1:9");
-    store_session(&config, "desktop.test.local");
+    store_session(&config, "desktop.test.local").await;
     config
 }

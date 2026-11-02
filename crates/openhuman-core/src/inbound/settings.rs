@@ -1,10 +1,11 @@
 //! What `[inbound]` resolves to: the queue manifest and pipeline configuration
 //! the module runs, where its queues live, and whether routing is on.
 //!
-//! The host hands the module its configuration (`queues`, `pipeline`) in the
-//! module's private blob when it loads it ([`module_config`]), and declares
-//! the same manifest on the module's storage scope when the storage host
-//! binds it ([`queue_grant`]). Both read the last resolution, so the queues
+//! The host hands the module its queue and pipeline configuration in the
+//! module's private blob when it loads it ([`module_config`]), and declares the
+//! same manifest on the module's storage scope when the storage host binds it
+//! ([`queue_grant`]). TinyBus injects the unique storage callback destination
+//! during verified module loading. Both read the last resolution, so the queues
 //! the module asks for are exactly the queues the host serves.
 
 use std::path::Path;
@@ -217,7 +218,11 @@ pub fn module_config(config: &Config) -> Value {
         "[inbound] configuring the tinyeventqueues module"
     );
     let resolved = remember(resolved);
+    // The module keeps its queues in host storage and refuses to load without
+    // the bus name that serves it; the host still derives the scope and grant
+    // from the authenticated caller, never from this value.
     json!({
+        "storage_callback": tinystoragedrivers_bus::STORAGE_INTERFACE.to_string(),
         "queues": resolved.queues_json,
         "pipeline": resolved.pipeline_json,
     })

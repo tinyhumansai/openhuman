@@ -58,7 +58,7 @@ pub struct HostStorage<'lock>(std::marker::PhantomData<&'lock ()>);
 impl<'lock> HostStorage<'lock> {
     pub fn install(_env: &'lock tokio::sync::MutexGuard<'_, ()>) -> Self {
         let previous = openhuman_core::storage::install(std::sync::Arc::new(
-            openhuman_core::storage::MemoryStorage::new(),
+            tinystoragedrivers_testkit::MemoryBackend::new(),
         ));
         assert!(
             previous.is_none(),

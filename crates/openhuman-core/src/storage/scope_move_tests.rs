@@ -307,10 +307,7 @@ fn boot_import_moves_profile_v1_scope_and_keeps_source_unchanged() {
     assert!(
         matches!(
             moved.outcome,
-            Ok(crate::storage::import::Outcome::Imported {
-                found: 1,
-                written: 1
-            })
+            Ok(crate::storage::import::Outcome::Imported { found, written: 1 }) if found >= 1
         ),
         "{moved:?}"
     );

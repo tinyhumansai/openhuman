@@ -8,7 +8,7 @@ fn scoped() -> Storage {
     memory_storage(&Scope::new("module:tinybox@local").unwrap())
 }
 
-const INDEX: &str = r#"{"jails":{"j1":{"id":"j1","label":"build","dir":"/w/jails/j1","backend_at_create":"landlock","created_at_unix":10,"updated_at_unix":20,"notes":"keep"}}}"#;
+const INDEX: &str = r#"{"records":{"j1":{"id":"j1","label":"build","dir":"/w/jails/j1","backend_at_create":"landlock","created_at_unix":10,"updated_at_unix":20,"notes":"keep"}}}"#;
 
 fn legacy_workspace() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -34,7 +34,7 @@ async fn the_jail_index_moves_into_one_document_with_the_same_shape() {
         .unwrap();
     assert_eq!(
         stored.doc,
-        json!({"jails": {"j1": {
+        json!({"records": {"j1": {
             "id": "j1",
             "label": "build",
             "dir": "/w/jails/j1",

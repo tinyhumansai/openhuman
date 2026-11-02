@@ -163,7 +163,7 @@ fn grant_turn_cwd_is_the_only_mutation() {
 /// silently drop a real user message (#5312).
 #[tokio::test]
 async fn effective_origin_defaults_to_direct_chat_outside_any_scope() {
-    use crate::security::turn_origin::AgentTurnOrigin;
+    use crate::core::runtime::turn_origin::AgentTurnOrigin;
     let origin = effective_agent_chat_origin(&crate::core::runtime::DispatchCtx::ambient());
     assert!(
         matches!(origin, AgentTurnOrigin::DirectChat),
@@ -180,7 +180,9 @@ async fn effective_origin_defaults_to_direct_chat_outside_any_scope() {
 /// see, not the blanket `Cli` allowance this RPC would otherwise impose.
 #[tokio::test]
 async fn effective_origin_keeps_an_embedder_scoped_label() {
-    use crate::security::turn_origin::{with_origin, AgentTurnOrigin, TrustedAutomationSource};
+    use crate::core::runtime::turn_origin::{
+        with_origin, AgentTurnOrigin, TrustedAutomationSource,
+    };
     let observed = with_origin(
         AgentTurnOrigin::TrustedAutomation {
             job_id: "run-7".to_string(),
@@ -202,18 +204,18 @@ async fn effective_origin_keeps_an_embedder_scoped_label() {
     ));
 }
 
-fn chat_origin(thread: &str) -> crate::security::turn_origin::AgentTurnOrigin {
-    crate::security::turn_origin::AgentTurnOrigin::WebChat {
+fn chat_origin(thread: &str) -> crate::core::runtime::turn_origin::AgentTurnOrigin {
+    crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
         thread_id: thread.into(),
         client_id: "client".into(),
         request_id: format!("req-{thread}").into(),
     }
 }
 
-fn chat_thread(origin: crate::security::turn_origin::AgentTurnOrigin) -> String {
+fn chat_thread(origin: crate::core::runtime::turn_origin::AgentTurnOrigin) -> String {
     match origin {
-        crate::security::turn_origin::AgentTurnOrigin::WebChat { thread_id, .. } => thread_id,
-        crate::security::turn_origin::AgentTurnOrigin::DirectChat => "direct".into(),
+        crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat { thread_id, .. } => thread_id,
+        crate::core::runtime::turn_origin::AgentTurnOrigin::DirectChat => "direct".into(),
         other => panic!("unexpected origin {other:?}"),
     }
 }

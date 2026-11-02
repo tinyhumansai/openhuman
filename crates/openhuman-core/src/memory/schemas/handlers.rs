@@ -102,7 +102,7 @@ fn engine_set_save_error(error: anyhow::Error) -> String {
 
 pub(super) fn engines_list(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
     rpc::<EmptyParams, _>(ctx, params, |_, config, _| async move {
-        Ok(ops::engines_list(&config))
+        Ok(ops::engines_list(&config).await)
     })
 }
 
@@ -116,7 +116,7 @@ pub(super) fn engine_set(ctx: DispatchCtx, params: Map<String, Value>) -> Contro
     Box::pin(async move {
         let params = parse::<EngineSetParams>(params)?;
         let mut config = load(&ctx).await?;
-        if let Err(error) = ops::apply_engine_set(&mut config, &params) {
+        if let Err(error) = ops::apply_engine_set(&mut config, &params).await {
             return finish::<Value>(Err(error));
         }
         if let Err(error) = config.save().await {
@@ -338,7 +338,7 @@ pub(super) fn sources_sync(ctx: DispatchCtx, params: Map<String, Value>) -> Cont
         ctx,
         params,
         |ctx, config, params: SourcesSyncParams| async move {
-            let started = sources::start_sync(&ctx, &config, params.id.as_deref())?;
+            let started = sources::start_sync(&ctx, &config, params.id.as_deref()).await?;
             Ok(SourcesSyncView { started })
         },
     )

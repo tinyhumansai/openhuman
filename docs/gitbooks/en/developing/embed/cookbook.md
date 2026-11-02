@@ -80,17 +80,17 @@ Run: `cargo run -p openhuman-embed --example lean_headless`
 
 Measure retained runtime-owned agents using loopback inference and two worker threads.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements.
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements. · feature: mcp,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features`
+Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features --features mcp,storage-sqlite`
 
 ## Connect an actual MCP protocol stub over loopback
 
 Connect an actual MCP protocol stub over loopback.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/mcp.rs) · offline with loopback stubs; no live path. · feature: mcp
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/mcp.rs) · offline with loopback stubs; no live path. · feature: mcp,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --example mcp --features mcp`
+Run: `cargo run -p openhuman-embed --example mcp --features mcp,storage-sqlite`
 
 ## Tenant scoped memory facade with an in-memory engine
 
@@ -104,9 +104,9 @@ Run: `cargo run -p openhuman-embed --example memory`
 
 SaaS profiles isolate conversation history.
 
-[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs) · offline with loopback stubs; no live path. · feature: channels
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs) · offline with loopback stubs; no live path. · feature: channels,storage-sqlite
 
-Run: `cargo run -p openhuman-embed --example profiles --features channels`
+Run: `cargo run -p openhuman-embed --example profiles --features channels,storage-sqlite`
 
 ## Hello agent: a prompt in and a reply out
 

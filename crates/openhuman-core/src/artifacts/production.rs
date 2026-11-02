@@ -18,11 +18,12 @@
 //! always has its versioned record.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tiny_artifacts::{ArtifactKind, Artifacts, Author, Content};
 
 use super::files::FileRoots;
-use super::tiny_store::{artifacts_service, legacy_kind_for_extension};
+use super::tiny_store::{artifacts_service_current, legacy_kind_for_extension};
 use super::types::ArtifactKind as LegacyArtifactKind;
 use crate::security::approval::ApprovalChatContext;
 
@@ -92,7 +93,7 @@ impl Production {
         )
         .await?;
 
-        let artifacts = artifacts_service(workspace_dir, files.clone(), None, chat);
+        let artifacts = artifacts_service_current(workspace_dir, files.clone(), None, chat);
         let mut production = Self {
             artifacts,
             workspace_dir: workspace_dir.to_path_buf(),
@@ -236,10 +237,24 @@ impl Production {
             Ok(Some(record)) if record.latest().is_some() => record,
             _ => return self.fail_card(reason).await,
         };
+        let ctx = crate::core::runtime::DispatchCtx::ambient();
+        let scoped = crate::storage::sessions::artifact_scoped_for_in(&self.workspace_dir, &ctx);
+        let file_store = scoped.as_ref().map(|scoped| {
+            let storage = super::tiny_store::storage_bundle(scoped);
+            Arc::new(tiny_artifacts::BlobFileStore::new(&storage))
+                as Arc<dyn tiny_artifacts::FileStore>
+        });
         let bridge = super::tiny_store::LegacyUiBridge::new(
             &self.workspace_dir,
             self.files.clone(),
+            super::tiny_store::guarded_roots(super::tiny_store::file_roots(
+                &self.workspace_dir,
+                &self.files,
+                None,
+            )),
+            file_store,
             self.chat.as_ref(),
+            &ctx,
         );
         if let Err(err) = bridge.show_newest(&record).await {
             tracing::warn!(

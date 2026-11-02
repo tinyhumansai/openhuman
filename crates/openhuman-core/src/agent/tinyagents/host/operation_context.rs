@@ -1,7 +1,7 @@
 //! The immutable authority view the run exposes to shared tools through the
 //! harness's typed state-view seam, and the readers tools use on it.
 
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use tinyagents_definition::SandboxMode;
 
 use std::{sync::Arc, time::Duration};

@@ -7,29 +7,25 @@ use super::port::BackendTransportError;
 use reqwest::Method;
 use tinyhumans_sdk::Error as SdkError;
 
+/// Extract the provider and message id from a channel-message route, allowing
+/// a fixed API prefix such as `/api/v1` before `/channels`.
 fn channel_message_path(path: &str) -> Option<(&str, &str)> {
-    let segments = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    let channels = segments.iter().position(|segment| *segment == "channels")?;
-    if segments.get(channels + 2).copied() != Some("messages") {
-        return None;
+    let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
+    let index = segments.iter().position(|segment| *segment == "channels")?;
+    match segments.get(index..)? {
+        ["channels", provider, "messages", message_id]
+            if !provider.is_empty() && !message_id.is_empty() =>
+        {
+            Some((*provider, *message_id))
+        }
+        _ => None,
     }
-    let provider = *segments.get(channels + 1)?;
-    let message_id = *segments.get(channels + 3)?;
-    if provider.is_empty() || message_id.is_empty() || segments.len() != channels + 4 {
-        return None;
-    }
-    Some((provider, message_id))
 }
 
-fn is_unmatched_route_404(error: &SdkError) -> bool {
-    let SdkError::Status { body, .. } = error else {
-        return false;
-    };
-    body.as_str()
-        .is_some_and(|body| body.contains("Cannot PATCH "))
+/// The backend's unmatched Express route responds with plain text or HTML;
+/// handler errors are JSON and mean the message itself was not found.
+fn is_unmatched_route_404(body: &serde_json::Value) -> bool {
+    matches!(body, serde_json::Value::String(_))
 }
 
 /// Map the SDK's error for `method path` onto the core-owned transport error.
@@ -44,7 +40,9 @@ pub fn map_sdk_error(error: SdkError, method: &Method, path: &str) -> BackendTra
     if let SdkError::Status { status: 404, .. } = &error {
         if let Some((provider, message_id)) = channel_message_path(path) {
             let (provider, message_id) = (provider.to_owned(), message_id.to_owned());
-            if *method == Method::PATCH && is_unmatched_route_404(&error) {
+            if *method == Method::PATCH
+                && matches!(&error, SdkError::Status { body, .. } if is_unmatched_route_404(body))
+            {
                 log::debug!(
                     "[tinyhumans-transport] {method} {path}: 404 with no matching route; \
                      channel edit route missing"

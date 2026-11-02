@@ -1,6 +1,7 @@
 //! Keyring consent domain — explicit user consent before falling back to local
 //! encrypted storage when the OS keyring is unavailable.
 
+pub(crate) mod operation_approval;
 pub mod ops;
 pub mod policy;
 mod schemas;

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use tiny_artifacts::{ArtifactKind, ArtifactStatus as RecordStatus, ArtifactStore};
+use tiny_artifacts::{ArtifactKind, ArtifactStatus as RecordStatus, ArtifactStore, FileStore};
 
 use super::*;
 use crate::artifacts::store::get_artifact;
@@ -123,14 +123,15 @@ async fn a_revision_reuses_the_id_and_file_and_keeps_the_history() {
         b"deck-v2!"
     );
     // Each version still holds what it was.
-    let bytes_of = |n: u32| {
-        let file = record.version(n).unwrap().file.clone().unwrap();
-        std::fs::read(crate::artifacts::tiny_store::stored_file_path(
-            &workspace, &file,
-        ))
-    };
-    assert_eq!(bytes_of(1).unwrap(), b"deck-v1");
-    assert_eq!(bytes_of(2).unwrap(), b"deck-v2!");
+    let context = crate::core::runtime::DispatchCtx::ambient();
+    let scoped = crate::storage::sessions::artifact_scoped_for_in(&workspace, &context)
+        .expect("production's artifact scope is available");
+    let storage = crate::artifacts::tiny_store::storage_bundle(&scoped);
+    let blobs = tiny_artifacts::BlobFileStore::new(&storage);
+    for (version, expected) in [(1, b"deck-v1".as_slice()), (2, b"deck-v2!".as_slice())] {
+        let file = record.version(version).unwrap().file.as_ref().unwrap();
+        assert_eq!(blobs.read(&file.key).await.unwrap(), expected);
+    }
 }
 
 #[tokio::test]

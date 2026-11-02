@@ -37,8 +37,10 @@ fn declared_collections() -> Vec<CollectionOwner> {
             "tinyagents-session",
             tinyagents_session::port::collections(),
         ),
-        owner("tinyagents-graph", tinyagents_graph::storage::collections()),
-        owner("tinyagents-tasks", tinyagents_tasks::collections()),
+        owner(
+            "tinyagents-tasks",
+            tinyagents_tasks::storage_schema().collections(),
+        ),
         owner("openhuman-core", host_collections()),
     ];
 
@@ -79,12 +81,6 @@ fn declared_collections() -> Vec<CollectionOwner> {
             .into_iter()
             .map(|collection| CollectionSpec::new(collection.name))
             .collect(),
-    ));
-
-    #[cfg(feature = "tinymemes")]
-    owners.push(owner(
-        "tinymemes-bus",
-        tinymemes_bus::storage::collections(),
     ));
 
     #[cfg(feature = "inbound-queues")]
@@ -152,10 +148,6 @@ pub fn module_collections(owner: &str) -> Vec<CollectionSpec> {
                 .map(|collection| CollectionSpec::new(collection.name))
                 .collect(),
         );
-    }
-    #[cfg(feature = "tinymemes")]
-    if owner == "memes" {
-        return module_owned_collections(tinymemes_bus::storage::collections());
     }
     #[cfg(feature = "inbound-queues")]
     if owner == "teq" {

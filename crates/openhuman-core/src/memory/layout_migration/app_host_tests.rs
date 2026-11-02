@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
-use tinymemory_api::conformance::ReferenceEngine;
-use tinymemory_api::MemoryEngine;
+use tinymemory_api::{conformance::ReferenceEngine, MemoryEngine};
 
 use super::*;
 use crate::memory::engine::install_test_engine_for_root;
+#[cfg(feature = "storage-sqlite")]
 use crate::memory::layout_migration::ops::scan;
+#[cfg(feature = "storage-sqlite")]
 use crate::memory::layout_migration::test_host::{count, fact};
-use tinymemory_tools::layout_migration::{
-    FsLegacyClaim, LayoutHost, LegacyClaim, Outcome, Trigger,
-};
+use tinymemory_tools::layout_migration::{FsLegacyClaim, LayoutHost, LegacyClaim};
+#[cfg(feature = "storage-sqlite")]
+use tinymemory_tools::layout_migration::{Outcome, Trigger};
 
 const ACCOUNT: &str = "0123456789abcdef01234567";
 
@@ -42,17 +43,19 @@ fn signed_in(tmp: &tempfile::TempDir) -> Config {
     config
 }
 
+#[cfg(feature = "storage-sqlite")] // reads migration state; see `ops.rs`
 #[tokio::test]
 async fn signed_out_there_is_nothing_to_move() {
     let tmp = tempfile::tempdir().unwrap();
     let config = crate::memory::test_fixtures::config_in(&tmp);
     assert!(matches!(
-        AppHost::new(config.clone()).engines(),
+        AppHost::new(config.clone()).engines().await,
         Err(lm::Error::Off(_))
     ));
     assert!(!scan(&AppHost::new(config.clone())).await.unwrap().needed);
 }
 
+#[cfg(feature = "storage-sqlite")] // reads migration state; see `ops.rs`
 #[tokio::test]
 async fn binds_the_legacy_tree_and_the_users_own() {
     let tmp = tempfile::tempdir().unwrap();
@@ -64,7 +67,7 @@ async fn binds_the_legacy_tree_and_the_users_own() {
     install_test_engine_for_root(&config.workspace_dir, Some(&root), tree.clone());
     legacy.store(fact("legacy fact")).await.unwrap();
 
-    let engines = AppHost::new(config.clone()).engines().unwrap();
+    let engines = AppHost::new(config.clone()).engines().await.unwrap();
     assert_eq!(count(&*engines.legacy).await, 1);
     assert_eq!(count(&*engines.tree).await, 0);
     assert!(scan(&AppHost::new(config.clone())).await.unwrap().needed);
@@ -93,8 +96,8 @@ fn places_into_the_v3_layout_before_the_switch() {
     );
 }
 
-#[test]
-fn every_account_on_a_self_hosted_engine_shares_one_claim() {
+#[tokio::test]
+async fn every_account_on_a_self_hosted_engine_shares_one_claim() {
     let tmp = tempfile::tempdir().unwrap();
     let mut a = signed_in(&tmp);
     a.memory.engine = CORTEXDB_ENGINE.to_string();
@@ -111,8 +114,8 @@ fn every_account_on_a_self_hosted_engine_shares_one_claim() {
             Arc::new(ReferenceEngine::new()),
         );
     }
-    let key_a = claim(&a).unwrap().unwrap();
-    let key_b = claim(&b).unwrap().unwrap();
+    let key_a = claim(&a).await.unwrap().unwrap();
+    let key_b = claim(&b).await.unwrap().unwrap();
     assert_eq!(key_a.marker_path(), key_b.marker_path());
     assert_eq!(
         key_a
@@ -128,7 +131,7 @@ fn every_account_on_a_self_hosted_engine_shares_one_claim() {
     assert_eq!(key_a.owner(), format!("user:{ACCOUNT}"));
 
     let hosted = signed_in(&tmp);
-    assert!(claim(&hosted).unwrap().is_none());
+    assert!(claim(&hosted).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -153,6 +156,7 @@ async fn the_switch_writes_the_migrated_persons_own_config_fresh() {
 /// The host hands the module its claim: a self-hosted tree is not moved until
 /// the user consents, and the account that did not claim it has nothing to
 /// move. Fails if the adapter stops passing the claim on.
+#[cfg(feature = "storage-sqlite")] // reads migration state; see `ops.rs`
 #[tokio::test]
 async fn a_shared_tree_reaches_the_module_as_a_claim() {
     let tmp = tempfile::tempdir().unwrap();
@@ -177,10 +181,10 @@ async fn a_shared_tree_reaches_the_module_as_a_claim() {
     .await
     .unwrap();
     assert_eq!(outcome, Outcome::NeedsTakeover);
-    assert_eq!(count(&*host.engines().unwrap().tree).await, 0);
+    assert_eq!(count(&*host.engines().await.unwrap().tree).await, 0);
 
     // Another account on the machine took the tree first.
-    let key = claim(&config).unwrap().unwrap();
+    let key = claim(&config).await.unwrap().unwrap();
     let app_dir = key
         .marker_path()
         .parent()

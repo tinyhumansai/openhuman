@@ -135,9 +135,6 @@ pub(crate) fn normalize_config(config: &mut Config) -> bool {
             changed |= rewrite(model);
         }
     }
-    for delegate in config.agents.values_mut() {
-        changed |= rewrite(&mut delegate.model);
-    }
     for route in &mut config.model_routes {
         changed |= rewrite(&mut route.model);
     }

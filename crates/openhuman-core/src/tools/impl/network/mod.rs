@@ -1,14 +1,13 @@
-//! Network tools: GitBooks docs lookup, Gmail unsubscribe, and (under the
+//! Network tools: GitBooks docs lookup and (under the
 //! `mcp` feature) the MCP client/setup tools, plus the host adapter for the
-//! tools that live in `tinytools_std::network` (`http_request`, `web_fetch`,
+//! tools that live in `tinyagents_harness_tools::net::network` (`http_request`, `web_fetch`,
 //! `curl`, `pushover`). [`gate`] implements `NetGate` for `SecurityPolicy` and
 //! [`host`] supplies the limits, HTML engine and x402 payment hook those tools
-//! are handed. `url_guard` (in `tinytools_std`) is the shared SSRF/allowlist
+//! are handed. `url_guard` (in `tinyagents_harness`) is the shared SSRF/allowlist
 //! validator. Registration gates are documented in `tools/impl/README.md`.
 
 mod gate;
 mod gitbooks;
-mod gmail_unsubscribe;
 mod host;
 // Leaf-gated: the only consumers of these two are the `#[cfg(feature = "mcp")]`
 // blocks in `tools/ops.rs`, so no stub is needed — nothing names them when the
@@ -20,7 +19,6 @@ mod mcp;
 mod mcp_server_tools;
 
 pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
-pub use gmail_unsubscribe::GmailUnsubscribeTool;
 #[cfg(feature = "web3")]
 pub(crate) use host::x402_request_tool;
 pub use host::{

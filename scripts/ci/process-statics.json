@@ -50,17 +50,7 @@
     "verification": "agent/orchestration/background_delivery_slots_tests.rs: one_profiles_busy_turn_does_not_block_anothers_thread"
   },
   {
-    "file": "crates/openhuman-core/src/agent/orchestration/workflow_runs/engine/lifecycle.rs",
-    "scope": "",
-    "name": "SUPERVISOR",
-    "type": "OnceLock<WorkflowRunSupervisor>",
-    "count": 1,
-    "category": "D",
-    "reason": "The process-local supervisor holds generation cancellation handles keyed by run id, not durable workflow state or tenant data. Durable run transitions remain fenced by the storage driver's revision and lease checks.",
-    "verification": "agent/orchestration/workflow_runs/engine/lifecycle_tests.rs: losing_resume_cas_keeps_the_installed_workflow_generation"
-  },
-  {
-    "file": "crates/openhuman-core/src/agent/tinyagents/turn_exec.rs",
+    "file": "crates/openhuman-core/src/agent/tinyagents/turn_exec/root_hosted_harness.rs",
     "scope": "",
     "name": "ROOT_HOSTED_HARNESS",
     "type": "LazyLock<AgentHarness<(),OpenHumanRunContext>>",
@@ -410,6 +400,16 @@
     "verification": "modules/runtime_tests.rs: the_module_bus_is_a_singleton_and_serves_proxies"
   },
   {
+    "file": "crates/openhuman-core/src/modules/storage_host_backend.rs",
+    "scope": "",
+    "name": "TEST_MODULE_STORAGE",
+    "type": "std::sync::Mutex<Option<Arc<dyn StorageBackend>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (cfg(test)): the backend module calls are served while a unit test holds a module lock (composio module_guard), so that test's module storage is never installed in the process slot, where it would be every concurrent test's storage (MAIN-57). Set and restored only under the module's test lock; no tenant state, not compiled into any shipped build.",
+    "verification": "integrations/composio/ops/scope_prefs_tests.rs: a_saved_pref_survives_a_deferred_legacy_migration"
+  },
+  {
     "file": "crates/openhuman-core/src/modules/wallet_backend.rs",
     "scope": "",
     "name": "HANDLERS",
@@ -418,16 +418,6 @@
     "category": "A",
     "reason": "Host wiring: an id-keyed table of handlers the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
     "verification": "modules/wallet_backend_tests.rs: a_registered_handler_answers_the_call"
-  },
-  {
-    "file": "crates/openhuman-core/src/plan_review/gate.rs",
-    "scope": "",
-    "name": "GATE",
-    "type": "OnceLock<PlanReviewGate>",
-    "count": 1,
-    "category": "B",
-    "reason": "The process gate is infrastructure, and its waiter, parked-review, and thread lookup tables use the profile-only tenant key plus request/thread id; agent requests remain available to their profile-level UI while other profiles cannot reach them.",
-    "verification": "plan_review/gate_tests.rs: parked_reviews_are_isolated_by_tenant"
   },
   {
     "file": "crates/openhuman-core/src/prompts/section_renderers.rs",
@@ -492,16 +482,6 @@
   {
     "file": "crates/openhuman-core/src/storage/sessions/mod.rs",
     "scope": "",
-    "name": "OPEN_WORKSPACE_STORES",
-    "type": "LazyLock<Mutex<HashMap<(std::path::PathBuf,String),tinyagents_session::port::WorkspaceStores>>, >",
-    "count": 1,
-    "category": "D",
-    "reason": "Holds open the workspace transcript stores used when no host session store is installed. Each entry is a handle to the SQLite store under one workspace, keyed by that workspace and the session store key (agent_key_for: <profile>~<agent> for a SaaS profile), so two profiles or agents never share an entry; the store under the workspace is the authoritative data. release_workspace_defaults drops them all for a data reset, release_workspace those of one workspace.",
-    "verification": "threads/ops/edit_tests.rs: a_profile_prefixed_key_round_trips_through_edit_and_regenerate; storage/sessions/mod_tests.rs: without_a_store_transcripts_come_from_the_workspace_store_not_files"
-  },
-  {
-    "file": "crates/openhuman-core/src/storage/sessions/mod.rs",
-    "scope": "",
     "name": "PROVIDER",
     "type": "LazyLock<RwLock<Option<Arc<dyn SessionStoreProvider>>>>",
     "count": 1,
@@ -520,7 +500,7 @@
     "verification": "storage/sessions/rebound_tests.rs: a_registry_rebind_leaves_other_registries_alone"
   },
   {
-    "file": "crates/openhuman-core/src/storage/sessions/workspace.rs",
+    "file": "crates/openhuman-core/src/storage/sessions/host_stores.rs",
     "scope": "",
     "name": "FALLBACKS",
     "type": "LazyLock<Mutex<HashMap<PathBuf,Fallback>>>",
@@ -528,16 +508,6 @@
     "category": "D",
     "reason": "Each entry routes one workspace path to its storage backend and DriverSessionStores provider; returned stores still require the caller's tenant session key, while authoritative session data remains in the backend.",
     "verification": "storage/sessions/mod_tests.rs: each_workspace_keeps_its_sessions_in_its_own_database; storage/sessions/mod_tests.rs: two_profiles_default_agents_keep_separate_session_keys_and_stores; threads/ops/edit_tests.rs: a_profile_prefixed_key_round_trips_through_edit_and_regenerate"
-  },
-  {
-    "file": "crates/openhuman-core/src/storage/sessions/workspace.rs",
-    "scope": "",
-    "name": "MEMORY",
-    "type": "LazyLock<Mutex<HashMap<PathBuf,Arc<dyn SessionStoreProvider>>>>",
-    "count": 1,
-    "category": "D",
-    "reason": "The in-memory provider is a workspace-keyed fallback routing handle; its AgentStores are selected with the caller's tenant session key, and an unusable workspace cannot read another workspace's provider.",
-    "verification": "storage/sessions/workspace_tests.rs: an_unusable_workspace_degrades_to_an_in_memory_store; storage/sessions/mod_tests.rs: two_profiles_default_agents_keep_separate_session_keys_and_stores; threads/ops/edit_tests.rs: a_profile_prefixed_key_round_trips_through_edit_and_regenerate"
   },
   {
     "file": "crates/openhuman-core/src/threads/artifact_rows.rs",
@@ -548,26 +518,6 @@
     "category": "A",
     "reason": "Keeps the one process-wide event-bus subscription that writes artifact rows alive and makes registration idempotent; it holds no data, and each event names the workspace and thread its row is written to.",
     "verification": "threads/artifact_rows_tests.rs: recording_an_artifact_twice_writes_one_row"
-  },
-  {
-    "file": "crates/openhuman-core/src/tinymemes/callbacks.rs",
-    "scope": "",
-    "name": "REGISTRY",
-    "type": "LazyLock<Mutex<HashMap<String,Entry>>>",
-    "count": 1,
-    "category": "B",
-    "reason": "Keyed by a random per-remix correlation id; each entry holds the registering caller's config and CoreContext, which every callback re-enters. Callbacks are accepted only from the module peer (bus name owner) for a live id, and the entry is retired by End, a failed call, or an age sweep.",
-    "verification": "tinymemes/service_tests.rs: only_the_module_may_call_back_and_only_for_a_live_remix"
-  },
-  {
-    "file": "crates/openhuman-core/src/tinymemes/service.rs",
-    "scope": "",
-    "name": "FOREGROUND",
-    "type": "std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String,std::sync::Arc<tokio::sync::Mutex<()>>>>, >",
-    "count": 1,
-    "category": "B",
-    "reason": "Holds only unit mutexes. The key is the workspace directory, so different workspaces never share or wait on a lock and no tenant data is stored.",
-    "verification": "tinymemes/service_tests.rs: foreground_remixes_share_a_lock_per_workspace_and_never_across_workspaces"
   },
   {
     "file": "crates/openhuman-core/src/tools/sources.rs",
@@ -660,6 +610,16 @@
     "verification": "storage/mod_tests.rs: bridged_calls_do_not_starve_a_capped_host_runtime; storage/mod_tests.rs: open_connects_on_the_storage_runtime"
   },
   {
+    "file": "crates/openhuman-core/src/storage/mod.rs",
+    "scope": "",
+    "name": "SLOT_OWNER",
+    "type": "Mutex<Option<String>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (cfg(test)): names the libtest thread that installed the storage slot, so a slot one test installs is hidden from tests on other threads in the same process (MAIN-57). It holds only a thread name, no records or tenant state, and is not compiled into any shipped build.",
+    "verification": "storage/mod_tests.rs: a_test_installed_slot_is_hidden_from_other_test_threads"
+  },
+  {
     "file": "crates/openhuman-core/src/web_chat/ops/test_hooks.rs",
     "scope": "",
     "name": "TEST_PARK_AFTER_RUN",
@@ -668,5 +628,55 @@
     "category": "A",
     "reason": "A debug/test-only hook flag (`cfg(any(test, debug_assertions))`) that parks `run_chat_task` after its run so the idle guard can be exercised end to end; it holds no tenant data and is off unless a test sets it.",
     "verification": "tests/agent_harness_e2e.rs: idle_guard_local::stalled_turn_is_stopped_by_the_idle_guard_and_closed_with_a_summary"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_lease.rs",
+    "scope": "",
+    "name": "LEASES",
+    "type": "LazyLock<Mutex<HashMap<SessionLeaseKey,Weak<AsyncMutex<()>>>>>",
+    "count": 1,
+    "category": "D",
+    "reason": "Process-local lease table keyed by the complete tenant, agent and canonical session identity; it holds only weak mutex handles that coordinate runners inside this process and stores no tenant data.",
+    "verification": "agent/session_lease_tests.rs: distinct_tenant_agent_or_session_keys_do_not_serialize"
+  },
+  {
+    "file": "crates/openhuman-core/src/web_chat/event_bus_channel.rs",
+    "scope": "",
+    "name": "EVENT_BUS",
+    "type": "Lazy<broadcast::Sender<ScopedWebEvent>>",
+    "count": 1,
+    "category": "D",
+    "reason": "Process-wide fan-out for web-channel events; every event is a ScopedWebEvent carrying its own tenant scope, and each subscriber filters by that scope rather than relying on shared state.",
+    "verification": "web_chat/event_bus_tests.rs: egress_surface_bridges_pending_with_chat_context"
+  },
+  {
+    "file": "crates/openhuman-core/src/web_chat/ops/test_hooks.rs",
+    "scope": "",
+    "name": "TEST_LAST_RUN_CHAT_TASK_ERROR",
+    "type": "Lazy<Mutex<Option<String>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "Test-only #[cfg(test)] slot recording the last run_chat_task error string; it is not compiled into production builds and carries no tenant data.",
+    "verification": "channels/bus/subscriber_tests.rs: reads the slot through last_run_chat_task_error_for_test"
+  },
+  {
+    "file": "crates/openhuman-core/src/web_chat/proactive.rs",
+    "scope": "",
+    "name": "REGISTERED",
+    "type": "std::sync::Once",
+    "count": 1,
+    "category": "A",
+    "reason": "One-shot guard that subscribes the proactive web subscriber to the process-wide bus once; it stores no tenant identifiers, and per-event tenant scope arrives on each event.",
+    "verification": "web_chat/event_bus_tests.rs: egress_surface_bridges_pending_with_chat_context"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "std::sync::OnceLock<std::sync::Arc<BoxRegistry<BusBoxDriver>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
+    "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
   }
 ]

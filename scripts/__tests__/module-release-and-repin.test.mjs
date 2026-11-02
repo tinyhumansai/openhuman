@@ -100,6 +100,19 @@ test("rewriteRecord takes version, url, archives and digests verbatim from check
   assert.deepEqual(unusedChecksums(src, "tinyx", sums), []);
 });
 
+test("rewriteRecord uses the selected fork release URL when provided", () => {
+  const releaseUrl = "https://github.com/senamakel/tinyx/releases/tag/v0.3.0";
+  const { src } = rewriteRecord(
+    RECORDS,
+    "tinyx",
+    "0.3.0",
+    parseChecksumToml(CHECKSUM),
+    releaseUrl,
+  );
+
+  assert.match(src, new RegExp(`release_url: "${releaseUrl}"`));
+});
+
 test("rewriteRecord refuses a release that lacks an asset, and an unknown id is unchanged", () => {
   const partial = parseChecksumToml(
     `[sha256]\n"tinyx-module-0.3.0-ubuntu-24.04-x86_64.tar.gz" = "${SHA_X}"\n`,

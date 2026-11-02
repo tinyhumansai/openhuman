@@ -57,6 +57,37 @@ pub(crate) fn reset_local_data_marker_remove_error(path: &Path, error: &std::io:
     )
 }
 
+/// Refuses any delete target that is not one user's own folder,
+/// `<root>/users/<id>`. Every reset path goes through this before it touches
+/// the disk, so a refusal deletes nothing.
+///
+/// On the legacy single-user layout the config dir is the shared root itself,
+/// which also holds every account under `users/`: clearing it would wipe them
+/// all, so that case is refused with its own message.
+pub(crate) fn ensure_user_scoped_dir(current: &Path, root: &Path) -> Result<(), String> {
+    let users_root = root.join("users");
+    let plain_id = current
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_plain_user_id);
+    if plain_id && current.parent() == Some(users_root.as_path()) {
+        return Ok(());
+    }
+    if current == root {
+        return Err(format!(
+            "Clear App Data is not available on the legacy data layout: {} is the shared \
+             OpenHuman folder and holds every account's data. Nothing was removed; delete the \
+             folder manually to start over.",
+            root.display()
+        ));
+    }
+    Err(format!(
+        "refusing to clear {}: it is not a per-user data folder under {}. Nothing was removed.",
+        current.display(),
+        users_root.display()
+    ))
+}
+
 /// Internal helper to reset local data for the **active user only**.
 ///
 /// Removes the current user's data directory (`~/.openhuman/users/<id>`) plus
@@ -82,6 +113,9 @@ pub(crate) async fn reset_local_data_for_paths(
         user_marker = %active_user_marker.display(),
         "[config] reset_local_data: starting (user-scoped)"
     );
+
+    // Before any marker is touched, so a refusal changes nothing.
+    ensure_user_scoped_dir(current_openhuman_dir, default_openhuman_dir)?;
 
     let mut removed_paths = Vec::new();
 
@@ -166,15 +200,36 @@ pub async fn reset_local_data(ctx: &DispatchCtx) -> Result<Outcome<serde_json::V
 /// that motivated the split.
 pub async fn get_data_paths(ctx: &DispatchCtx) -> Result<Outcome<serde_json::Value>, String> {
     let config = ctx.load_config().await?;
+    Ok(data_paths(
+        &config_openhuman_dir(&config),
+        &default_openhuman_dir(),
+    ))
+}
+
+/// [`get_data_paths`] for the Tauri `reset_local_data` command, which deletes
+/// the returned `current_openhuman_dir`: refuses unless that is one user's own
+/// folder (see [`ensure_user_scoped_dir`]), before the shell stops the core.
+pub async fn get_data_paths_to_clear(
+    ctx: &DispatchCtx,
+) -> Result<Outcome<serde_json::Value>, String> {
+    let config = ctx.load_config().await?;
     let current_openhuman_dir = config_openhuman_dir(&config);
     let default_openhuman_dir = default_openhuman_dir();
-    let active_workspace_marker = active_workspace_marker_path(&default_openhuman_dir);
+    ensure_user_scoped_dir(&current_openhuman_dir, &default_openhuman_dir)?;
+    Ok(data_paths(&current_openhuman_dir, &default_openhuman_dir))
+}
+
+fn data_paths(
+    current_openhuman_dir: &Path,
+    default_openhuman_dir: &Path,
+) -> Outcome<serde_json::Value> {
+    let active_workspace_marker = active_workspace_marker_path(default_openhuman_dir);
     // The active-user marker lives at the *shared* root `~/.openhuman`, not
     // inside the per-user dir. A clear removes it (to sign the current user
     // out) but must leave the sibling `users/<other>` dirs and the root
     // itself intact — see `reset_local_data_for_paths`.
-    let active_user_marker = crate::config::active_user_marker_path(&default_openhuman_dir);
-    Ok(Outcome::new(
+    let active_user_marker = crate::config::active_user_marker_path(default_openhuman_dir);
+    Outcome::new(
         json!({
             "current_openhuman_dir": current_openhuman_dir.display().to_string(),
             "default_openhuman_dir": default_openhuman_dir.display().to_string(),
@@ -186,7 +241,7 @@ pub async fn get_data_paths(ctx: &DispatchCtx) -> Result<Outcome<serde_json::Val
             current_openhuman_dir.display(),
             default_openhuman_dir.display()
         )],
-    ))
+    )
 }
 
 /// Like [`get_data_paths`], but resolves the current data dir directly from an

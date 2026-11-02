@@ -47,7 +47,7 @@ pub(super) fn resolve_local_runtime_key(
 
 /// The key and HTTP client a registered catalog listing is handed for `entry`
 /// (when the provider id matched a configured entry).
-fn catalog_request(
+async fn catalog_request(
     config: &crate::config::Config,
     entry: Option<&crate::config::schema::cloud_providers::CloudProviderCreds>,
 ) -> Result<crate::inference::registry::CatalogHostRequest, String> {
@@ -57,6 +57,7 @@ fn catalog_request(
         Some(entry) => {
             let looked_up =
                 crate::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
+                    .await
                     .unwrap_or_default();
             resolve_local_runtime_key(&entry.slug, looked_up, config)
         }
@@ -182,7 +183,7 @@ pub async fn list_configured_models_from_config(
             .cloud_providers
             .iter()
             .find(|e| e.id == provider_id || e.slug == provider_id);
-        let request = catalog_request(config, entry)?;
+        let request = catalog_request(config, entry).await?;
         return run_registered_catalog(&provider_id, config, request, catalog).await;
     }
     if provider_id == crate::inference::provider::factory::PROVIDER_OPENHUMAN {
@@ -208,7 +209,7 @@ pub async fn list_configured_models_from_config(
             crate::inference::provider::factory::PROVIDER_OPENHUMAN,
         ) {
             Some(catalog) => {
-                let request = catalog_request(config, Some(&entry))?;
+                let request = catalog_request(config, Some(&entry)).await?;
                 run_registered_catalog(
                     crate::inference::provider::factory::PROVIDER_OPENHUMAN,
                     config,
@@ -243,11 +244,11 @@ pub async fn list_configured_models_from_config(
     let crate::inference::registry::CatalogHostRequest {
         provider_key: api_key,
         client,
-    } = catalog_request(config, Some(&entry))?;
+    } = catalog_request(config, Some(&entry)).await?;
 
     let bearer_is_oauth = entry.slug == "openai"
-        && crate::inference::provider::factory::openai_bearer_is_oauth(config);
-    let routing = resolve_codex_routing(config, &entry.slug, &entry.endpoint, &api_key, bearer_is_oauth)
+        && crate::inference::provider::factory::openai_bearer_is_oauth(config).await;
+    let routing = resolve_codex_routing(config, &entry.slug, &entry.endpoint, &api_key, bearer_is_oauth).await
         .unwrap_or_else(|err| {
             log::warn!(
                 "[providers][list_models] openai codex routing unavailable; continuing with configured endpoint: {err}"

@@ -94,7 +94,7 @@ impl PinnedAgent for AgentChatPinned {
             None,
             AgentChatEnv::default(),
         );
-        let outcome = crate::security::turn_origin::with_origin(
+        let outcome = crate::core::runtime::turn_origin::with_origin(
             external_inbound_origin(&run.source, &run.turn_id),
             turn,
         )
@@ -133,7 +133,7 @@ pub fn render_prompt(
 /// `inference.agent_chat` applies to the whole message, so one injected
 /// event is left out instead of failing its batch; the reason is the guard's
 /// verdict and rule codes, never the text.
-fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
+async fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
     use crate::security::prompt_injection::{
         enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
     };
@@ -148,7 +148,8 @@ fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
                 user_id: None,
                 session_id: Some("inbound"),
             },
-        );
+        )
+        .await;
         let verdict = match decision.action {
             PromptEnforcementAction::Allow => {
                 kept.push(item);
@@ -277,7 +278,7 @@ impl Pinned {
         };
         let items: Vec<ExternalItem> = turn.events.iter().filter_map(external_of).collect();
         let event_ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
-        let (items, blocked) = screen(items);
+        let (items, blocked) = screen(items).await;
         let key = turn.events.first().map_or_else(
             || turn.conversation_key.clone(),
             |e| e.conversation_key.clone(),
@@ -382,7 +383,11 @@ impl Pinned {
     /// Store `turn_id` as failed with `detail` and publish
     /// `InboundTurnFailed`.
     pub fn fail(&self, turn_id: &str, detail: &str) {
-        let detail: String = detail.chars().take(MAX_DETAIL_CHARS).collect();
+        // Scrub before truncating so a cut secret can't slip past the patterns.
+        let detail: String = crate::core::log_redaction::scrub_secrets(detail)
+            .chars()
+            .take(MAX_DETAIL_CHARS)
+            .collect();
         match self.results.finish(turn_id, Err(detail.clone()), now_ms()) {
             Ok(Some(stored)) => {
                 tracing::warn!(turn = %turn_id, detail = %detail, "[inbound] pinned turn failed");

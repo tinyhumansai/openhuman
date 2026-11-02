@@ -23,8 +23,32 @@ fn every_row_has_a_valid_generated_grant() {
             .validate()
             .unwrap_or_else(|why| panic!("{}: {why}", row.module));
         assert!(grant.writable);
-        let items = module_collections(row.owner);
-        assert_eq!(grant.collections.len(), items.len(), "{}", row.module);
+        // What the owner provisions plus what its migrations read, and each
+        // one reachable: a collection the module touches but the grant lacks
+        // is refused as target-not-granted on every host with storage.
+        let mut expected: Vec<String> = module_collections(row.owner)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        for name in read_collections(row.owner) {
+            if !expected.contains(&name) {
+                expected.push(name);
+            }
+        }
+        let granted: Vec<String> = grant.collections.iter().map(|s| s.name.clone()).collect();
+        assert_eq!(granted, expected, "{}", row.module);
+        for collection in &expected {
+            assert!(
+                allowed(
+                    &grant,
+                    Object::Documents,
+                    "Get",
+                    json!({"collection": collection, "id": "x"})
+                ),
+                "{}: {collection} is not granted",
+                row.module
+            );
+        }
     }
     assert!(declared("not-a-module").is_none());
 }
@@ -129,19 +153,13 @@ fn tinyjuice_reaches_only_its_blob_prefix() {
         &grant,
         Object::Blobs,
         "Get",
-        json!({"key": "tinyjuice_ccr/abc"})
-    ));
-    assert!(!allowed(
-        &grant,
-        Object::Blobs,
-        "Get",
         json!({"key": "juice/ccr/abc"})
     ));
     assert!(!allowed(
         &grant,
         Object::Blobs,
         "Get",
-        json!({"key": "tinyjuice_ccr/abc"})
+        json!({"key": "tinyjuice_ccr_private/abc"})
     ));
 }
 
@@ -186,4 +204,24 @@ fn non_document_grants_match_the_owner_contracts_without_broad_prefixes() {
         ),
         Err(Denied::Target)
     );
+}
+
+#[test]
+fn connectors_may_read_the_v1_preferences_its_migration_moves() {
+    let connectors = declared("tinyconnectors").unwrap();
+    for collection in [
+        tinyconnectors_bus::storage::PREFS_NAMESPACE,
+        tinyconnectors_bus::storage::MIGRATIONS_NAMESPACE,
+        tinyconnectors_bus::storage::LEGACY_PREFS_NAMESPACE,
+    ] {
+        assert!(
+            allowed(
+                &connectors,
+                Object::Documents,
+                "Get",
+                json!({"collection": collection, "id": "gmail"})
+            ),
+            "{collection} is not granted"
+        );
+    }
 }

@@ -43,7 +43,7 @@ pub async fn resolve_provider_with_config(
         runtime_enabled = config.local_ai.runtime_enabled,
         "[triage::routing] resolving provider (always remote)"
     );
-    build_remote_provider(ctx, config)
+    build_remote_provider(ctx, config).await
 }
 
 /// Build the local-arm provider for the tiered fallback chain (issue
@@ -136,7 +136,7 @@ fn is_local_cli_route(provider_string: &str) -> bool {
 /// BYOK-incomplete sentinel, we force the managed backend so a trigger never
 /// errors because a local model is down. Only a concrete BYOK **cloud** route is
 /// honoured as-is. A build failure also falls back to the managed backend.
-fn build_remote_provider(
+async fn build_remote_provider(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
 ) -> anyhow::Result<ResolvedProvider> {
@@ -170,37 +170,43 @@ fn build_remote_provider(
     // Build through the per-workload factory: managed routes resolve their model
     // id via `make_openhuman_backend` → `managed_tier_for_role`, BYOK cloud routes
     // via the slug's configured model.
-    let build = |provider_string: &str| -> anyhow::Result<ResolvedProvider> {
-        let (_chat_model, model) = create_chat_model_from_string_with_model_id(
-            TRIAGE_ROLE,
-            provider_string,
-            config,
-            config.default_temperature,
-        )?;
-        let provider_name = if provider_string == PROVIDER_OPENHUMAN {
-            INFERENCE_BACKEND_ID.to_string()
-        } else {
-            provider_string
-                .split(':')
-                .next()
-                .unwrap_or(provider_string)
-                .to_string()
-        };
-        Ok(ResolvedProvider {
-            turn_model_source:
-                crate::agent::tinyagents::TurnModelSource::new_crate_native_from_string(
-                    ctx,
-                    TRIAGE_ROLE,
-                    provider_string,
-                    Arc::new(config.clone()),
-                ),
-            provider_name,
-            model,
-            used_local: false,
-        })
+    let build = |provider_string: &str| {
+        let provider_string = provider_string.to_owned();
+        let config = config.clone();
+        let ctx = ctx.clone();
+        async move {
+            let (_chat_model, model) = create_chat_model_from_string_with_model_id(
+                TRIAGE_ROLE,
+                &provider_string,
+                &config,
+                config.default_temperature,
+            )
+            .await?;
+            let provider_name = if provider_string == PROVIDER_OPENHUMAN {
+                INFERENCE_BACKEND_ID.to_string()
+            } else {
+                provider_string
+                    .split(':')
+                    .next()
+                    .unwrap_or(provider_string.as_str())
+                    .to_string()
+            };
+            Ok(ResolvedProvider {
+                turn_model_source:
+                    crate::agent::tinyagents::TurnModelSource::new_crate_native_from_string(
+                        &ctx,
+                        TRIAGE_ROLE,
+                        &provider_string,
+                        Arc::new(config.clone()),
+                    ),
+                provider_name,
+                model,
+                used_local: false,
+            })
+        }
     };
 
-    match build(effective) {
+    match build(effective).await {
         Ok(rp) => {
             tracing::debug!(
                 provider = %rp.provider_name,
@@ -216,7 +222,7 @@ fn build_remote_provider(
                 "[triage::routing] chat workload provider build failed — \
                  falling back to managed backend"
             );
-            build(PROVIDER_OPENHUMAN)
+            build(PROVIDER_OPENHUMAN).await
         }
     }
 }

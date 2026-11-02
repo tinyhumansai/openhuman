@@ -36,7 +36,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // TAURI-RUST-5EH — `approval_decide` resolved a request_id whose row was
     // already decided / lazily expired / superseded (benign race per the
     // inline-approvals design spec). `rpc::approval_decide` emits this exact
-    // `"no pending approval found"` wording ONLY after `store::get_decision`
+    // `"no pending approval found"` wording ONLY after the approval engine
     // confirms a persisted decision exists; the genuine never-registered case
     // raises `"no pending approval ever registered"` (matched by neither this
     // arm nor any below), so a real lost-registration defect still reaches

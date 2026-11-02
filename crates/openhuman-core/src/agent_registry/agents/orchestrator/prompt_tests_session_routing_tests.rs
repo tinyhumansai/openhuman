@@ -31,68 +31,29 @@ fn a_thread_renamed_session_still_resolves_to_its_registry_entry() {
     );
 }
 
-/// The generated block must actually render for a real, renamed session.
-///
-/// The first live capture had every `prompt.md` edit in it and no block, which
-/// only a silent early return can produce. Pin the whole path: a renamed agent
-/// id, a visible set that withholds the packed delegates, and at least one row
-/// naming a real route.
+/// There is no longer a synthesized specialist catalogue: the registered
+/// spawn tool carries the allowed agent ids in its own schema.
 #[test]
-fn the_withheld_block_renders_for_a_renamed_session_with_a_filter() {
+fn retired_withheld_specialist_block_is_empty() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
 
     // A visible set shaped like the live one: the advertised delegates are in,
     // the packed ones are not.
-    let visible: HashSet<String> = ["file_read", "goal_complete"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let visible: HashSet<String> = ["spawn_subagent".to_string()].into_iter().collect();
     let mut ctx = ctx_with(&[]);
     ctx.agent_id = "orchestrator_thread-captu";
     ctx.visible_tool_names = &visible;
-
-    let block = render_withheld_specialists(&ctx);
-    assert!(
-        block.starts_with("## Capabilities not in your tool list"),
-        "expected the generated heading, got: {:?}",
-        block.chars().take(120).collect::<String>()
-    );
-    // A packed delegate no Cargo feature gates must always render with its
-    // route; this is the row that pins the block in every build profile.
-    assert!(
-        block.contains("`tasks` (manage_tasks"),
-        "a packed delegate must render with its route:\n{block}"
-    );
-    // `make_presentation` is a `documents`-gated skill: under `default` it is
-    // not compiled and its row cannot render, so expecting it unconditionally
-    // reads as a broken block (which is how openhuman#6507 came to be filed
-    // and retracted). Assert it exactly when the feature is on, and assert its
-    // absence when it is off, so the expectation tracks the build profile.
-    let presentation_row = block.contains("`documents` (make_presentation");
-    assert_eq!(
-        presentation_row,
-        cfg!(feature = "documents"),
-        "the `documents` row must render exactly when the `documents` feature is enabled \
-         (see openhuman#6512):\n{block}"
-    );
+    assert!(render_withheld_specialists(&ctx).is_empty());
 }
 
 /// The generated intro must not carry the source's line-continuation padding.
 #[test]
-fn the_generated_block_has_no_stray_whitespace_runs() {
+fn the_retired_generated_block_emits_no_text() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
-    let visible: HashSet<String> = ["file_read".to_string()].into_iter().collect();
-    let mut ctx = ctx_with(&[]);
-    ctx.agent_id = "orchestrator";
-    ctx.visible_tool_names = &visible;
-    let block = render_withheld_specialists(&ctx);
-    assert!(!block.is_empty(), "expected a rendered block");
-    assert!(
-        !block.contains("  "),
-        "the block carries doubled spaces from the source literal:\n{block}"
-    );
+    let ctx = ctx_with(&[]);
+    assert!(render_withheld_specialists(&ctx).is_empty());
 }
 
 #[test]
@@ -105,9 +66,10 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
     // The gate is the fix; this pins the prompt so the model is told the route
     // before it discovers the wall.
     assert!(
-        ARCHETYPE.contains(
-            "Build or edit a workflow: spawn `workflow_builder` with `spawn_async_subagent`"
-        ),
+        ARCHETYPE.contains("Build or edit a workflow with `agent_id: \"workflow_builder\"`")
+            && ARCHETYPE.contains(
+                "Spawn specialist work with `spawn_subagent{agent_id, prompt, task_key}`"
+            ),
         "orchestrator prompt must carry the workflow routing rule and name the spawn to make"
     );
 
@@ -130,11 +92,11 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
     let builder = registry
         .get("workflow_builder")
         .expect("workflow_builder is a registered agent");
-    assert_eq!(
-        builder.delegate_name.as_deref(),
-        Some("build_workflow"),
-        "the prompt tells the model to call `build_workflow`; that must still be \
-         workflow_builder's delegate_name, or the rule names a tool nobody has"
+    let orchestrator = registry.get("orchestrator").expect("orchestrator exists");
+    assert!(
+        orchestrator.subagents.iter().any(|entry| matches!(entry,
+            tinyagents_definition::SubagentEntry::AgentId(id) if id == "workflow_builder")),
+        "workflow_builder must be permitted through spawn_subagent's agent_id"
     );
     match &builder.tools {
         tinyagents_definition::ToolScope::Named(tools) => {
@@ -159,7 +121,7 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
 fn skill_sections_name_the_hand_off_this_session_can_call() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
-    let belt: HashSet<String> = ["setup_skills", "run_workflow", "file_read", "use_skill"]
+    let belt: HashSet<String> = ["spawn_subagent", "run_workflow", "file_read", "use_skill"]
         .iter()
         .map(|s| s.to_string())
         .collect();
@@ -169,23 +131,22 @@ fn skill_sections_name_the_hand_off_this_session_can_call() {
 
     assert_eq!(
         hand_off_route(&ctx, "skill_setup").as_deref(),
-        Some("`setup_skills`")
+        Some("`spawn_subagent` with agent_id `skill_setup`")
     );
     // Running a skill is the orchestrator's own `run_workflow`, not a hand-off.
     assert_eq!(run_workflow_route(&ctx).as_deref(), Some("`run_workflow`"));
     // Listed but held by a pack: name the call that actually reaches it.
     assert_eq!(
         hand_off_route(&ctx, "image_agent").as_deref(),
-        Some("`create_image` (`use_skill` skill `media`)")
+        Some("`spawn_subagent` with agent_id `image_agent`")
     );
-    // Not in the orchestrator's allowlist: no route, so name nothing. `planner`
-    // is registered for workflow runs but is not a chat delegate.
+    // Not in the orchestrator's allowlist: no route, so name nothing.
     assert_eq!(hand_off_route(&ctx, "summarizer"), None);
     assert_eq!(hand_off_route(&ctx, "planner"), None);
 
     // The generated withheld block no longer lists the unpacked hand-offs.
     let block = render_withheld_specialists(&ctx);
-    for handoff in ["setup_skills", "run_workflow"] {
+    for handoff in ["spawn_subagent", "run_workflow"] {
         assert!(
             !block.contains(handoff),
             "`{handoff}` is a direct tool and must not be listed as withheld:\n{block}"
@@ -195,10 +156,7 @@ fn skill_sections_name_the_hand_off_this_session_can_call() {
     // A packed route needs `use_skill` on the belt. A session filtered down to
     // neither the delegate nor `use_skill` cannot reach the specialist at all,
     // and naming a call it cannot make is the bug, not the fix.
-    let no_use_skill: HashSet<String> = ["setup_skills", "file_read"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let no_use_skill: HashSet<String> = ["file_read"].iter().map(|s| s.to_string()).collect();
     ctx.visible_tool_names = &no_use_skill;
     assert_eq!(
         hand_off_route(&ctx, "image_agent"),
@@ -212,8 +170,8 @@ fn skill_sections_name_the_hand_off_this_session_can_call() {
     );
     assert_eq!(
         hand_off_route(&ctx, "skill_setup").as_deref(),
-        Some("`setup_skills`"),
-        "a delegate on the belt is still a direct route"
+        None,
+        "without spawn_subagent there is no model-facing specialist route"
     );
 }
 
@@ -258,4 +216,20 @@ fn the_composio_connect_row_is_dropped_when_composio_is_off() {
     let off = strip_route_lines(md, true, true, false);
     assert!(!off.contains("composio_connect"), "{off}");
     assert!(off.contains("keep") && off.contains("tail"));
+}
+
+/// The rendered prompt (not just the source file) keeps the async-wait rule
+/// and the proposal turn boundary: a model told neither sleeps or re-spawns
+/// to wait for a sub-agent, or keeps building after delivering a proposal.
+#[test]
+fn rendered_prompt_keeps_the_no_wait_rule_and_the_proposal_turn_boundary() {
+    let body = build(&ctx_with(&[])).unwrap();
+    assert!(
+        body.contains("never sleep, poll or re-spawn to wait for it"),
+        "the rendered orchestrator prompt lost the no-sleep/no-poll/no-respawn rule"
+    );
+    assert!(
+        body.contains("A delivered workflow proposal ends that turn"),
+        "the rendered orchestrator prompt lost the proposal turn boundary"
+    );
 }

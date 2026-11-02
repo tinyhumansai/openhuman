@@ -127,7 +127,17 @@ pub(crate) async fn release_all(host: &ProfileHost, grants: Vec<(ProfileId, Leas
             Ok(()) => log::debug!("[profiles][lease] released profile={id}"),
             Err(error) => log::debug!("[profiles][lease] release of profile={id}: {error}"),
         }
+        release_profile_stores(host, &id);
     }
+}
+
+/// Discard cached stores whose storage handles captured this profile's old
+/// fence. In-flight owners retain their handles and remain fenced; any later
+/// open constructs stores against the profile's new lease epoch.
+pub(crate) fn release_profile_stores(host: &ProfileHost, id: &ProfileId) {
+    crate::storage::sessions::release_profile(id.as_str());
+    let workspace = host.layout_of(id).workspace_dir;
+    crate::storage::sessions::release_workspace(&workspace);
 }
 
 /// What one renewal pass did.

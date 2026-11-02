@@ -159,7 +159,7 @@ The host's storage tests run on SQLite only. They test the host's wiring on a co
 
 Whether each driver honours the storage ports is proven upstream, in `tinystoragedrivers`. Its `conformance` module runs the same checks against every driver (nested scope isolation, compare-and-swap and leases across processes via `run_shared` for drivers that claim `Capability::SharedAcrossProcesses`, fencing, document secrets and migrations), and its CI runs them against a MongoDB replica set as well. The host asks a backend for `Capability::SharedAcrossProcesses` rather than hardcoding driver names where it can (`storage::backend_has_cross_process_cas`); the boot guard judges a URL before anything is opened, so it keeps a name check that a test pins to the real drivers.
 
-The targets are `storage_approvals_e2e`, `storage_domains_e2e`, `storage_flows_e2e`, `storage_secrets_e2e`, `storage_scope_e2e`, `storage_agent_scopes_e2e`, `storage_delegation_e2e`, `storage_desktop_upgrade_e2e` and `cli_storage_url_e2e`. Run one locally:
+The targets are `storage_approvals_e2e`, `storage_domains_e2e`, `storage_flows_e2e`, `storage_secrets_e2e`, `storage_scope_e2e`, `storage_agent_scopes_e2e`, `storage_desktop_upgrade_e2e` and `cli_storage_url_e2e`. Run one locally:
 
 ```bash
 cargo test -p openhuman-cli --features storage-sqlite --test storage_approvals_e2e

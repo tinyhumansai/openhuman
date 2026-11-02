@@ -31,6 +31,36 @@ fn record_returns_true_only_on_first_episode() {
 }
 
 #[test]
+fn an_unscoped_saas_auth_error_is_not_attributed_to_every_profile() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_for_tests();
+    let scope = current_scope_in(true, None);
+    assert!(matches!(scope, CurrentScope::Unresolved(_)));
+    assert!(!record_in_scope("saas-unscoped-provider", 401, scope));
+    assert!(
+        snapshot().is_empty(),
+        "an unresolved SaaS failure must not enter the process-wide registry"
+    );
+
+    let workspace = tempfile::tempdir().expect("profile workspace");
+    let (errors, has_unscoped) = snapshot_for_scope(
+        workspace.path(),
+        &workspace.path().join("config.toml"),
+        None,
+    );
+    assert!(errors.is_empty(), "an unscoped SaaS failure has no owner");
+    assert!(!has_unscoped, "a SaaS failure is never marked single-user");
+    assert!(
+        !origins()
+            .lock()
+            .unwrap()
+            .contains_key("saas-unscoped-provider"),
+        "the unresolved call must not create a process-wide origin"
+    );
+    reset_for_tests();
+}
+
+#[test]
 fn clear_removes_entry_and_rearms_latch() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     reset_for_tests();
@@ -231,6 +261,117 @@ fn normal_boot_without_preloaded_config_uses_the_resolved_config_path() {
         assert!(!unattributed_for_a);
         assert!(errors_for_b.is_empty());
         assert!(!unattributed_for_b);
+        reset_for_tests();
+    });
+}
+
+/// One process can serve several workspaces/tenants. The settings RPC must
+/// list only the caller's own rejected keys, and one tenant re-keying a
+/// provider must not clear another tenant's notice for it.
+#[test]
+fn auth_errors_stay_in_the_scope_that_recorded_them() {
+    with_test_lock(async {
+        use crate::core::runtime::{CoreContext, DomainSet};
+        reset_for_tests();
+        let workspace_a = tempfile::tempdir().expect("workspace A");
+        let workspace_b = tempfile::tempdir().expect("workspace B");
+        let context_a = CoreContext::for_test(DomainSet::full(), Some(workspace_a.path().into()));
+        let context_b = CoreContext::for_test(DomainSet::full(), Some(workspace_b.path().into()));
+        let rpc_providers = |context: std::sync::Arc<CoreContext>| {
+            CoreContext::scope(context, async {
+                let outcome = crate::inference::ops::inference_provider_auth_errors()
+                    .await
+                    .expect("auth errors rpc");
+                outcome.value["errors"]
+                    .as_array()
+                    .expect("errors array")
+                    .iter()
+                    .map(|error| {
+                        (
+                            error["provider"].as_str().unwrap_or_default().to_owned(),
+                            error["status"].as_u64().unwrap_or_default(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        CoreContext::scope(context_a.clone(), async {
+            record("tenant-a-only", 401);
+            record("shared-provider", 401);
+        })
+        .await;
+        CoreContext::scope(context_b.clone(), async {
+            record("shared-provider", 403);
+        })
+        .await;
+
+        // Each scope sees its own failures, with its own status.
+        assert_eq!(
+            rpc_providers(context_b.clone()).await,
+            [("shared-provider".to_owned(), 403)]
+        );
+        assert_eq!(
+            rpc_providers(context_a.clone()).await,
+            [
+                ("shared-provider".to_owned(), 401),
+                ("tenant-a-only".to_owned(), 401)
+            ]
+        );
+
+        CoreContext::scope(context_a.clone(), async {
+            clear("shared-provider");
+        })
+        .await;
+        assert_eq!(
+            rpc_providers(context_b).await,
+            [("shared-provider".to_owned(), 403)],
+            "tenant A re-keying cleared tenant B's notice"
+        );
+        assert_eq!(
+            rpc_providers(context_a).await,
+            [("tenant-a-only".to_owned(), 401)]
+        );
+        reset_for_tests();
+    });
+}
+
+/// The doctor's scope read gets the status that scope recorded, not the one a
+/// later failure for the same provider in another config root left behind.
+#[test]
+fn a_scope_read_returns_that_scopes_own_status() {
+    with_test_lock(async {
+        reset_for_tests();
+        let workspace = tempfile::tempdir().expect("shared workspace");
+        let config_root_a = tempfile::tempdir().expect("config root A");
+        let config_root_b = tempfile::tempdir().expect("config root B");
+        let config_path_a = config_root_a.path().join("config.toml");
+        let config_path_b = config_root_b.path().join("config.toml");
+        let mut config = crate::config::Config::default();
+        config.workspace_dir = workspace.path().to_path_buf();
+        config.config_path = config_path_a.clone();
+        let context = crate::core::runtime::CoreContext::for_test_with_config(
+            crate::core::runtime::DomainSet::full(),
+            config,
+        );
+        crate::core::runtime::CoreContext::scope(context.clone(), async {
+            record("shared-provider", 401);
+        })
+        .await;
+        context
+            .rebind_workspace(workspace.path(), Some(&config_path_b))
+            .expect("rebind config origin");
+        crate::core::runtime::CoreContext::scope(context, async {
+            record("shared-provider", 403);
+        })
+        .await;
+
+        let status = |config_path: &std::path::Path| {
+            let (errors, _) = snapshot_for_scope(workspace.path(), config_path, None);
+            errors.iter().map(|error| error.status).collect::<Vec<_>>()
+        };
+        assert_eq!(status(&config_path_a), [401]);
+        assert_eq!(status(&config_path_b), [403]);
         reset_for_tests();
     });
 }

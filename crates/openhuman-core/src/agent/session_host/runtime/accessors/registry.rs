@@ -14,7 +14,7 @@ impl OpenHumanSessionHost {
     }
 
     /// The agent definition id this session is running
-    /// (`"welcome"`, `"orchestrator"`, `"planner"`, …).
+    /// (`"welcome"`, `"orchestrator"`, `"workflow_builder"`, …).
     ///
     /// Exposed so callers that build sessions via
     /// [`OpenHumanSessionHost::from_config_for_agent`] can stamp the resolved id onto

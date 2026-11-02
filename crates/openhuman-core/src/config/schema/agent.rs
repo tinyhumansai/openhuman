@@ -47,26 +47,6 @@ impl TeamModelConfig {
     }
 }
 
-/// Configuration for a delegate sub-agent used by the `delegate` tool.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DelegateAgentConfig {
-    /// Model name (inference uses the OpenHuman backend from main config).
-    pub model: String,
-    /// Optional system prompt for the sub-agent
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-    /// Temperature override
-    #[serde(default)]
-    pub temperature: Option<f64>,
-    /// Max recursion depth for nested delegation
-    #[serde(default = "default_max_depth")]
-    pub max_depth: u32,
-}
-
-fn default_max_depth() -> u32 {
-    3
-}
-
 /// A per-agent contract requiring a structured JSON block in every turn's final
 /// reply (issue #4117).
 ///
@@ -386,7 +366,7 @@ fn default_tool_result_budget_bytes() -> usize {
 }
 
 fn default_agent_timeout_secs() -> u64 {
-    tinytools_std::timeout::DEFAULT_TIMEOUT_SECS
+    tinyagents_harness_tools::exec::timeout::DEFAULT_TIMEOUT_SECS
 }
 
 fn default_agent_max_tool_iterations() -> usize {

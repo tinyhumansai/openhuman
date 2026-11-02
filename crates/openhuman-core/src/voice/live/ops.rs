@@ -19,11 +19,11 @@ use crate::core::Outcome;
 pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The provider catalogue and the default provider.
-pub fn live_providers(config: &Config) -> Outcome<LiveProvidersResponse> {
+pub async fn live_providers(config: &Config) -> Outcome<LiveProvidersResponse> {
     Outcome::new(
         LiveProvidersResponse {
             default_provider: config.voice_live.default_provider.clone(),
-            providers: providers::provider_infos(config),
+            providers: providers::provider_infos(config).await,
         },
         Vec::new(),
     )

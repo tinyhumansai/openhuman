@@ -58,7 +58,8 @@ pub(crate) fn provider_is_self_hosted(provider: &str, endpoint: Option<&str>) ->
     match kind {
         LocalProviderKind::LocalOpenai => endpoint
             .and_then(|url| url::Url::parse(url).ok())
-            .is_some_and(|parsed| crate::util::url::host_is_local(&parsed)),
+            .and_then(|parsed| parsed.host_str().map(str::to_owned))
+            .is_some_and(|host| crate::util::url::provider_host_is_local(&host)),
         _ => true,
     }
 }
@@ -244,22 +245,10 @@ pub(crate) fn tool_call_limit(max_iterations: usize, cap: Option<usize>) -> usiz
 /// True when `name` is a sub-agent spawn/delegation tool that a **child** run
 /// must never be able to invoke (issue #4452), re-asserted at registration as
 /// defense-in-depth so a misconfigured allowlist cannot reintroduce sub-agent
-/// spawning into a nested run. Kept local to this seam (rather than importing
-/// the `pub(super)` runner helper) so the invariant travels with the
-/// registration site that enforces it.
-///
-/// **This is a strict subset of the caller-side strip**, not a mirror of it
-/// (issue #6157). `subagent_host::tool_prep::is_subagent_spawn_tool` also
-/// resolves each archetype's `delegate_name` override through the definition
-/// registry — `manage_tasks`, `create_image`, `setup_skills`, … — none of which
-/// carry the `delegate_` prefix this match relies on. Matching them here would
-/// put a registry lookup on the per-tool registration loop, so the caller
-/// stays responsible for the override names: every path that feeds `allowed`
-/// runs `is_subagent_spawn_tool` first, including the dynamic per-spawn tools
-/// (`subagent_host::ops::runner`). Widen this predicate in lockstep if that
-/// ever stops being true.
-pub(crate) fn is_subagent_spawn_or_delegate_tool(name: &str) -> bool {
-    name == "spawn_subagent" || name.starts_with("delegate_") || name == "spawn_worker_thread"
+/// spawning into a nested run. It shares TinyAgents' canonical spawn names and
+/// the host's single spawn surface.
+pub(crate) fn is_subagent_spawn_tool(name: &str) -> bool {
+    name == "spawn_subagent" || tinyagents_definition::SPAWN_TOOL_NAMES.contains(&name)
 }
 
 #[cfg(test)]

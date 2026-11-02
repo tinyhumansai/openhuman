@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { decideKeyringConsent, fetchKeyringStatus, retryKeyringProbe } from '../keyringApi';
+import {
+  decideKeyringConsent,
+  fetchKeyringStatus,
+  respondToKeyringOperation,
+  retryKeyringProbe,
+} from '../keyringApi';
 
 vi.mock('../coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
@@ -38,5 +43,16 @@ describe('keyringApi', () => {
     const result = await retryKeyringProbe();
     expect(result).toEqual(status);
     expect(mockRpc).toHaveBeenCalledWith({ method: 'openhuman.keyring_consent_retry_probe' });
+  });
+
+  it('responds to one operation-scoped keyring approval', async () => {
+    mockRpc.mockResolvedValueOnce({ result: { accepted: true } });
+
+    await respondToKeyringOperation('request-1', true);
+
+    expect(mockRpc).toHaveBeenCalledWith({
+      method: 'openhuman.keyring_consent_respond_operation',
+      params: { request_id: 'request-1', approved: true },
+    });
   });
 });

@@ -53,9 +53,11 @@ pub fn step_id(kind: &str, id: &str) -> String {
 /// The owner name used by module importers.
 pub const HOST_OWNER: &str = "host";
 
-/// Returns a backend whose scope handles carry `condition` on every write.
-/// Calling `for_scope_conditioned` on the wrapped backend composes the
-/// condition with any profile-level condition before opening the target.
+/// Returns a backend whose scope handles carry `condition` on every write,
+/// except collection declarations, which every driver must accept from an
+/// importer (see `claim_bound`). Calling `for_scope_conditioned` on the
+/// wrapped backend composes the condition with any profile-level condition
+/// before opening the target.
 pub(crate) fn backend_with_condition(
     backend: std::sync::Arc<dyn StorageBackend>,
     condition: WriteCondition,
@@ -82,7 +84,7 @@ impl StorageBackend for ClaimBoundBackend {
     }
 
     fn for_scope(&self, scope: &tinystoragedrivers::Scope) -> Result<Storage, StorageError> {
-        self.backend.for_scope_conditioned(scope, &self.condition)
+        super::claim_bound::claim_bound(self.backend.as_ref(), scope, &self.condition)
     }
 
     fn for_scope_conditioned(
@@ -95,7 +97,7 @@ impl StorageBackend for ClaimBoundBackend {
             .clone()
             .and(condition.clone())
             .map_err(|error| StorageError::invalid_input(error.to_string()))?;
-        self.backend.for_scope_conditioned(scope, &condition)
+        super::claim_bound::claim_bound(self.backend.as_ref(), scope, &condition)
     }
 }
 
@@ -250,11 +252,35 @@ pub fn with_claim<T>(
     with_claim_ttl(repo, owner, step, CLAIM_TTL_MS, body)
 }
 
+/// Runs `body` under a claim like [`with_claim`], but returns `Ok(None)` at
+/// once when another holder's claim is live instead of polling for up to the
+/// claim TTL. For callers on an async path that retry at their next call.
+pub fn try_claim<T>(
+    repo: &Repo,
+    owner: &str,
+    step: &str,
+    body: impl FnOnce(&WriteCondition) -> Result<T>,
+) -> Result<Option<T>> {
+    claim_waiting(repo, owner, step, CLAIM_TTL_MS, Duration::ZERO, body)
+}
+
 fn with_claim_ttl<T>(
     repo: &Repo,
     owner: &str,
     step: &str,
     ttl_ms: i64,
+    body: impl FnOnce(&WriteCondition) -> Result<T>,
+) -> Result<Option<T>> {
+    let max_wait = Duration::from_millis(CLAIM_TTL_MS.max(0) as u64);
+    claim_waiting(repo, owner, step, ttl_ms, max_wait, body)
+}
+
+fn claim_waiting<T>(
+    repo: &Repo,
+    owner: &str,
+    step: &str,
+    ttl_ms: i64,
+    max_wait: Duration,
     body: impl FnOnce(&WriteCondition) -> Result<T>,
 ) -> Result<Option<T>> {
     let started = Instant::now();
@@ -283,7 +309,7 @@ fn with_claim_ttl<T>(
             }
             return result.map(Some);
         }
-        if started.elapsed() >= Duration::from_millis(CLAIM_TTL_MS.max(0) as u64) {
+        if started.elapsed() >= max_wait {
             return Ok(None);
         }
         std::thread::sleep(WAIT_POLL);

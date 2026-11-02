@@ -82,9 +82,9 @@ fn endpoint_references() -> &'static Mutex<HashMap<String, EndpointReference>> {
 /// callback arrives over the bus with no run context of its own.
 fn x402_request_owner_matches(
     request: &AuthorizeX402PaymentRequest,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> bool {
-    let Some(crate::security::turn_origin::AgentTurnOrigin::WebChat {
+    let Some(crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
         thread_id,
         client_id,
         ..

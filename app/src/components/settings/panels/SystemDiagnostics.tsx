@@ -189,6 +189,12 @@ const DoctorRow = () => {
     setState({ kind: 'running' });
     try {
       const response = await openhumanDoctorReport(tier);
+      // A core from another version can answer without `findings`; show the
+      // error state rather than crashing the panel on `.findings` iteration.
+      if (!Array.isArray(response?.result?.findings)) {
+        setState({ kind: 'error' });
+        return;
+      }
       setState({ kind: 'ready', report: response.result });
     } catch {
       // Core transport errors may include endpoint details; keep this surface
@@ -244,8 +250,17 @@ const DoctorRow = () => {
                     key={`${finding.check_id}:${finding.severity}:${index}`}
                     className="rounded-lg border border-line-subtle p-3">
                     <div className="flex flex-wrap items-start gap-2">
-                      <Badge variant={severityBadge[finding.severity]}>
-                        {t(`${textKey}.severity.${finding.severity}`)}
+                      {/* Own-property check: an unknown severity such as
+                          `constructor` must not hit Object.prototype. */}
+                      <Badge
+                        variant={
+                          Object.hasOwn(severityBadge, finding.severity)
+                            ? severityBadge[finding.severity]
+                            : 'neutral'
+                        }>
+                        {Object.hasOwn(severityBadge, finding.severity)
+                          ? t(`${textKey}.severity.${finding.severity}`)
+                          : String(finding.severity)}
                       </Badge>
                       <span className="min-w-0 flex-1 text-sm text-content">{finding.message}</span>
                     </div>

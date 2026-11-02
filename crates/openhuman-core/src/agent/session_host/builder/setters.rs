@@ -90,6 +90,14 @@ impl SessionHostBuilder {
         self
     }
 
+    pub(crate) fn turn_model_source(
+        mut self,
+        source: crate::agent::tinyagents::TurnModelSource,
+    ) -> Self {
+        self.turn_model_source = Some(source);
+        self
+    }
+
     /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);

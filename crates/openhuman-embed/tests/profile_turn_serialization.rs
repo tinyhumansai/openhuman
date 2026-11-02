@@ -102,7 +102,7 @@ async fn scenario() {
                 "fixture-key",
             )
             .await
-            .unwrap();
+            .expect("profile credential is stored");
         handles.push(runtime.open(user).await.unwrap());
     }
     let (alice, bob) = (handles.remove(0), handles.remove(0));

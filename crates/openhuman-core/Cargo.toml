@@ -53,6 +53,7 @@ crate-type = ["rlib"]
 # contracts. Unconditional because cron and module callbacks remain available
 # without the OpenHuman `flows` surface; engine and catalog implementations are
 # reached only through the loaded module's bus endpoints.
+tinyflows = { path = "../../vendor/tinyflows/crates/tinyflows" }
 tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }
 # TinyAgents — Rust LLM orchestration framework (LangGraph/LangChain-style):
 # durable state graphs, agent-loop harness, model/tool registries, REPL +
@@ -67,11 +68,11 @@ tinyflows-bus = { path = "../../vendor/tinyflows/crates/tinyflows-bus" }
 # work): there is no longer a single `tinyagents` package. openhuman now depends
 # directly on the members it actually uses — `tinyagents-harness` (agent loop,
 # tools, middleware), `tinyagents-hooks` (host-provided lifecycle and stop
-# hooks), `tinyagents-graph` (durable state graphs),
+# hooks),
 # `tinyagents-registry` (capability/model registry), and
 # `tinyagents-session` (durable session history + run ledger, previously gated
 # behind this crate's own `sqlite` feature — it is its own always-on crate now).
-# The `sqlite` feature is enabled on the harness/graph crates now that openhuman's
+# The `sqlite` feature is enabled on the harness now that openhuman's
 # direct rusqlite pin is aligned to 0.40, avoiding duplicate `links = "sqlite3"`
 # native bindings. Durable graph checkpoints still use `SqlRunLedgerCheckpointer`
 # until the migration re-points those rows to the crate checkpointer.
@@ -104,8 +105,14 @@ tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-h
     "state-block",
     "subagents",
     "todos",
+    "fs",
+    "net",
+    "exec",
+    "media",
+    "plan-review",
 ] }
 tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus", features = ["storage"] }
+tinybox-jail = { path = "../../vendor/tinybox/crates/tinybox-jail" }
 tiny-artifacts = { path = "../../vendor/tiny-artifacts/crates/tiny-artifacts" }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 # Live (realtime voice) agent sessions: `tinyagents-live` runs a
@@ -113,32 +120,31 @@ tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-defi
 # Agents, the Sarvam cascade) and executes its tool calls through the turn
 # harness pipeline. Only the `voice` feature's `voice::live` uses it.
 tinyagents-live = { path = "../../vendor/tinyagents/crates/tinyagents-live", optional = true }
-tinyagents-graph = { path = "../../vendor/tinyagents/crates/tinyagents-graph", features = [
-    "sqlite",
-    "storage-drivers",
-] }
 tinyagents-registry = { path = "../../vendor/tinyagents/crates/tinyagents-registry" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["storage-drivers"] }
 tinyagents-storage-kit = { path = "../../vendor/tinyagents/crates/tinyagents-storage-kit" }
 # The storage ports and the URL-to-backend facade (`storage` domain). No driver
 # by default: the `storage-*` features below add them.
-tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", default-features = false }
-tinystoragedrivers-api = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false }
+tinystoragedrivers-api = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039" }
 # Legacy source readers use the shared SQLite binding only while the host
-# migration feature is enabled; production storage opens through the facade.
-tinystoragedrivers-connect = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", features = ["sqlite"], optional = true }
-tinystoragedrivers-types = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+# migration feature is enabled (`legacy-import`); the doctor's MongoDB probe
+# uses its hello-only connection (`storage-mongodb`). Production storage opens
+# through the facade.
+tinystoragedrivers-connect = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", optional = true }
+tinystoragedrivers-types = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039" }
 # The host config and secret adapters use the driver's established `enc2`
 # codec and per-scope key provider while storing through the v2 SecretStore
 # port. The backend itself still supplies the port implementation.
-tinystoragedrivers-secrets = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", default-features = false, features = ["document"] }
+tinystoragedrivers-secrets = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["document", "file"] }
+tinystoragedrivers-fence = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-fence" }
 # The storage bus: the wire contract and the reference host server that the
 # `modules::storage_host` interface answers loaded modules with. Modules only.
-tinystoragedrivers-bus = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", optional = true }
+tinystoragedrivers-bus = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", optional = true }
 # The host half of the storage bus transport: registers the four `Storage`
 # objects and binds blob streams and watch signals to the calling peer
 # (`Connection::accept_stream_from` / `emit_to`).
-tinystoragedrivers-busproxy = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456", optional = true }
+tinystoragedrivers-busproxy = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", optional = true }
 # The module-side export macro, used only to wrap the host's own storage server
 # as a *linked* module (`modules/storage_host_linked.rs`): a linked module is the
 # one in-process recipient the bus attests, so it is how `Secrets` can be served.
@@ -169,7 +175,6 @@ tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/cra
 # crates. After cloning: `git submodule update --init --recursive vendor/`.
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-agent = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
-tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 
 
 # TinyMemory (https://github.com/tinyhumansai/tinymemory), three crates:
@@ -228,6 +233,11 @@ tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/t
 # --features flows` would carry `ureq` and the archive stack for a host that
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
+# The device tunnel's owner and wire crypto live in TinySecurity. The bus
+# contract and crypto crate use this same v0.17.1 checkout so tunnel handles
+# cannot be created from a second version of the pairing types.
+tinysecurity-bus = { path = "../../vendor/tinysecurity/crates/tinysecurity-bus" }
+# TODO(#657): move existing device-pairing callers behind tinysecurity-bus, then drop this exception.
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus", features = ["schemars"] }
 # Registry vocabulary is available even when the loader is disabled, so the
 # pre-core client can identify and report an unavailable module safely.
@@ -268,13 +278,6 @@ tokio = { version = "1", features = ["full"] }
 once_cell = "1.19"
 parking_lot = "0.12"
 log = "0.4"
-# Final-reply slang + meme remix (runtime flag OPENHUMAN_TINYMEMES, off by
-# default). The engine runs in the `tinymemes` module; the host links only its
-# `*-bus` contract (vendored submodule: vendor/tinymemes).
-tinymemes-bus = { path = "../../vendor/tinymemes/crates/tinymemes-bus", features = ["storage"], optional = true }
-# The Jev client the host serves to the module's `Evaluate` callback (managed
-# Jev over the backend's System One proxy). Not a module implementation.
-tinyinference-decisions = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-decisions", optional = true }
 # Inbound event queues: the `tinyeventqueues` module durably queues and filters
 # inbound events (Composio triggers, agent webhooks) before they reach an agent.
 # The host links only its `*-bus` contract (vendored submodule:
@@ -284,8 +287,6 @@ tinyeventqueues-bus = { path = "../../vendor/tinyeventqueues/crates/tinyeventque
 libc = "0.2"
 nu-ansi-term = "0.50"
 base64 = "0.22"
-aes-gcm = "0.10"
-argon2 = "0.5"
 rand = "0.10"
 dirs = "6"
 sha2 = "0.10"
@@ -305,13 +306,10 @@ flate2 = "1"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"
-chacha20poly1305 = "0.10"
 # Wipe master keys / decrypted secret buffers from memory on drop (audit C9).
 # Already present transitively (resolved to 1.8.x via the *-dalek / cipher
 # crates); declared directly so the keyring module can `use zeroize::Zeroizing`.
 zeroize = "1"
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-hkdf = "0.12"
 hex = "0.4"
 # The host-owned SaaS gateway signature uses HMAC with SHA-256.
 hmac = "0.12"
@@ -357,7 +355,7 @@ url = "2"
 tempfile = "3"
 fs2 = "0.4"
 # Streams the layout-migration archive (`storage::layout::archive`), a `.tar.zst`.
-zstd = "0.13"
+zstd = "0.14"
 # The scheduler gate's battery/AC probe (`platform::llm_gate::signals`),
 # behind the `scheduler-gate` feature. CPU sampling uses `sysinfo` above.
 starship-battery = { version = "0.12", optional = true }
@@ -482,8 +480,16 @@ windows-sys = { version = "0.61", features = [
 # pulling OpenSSL in as a runtime dependency on Linux.
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
+[target.'cfg(unix)'.dependencies]
+# Open operator-selected key files without blocking on raced FIFO/device paths.
+rustix = { version = "1.1", features = ["fs"] }
+
 [dev-dependencies]
-tinystoragedrivers-testkit = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "05eaada962decbab33bafa4763d2bd1a67f6b456" }
+# Lib tests always link the SQLite driver, so the durable-storage test helpers
+# (`storage::test_support::sqlite_backend`, persistent workspace defaults)
+# compile under the default (contributor) feature set too.
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039", default-features = false, features = ["sqlite"] }
+tinystoragedrivers-testkit = { git = "https://github.com/tinyhumansai/tinystoragedrivers", rev = "f05fbd230c2c403c8dcdef57316fa55265379039" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["storage-drivers", "testkit"] }
 # Legacy TinyChannels provider/runtime fixtures remain available to tests only;
 # production channel execution uses the TinyBus module contract above.
@@ -494,7 +500,6 @@ tinychannels-runtime = { path = "../../vendor/tinychannels/crates/tinychannels-r
 # the WhatsApp Web stack (whatsapp-rust, wacore, waproto) is never compiled here;
 # WhatsApp provider behaviour is tested in the tinychannels repository.
 tinychannels-module = { path = "../../vendor/tinychannels/crates/tinychannels-module", default-features = false, features = ["static-link"] }
-tinybox-core = { path = "../../vendor/tinybox/crates/tinybox-core" }
 # The TinyMemory reference engine (an in-memory `MemoryEngine`) and the
 # behavioural suite every engine must pass. Memory unit tests bind it as the
 # engine instead of talking to CortexDB.
@@ -562,8 +567,8 @@ langfuse = ["tinyagents-harness/langfuse"]
 # it on. OS keychain support belongs to openhuman-rpc's `os-keyring` feature,
 # not the core or its storage-driver feature set.
 storage-sqlite = ["tinystoragedrivers/sqlite"]
-legacy-import = ["dep:tinystoragedrivers-connect"]
-storage-mongodb = ["tinystoragedrivers/mongodb"]
+legacy-import = ["dep:tinystoragedrivers-connect", "tinystoragedrivers-connect/sqlite"]
+storage-mongodb = ["tinystoragedrivers/mongodb", "dep:tinystoragedrivers-connect", "tinystoragedrivers-connect/mongodb"]
 # `s3://` blob URLs and composite storage. In neither the contributor set nor
 # the product: an object-store client is only for a deployment that wants one.
 storage-s3 = ["tinystoragedrivers/s3"]
@@ -603,7 +608,7 @@ secret-file = ["tinystoragedrivers-secrets/file"]
 # costs no new native builds. It matches `scripts/ci/product-features.txt`. This
 # does NOT move the kernel floor: that profile is
 # `--no-default-features --features flows` and never reads this list.
-default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "tinymemes", "inbound-queues", "secret-file", "legacy-import"]
+default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "security-module", "inbound-queues", "secret-file", "legacy-import"]
 # The core's domain-owned HTTP surfaces (#5048): the `/v1` OpenAI-compatible
 # router (`inference::http`), the `openhuman text-input run` dev server, and the MCP
 # Streamable-HTTP transport (`mcp::server::http`, additionally gated by `mcp`).
@@ -656,12 +661,6 @@ documents = ["modules", "dep:tinydocs-bus"]
 # `[hosting].api_key` or the provider's environment variable — because a tool
 # that cannot work is worse than a tool that is not there.
 hosting = ["modules", "dep:tinyhosts-bus"]
-# TinyMemes: remixes the final reply with the user's register, regional slang
-# and, sometimes, a reaction meme. Compiled into product builds; at runtime it
-# is still off until `OPENHUMAN_TINYMEMES` (or a build-time
-# `OPENHUMAN_TINYMEMES_DEFAULT`) turns it on. Off in the minimal kernel
-# profiles, so they stay free of its dependencies.
-tinymemes = ["modules", "dep:tinymemes-bus", "dep:tinyinference-decisions"]
 # Inbound event queues (`inbound` domain): Composio triggers and agent webhooks
 # are ingested into the `tinyeventqueues` module, which persists, filters and
 # paces them and calls the host back (`Deliver`, `ClassifySalience`) to run
@@ -698,6 +697,7 @@ modules = [
     "dep:tinystoragedrivers-busproxy",
     "dep:tinybus-module",
 ]
+security-module = ["modules"]
 # Voice domain: STT/TTS providers, reply speech, and live voice.
 # The desktop product enables voice explicitly; contributor defaults leave it
 # off. WAV framing moved to the `tinyvoice` module, removing the former `hound`

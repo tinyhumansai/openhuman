@@ -1,45 +1,61 @@
 use super::*;
 
 #[test]
-fn custom_delegate_is_treated_as_spawn_tool() {
+fn the_single_openhuman_spawn_tool_is_protected_from_nested_runs() {
     assert!(is_subagent_spawn_tool("spawn_subagent"));
-    assert!(is_subagent_spawn_tool("delegate_researcher"));
+    assert!(!is_subagent_spawn_tool("delegate_researcher"));
+    assert!(!is_subagent_spawn_tool("continue_subagent"));
     assert!(!is_subagent_spawn_tool("directory_resolve"));
 }
 
 #[test]
-fn unprefixed_delegate_name_overrides_are_treated_as_spawn_tools() {
-    // Most synthesised delegation tools use an unprefixed
-    // `delegate_name` override (`plan`, `manage_tasks`, `create_image`, …).
-    // They must be stripped from every sub-agent surface, exactly like
-    // the `delegate_*`-prefixed defaults.
-    let tmp = tempfile::TempDir::new().unwrap();
-    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global(tmp.path())
-        .unwrap();
-    for delegate in [
-        "plan",
-        "review_code",
-        "manage_tasks",
-        "create_image",
-        // `make_presentation` is `presentation_agent`'s `delegate_name`; the agent —
-        // and therefore this delegate tool — is compiled out with the
-        // `documents` feature.
-        #[cfg(feature = "documents")]
-        "make_presentation",
-    ] {
+fn child_tool_surface_never_contains_any_spawn_or_continuation_tool() {
+    let spawn_names = tinyagents_definition::SPAWN_TOOL_NAMES.to_vec();
+    for name in &spawn_names {
         assert!(
-            is_subagent_spawn_tool(delegate),
-            "`{delegate}` is a synthesised delegation tool and must be \
-             stripped from sub-agent tool surfaces"
+            crate::agent::tinyagents::is_subagent_spawn_tool(name),
+            "shared spawn predicate missed {name}"
         );
     }
-    // Ordinary worker tools stay visible.
-    for plain in ["shell", "file_read", "web_fetch", "todo"] {
-        assert!(
-            !is_subagent_spawn_tool(plain),
-            "`{plain}` must not be classified as a spawn tool"
-        );
-    }
+    let tools: Vec<Box<dyn Tool>> = spawn_names
+        .into_iter()
+        .map(|name| Box::new(NamedTool(name)) as Box<dyn Tool>)
+        .collect();
+
+    let indices = filter_tool_indices(&tools, &ToolScope::Wildcard, &[], None);
+
+    assert!(
+        indices.is_empty(),
+        "child tool surface retained: {:?}",
+        indices
+            .iter()
+            .map(|&index| tools[index].name())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn explicitly_scoped_nested_spawn_is_retained_only_with_host_grant() {
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(NamedTool("spawn_subagent"))];
+    let scope = ToolScope::Named(vec!["spawn_subagent".to_owned()]);
+
+    assert!(filter_tool_indices_with_nested_spawn(&tools, &scope, &[], None, false).is_empty());
+    assert_eq!(
+        filter_tool_indices_with_nested_spawn(&tools, &scope, &[], None, true),
+        vec![0],
+        "an explicit host grant should preserve the definition's named spawn tool"
+    );
+    assert!(
+        filter_tool_indices_with_nested_spawn(
+            &tools,
+            &scope,
+            &["spawn_subagent".to_owned()],
+            None,
+            true,
+        )
+        .is_empty(),
+        "the definition denylist must still win over the grant"
+    );
 }
 
 #[test]

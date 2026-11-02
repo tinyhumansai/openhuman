@@ -75,7 +75,7 @@ fn domain_subscriber_plan_harness_gates_by_owning_group() {
     assert!(!plan.platform, "harness excludes the platform domain");
     assert!(
         !plan.channels,
-        "harness must skip channel-inbound + web-only proactive"
+        "harness must skip channel-inbound subscriber"
     );
     assert!(!plan.flows, "harness must skip flows trigger dispatch");
     assert!(
@@ -203,11 +203,180 @@ async fn tool_timeout_seeds_on_channelless_core_boot() {
         true,
         crate::core::runtime::DomainSet::none(),
         &crate::core::runtime::DispatchCtx::ambient(),
+        true,
     );
 
     assert_eq!(
         crate::tools::timeout::tool_execution_timeout_secs(),
         1234,
         "channel-less core boot must seed the tool-execution timeout from [agent].agent_timeout_secs"
+    );
+}
+
+#[test]
+fn proactive_message_reaches_web_on_channelless_core_boot() {
+    const CHILD: &str = "OPENHUMAN_PROACTIVE_SUBSCRIBER_TEST_CHILD";
+    const TEST_NAME: &str =
+        "core::runtime::subscribers::tests::proactive_message_reaches_web_on_channelless_core_boot";
+
+    if std::env::var(CHILD).as_deref() == Ok("1") {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                crate::core::bus::init().await.expect("bus init");
+                let mut web_events = crate::web_chat::subscribe_web_channel_events();
+                let config = crate::config::Config::default();
+                assert!(config.channels_config.active_channel.is_none());
+
+                super::register_domain_subscribers(
+                    std::env::temp_dir(),
+                    config,
+                    true,
+                    crate::core::runtime::DomainSet::none(),
+                    &crate::core::runtime::DispatchCtx::ambient(),
+                );
+
+                crate::core::bus::BUS.publish(
+                    crate::core::events::DomainEvent::ProactiveMessageRequested {
+                        source: "cron:test".into(),
+                        message: "Your morning briefing is ready.".into(),
+                        job_name: Some("morning-briefing".into()),
+                        tenant: None,
+                    },
+                );
+
+                let event = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    loop {
+                        let event = web_events
+                            .recv()
+                            .await
+                            .expect("web event stream should remain open");
+                        if matches!(
+                            event.wire_event(),
+                            crate::web_chat::WebChannelEvent::ProactiveMessage {
+                                full_response, ..
+                            } if full_response.as_deref() == Some("Your morning briefing is ready.")
+                        ) {
+                            break event;
+                        }
+                    }
+                })
+                .await
+                .expect("proactive message should reach the web event stream");
+                assert_eq!(event.event_name(), "proactive_message");
+            });
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated proactive subscriber boot test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "isolated proactive subscriber boot test failed:\n{stdout}\n{stderr}"
+    );
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn proactive_message_is_scoped_to_originating_saas_profile() {
+    const CHILD: &str = "OPENHUMAN_PROACTIVE_SUBSCRIBER_TEST_CHILD";
+    const TEST_NAME: &str = "core::runtime::subscribers::tests::proactive_message_is_scoped_to_originating_saas_profile";
+
+    if std::env::var(CHILD).as_deref() == Ok("1") {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                crate::core::runtime::mode::lock_mode(crate::core::runtime::Mode::Saas)
+                    .expect("lock isolated test process in SaaS mode");
+                crate::core::bus::init().await.expect("bus init");
+                let mut web_events = crate::web_chat::subscribe_web_channel_events();
+                let config = crate::config::Config::default();
+                assert!(config.channels_config.active_channel.is_none());
+
+                let root = tempfile::tempdir().expect("profile root");
+                let id = crate::profiles::ProfileId::parse("proactive-test").unwrap();
+                let profile_host = std::sync::Arc::new(crate::profiles::ProfileHost::new(
+                    crate::core::runtime::SaasConfig::new(root.path()),
+                    crate::core::runtime::CoreContext::for_test(
+                        crate::core::runtime::DomainSet::full(),
+                        None,
+                    ),
+                ));
+                profile_host
+                    .provision(&id)
+                    .await
+                    .expect("provision profile");
+                let profile = profile_host.open(&id).await.expect("open profile");
+                crate::profiles::host::install(profile_host);
+                let ctx = crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(
+                    profile.context(),
+                ));
+                let tenant = ctx.event_tenant();
+                assert_eq!(
+                    tenant.as_ref().and_then(|tenant| tenant.profile.as_deref()),
+                    Some("proactive-test")
+                );
+
+                super::register_domain_subscribers(
+                    std::env::temp_dir(),
+                    config,
+                    true,
+                    crate::core::runtime::DomainSet::none(),
+                    &ctx,
+                );
+
+                crate::core::bus::BUS.publish(
+                    crate::core::events::DomainEvent::ProactiveMessageRequested {
+                        source: "cron:test".into(),
+                        message: "Your morning briefing is ready.".into(),
+                        job_name: Some("morning-briefing".into()),
+                        tenant,
+                    },
+                );
+
+                let event = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    loop {
+                        let event = web_events
+                            .recv()
+                            .await
+                            .expect("web event stream should remain open");
+                        if matches!(
+                            event.wire_event(),
+                            crate::web_chat::WebChannelEvent::ProactiveMessage {
+                                full_response, ..
+                            } if full_response.as_deref() == Some("Your morning briefing is ready.")
+                        ) {
+                            break event;
+                        }
+                    }
+                })
+                .await
+                .expect("proactive message should reach the web event stream");
+                assert_eq!(event.event_name(), "proactive_message");
+                assert!(event.belongs_to_profile("proactive-test"));
+                assert!(!event.belongs_to_profile("another-profile"));
+            });
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated proactive subscriber boot test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "isolated proactive subscriber boot test failed:\n{stdout}\n{stderr}"
     );
 }

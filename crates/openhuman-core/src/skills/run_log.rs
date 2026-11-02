@@ -45,8 +45,9 @@ fn run_log_store(workspace: &Path) -> anyhow::Result<RunLogStore> {
     let opened = crate::storage::local::open("skills::run_log", workspace)?;
     let storage = opened.scoped()?;
     let prepared = storage.clone();
+    let scope = opened.scope.to_storage_scope();
     crate::storage::block_on(async move {
-        crate::storage::boot::prepare_scope(&prepared).await?;
+        crate::storage::boot::prepare_scope(&prepared, &scope).await?;
         Ok(())
     })?;
     Ok(RunLogStore::new(Arc::clone(storage.streams())))
@@ -431,6 +432,19 @@ pub async fn drain_to_log(
         }
     }
     stop
+}
+
+/// [`drain_to_log`] on its own task, acting for `ctx`. The log store resolves
+/// its storage scope from the acting context, so a bare spawn would write the
+/// steps under the default scope (or, in SaaS, fail closed) while the header
+/// sits under the dispatching tenant's.
+pub fn spawn_drain_to_log(
+    ctx: &crate::core::runtime::DispatchCtx,
+    rx: Receiver<AgentProgress>,
+    workspace: PathBuf,
+    path: PathBuf,
+) -> tokio::task::JoinHandle<Option<tinyagents_harness::turn_stop::TurnStop>> {
+    ctx.spawn(drain_to_log(rx, workspace, path))
 }
 
 #[cfg(test)]

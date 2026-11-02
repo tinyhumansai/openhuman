@@ -17,6 +17,10 @@ use crate::core::{ControllerSchema, TypeSchema};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+#[path = "cli/help.rs"]
+mod help;
+use help::{is_help, print_function_help, print_general_help, print_namespace_help};
+
 /// The ASCII banner displayed when the CLI starts.
 const CLI_BANNER: &str = r#"
 
@@ -475,13 +479,55 @@ fn run_call_command(args: &[String]) -> Result<()> {
         .build()?;
     let value = rt
         .block_on(async {
-            invoke_method(
-                DispatchCtx::process_default(),
-                default_state(),
-                &method,
-                params,
-            )
-            .await
+            let headless_agent_chat = crate::core::legacy_aliases::resolve_legacy(&method)
+                == crate::agent_runs::INFERENCE_AGENT_CHAT;
+            let dispatch = if headless_agent_chat {
+                let config = crate::config::load_config_with_timeout()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if crate::agent_registry::host_definition::AgentDefinitionRegistry::global()
+                    .is_none()
+                {
+                    crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global(
+                        &config.workspace_dir,
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                crate::security::credentials::seed_api_key_from_env(&config).await;
+
+                // A one-shot CLI call does not boot the long-lived server
+                // runtime, but the agent turn still needs a real owner context
+                // for scoped persistence and tools that cross task boundaries.
+                let core = match crate::core::runtime::CoreContext::default_context() {
+                    Some(core) => core,
+                    None => {
+                        let tool_groups = if std::env::var_os("OPENHUMAN_E2E").is_some() {
+                            crate::tools::toolpacks::ToolGroups::advertised()
+                        } else {
+                            crate::tools::toolpacks::ToolGroups::default()
+                        };
+                        crate::core::runtime::CoreContext::init_with_config(
+                            crate::core::types::HostKind::detect_standalone(),
+                            &crate::core::runtime::TokenSource::EnvOrFile,
+                            crate::core::runtime::DomainSet::full(),
+                            tool_groups,
+                            Some(config),
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .0
+                    }
+                };
+                DispatchCtx::new(core)
+            } else {
+                DispatchCtx::process_default()
+            };
+            let dispatch = if headless_agent_chat {
+                dispatch.with_headless_agent_chat()
+            } else {
+                dispatch
+            };
+            invoke_method(dispatch, default_state(), &method, params).await
         })
         .map_err(anyhow::Error::msg)?;
 
@@ -678,69 +724,6 @@ fn grouped_schemas() -> BTreeMap<String, Vec<ControllerSchema>> {
         schemas.sort_by_key(|s| s.function);
     }
     grouped
-}
-
-/// Prints the general help message listing available commands and namespaces.
-fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
-    println!("OpenHuman core CLI\n");
-    println!("Usage:");
-    println!("  openhuman [OPTIONS]                     (show this help)");
-    println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
-    println!("  openhuman call --method <name> [--params '<json>' | --params-stdin]");
-    println!("  openhuman mcp [-v|--verbose]              (stdio MCP server)");
-    println!("  openhuman-tui [--thread <id>|--new]       (terminal UI; separate executable)");
-    println!("  openhuman skills <subcommand> [options]   (skill development runtime)");
-    println!("  openhuman agent <subcommand> [options]    (inspect agent definitions & prompts)");
-    println!("  openhuman sentry-test [--message <text>] [--panic]  (verify Sentry wiring)");
-    println!("  openhuman <namespace> <function> [--param value ...]\n");
-    println!("Global options (place before the command):");
-    println!("  -m, --model <id>       Override the model for this CLI session");
-    println!("  -p, --provider <id>    Override the provider id or slug for this CLI session");
-    println!("                        (aliases: --model-id, --provider-id)\n");
-    println!("Available namespaces:");
-    for namespace in grouped.keys() {
-        let description = all::namespace_description(namespace.as_str())
-            .unwrap_or("No namespace description available.");
-        println!("  {namespace} - {description}");
-    }
-    println!("\nUse `openhuman <namespace> --help` to see functions.");
-}
-
-/// Prints help for a specific namespace, listing its functions.
-fn print_namespace_help(namespace: &str, schemas: &[ControllerSchema]) {
-    println!("Namespace: {namespace}\n");
-    if let Some(description) = all::namespace_description(namespace) {
-        println!("{description}\n");
-    }
-    println!("Functions:");
-    for schema in schemas {
-        println!("  {} - {}", schema.function, schema.description);
-    }
-    println!("\nUse `openhuman {namespace} <function> --help` for parameters.");
-}
-
-/// Prints detailed help for a specific function, including its parameters and description.
-fn print_function_help(namespace: &str, schema: &ControllerSchema) {
-    println!("{} {}\n", namespace, schema.function);
-    println!("{}", schema.description);
-    println!("\nParameters:");
-    if schema.inputs.is_empty() {
-        println!("  none");
-    } else {
-        for input in &schema.inputs {
-            let required = if input.required {
-                "required"
-            } else {
-                "optional"
-            };
-            println!("  --{} ({}) - {}", input.name, required, input.comment);
-        }
-    }
-}
-
-/// Checks if a string represents a help flag.
-fn is_help(value: &str) -> bool {
-    matches!(value, "-h" | "--help" | "help")
 }
 
 #[cfg(test)]

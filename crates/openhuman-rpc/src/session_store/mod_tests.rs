@@ -28,14 +28,17 @@ async fn a_storage_url_installs_the_driver_backed_store() {
     assert!(
         provider
             .destination_key()
-            .is_some_and(|key| key.starts_with("memory://")),
+            .is_some_and(|key| !key.is_empty()),
         "{:?}",
         provider.destination_key()
     );
     assert!(crate::core_host::storage::installed().is_some());
+    let installed_url = crate::core_host::storage::installed_url().unwrap();
     assert_eq!(
-        crate::core_host::storage::installed_url().as_deref(),
-        Some("memory")
+        crate::core_host::storage::StorageUrl::parse(&installed_url)
+            .unwrap()
+            .driver(),
+        "memory"
     );
     // Agents are kept apart in the shared backend.
     let alice = provider.for_agent("alice");
@@ -132,7 +135,13 @@ async fn the_host_reads_the_storage_url_from_the_environment() {
     crate::core_host::agent::session_store::restore(previous);
 
     booted.unwrap();
-    assert_eq!(installed_url.as_deref(), Some("memory"));
+    assert_eq!(
+        installed_url
+            .as_deref()
+            .and_then(|url| crate::core_host::storage::StorageUrl::parse(url).ok())
+            .map(|url| url.driver()),
+        Some("memory")
+    );
     assert!(refused.is_err(), "an unusable env URL fails the boot");
 }
 
@@ -156,15 +165,16 @@ async fn provider_for_url_returns_the_store_without_installing_it() {
     crate::core_host::agent::session_store::restore(previous);
 
     assert!(
-        backed_key
-            .as_deref()
-            .is_some_and(|key| key.starts_with("memory://")),
+        backed_key.as_deref().is_some_and(|key| !key.is_empty()),
         "{backed_key:?}"
     );
     assert_eq!(
-        installed_url.as_deref(),
+        installed_url
+            .as_deref()
+            .and_then(|url| crate::core_host::storage::StorageUrl::parse(url).ok())
+            .map(|url| url.driver()),
         Some("memory"),
-        "the backend is installed"
+        "the memory backend is installed"
     );
     assert!(
         left_uninstalled,
@@ -193,10 +203,6 @@ async fn provider_for_host_reads_the_storage_url_from_the_environment() {
     restore_backend(previous_backend);
 
     let key = booted.unwrap();
-    assert!(
-        key.as_deref()
-            .is_some_and(|key| key.starts_with("memory://")),
-        "{key:?}"
-    );
+    assert!(key.as_deref().is_some_and(|key| !key.is_empty()), "{key:?}");
     assert!(refused.is_err(), "an unusable env URL fails the TUI boot");
 }

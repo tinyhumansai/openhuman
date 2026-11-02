@@ -21,6 +21,10 @@ fn raw_keyring_consent_registry_matches_its_independent_contract() {
                 "keyring_consent.retry_probe",
                 "openhuman.keyring_consent_retry_probe",
             ),
+            (
+                "keyring_consent.respond_operation",
+                "openhuman.keyring_consent_respond_operation",
+            ),
         ],
     };
     registry_test_support::verify_family_contract(

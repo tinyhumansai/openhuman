@@ -74,6 +74,13 @@ pub struct AgentExt {
     /// before the session has read its integrations.
     #[serde(default)]
     pub refresh_prompt_on_resume: bool,
+    /// A memory block at the end of the system prompt: what long-term
+    /// memory knows about the user, rendered when a transcript generation
+    /// starts and re-sent verbatim until the next one
+    /// (`agent/session_host/runtime_session/memory_block.rs`). `None` sends
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_block: Option<MemoryBlock>,
     /// Whether this agent's turns can search and call the tools of every
     /// connected MCP server (deferred, through `tool_search`).
     #[serde(default)]
@@ -88,6 +95,14 @@ pub struct AgentExt {
     pub tinyflows_prompt_owner: Option<String>,
 }
 
+/// The memory block an agent's system prompt ends with; see
+/// [`AgentExt::memory_block`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryBlock {
+    /// The most tokens the block may take, markers and instruction included.
+    pub max_tokens: u32,
+}
+
 impl Default for AgentExt {
     fn default() -> Self {
         Self {
@@ -96,6 +111,7 @@ impl Default for AgentExt {
             omit_safety_preamble: true,
             tokenjuice_compression: AgentTokenjuiceCompression::default(),
             refresh_prompt_on_resume: false,
+            memory_block: None,
             searches_connected_mcp: false,
             prompt_builder: None,
             tinyflows_prompt_owner: None,

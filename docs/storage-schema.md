@@ -28,18 +28,14 @@ Record shapes and migrations stay with their owners.
 | `notifications.settings` |  |  |  |
 | `openhuman.journal_backfill` |  |  |  |
 | `profiles.registry` |  |  |  |
+| `subagents.session_epochs` |  |  |  |
 | `subagents.sessions` |  |  |  |
 | `task_sources.ingested` | `by_source` (`source_id`, `ingested_ms`) |  |  |
 | `task_sources.sources` | `by_created` (`created_ms`) |  |  |
+| `threads.channel_messages` |  |  |  |
+| `threads.reply_viseme_timelines` |  |  |  |
+| `threads.staged_attachments` |  |  |  |
 | `threads.transcript_keys` |  |  |  |
-
-## tinyagents-graph
-
-| Collection | Indexes | Expiry field | Search fields |
-| --- | --- | --- | --- |
-| `graph.checkpoints` | `by_thread_id` (`ns`, `thread`, `checkpoint_id`)<br>`by_thread_seq` (`ns`, `thread`, `seq`)<br>`by_thread_subgraph` (`ns`, `thread`, `subgraph`, `seq`) |  |  |
-| `graph.threads` | `by_ns` (`ns`) |  |  |
-| `graph.writes` | `by_thread` (`ns`, `thread`) |  |  |
 
 ## tinyagents-harness
 
@@ -69,7 +65,7 @@ Record shapes and migrations stay with their owners.
 | `ledger.tool_effects` | `run` (`run_id`)<br>`started` (`started_ms`)<br>`status` (`status`) |  |  |
 | `ledger.workflow_runs` | `definition` (`definition_id`)<br>`status` (`status`)<br>`thread` (`parent_thread_id`)<br>`updated` (`updated_ms`) |  |  |
 | `session.transcript_entries` | `by_stem_written` (`stem`, `written`)<br>`by_stem` (`stem`, `seq`) |  |  |
-| `session.transcripts` | `by_agent_id` (`agent_id`, `created_ms`)<br>`by_agent_name` (`agent_name`, `created_ms`)<br>`by_thread` (`thread_id`, `created_ms`) |  |  |
+| `session.transcripts` | `by_agent_id_created` (`agent_id`, `created_ms`)<br>`by_agent_name_created` (`agent_name`, `created_ms`)<br>`by_thread_created` (`thread_id`, `created_ms`) |  |  |
 | `session.turn_states` | `by_thread` (`thread_id`) |  |  |
 | `tsd.counters` |  |  |  |
 | `tsd.kv` | `kv_by_key` (`owner`, `ns`, `key`) |  |  |
@@ -98,6 +94,9 @@ Record shapes and migrations stay with their owners.
 
 | Collection | Indexes | Expiry field | Search fields |
 | --- | --- | --- | --- |
+| `channel_remote_bindings` |  |  |  |
+| `channel_remote_busy` |  |  |  |
+| `channel_remote_meta` |  |  |  |
 | `channels.delivery_failed` |  |  |  |
 | `channels.delivery_pending` |  |  |  |
 | `channels.delivery_results` |  |  |  |
@@ -114,6 +113,17 @@ Record shapes and migrations stay with their owners.
 | `channels.whatsapp_session` |  |  |  |
 | `channels.whatsapp_signed_prekey` |  |  |  |
 | `channels.whatsapp_sync_key` |  |  |  |
+| `channels_delivery_failed` |  |  |  |
+| `channels_delivery_pending` |  |  |  |
+| `channels_delivery_results` |  |  |  |
+| `whatsapp_device` |  |  |  |
+| `whatsapp_identity` |  |  |  |
+| `whatsapp_lid_mapping` |  |  |  |
+| `whatsapp_prekey` |  |  |  |
+| `whatsapp_sender_key` |  |  |  |
+| `whatsapp_session` |  |  |  |
+| `whatsapp_signed_prekey` |  |  |  |
+| `whatsapp_sync_key` |  |  |  |
 
 ## tinyconnectors-bus
 
@@ -155,17 +165,6 @@ Record shapes and migrations stay with their owners.
 | `mcp.server_names` |  |  |  |
 | `mcp.servers` | `installed_ms` (`installed_ms`)<br>`qualified_name` (`qualified_name`) |  |  |
 | `mcp.tool_cache` |  |  |  |
-| `tsd.migrations` |  |  |  |
-
-## tinymemes-bus
-
-| Collection | Indexes | Expiry field | Search fields |
-| --- | --- | --- | --- |
-| `memes.remix_markers` |  |  |  |
-| `memes.state` |  |  |  |
-| `remix_markers` |  |  |  |
-| `tinymemes_documents` |  |  |  |
-| `tsd.leases` |  |  |  |
 | `tsd.migrations` |  |  |  |
 
 ## tinyskills-drivers

@@ -14,6 +14,8 @@ use crate::config::Config;
 pub(crate) fn config_in(tmp: &tempfile::TempDir) -> Config {
     let workspace = tmp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace dir");
+    #[cfg(feature = "storage-sqlite")]
+    crate::storage::local::use_persistent_default_for_test(&workspace);
     Config {
         workspace_dir: workspace.clone(),
         action_dir: workspace,

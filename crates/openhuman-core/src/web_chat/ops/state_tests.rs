@@ -1,6 +1,8 @@
 use super::*;
 use crate::core::runtime::{context::CoreContext, ContextOverlay, DomainSet};
 use crate::tools::toolpacks::ToolGroups;
+use crate::web_chat::runner::runtime;
+use crate::web_chat::track_parallel_turn_for_test;
 
 fn agent(parent: &Arc<CoreContext>, id: &str) -> Arc<CoreContext> {
     parent.derive_with(
@@ -19,34 +21,19 @@ async fn each_agent_context_owns_its_turn_tables() {
     let alpha = agent(&root, "alpha");
     let beta = agent(&root, "beta");
 
-    let (alpha_sessions, alpha_in_flight, alpha_parallel) = {
+    let (alpha_sessions, alpha_runtime) = {
         let scope_ctx = crate::core::runtime::DispatchCtx::new(Arc::clone(&alpha));
-
-        (
-            thread_sessions(&scope_ctx),
-            in_flight(&scope_ctx),
-            parallel_in_flight(&scope_ctx),
-        )
+        (thread_sessions(&scope_ctx), runtime(&scope_ctx))
     };
-    let (beta_sessions, beta_in_flight, beta_parallel) = {
+    let (beta_sessions, beta_runtime) = {
         let scope_ctx = crate::core::runtime::DispatchCtx::new(beta);
-
-        (
-            thread_sessions(&scope_ctx),
-            in_flight(&scope_ctx),
-            parallel_in_flight(&scope_ctx),
-        )
+        (thread_sessions(&scope_ctx), runtime(&scope_ctx))
     };
-    let alpha_again = {
-        let scope_ctx = crate::core::runtime::DispatchCtx::new(alpha);
-
-        in_flight(&scope_ctx)
-    };
+    let alpha_again = runtime(&crate::core::runtime::DispatchCtx::new(alpha));
 
     assert!(!Arc::ptr_eq(&alpha_sessions, &beta_sessions));
-    assert!(!Arc::ptr_eq(&alpha_in_flight, &beta_in_flight));
-    assert!(!Arc::ptr_eq(&alpha_parallel, &beta_parallel));
-    assert!(Arc::ptr_eq(&alpha_in_flight, &alpha_again));
+    assert!(!Arc::ptr_eq(&alpha_runtime, &beta_runtime));
+    assert!(Arc::ptr_eq(&alpha_runtime, &alpha_again));
 }
 
 #[tokio::test]
@@ -96,7 +83,6 @@ async fn a_user_cancel_under_the_fence_placeholder_id_keeps_the_callers_client()
     track_parallel_turn_for_test(
         &crate::core::runtime::DispatchCtx::ambient(),
         "fence-thread",
-        "fence-req",
         token.clone(),
     )
     .await;
@@ -111,12 +97,24 @@ async fn a_user_cancel_under_the_fence_placeholder_id_keeps_the_callers_client()
     .await
     .unwrap();
 
-    assert!(token.is_cancelled());
-    let mut seen = None;
-    while let Ok(event) = events.try_recv() {
-        if event.event == "chat_cancelled" && event.request_id == "fence-req" {
-            seen = Some(event.client_id);
+    let seen = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match events.recv().await {
+                Ok(event)
+                    if event.event_name() == "chat_cancelled"
+                        && event.context().thread_id == "fence-thread" =>
+                {
+                    return event.context().client_id.clone();
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(error) => panic!("event stream closed: {error}"),
+            }
         }
-    }
-    assert_eq!(seen.as_deref(), Some("profile-fence"));
+    })
+    .await
+    .expect("the cancelled turn announces itself");
+    assert_eq!(seen, "profile-fence");
+    tokio::time::timeout(std::time::Duration::from_secs(5), token.cancelled())
+        .await
+        .expect("tearing the turn down reaches its watcher");
 }

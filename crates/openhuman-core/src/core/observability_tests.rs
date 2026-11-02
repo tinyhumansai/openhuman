@@ -132,3 +132,91 @@ mod error_classification_provider;
 mod error_classification_session;
 #[path = "observability_error_classification_user_state_tests.rs"]
 mod error_classification_user_state;
+
+/// Log output of `f` under a plain fmt subscriber.
+fn captured_logs(f: impl FnOnce()) -> String {
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    tracing::subscriber::with_default(subscriber, f);
+    let out = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    out
+}
+
+#[test]
+fn expected_and_reported_errors_are_logged_scrubbed() {
+    let msg = "Embedding API error (429 Too Many Requests): Bearer sekrit-value rejected";
+    assert!(
+        expected_error_kind(msg).is_some(),
+        "fixture must take the expected-error path"
+    );
+    let expected = captured_logs(|| report_error_or_expected(&msg, "d", "o", &[]));
+    assert!(expected.contains("[REDACTED]"), "{expected}");
+    assert!(!expected.contains("sekrit"), "{expected}");
+
+    let reported = captured_logs(|| report_error(&"boom Bearer sekrit-value", "d", "o", &[]));
+    assert!(
+        !reported.is_empty() && !reported.contains("sekrit"),
+        "{reported}"
+    );
+}
+
+#[test]
+fn a_backend_error_code_survives_a_secret_in_the_message() {
+    let body = "OpenHuman API error (400): {\"error\":{\"message\":\"bad Bearer sekrit-value\",\"errorCode\":\"x\"}}";
+    register_backend_classifier_fixture(
+        body,
+        BackendErrorClassification {
+            provider_owned: true,
+            backend_owned: true,
+            reportable: false,
+            token: Some("fixture-owned".to_string()),
+            kind: Some(BackendErrorKind::Internal),
+            malformed_bad_request: false,
+        },
+    );
+    assert_eq!(
+        expected_error_kind(body),
+        Some(ExpectedErrorKind::BackendErrorCodeOwned)
+    );
+    let logs = captured_logs(|| report_error_or_expected(&body, "d", "o", &[]));
+    assert!(logs.contains("errorCode=fixture-owned"), "{logs}");
+    assert!(!logs.contains("sekrit"), "{logs}");
+
+    // An errorCode that is itself secret-shaped is scrubbed too.
+    let leaky = "OpenHuman API error (400): {\"error\":{\"errorCode\":\"code-x\"}}";
+    register_backend_classifier_fixture(
+        leaky,
+        BackendErrorClassification {
+            provider_owned: true,
+            backend_owned: true,
+            reportable: false,
+            token: Some("sk-proj-LEAKEDLEAKEDLEAKED".to_string()),
+            kind: Some(BackendErrorKind::Internal),
+            malformed_bad_request: false,
+        },
+    );
+    let logs = captured_logs(|| report_error_or_expected(&leaky, "d", "o", &[]));
+    assert!(logs.contains("errorCode=[REDACTED]"), "{logs}");
+    assert!(!logs.contains("LEAKED"), "{logs}");
+}

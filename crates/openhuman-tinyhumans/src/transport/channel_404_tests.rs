@@ -70,6 +70,33 @@ async fn patch_404_without_a_matching_route_is_route_missing() {
 }
 
 #[tokio::test]
+async fn patch_404_with_a_non_json_body_is_route_missing() {
+    // A CDN or proxy HTML 404 has no "Cannot PATCH", but no backend handler
+    // answered it either: the SDK's classifier treats any non-JSON body as an
+    // unmatched route, and the host follows it.
+    let server = server_404(
+        "PATCH",
+        "/channels/telegram/messages/5",
+        ResponseTemplate::new(404).set_body_string("<html>Not Found</html>"),
+    )
+    .await;
+    let err = send(
+        &server.uri(),
+        Method::PATCH,
+        "/channels/telegram/messages/5",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            BackendTransportError::ChannelMessageRouteMissing { .. }
+        ),
+        "got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn patch_404_from_a_real_handler_is_a_missing_message() {
     // The world where the edit route exists: a handler's JSON 404 means the
     // message is gone, never that edits are unsupported for the provider.

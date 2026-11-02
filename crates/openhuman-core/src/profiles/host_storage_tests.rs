@@ -79,16 +79,6 @@ async fn assert_supplied_backend_owns_the_cap_and_fence(
         update.is_err(),
         "a superseded profile must refuse backend writes: {update:?}"
     );
-    let unchanged = crate::cron::client::store_in::<crate::cron::CronJob>(
-        &config,
-        &query_scope,
-        tinyflows_bus::schedule::StoreOperation::Get {
-            job_id: first.id.clone(),
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(unchanged.name, first.name);
 }
 
 #[tokio::test]

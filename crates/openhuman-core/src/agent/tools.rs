@@ -7,11 +7,8 @@
 //! - `AskClarificationTool` (`ask_user_clarification`, from `tinyagents_harness_tools`) — returns the
 //!   question as its output; the turn actually pauses only because callers
 //!   list this name in the harness seam's `early_exit_tools`.
-//! - [`DelegateTool`] — hands a subtask to a named agent with its own
-//!   provider/model configuration.
-//! - [`PlanExitTool`] — ends a plan-mode pass by returning the plan plus
-//!   [`PLAN_EXIT_MARKER`]. The mode switch itself lives outside the tool;
-//!   nothing in this crate consumes the marker yet.
+//! - `plan_exit_tool` — configures TinyAgents' plan-exit tool with OpenHuman's
+//!   tenant-scoped mode and parked-review stores.
 //! - `RunWorkflowTool` / `AwaitWorkflowTool` — spawn a
 //!   `crate::skills::runtime` workflow run and wait on its outcome. Compiled
 //!   in only with the `skills` feature, so builds without it omit both tools
@@ -21,13 +18,8 @@
 //! `agent::registration` assembles the dialogue tools; `tools::ops` composes
 //! domain registrations and applies the runtime capability filters.
 pub(crate) mod plan_exit;
-// Pure `skill_runtime` client (spawn + await a workflow run) — compiled out
-// with the `skills` gate so the tool list OMITS these rather than degrading
-// them to a disabled-error.
 mod todo;
 
-pub use plan_exit::PlanExitTool;
 pub const PLAN_EXIT_MARKER: &str = tinyagents_harness_tools::PLAN_EXIT_MARKER;
-pub use tinyagents_harness_tools::{WaitLoopTool, WaitTool};
 pub use todo::TodoTool;
 pub(crate) use todo::TodoToolDispatch;

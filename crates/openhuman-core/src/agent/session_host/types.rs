@@ -161,7 +161,7 @@ pub struct OpenHumanSessionHost {
     pub(super) pack_registry_handle: Option<tinyagents_harness_tools::skills::PackRegistryHandle>,
     /// The delegation tools synthesised for the current connection set —
     /// `delegate_<toolkit>` skill tools and archetype delegates, produced by
-    /// [`crate::tools::orchestrator_tools::collect_orchestrator_tools`].
+    /// [`crate::integrations::composio::orchestrator_actions::collect_orchestrator_tools`].
     ///
     /// Held apart from [`Self::tools`] because it is the only part of the
     /// surface that changes mid-session, and `Box<dyn Tool>` is not cloneable:
@@ -295,6 +295,9 @@ pub struct OpenHumanSessionHost {
     /// Per-turn host environment (budget, cancellation, deadline, hooks, ...)
     /// handed in by the entry point; copied onto every turn's run context.
     pub(super) host_env: crate::agent::turn_env::HostTurnEnv,
+    /// Whether this specific single-shot host turn should settle all native
+    /// driver descendants before returning its result. Normal chat stays async.
+    pub(super) settle_headless_descendants: bool,
     /// Backend/session thread explicitly owned by this agent run. It is kept
     /// separate from event identity: CLI and worker event sessions are not
     /// necessarily user conversation threads.
@@ -324,15 +327,9 @@ pub struct OpenHumanSessionHost {
     /// Injected transcript locator, or `None` to resolve the session store for
     /// this agent key.
     ///
-    /// The single injection point for the whole transcript seam: it resolves
-    /// both resume reads (`latest_for_agent`, `root_for_thread`) and binds this
-    /// session's write handle (`open_stem`). `None` is the production default
-    /// and is resolved *lazily* by
-    /// [`OpenHumanSessionHost::session_locator`][Self::session_locator] into the
-    /// session store's transcripts for the **current** `workspace_dir` — never
-    /// captured at build time, because callers (tests especially) reassign
-    /// `workspace_dir` after `build()` and a frozen locator would silently keep
-    /// reading the old directory.
+    /// Optional transcript locator used by focused session-host tests and
+    /// embedders that supply their own durable transcript store. Production
+    /// thread-bound sessions use `SessionIdentityResolver` admission instead.
     pub(super) session_history_locator:
         Option<std::sync::Arc<dyn tinyagents_session::transcript::TranscriptLocator>>,
     /// First-call memo for [`OpenHumanSessionHost::session_locator`][Self::session_locator]'s
@@ -523,7 +520,7 @@ pub struct OpenHumanSessionHost {
     /// re-announced per turn. Seeded from the session-build catalogue.
     pub(super) announced_skills: std::collections::HashSet<String>,
     /// Names of every tool currently in [`OpenHumanSessionHost::synthesized_tools`] — those
-    /// produced by [`crate::tools::orchestrator_tools::collect_orchestrator_tools`]
+    /// produced by [`crate::integrations::composio::orchestrator_actions::collect_orchestrator_tools`]
     /// (i.e. `delegate_<toolkit>` skill tools and archetype-delegation
     /// tools). Tracked so
     /// [`OpenHumanSessionHost::refresh_delegation_tools`] can drop the entire

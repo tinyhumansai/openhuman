@@ -65,7 +65,7 @@
 
 /// Complete definition accepted by [`AgentDefinitionSpec::from_base`].
 pub use openhuman_core::agent_registry::host_definition::AgentDefinition;
-pub use openhuman_core::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+pub use openhuman_core::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 /// The origin of the executing turn, with its original chat or channel route.
 ///
@@ -152,6 +152,7 @@ pub mod profiles;
 pub mod routing;
 mod runtime;
 pub mod secret_storage;
+mod security;
 mod turn;
 mod turn_cancellation;
 mod turn_meter;
@@ -176,7 +177,8 @@ pub use openhuman_core::voice::VOICE_COMPILED_IN;
 pub use agent::ToolAttachmentError;
 pub use agent::{
     Agent, AgentDefinitionSpec, AgentError, AgentLayout, AgentSpec, ApprovalDecision, Approvals,
-    ApprovalsError, DefinitionBase, MemoryBinding, PendingApproval, SandboxModeSpec, ToolScopeSpec,
+    ApprovalsError, CompactOptions, CompactOutcome, DefinitionBase, MemoryBinding, MemoryBlockSpec,
+    PendingApproval, SandboxModeSpec, ToolScopeSpec,
 };
 pub use auth::{Auth, AuthState, Session};
 #[cfg(feature = "channels")]
@@ -258,6 +260,9 @@ pub mod session_store {
     pub use tinyagents_session::port::{
         InMemorySessionStores, InMemoryTranscriptLocator, InMemoryTurnStates,
     };
+    /// What a provider's `lease_for_agent` returns: stores the provider promises
+    /// stay bound to one backend for the life of the lease.
+    pub use tinyagents_session::port::{SessionStoreLease, SessionStoreLeaseError};
     #[cfg(feature = "testkit")]
     pub use tinyagents_session::testkit::conformance::{
         session_store_conformance, session_store_isolation_conformance,

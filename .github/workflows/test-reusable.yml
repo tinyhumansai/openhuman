@@ -105,6 +105,13 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git submodule update --init vendor/tinychannels
+      # The i18n scanner and frontend RPC drift guard read schemas and source
+      # from TinyInference and TinyAgents during tests. Initialize only those
+      # nested inputs rather than checking out every nested vendor dependency.
+      - name: Init TinyAgents inference sources (frontend test scanners read them)
+        run: |
+          git submodule update --init vendor/tinyagents
+          git -C vendor/tinyagents submodule update --init vendor/tinyinference
       - name: Cache pnpm store
         uses: actions/cache@v6
         with:
@@ -114,6 +121,8 @@ jobs:
             pnpm-store-${{ runner.os }}-
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+      - name: Verify generated chat wire types are current
+        run: bash scripts/ci-cancel-aware.sh pnpm chat-wire:check
       - name: Run tests with coverage
         run: bash scripts/ci-cancel-aware.sh pnpm test:coverage
         env:
@@ -233,6 +242,19 @@ jobs:
           CORE_FEATURES="$(bash scripts/ci/product-features.sh --core)"
           CLI_FEATURES="${FEATURES},bin-tools"
           MODULE_TESTS=(
+            inbound::ops::tests::a_burst_over_max_batch_runs_in_turns_of_at_most_max_batch
+            inbound::ops::tests::the_operations_reach_the_module
+            inbound::ops::tests::three_offers_within_the_window_run_one_turn_with_one_result_and_one_event
+            inbound::route::tests::an_accepted_event_is_queued_and_a_redelivery_ends_at_ingress
+            integrations::composio::bus::trigger_subscriber::tests::a_deferred_composio_trigger_is_retried_at_its_defer_time_instead_of_dropped
+            integrations::composio::bus::trigger_subscriber::tests::a_redelivered_composio_trigger_produces_one_turn
+            integrations::composio::bus::trigger_subscriber::tests::without_a_config_a_trigger_is_triaged_directly
+            integrations::composio::bus::trigger_subscriber::tests::with_the_queues_off_a_trigger_is_triaged_directly
+            modules::channel_runtime::tests::released_runtime_scopes_callbacks_and_replays_one_final_send
+            modules::event_queues::tests::every_member_is_reachable
+            skills::webhooks::bus::tests::inbound::with_the_component_off_an_agent_webhook_is_triaged_directly
+            skills::webhooks::bus::tests::inbound::a_redelivered_agent_webhook_produces_one_turn
+            skills::webhooks::bus::tests::inbound::a_deferred_agent_webhook_is_retried_at_its_defer_time_instead_of_dropped
             inference::tokenjuice::repl_module_tests::a_large_result_becomes_a_handle_the_repl_tools_can_query
             inference::tokenjuice::tests::the_module_defers_a_summary_until_requested
             inference::tokenjuice::tests::released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content

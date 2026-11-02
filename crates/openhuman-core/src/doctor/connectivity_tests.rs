@@ -212,6 +212,7 @@ async fn storage_connect_check_reports_corrupt_sqlite_without_changing_it() {
     assert_eq!(before, snapshot_test_tree(temp.path()));
 }
 
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn storage_layout_check_warns_when_a_migration_is_pending() {
     let temp = tempfile::tempdir().expect("temp directory");

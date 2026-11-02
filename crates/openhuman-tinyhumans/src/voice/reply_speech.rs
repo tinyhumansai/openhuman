@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::Outcome;
-use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
+use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 
 use crate::client::{flatten_authed_error, BackendClient};
 
@@ -133,7 +133,7 @@ pub async fn synthesize_reply(
     }
 
     // API key (sent as `x-api-key`) or live session JWT (sent as Bearer).
-    let credential = resolve_backend_credential(config)?;
+    let credential = resolve_backend_credential(config).await?;
     let client = BackendClient::from_config(config).map_err(|e| e.to_string())?;
 
     let mut body = serde_json::Map::new();

@@ -3,7 +3,7 @@
 
 use super::{BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PROVIDER, PROVIDER_OPENHUMAN};
 use crate::config::Config;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 use crate::security::egress::EgressLedger;
 use tinyinference_providers::route::{ProviderRoute, RouteKind};
 
@@ -62,10 +62,149 @@ pub(super) fn local_only_violation(
         // Deferred: re-resolves to a concrete string on the recursive call.
         return None;
     }
-    if tinyinference_local::profile::is_local_provider_string(p) {
+    if tinyinference_local::profile::is_local_provider_string(p) && !is_ollama_cloud_model(p) {
         return None;
     }
     Some(external_provider_label(p))
+}
+
+/// An Ollama `*-cloud` tag: the local daemon proxies it to ollama.com, so
+/// the prompt leaves the machine although the route is named local.
+pub(super) fn is_ollama_cloud_model(provider: &str) -> bool {
+    let Some((prefix, model)) = provider.trim().split_once(':') else {
+        return false;
+    };
+    let tag = model
+        .rsplit_once('@')
+        .map_or(model, |(tag, _temperature)| tag);
+    prefix.eq_ignore_ascii_case("ollama") && tag.to_ascii_lowercase().ends_with("-cloud")
+}
+
+/// Whether `endpoint` stays on this machine. Only loopback counts: a LAN
+/// address is another machine.
+pub(super) fn is_loopback_endpoint(endpoint: &str) -> bool {
+    match url::Url::parse(endpoint.trim())
+        .ok()
+        .and_then(|url| url.host().map(|h| h.to_owned()))
+    {
+        Some(url::Host::Domain(host)) => {
+            let host = host.to_ascii_lowercase();
+            host == "localhost" || host.ends_with(".localhost")
+        }
+        // A client dialling the unspecified address reaches this machine.
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        None => false,
+    }
+}
+
+/// Privacy at request time for every local runtime. The construction-time
+/// checks see only the route as built, and two things can change after that:
+/// - the privacy mode is live, so a model built under `Standard` must still
+///   stop at a non-loopback endpoint once the mode is local-only;
+/// - a caller may override the route's model per request (a flow node's pinned
+///   model, for one), so an Ollama route built for `llama3` can still be asked
+///   for a `*-cloud` tag, which local-only refuses and every other mode
+///   discloses as external egress.
+pub(super) struct LocalOnlyRequestGuard {
+    pub(super) inner: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>>,
+    pub(super) role: String,
+    /// The runtime's slug (`ollama`, `lmstudio`, ...), resolved endpoint, and
+    /// the model the route was built (and disclosed) for.
+    pub(super) slug: String,
+    pub(super) endpoint: String,
+    pub(super) model: String,
+    /// The turn's ledger, so a per-request model is disclosed once per turn.
+    pub(super) egress: EgressLedger,
+}
+
+impl LocalOnlyRequestGuard {
+    fn check(
+        &self,
+        request: &tinyinference_llm::model::ModelRequest,
+    ) -> tinyinference_llm::Result<()> {
+        let refuse = |e: anyhow::Error| tinyinference_llm::Error::Validation(e.to_string());
+        enforce_local_only_endpoint(&self.role, &self.endpoint).map_err(refuse)?;
+        let model = request.model.as_deref().unwrap_or(&self.model);
+        let route = format!("{}:{model}", self.slug);
+        let cloud = is_ollama_cloud_model(&route);
+        if cloud {
+            enforce_local_only_inference(&self.role, &route).map_err(refuse)?;
+        }
+        if model != self.model {
+            // Construction disclosed the route's own model; an override is a
+            // different destination, disclosed where the request makes it.
+            crate::security::egress::emit_external_transfer_in(
+                &self.egress,
+                crate::security::egress::EgressDescriptor::inference(
+                    self.slug.clone(),
+                    model.to_string(),
+                    cloud || !is_loopback_endpoint(&self.endpoint),
+                ),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl tinyinference_llm::model::ChatModel<()> for LocalOnlyRequestGuard {
+    fn profile(&self) -> Option<&tinyinference_llm::model::ModelProfile> {
+        self.inner.profile()
+    }
+    fn supports_input(
+        &self,
+        modality: tinyinference_llm::model::InputModality,
+        mime_type: &str,
+        source: tinyinference_llm::model::InputSource,
+    ) -> bool {
+        self.inner.supports_input(modality, mime_type, source)
+    }
+    fn cache_identity(&self) -> Option<String> {
+        self.inner.cache_identity()
+    }
+    fn tracks_physical_attempts(&self) -> bool {
+        self.inner.tracks_physical_attempts()
+    }
+    fn has_pre_invocation_admission_gate(&self) -> bool {
+        self.inner.has_pre_invocation_admission_gate()
+    }
+    async fn invoke(
+        &self,
+        state: &(),
+        request: tinyinference_llm::model::ModelRequest,
+    ) -> tinyinference_llm::Result<tinyinference_llm::model::ModelResponse> {
+        self.check(&request)?;
+        self.inner.invoke(state, request).await
+    }
+    async fn stream(
+        &self,
+        state: &(),
+        request: tinyinference_llm::model::ModelRequest,
+    ) -> tinyinference_llm::Result<tinyinference_llm::model::ModelStream> {
+        self.check(&request)?;
+        self.inner.stream(state, request).await
+    }
+    async fn fetch_deferred(
+        &self,
+        handle: &tinyinference_llm::model::DeferredHandle,
+    ) -> tinyinference_llm::Result<tinyinference_llm::model::DeferredStatus> {
+        self.inner.fetch_deferred(handle).await
+    }
+}
+
+/// Privacy Mode `LocalOnly` for a resolved local-runtime endpoint: refuse
+/// one that is not loopback (the prompt and the `local_ai` key would go there).
+pub(super) fn enforce_local_only_endpoint(role: &str, endpoint: &str) -> anyhow::Result<()> {
+    let mode = crate::security::live_policy::current_privacy_mode();
+    if mode != crate::config::PrivacyMode::LocalOnly || is_loopback_endpoint(endpoint) {
+        return Ok(());
+    }
+    log::warn!("[privacy][chat-factory] LocalOnly BLOCK: role={role} local runtime endpoint is not loopback");
+    anyhow::bail!(
+        "Local-only privacy mode is active: this local model's endpoint is on another machine. \
+         Point it at this computer (localhost) or change privacy mode in Settings."
+    )
 }
 
 /// Enforce Privacy Mode `LocalOnly` at the inference chokepoint: refuse to build
@@ -150,18 +289,18 @@ pub(crate) fn provider_uses_independent_auth(provider: &str) -> bool {
         })
 }
 
-pub(crate) fn verify_provider_session(config: &Config, provider: &str) -> anyhow::Result<()> {
+pub(crate) async fn verify_provider_session(config: &Config, provider: &str) -> anyhow::Result<()> {
     if provider_uses_independent_auth(provider) {
         log::debug!("[chat-factory] caller-owned runtime uses independent authentication");
         return Ok(());
     }
-    verify_session_active(config)
+    verify_session_active(config).await
 }
 
 /// Explicit-dispatch counterpart used by model construction. Session policy
 /// follows the host context that requested the model, never a different ambient
 /// context on the current task.
-pub(crate) fn verify_provider_session_in(
+pub(crate) async fn verify_provider_session_in(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     provider: &str,
@@ -174,7 +313,7 @@ pub(crate) fn verify_provider_session_in(
         .resolved()
         .map(|core| host_requires_session(core.host_kind()))
         .unwrap_or(true);
-    verify_session_active_for_host(config, requires_session)
+    verify_session_active_for_host(config, requires_session).await
 }
 
 /// Verify the user has an active OpenHuman backend session.
@@ -189,17 +328,20 @@ pub(crate) fn verify_provider_session_in(
 /// as its Layer 1 sync session check, so the author-time gate and this
 /// construction-time chokepoint can never diverge on what "session active"
 /// means.
-pub(crate) fn verify_session_active(config: &Config) -> anyhow::Result<()> {
+pub(crate) async fn verify_session_active(config: &Config) -> anyhow::Result<()> {
     // An in-process library host is given its provider URL and credential by
     // its caller. It does not participate in the OpenHuman app's registration
     // or auth-profile lifecycle, so requiring a fabricated local session here
     // would mix desktop product policy into the library contract. The ambient
     // context is installed by the dispatch chokepoint; all other host kinds
     // retain the registration gate below.
-    verify_session_active_for_host(config, current_host_requires_session())
+    verify_session_active_for_host(config, current_host_requires_session()).await
 }
 
-fn verify_session_active_for_host(config: &Config, requires_session: bool) -> anyhow::Result<()> {
+async fn verify_session_active_for_host(
+    config: &Config,
+    requires_session: bool,
+) -> anyhow::Result<()> {
     if !requires_session {
         return Ok(());
     }
@@ -213,13 +355,57 @@ fn verify_session_active_for_host(config: &Config, requires_session: bool) -> an
         return Ok(());
     }
 
-    verify_backend_session_active(config)
+    verify_backend_session_active(config).await
+}
+
+pub(super) fn verify_provider_session_in_with_snapshot(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    provider: &str,
+    snapshot: &super::credentials::RuntimeCredentialSnapshot,
+) -> anyhow::Result<()> {
+    if provider_uses_independent_auth(provider) {
+        return Ok(());
+    }
+    let requires_session = ctx
+        .resolved()
+        .map(|core| host_requires_session(core.host_kind()))
+        .unwrap_or(true);
+    verify_session_active_with_snapshot_for_host(config, requires_session, snapshot)
+}
+
+/// Synchronous model-factory gate backed by the per-session credential
+/// snapshot loaded before TinyAgents invokes its sync `ModelFactory` trait.
+pub(super) fn verify_session_active_with_snapshot(
+    config: &Config,
+    snapshot: &super::credentials::RuntimeCredentialSnapshot,
+) -> anyhow::Result<()> {
+    verify_session_active_with_snapshot_for_host(config, current_host_requires_session(), snapshot)
+}
+
+fn verify_session_active_with_snapshot_for_host(
+    config: &Config,
+    requires_session: bool,
+    snapshot: &super::credentials::RuntimeCredentialSnapshot,
+) -> anyhow::Result<()> {
+    if !requires_session
+        || config
+            .profile_providers
+            .as_ref()
+            .is_some_and(|providers| providers.has_direct_chat())
+    {
+        return Ok(());
+    }
+    if snapshot.backend_session_active() {
+        return Ok(());
+    }
+    anyhow::bail!("SESSION_EXPIRED: backend session not active — sign in to use custom providers")
 }
 
 /// Managed `OpenhumanJwt` inference always needs the backend bearer, including
 /// in a Library host. Library mode exempts caller-owned provider credentials;
 /// it cannot manufacture a TinyHumans account credential.
-pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<()> {
+pub(crate) async fn verify_backend_session_active(config: &Config) -> anyhow::Result<()> {
     let state_dir = config
         .config_path
         .parent()
@@ -231,7 +417,7 @@ pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<(
         });
     // An API key is a standing credential: no session to be active, nothing
     // for the scheduler gate to have expired.
-    if crate::security::credentials::api_key::has_api_key_in(&state_dir, config.secrets.encrypt) {
+    if crate::credentials::api_key::has_api_key_in(&state_dir, config.secrets.encrypt).await {
         log::debug!(
             "[providers][access-gate] api-key credential satisfies the backend session gate"
         );
@@ -246,7 +432,8 @@ pub(crate) fn verify_backend_session_active(config: &Config) -> anyhow::Result<(
     // Verify the app-session JWT actually exists in auth-profiles.
     let auth = AuthService::new(&state_dir, config.secrets.encrypt);
     let has_session = auth
-        .get_provider_bearer_token(crate::security::credentials::APP_SESSION_PROVIDER, None)?
+        .get_provider_bearer_token(crate::credentials::APP_SESSION_PROVIDER, None)
+        .await?
         .filter(|s| !s.trim().is_empty())
         .is_some();
     if !has_session {
@@ -266,4 +453,28 @@ pub(crate) fn current_host_requires_session() -> bool {
 
 pub(super) fn host_requires_session(host_kind: crate::core::types::HostKind) -> bool {
     host_kind != crate::core::types::HostKind::Library
+}
+
+/// The access check every model a harness turn builds passes first.
+impl tinyagents_harness::host::ModelBuildGate for super::OpenHumanModelFactory<'_> {
+    fn check(
+        &self,
+        request: &tinyagents_harness::host::ModelBuildRequest,
+    ) -> tinyagents_harness::Result<()> {
+        // Explicit host model injection is authoritative and has no provider
+        // construction, credential, or egress side effect to gate.
+        if self.injected(request).is_some() {
+            return Ok(());
+        }
+        let provider = self.provider_for(request);
+        enforce_local_only_inference(&request.role, &provider)
+            .map_err(|error| tinyagents_harness::TinyAgentsError::Model(error.to_string()))?;
+        verify_provider_session_in_with_snapshot(
+            self.ctx,
+            self.config,
+            &provider,
+            &self.credentials,
+        )
+        .map_err(|error| tinyagents_harness::TinyAgentsError::Model(error.to_string()))
+    }
 }

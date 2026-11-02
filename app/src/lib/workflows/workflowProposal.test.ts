@@ -99,6 +99,18 @@ describe('maybeParseWorkflowProposalTool', () => {
   });
 });
 
+describe('coerceWorkflowProposal flow_id', () => {
+  it('keeps the flow a revision targets and omits it for a new proposal', () => {
+    const revision = parseWorkflowProposal(
+      JSON.stringify({ ...proposalPayload('Revised'), flow_id: 'flow-1', draft_id: 'draft-1' })
+    );
+    expect(revision?.flowId).toBe('flow-1');
+    expect(parseWorkflowProposal(JSON.stringify(proposalPayload('New')))).not.toHaveProperty(
+      'flowId'
+    );
+  });
+});
+
 describe('extractWorkflowProposalFromMessages', () => {
   it('rehydrates the newest unconsumed proposal and tags its source message', () => {
     const messages = [
@@ -111,18 +123,27 @@ describe('extractWorkflowProposalFromMessages', () => {
     expect(proposal?.sourceMessageId).toBe('m3');
   });
 
-  it('skips consumed proposals so a saved/dismissed card does not resurrect', () => {
+  it('returns nothing once the newest proposal is consumed: older revisions are superseded', () => {
     const messages = [
-      message('m1', { scope: 'workflow_proposal', proposal: proposalPayload('Kept') }),
+      message('m1', { scope: 'workflow_proposal', proposal: proposalPayload('Superseded') }),
       message('m2', {
         scope: 'workflow_proposal',
         proposal: proposalPayload('Already Saved'),
         consumed: true,
       }),
     ];
-    const proposal = extractWorkflowProposalFromMessages(messages);
-    expect(proposal?.name).toBe('Kept');
-    expect(proposal?.sourceMessageId).toBe('m1');
+    expect(extractWorkflowProposalFromMessages(messages)).toBeNull();
+  });
+
+  it('carries the saved flow id so a reloaded card resumes at the enable step', () => {
+    const messages = [
+      message('m1', {
+        scope: 'workflow_proposal',
+        proposal: proposalPayload('Saved Not Enabled'),
+        saved_flow_id: 'flow-7',
+      }),
+    ];
+    expect(extractWorkflowProposalFromMessages(messages)?.savedFlowId).toBe('flow-7');
   });
 
   it('returns null when there is no proposal metadata or the payload is malformed', () => {

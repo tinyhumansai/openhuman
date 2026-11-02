@@ -29,9 +29,10 @@ const metadata = JSON.parse(metadataResult.stdout);
 const targets = new Set(metadata.packages.flatMap(pkg => pkg.targets.map(target => target.name)));
 // Nextest validates binary predicates against the selected workspace, even
 // regex predicates. A standalone Tauri workspace has none of the root CLI's
-// resource-sensitive binaries, so omit only those inapplicable overrides.
+// resource-sensitive binaries, so omit only those inapplicable overrides in
+// every profile (including the default profile used by the Tauri suite).
 const source = fs.readFileSync('.config/nextest.toml', 'utf8');
-const configText = source.replace(/\n\[\[profile\.ci\.overrides\]\]\n[\s\S]*?(?=\n\[|$)/g, block => {
+const configText = source.replace(/\n\[\[profile\.(?:ci|default)\.overrides\]\]\n[\s\S]*?(?=\n\[|$)/g, block => {
   const binary = block.match(/binary\(\/([^/]+)\/\)/);
   const exact = block.match(/binary\(=([a-zA-Z0-9_-]+)\)/);
   const present = binary

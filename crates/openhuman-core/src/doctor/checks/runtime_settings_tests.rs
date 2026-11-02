@@ -18,7 +18,7 @@ async fn run_check(config: crate::config::Config) -> Vec<crate::doctor::Finding>
 
 #[tokio::test]
 async fn former_runtime_settings_findings_keep_their_paths_without_exposing_values() {
-    use crate::config::{DelegateAgentConfig, ModelRouteConfig};
+    use crate::config::ModelRouteConfig;
 
     let mut config = crate::config::Config::default();
     config.reliability.fallback_providers = vec!["private-model-name".to_owned()];
@@ -32,16 +32,6 @@ async fn former_runtime_settings_findings_keep_their_paths_without_exposing_valu
             model: "private-model-name".to_owned(),
         },
     ];
-    let delegate = DelegateAgentConfig {
-        model: String::new(),
-        system_prompt: None,
-        temperature: None,
-        max_depth: 3,
-    };
-    config
-        .agents
-        .insert("private-agent-name".to_owned(), delegate);
-
     let findings = run_check(config).await;
     let paths = findings
         .iter()
@@ -53,7 +43,6 @@ async fn former_runtime_settings_findings_keep_their_paths_without_exposing_valu
         "reliability.fallback_providers",
         "model_routes[0].model",
         "model_routes[1].hint",
-        "agents[0].model",
     ] {
         assert!(
             paths.contains(&path),

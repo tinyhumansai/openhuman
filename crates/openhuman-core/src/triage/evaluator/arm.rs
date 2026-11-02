@@ -132,7 +132,7 @@ pub(super) async fn try_arm(
         // tool call originating from this turn as remote-attacker input
         // (the triage agent doesn't usually invoke such tools — it
         // classifies and routes — but label correctly for defense in depth).
-        origin: crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+        origin: crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
             sender_name: None,
             channel: envelope.source.slug().to_string(),
             // Triage runs over an upstream envelope (composio / webhook /
@@ -143,6 +143,7 @@ pub(super) async fn try_arm(
             reply_target: envelope.display_label.clone(),
             message_id: envelope.external_id.clone(),
             history_key: None,
+            channel_session: None,
         },
         // Triage is not an interactive chat turn: no approval surface.
         approval: Default::default(),

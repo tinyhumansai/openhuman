@@ -29,12 +29,18 @@ async fn persists_inbound_and_processed_turns_into_workspace_thread() {
             thread_ts: Some("thread-1".into()),
             timestamp: 0,
             sender_name: None,
-            reply_to_id: None,
-            topic_id: None,
         },
     );
     inbound_envelope.conversation.kind = tinychannels_bus::channel::ConversationKind::Channel;
     inbound_envelope.conversation.scope_id = Some("T123".into());
+    // The module owns the session-key format, so the expectation is built by the
+    // same builder rather than spelled out.
+    let expected_session_key =
+        tinychannels_runtime::channel::build_session_key_for_inbound_envelope(
+            "main",
+            &inbound_envelope,
+            Default::default(),
+        );
 
     subscriber
         .handle(&DomainEvent::ChannelMessageReceived {
@@ -84,7 +90,7 @@ async fn persists_inbound_and_processed_turns_into_workspace_thread() {
     assert_eq!(messages[0].sender, "user");
     assert_eq!(
         messages[0].extra_metadata["tinychannelsSessionKey"],
-        "main:slack:default:channel:T123:general:thread-1"
+        expected_session_key
     );
     assert_eq!(messages[1].id, "assistant:m1");
     assert_eq!(messages[1].sender, "assistant");

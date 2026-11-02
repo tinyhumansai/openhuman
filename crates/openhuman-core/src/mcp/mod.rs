@@ -65,6 +65,12 @@ pub fn start(config: &crate::config::Config) {
 #[cfg(feature = "mcp")]
 pub(crate) mod module_client;
 
+#[cfg(all(test, feature = "mcp"))]
+#[path = "test_module_port.rs"]
+mod test_module_port;
+#[cfg(all(test, feature = "mcp"))]
+pub(crate) use test_module_port::install as install_test_module_port;
+
 mod host_cleanup;
 
 /// Brings this domain up — the build without it, where there is nothing to do.
@@ -111,7 +117,7 @@ pub(crate) async fn refresh_configured_tool_cache(config: &crate::config::Config
             return;
         }
     };
-    let client_config = host::client_config(config);
+    let client_config = host::client_config(config).await;
     let servers: Vec<String> = match client
         .call(&client_config, tinymcp_bus::names::methods::STATIC_LIST, ())
         .await

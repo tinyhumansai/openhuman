@@ -1,7 +1,7 @@
 //! Async wrapper around the `tinydocs` module's `.pptx` writer.
 //!
 //! The synthesis itself — the slide mapping, the single-column image layout, the
-//! EMU geometry — lives in `crate::tools::implementations::document::format::pptx` and runs inside the loaded module.
+//! EMU geometry is implemented by the loaded module; its wire spec is shared through the document format alias.
 //! What is left here is the policy only a host can supply:
 //!
 //! 1. a deadline, because the module holds no opinion about how long a caller

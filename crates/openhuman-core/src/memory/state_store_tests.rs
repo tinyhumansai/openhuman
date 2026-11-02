@@ -138,8 +138,8 @@ async fn first_workspace_open_transfers_only_its_old_profile_queue_and_rechecks_
     let alice_workspace = ProfileLayout::with_version(alice_dir, LayoutVersion::V2).workspace_dir;
     let bob_workspace = ProfileLayout::with_version(bob_dir, LayoutVersion::V2).workspace_dir;
 
-    let backend: std::sync::Arc<dyn crate::storage::StorageBackend> =
-        crate::storage::test_support::memory_backend();
+    let backend_fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = std::sync::Arc::clone(&backend_fixture.backend);
     let alice_old = crate::storage::state_kv::StateKv::on_backend(
         &backend,
         &crate::storage::scope_for_profile("alice"),
@@ -257,8 +257,8 @@ async fn a_matching_active_agent_scope_is_a_legacy_source() {
     let context = CoreContext::for_test(DomainSet::full(), Some(workspace.clone())).derive_with(
         ContextOverlay::new(config, DomainSet::full(), ToolGroups::none()).session_agent("agent-a"),
     );
-    let backend: std::sync::Arc<dyn crate::storage::StorageBackend> =
-        crate::storage::test_support::memory_backend();
+    let backend_fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = std::sync::Arc::clone(&backend_fixture.backend);
     let old_scope = crate::storage::scope_for_agent("agent-a");
     let old =
         crate::storage::state_kv::StateKv::on_backend(&backend, &old_scope, "memory", "state")
@@ -334,8 +334,8 @@ fn layout_import_places_legacy_retry_queue_in_its_workspace_scope() {
     )
     .unwrap();
 
-    let backend: std::sync::Arc<dyn crate::storage::StorageBackend> =
-        crate::storage::test_support::memory_backend();
+    let backend_fixture = crate::storage::test_support::sqlite_backend().unwrap();
+    let backend = std::sync::Arc::clone(&backend_fixture.backend);
     let local = backend.for_scope(&crate::storage::Scope::local()).unwrap();
     let local_queue = crate::storage::state_kv::StateKv::over(&local, "memory", "state");
     local_queue

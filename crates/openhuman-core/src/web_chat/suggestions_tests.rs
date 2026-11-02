@@ -148,13 +148,15 @@ impl ChatModel<()> for ScriptedTextModel {
 }
 
 async fn drain_suggestions_event(
-    rx: &mut tokio::sync::broadcast::Receiver<WebChannelEvent>,
+    rx: &mut tokio::sync::broadcast::Receiver<crate::web_chat::ScopedWebEvent>,
     thread_id: &str,
-) -> Option<WebChannelEvent> {
+) -> Option<crate::web_chat::ScopedWebEvent> {
     loop {
         match tokio::time::timeout(Duration::from_secs(2), rx.recv()).await {
-            Ok(Ok(ev)) if ev.event == "chat_suggestions" && ev.thread_id == thread_id => {
-                return Some(ev)
+            Ok(Ok(ev))
+                if ev.event_name() == "chat_suggestions" && ev.context().thread_id == thread_id =>
+            {
+                return Some(ev);
             }
             Ok(Ok(_)) => continue,
             Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
@@ -185,8 +187,11 @@ async fn emits_chat_suggestions_for_a_well_formed_reply() {
     let ev = drain_suggestions_event(&mut rx, thread_id)
         .await
         .expect("chat_suggestions should have been emitted");
-    assert_eq!(ev.turn_request_id, Some("req-1".to_string()));
-    let suggestions = ev.suggestions.expect("suggestions payload");
+    assert_eq!(ev.context().turn_request_id.as_deref(), Some("req-1"));
+    let crate::web_chat::WebChannelEvent::ChatSuggestions { suggestions, .. } = ev.wire_event()
+    else {
+        panic!("expected chat_suggestions event");
+    };
     assert_eq!(suggestions.len(), 1);
     assert_eq!(suggestions[0].prompt, "What's next?");
 }

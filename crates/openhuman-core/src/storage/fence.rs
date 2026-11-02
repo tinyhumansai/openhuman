@@ -417,10 +417,18 @@ impl FenceRegistry {
     }
 
     /// Drops the fence on `key` at `epoch` (a clean release); a fence
-    /// registered since under another epoch stays.
+    /// registered since under another epoch stays. Cached handles retain the
+    /// old fence, so latch it before removing it from the registry.
     pub fn retire(&self, key: &str, epoch: u64) {
-        self.lock()
-            .retain(|held| !(held.key == key && held.epoch == epoch));
+        let mut fences = self.lock();
+        fences.retain(|held| {
+            if held.key == key && held.epoch == epoch {
+                held.fence();
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// The fence guarding `scope`, if any. A latched fence whose anchor is

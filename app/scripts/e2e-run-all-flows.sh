@@ -252,9 +252,10 @@ if should_run_suite "chat"; then
   run "test/e2e/specs/chat-background-activity-panel.spec.ts" "chat-background-activity"  "chat"
   run "test/e2e/specs/chat-todos-goals.spec.ts"               "chat-todos-goals"          "chat"
   run "test/e2e/specs/agent-harness-behaviors.spec.ts"        "agent-harness-behaviors"   "chat"
-  run "test/e2e/specs/agent-teams-live.spec.ts"               "agent-teams-live"          "chat"
   run "test/e2e/specs/file-drop-guard.spec.ts"                "file-drop-guard"           "chat"
   run "test/e2e/specs/chat-external-link.spec.ts"             "chat-external-link"        "chat"
+  run "test/e2e/specs/chat-voice-note.spec.ts"                "chat-voice-note"           "chat"
+  run "test/e2e/specs/agent-teams-live.spec.ts"               "agent-teams-live"          "chat"
   run "test/e2e/specs/mega-flow.spec.ts"                      "mega-flow"                 "chat"
   _mini_summary "chat"
 fi
@@ -357,11 +358,8 @@ if should_run_suite "settings"; then
   echo "## Running suite: settings"
   run "test/e2e/specs/settings-data-management.spec.ts"       "settings-data"             "settings"
   run "test/e2e/specs/memory-plan-required.spec.ts"           "memory-plan-required"      "settings"
-  run "test/e2e/specs/settings-ai-skills.spec.ts"             "settings-ai-skills"        "settings"
-  run "test/e2e/specs/settings-account-preferences.spec.ts"   "settings-account"          "settings"
-  run "test/e2e/specs/settings-advanced-config.spec.ts"       "settings-advanced"         "settings"
-  run "test/e2e/specs/settings-feature-preferences.spec.ts"   "settings-features"         "settings"
   run "test/e2e/specs/settings-search.spec.ts"                "settings-search"           "settings"
+  run "test/e2e/specs/security-approval-history.spec.ts"      "security-approval-history" "settings"
   _mini_summary "settings"
 fi
 

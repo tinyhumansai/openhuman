@@ -303,6 +303,8 @@ fn an_invalid_flow_record_keeps_the_import_open_for_retry() {
 }
 
 #[tokio::test]
+// The lock protects process-global storage installation for this async test.
+#[allow(clippy::await_holding_lock)]
 async fn fallback_backend_migrates_legacy_catalog_state_without_importing_files() {
     struct FallbackStorageRestore {
         previous: Option<Arc<dyn StorageBackend>>,

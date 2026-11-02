@@ -15,7 +15,7 @@ All managed services sit behind one TinyHumans account. Sign in through the desk
 
 ## Using it
 
-Desktop app: sign in with a TinyHumans account. The app stores a session credential in the OS-backed auth-profile store. The core resolves it the same way it resolves an API key, through `security::credentials::api_key` and `session_support::resolve_backend_credential`.
+Desktop app: sign in with a TinyHumans account. The app stores a session credential in the OS-backed auth-profile store. The core resolves it the same way it resolves an API key, through `credentials::api_key` and `session_state::resolve_backend_credential`.
 
 Library: pass the key to `RuntimeBuilder` and it boots connected:
 
@@ -31,7 +31,7 @@ let runtime = RuntimeBuilder::new()
 
 `openhuman_tinyhumans::RuntimeBuilder` mirrors `openhuman_embed::RuntimeBuilder` method for method. On `build()` it installs the SDK-backed transport and binds it to the runtime.
 
-Headless: set `OPENHUMAN_BACKEND_API_KEY` before the core boots. The boot sequence (`crates/openhuman-core/src/security/credentials/ops/boot_env.rs`) installs it on a fresh credential store and never overwrites a credential that is already there.
+Headless: set `OPENHUMAN_BACKEND_API_KEY` before the core boots. The boot sequence (`crates/openhuman-core/src/credentials/ops/boot_env.rs`) installs it on a fresh credential store and never overwrites a credential that is already there.
 
 ## Where it is stored and how it is sent
 
@@ -42,7 +42,7 @@ The key is sent in one of two forms, depending on the endpoint:
 - Managed inference (`{api_url}/openai/v1`): `Authorization: Bearer <key>`. `OpenHumanBackendModel::resolve_bearer` prefers the stored API key over an app session when both exist.
 - Backend REST (`BackendClient`, `IntegrationClient`): `x-api-key: <key>`.
 
-`crates/openhuman-core/src/security/credentials/api_key.rs` owns storage and retrieval (`store_api_key`, `get_api_key`, `has_api_key`, `clear_api_key`). `session_support::BackendCredential` turns either credential form into the right header at request time.
+`crates/openhuman-core/src/credentials/api_key.rs` owns storage and retrieval (`store_api_key`, `get_api_key`, `has_api_key`, `clear_api_key`). `session_state::BackendCredential` turns either credential form into the right header at request time.
 
 ## Bring your own key still works
 

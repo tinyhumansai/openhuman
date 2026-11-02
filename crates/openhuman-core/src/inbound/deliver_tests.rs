@@ -613,8 +613,8 @@ async fn an_all_injection_batch_completes_without_calling_the_model() {
     );
 }
 
-#[test]
-fn a_benign_batch_passes_the_whole_turn_guard() {
+#[tokio::test]
+async fn a_pinned_prompt_is_held_when_the_security_module_is_unavailable() {
     use crate::security::prompt_injection::{
         enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
     };
@@ -637,6 +637,107 @@ fn a_benign_batch_passes_the_whole_turn_guard() {
             user_id: None,
             session_id: None,
         },
+    )
+    .await;
+    assert_eq!(
+        decision.action,
+        PromptEnforcementAction::ReviewBlocked,
+        "{prompt}"
     );
-    assert_eq!(decision.action, PromptEnforcementAction::Allow, "{prompt}");
+}
+
+#[tokio::test]
+async fn a_pinned_source_in_a_mixed_digest_still_runs_its_agent() {
+    let triage = ScriptedTriage::new([decision(TriageAction::Acknowledge)]);
+    let agent = ScriptedAgent::new([Reply::Text("draft")]);
+    let results = memory_results();
+    let response = pinned_deliverer(&triage, &agent, &results)
+        .deliver(turn(
+            vec![mention("t2"), trigger_event("u1"), mention("t1")],
+            Lane::Digest,
+            1,
+        ))
+        .await;
+    assert_eq!(response.status, DeliverStatus::Accepted);
+    let runs = agent.runs();
+    assert_eq!(runs.len(), 1, "the pinned events skipped their agent");
+    assert!(runs[0].message.contains("hello t1") && runs[0].message.contains("hello t2"));
+    let stored = results
+        .get("turn-1:x:mentions:mentions:t1..t2")
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.result.status, ResultStatus::Completed);
+    assert_eq!(stored.result.event_ids, ["t1", "t2"]);
+    // The rest of the digest is still triaged, once.
+    assert_eq!(triage.runs(), 1);
+}
+
+fn mention_at(id: &str, key: &str, received_at_ms: u64) -> InboundEvent {
+    events::external(
+        "x:mentions",
+        key,
+        id,
+        &format!("hello {id}"),
+        json!({ "author": "@a" }),
+        received_at_ms,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_mixed_digest_runs_each_conversation_key_oldest_first() {
+    let triage = ScriptedTriage::new([decision(TriageAction::Acknowledge)]);
+    let agent = ScriptedAgent::new([Reply::Text("a"), Reply::Text("b")]);
+    let results = memory_results();
+    let response = pinned_deliverer(&triage, &agent, &results)
+        .deliver(turn(
+            vec![
+                mention_at("z-old", "mentions", 1),
+                mention_at("a-new", "mentions", 9),
+                mention_at("d1", "dms", 3),
+                trigger_event("u1"),
+            ],
+            Lane::Digest,
+            1,
+        ))
+        .await;
+    assert_eq!(response.status, DeliverStatus::Accepted);
+    let mut keys: Vec<String> = agent.runs().into_iter().map(|run| run.key).collect();
+    keys.sort();
+    assert_eq!(keys, ["dms", "mentions"]);
+    let mentions = results
+        .get("turn-1:x:mentions:mentions:z-old..a-new")
+        .unwrap()
+        .unwrap();
+    assert_eq!(mentions.result.event_ids, ["z-old", "a-new"]);
+    assert!(results
+        .get("turn-1:x:mentions:dms:d1..d1")
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn the_rest_of_a_mixed_digest_waits_when_the_pinned_parts_spent_the_budget() {
+    let triage = ScriptedTriage::new([decision(TriageAction::Acknowledge)]);
+    let agent = ScriptedAgent::new([Reply::Text("draft"), Reply::Text("late")]);
+    let results = memory_results();
+    let response = pinned_deliverer(&triage, &agent, &results)
+        .with_budget(Duration::ZERO)
+        .deliver(turn(
+            vec![
+                mention("t1"),
+                mention_at("d1", "dms", 3),
+                trigger_event("u1"),
+            ],
+            Lane::Digest,
+            1,
+        ))
+        .await;
+    assert!(matches!(response.status, DeliverStatus::Retry { .. }));
+    assert_eq!(
+        agent.runs().len(),
+        1,
+        "a second part started with no budget"
+    );
+    assert_eq!(triage.runs(), 0, "triage started with no budget left");
 }

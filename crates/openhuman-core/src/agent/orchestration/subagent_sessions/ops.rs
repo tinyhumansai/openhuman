@@ -1,9 +1,5 @@
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-};
 
 use crate::agent::subagent_host::SubagentRunStatus;
 use tinyagents_session::transcript::TranscriptMessage;
@@ -17,67 +13,13 @@ use super::types::{
 mod driver;
 #[cfg(test)]
 use driver::record_cancel_reason;
+#[cfg(test)]
+pub(crate) use driver::{cancel_driver_job_by_task, mark_driver_pause_cancelled};
 pub use driver::{
-    cancel_driver_job_by_task, cancel_driver_job_for_observed_session,
-    cancel_driver_jobs_for_thread, mark_driver_pause_cancelled, resolve_lifecycle_key,
-    DriverTaskCancellation,
+    cancel_driver_job_for_observed_session, cancel_driver_jobs_for_thread,
+    resolve_driver_lifecycle_key, resolve_lifecycle_key, DriverTaskCancellation,
 };
-
-pub fn normalize_task_key(input: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in input.trim().to_lowercase().chars() {
-        if ch.is_alphanumeric() {
-            out.push(ch);
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out.is_empty() {
-        if input.trim().is_empty() {
-            "untitled-task".to_string()
-        } else {
-            format!("task-{:016x}", task_key_hash(input))
-        }
-    } else if out.len() > 96 {
-        let hash = format!("{:016x}", task_key_hash(input));
-        let mut prefix = String::new();
-        for ch in out.chars() {
-            if prefix.len() + ch.len_utf8() + hash.len() + 1 > 96 {
-                break;
-            }
-            prefix.push(ch);
-        }
-        while prefix.ends_with('-') {
-            prefix.pop();
-        }
-        format!("{prefix}-{hash}")
-    } else {
-        out
-    }
-}
-
-fn task_key_hash(input: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    input.hash(&mut hasher);
-    hasher.finish()
-}
-
-pub fn task_title_from_prompt(prompt: &str) -> String {
-    let collapsed = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= 80 {
-        collapsed
-    } else {
-        let mut title: String = collapsed.chars().take(77).collect();
-        title.push_str("...");
-        title
-    }
-}
+pub use tinyagents_orchestration::subagent::normalize_task_key;
 
 pub fn action_root_key(path: Option<&Path>) -> Option<String> {
     path.map(|p| p.to_string_lossy().to_string())
@@ -133,6 +75,7 @@ pub fn upsert_running(
                 if let Some(lifecycle_key) = &lifecycle_key {
                     session.lifecycle_key = Some(lifecycle_key.clone());
                 }
+                session.parent_epoch = upsert.parent_epoch;
                 session.status = DurableSubagentStatus::Running;
                 session.reusable = true;
                 session.latest_error = None;
@@ -169,6 +112,7 @@ pub fn upsert_running(
         task_title: upsert.task_title.clone(),
         current_task_id: Some(upsert.task_id),
         lifecycle_key: upsert.lifecycle_key,
+        parent_epoch: upsert.parent_epoch,
         status: DurableSubagentStatus::Running,
         reusable: true,
         latest_history: None,

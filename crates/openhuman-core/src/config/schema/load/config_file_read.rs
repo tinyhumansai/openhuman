@@ -36,7 +36,7 @@ pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (B
         tracing::warn!(
             path = %config_path.display(),
             backup = %backup_path.display(),
-            error = %parse_err,
+            error = %parse_error.safe_summary(),
             "[config] Config file is corrupted — attempting recovery from backup"
         );
         match fs::read_to_string(&backup_path).await {
@@ -58,7 +58,8 @@ pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (B
                     tracing::warn!(
                         path = %config_path.display(),
                         backup = %backup_path.display(),
-                        error = %bak_err,
+                        error = %ConfigParseError::from_error(backup_path.clone(), &bak_err)
+                            .safe_summary(),
                         "[config] Backup is also corrupted; resetting to defaults"
                     );
                 }
@@ -75,7 +76,7 @@ pub(super) async fn parse_config_boxed(config_path: &Path, contents: &str) -> (B
     } else {
         tracing::warn!(
             path = %config_path.display(),
-            error = %parse_err,
+            error = %parse_error.safe_summary(),
             "[config] Config file is corrupted (no backup found); resetting to defaults"
         );
     }

@@ -128,25 +128,30 @@ pub async fn thread_generate_title(
     // `_with_model_id` rather than the plain constructor: the debug line below
     // reports the model this call actually dispatches on, and only the factory
     // knows what the `summarization` role resolved to for this configuration.
-    let (chat_model, resolved_model) =
-        match provider::create_chat_model_with_model_id_in(ctx, "summarization", &config, 0.2) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                tracing::warn!(
-                    thread_id = %request.thread_id,
-                    error = %error,
-                    "{THREAD_TITLE_LOG_PREFIX} provider init failed; applying fallback title"
-                );
-                let updated =
-                    update_thread_with_fallback_title(ctx, dir, thread, &first_user_message)
-                        .await?;
-                return Ok(envelope(
-                    thread_to_summary(updated),
-                    Some(counts([("num_threads", 1)])),
-                    None,
-                ));
-            }
-        };
+    let (chat_model, resolved_model) = match provider::create_chat_model_with_model_id_in(
+        ctx,
+        "summarization",
+        &config,
+        0.2,
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            tracing::warn!(
+                thread_id = %request.thread_id,
+                error = %error,
+                "{THREAD_TITLE_LOG_PREFIX} provider init failed; applying fallback title"
+            );
+            let updated =
+                update_thread_with_fallback_title(ctx, dir, thread, &first_user_message).await?;
+            return Ok(envelope(
+                thread_to_summary(updated),
+                Some(counts([("num_threads", 1)])),
+                None,
+            ));
+        }
+    };
 
     tracing::debug!(
         thread_id = %request.thread_id,

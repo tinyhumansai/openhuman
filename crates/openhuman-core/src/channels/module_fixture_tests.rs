@@ -16,27 +16,75 @@ use std::sync::{Arc, MutexGuard};
 use tinybus::module::ModuleClient;
 #[cfg(feature = "e2e-test-support")]
 use tinychannels_bus::methods;
+use tokio::sync::OnceCell;
 
 const MODULE_ID: &str = "tinychannels";
+static CLIENT: OnceCell<ModuleClient> = OnceCell::const_new();
 
 /// Return a client for the compiled, linked TinyChannels module fixture.
 pub(crate) async fn client() -> ModuleClient {
-    register_linked(MODULE_ID, tinychannels_module::linked_module);
-    let mut config = Config::default();
-    config.modules.allow_download = false;
-    config.modules.source = ModuleSourceMode::Linked;
-    ops::ensure_loaded(&config, MODULE_ID)
+    CLIENT
+        .get_or_init(|| async {
+            register_linked(MODULE_ID, tinychannels_module::linked_module);
+            let mut config = Config::default();
+            config.modules.allow_download = false;
+            config.modules.source = ModuleSourceMode::Linked;
+            ops::ensure_loaded(&config, MODULE_ID)
+                .await
+                .expect("the linked TinyChannels module should be admitted through the seam");
+            let proxy = runtime::runtime()
+                .await
+                .expect("the module host should be running")
+                .proxy(
+                    tinychannels_module::BUS_NAME,
+                    tinychannels_module::OBJECT_PATH,
+                )
+                .expect("the linked TinyChannels proxy should be valid");
+            ops::fixture_client(proxy)
+        })
         .await
-        .expect("the linked TinyChannels module should be admitted through the seam");
-    let proxy = runtime::runtime()
-        .await
-        .expect("the module host should be running")
-        .proxy(
-            tinychannels_module::BUS_NAME,
-            tinychannels_module::OBJECT_PATH,
+        .clone()
+}
+
+#[tokio::test]
+async fn concurrent_linked_module_client_requests_share_the_ready_fixture() {
+    let (first, second, third) = tokio::join!(client(), client(), client());
+
+    assert!(first.fixture_proxy().is_some());
+    assert!(second.fixture_proxy().is_some());
+    assert!(third.fixture_proxy().is_some());
+}
+
+#[tokio::test]
+async fn linked_module_accepts_confidential_web_projection_begin() {
+    let module = client().await;
+    let handle: tinychannels_bus::module_web_output::WebTurnHandle = module
+        .call_confidential(
+            "tinychannels",
+            tinychannels_bus::methods::BEGIN_WEB_TURN,
+            (tinychannels_bus::module_web_output::BeginWebTurn {
+                scope_key: "fixture-web-chat:begin".into(),
+                context: tinychannels_bus::web::WebEventContext {
+                    client_id: "fixture-client".into(),
+                    thread_id: "fixture-thread".into(),
+                    request_id: "fixture-request".into(),
+                    ..Default::default()
+                },
+            },),
         )
-        .expect("the linked TinyChannels proxy should be valid");
-    ops::fixture_client(proxy)
+        .await
+        .unwrap_or_else(|error| panic!("confidential web projection begin failed: {error:?}"));
+
+    module
+        .call_confidential::<()>(
+            "tinychannels",
+            tinychannels_bus::methods::END_WEB_TURN,
+            (tinychannels_bus::module_web_output::EndWebTurn {
+                handle: handle.handle,
+            },),
+        )
+        .await
+        .expect("the linked module should end its web projection turn");
 }
 
 /// Temporarily install in-memory storage for module callbacks in isolated tests.
@@ -50,7 +98,12 @@ pub(crate) fn install_memory_storage() -> MemoryStorageGuard {
     let slot_lock = crate::storage::test_support::lock_storage_slot();
     MemoryStorageGuard {
         _slot_lock: slot_lock,
-        previous: crate::storage::install(crate::storage::test_support::memory_backend()),
+        // The module's media store and legacy-import claims ask for a
+        // conditioned scope, which the plain memory engine cannot open; one
+        // test process is the only writer, so the unfenced wrapper is exact.
+        previous: crate::storage::install(std::sync::Arc::new(
+            crate::storage::test_support::UnfencedMemoryBackend::new(),
+        )),
     }
 }
 
@@ -109,8 +162,6 @@ async fn linked_module_prepares_legacy_inbound_facts_over_confidential_bus_call(
         timestamp: 42,
         thread_ts: Some("thread/c".into()),
         sender_name: Some("Display".into()),
-        reply_to_id: None,
-        topic_id: None,
     };
     let response: PreparedChannelInbound = client()
         .await
@@ -123,6 +174,7 @@ async fn linked_module_prepares_legacy_inbound_facts_over_confidential_bus_call(
                     envelope: None,
                 },
                 namespace: "openhuman".into(),
+                preparation_mode: Default::default(),
                 session_policy: Default::default(),
             },),
         )
@@ -140,7 +192,7 @@ async fn linked_module_prepares_legacy_inbound_facts_over_confidential_bus_call(
     );
     assert_eq!(
         response.session_key,
-        "openhuman:discord:default:unknown:room#b:thread/c"
+        "v22|namespace=p9:openhuman|channel=p7:discord|account=a|kind=p7:unknown|scope=a|conversation=p6:room#b|parent=a|topic=a|thread=p8:thread/c|participant=a"
     );
     assert_eq!(response.message.timestamp, 42);
     assert_eq!(response.message.sender_name.as_deref(), Some("Display"));

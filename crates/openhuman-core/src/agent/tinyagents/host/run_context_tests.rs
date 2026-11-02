@@ -97,6 +97,7 @@ fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     let mut parent = OpenHumanRunContext::new();
     parent.thread_id = Some("thread-a".to_string());
     parent.file_state_agent_id = Some("parent-file-state".to_string());
+    parent.headless_descendant_settlement = true;
     *parent.resolved_route.lock().expect("route lock") =
         Some(tinyinference_llm::model::ResolvedModelRoute {
             provider: "provider-a".to_string(),
@@ -107,6 +108,7 @@ fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     let child = parent.child();
 
     assert_eq!(child.spawn_depth, 1);
+    assert!(child.headless_descendant_settlement);
     assert_eq!(child.thread_id.as_deref(), Some("thread-a"));
     assert!(child.file_state_agent_id().is_none());
     assert!(child
@@ -139,7 +141,7 @@ fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     left.append_subagent_usage(SubagentUsageEntry {
         task_id: "left-task".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 3,
             output_tokens: 2,
             cached_input_tokens: 1,
@@ -152,7 +154,7 @@ fn child_ledgers_are_isolated_and_parent_keeps_completed_child_totals() {
     left.record_completed_subagent_usage(SubagentUsageEntry {
         task_id: "completed-child".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage::default(),
+        usage: tinyagents_harness::progress::SubagentUsage::default(),
     });
     assert_eq!(root.subagent_usage_entries().len(), 1);
     assert_eq!(left.subagent_usage_entries().len(), 1);
@@ -165,7 +167,7 @@ fn failed_outer_run_promotes_completed_nested_usage_once() {
     outer.append_subagent_usage(SubagentUsageEntry {
         task_id: "nested".into(),
         agent_id: "researcher".into(),
-        usage: crate::agent::subagent_host::SubagentUsage {
+        usage: tinyagents_harness::progress::SubagentUsage {
             input_tokens: 7,
             ..Default::default()
         },
@@ -177,6 +179,51 @@ fn failed_outer_run_promotes_completed_nested_usage_once() {
     outer.promote_completed_descendant_usage();
     assert_eq!(root.subagent_usage_entries().len(), 1);
     assert_eq!(root.subagent_usage_entries()[0].task_id, "nested");
+}
+
+#[test]
+fn detached_children_reset_turn_accounting_and_cancellation() {
+    let mut root = OpenHumanRunContext::new();
+    root.thread_id = Some("thread-a".into());
+    root.headless_descendant_settlement = true;
+    root.headless_descendant_owner = Some("root-owner".into());
+    let dispatch = Arc::new(TurnDispatchState::new(Some(std::time::Duration::ZERO)));
+    dispatch.record_subagent_elapsed(std::time::Duration::from_secs(1));
+    root.dispatch = Some(dispatch);
+    let detached = root.detached_child();
+
+    assert_eq!(detached.thread_id.as_deref(), Some("thread-a"));
+    assert!(
+        !detached.headless_descendant_settlement,
+        "detached work is outside the root's settlement lease"
+    );
+    assert_eq!(
+        root.child().headless_descendant_owner.as_deref(),
+        Some("root-owner")
+    );
+    assert!(detached.headless_descendant_owner.is_none());
+    let workspace = std::path::Path::new("/workspace");
+    assert_eq!(
+        root.child()
+            .subagent_owner_scope(workspace, "session", Some("worker-thread")),
+        "root-owner",
+        "headless descendants retain the root lease's owner across native thread ids"
+    );
+    assert_ne!(
+        detached.subagent_owner_scope(workspace, "session", Some("worker-thread")),
+        "root-owner",
+        "detached chat work keeps its own owner scope"
+    );
+    assert!(detached.dispatch.is_none());
+    root.cancellation.cancel();
+    assert!(!detached.cancellation.is_cancelled());
+    detached.record_completed_subagent_usage(SubagentUsageEntry {
+        task_id: "background".into(),
+        agent_id: "archivist".into(),
+        usage: Default::default(),
+    });
+    assert!(root.subagent_usage_entries().is_empty());
+    assert_eq!(detached.subagent_usage_entries().len(), 1);
 }
 
 #[test]
@@ -229,7 +276,7 @@ fn stale_parent_snapshot() -> ParentExecutionContext {
 /// `on_progress.is_some()` proves *presence*, not *identity*: a bind that
 /// installed some other, freshly created channel satisfies it just as happily,
 /// and that is the miswiring that actually ships. Production reads this exact
-/// field one clone away — `spawn_async_subagent_execute.rs` opens with
+/// field one clone away — `spawn_subagent_execute.rs` opens with
 /// `let progress_sink = parent.on_progress.clone();` — so delivery onto this
 /// receiver is what "the panel will see the spawn" reduces to.
 fn assert_bound_sink_is_this_runs_channel(
@@ -339,7 +386,7 @@ fn attach_parent_keeps_the_snapshot_sink_when_the_run_has_none() {
 #[test]
 fn child_inherits_shared_model_budget_and_narrowed_depth_limit() {
     use {
-        crate::agent::tinyagents::budget::ModelBudget, tinyinference_llm::model::budget::Budget,
+        tinyagents_harness::cost::ModelBudget, tinyinference_llm::model::budget::Budget,
         tinyinference_llm::model::budget::CallBudget, tinyinference_llm::model::budget::Spend,
         tinyinference_llm::model::budget::SpendLimits,
     };

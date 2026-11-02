@@ -21,6 +21,9 @@ use tinybus::transport::memory::MemoryBus;
 use tinybus::{Connection, ObjectPath};
 use tinyeventqueues_bus::names;
 use tinyeventqueues_bus::storage::SHIPPED_PIPELINE_JSON;
+use tinystoragedrivers_api::StorageBackend;
+use tinystoragedrivers_busproxy::{PerCallerEndpoint, ServedStorage, StorageServer};
+use tinystoragedrivers_testkit::MemoryBackend;
 
 use super::deliver::Deliverer;
 use super::host::InboundHost;
@@ -297,6 +300,7 @@ pub(crate) struct Rig {
     /// The triage the host callbacks run.
     pub(crate) triage: Arc<ScriptedTriage>,
     _host: Connection,
+    _storage: ServedStorage,
     _modules: ModuleHost,
 }
 
@@ -344,12 +348,25 @@ impl Rig {
         .await
         .unwrap();
         host.request_name(names::host::INTERFACE).await.unwrap();
+        // The module keeps its queues in host storage and refuses to set up
+        // without it, so the rig serves the Storage service from memory.
+        let backend = Arc::new(MemoryBackend::new());
+        let storage = tinystoragedrivers_busproxy::serve(
+            &host,
+            Arc::new(PerCallerEndpoint::new(move |_caller| {
+                let storage = backend.for_scope(&crate::storage::Scope::local()).ok()?;
+                Some(StorageServer::new(storage))
+            })),
+        )
+        .await
+        .unwrap();
 
         let modules = ModuleHost::new(broker);
         modules
             .attach_linked_with_config(
                 tinyeventqueues::linked_module().unwrap(),
                 json!({
+                    "storage_callback": tinystoragedrivers_bus::STORAGE_INTERFACE,
                     "pipeline": pipeline,
                     "timer": { "min_interval_ms": 5, "max_interval_ms": 25 },
                 }),
@@ -373,6 +390,7 @@ impl Rig {
             client: crate::modules::ops::fixture_client(proxy),
             triage,
             _host: host,
+            _storage: storage,
             _modules: modules,
         }
     }

@@ -7,7 +7,7 @@
 //! from an external channel keeps running as that channel's turn, so its own
 //! external-effect tools stay gated exactly like its creator's were.
 
-use crate::security::turn_origin::{self, AgentTurnOrigin};
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use serde_json::Value;
 use {
     tinyflows_bus::schedule::types::delivery_mode, tinyflows_bus::schedule::types::CronJob,
@@ -33,6 +33,7 @@ pub(crate) fn job_origin_from_turn(origin: &AgentTurnOrigin) -> Option<JobOrigin
             sender,
             reply_target,
             history_key: Some(history_key),
+            channel_session: Some(channel_session),
             ..
         } if !channel.trim().is_empty() && !reply_target.trim().is_empty() => {
             Some(JobOrigin::Channel {
@@ -41,7 +42,7 @@ pub(crate) fn job_origin_from_turn(origin: &AgentTurnOrigin) -> Option<JobOrigin
                 history_key: history_key.clone(),
                 sender: sender.clone(),
                 thread_id: None,
-                session_identity: None,
+                channel_session: Some(Box::new(channel_session.clone())),
             })
         }
         _ => None,
@@ -74,6 +75,7 @@ pub(crate) fn turn_origin_for_job_run(job: &CronJob, run_id: &str) -> AgentTurnO
             reply_target,
             history_key,
             sender,
+            channel_session,
             ..
         }) => AgentTurnOrigin::ExternalChannel {
             sender_name: None,
@@ -82,6 +84,7 @@ pub(crate) fn turn_origin_for_job_run(job: &CronJob, run_id: &str) -> AgentTurnO
             reply_target: reply_target.clone(),
             message_id: format!("cron:{}:{run_id}", job.id),
             history_key: Some(history_key.clone()),
+            channel_session: channel_session.as_deref().cloned(),
         },
         _ => AgentTurnOrigin::TrustedAutomation {
             job_id: job.id.clone(),

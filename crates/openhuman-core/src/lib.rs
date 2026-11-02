@@ -65,6 +65,7 @@ pub mod channels;
 pub mod commands;
 pub mod config;
 pub mod core;
+pub mod credentials;
 // These host adapters still call TinyChannels' v21 compatibility surface.
 // Keep the deprecation exception scoped here while the v22 adapter migration
 // is handled separately.
@@ -105,8 +106,6 @@ pub mod test_support;
 // is handled separately.
 #[allow(deprecated)]
 pub mod threads;
-#[cfg(feature = "tinymemes")]
-pub mod tinymemes;
 pub mod tools;
 pub mod triage;
 pub mod util;

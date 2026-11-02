@@ -27,11 +27,9 @@ fn registered_controllers_match_schemas() {
     let schemas = all_controller_schemas();
     let registered = all_registered_controllers();
     assert_eq!(schemas.len(), registered.len());
-    assert_eq!(schemas.len(), 2);
+    assert_eq!(schemas.len(), 1);
     assert_eq!(schema_for("subagent_cancel").namespace, "subagent");
     assert_eq!(schema_for("subagent_cancel").function, "cancel");
-    assert_eq!(schema_for("subagent_steer").namespace, "subagent");
-    assert_eq!(schema_for("subagent_steer").function, "steer");
 }
 
 #[test]
@@ -74,16 +72,13 @@ fn field(out: &Value, name: &str) -> Option<Value> {
         .cloned()
 }
 
-/// A late Cancel on a run that already finished answers with how it ended and
-/// leaves its durable session alone, instead of rewriting it as "cancelled by
-/// user". A failed run must come back `failed`, never as a success.
+/// A late Cancel on a legacy failed run reports its outcome and leaves the
+/// durable session alone, instead of rewriting it as "cancelled by user".
 #[tokio::test]
-async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
-    use crate::agent::orchestration::running_subagents::{register, status_channel};
-    use crate::agent::orchestration::subagent_sessions::SubagentSessionStore;
+async fn cancel_of_a_legacy_failed_run_reports_its_outcome_and_rewrites_nothing() {
+    use crate::agent::orchestration::subagent_sessions::{mark_failed, SubagentSessionStore};
+    use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
     use std::sync::Arc;
-    use tinyagents_harness::run_queue::RunQueue;
-    use tinyagents_orchestration::subagent::DetachedSubagentStatus;
 
     let _lock = crate::config::TEST_ENV_LOCK.lock().await;
     let workspace = tempfile::tempdir().expect("tempdir");
@@ -92,7 +87,7 @@ async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
     let store = SubagentSessionStore::new(workspace.path().to_path_buf());
     let seeded: Vec<crate::agent::orchestration::subagent_sessions::DurableSubagentSession> =
         serde_json::from_value(json!([{
-            "subagentSessionId": "subsess-sub-rpc-done",
+            "subagentSessionId": "subsess-sub-rpc-failed",
             "parentSession": "session-rpc",
             "parentThreadId": "thread-rpc",
             "workerThreadId": null,
@@ -103,7 +98,7 @@ async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
             "actionRoot": null,
             "taskKey": "task",
             "taskTitle": "Task",
-            "currentTaskId": "sub-rpc-done",
+            "currentTaskId": "sub-rpc-failed",
             "status": "running",
             "reusable": true,
             "latestHistory": null,
@@ -114,49 +109,41 @@ async fn cancel_of_a_finished_run_reports_its_outcome_and_rewrites_nothing() {
         }]))
         .expect("session fixture");
     store.save(&seeded).expect("seed store");
+    mark_failed(
+        &store,
+        "subsess-sub-rpc-failed",
+        "sub-rpc-failed",
+        "boom".into(),
+    )
+    .expect("failed driver row");
     let before = serde_json::to_string(&store.load().expect("load seeded")).expect("encode");
-    for (task_id, status, outcome) in [
-        (
-            "sub-rpc-done",
-            DetachedSubagentStatus::Completed {
-                output: "ok".into(),
-                iterations: 1,
-            },
-            "completed",
-        ),
-        (
-            "sub-rpc-failed",
-            DetachedSubagentStatus::Failed {
-                error: "boom".into(),
-            },
-            "failed",
-        ),
-    ] {
-        let (tx, rx) = status_channel();
-        register(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            task_id.into(),
-            "agent_memory".into(),
-            "session-rpc".into(),
-            None,
-            Some(format!("subsess-{task_id}")),
-            workspace.path().to_path_buf(),
-            Some("thread-rpc".into()),
-            Arc::new(RunQueue::new()),
-            tokio::spawn(async {}).abort_handle(),
-            rx,
-        )
-        .expect("fixture registration admitted");
-        tx.send(status).expect("status channel open");
-
-        let mut params = Map::new();
-        params.insert("taskId".into(), json!(task_id));
-        let out = handle_subagent_cancel(DispatchCtx::process_default(), params)
-            .await
-            .expect("handler ok");
-        assert_eq!(field(&out, "cancelled"), Some(json!(false)), "{task_id}");
-        assert_eq!(field(&out, "outcome"), Some(json!(outcome)), "{task_id}");
-    }
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = workspace.path().to_path_buf();
+    let core = CoreContext::for_test_with_config(DomainSet::full(), config);
+    let ctx = DispatchCtx::new(Arc::clone(&core));
+    let mut params = Map::new();
+    params.insert("taskId".into(), json!("sub-rpc-failed"));
+    let out = handle_subagent_cancel(ctx.clone(), params)
+        .await
+        .expect("handler ok");
+    assert_eq!(field(&out, "cancelled"), Some(json!(false)));
+    assert_eq!(field(&out, "outcome"), Some(json!("failed")));
+    let driver = crate::agent::orchestration::subagent_sessions::open_for_context(
+        &ctx,
+        workspace.path().to_path_buf(),
+        "session-rpc",
+        Some("thread-rpc".into()),
+        None,
+    )
+    .expect("driver session store");
+    let imported = driver
+        .list_for_parent("session-rpc", Some("thread-rpc"))
+        .await
+        .expect("driver rows");
+    assert!(imported.iter().any(|session| {
+        session.current_task_id.as_deref() == Some("sub-rpc-failed")
+            && session.status == tinyagents_orchestration::subagent::DurableSubagentStatus::Failed
+    }));
     assert_eq!(
         serde_json::to_string(&store.load().expect("store still readable")).expect("encode"),
         before,
@@ -170,9 +157,10 @@ async fn cancelling_a_paused_driver_queues_a_failed_delivery_with_reason() {
         forget_workspace_for_test, pending_for,
     };
     use crate::agent::orchestration::subagent_sessions::{
-        mark_finished, upsert_running, DriverTaskCancellation, DurableSubagentStatus,
-        SubagentSessionSelector, SubagentSessionStore, SubagentSessionUpsert,
+        mark_finished, upsert_running, DriverTaskCancellation, SubagentSessionSelector,
+        SubagentSessionStore, SubagentSessionUpsert,
     };
+    use std::sync::Arc;
     use tinyagents_orchestration::subagent::SubagentTaskKey;
     use tinyagents_tasks::CompletionStatus;
 
@@ -206,6 +194,7 @@ async fn cancelling_a_paused_driver_queues_a_failed_delivery_with_reason() {
             worker_thread_id: None,
             task_id: task_id.into(),
             lifecycle_key: Some(key.clone()),
+            parent_epoch: Some(1),
         },
         None,
     )
@@ -229,39 +218,69 @@ async fn cancelling_a_paused_driver_queues_a_failed_delivery_with_reason() {
         subagent_session_id: session.subagent_session_id.clone(),
         workspace_dir: workspace_dir.clone(),
         parent_thread_id: parent_thread.clone(),
+        parent_epoch: Some(1),
         already_finished: None,
         was_paused: true,
         lifecycle_key: Some(key),
     };
 
     forget_workspace_for_test(&workspace_dir);
+    let mut config = crate::config::Config::default();
+    config.workspace_dir = workspace_dir.clone();
+    let core = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config,
+    );
+    let ctx = DispatchCtx::new(Arc::clone(&core));
+    crate::agent::orchestration::completion_owners::note_driver_task(
+        &ctx,
+        task_id,
+        workspace_dir.clone(),
+        tinytools::WorkspaceDescriptor::new(workspace_dir.clone()),
+        parent_session.into(),
+        parent_thread.clone(),
+    )
+    .expect("paused child owner registered");
     assert!(settle_paused_driver_cancel(
-        &DispatchCtx::process_default(),
+        &ctx,
         &observed,
+        observed.parent_epoch,
         Some("user requested stop")
     )
     .await
     .expect("paused cancellation settles"));
 
-    let row = store.load().unwrap().remove(0);
-    assert_eq!(row.status, DurableSubagentStatus::Failed);
+    let driver = crate::agent::orchestration::subagent_sessions::open_for_context(
+        &ctx,
+        workspace_dir.clone(),
+        parent_session,
+        parent_thread.clone(),
+        None,
+    )
+    .expect("scoped driver session store");
+    let row = driver
+        .list_for_parent(parent_session, parent_thread.as_deref())
+        .await
+        .expect("driver session list")
+        .into_iter()
+        .find(|row| row.subagent_session_id == session.subagent_session_id)
+        .expect("paused driver row remains stored");
+    assert_eq!(
+        row.status,
+        tinyagents_orchestration::subagent::DurableSubagentStatus::Failed
+    );
+    assert!(
+        crate::agent::orchestration::completion_owners::driver_tasks_for_thread(
+            &ctx,
+            &workspace_dir,
+            parent_thread.as_deref().expect("parent thread"),
+        )
+        .is_empty(),
+        "settled paused child releases its active owner slot"
+    );
     let delivery = pending_for(&workspace_dir, parent_thread.as_deref().unwrap());
     assert_eq!(delivery.len(), 1);
     assert_eq!(delivery[0].status, CompletionStatus::Failed);
     assert!(delivery[0].result.text.contains("[SUBAGENT_FAILED]"));
     assert!(delivery[0].result.text.contains("user requested stop"));
-}
-
-#[tokio::test]
-async fn steer_unknown_task_is_a_noop_false() {
-    let _lock = crate::config::TEST_ENV_LOCK.lock().await;
-    let mut params = Map::new();
-    params.insert("taskId".into(), json!("sub-does-not-exist"));
-    params.insert("message".into(), json!("redirect"));
-    let out = handle_subagent_steer(DispatchCtx::process_default(), params)
-        .await
-        .expect("handler ok");
-    let data = out.get("data").unwrap_or(&out);
-    assert_eq!(data.get("steered").and_then(Value::as_bool), Some(false));
-    assert_eq!(data.get("reason").and_then(Value::as_str), Some("unknown"));
 }

@@ -20,7 +20,7 @@
 //! tinyagents harness.
 
 pub mod config;
-mod context_wiring;
+pub(crate) mod context_wiring;
 mod deadline_wind_down;
 pub mod discovery;
 pub mod host;
@@ -76,7 +76,7 @@ pub(crate) use turn_exec_native::NativeSubagentRunContext;
 pub(crate) use turn_outcome::DeferredTurnTerminal;
 pub(crate) use turn_outcome::TinyagentsTurnOutcome;
 #[cfg(test)]
-pub(crate) use turn_policy::is_subagent_spawn_or_delegate_tool;
+pub(crate) use turn_policy::is_subagent_spawn_tool;
 pub(crate) use turn_policy::{
     agent_turn_wall_clock_ms_for, chat_provider_is_local, local_web_turn_backstop_secs,
     ToolPolicyEnforcement,
@@ -99,6 +99,3 @@ mod prompt_cache_golden_tests;
 #[cfg(test)]
 #[path = "tinyagents_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "topology_collision_tests.rs"]
-mod topology_collision_tests;

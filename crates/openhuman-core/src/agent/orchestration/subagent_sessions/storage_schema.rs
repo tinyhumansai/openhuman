@@ -21,6 +21,7 @@ use crate::storage::schema_support::{
 };
 
 pub(super) const SESSIONS: &str = "subagents.sessions";
+pub(super) const EPOCHS: &str = "subagents.session_epochs";
 pub(super) const LEGACY_SESSIONS: &str = "subagent_sessions";
 /// Converts legacy sub-agent session rows into the current owner shape.
 pub(crate) fn upgrade_records(
@@ -35,7 +36,7 @@ pub(super) fn spec() -> CollectionSpec {
 
 /// Collections owned by the sub-agent session host.
 pub(crate) fn collection_specs() -> Vec<CollectionSpec> {
-    vec![spec()]
+    vec![spec(), CollectionSpec::new(EPOCHS)]
 }
 
 pub(super) fn legacy_collections() -> Vec<CollectionSpec> {
@@ -43,7 +44,7 @@ pub(super) fn legacy_collections() -> Vec<CollectionSpec> {
 }
 
 /// The camelCase v1 field and its snake_case v2 name, for the plain copies.
-const COPIES: [(&str, &str); 17] = [
+const COPIES: [(&str, &str); 19] = [
     ("subagentSessionId", "subagent_session_id"),
     ("parentSession", "parent_session"),
     ("parentThreadId", "parent_thread_id"),
@@ -57,6 +58,8 @@ const COPIES: [(&str, &str); 17] = [
     ("taskTitle", "task_title"),
     ("currentTaskId", "current_task_id"),
     ("lifecycleKey", "lifecycle_key"),
+    ("parentEpoch", "parent_epoch"),
+    ("parentEpoch", "parent_epoch"),
     ("status", "status"),
     ("reusable", "reusable"),
     ("latestHistory", "latest_history"),

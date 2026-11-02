@@ -6,7 +6,7 @@
 
 [package]
 name = "openhuman-app"
-version = "0.64.18"
+version = "0.64.20"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -61,8 +61,6 @@ serde_json = "1"
 #   silently unenforced.
 # - `file-logging` — the packaged app's only durable log.
 # - `hosting` — registration stays credential-gated in tools/ops.rs.
-# - `tinymemes` — compiled in; still off at runtime until `OPENHUMAN_TINYMEMES`
-#   (or a build-time `OPENHUMAN_TINYMEMES_DEFAULT`) turns it on.
 # - `inbound-queues` — Composio triggers and agent webhooks go through the
 #   `tinyeventqueues` module (durable, deduplicated, paced); without it a
 #   deferred triage is dropped as before.
@@ -85,6 +83,7 @@ openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features 
     "web3",
     "documents",
     "modules",
+    "security-module",
     "flows",
     "skills",
     "mcp",
@@ -93,7 +92,6 @@ openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features 
     "scheduler-gate",
     "file-logging",
     "hosting",
-    "tinymemes",
     "inbound-queues",
     "storage-sqlite",
     "storage-file",
@@ -222,7 +220,7 @@ async-trait = "0.1"
 # rather than reaching for a heavier image stack.
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", default-features = false, features = ["hostname", "signal", "user"] }
+nix = { version = "0.29", default-features = false, features = ["hostname", "signal", "socket", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -302,13 +300,11 @@ e2e-test-support = ["openhuman-rpc/e2e-test-support"]
 # `Tool` trait. Without this, MCP tools would not satisfy the harness's trait.
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-agent = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
-tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 
 [patch."https://github.com/tinyhumansai/tinyinference"]
 # Crates in this world name tinyinference by git rev; without this the shell
 # world resolves TWO copies of the same types. Mirrors the root Cargo.toml.
 tinyinference-core = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
-tinyinference-decisions = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-decisions" }
 tinyinference-embeddings = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
 tinyinference-local = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-local" }
@@ -353,6 +349,8 @@ tinystoragedrivers-testkit = { path = "../../vendor/tinystoragedrivers/crates/ti
 tinystoragedrivers-types = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-types" }
 
 [patch."https://github.com/senamakel/tinystoragedrivers"]
+# Fork-pinned modules such as TinyWallet use this source identity; resolve it
+# to the same vendored checkout as the canonical Git URL above.
 tinystoragedrivers = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers" }
 tinystoragedrivers-api = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-api" }
 tinystoragedrivers-blob = { path = "../../vendor/tinystoragedrivers/crates/tinystoragedrivers-blob" }

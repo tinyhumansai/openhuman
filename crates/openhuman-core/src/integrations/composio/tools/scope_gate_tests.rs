@@ -17,6 +17,29 @@ fn a_curated_write_action_follows_the_write_flag() {
     ));
 }
 
+/// What `evaluate_tool_visibility` applies when the module cannot answer: an
+/// unreadable preference must not widen a user's `write=false` to the default
+/// `read+write`. Nothing is allowed, curated or not, read or write.
+#[test]
+fn an_unreadable_preference_allows_nothing() {
+    assert!(matches!(
+        decide_visibility("gmail", "GMAIL_SEND_EMAIL", NOTHING_ALLOWED),
+        ToolDecision::BlockedByScope {
+            scope: ToolScope::Write
+        }
+    ));
+    assert!(matches!(
+        decide_visibility("flowstestkit", "FLOWSTESTKIT_SEND_THING", NOTHING_ALLOWED),
+        ToolDecision::BlockedByScope {
+            scope: ToolScope::Write
+        }
+    ));
+    assert!(matches!(
+        decide_visibility("flowstestkit", "FLOWSTESTKIT_GET_THING", NOTHING_ALLOWED),
+        ToolDecision::BlockedByScope { .. }
+    ));
+}
+
 #[test]
 fn an_action_outside_a_curated_catalog_is_not_curated() {
     let decision = decide_visibility("gmail", "GMAIL_NOT_A_REAL_ACTION", UserScopePref::default());
@@ -55,10 +78,18 @@ fn the_scope_error_names_the_toolkit_and_the_unlock_path() {
     let message = scope_error_message(
         "GMAIL_SEND_EMAIL",
         ToolScope::Write,
-        only(true, false, false),
+        Some(only(true, false, false)),
     );
     assert!(message.contains("Connections → gmail → write"), "{message}");
     assert!(message.contains("write=false"), "{message}");
+
+    let unread = scope_error_message("GMAIL_SEND_EMAIL", ToolScope::Write, None);
+    assert!(unread.contains("could not be read"), "{unread}");
+    assert!(!unread.contains("write="), "{unread}");
+    assert!(
+        !unread.contains("Connections →"),
+        "an unreadable pref must not send the user to a disabled toggle: {unread}"
+    );
 }
 
 fn visible(
@@ -185,4 +216,65 @@ async fn a_preference_still_in_the_legacy_file_gates_execution() {
             scope: ToolScope::Write
         }
     ));
+}
+
+/// The wiring, not only the fallback value: when the connector module cannot
+/// read a stored preference, every gate that consults it denies.
+///
+/// The module caches its link to the host's storage on first use. Saving a
+/// preference while a backend is served connects that link; withdrawing the
+/// backend then makes the module's next preference read fail (`Unavailable`),
+/// as a storage outage would.
+///
+/// `module_guard` serves module calls a memory backend (restored on drop);
+/// the test withdraws it rather than touching the process storage slot.
+#[tokio::test]
+async fn an_unreadable_preference_denies_at_every_gate() {
+    use crate::integrations::composio::module_client::module_guard;
+    let _serialised = module_guard().await;
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.workspace_dir = tmp.path().join("workspace");
+    config.config_path = tmp.path().join("config.toml");
+
+    crate::integrations::composio::ops::save_user_scope_pref(
+        &ctx,
+        &config,
+        "gmail",
+        only(true, false, false),
+    )
+    .await
+    .expect("the module stores the pref while storage is served");
+    #[cfg(feature = "modules")]
+    crate::modules::storage_host::backend_choice::withdraw_test_module_storage();
+    #[cfg(not(feature = "modules"))]
+    crate::storage::clear();
+
+    let read =
+        crate::integrations::composio::ops::load_user_scope_pref(&ctx, &config, "gmail").await;
+    assert!(
+        read.is_err(),
+        "an unreadable pref is an error, not the default: {read:?}"
+    );
+    assert!(
+        !crate::integrations::composio::flow_gate::flow_tool_allowed(
+            &ctx,
+            &config,
+            "GMAIL_SEND_EMAIL",
+            None
+        )
+        .await,
+        "the flows gate must not admit a write action on an unreadable pref"
+    );
+    let decision = evaluate_tool_visibility(&ctx, &config, "GMAIL_SEND_EMAIL").await;
+    assert!(
+        matches!(
+            decision,
+            ToolDecision::BlockedByScope {
+                scope: ToolScope::Write
+            }
+        ),
+        "the execute gate must block a write action on an unreadable pref"
+    );
 }

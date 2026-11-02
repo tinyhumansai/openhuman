@@ -312,6 +312,7 @@ pub fn desktop_builder(options: &DesktopOptions) -> RuntimeBuilder {
     // missing asset here (Sentry TAURI-RUST-122R/122S/13B8/13B9).
     services.update_scheduler = false;
     let mut builder = RuntimeBuilder::desktop()
+        .boot_mode(CoreBootMode::SecretPreflight)
         .services(services)
         .server_launcher(crate::server::cli::launch)
         .controller_extension(crate::http_host::extension());

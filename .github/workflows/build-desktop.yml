@@ -379,6 +379,21 @@ jobs:
         shell: bash
         run: node scripts/release/stage-modules.mjs --target "${{ matrix.settings.target }}"
 
+      # Second line of defence against TAURI-RUST-11MZ / issue #8500: re-hash
+      # every staged archive against the sha256 compiled into
+      # crates/openhuman-core/src/modules/registry/*.rs right before
+      # `cargo tauri build` consumes the bundled-modules tree. `stage-modules`
+      # already verifies at download; this closes the gap where the record
+      # pins are updated after staging but before compilation, which would
+      # otherwise ship a bundle the runtime loader refuses with "release is
+      # not cached and downloads are disabled". Passing `--target` turns on
+      # the completeness check: every asset the registry expects for this
+      # host MUST be on disk, catching a partial stage that would ship an
+      # installer whose module set is incomplete for this matrix cell.
+      - name: Verify bundled modules match the compiled registry pins
+        shell: bash
+        run: node scripts/release/verify-bundled-modules.mjs --target "${{ matrix.settings.target }}"
+
       # Vite is invoked via tauri.conf.json's beforeBuildCommand inside
       # `cargo tauri build`, so all VITE_* env must be present here for the
       # bundle to bake them in. macOS signing is intentionally skipped here
@@ -452,6 +467,19 @@ jobs:
           # on macos-arm64 runners, causing OOM at node's ~2GB auto default.
           #
           NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh pnpm tauri build $PROFILE_FLAG -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
+
+      # Third line of defence for TAURI-RUST-11MZ / issue #8500. The pre-build
+      # verify above only guards the stage → cargo-tauri-build window; this
+      # re-runs the same gate against `crates/openhuman-app/bundled-modules`
+      # after `cargo tauri build` has consumed it, catching the narrow but
+      # real case where a build-time step (a build.rs regenerating files, a
+      # pnpm hook, a stray mv) modifies the staged tree between the pin check
+      # and the installer sealing. If this ever flags drift, the staged bytes
+      # the installer carried do not match the pins the compiled binary will
+      # ask for at runtime — the exact production failure mode behind #8500.
+      - name: Re-verify bundled modules after Tauri build
+        shell: bash
+        run: node scripts/release/verify-bundled-modules.mjs --target "${{ matrix.settings.target }}"
 
       # Diagnostic for the recurring quick-sharun "is missing libraries!
       # Aborting..." error on the AppImage bundler — the upstream script

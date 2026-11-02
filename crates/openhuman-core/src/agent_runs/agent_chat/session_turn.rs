@@ -222,18 +222,19 @@ fn definition_for_turn(
     }
 }
 
-fn build_turn_agent(
+pub(super) async fn build_turn_agent(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     target: &AgentChatTarget<'_>,
     session_id: Option<&str>,
     temperature: Option<f64>,
+    turn_model_source: Option<(crate::agent::tinyagents::TurnModelSource, String)>,
 ) -> Result<OpenHumanSessionHost, String> {
     match target {
-        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(ctx, config),
+        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(ctx, config).await,
         AgentChatTarget::AgentId(id) => {
             log::debug!("[inference] agent_chat building agent_id={id}");
-            OpenHumanSessionHost::from_config_for_agent(ctx, config, id)
+            OpenHumanSessionHost::from_config_for_agent(ctx, config, id).await
         }
         AgentChatTarget::Definition {
             definition,
@@ -243,20 +244,42 @@ fn build_turn_agent(
         } => {
             let definition = definition_for_turn(definition, temperature);
             OpenHumanSessionHost::from_config_host_only(ctx, config, &definition, *host, session_id)
+                .await
         }
         AgentChatTarget::Definition {
             definition, host, ..
         } => {
             let definition = definition_for_turn(definition, temperature);
-            match host {
-                Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
-                    ctx,
-                    config,
-                    &definition,
-                    host,
-                    session_id,
-                ),
-                None => OpenHumanSessionHost::from_config_with_definition(ctx, config, &definition),
+            match (host, turn_model_source) {
+                (None, Some((source, model))) => {
+                    OpenHumanSessionHost::from_config_with_definition_and_turn_model_source(
+                        ctx,
+                        config,
+                        &definition,
+                        source,
+                        model,
+                    )
+                    .await
+                }
+                (host, None) => match host {
+                    Some(host) => {
+                        OpenHumanSessionHost::from_config_with_host_tools(
+                            ctx,
+                            config,
+                            &definition,
+                            host,
+                            session_id,
+                        )
+                        .await
+                    }
+                    None => {
+                        OpenHumanSessionHost::from_config_with_definition(ctx, config, &definition)
+                            .await
+                    }
+                },
+                (Some(_), Some(_)) => Err(anyhow::anyhow!(
+                    "explicit turn model source cannot be combined with host tools"
+                )),
             }
         }
     }
@@ -292,44 +315,57 @@ pub fn agent_chat_for<'a>(
     route: Option<crate::config::schema::EphemeralRoute>,
     env: AgentChatEnv,
 ) -> futures::future::BoxFuture<'a, Result<Outcome<String>, String>> {
-    Box::pin(agent_chat_for_inner(
-        config,
-        target,
-        message,
-        model_override,
-        temperature,
-        thread_id,
-        cwd,
-        route,
-        env,
-    ))
+    Box::pin(async move {
+        agent_chat_reply_for_inner(
+            config,
+            target,
+            message,
+            model_override,
+            temperature,
+            thread_id,
+            cwd,
+            route,
+            env,
+            None,
+            false,
+        )
+        .await
+        .map(AgentChatReply::into_outcome)
+        .map_err(|error| error.to_string())
+    })
 }
 
+/// Runs a controlled direct agent turn with the caller's selected model source.
 #[allow(clippy::too_many_arguments)]
-async fn agent_chat_for_inner(
-    config: &mut Config,
-    target: AgentChatTarget<'_>,
-    message: &str,
+pub(crate) fn agent_chat_for_with_turn_model_source<'a>(
+    config: &'a mut Config,
+    target: AgentChatTarget<'a>,
+    message: &'a str,
     model_override: Option<String>,
     temperature: Option<f64>,
     thread_id: Option<String>,
     cwd: Option<String>,
     route: Option<crate::config::schema::EphemeralRoute>,
     env: AgentChatEnv,
-) -> Result<Outcome<String>, String> {
-    agent_chat_reply_for(
-        config,
-        target,
-        message,
-        model_override,
-        temperature,
-        thread_id,
-        cwd,
-        route,
-        env,
-    )
-    .await
-    .map(AgentChatReply::into_outcome)
+    turn_model_source: (crate::agent::tinyagents::TurnModelSource, String),
+) -> futures::future::BoxFuture<'a, anyhow::Result<Outcome<String>>> {
+    Box::pin(async move {
+        agent_chat_reply_for_inner(
+            config,
+            target,
+            message,
+            model_override,
+            temperature,
+            thread_id,
+            cwd,
+            route,
+            env,
+            Some(turn_model_source),
+            false,
+        )
+        .await
+        .map(AgentChatReply::into_outcome)
+    })
 }
 
 /// [`agent_chat_for`], keeping whether the turn stopped at its iteration cap.
@@ -346,7 +382,7 @@ pub async fn agent_chat_reply_for(
     route: Option<crate::config::schema::EphemeralRoute>,
     env: AgentChatEnv,
 ) -> Result<AgentChatReply, String> {
-    agent_chat_reply_for_controlled(
+    agent_chat_reply_for_with_headless(
         config,
         target,
         message,
@@ -356,13 +392,43 @@ pub async fn agent_chat_reply_for(
         cwd,
         route,
         env,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn agent_chat_reply_for_with_headless(
+    config: &mut Config,
+    target: AgentChatTarget<'_>,
+    message: &str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    thread_id: Option<String>,
+    cwd: Option<String>,
+    route: Option<crate::config::schema::EphemeralRoute>,
+    env: AgentChatEnv,
+    headless: bool,
+) -> Result<AgentChatReply, String> {
+    agent_chat_reply_for_inner(
+        config,
+        target,
+        message,
+        model_override,
+        temperature,
+        thread_id,
+        cwd,
+        route,
+        env,
+        None,
+        headless,
     )
     .await
     .map_err(|error| error.to_string())
 }
 
-/// [`agent_chat_reply_for`] while retaining typed host-policy errors for
-/// callers that need to distinguish dispatch refusal from provider failure.
+/// Retains typed host-policy errors for callers that need to distinguish
+/// dispatch refusal from provider failure.
 #[allow(clippy::too_many_arguments)]
 pub async fn agent_chat_reply_for_controlled(
     config: &mut Config,
@@ -374,6 +440,60 @@ pub async fn agent_chat_reply_for_controlled(
     cwd: Option<String>,
     route: Option<crate::config::schema::EphemeralRoute>,
     env: AgentChatEnv,
+) -> anyhow::Result<AgentChatReply> {
+    agent_chat_reply_for_inner(
+        config,
+        target,
+        message,
+        model_override,
+        temperature,
+        thread_id,
+        cwd,
+        route,
+        env,
+        None,
+        false,
+    )
+    .await
+}
+
+/// Applies a call's model, temperature and inference route to `config`, in
+/// memory, before its session is built.
+pub(super) fn apply_turn_overrides(
+    config: &mut Config,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    route: Option<crate::config::schema::EphemeralRoute>,
+) {
+    // TAURI-RUST-RS: an upstream caller (frontend, JSON-RPC client) can pass
+    // `model_override: Some("")`. See `normalize_model_override` for the
+    // rationale — an empty / whitespace-only override collapses to `None`.
+    if let Some(model) = normalize_model_override(model_override) {
+        config.default_model = Some(model);
+    }
+    if let Some(temp) = temperature {
+        config.default_temperature = temp;
+    }
+    // After the model override, because the route pins its roles to
+    // `"<slug>:<model>"` and the model it uses is the one this call resolved.
+    if let Some(route) = route {
+        crate::config::schema::ephemeral_route::apply(config, route);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn agent_chat_reply_for_inner(
+    config: &mut Config,
+    target: AgentChatTarget<'_>,
+    message: &str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    thread_id: Option<String>,
+    cwd: Option<String>,
+    route: Option<crate::config::schema::EphemeralRoute>,
+    env: AgentChatEnv,
+    turn_model_source: Option<(crate::agent::tinyagents::TurnModelSource, String)>,
+    headless: bool,
 ) -> anyhow::Result<AgentChatReply> {
     match target {
         AgentChatTarget::Definition {
@@ -391,24 +511,12 @@ pub async fn agent_chat_reply_for_controlled(
             );
         }
         _ => enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat")
+            .await
             .map_err(anyhow::Error::msg)?,
     }
 
-    // TAURI-RUST-RS: an upstream caller (frontend, JSON-RPC client) can pass
-    // `model_override: Some("")`. See `normalize_model_override` for the
-    // rationale — an empty / whitespace-only override collapses to `None`.
-    if let Some(model) = normalize_model_override(model_override) {
-        config.default_model = Some(model);
-    }
-    if let Some(temp) = temperature {
-        config.default_temperature = temp;
-    }
-    // After the model override, because the route pins its roles to
-    // `"<slug>:<model>"` and the model it uses is the one this call resolved.
     // Before the `cwd` clone below, so a rooted turn is routed too.
-    if let Some(route) = route {
-        crate::config::schema::ephemeral_route::apply(config, route);
-    }
+    apply_turn_overrides(config, model_override, temperature, route);
     // The conversation this turn runs in, normalised once: the factory below is
     // told the same id `set_thread_id` will bind, so a belt keyed on the
     // session cannot disagree with the session it is built for.
@@ -436,17 +544,32 @@ pub async fn agent_chat_reply_for_controlled(
                 "[inference] agent_chat rooting turn tools at cwd={}",
                 root.display()
             );
-            let mut agent =
-                build_turn_agent(&turn_ctx, &scoped, &target, turn_session_id, temperature)
-                    .map_err(anyhow::Error::msg)?;
+            let mut agent = build_turn_agent(
+                &turn_ctx,
+                &scoped,
+                &target,
+                turn_session_id,
+                temperature,
+                turn_model_source.clone(),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
             // Also thread it as the turn's workspace descriptor so acting tools
             // that read `ToolExecutionContext::workspace` (shell) resolve their
             // default cwd here, and so spawned sub-agents inherit the same root.
             agent.set_workspace_descriptor(Some(tinytools::WorkspaceDescriptor::new(root.clone())));
             agent
         }
-        None => build_turn_agent(&turn_ctx, config, &target, turn_session_id, temperature)
-            .map_err(anyhow::Error::msg)?,
+        None => build_turn_agent(
+            &turn_ctx,
+            config,
+            &target,
+            turn_session_id,
+            temperature,
+            turn_model_source,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?,
     };
     // Thread-correct resume. `OpenHumanSessionHost::turn` would otherwise auto-load the
     // newest transcript for the agent *name*, which is another thread's
@@ -524,7 +647,20 @@ pub async fn agent_chat_reply_for_controlled(
     // The host environment of this turn (budget, cancellation, deadline, hooks,
     // tool-belt authority) rides the session explicitly.
     let approval = env.host.approval.clone();
-    agent.set_host_env(env.host);
+    if headless {
+        agent.enable_headless_descendant_settlement();
+    }
+    let mut host_env = env.host;
+    if headless && host_env.turn_deadline.is_none() {
+        host_env.turn_deadline = Some(
+            tinyagents_harness::turn_deadline::TurnDeadline::starting_now(
+                std::time::Duration::from_secs(
+                    tinyagents_harness::turn_deadline::DEFAULT_TURN_BACKSTOP_SECS,
+                ),
+            ),
+        );
+    }
+    agent.set_host_env(host_env);
     if let Some(queue) = env.run_queue {
         log::debug!("[inference] agent_chat attached a run queue for mid-turn steering");
         agent.set_run_queue(Some(queue));
@@ -556,7 +692,7 @@ pub async fn agent_chat_reply_for_controlled(
     // Overwriting that with `Cli` would silently discard the caller's own
     // trust statement and hand every such turn the blanket CLI allowance
     // instead of the narrower one it asked for.
-    let run = crate::security::turn_origin::with_origin(
+    let run = crate::core::runtime::turn_origin::with_origin(
         effective_agent_chat_origin(&turn_ctx),
         agent.run_single_with_approval(message, None, approval),
     );

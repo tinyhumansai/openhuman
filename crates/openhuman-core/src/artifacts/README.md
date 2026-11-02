@@ -23,7 +23,7 @@ renders artifact content itself.
 | [`store.rs`](./store.rs) | All filesystem I/O over `tokio::fs`: `artifacts_root`, `create_artifact`, `finalize_artifact`, `fail_artifact`, `read_artifact_bytes` (`pub`); `save_artifact_meta`, `save_artifact_args`, `read_artifact_args`, `list_artifacts`, `get_artifact`, `delete_artifact` (`pub(crate)`); `validate_artifact_id` / `assert_within_root` sandboxing; `create_artifact_regenerating` (explicit regenerate target); `sanitize_filename_stem`. |
 | [`ops.rs`](./ops.rs) | RPC business logic returning `Outcome<Value>`: `ai_list_artifacts`, `ai_get_artifact`, `ai_delete_artifact`, `ai_regenerate`. `DEFAULT_LIMIT = 50`, `MAX_LIMIT = 200`. The regenerate path that re-runs `PresentationTool` is `#[cfg(feature = "documents")]`; without the feature `ai_regenerate` returns an error. |
 | [`schemas.rs`](./schemas.rs) | `ControllerSchema`s and `handle_*` fns for the four `ai.*` controllers; param helpers `read_required`, `read_optional_u64`, `read_optional_string` (whitespace-only → absent), `type_name`. |
-| [`tiny_store.rs`](./tiny_store.rs) | OpenHuman's side of the versioned artifacts (`tiny-artifacts`): `versioned_store` (the records, in the configured storage backend: [`version_documents.rs`](./version_documents.rs); files from earlier builds under `<workspace>/artifacts/versioned/` are imported once), `version_files_dir` (each file version's own copy), `LegacyUiBridge` (the crate's `ArtifactObserver`: shows each artifact's newest version through the legacy row + events and the files folder), `artifacts_service`, the agent tools, and `save_operator_version` (the preview panel's autosave). |
+| [`tiny_store.rs`](./tiny_store.rs) | OpenHuman's side of the versioned artifacts (`tiny-artifacts`): `versioned_store` (records in the configured storage backend: [`version_documents.rs`](./version_documents.rs); older JSON records are imported once), the acting tenant's scoped blob-backed file store, guarded migration of old path references, `LegacyUiBridge` (shows the newest version through the legacy row, events and visible files folder), `artifacts_service`, the agent tools, and `save_operator_version` (the preview panel's autosave). |
 | [`production.rs`](./production.rs) | `Production`: how producer tools (deck, document, generated media) file their output — reserve the file and the card, open the versioned record under the same id, then complete or fail it. |
 | `*_tests.rs` | Sibling test files for each of the above (`#[path]`). |
 
@@ -149,7 +149,7 @@ event.
   a legacy `meta.path` with `..` components (a lexical `starts_with` alone
   let `<root>/../x` through) and holds a recorded `file` to the escape guard:
   absolute, no `..`, strictly inside its `file_root` (symlinks resolved), and
-  never `SecurityPolicy::is_always_forbidden`.
+  never `TinySecurity protected-path policy`.
 - `create_artifact` rejects empty titles/extensions and extensions
   containing `/`, `\`, or `.`. Filename stems are lowercased ASCII
   `[a-z0-9_-]`, capped at 80 chars, fallback `artifact`.

@@ -804,7 +804,7 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
     let workspace = home.join("workspace");
 
     let _home_guard = EnvVarGuard::set_to_path("HOME", home);
-    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", home);
     let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
     let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
 
@@ -840,7 +840,7 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
     let jsonl = format!(
         "{}\n{}\n{}\n{}\n{}\n",
         json!({"_meta": {
-            "agent": "main", "dispatcher": "native",
+            "agent": "orchestrator", "dispatcher": "native",
             "created": "2026-04-11T14:30:00Z", "updated": "2026-04-11T14:35:22Z",
             "turn_count": 2, "input_tokens": 0, "output_tokens": 0,
             "cached_input_tokens": 0, "charged_amount_usd": 0.0, "thread_id": "thr-e2e"
@@ -856,7 +856,10 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
             "usage": {"input": 350, "output": 80, "cached_input": 40, "cost_usd": 0.0009},
             "ts": "2026-04-11T14:35:22Z"}),
     );
-    std::fs::write(raw.join("1700000000_main.jsonl"), jsonl).expect("write transcript");
+    let root_stem = tinyagents_session::transcript::session_stem(
+        &tinyagents_session::transcript::SessionRef::scoped("thr-e2e", "orchestrator"),
+    );
+    std::fs::write(raw.join(format!("{root_stem}.jsonl")), jsonl).expect("write transcript");
 
     // A sub-agent transcript (stem contains `__`) for the SAME thread: a `coder`
     // archetype. Its message carries NO model (mirroring how sub-agent
@@ -894,10 +897,44 @@ async fn json_rpc_threads_token_usage_reads_persisted_thread_totals() {
             "ts": "2026-04-11T14:34:00Z"}),
     );
     std::fs::write(
-        raw.join("1700000000_main__1700000050_coder.jsonl"),
+        raw.join(format!("{root_stem}__1700000050_coder.jsonl")),
         sub_jsonl,
     )
     .expect("write subagent transcript");
+
+    // The host imports classic workspace transcripts during runtime boot.
+    // This test builds the router directly, so run the same importer before
+    // asking the storage-backed thread API to read the seeded records.
+    let config = openhuman_core::config::Config::load_or_init()
+        .await
+        .expect("load test config");
+    assert_eq!(config.workspace_dir, workspace);
+    openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins(
+    )
+    .expect("initialize built-in agent definitions");
+    let backend = openhuman_core::storage::local::backend_for(&config.workspace_dir)
+        .expect("open test workspace storage");
+    let reports = openhuman_core::storage::import::sessions::run_with(&backend, &config);
+    assert!(
+        matches!(
+            reports.first().map(|report| &report.outcome),
+            Some(Ok(openhuman_core::storage::import::Outcome::Imported {
+                found: 2,
+                written: 2
+            }))
+        ),
+        "import classic session transcripts: {reports:?}"
+    );
+    let imported = openhuman_core::storage::sessions::provider_for_workspace(&config.workspace_dir)
+        .for_agent("orchestrator");
+    let spend = tinyagents_session::transcript::spend::thread_spend_in(
+        imported.transcripts.as_ref(),
+        "thr-e2e",
+    );
+    assert_eq!(
+        spend.root.input_tokens, 4200,
+        "imported root spend: {spend:?}"
+    );
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
@@ -1000,7 +1037,13 @@ async fn json_rpc_threads_transcript_get_projects_and_paginates() {
     let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
 
     let thread_id = "thr_transcript_e2e";
-    let root_stem = "1000_orchestrator";
+    // The importer files a transcript by the session key and agent component
+    // its stem carries (`<session>.<agent>`); a bare legacy stem lands in the
+    // default agent, which is not where the thread API looks.
+    let root_stem = tinyagents_session::transcript::session_stem(
+        &tinyagents_session::transcript::SessionRef::scoped(thread_id, "orchestrator"),
+    );
+    let root_stem = root_stem.as_str();
     // A full turn: system scaffolding (dropped), user with injected datetime
     // prefix, assistant tool-calling step (reasoning + tool_calls), tool result,
     // final assistant answer.
@@ -1025,6 +1068,33 @@ async fn json_rpc_threads_transcript_get_projects_and_paginates() {
         &[
             r#"{"role":"assistant","content":"sub work done","provider":"anthropic","model":"claude-x","usage":{"input":5,"output":3,"cached_input":0,"cost_usd":0.0},"ts":"2026-07-21T09:10:00Z","iteration":1}"#,
         ],
+    );
+
+    // The host imports classic workspace transcripts during runtime boot.
+    // This test builds the router directly, so import the seeded records before
+    // asking the storage-backed thread API to read them.
+    let config = openhuman_core::config::Config::load_or_init()
+        .await
+        .expect("load test config");
+    assert_eq!(config.workspace_dir, workspace);
+    let mut config = config;
+    config.agent.chat_agent_id = Some("orchestrator".into());
+    config.save().await.expect("save test chat agent");
+    openhuman_core::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins(
+    )
+    .expect("initialize built-in agent definitions");
+    let backend = openhuman_core::storage::local::backend_for(&config.workspace_dir)
+        .expect("open test workspace storage");
+    let reports = openhuman_core::storage::import::sessions::run_with(&backend, &config);
+    assert!(
+        matches!(
+            reports.first().map(|report| &report.outcome),
+            Some(Ok(openhuman_core::storage::import::Outcome::Imported {
+                found: 2,
+                written: 2
+            }))
+        ),
+        "import classic session transcripts: {reports:?}"
     );
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;

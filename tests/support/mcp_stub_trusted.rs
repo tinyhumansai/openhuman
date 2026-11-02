@@ -3,7 +3,7 @@
 //!
 //! Registry-installed servers (`mcp.json`, the registry RPCs) are never
 //! operator-trusted, so tinymcp starts them inside a TinyBox jail. With
-//! tinymcp 0.19.5 the host declares best-effort enforcement, which macOS
+//! tinymcp 0.20.0 the host declares best-effort enforcement, which macOS
 //! Seatbelt satisfies, so the tests on the registry path start the stub jailed
 //! there and do not need this helper.
 //!

@@ -182,8 +182,8 @@ async fn the_session_is_stamped_with_the_definitions_own_id() {
     );
 }
 
-#[test]
-fn a_name_the_definition_contradicts_fails_the_build() {
+#[tokio::test]
+async fn a_name_the_definition_contradicts_fails_the_build() {
     // Silently preferring either one would leave a session that resolves to
     // nothing, and every turn refused for want of a definition.
     // `OpenHumanSessionHost` is not `Debug`, so the `Ok` arm cannot be

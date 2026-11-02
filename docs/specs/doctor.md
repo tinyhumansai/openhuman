@@ -224,6 +224,19 @@ The CLI does not add fields to the RPC report. Human output is a rendering of
 the same findings and includes the severity, check id, message, and fix hint.
 JSON uses the same report in every surface.
 
+`--help` (also `-h` or `help`) prints usage and exits `0`. When no report is
+produced the CLI exits `2` and names one fixed reason; the underlying error is
+never printed, because it can carry endpoints or credential context. Text mode
+prints `doctor could not produce a report: <reason>` to stderr; `--json` prints
+`{"ok": false, "reason": "<reason>"}`. The reason strings are stable:
+
+| Reason                                                                     | Meaning                               |
+| -------------------------------------------------------------------------- | ------------------------------------- |
+| `the async runtime could not start`                                        | The CLI could not create its runtime. |
+| `the doctor host could not start (profile selection, config or core boot)` | The in-process host did not start.    |
+| `the doctor_report call failed`                                            | The core rejected or failed the RPC.  |
+| `the core answered without a report`                                       | The RPC returned no report object.    |
+
 ## Profile semantics
 
 On desktop, a requested profile id resolves through `ProfileLayout`. Doctor

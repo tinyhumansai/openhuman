@@ -3,10 +3,13 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 use tinyagents_harness::media::MediaOutput;
+use tinyagents_harness_tools::media::MediaJobProgress;
 use tinystoragedrivers_api::BlobStore;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolContent, ToolResult};
 
-use super::{copy_blob_to_file, has_reusable_files_reference, MediaArtifactTool};
+use super::{
+    copy_blob_to_file, has_reusable_files_reference, MediaArtifactTool, OpenHumanArtifactFiling,
+};
 use crate::artifacts::{ArtifactKind, ArtifactStatus, FileRoots};
 
 #[test]
@@ -341,7 +344,8 @@ async fn keeps_source_blob_when_artifact_finalization_fails() {
     .await
     .unwrap();
     let _ = std::fs::remove_file(production.path());
-    let error = tool
+    let filing = OpenHumanArtifactFiling(Arc::clone(&tool.policy));
+    let error = filing
         .complete_and_discard_blob(&production, Path::new(key))
         .await
         .unwrap_err();
@@ -538,9 +542,23 @@ async fn per_call_observer_reports_each_calls_own_job_state() {
         root.path().join("workspace"),
         root.path().join("Files"),
     )
-    .with_per_call_inner(move |observer, _chat| PollingTool {
-        observer,
-        state: states.lock().unwrap().pop().unwrap(),
+    .with_per_call_inner(move |progress, _context| {
+        let observer = std::sync::Arc::new(
+            move |status: &tinyagents_harness::tinyinference_video::VideoJobStatus| {
+                progress(&MediaJobProgress {
+                    id: status.id.clone(),
+                    state: status.state.to_string(),
+                    outputs: status.outputs,
+                    output_indices: status.output_indices.clone(),
+                    cost_usd: status.cost_usd,
+                    error: status.error.clone(),
+                });
+            },
+        );
+        PollingTool {
+            observer,
+            state: states.lock().unwrap().pop().unwrap(),
+        }
     });
     let (a, b) = (Recorder::default(), Recorder::default());
     let (ra, rb) = tokio::join!(

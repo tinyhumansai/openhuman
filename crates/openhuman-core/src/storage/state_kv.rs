@@ -277,6 +277,48 @@ impl StateKv {
         })
     }
 
+    /// Async read-modify-write variant for callbacks already running on the
+    /// storage executor. It avoids re-entering the synchronous storage bridge.
+    pub async fn update_async<T, R>(
+        &self,
+        name: &str,
+        change: impl Fn(&mut T) -> (R, bool) + Send + Sync,
+    ) -> Result<R>
+    where
+        T: DeserializeOwned + Serialize + Default,
+    {
+        let storage = self.repo.scoped().clone();
+        for _ in 0..32 {
+            let current = storage.kv().get(&self.id(name)?).await?;
+            let mut value: T = match &current {
+                Some(record) => {
+                    let entry = self.decode_entry(&record.id, record.doc.clone())?;
+                    serde_json::from_value(entry.value)
+                        .map_err(|error| StorageError::invalid_input(error.to_string()))?
+                }
+                None => T::default(),
+            };
+            let (outcome, changed) = change(&mut value);
+            if !changed {
+                return Ok(outcome);
+            }
+            let body = self.entry(
+                name,
+                serde_json::to_value(&value)
+                    .map_err(|error| StorageError::serialization(error.to_string()))?,
+            )?;
+            let expected = current
+                .as_ref()
+                .map_or(Precondition::Absent, |record| record.unchanged());
+            match storage.kv().cas(&self.id(name)?, body, expected).await {
+                Ok(_) => return Ok(outcome),
+                Err(error) if error.kind() == ErrorKind::Conflict => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(StorageError::conflict("state update exceeded its retry budget").into())
+    }
+
     fn entry(&self, key: &str, value: Value) -> Result<Value, StorageError> {
         serde_json::to_value(KvEntry {
             owner: self.owner.to_owned(),

@@ -25,6 +25,13 @@ fn open_fd_count() -> usize {
 #[tokio::test]
 #[cfg(feature = "storage-sqlite")]
 async fn workspace_fd_lifetime_is_separate_from_catalog_callback_lifetime() {
+    if crate::util::module_test_process::run(
+        module_path!(),
+        "workspace_fd_lifetime_is_separate_from_catalog_callback_lifetime",
+    ) {
+        return;
+    }
+
     // Warm the process-wide bus before measuring. Serving additional callback
     // objects should only add entries to that shared bus, not open a backend.
     crate::modules::runtime::runtime()

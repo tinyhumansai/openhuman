@@ -122,7 +122,7 @@ impl TransportFixture {
         let tinychannels_bus::ChannelBackendRequest::ProgressiveTransport(request) = request else {
             return Err(tinybus::Error::failed("unexpected fixture capability"));
         };
-        let value = if let ProgressiveTransportRequest::Send { message, .. } = *request {
+        let value = if let ProgressiveTransportRequest::Send { message, .. } = request {
             assert!(message["idempotencyKey"].as_str().is_some());
             assert_eq!(message["text"].as_str(), Some(self.expected_text.as_str()));
             self.sends.fetch_add(1, Ordering::SeqCst);
@@ -131,9 +131,9 @@ impl TransportFixture {
             serde_json::Value::Null
         };
         Ok(
-            tinychannels_bus::ChannelBackendResult::ProgressiveTransport(
+            tinychannels_bus::ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Success(value),
-            ),
+            )),
         )
     }
 }

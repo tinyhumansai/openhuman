@@ -124,6 +124,17 @@ pub async fn exec(
     call(config, EXEC, (request,), true).await
 }
 
+/// [`exec`] that waits up to `deadline` for the reply instead of the module
+/// call default, for a long command whose caller enforces its own deadline.
+pub async fn exec_within(
+    config: &Config,
+    request: contract::ExecRequest,
+    deadline: Duration,
+) -> Result<contract::ExecOutput, String> {
+    let client = crate::modules::client(config.clone()).with_timeout(deadline);
+    call_with_client(&client, EXEC, (request,), true).await
+}
+
 /// Inspect a module-owned resource.
 pub async fn inspect(
     config: &Config,
@@ -356,15 +367,6 @@ pub async fn analyze_shell(
     command: String,
 ) -> Result<contract::ShellAnalysis, String> {
     call(config, ANALYZE_SHELL, (command,), false).await
-}
-
-/// Ask TinyBox for generic command facts; the caller still decides policy.
-pub(crate) async fn analyze_command(
-    config: &Config,
-    command: String,
-) -> Result<crate::security::policy::CommandAnalysis, String> {
-    let facts = analyze_shell(config, command).await?;
-    Ok(crate::security::policy::CommandAnalysis::from_shell_analysis(facts))
 }
 
 /// Open a bounded workspace file reader.

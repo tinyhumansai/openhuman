@@ -76,7 +76,7 @@ async fn json_rpc_cron_manual_worker_survives_caller_cancel_on_published_tinyflo
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     clear_forced_chat_completions();
 
-    let (artifact, _) = published_tinyflows::staged_v0_8_29_module();
+    let (artifact, _) = published_tinyflows::staged_v0_9_4_module();
     let module_path = artifact.parent().expect("native artifact directory");
     let _module_path_guard = EnvVarGuard::set_to_path("OPENHUMAN_MODULE_PATH", module_path);
 
@@ -212,7 +212,14 @@ async fn json_rpc_cron_manual_worker_survives_caller_cancel_on_published_tinyflo
         .await
         .unwrap()
         .expect("the released module wrote the v2 job through the host callback");
-    assert_eq!(migrated.meta.created_ms, 1772600767123_i64);
+    // Module ports cannot set host-owned record metadata, so the migrated
+    // job carries its original creation time as the body field `created_ms`
+    // (the backend stamps `meta.created_ms` with the write time).
+    assert_eq!(migrated.doc["created_ms"], 1772600767123_i64);
+    assert!(
+        migrated.meta.created_ms > 0,
+        "the backend owns record metadata"
+    );
     for (collection, id) in [
         ("cron_jobs", "legacy-migration-proof"),
         ("cron_runs", "00000000000000000007"),
@@ -246,7 +253,12 @@ async fn json_rpc_cron_manual_worker_survives_caller_cancel_on_published_tinyflo
         .unwrap_or_else(|| {
             panic!("TinyFlows is listed after the released cdylib loaded: {module_list}")
         });
-    assert_eq!(tinyflows["version"], "0.8.29");
+    let pinned = openhuman_core::modules::registry::find("tinyflows")
+        .expect("TinyFlows is registered in the module asset registry");
+    assert_eq!(
+        tinyflows["version"], pinned.version,
+        "the loaded TinyFlows must be the registry-pinned release"
+    );
 
     let name = format!("published-manual-{}", uuid::Uuid::new_v4().simple());
     let job = openhuman_core::cron::system_jobs::ensure_system_job(
@@ -903,7 +915,7 @@ async fn json_rpc_cron_add_run_list_round_trip_over_the_tinyflows_module_inner()
 }
 
 #[tokio::test]
-async fn json_rpc_workflow_run_definitions_and_runs_roundtrip() {
+async fn json_rpc_retired_workflow_run_methods_are_not_found() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
@@ -922,89 +934,18 @@ async fn json_rpc_workflow_run_definitions_and_runs_roundtrip() {
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
 
-    let config = openhuman_core::config::Config::load_or_init()
-        .await
-        .expect("load config");
+    for (id, method) in [
+        (9141, "openhuman.workflow_run_list_definitions"),
+        (9142, "openhuman.workflow_run_start"),
+        (9143, "openhuman.workflow_run_list"),
+        (9144, "openhuman.workflow_run_get"),
+    ] {
+        let response = post_json_rpc(&rpc_base, id, method, json!({})).await;
+        assert_unknown_method(&response, method);
+    }
 
-    // Builtin definitions are available with no seeding.
-    let defs = post_json_rpc(
-        &rpc_base,
-        9141,
-        "openhuman.workflow_run_list_definitions",
-        json!({}),
-    )
-    .await;
-    let defs_outer = assert_no_jsonrpc_error(&defs, "workflow_run_list_definitions");
-    assert_eq!(
-        defs_outer.get("count").and_then(serde_json::Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        defs_outer
-            .get("definitions")
-            .and_then(|d| d.get(0))
-            .and_then(|d| d.get("id"))
-            .and_then(serde_json::Value::as_str),
-        Some("parallel_research_cross_check")
-    );
-
-    // Seed a durable workflow run, then list + get it.
-    openhuman_core::storage::sessions::with_ledger(&config.workspace_dir, |ledger| {
-        let ledger_arg_0 = tinyagents_session::run_ledger::WorkflowRunUpsert {
-            id: "wf-run-1".to_string(),
-            definition_id: "parallel_research_cross_check".to_string(),
-            parent_thread_id: Some("thread-wf-1".to_string()),
-            input: json!({ "question": "test" }),
-            phase_states: json!({ "decompose": "completed" }),
-            child_run_ids: vec!["child-1".to_string()],
-            status: tinyagents_session::run_ledger::WorkflowRunStatus::Running,
-            summary: None,
-            started_at: None,
-            completed_at: None,
-        };
-        async move { ledger.upsert_workflow_run(ledger_arg_0).await }
-    })
-    .expect("seed workflow run");
-
-    let list = post_json_rpc(
-        &rpc_base,
-        9142,
-        "openhuman.workflow_run_list",
-        json!({ "definitionId": "parallel_research_cross_check" }),
-    )
-    .await;
-    let list_outer = assert_no_jsonrpc_error(&list, "workflow_run_list");
-    assert_eq!(
-        list_outer.get("count").and_then(serde_json::Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        list_outer
-            .get("runs")
-            .and_then(|r| r.get(0))
-            .and_then(|r| r.get("status"))
-            .and_then(serde_json::Value::as_str),
-        Some("running")
-    );
-
-    let get = post_json_rpc(
-        &rpc_base,
-        9143,
-        "openhuman.workflow_run_get",
-        json!({ "id": "wf-run-1" }),
-    )
-    .await;
-    let get_outer = assert_no_jsonrpc_error(&get, "workflow_run_get");
-    assert_eq!(
-        get_outer
-            .get("workflowRun")
-            .and_then(|r| r.get("definitionId"))
-            .and_then(serde_json::Value::as_str),
-        Some("parallel_research_cross_check")
-    );
-
-    api_join.abort();
     rpc_join.abort();
+    api_join.abort();
 }
 
 /// Full lifecycle over JSON-RPC for the `workflows` namespace:
@@ -2437,8 +2378,9 @@ async fn json_rpc_flows_list_connections_aggregates_secret_free() {
         .await
         .expect("load config to seed http_cred");
     const SECRET: &str = "sk_live_flows_list_connections_seed";
-    openhuman_core::security::credentials::HttpCredentialsStore::from_config(&seed_config)
-        .upsert(&openhuman_core::security::credentials::HttpCredential::bearer("stripe", SECRET))
+    openhuman_core::flows::http_credentials::HttpCredentialsStore::from_config(&seed_config)
+        .upsert(&openhuman_core::flows::http_credentials::HttpCredential::bearer("stripe", SECRET))
+        .await
         .expect("seed http_cred");
 
     let resp = post_json_rpc(
@@ -2477,152 +2419,13 @@ async fn json_rpc_flows_list_connections_aggregates_secret_free() {
     rpc_join.abort();
 }
 
-/// Task 4 / #3090: when a web-chat request is sent with
-/// `speak_reply: true`, `run_chat_task` should drive the agent's final text
-/// through `voice::reply_speech::synthesize_reply` after the turn completes.
-///
-/// We activate the [`reply_speech::test_seam`] short-circuit via the
-/// `OPENHUMAN_TEST_REPLY_SPEECH_SEAM` env var so the call is recorded
-/// without contacting the ElevenLabs proxy.
-
-#[test]
-fn json_rpc_workflow_run_engine_executes_builtin_to_completion() {
-    run_json_rpc_e2e_on_agent_stack(
-        "json_rpc_workflow_run_engine_executes_builtin_to_completion",
-        json_rpc_workflow_run_engine_executes_builtin_to_completion_inner,
-    );
-}
-
-async fn json_rpc_workflow_run_engine_executes_builtin_to_completion_inner() {
-    let _env_lock = json_rpc_e2e_env_lock_async().await;
-    let tmp = tempdir().expect("tempdir");
-    let home = tmp.path();
-    let openhuman_home = home.join(".openhuman");
-
-    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
-    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
-    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
-    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
-
-    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
-    let mock_origin = format!("http://{}", mock_addr);
-
-    write_min_config(&openhuman_home, &mock_origin);
-    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
-    write_min_config(&user_scoped_dir, &mock_origin);
-
-    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
-    let rpc_base = format!("http://{}", rpc_addr);
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Authenticate so the child agents' provider has a backend session.
-    let store = post_json_rpc(
-        &rpc_base,
-        375_001,
-        "openhuman.auth_store_session",
-        json!({ "token": "e2e-test-jwt", "user_id": "e2e-user" }),
-    )
-    .await;
-    assert_no_jsonrpc_error(&store, "store_session");
-
-    // Sanity: the builtin definition is listed.
-    let defs = post_json_rpc(
-        &rpc_base,
-        375_002,
-        "openhuman.workflow_run_list_definitions",
-        json!({}),
-    )
-    .await;
-    let defs_result = assert_no_jsonrpc_error(&defs, "list_definitions");
-    let defs_body = peel_logs_envelope(defs_result.get("result").unwrap_or(defs_result));
-    let definition_id = defs_body
-        .get("definitions")
-        .and_then(Value::as_array)
-        .and_then(|arr| arr.first())
-        .and_then(|d| d.get("id"))
-        .and_then(Value::as_str)
-        .expect("at least one builtin workflow definition")
-        .to_string();
-    assert_eq!(definition_id, "parallel_research_cross_check");
-
-    // Start the workflow. Children inherit the parent (root) provider via the
-    // `modelOverride` pin → every phase hits the mock chat-completions route.
-    let start = post_json_rpc(
-        &rpc_base,
-        375_003,
-        "openhuman.workflow_run_start",
-        json!({
-            "definitionId": definition_id,
-            "input": { "question": "What is the capital of France?", "modelOverride": "e2e-mock-model" },
-        }),
-    )
-    .await;
-    let start_result = assert_no_jsonrpc_error(&start, "workflow_run_start");
-    let start_body = peel_logs_envelope(start_result.get("result").unwrap_or(start_result));
-    let run = start_body
-        .get("workflowRun")
-        .expect("workflowRun in start response");
-    let run_id = run
-        .get("id")
-        .and_then(Value::as_str)
-        .expect("run id")
-        .to_string();
-    assert_eq!(
-        run.get("status").and_then(Value::as_str),
-        Some("running"),
-        "fresh run should be running: {run}"
-    );
-
-    // Poll workflow_run_get until terminal (or timeout). The four-phase builtin
-    // fans out 5 children total against the mock — completes quickly.
-    let mut final_status = String::new();
-    let mut final_summary = String::new();
-    for attempt in 0..120 {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        let got = post_json_rpc(
-            &rpc_base,
-            37_500_100 + attempt,
-            "openhuman.workflow_run_get",
-            json!({ "id": run_id }),
-        )
-        .await;
-        let got_result = assert_no_jsonrpc_error(&got, "workflow_run_get");
-        let got_body = peel_logs_envelope(got_result.get("result").unwrap_or(got_result));
-        let wf = got_body
-            .get("workflowRun")
-            .expect("workflowRun payload present");
-        let status = wf
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if matches!(
-            status.as_str(),
-            "completed" | "failed" | "cancelled" | "interrupted"
-        ) {
-            final_status = status;
-            final_summary = wf
-                .get("summary")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            break;
-        }
-    }
-
-    assert_eq!(
-        final_status, "completed",
-        "workflow run must reach completed; got status={final_status:?} summary={final_summary:?}"
-    );
-    assert!(
-        !final_summary.trim().is_empty(),
-        "completed workflow run must carry a non-empty summary"
-    );
-
-    rpc_join.abort();
-    mock_join.abort();
-}
+// Task 4 / #3090: when a web-chat request is sent with
+// `speak_reply: true`, `run_chat_task` should drive the agent's final text
+// through `voice::reply_speech::synthesize_reply` after the turn completes.
+//
+// We activate the [`reply_speech::test_seam`] short-circuit via the
+// `OPENHUMAN_TEST_REPLY_SPEECH_SEAM` env var so the call is recorded
+// without contacting the ElevenLabs proxy.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #5846 — the two authoring-gate behaviour changes, driven end-to-end through

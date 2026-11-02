@@ -53,17 +53,25 @@ pub fn is_session_expired_error(msg: &str) -> bool {
     // The HTTP-method prefix distinguishes these from provider-prefixed errors.
     // HEAD and OPTIONS are intentionally excluded — `authed_json` only issues
     // the five listed verbs (GET/POST/PUT/DELETE/PATCH) for REST JSON endpoints.
-    let lower = msg.to_ascii_lowercase();
-    if (lower.contains("401") && lower.contains("unauthorized"))
-        && (msg.starts_with("GET /")
-            || msg.starts_with("POST /")
-            || msg.starts_with("PUT /")
-            || msg.starts_with("DELETE /")
-            || msg.starts_with("PATCH /"))
-    {
-        return true;
-    }
-    false
+    // Anchored on the status in the `{METHOD} /path failed ({status} …)`
+    // header itself — the first ` failed (` — so a 500 whose body mentions a
+    // 401 (`"status":401`, `upstream failed (401 …)`) is not an expired session.
+    const HEADER: &str = " failed (";
+    ["GET /", "POST /", "PUT /", "DELETE /", "PATCH /"]
+        .iter()
+        .any(|verb| msg.starts_with(verb))
+        && msg
+            .find(HEADER)
+            .is_some_and(|at| msg[at + HEADER.len()..].starts_with("401"))
+}
+
+/// The one status rule for the OpenHuman backend: only a 401 on a request
+/// authenticated with the session credential means the session expired.
+/// 402/403/404 (plan, tier, WAF, proxy) are refusals that keep the session,
+/// and a 401 on an API key means the key was rejected — an API key has no
+/// session to expire.
+pub fn backend_status_means_session_expired(status: u16, api_key: bool) -> bool {
+    status == 401 && !api_key
 }
 
 /// Detect auth-looking failures that are not specific enough to clear the

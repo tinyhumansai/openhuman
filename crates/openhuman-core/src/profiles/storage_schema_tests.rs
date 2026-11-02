@@ -29,7 +29,7 @@ fn a_registry_row_loses_its_seconds_field_and_keeps_its_creation_time() {
 
 #[tokio::test]
 #[cfg(feature = "storage-sqlite")]
-async fn migrate_cluster_moves_the_v1_registry_into_the_v2_collection() {
+async fn cluster_schema_declaration_leaves_legacy_registry_for_the_host_importer() {
     let fixture = sqlite_backend().unwrap();
     let backend = Arc::clone(&fixture.backend);
     let scoped = backend.for_scope(&Scope::cluster()).unwrap();
@@ -47,16 +47,19 @@ async fn migrate_cluster_moves_the_v1_registry_into_the_v2_collection() {
     .unwrap();
     migrate_cluster(&scoped).await.unwrap();
     migrate_cluster(&scoped).await.unwrap();
-    let moved = docs
+    assert!(docs
         .get(REGISTRY_COLLECTION, "alice")
         .await
         .unwrap()
-        .unwrap();
+        .is_none());
     assert_eq!(
-        moved.doc,
-        json!({ "profile_id": "alice", "layout_version": 2 })
+        docs.get("profiles", "alice").await.unwrap().unwrap().doc,
+        json!({ "profile_id": "alice", "created_at": 5, "layout_version": 2 })
     );
-    assert_eq!(moved.meta.created_ms, 5000);
+    assert!(docs
+        .validate_collection_spec(&CollectionSpec::new(REGISTRY_COLLECTION))
+        .await
+        .is_ok());
 }
 
 #[test]
@@ -69,8 +72,8 @@ fn the_schema_composes_under_its_owner() {
 
 #[tokio::test]
 #[cfg(feature = "storage-sqlite")]
-async fn migrate_cluster_moves_v1_leases_into_tsd_leases_and_keeps_their_epoch() {
-    use crate::storage::lease::{DocumentLeases, LeaseStore, LEASE_OWNER};
+async fn legacy_lease_conversion_preserves_epoch_and_source_records() {
+    use crate::storage::lease::LEASE_OWNER;
     let fixture = sqlite_backend().unwrap();
     let backend = Arc::clone(&fixture.backend);
     let scoped = backend.for_scope(&Scope::cluster()).unwrap();
@@ -96,31 +99,45 @@ async fn migrate_cluster_moves_v1_leases_into_tsd_leases_and_keeps_their_epoch()
     )
     .await
     .unwrap();
-    migrate_cluster(&scoped).await.unwrap();
-    migrate_cluster(&scoped).await.unwrap();
-    assert!(docs.get("leases", "alice").await.unwrap().is_none());
-    assert!(docs.get("leases", "bob").await.unwrap().is_none());
-    let id = crate::storage::schema_support::key_of_parts([LEASE_OWNER, "alice"]).unwrap();
-    let moved = docs.get("tsd.leases", id.as_str()).await.unwrap().unwrap();
+    let converted = upgrade_lease_records(vec![
+        crate::storage::import::Record {
+            collection: "leases".into(),
+            id: "alice".into(),
+            doc: json!({ "owner": "node-a", "endpoint": "http://a", "epoch": 4,
+                "expires_at_ms": 5_000, "released": false }),
+            created_ms: None,
+            schema: None,
+            expires_ms: None,
+            updated_ms: None,
+        },
+        crate::storage::import::Record {
+            collection: "leases".into(),
+            id: "bob".into(),
+            doc: json!({ "owner": "node-a", "endpoint": null, "epoch": 2,
+                "expires_at_ms": 1_000, "released": true }),
+            created_ms: None,
+            schema: None,
+            expires_ms: None,
+            updated_ms: None,
+        },
+    ])
+    .unwrap();
+    assert_eq!(converted.len(), 2);
+    assert_eq!(converted[0].collection, "openhuman.leases");
+    assert_eq!(
+        converted[0].id,
+        crate::storage::schema_support::key_of_parts([LEASE_OWNER, "alice"]).unwrap()
+    );
+    let moved = &converted[0];
     assert_eq!(
         moved.doc,
         json!({ "holder": "node-a", "epoch": 4, "expires_ms": 5_000, "endpoint": "http://a" })
     );
-
-    // The host's lease store reads the moved records: alice is still held,
-    // bob's released record is taken over cleanly at the next epoch.
-    let b = DocumentLeases::cluster(
-        backend.as_ref(),
-        "node-b",
-        None,
-        std::time::Duration::from_secs(1),
-    )
-    .unwrap();
-    let held = b.holder("alice").await.unwrap().unwrap();
-    assert_eq!((held.owner.as_str(), held.epoch), ("node-a", 4));
-    assert!(b.acquire("alice", 1_000).await.is_err());
-    let taken = b.acquire("bob", 2_000).await.unwrap();
-    assert_eq!((taken.epoch, taken.previous_unclean), (3, false));
-    let after = b.acquire("alice", 5_000).await.unwrap();
-    assert_eq!((after.epoch, after.previous_unclean), (5, true));
+    assert_eq!(converted[1].doc["released"], true);
+    assert!(docs.get("leases", "alice").await.unwrap().is_some());
+    assert!(docs
+        .get("tsd.leases", &converted[0].id)
+        .await
+        .unwrap()
+        .is_none());
 }

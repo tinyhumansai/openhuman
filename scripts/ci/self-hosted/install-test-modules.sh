@@ -7,8 +7,8 @@
 # Release archives come from the module registry (test-module-assets.mjs),
 # are cached by sha256 under $CI_CACHE_DIR/blobs when that is set, and are
 # verified against the registry digest on every use, cached or not.
-# All nine modules, tinyconnectors included, come from releases; nothing is
-# compiled from source here (#7618).
+# Every staged test module, including tinyconnectors and tinyeventqueues,
+# comes from its registry release; nothing is compiled from source here.
 #
 # tinybus refuses a module when any ancestor directory is owned by someone
 # other than root or the current user, so <dest-dir> must sit under a tree the
@@ -25,6 +25,7 @@ host_key="${OH_MODULE_HOST_KEY:-ubuntu-22.04-x86_64}"
 blobs="${CI_CACHE_DIR:+${CI_CACHE_DIR}/blobs}"
 blobs="${blobs:-${dest}/.blobs}"
 mkdir -p "${blobs}" "${dest}"
+dest="$(cd "${dest}" && pwd -P)"
 
 verify() { echo "$1  $2" | sha256sum --check --status; }
 
@@ -61,7 +62,7 @@ done <<< "${assets}"
 # Every staged directory goes on the search path the loader already honours
 # (release mode); each holds the released library.
 module_dirs=""
-for id in tinybox tinydocs tinywallet tinychannels tinymcp tinyjuice tinysearch tinyhosts tinyconnectors tinyflows; do
+for id in tinybox tinydocs tinywallet tinychannels tinymcp tinyeventqueues tinyjuice tinysearch tinyhosts tinyconnectors tinyflows; do
   module_dirs="${module_dirs:+${module_dirs}:}${dest}/${id}"
 done
 # mcp_registry_multi_server loads TinyMCP by file, not by search path, as
@@ -78,10 +79,19 @@ if [ -z "${tinychannels_artifact}" ]; then
   echo "::error::the tinychannels release holds no module library" >&2
   exit 1
 fi
+# TinyVoice stays off the search path so no other suite starts loading it;
+# the native Telegram voice-note E2E loads it by file.
+tinyvoice_artifact="$(find "${dest}/tinyvoice" -maxdepth 2 -type f \
+  \( -name libtinyvoice_module.so -o -name libtinyvoice_module.dylib -o -name tinyvoice_module.dll \) | head -n 1)"
+if [ -z "${tinyvoice_artifact}" ]; then
+  echo "::error::the tinyvoice release holds no module library" >&2
+  exit 1
+fi
 {
   echo "OPENHUMAN_MODULE_PATH=${module_dirs}${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
   echo "OPENHUMAN_TINYMCP_TEST_MODULE=${tinymcp_artifact}"
   echo "OPENHUMAN_CHANNELS_TEST_ARTIFACT=${tinychannels_artifact}"
+  echo "OPENHUMAN_VOICE_TEST_ARTIFACT=${tinyvoice_artifact}"
   echo "OPENHUMAN_TEST_MODULES_STAGED=1"
 } > "${env_file}"
 log "wrote ${env_file}"

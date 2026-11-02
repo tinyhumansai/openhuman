@@ -69,7 +69,7 @@ async fn drive_with(
     responses.push(ModelResponse::assistant("draft".to_string()));
     responses.push(ModelResponse::assistant("checked".to_string()));
     let mut harness: AgentHarness<()> = AgentHarness::new();
-    harness.register_model("mock", Arc::new(ScriptedModel::new(responses)));
+    harness.with_model(Arc::new(ScriptedModel::new(responses)));
     harness.register_tool(Arc::new(FakeTool::returning("lookup", "ok")));
     harness.register_tool(Arc::new(FakeTool::returning("todo", "ok")));
     harness.with_policy(RunPolicy {
@@ -201,7 +201,7 @@ async fn requirements_check_allows_a_fix_for_different_tasks() {
         ]);
         let model = Arc::new(ScriptedModel::new(responses));
         let mut harness: AgentHarness<()> = AgentHarness::new();
-        harness.register_model("mock", model.clone());
+        harness.with_model(model.clone());
         harness.register_tool(Arc::new(FakeTool::returning("lookup", "ok")));
         harness.with_policy(RunPolicy {
             limits: RunLimits::default().with_max_model_calls(50),

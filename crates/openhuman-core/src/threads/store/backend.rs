@@ -15,8 +15,9 @@
 //! request paths already go through [`super::blocking`], which keeps that off
 //! the async workers.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 
 use super::ConversationPurgeStats;
 use tinyagents_session::threads::{
@@ -30,6 +31,147 @@ use crate::core::runtime::DispatchCtx;
 use crate::storage::documents::Repo;
 use crate::storage::{self, Scope, StorageError};
 use tinystoragedrivers::ErrorKind;
+
+#[derive(Default)]
+struct ThreadAdmissionState {
+    active_creates: usize,
+    purging: bool,
+}
+
+struct WorkspaceThreadAdmission {
+    state: Mutex<ThreadAdmissionState>,
+    changed: Condvar,
+}
+
+static THREAD_ADMISSIONS: OnceLock<Mutex<HashMap<PathBuf, Weak<WorkspaceThreadAdmission>>>> =
+    OnceLock::new();
+
+fn normalized_workspace_path(workspace_dir: &Path) -> PathBuf {
+    let absolute = if workspace_dir.is_absolute() {
+        workspace_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(workspace_dir)
+    };
+    if let Ok(canonical) = std::fs::canonicalize(&absolute) {
+        return canonical;
+    }
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    if let Ok(canonical) = std::fs::canonicalize(&normalized) {
+        return canonical;
+    }
+    let mut existing = normalized.as_path();
+    let mut suffix = Vec::new();
+    while !existing.exists() {
+        let Some(name) = existing.file_name() else {
+            break;
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        existing = parent;
+    }
+    let mut key = std::fs::canonicalize(existing).unwrap_or_else(|_| existing.to_path_buf());
+    for component in suffix.into_iter().rev() {
+        key.push(component);
+    }
+    key
+}
+
+fn thread_admission(workspace_dir: &Path) -> Arc<WorkspaceThreadAdmission> {
+    let admissions = THREAD_ADMISSIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut admissions = admissions.lock().unwrap_or_else(|error| error.into_inner());
+    let workspace_key = normalized_workspace_path(workspace_dir);
+    if let Some(admission) = admissions.get(&workspace_key).and_then(Weak::upgrade) {
+        return admission;
+    }
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    let admission = Arc::new(WorkspaceThreadAdmission {
+        state: Mutex::new(ThreadAdmissionState::default()),
+        changed: Condvar::new(),
+    });
+    admissions.insert(workspace_key, Arc::downgrade(&admission));
+    admission
+}
+
+struct ThreadCreateGuard(Arc<WorkspaceThreadAdmission>);
+
+impl Drop for ThreadCreateGuard {
+    fn drop(&mut self) {
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.active_creates -= 1;
+        if state.active_creates == 0 {
+            self.0.changed.notify_all();
+        }
+    }
+}
+
+impl WorkspaceThreadAdmission {
+    fn admit_create(self: &Arc<Self>) -> Result<ThreadCreateGuard, String> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.purging {
+            return Err("thread creation refused while workspace purge is active".into());
+        }
+        state.active_creates += 1;
+        Ok(ThreadCreateGuard(Arc::clone(self)))
+    }
+}
+
+/// A workspace-wide barrier that prevents new thread rows while a full purge
+/// snapshots, cancels and removes the current rows.
+pub(crate) struct ThreadPurgeGuard(Arc<WorkspaceThreadAdmission>);
+
+impl Drop for ThreadPurgeGuard {
+    fn drop(&mut self) {
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.purging = false;
+        self.0.changed.notify_all();
+    }
+}
+
+/// Closes workspace thread admission and waits for in-flight creates to settle.
+///
+pub(crate) fn begin_thread_purge(workspace_dir: &Path) -> ThreadPurgeGuard {
+    let admission = thread_admission(workspace_dir);
+    let mut state = admission
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    while state.purging {
+        state = admission
+            .changed
+            .wait(state)
+            .unwrap_or_else(|error| error.into_inner());
+    }
+    state.purging = true;
+    while state.active_creates > 0 {
+        state = admission
+            .changed
+            .wait(state)
+            .unwrap_or_else(|error| error.into_inner());
+    }
+    drop(state);
+    ThreadPurgeGuard(admission)
+}
 
 const DOMAIN: &str = "threads::store";
 const LOG_PREFIX: &str = "[conversations]";
@@ -222,6 +364,7 @@ impl ConversationStore {
         &self,
         request: CreateConversationThread,
     ) -> Result<ConversationThread, String> {
+        let _admission = thread_admission(&self.workspace_dir).admit_create()?;
         self.run("ensure_thread", NONE, |s| async move {
             s.ensure_thread(request).await
         })
@@ -362,26 +505,24 @@ impl ConversationStore {
     /// this workspace's existing best-effort queue as each header is removed.
     /// Queue persistence keeps its existing IO and process-crash limitations.
     pub fn purge_threads(&self) -> Result<ConversationPurgeStats, String> {
-        let ctx = self.ctx.clone();
         let workspace_dir = self.workspace_dir.clone();
+        let deletion_state = crate::memory::deletion::open_state(&workspace_dir)
+            .map_err(|error| format!("{LOG_PREFIX} open deletion queue: {error:#}"))?;
         let stats = self.run("purge_threads", NONE, |s| async move {
-            let callback_ctx = ctx.clone();
-            let callback_workspace = workspace_dir.clone();
+            let callback_state = deletion_state;
             s.purge_threads_with_async(move |thread_id| {
-                let ctx = callback_ctx.clone();
-                let workspace_dir = callback_workspace.clone();
+                let state = callback_state.clone();
                 async move {
-                    // The TinyAgents callback runs inside the storage bridge.
-                    // Persist off-bridge and await each header's queue write
-                    // before the purge deletes the next one.
-                    ctx.spawn_blocking(move || {
-                        crate::memory::deletion::enqueue(
-                            &workspace_dir,
-                            crate::memory::deletion::PendingDeletion::Thread { thread_id },
-                        );
-                    })
+                    if let Err(error) = crate::memory::deletion::enqueue_with_state(
+                        &state,
+                        crate::memory::deletion::PendingDeletion::Thread { thread_id },
+                    )
                     .await
-                    .expect("conversation purge deletion callback worker must complete");
+                    {
+                        log::warn!(
+                            "[threads] queue conversation memory deletion failed: {error:#}"
+                        );
+                    }
                 }
             })
             .await

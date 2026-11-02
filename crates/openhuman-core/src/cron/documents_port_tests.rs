@@ -130,8 +130,12 @@ async fn schedule_store_migration_moves_legacy_jobs_runs_and_counter_before_read
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].output.as_deref(), Some("legacy output"));
 
+    // Schedule schema v2 keeps a job's creation time in its body
+    // (`created_ms`), which every read prefers; the record's own metadata time
+    // is the migration's write.
     let migrated_job = docs.get("cron.jobs", "legacy-job").await.unwrap().unwrap();
-    assert_eq!(migrated_job.meta.created_ms, 1772600767123_i64);
+    assert_eq!(migrated_job.doc["created_ms"], 1772600767123_i64);
+    assert_eq!(listed[0].created_at.timestamp_millis(), 1772600767123_i64);
     for (collection, id) in [
         ("cron_jobs", "legacy-job"),
         ("cron_runs", "00000000000000000007"),
@@ -142,13 +146,15 @@ async fn schedule_store_migration_moves_legacy_jobs_runs_and_counter_before_read
             "successful migration retires {collection}/{id}"
         );
     }
+    // v1 kept the next run number to hand out; the v2 counter (`{value}`)
+    // holds the last one issued, so the next run is still number 8.
     assert_eq!(
         docs.get("tsd.counters", "cron/runs")
             .await
             .unwrap()
             .expect("the imported counter remains readable")
-            .doc["next"],
-        8
+            .doc["value"],
+        7
     );
     for progress in [
         "cron/cron.jobs/jobs_v2",

@@ -35,6 +35,8 @@ impl LegacyDb {
         F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<T> + Send + 'static,
     {
         let path: PathBuf = self.snapshot.db().to_path_buf();
+        // This worker reads only the explicit private snapshot. Tenant-scoped
+        // writes happen later through the caller's captured module proxy.
         tokio::task::spawn_blocking(move || {
             let connection = rusqlite::Connection::open_with_flags(
                 path,

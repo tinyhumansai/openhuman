@@ -8,7 +8,7 @@
 //! asking; every other origin keeps the forced gate exactly as it was.
 
 use crate::config::BrowserConfig;
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 /// A turn the user authorized ahead of time and nobody is watching live.
 /// A workflow that asked for review (`require_approval`) is excluded.

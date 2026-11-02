@@ -365,7 +365,7 @@ async fn core_channel_routes_recover_from_the_transports_typed_404s() {
     );
 
     let err = client
-        .send_channel_delete("telegram", "1103", "jwt")
+        .send_channel_delete("telegram", "1103", "jwt", None)
         .await
         .unwrap_err();
     assert!(

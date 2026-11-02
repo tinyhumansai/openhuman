@@ -1896,6 +1896,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'キャンバスで開く',
   'chat.flowProposal.dismiss': '閉じる',
   'chat.flowProposal.error': 'ワークフローを保存できませんでした。もう一度お試しください。',
+  'chat.flowProposal.versionConflict':
+    'この提案の作成後にワークフローが変更されたため、上書きしませんでした。新しい改訂を依頼してください。',
   'chat.flowProposal.enableError':
     'ワークフローは保存されましたが、有効化できませんでした。もう一度お試しいただくか、ワークフローページから有効化してください。',
   // Terminal success state (issue B36): shown once the flow is saved and
@@ -2109,11 +2111,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} / {total} 件',
   'chat.todos.receipt': '進捗を更新しました · {done}/{total}',
   'chat.subagents.ranFor': '{duration}間実行',
-  'chat.subagents.ofTotal': '{complete} / {total} 件',
-  'chat.subagents.runningCount': '{count}件実行中',
-  'chat.subagents.failedCount': '{count}件失敗',
-  'chat.subagents.incompleteCount': '{count}件未完了',
-  'chat.subagents.settled': '子の実行が完了しました。結果を処理しています。',
   'conversations.planReview.title': 'プランの確認',
   'conversations.planReview.subtitle':
     '承認して実行、却下して破棄、またはフィードバックを送信して修正します。',
@@ -2150,7 +2147,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': '許可',
   'conversations.mcpUi.confirmDeny': '拒否',
   'conversations.tools.delegatedTo': '{agent} に委任',
-  'conversations.tools.parallelAgentsAggregating': '結果を集約中',
   'conversations.tools.openInBrowser': 'ブラウザで開く',
   'conversations.tools.status.running': '実行中',
   'conversations.tools.status.done': '完了',
@@ -2249,25 +2245,6 @@ const messages: TranslationMap = {
     '再試行に失敗しました。最新のアプリビルドをダウンロードして再試行してください。',
   'daemon.serviceBlockingGate.retrying': '再試行中...',
   'daemon.serviceBlockingGate.title': 'OpenHuman コアが利用できません',
-  // Worktree manager (#3376): isolated worker git worktrees
-  'worktree.label': 'ワークツリー',
-  'worktree.dirty': '未コミットの変更',
-  'worktree.clean': 'クリーン',
-  'worktree.removing': '削除中…',
-  'worktree.removeFailed': 'ワークツリーの削除に失敗しました',
-  'worktree.diffFailed': '差分の読み込みに失敗しました',
-  'worktree.diffLoading': '差分を読み込み中…',
-  'worktree.diffEmpty': 'HEAD との変更はありません。',
-  'worktree.dirtyConfirm':
-    'このワークツリーには未コミットの変更があります。削除するとその作業は破棄されますが、ワーカーブランチは保持されます。',
-  'worktree.action.open': 'フォルダを開く',
-  'worktree.action.diff': '差分',
-  'worktree.action.hideDiff': '差分を非表示',
-  'worktree.action.remove': '削除',
-  'worktree.action.removeAnyway': '破棄して削除',
-  'worktree.action.preserve': '保持',
-  // Orchestration tab (#3375): multi-agent workflow runs.
-  'orchestration.detail.stop': '停止',
   'notifications.card.dismiss': '通知を閉じる',
   'notifications.card.importanceTitle': '重要度: {pct}%',
   'notifications.center.empty': '通知はまだありません',
@@ -4074,6 +4051,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'モデルを読み込み中…',
   'composer.voiceMode': '音声モード',
   'composer.humanMode': 'ヒューマンモード',
+  'voiceNote.record': 'ボイスメモを録音',
+  'voiceNote.stop': '録音を停止',
+  'voiceNote.discard': 'ボイスメモを破棄',
+  'voiceNote.send': 'ボイスメモを送信',
+  'voiceNote.recording': '録音中…',
+  'voiceNote.play': 'ボイスメモを再生',
+  'voiceNote.pause': 'ボイスメモを一時停止',
+  'voiceNote.seek': 'ボイスメモをシーク',
+  'voiceNote.transcript': '文字起こし',
+  'voiceNote.noTranscript': '文字起こしはありません',
+  'voiceNote.label': 'ボイスメモ {duration}',
+  'voiceNote.micDenied': 'マイクへのアクセスが拒否されたか、利用できません。',
+  'voiceNote.transcribeFailed': 'ボイスメモを文字起こしできませんでした。',
+  'voiceNote.loadFailed': 'このボイスメモを読み込めませんでした。',
+  'voiceNote.sendFailed': 'ボイスメモを送信できませんでした。',
   // Sync budget dialog
 
   // Sync confirm dialog
@@ -5223,11 +5215,10 @@ const messages: TranslationMap = {
   'conversations.tools.reviewLearnings.active': '学習内容をレビュー中',
   'conversations.tools.reviewLearnings.done': '学習内容をレビューしました',
   'conversations.tools.updateLearnings.active': '学習内容を更新中',
+  'orchestration.detail.stop': '停止',
   'conversations.tools.updateLearnings.done': '学習内容を更新しました',
   'conversations.tools.delegateTask.active': 'タスクを委任中',
   'conversations.tools.delegateTask.done': 'タスクを委任しました',
-  'conversations.tools.runAgentsInParallel.active': 'エージェントを並列実行中',
-  'conversations.tools.runAgentsInParallel.done': 'エージェントを並列実行しました',
   'conversations.tools.messageAgent.active': 'エージェントにメッセージ送信中',
   'conversations.tools.messageAgent.done': 'エージェントにメッセージを送信しました',
   'conversations.tools.waitForAgent.active': 'エージェントを待機中',
@@ -5264,6 +5255,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': '目標を確認しました',
   'conversations.tools.completeGoal.active': '目標を達成中',
   'conversations.tools.completeGoal.done': '目標を達成しました',
+  'conversations.tools.resumeGoal.active': '目標を再開中',
+  'conversations.tools.resumeGoal.done': '目標を再開しました',
   'conversations.tools.scheduleTask.active': 'タスクをスケジュール中',
   'conversations.tools.scheduleTask.done': 'タスクをスケジュールしました',
   'conversations.tools.checkSchedules.active': 'スケジュールを確認中',
@@ -5453,6 +5446,55 @@ const messages: TranslationMap = {
   'settings.layout.corners.round': '丸み',
 
   'settings.layout.contrast.strong': '強',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'このコアにはポリシー診断が含まれていません。',
+  'devOptions.toolPolicyDiagnostics.policy.title': '有効なセキュリティポリシー',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '自律性',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'ワークスペースのみ',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '1 時間あたりの最大アクション数',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '中リスクで承認を要求',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '高リスクのコマンドをブロック',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '許可されたコマンド',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    '明示的に許可されたコマンドはありません。',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'ポリシー',
+  'settings.approvalHistory.judgeScores':
+    '意図 {intent} · 可逆性 {reversible} · 情報流出 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'キャッシュ済み',
+  'settings.approvalHistory.judgeExpires': '{time} に期限切れ',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '常に許可するツール',
+  'keyring.settings.toolTrustDescription':
+    'このセキュリティ範囲では、これらのツールは承認を求めずに実行できます。',
+  'keyring.settings.toolTrustLoading': '許可されたツールを読み込み中…',
+  'keyring.settings.toolTrustLoadFailed': '許可されたツールを読み込めませんでした。',
+  'keyring.settings.toolTrustRevokeFailed': 'このツールの許可を取り消せませんでした。',
+  'keyring.settings.toolTrustEmpty': '常に許可されたツールはありません。',
+  'keyring.settings.toolTrustRetry': '再試行',
+  'keyring.settings.toolTrustRevoke': '取り消す',
+  'keyring.settings.toolTrustRevoking': '取り消し中…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'キーチェーンアクセスのリクエスト',
+  'keyring.operation.description':
+    'TinySecurity がキーチェーン項目へのアクセスを要求しています。判断する前に操作を確認してください。',
+  'keyring.operation.access': 'アクセス',
+  'keyring.operation.requester': '要求元',
+  'keyring.operation.origin': '発生元',
+  'keyring.operation.purpose': '目的',
+  'keyring.operation.name': 'キーチェーン項目',
+  'keyring.operation.access.read': '読み取り',
+  'keyring.operation.access.write': '書き込み',
+  'keyring.operation.access.delete': '削除',
+  'keyring.operation.allow': '今回のみ許可',
+  'keyring.operation.deny': '拒否',
+  'keyring.operation.submitting': '送信中…',
+  'keyring.operation.expires': 'リクエストは {seconds} 秒後に期限切れになります。',
+  'keyring.operation.error':
+    '判断を送信できませんでした。リクエストの期限が切れた可能性があります。',
 };
 
 export default messages;

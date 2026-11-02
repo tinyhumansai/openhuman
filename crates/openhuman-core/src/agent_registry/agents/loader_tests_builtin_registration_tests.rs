@@ -26,7 +26,7 @@ fn flow_builtin_entries_follow_the_flows_feature_gate() {
 /// Pins the `presentation_agent` compile-time gate, both directions: it is
 /// registered under the `documents` feature (its `generate_presentation`
 /// deck tool lives there) and filtered out of the registry without it, so
-/// slim builds never advertise `make_presentation` with no tool to fulfil it.
+/// slim builds never advertise a presentation specialist with no deck tool.
 #[cfg(feature = "documents")]
 #[test]
 fn presentation_agent_registered_when_documents_on() {
@@ -78,19 +78,12 @@ fn trigger_reactor_has_agentic_hint_and_narrow_tools() {
 }
 
 #[test]
-fn orchestrator_can_resume_paused_subagents_via_continue_subagent() {
-    // #4291: when a delegated sub-agent (e.g. task_manager_agent) pauses on
-    // ask_user_clarification, the orchestrator gets a
-    // [SUBAGENT_AWAITING_USER] envelope and must resume that exact
-    // checkpoint with `continue_subagent`. Without the tool in scope the
-    // only continuation is to re-delegate a fresh, stateless sub-agent
-    // that asks again — the infinite re-spawn loop. Lock the tool in.
+fn orchestrator_resumes_paused_subagents_through_spawn_task_key_reuse() {
     let def = find("orchestrator");
     match &def.tools {
         ToolScope::Named(tools) => assert!(
-            tools.iter().any(|t| t == "continue_subagent"),
-            "orchestrator must expose continue_subagent to resume paused \
-             sub-agents instead of re-spawning them (#4291)"
+            tools.iter().any(|t| t == "spawn_subagent"),
+            "orchestrator must expose the single spawn tool for task_key reuse"
         ),
         ToolScope::Wildcard => {
             panic!("orchestrator must have a Named tool scope")
@@ -152,14 +145,6 @@ fn coding_agent_prompts_reference_action_sandbox_not_stale_workspace() {
     assert!(
         coding.contains("action sandbox") || coding.contains("action_dir"),
         "guides/coding.md must reference the action sandbox or action_dir (see #3236)"
-    );
-
-    let planner = include_str!("planner/prompt.md");
-    assert!(
-        !planner.contains("the workspace has code"),
-        "planner/prompt.md still says 'the workspace has code …' — \
-         use 'the project tree' or similar to avoid colliding with \
-         `Config.workspace_dir` (internal product state). See #3236."
     );
 }
 
@@ -277,28 +262,11 @@ fn master_agent_has_coding_hint_and_named_tools() {
     assert_eq!(def.sandbox_mode, SandboxMode::Sandboxed);
     match def.tools {
         ToolScope::Named(tools) => {
-            // spawn_subagent was removed in #1141. spawn_worker_thread is
-            // disabled pending its UI (#1624) and unregistered, so the
-            // named scope must not advertise it.
+            // Specialist routing uses the single asynchronous spawn tool.
             assert!(
-                !tools.iter().any(|t| t == "spawn_worker_thread"),
-                "spawn_worker_thread is disabled (#1624) and must not be named"
+                tools.iter().any(|t| t == "spawn_subagent"),
+                "orchestrator must have the asynchronous sub-agent tool"
             );
-            // Sub-agent surface taught by prompt.md, deliberately three
-            // tools (#5701): spawn, enumerate, resume. A sub-agent is
-            // always async and its result is delivered back on an idle
-            // system turn, so there is nothing to collect and nothing to
-            // block on.
-            for required in [
-                "spawn_async_subagent",
-                "list_subagents",
-                "continue_subagent",
-            ] {
-                assert!(
-                    tools.iter().any(|t| t == required),
-                    "orchestrator must have sub-agent tool `{required}`"
-                );
-            }
             // The collection/fan-out/fleet surface these replaced. Each was
             // either a second way to say "spawn again" or a way to stall
             // the turn waiting for a result that arrives on its own.
@@ -311,16 +279,15 @@ fn master_agent_has_coding_hint_and_named_tools() {
                 "spawn_parallel_agents",
                 "steer_subagent",
                 "close_subagent",
+                "list_subagents",
+                "continue_subagent",
+                "spawn_async_subagent",
             ] {
                 assert!(
                     !tools.iter().any(|t| t == retired),
                     "retired sub-agent tool `{retired}` must not reappear (#5701)"
                 );
             }
-            assert!(
-                !tools.iter().any(|t| t == "spawn_subagent"),
-                "spawn_subagent must not appear — removed in #1141"
-            );
             // The Master Agent owns the ordinary coding loop directly.
             // Keep its mutation surface intentionally small: one patch
             // mechanism for existing files, file_write for new files,
@@ -430,95 +397,9 @@ fn broad_agent_surfaces_expose_storage_transfer_not_lifecycle_tools() {
 }
 
 #[test]
-fn critic_is_read_only() {
-    let def = find("critic");
-    assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
-    assert!(def.extensions.omit_safety_preamble);
-}
-
-/// Planner runs `composio_execute` so it can ground plans in real
-/// integration data, but it must stay strictly read-only — issue
-/// #685. `sandbox_mode = "read_only"` in `planner/agent.toml` is the
-/// runtime hook that activates the agent-level gate inside
-/// `ComposioExecuteTool::execute`; this test pins that contract so a
-/// future TOML edit that drops the sandbox mode can never silently
-/// turn the planner into a write-capable agent.
-#[test]
-fn planner_is_read_only_with_composio_meta_tools() {
-    let def = find("planner");
-    assert_eq!(
-        def.sandbox_mode,
-        SandboxMode::ReadOnly,
-        "planner.sandbox_mode must be read_only — gates Write/Admin composio actions",
-    );
-    match &def.tools {
-        ToolScope::Named(names) => {
-            for required in [
-                "composio_list_toolkits",
-                "composio_list_connections",
-                "composio_list_tools",
-                "composio_execute",
-            ] {
-                assert!(
-                    names.iter().any(|n| n == required),
-                    "planner tool list missing `{required}` — composio meta-tools must \
-                     all be present so the planner can inspect integrations under the \
-                     read-only sandbox gate",
-                );
-            }
-        }
-        other => panic!("planner must use Named tool scope, got {other:?}"),
-    }
-}
-
-/// The planner grounds plans in connected-MCP context the same way it
-/// grounds in Composio — but read-only. It must carry the MCP *discovery*
-/// tools (`status` / `installed_list` / `list_tools`, all
-/// `PermissionLevel::ReadOnly`) and must NOT carry `mcp_registry_tool_call`
-/// (no read-only gate exists for an arbitrary MCP tool call) nor the
-/// install/connect mutators. Execution stays with the orchestrator.
-#[test]
-fn planner_has_readonly_mcp_discovery_not_execute() {
-    let def = find("planner");
-    assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
-    match &def.tools {
-        ToolScope::Named(names) => {
-            for required in [
-                "mcp_registry_status",
-                "mcp_registry_installed_list",
-                "mcp_registry_list_tools",
-            ] {
-                assert!(
-                    names.iter().any(|n| n == required),
-                    "planner needs read-only MCP discovery tool `{required}`"
-                );
-            }
-            for forbidden in [
-                "mcp_registry_tool_call",
-                "mcp_registry_connect",
-                "mcp_registry_install",
-                "mcp_registry_uninstall",
-            ] {
-                assert!(
-                    !names.iter().any(|n| n == forbidden),
-                    "planner must NOT have `{forbidden}` — it is read-only; MCP execution \
-                     belongs to the orchestrator"
-                );
-            }
-        }
-        other => panic!("planner must use Named tool scope, got {other:?}"),
-    }
-}
-
-/// The specialists the inline skills replaced must not come back as
-/// orchestrator delegates, and the ones kept for workflow runs must not
-/// become chat delegates.
-#[test]
-fn the_orchestrator_lists_no_replaced_or_workflow_only_specialist() {
+fn the_orchestrator_lists_no_replaced_specialist() {
     let orchestrator = find("orchestrator");
     for id in [
-        "planner",
-        "critic",
         "code_executor",
         "settings_agent",
         "scheduler_agent",
@@ -552,15 +433,6 @@ fn orchestrator_omits_removed_prompt_tools() {
         assert!(
             !tools.iter().any(|tool| tool == removed),
             "`{removed}` must not appear in the orchestrator tool list"
-        );
-    }
-    for removed in ["critic", "planner"] {
-        assert!(
-            !orchestrator
-                .subagents
-                .iter()
-                .any(|entry| matches!(entry, SubagentEntry::AgentId(id) if id == removed)),
-            "`{removed}` adds a delegate tool to the orchestrator prompt"
         );
     }
 }

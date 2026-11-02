@@ -78,7 +78,7 @@ impl LayoutHost for FakeHost {
         &self.store
     }
 
-    fn engines(&self) -> Result<Engines> {
+    async fn engines(&self) -> Result<Engines> {
         Ok(Engines {
             legacy: self.legacy.clone(),
             tree: self.tree.clone(),
@@ -112,7 +112,7 @@ impl LayoutHost for FakeHost {
         self.free.load(Ordering::SeqCst) && left > 0
     }
 
-    fn legacy_claim(&self) -> Result<Option<Box<dyn LegacyClaim>>> {
+    async fn legacy_claim(&self) -> Result<Option<Box<dyn LegacyClaim>>> {
         Ok(self
             .claim
             .clone()

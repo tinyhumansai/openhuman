@@ -25,29 +25,32 @@ fn viewport_journal_is_bounded_and_identifies_non_tail_changes_and_resets() {
 
 const CLIENT: &str = "tui-abc123";
 
-fn ev(event: &str) -> WebChannelEvent {
-    WebChannelEvent {
-        event: event.to_string(),
-        client_id: CLIENT.to_string(),
-        thread_id: "thread-1".to_string(),
-        ..Default::default()
-    }
+fn ev(event: &str, fields: serde_json::Value) -> WebChannelEvent {
+    let mut value = serde_json::json!({
+        "event": event,
+        "client_id": CLIENT,
+        "thread_id": "thread-1",
+        "request_id": "request-1"
+    });
+    value
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    serde_json::from_value(value).expect("test event matches the owner contract")
 }
 
 fn text_delta(delta: &str) -> WebChannelEvent {
-    WebChannelEvent {
-        delta: Some(delta.to_string()),
-        delta_kind: Some("text".to_string()),
-        ..ev("text_delta")
-    }
+    ev(
+        "text_delta",
+        serde_json::json!({"delta":delta,"delta_kind":"text"}),
+    )
 }
 
 fn thinking_delta(delta: &str) -> WebChannelEvent {
-    WebChannelEvent {
-        delta: Some(delta.to_string()),
-        delta_kind: Some("thinking".to_string()),
-        ..ev("thinking_delta")
-    }
+    ev(
+        "thinking_delta",
+        serde_json::json!({"delta":delta,"delta_kind":"thinking"}),
+    )
 }
 
 #[test]
@@ -110,10 +113,10 @@ fn chat_done_replaces_streamed_text_with_full_response() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("hi");
     s.apply_event(&text_delta("Hel")); // partial / laggy stream
-    let done = WebChannelEvent {
-        full_response: Some("Hello, world!".to_string()),
-        ..ev("chat_done")
-    };
+    let done = ev(
+        "chat_done",
+        serde_json::json!({"full_response":"Hello, world!"}),
+    );
     s.apply_event(&done);
 
     let assistant: Vec<_> = s
@@ -133,10 +136,10 @@ fn chat_done_replaces_streamed_text_with_full_response() {
 fn chat_done_without_prior_deltas_still_shows_full_response() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("hi");
-    let done = WebChannelEvent {
-        full_response: Some("Direct answer".to_string()),
-        ..ev("chat_done")
-    };
+    let done = ev(
+        "chat_done",
+        serde_json::json!({"full_response":"Direct answer"}),
+    );
     s.apply_event(&done);
     let assistant = s
         .entries()
@@ -148,14 +151,31 @@ fn chat_done_without_prior_deltas_still_shows_full_response() {
 }
 
 #[test]
+fn channel_outbound_finishes_turn_with_its_final_response() {
+    let mut state = TranscriptState::new(CLIENT);
+    state.begin_user_turn("hi");
+    state.apply_event(&text_delta("partial"));
+    state.apply_event(&ev(
+        "channel_outbound",
+        serde_json::json!({"full_response":"final reply"}),
+    ));
+    let assistant = state
+        .entries()
+        .iter()
+        .find(|entry| entry.kind == EntryKind::Assistant)
+        .expect("channel_outbound carries the delivered assistant reply");
+    assert_eq!(assistant.text, "final reply");
+    assert!(!state.is_streaming());
+}
+
+#[test]
 fn chat_error_pushes_error_entry_and_ends_stream() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("hi");
-    let err = WebChannelEvent {
-        message: Some("rate limited".to_string()),
-        error_type: Some("rate_limit".to_string()),
-        ..ev("chat_error")
-    };
+    let err = ev(
+        "chat_error",
+        serde_json::json!({"message":"rate limited","error_type":"rate_limit"}),
+    );
     s.apply_event(&err);
     let error = s
         .entries()
@@ -170,12 +190,12 @@ fn chat_error_pushes_error_entry_and_ends_stream() {
 fn retryable_error_includes_retry_timing() {
     let mut state = TranscriptState::new(CLIENT);
     state.begin_user_turn("try");
-    state.apply_event(&WebChannelEvent {
-        message: Some("rate limited".into()),
-        error_retryable: Some(true),
-        error_retry_after_ms: Some(2_100),
-        ..ev("chat_error")
-    });
+    state.apply_event(&ev(
+        "chat_error",
+        serde_json::json!({
+            "message":"rate limited","error_retryable":true,"error_retry_after_ms":2100
+        }),
+    ));
     assert_eq!(
         state.entries().last().unwrap().text,
         "rate limited · retryable after 3s"
@@ -188,10 +208,10 @@ fn last_assistant_excludes_an_in_flight_partial_answer() {
     state.begin_user_turn("question");
     state.apply_event(&text_delta("partial"));
     assert_eq!(state.last_assistant(), None);
-    state.apply_event(&WebChannelEvent {
-        full_response: Some("complete".into()),
-        ..ev("chat_done")
-    });
+    state.apply_event(&ev(
+        "chat_done",
+        serde_json::json!({"full_response":"complete"}),
+    ));
     assert_eq!(state.last_assistant(), Some("complete"));
 }
 
@@ -200,14 +220,12 @@ fn events_for_other_client_id_are_ignored() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("hi");
     let before = s.entries().len();
-    let foreign = WebChannelEvent {
-        client_id: "tui-someone-else".to_string(),
-        delta: Some("not mine".to_string()),
-        ..WebChannelEvent {
-            event: "text_delta".to_string(),
-            thread_id: "thread-1".to_string(),
-            ..Default::default()
-        }
+    let foreign = {
+        let mut event =
+            serde_json::to_value(ev("text_delta", serde_json::json!({"delta":"not mine"})))
+                .unwrap();
+        event["client_id"] = "tui-someone-else".into();
+        serde_json::from_value(event).unwrap()
     };
     s.apply_event(&foreign);
     assert_eq!(
@@ -221,9 +239,10 @@ fn events_for_other_client_id_are_ignored() {
 fn events_for_an_inactive_thread_are_ignored() {
     let mut state = TranscriptState::new(CLIENT);
     state.set_thread("thread-1");
-    let event = WebChannelEvent {
-        thread_id: "thread-2".into(),
-        ..text_delta("not this conversation")
+    let event = {
+        let mut event = serde_json::to_value(text_delta("not this conversation")).unwrap();
+        event["thread_id"] = "thread-2".into();
+        serde_json::from_value(event).unwrap()
     };
     state.apply_event(&event);
     assert!(state.entries().is_empty());
@@ -243,21 +262,67 @@ fn projected_transcript_is_restored_in_chronological_order() {
 }
 
 #[test]
+fn projected_voice_note_keeps_its_transcript_and_duration_label() {
+    let mut state = TranscriptState::new(CLIENT);
+    state.load_transcript(&serde_json::json!({
+        "result": {"data": {"items": [
+            {
+                "kind": "userMessage",
+                "content": "Remind me about the dentist",
+                "extraMetadata": {"voiceNote": {"noteId": "recording-1", "durationMs": 12000}}
+            }
+        ]}}
+    }));
+    assert_eq!(
+        state.entries()[0].text,
+        "[voice note 0:12] Remind me about the dentist"
+    );
+}
+
+#[test]
+fn projected_spoken_replies_show_voice_note_and_known_duration_labels() {
+    let mut state = TranscriptState::new(CLIENT);
+    state.load_transcript(&serde_json::json!({
+        "result": {"data": {"items": [
+            {
+                "kind": "assistantMessage",
+                "content": "I can say that aloud.",
+                "extraMetadata": {"voiceNote": {"noteId": "reply-2", "mime": "audio/wav", "visemes": [{"viseme": "aa"}]}}
+            },
+            {
+                "kind": "assistantMessage",
+                "content": "I will remind you.",
+                "extraMetadata": {"voiceNote": {"noteId": "reply-1", "mime": "audio/wav", "durationMs": 8600}}
+            }
+        ]}}
+    }));
+    assert_eq!(
+        state.entries()[0].text,
+        "[voice note 0:09] I will remind you."
+    );
+    assert_eq!(
+        state.entries()[1].text,
+        "[voice note] I can say that aloud."
+    );
+}
+
+#[test]
 fn tool_result_updates_the_originating_activity() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("do it");
-    let call = WebChannelEvent {
-        tool_name: Some("web_search".to_string()),
-        args: Some(serde_json::json!({"query": "rust ratatui"})),
-        ..ev("tool_call")
-    };
+    let call = ev(
+        "tool_call",
+        serde_json::json!({
+            "tool_name":"web_search","args":{"query":"rust ratatui"}
+        }),
+    );
     s.apply_event(&call);
-    let result = WebChannelEvent {
-        tool_name: Some("web_search".to_string()),
-        success: Some(true),
-        output: Some("3 results".to_string()),
-        ..ev("tool_result")
-    };
+    let result = ev(
+        "tool_result",
+        serde_json::json!({
+            "tool_name":"web_search","success":true,"output":"3 results"
+        }),
+    );
     s.apply_event(&result);
 
     let tools: Vec<_> = s
@@ -276,12 +341,12 @@ fn tool_result_updates_the_originating_activity() {
 fn failed_tool_result_uses_cross_marker() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("do it");
-    let result = WebChannelEvent {
-        tool_name: Some("run_shell".to_string()),
-        success: Some(false),
-        output: Some("exit code 1".to_string()),
-        ..ev("tool_result")
-    };
+    let result = ev(
+        "tool_result",
+        serde_json::json!({
+            "tool_name":"run_shell","success":false,"output":"exit code 1"
+        }),
+    );
     s.apply_event(&result);
     let tool = s
         .entries()
@@ -296,10 +361,7 @@ fn second_turn_opens_fresh_assistant_entry() {
     let mut s = TranscriptState::new(CLIENT);
     s.begin_user_turn("first");
     s.apply_event(&text_delta("one"));
-    s.apply_event(&WebChannelEvent {
-        full_response: Some("one".to_string()),
-        ..ev("chat_done")
-    });
+    s.apply_event(&ev("chat_done", serde_json::json!({"full_response":"one"})));
     s.begin_user_turn("second");
     s.apply_event(&text_delta("two"));
 
@@ -326,21 +388,20 @@ fn concurrent_same_named_tools_match_results_by_call_identity() {
     let mut state = TranscriptState::new(CLIENT);
     state.set_thread("thread-1");
     for id in ["a", "b"] {
-        state.apply_event(&WebChannelEvent {
-            tool_call_id: Some(id.into()),
-            tool_name: Some("read".into()),
-            request_id: "turn".into(),
-            ..ev("tool_call")
-        });
+        state.apply_event(&ev(
+            "tool_call",
+            serde_json::json!({
+                "tool_call_id":id,"tool_name":"read","request_id":"turn"
+            }),
+        ));
     }
-    state.apply_event(&WebChannelEvent {
-        tool_call_id: Some("b".into()),
-        tool_name: Some("read".into()),
-        request_id: "turn".into(),
-        success: Some(false),
-        output: Some("failure".into()),
-        ..ev("tool_result")
-    });
+    state.apply_event(&ev(
+        "tool_result",
+        serde_json::json!({
+            "tool_call_id":"b","tool_name":"read","request_id":"turn",
+            "success":false,"output":"failure"
+        }),
+    ));
     assert_eq!(
         state.entries()[0].activity.as_ref().unwrap().status,
         Status::Running
@@ -349,12 +410,12 @@ fn concurrent_same_named_tools_match_results_by_call_identity() {
         state.entries()[1].activity.as_ref().unwrap().status,
         Status::Error
     );
-    state.apply_event(&WebChannelEvent {
-        tool_call_id: Some("b".into()),
-        request_id: "turn".into(),
-        success: Some(false),
-        ..ev("tool_result")
-    });
+    state.apply_event(&ev(
+        "tool_result",
+        serde_json::json!({
+            "tool_call_id":"b","request_id":"turn","success":false
+        }),
+    ));
     assert_eq!(state.entries().len(), 2);
 }
 
@@ -366,13 +427,12 @@ fn child_activity_accumulates_output_and_failed_status_in_one_record() {
         ("subagent_text_delta", Some("partial")),
         ("subagent_failed", None),
     ] {
-        state.apply_event(&WebChannelEvent {
-            skill_id: Some("task".into()),
-            request_id: "turn".into(),
-            delta: delta.map(str::to_string),
-            message: Some("Timed out".into()),
-            ..ev(event)
-        });
+        state.apply_event(&ev(
+            event,
+            serde_json::json!({
+                "skill_id":"task","request_id":"turn","delta":delta,"message":"Timed out"
+            }),
+        ));
     }
     assert_eq!(state.entries().len(), 1);
     let child = state.entries()[0].activity.as_ref().unwrap();
@@ -383,13 +443,36 @@ fn child_activity_accumulates_output_and_failed_status_in_one_record() {
 }
 
 #[test]
+fn child_thinking_delta_uses_nested_task_identity() {
+    let mut state = TranscriptState::new(CLIENT);
+    for (event, delta) in [
+        ("subagent_spawned", None),
+        ("subagent_text_delta", Some("partial")),
+        ("subagent_thinking_delta", Some("reasoning")),
+        ("subagent_failed", None),
+    ] {
+        state.apply_event(&ev(
+            event,
+            serde_json::json!({
+                "skill_id":null,"request_id":"turn","delta":delta,"message":"Timed out",
+                "subagent":{"task_id":"task"}
+            }),
+        ));
+    }
+    assert_eq!(state.entries().len(), 1);
+    let child = state.entries()[0].activity.as_ref().unwrap();
+    assert!(child.child);
+    assert_eq!(child.status, Status::Error);
+    assert_eq!(child.output, "partial");
+}
+
+#[test]
 fn sequence_duplicates_do_not_duplicate_streamed_text() {
     let mut state = TranscriptState::new(CLIENT);
-    let event = WebChannelEvent {
-        request_id: "turn".into(),
-        seq: Some(0),
-        ..text_delta("one")
-    };
+    let event = ev(
+        "text_delta",
+        serde_json::json!({"request_id":"turn","seq":0,"delta":"one","delta_kind":"text"}),
+    );
     state.apply_event(&event);
     state.apply_event(&event);
     assert_eq!(state.entries()[0].text, "one");

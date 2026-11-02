@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { toThreadMessageLike } from '../../providers/assistantUiMessages';
 import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   beginInferenceTurn,
@@ -222,7 +223,7 @@ describe('chatRuntimeSlice', () => {
   });
 
   /**
-   * A detached `spawn_async_subagent` child outlives the turn that spawned it.
+   * A detached `spawn_subagent` child outlives the turn that spawned it.
    * Settling it on the parent's `completed` snapshot made the Background tasks
    * panel report "none running" — and the row read "Cancelled" — while the
    * sub-agent was still making tool calls. Its own `subagent_completed` event
@@ -393,16 +394,24 @@ describe('chatRuntimeSlice', () => {
             status: 'awaiting_user',
             workerThreadId: 'worker-1',
             checkpoint: { resumeTool: 'continue_subagent' },
+            checkpointPath: null,
+            completedAt: null,
+            error: null,
             summary: 'Which repository should I inspect?',
             metadata: { mode: 'typed', dedicatedThread: true, displayName: 'Researcher' },
+            promptRef: null,
             telemetry: {
               runId: 'sub-run-1',
               inputTokens: 0,
               outputTokens: 0,
               cachedInputTokens: 0,
               costUsd: 0,
+              error: null,
               elapsedMs: 1200,
+              model: null,
               toolCount: 2,
+              provider: null,
+              updatedAt: null,
             },
             startedAt: '2026-06-04T12:00:00Z',
             updatedAt: '2026-06-04T12:00:04Z',
@@ -484,9 +493,18 @@ describe('chatRuntimeSlice', () => {
             parentThreadId: 'thread-detached',
             agentId: 'researcher',
             status,
+            checkpoint: {},
+            checkpointPath: null,
+            completedAt: null,
+            error: null,
             metadata: { mode: 'async' },
+            parentRunId: null,
+            promptRef: null,
             startedAt: '2026-09-22T00:00:00Z',
+            summary: null,
+            telemetry: null,
             updatedAt: '2026-09-22T00:05:00Z',
+            workerThreadId: null,
           },
         ],
       });
@@ -552,9 +570,18 @@ describe('chatRuntimeSlice', () => {
             parentThreadId: 'thread-runs',
             agentId: 'writer',
             status: 'completed',
+            checkpoint: {},
+            checkpointPath: null,
+            completedAt: null,
+            error: null,
             metadata: {},
+            parentRunId: null,
+            promptRef: null,
             startedAt: '2026-06-04T12:00:00Z',
+            summary: null,
+            telemetry: null,
             updatedAt: '2026-06-04T12:00:04Z',
+            workerThreadId: null,
           },
           {
             id: 'failed-run',
@@ -562,28 +589,56 @@ describe('chatRuntimeSlice', () => {
             parentThreadId: 'thread-runs',
             agentId: 'reviewer',
             status: 'failed',
+            checkpoint: {},
+            checkpointPath: null,
+            completedAt: null,
             error: 'Tool failed',
             metadata: {},
+            parentRunId: null,
+            promptRef: null,
             startedAt: '2026-06-04T12:00:05Z',
+            summary: null,
+            telemetry: null,
             updatedAt: '2026-06-04T12:00:07Z',
+            workerThreadId: null,
           },
           {
             id: 'pending-run',
             kind: 'team_member',
             parentThreadId: 'thread-runs',
+            agentId: null,
             status: 'pending',
+            checkpoint: {},
+            checkpointPath: null,
+            completedAt: null,
+            error: null,
             metadata: {},
+            parentRunId: null,
+            promptRef: null,
             startedAt: '2026-06-04T12:00:08Z',
+            summary: null,
+            telemetry: null,
             updatedAt: '2026-06-04T12:00:09Z',
+            workerThreadId: null,
           },
           {
             id: 'background-run',
             kind: 'background_agent',
             parentThreadId: 'thread-runs',
+            agentId: null,
             status: 'running',
+            checkpoint: {},
+            checkpointPath: null,
+            completedAt: null,
+            error: null,
             metadata: {},
+            parentRunId: null,
+            promptRef: null,
             startedAt: '2026-06-04T12:00:10Z',
+            summary: null,
+            telemetry: null,
             updatedAt: '2026-06-04T12:00:11Z',
+            workerThreadId: null,
           },
         ],
       })
@@ -1377,6 +1432,72 @@ describe('subagent event reducers (Phase 3)', () => {
       detail: 'go research', // carried from the collapsed spawn row's prompt
     });
     expect(rows[0].subagent).toMatchObject({ taskId: 'task-1', agentId: 'researcher' });
+  });
+
+  it('reattaches a resumed task to its newest parent spawn call', () => {
+    const rowId = 't1:subagent:task-1:researcher';
+    let state = reducer(
+      reducer(
+        undefined,
+        setToolTimelineForThread({
+          threadId: 't1',
+          entries: [
+            { id: 'spawn-original', name: 'spawn_subagent', round: 0, seq: 0, status: 'success' },
+            { id: 'spawn-resume', name: 'spawn_subagent', round: 0, seq: 1, status: 'running' },
+          ],
+        })
+      ),
+      subagentSpawned({
+        threadId: 't1',
+        requestId: 'request-1',
+        round: 0,
+        rowId,
+        taskId: 'task-1',
+        agentId: 'researcher',
+        spawnEventId: 'request-1:4',
+        parentCallId: 'spawn-original',
+      })
+    );
+    state = reducer(state, subagentAwaitingUser({ threadId: 't1', rowId, question: 'Continue?' }));
+
+    state = reducer(
+      state,
+      subagentSpawned({
+        threadId: 't1',
+        requestId: 'request-2',
+        round: 0,
+        rowId,
+        taskId: 'task-1',
+        agentId: 'researcher',
+        spawnEventId: 'request-2:2',
+        parentCallId: 'spawn-resume',
+      })
+    );
+
+    const activity = state.toolTimelineByThread.t1.find(entry => entry.id === rowId)!;
+    expect(activity).toMatchObject({ status: 'running' });
+    expect(activity.subagent).toMatchObject({ status: 'running', parentCallId: 'spawn-resume' });
+    expect(activity.subagent?.awaitingQuestion).toBeUndefined();
+    const rendered = toThreadMessageLike(
+      {
+        id: 'm1',
+        content: '',
+        extraMetadata: {},
+        sender: 'agent',
+        type: 'text',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      state.toolTimelineByThread.t1
+    );
+    expect(rendered.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool-call',
+          toolCallId: 'spawn-resume',
+          toolName: 'task',
+        }),
+      ])
+    );
   });
 
   it('subagentToolCallReceived appends and de-dupes on callId; result settles it', () => {

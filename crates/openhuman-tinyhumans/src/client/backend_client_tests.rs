@@ -1,5 +1,7 @@
 use super::*;
-use crate::client::classify::{backend_api_body_shape, BACKEND_API_BODY_SHAPE_MAX_BYTES};
+use crate::client::classify::{
+    backend_api_body_shape, BACKEND_API_BODY_SHAPE_MAX_BYTES, BACKEND_API_ERROR_BODY_MAX_BYTES,
+};
 use crate::client::{flatten_authed_error, HostedApiError};
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -15,7 +17,7 @@ const PRODUCT_IDENTITY_HEADER: &str = "x-sdk-name";
 
 #[tokio::test]
 async fn authed_json_rejects_api_key_for_foreign_or_plaintext_endpoint() {
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     for endpoint in ["https://example.com", "http://example.com"] {
         let client = BackendClient::new(endpoint).unwrap();
@@ -86,7 +88,7 @@ async fn authed_json_sends_an_api_key_as_x_api_key_and_no_bearer() {
     // Library mode: the TinyHumans API key rides the SDK REST routes as
     // `x-api-key`, never as `Authorization: Bearer` (that header is the
     // managed-inference shape, handled by `TinyHumansModel` through the host adapter).
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     let (base_url, captured) = spawn_header_capture_server().await;
     let client = BackendClient::new(&base_url).unwrap();
@@ -119,7 +121,7 @@ async fn authed_json_sends_an_api_key_as_x_api_key_and_no_bearer() {
 
 #[tokio::test]
 async fn authed_json_sends_a_session_credential_as_a_bearer_only() {
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     let (base_url, captured) = spawn_header_capture_server().await;
     let client = BackendClient::new(&base_url).unwrap();
@@ -229,7 +231,7 @@ async fn authed_json_surfaces_unauthorized_on_401() {
 /// session at all.
 #[tokio::test]
 async fn authed_json_surfaces_api_key_rejected_not_unauthorized_on_401() {
-    use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
+    use openhuman_embed::__host::credentials::backend_credential::BackendCredential;
 
     let app = Router::new().route(
         "/teams/me/usage",
@@ -361,3 +363,34 @@ fn backend_api_body_shape_bounds_long_safe_key_list() {
 
 #[path = "backend_channel_tests.rs"]
 mod channel_tests;
+
+#[tokio::test]
+async fn non_2xx_error_body_is_truncated_in_the_returned_error() {
+    let body = format!("{}SECRET_TAIL", "x".repeat(1024 * 1024));
+    let app = Router::new().route(
+        "/teams/me/usage",
+        get(move || {
+            let body = body.clone();
+            async move { (axum::http::StatusCode::UNPROCESSABLE_ENTITY, body) }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = BackendClient::new(&format!("http://{addr}")).unwrap();
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/teams/me/usage", None)
+        .await
+        .unwrap_err();
+    let message = flatten_authed_error(err);
+    assert!(message.contains("failed (422"), "{message}");
+    assert!(!message.contains("SECRET_TAIL"));
+    assert!(
+        message.len() < BACKEND_API_ERROR_BODY_MAX_BYTES + 256,
+        "{}",
+        message.len()
+    );
+}

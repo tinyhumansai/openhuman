@@ -573,9 +573,9 @@ fn private_or_local(host: &str) -> bool {
         // `is_non_global_v4` already covers 0.0.0.0/8; the explicit octet check
         // keeps that local-host range visibly blocked at this call site too.
         Ok(std::net::IpAddr::V4(ip)) => {
-            tinytools_std::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
+            tinyagents_harness::url_guard::is_non_global_v4(ip) || ip.octets()[0] == 0
         }
-        Ok(std::net::IpAddr::V6(ip)) => tinytools_std::url_guard::is_non_global_v6(ip),
+        Ok(std::net::IpAddr::V6(ip)) => tinyagents_harness::url_guard::is_non_global_v6(ip),
         Err(_) => false,
     }
 }

@@ -72,8 +72,8 @@ where
         .expect("big-stack test thread panicked")
 }
 
-#[test]
-fn humanize_composio_action_sentence_cases_slug() {
+#[tokio::test]
+async fn humanize_composio_action_sentence_cases_slug() {
     assert_eq!(
         humanize_composio_action("GMAIL_SEND_EMAIL"),
         "Gmail send email"
@@ -85,8 +85,8 @@ fn humanize_composio_action_sentence_cases_slug() {
     assert_eq!(humanize_composio_action(""), "");
 }
 
-#[test]
-fn display_label_is_human_and_detail_pulls_recipient() {
+#[tokio::test]
+async fn display_label_is_human_and_detail_pulls_recipient() {
     let tool = ComposioActionTool::new(
         fake_config(),
         "GMAIL_SEND_EMAIL".to_string(),
@@ -104,8 +104,8 @@ fn display_label_is_human_and_detail_pulls_recipient() {
     );
 }
 
-#[test]
-fn per_action_tool_requires_approval_for_external_writes_only() {
+#[tokio::test]
+async fn per_action_tool_requires_approval_for_external_writes_only() {
     let write = ComposioActionTool::new(
         fake_config(),
         "GMAIL_SEND_EMAIL".to_string(),
@@ -123,8 +123,8 @@ fn per_action_tool_requires_approval_for_external_writes_only() {
     assert!(!read.external_effect_with_args(&serde_json::Value::Null));
 }
 
-#[test]
-fn sandbox_read_only_blocks_per_action_write_call() {
+#[tokio::test]
+async fn sandbox_read_only_blocks_per_action_write_call() {
     run_with_big_stack(|| async {
         let t = ComposioActionTool::new(
             fake_config(),
@@ -153,8 +153,8 @@ fn sandbox_read_only_blocks_per_action_write_call() {
     });
 }
 
-#[test]
-fn sandbox_read_only_blocks_per_action_admin_call() {
+#[tokio::test]
+async fn sandbox_read_only_blocks_per_action_admin_call() {
     run_with_big_stack(|| async {
         let t = ComposioActionTool::new(
             fake_config(),
@@ -179,8 +179,8 @@ fn sandbox_read_only_blocks_per_action_admin_call() {
     });
 }
 
-#[test]
-fn sandbox_unset_leaves_per_action_execute_to_downstream() {
+#[tokio::test]
+async fn sandbox_unset_leaves_per_action_execute_to_downstream() {
     run_with_big_stack(|| async {
         use crate::config::TEST_ENV_LOCK;
         // Lock order module -> env, matching the ops tests (no inversion).
@@ -210,8 +210,8 @@ fn sandbox_unset_leaves_per_action_execute_to_downstream() {
     });
 }
 
-#[test]
-fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
+#[tokio::test]
+async fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
     run_with_big_stack(|| async {
         // The FIRST per-action execute this turn must return the action's FULL
         // live contract (so the model composes a well-formed query) instead of
@@ -288,7 +288,7 @@ fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 // honoured on the very next per-action execute.
 
 // These two tests assert the *factory routing decision* by mode. They
-// call `resolve_composio_route(&Config)` directly — the pure routing
+// call `resolve_composio_route(&Config).await` directly — the pure routing
 // function — instead of going through `tool.execute()`, which reloads
 // config via `load_config_with_timeout()` (reads `OPENHUMAN_WORKSPACE`)
 // and was therefore subject to a parallel-test env-var race: another
@@ -299,8 +299,8 @@ fn contract_gate_surfaces_full_contract_then_proceeds_on_retry() {
 // derived from the config's own paths, not the env var), so pointing
 // those at a fresh tempdir is fully isolated, deterministic, and needs
 // no env mutation / `TEST_ENV_LOCK` / async.
-#[test]
-fn factory_routes_through_backend_when_mode_is_backend() {
+#[tokio::test]
+async fn factory_routes_through_backend_when_mode_is_backend() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default(); // composio.mode defaults to "backend"
     config.config_path = tmp.path().join("config.toml");
@@ -308,7 +308,7 @@ fn factory_routes_through_backend_when_mode_is_backend() {
 
     // `ComposioRoute` isn't `Debug`, so match rather than
     // `expect_err` (which would need to format the unexpected `Ok`).
-    let msg = match crate::integrations::composio::client::resolve_composio_route(&config) {
+    let msg = match crate::integrations::composio::client::resolve_composio_route(&config).await {
         Ok(_) => panic!("backend mode with no session must error, but a client resolved"),
         Err(e) => e.to_string(),
     };
@@ -322,8 +322,8 @@ fn factory_routes_through_backend_when_mode_is_backend() {
     );
 }
 
-#[test]
-fn factory_routes_through_direct_when_mode_is_direct() {
+#[tokio::test]
+async fn factory_routes_through_direct_when_mode_is_direct() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -335,6 +335,7 @@ fn factory_routes_through_direct_when_mode_is_direct() {
     // never the backend branch. (Deterministic: pure factory call, no
     // env / reload / await; see the note on the backend test.)
     let kind = crate::integrations::composio::client::resolve_composio_route(&config)
+        .await
         .expect("direct mode with an api key must resolve");
     assert!(
         matches!(
@@ -345,8 +346,8 @@ fn factory_routes_through_direct_when_mode_is_direct() {
     );
 }
 
-#[test]
-fn mode_toggle_between_calls_is_observed() {
+#[tokio::test]
+async fn mode_toggle_between_calls_is_observed() {
     run_with_big_stack(|| async {
         // Building the tool once with one mode and toggling the config
         // mid-session must take effect on the next execute. We can't trivially
@@ -446,8 +447,8 @@ fn mode_toggle_between_calls_is_observed() {
 // above) so the FIRST call surfaces the contract and returns right after
 // resolving `live_config`, never reaching real dispatch.
 
-#[test]
-fn deferred_instance_returns_live_config_for_redaction() {
+#[tokio::test]
+async fn deferred_instance_returns_live_config_for_redaction() {
     run_with_big_stack(|| async {
         use crate::config::TEST_ENV_LOCK;
         use crate::integrations::composio::catalog::{seed_live_catalog_cache, ToolContract};
@@ -517,8 +518,8 @@ fn deferred_instance_returns_live_config_for_redaction() {
     });
 }
 
-#[test]
-fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
+#[tokio::test]
+async fn configured_instance_resolves_live_config_not_the_stale_snapshot() {
     run_with_big_stack(|| async {
         // `execute_unredacted` assigns its `live_config` local from exactly
         // this private helper (`self.live_config().await`) before ever touching

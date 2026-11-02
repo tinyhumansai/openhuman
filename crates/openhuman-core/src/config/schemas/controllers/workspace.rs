@@ -145,7 +145,8 @@ pub(crate) fn handle_get_data_paths(
 /// removes the active-user marker *before* the reset resolves paths — without
 /// the explicit id the core would fall back to the pre-login `users/local` dir
 /// and leave the real user's data behind. Absent/blank → marker-based
-/// resolution (the default used by the agent tool and diagnostics).
+/// resolution, refused unless it is one user's folder: the Tauri shell deletes
+/// the dir this returns.
 async fn resolve_data_paths(
     ctx: &DispatchCtx,
     params: Map<String, Value>,
@@ -161,8 +162,14 @@ async fn resolve_data_paths(
         user_id.is_some()
     );
     match user_id.as_deref() {
-        Some(id) => config_rpc::get_data_paths_for_user(id).await,
-        None => config_rpc::get_data_paths(ctx).await,
+        Some(id) => {
+            // The id picks the profile, but the loaded layout decides whether a
+            // per-user clear applies at all: a legacy root or a workspace
+            // outside `users/` is refused here too, not silently skipped.
+            config_rpc::get_data_paths_to_clear(ctx).await?;
+            config_rpc::get_data_paths_for_user(id).await
+        }
+        None => config_rpc::get_data_paths_to_clear(ctx).await,
     }
 }
 

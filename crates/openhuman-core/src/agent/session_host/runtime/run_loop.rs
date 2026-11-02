@@ -10,6 +10,7 @@ use crate::security::prompt_injection::{
 };
 use anyhow::Result;
 use tinyagents_harness::agent_error::AgentError;
+use tinyinference_llm::message::Message;
 
 impl OpenHumanSessionHost {
     // ─────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ impl OpenHumanSessionHost {
     pub async fn run_single_with_origin(
         &mut self,
         message: &str,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Result<String> {
         self.run_single_with_approval(message, origin, Default::default())
             .await
@@ -41,6 +42,29 @@ impl OpenHumanSessionHost {
     pub async fn run_single_with_approval(
         &mut self,
         message: &str,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
+        approval: crate::security::approval::ApprovalTurnContext,
+    ) -> Result<String> {
+        self.run_single_with_input(message, None, origin, approval)
+            .await
+    }
+
+    /// Run a turn with a trusted, already-resolved typed user message.
+    pub(crate) async fn run_single_with_approval_and_message(
+        &mut self,
+        message: &str,
+        input: Message,
+        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        approval: crate::security::approval::ApprovalTurnContext,
+    ) -> Result<String> {
+        self.run_single_with_input(message, Some(input), origin, approval)
+            .await
+    }
+
+    async fn run_single_with_input(
+        &mut self,
+        message: &str,
+        input: Option<Message>,
         origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
@@ -56,7 +80,8 @@ impl OpenHumanSessionHost {
                 user_id: Some(self.event_channel()),
                 session_id: Some(self.event_session_id()),
             },
-        );
+        )
+        .await;
         // A host-only session reading untrusted data has opted out; see
         // `set_untrusted_input`, which refuses any other session.
         if !self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow) {
@@ -102,10 +127,19 @@ impl OpenHumanSessionHost {
             channel: self.event_channel().to_string(),
         });
 
-        match self
-            .turn_with_approval(message, origin.as_ref(), approval)
-            .await
-        {
+        let turn = async {
+            match input {
+                Some(input) => {
+                    self.turn_with_approval_and_message(message, input, origin.as_ref(), approval)
+                        .await
+                }
+                None => {
+                    self.turn_with_approval(message, origin.as_ref(), approval)
+                        .await
+                }
+            }
+        };
+        match turn.await {
             Ok(response) => {
                 BUS.publish(DomainEvent::AgentTurnCompleted {
                     session_id: self.event_session_id().to_string(),

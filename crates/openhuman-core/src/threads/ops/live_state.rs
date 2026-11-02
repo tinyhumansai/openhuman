@@ -8,7 +8,7 @@
 //! notes in one call, with the run-state block they render to.
 
 use super::support::{envelope, workspace_dir};
-use crate::agent::goals::goal_to_value;
+use crate::agent::goals::{goal_store, goal_to_value};
 use crate::core::Outcome;
 use crate::threads::ApiEnvelope;
 
@@ -20,8 +20,8 @@ pub struct ThreadLiveStateRequest {
 
 /// Response for [`goal_get`]: the thread's current goal, or `None` when the
 /// thread has none. Mirrors the `goal` field on `ThreadGoalUpdated` /
-/// `thread_goal_updated` — a raw `Value` because `ThreadGoal` is owned by
-/// `tinyagents-graph`.
+/// `thread_goal_updated` — a raw `Value` to keep the RPC contract independent
+/// of the harness tool's internal goal type.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ThreadGoalGetResponse {
     pub goal: Option<serde_json::Value>,
@@ -54,10 +54,14 @@ pub async fn goal_get(
     if thread_id.is_empty() {
         return Err("thread_id is required".to_string());
     }
-    let goal = crate::agent::goals::runtime::load_for_thread(&dir, Some(thread_id))
-        .await
-        .as_ref()
-        .map(goal_to_value);
+    let context = crate::core::runtime::DispatchCtx::ambient();
+    let goal = match goal_store(&dir, &context).get(thread_id).await {
+        Ok(goal) => goal.as_ref().map(goal_to_value),
+        Err(error) => {
+            log::debug!("[threads] goal_get thread_id={thread_id} failed: {error}");
+            None
+        }
+    };
     Ok(envelope(ThreadGoalGetResponse { goal }, None, None))
 }
 

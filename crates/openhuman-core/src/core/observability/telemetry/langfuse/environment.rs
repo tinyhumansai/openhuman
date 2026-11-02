@@ -3,7 +3,7 @@
 //! resolved host belongs to, and whether that environment may push at all.
 
 use crate::config::Config;
-use crate::security::credentials::session_support::direct_backend_credential;
+use crate::credentials::backend_credential::direct_backend_credential;
 
 const LOG_TARGET: &str = "agent-tracing::langfuse";
 
@@ -33,10 +33,8 @@ pub(crate) fn otlp_url(config: &Config) -> String {
 /// sloppy match is load-bearing in both directions. A substring test on
 /// `staging` let `https://staging-attacker.invalid` through, and missed an
 /// IPv6 loopback backend (`http://[::1]:7788`). Local classification is
-/// delegated to [`crate::util::url::host_is_local`], which parses the URL and
-/// handles IPv4 loopback/unspecified/private, IPv6 loopback/unspecified and
-/// `localhost` / `*.localhost`; one local-host predicate keeps the gates in
-/// agreement. The hosted bucket is classified by the host that owns the
+/// delegated to TinySecurity's U5 provider endpoint classifier. The hosted
+/// bucket is classified by the host that owns the
 /// domain, anchored to its own deployment domain so the classifier fails
 /// *closed*.
 ///
@@ -48,7 +46,10 @@ pub(crate) fn environment_for_base(config: &Config, base: &str) -> &'static str 
     let Ok(parsed) = url::Url::parse(base) else {
         return "external";
     };
-    if crate::util::url::host_is_local(&parsed) {
+    if parsed
+        .host_str()
+        .is_some_and(crate::util::url::provider_host_is_local)
+    {
         return "development";
     }
     if parsed.scheme() != "https" {
@@ -119,13 +120,13 @@ pub(crate) fn skip_push(environment: &str) -> bool {
 /// and build observations first, so without a live session (unit tests, a
 /// signed-out or embedder host) or on a skipped environment that work is
 /// discarded anyway, and reading a whole child journal is not free.
-pub(crate) fn journal_push_ready(config: &Config) -> bool {
+pub(crate) async fn journal_push_ready(config: &Config) -> bool {
     let url = otlp_url(config);
     !skip_push(environment_for_base(config, &url))
         && url.starts_with("http")
         && matches!(
-            direct_backend_credential(config, "langfuse journal push"),
-            Some(crate::security::credentials::session_support::BackendCredential::Session(_))
+            direct_backend_credential(config, "langfuse journal push").await,
+            Some(crate::credentials::backend_credential::BackendCredential::Session(_))
         )
 }
 

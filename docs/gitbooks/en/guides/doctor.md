@@ -86,6 +86,12 @@ openhuman-core doctor --lint --severity-min warn --json
 | `--lint`        | Returns `0` when no finding meets the minimum severity, `1` when one or more do, or `2` if the report could not be produced. |
 | `--lint --json` | Prints the report as JSON and keeps lint's `0`, `1`, or `2` exit behavior.                                                   |
 
+If no report can be produced, the command exits `2` with a short reason, for
+example `doctor could not produce a report: the doctor host could not start
+(profile selection, config or core boot)`. With `--json` it prints
+`{"ok": false, "reason": "…"}` instead. `openhuman-core doctor --help` lists
+every option.
+
 `--severity-min` accepts `info`, `warn`, or `error` and defaults to `error`.
 Pass and skipped findings never meet the threshold. For example, to fail CI on
 warnings as well as errors:

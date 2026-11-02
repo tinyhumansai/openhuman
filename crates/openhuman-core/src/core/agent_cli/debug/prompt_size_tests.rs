@@ -75,8 +75,8 @@ fn tools_are_ranked_by_cost_not_registration_order() {
 /// agent's visible set — not the whole registry. d149ab0f0 switched the
 /// session dump to `all_tool_refs()`, and every agent then reported the same
 /// ~200 tools, so every `tool_bytes` budget described a belt no agent carries.
-#[test]
-fn session_report_measures_the_visible_belt_not_the_registry() {
+#[tokio::test]
+async fn session_report_measures_the_visible_belt_not_the_registry() {
     crate::agent_registry::host_definition::AgentDefinitionRegistry::init_global_builtins()
         .unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -84,17 +84,32 @@ fn session_report_measures_the_visible_belt_not_the_registry() {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
+        // The session model is the in-process fixture, so building it needs no
+        // backend session; a standing API key satisfies the session gate.
+        default_model: Some("test/session-fixture".to_string()),
         ..crate::config::Config::default()
     };
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    let agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(
+    crate::agent::session_host::test_support::install_model_fixture();
+    crate::security::credentials::api_key::store_api_key(&config, "test-prompt-size-key")
+        .expect("test api key");
+    let mut definition =
+        crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
+            .get("orchestrator")
+            .expect("built-in orchestrator")
+            .clone();
+    definition.id = "prompt_size_probe".to_string();
+    definition.tools = tinyagents_definition::ToolScope::Named(vec!["file_read".to_string()]);
+    let agent = crate::agent::OpenHumanSessionHost::from_config_with_definition(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
-        "critic",
+        &definition,
     )
-    .expect("critic session build");
+    .await
+    .expect("test-owned prompt-size session build");
 
-    let dumped = crate::core::agent_cli::debug::session_dump(&agent, "critic", String::new());
+    let dumped =
+        crate::core::agent_cli::debug::session_dump(&agent, "prompt_size_probe", String::new());
     let report = PromptSizeReport::from_dump(&dumped);
 
     let mut visible: Vec<String> = agent
@@ -111,7 +126,7 @@ fn session_report_measures_the_visible_belt_not_the_registry() {
     );
     assert!(
         report.tool_count < dumped.tool_names.len(),
-        "critic's belt ({}) must be narrower than its registry ({}), or this test \
+        "the test-owned named belt ({}) must be narrower than its registry ({}), or this test \
          cannot tell the two apart",
         report.tool_count,
         dumped.tool_names.len()

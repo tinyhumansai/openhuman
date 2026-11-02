@@ -18,8 +18,8 @@ impl std::io::Write for CapturedScopeLogs {
     }
 }
 
-#[test]
-fn dormant_scope_epochs_do_not_accumulate_with_profile_churn() {
+#[tokio::test]
+async fn dormant_scope_epochs_do_not_accumulate_with_profile_churn() {
     let _guard = composio_cache_test_lock();
     for index in 0..128 {
         drop(cache_generation(&format!(
@@ -38,8 +38,8 @@ fn dormant_scope_epochs_do_not_accumulate_with_profile_churn() {
     );
 }
 
-#[test]
-fn epoch_reclamation_preserves_the_lease_fencing_an_in_flight_fetch() {
+#[tokio::test]
+async fn epoch_reclamation_preserves_the_lease_fencing_an_in_flight_fetch() {
     let _guard = composio_cache_test_lock();
     let original = cache_generation("review-live/snapshot");
     original.fetch_add(1, Ordering::SeqCst);
@@ -75,9 +75,9 @@ fn profile(config: &Config, id: &str) -> Arc<CoreContext> {
     )
 }
 /// Install a known snapshot under the supplied context's production cache key.
-fn seed(config: &Config, ctx: Arc<CoreContext>, toolkit: &str) -> String {
-    CoreContext::sync_scope(ctx, || {
-        let key = cache_key(config);
+async fn seed(config: &Config, ctx: Arc<CoreContext>, toolkit: &str) -> String {
+    CoreContext::scope(ctx, async {
+        let key = cache_key(config).await;
         INTEGRATIONS_CACHE.write().unwrap().insert(
             key.clone(),
             CachedIntegrations {
@@ -95,100 +95,106 @@ fn seed(config: &Config, ctx: Arc<CoreContext>, toolkit: &str) -> String {
         );
         key
     })
+    .await
 }
 
 /// Matching credentials must not let one profile read another's snapshot.
-#[test]
-fn profiles_with_identical_credentials_cannot_read_each_others_integrations() {
+#[tokio::test]
+async fn profiles_with_identical_credentials_cannot_read_each_others_integrations() {
     let _guard = composio_cache_test_lock();
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path());
     let alice = profile(&config, "isolation-alice");
     let bob = profile(&config, "isolation-bob");
-    let key = seed(&config, alice.clone(), "gmail");
-    CoreContext::sync_scope(bob.clone(), || {
+    let key = seed(&config, alice.clone(), "gmail").await;
+    CoreContext::scope(bob.clone(), async {
         assert!(
-            cached_active_integrations(&config).is_none(),
+            cached_active_integrations(&config).await.is_none(),
             "identical service credentials must not grant another profile's cached connections"
         );
-    });
-    let bob_key = seed(&config, bob, "slack");
+    })
+    .await;
+    let bob_key = seed(&config, bob, "slack").await;
     assert_ne!(
         key, bob_key,
         "profile identity must participate in the cache key"
     );
-    CoreContext::sync_scope(alice, || {
+    CoreContext::scope(alice, async {
         assert_eq!(
-            cached_active_integrations(&config).unwrap()[0].toolkit,
+            cached_active_integrations(&config).await.unwrap()[0].toolkit,
             "gmail"
         );
-    });
+    })
+    .await;
     let mut guard = INTEGRATIONS_CACHE.write().unwrap();
     guard.remove(&key);
     guard.remove(&bob_key);
 }
 
 /// Reconcile only the caller's entries against its connection response.
-#[test]
-fn reconciliation_for_one_profile_preserves_another_profiles_connections() {
+#[tokio::test]
+async fn reconciliation_for_one_profile_preserves_another_profiles_connections() {
     let _guard = composio_cache_test_lock();
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path());
     let alice = profile(&config, "reconciliation-alice");
     let bob = profile(&config, "reconciliation-bob");
-    let alice_key = seed(&config, alice.clone(), "gmail");
-    let bob_key = seed(&config, bob.clone(), "slack");
+    let alice_key = seed(&config, alice.clone(), "gmail").await;
+    let bob_key = seed(&config, bob.clone(), "slack").await;
     assert!(CoreContext::sync_scope(
         bob,
         || sync_cache_with_connections(&[])
     ));
-    CoreContext::sync_scope(alice, || {
+    CoreContext::scope(alice, async {
         assert_eq!(
             cached_active_integrations(&config)
+                .await
                 .expect("another profile's connection list must preserve this snapshot")[0]
                 .toolkit,
             "gmail"
         );
-    });
+    })
+    .await;
     let mut guard = INTEGRATIONS_CACHE.write().unwrap();
     assert!(!guard.contains_key(&bob_key));
     guard.remove(&alice_key);
 }
 /// Invalidation must leave another profile's cached snapshot readable.
-#[test]
-fn profile_invalidation_preserves_another_profiles_snapshot() {
+#[tokio::test]
+async fn profile_invalidation_preserves_another_profiles_snapshot() {
     let _guard = composio_cache_test_lock();
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path());
     let alice = profile(&config, "invalidation-alice");
     let bob = profile(&config, "invalidation-bob");
-    let alice_key = seed(&config, alice.clone(), "gmail");
-    let bob_key = seed(&config, bob.clone(), "slack");
+    let alice_key = seed(&config, alice.clone(), "gmail").await;
+    let bob_key = seed(&config, bob.clone(), "slack").await;
     CoreContext::sync_scope(bob, invalidate_connected_integrations_cache);
     assert!(
         INTEGRATIONS_CACHE.read().unwrap().contains_key(&alice_key),
         "Bob's invalidation must preserve Alice's snapshot"
     );
     assert!(!INTEGRATIONS_CACHE.read().unwrap().contains_key(&bob_key));
-    CoreContext::sync_scope(alice, || {
+    CoreContext::scope(alice, async {
         assert_eq!(
-            cached_active_integrations(&config).unwrap()[0].toolkit,
+            cached_active_integrations(&config).await.unwrap()[0].toolkit,
             "gmail"
         )
-    });
+    })
+    .await;
     INTEGRATIONS_CACHE.write().unwrap().remove(&alice_key);
 }
 
 /// Fence the caller's pending warm while admitting another profile's result.
-#[test]
-fn profile_invalidation_does_not_cancel_another_profiles_in_flight_warm() {
+#[tokio::test]
+async fn profile_invalidation_does_not_cancel_another_profiles_in_flight_warm() {
     let _guard = composio_cache_test_lock();
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path());
     let alice = profile(&config, "warm-alice");
     let bob = profile(&config, "warm-bob");
-    let alice_key = CoreContext::sync_scope(alice, || cache_key(&config));
-    let bob_key = CoreContext::sync_scope(bob.clone(), || cache_key(&config));
+    let alice_key = CoreContext::scope(alice, cache_key(&config)).await;
+    let bob_key = CoreContext::scope(bob.clone(), cache_key(&config)).await;
     let alice_epoch = cache_generation(&alice_key);
     let bob_epoch = cache_generation(&bob_key);
     let alice_generation = alice_epoch.load(Ordering::SeqCst);
@@ -218,8 +224,8 @@ fn profile_invalidation_does_not_cancel_another_profiles_in_flight_warm() {
 }
 
 /// Missing SaaS authority must refuse cache reads, fetches and mutations.
-#[test]
-fn no_saas_profile_cannot_invalidate_or_reconcile_any_snapshot() {
+#[tokio::test]
+async fn no_saas_profile_cannot_invalidate_or_reconcile_any_snapshot() {
     const CHILD: &str = "OPENHUMAN_TEST_UNSCOPED_CACHE_MUTATION_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
@@ -250,7 +256,7 @@ fn no_saas_profile_cannot_invalidate_or_reconcile_any_snapshot() {
             .base_urls("http://127.0.0.1:1/v2", "http://127.0.0.1:1/v3"),
     );
     let alice = profile(&config, "unscoped-mutation-alice");
-    let key = seed(&config, alice, "gmail");
+    let key = seed(&config, alice, "gmail").await;
     let epoch = cache_generation(&key);
     let generation = epoch.load(Ordering::SeqCst);
     invalidate_connected_integrations_cache();
@@ -269,7 +275,7 @@ fn no_saas_profile_cannot_invalidate_or_reconcile_any_snapshot() {
         "absent profile must not fence another tenant's warm"
     );
 
-    assert!(cached_active_integrations(&config).is_none());
+    assert!(cached_active_integrations(&config).await.is_none());
     let mut disabled = config.clone();
     disabled.composio.mode = crate::config::schema::COMPOSIO_MODE_DISABLED.into();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -291,12 +297,13 @@ fn no_saas_profile_cannot_invalidate_or_reconcile_any_snapshot() {
         super::super::fetch::FetchConnectedIntegrationsStatus::Unavailable
     ));
     let unprofiled = CoreContext::for_test_with_config(DomainSet::kernel(), config.clone());
-    CoreContext::sync_scope(unprofiled, || {
-        assert!(checked_cache_key(&config).is_none());
-        assert!(cached_active_integrations(&config).is_none());
+    CoreContext::scope(unprofiled, async {
+        assert!(checked_cache_key(&config).await.is_none());
+        assert!(cached_active_integrations(&config).await.is_none());
         invalidate_connected_integrations_cache();
         assert!(!sync_cache_with_connections(&[]));
-    });
+    })
+    .await;
     assert!(INTEGRATIONS_CACHE.read().unwrap().contains_key(&key));
     assert_eq!(epoch.load(Ordering::SeqCst), generation);
     let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
@@ -309,8 +316,8 @@ fn no_saas_profile_cannot_invalidate_or_reconcile_any_snapshot() {
 }
 
 /// Desktop agents share their operator catalog and its invalidation epoch.
-#[test]
-fn desktop_agents_share_catalog_and_default_context_invalidates_their_warms() {
+#[tokio::test]
+async fn desktop_agents_share_catalog_and_default_context_invalidates_their_warms() {
     let _guard = composio_cache_test_lock();
     let dir = tempfile::tempdir().unwrap();
     let config = config(dir.path());
@@ -323,22 +330,23 @@ fn desktop_agents_share_catalog_and_default_context_invalidates_their_warms() {
     };
     let first = agent("desktop-first");
     let second = agent("desktop-second");
-    let key = seed(&config, first, "gmail");
+    let key = seed(&config, first, "gmail").await;
     let other_profile = profile(&config, "desktop-other-profile");
-    let other_key = seed(&config, other_profile, "slack");
+    let other_key = seed(&config, other_profile, "slack").await;
     let epoch = cache_generation(&key);
     let generation = epoch.load(Ordering::SeqCst);
-    CoreContext::sync_scope(second, || {
+    CoreContext::scope(second, async {
         assert_eq!(
-            cache_key(&config),
+            cache_key(&config).await,
             key,
             "the connected-account catalog belongs to the operator, shared by their agents"
         );
         assert_eq!(
-            cached_active_integrations(&config).unwrap()[0].toolkit,
+            cached_active_integrations(&config).await.unwrap()[0].toolkit,
             "gmail"
         );
-    });
+    })
+    .await;
     CoreContext::sync_scope(root, invalidate_connected_integrations_cache);
     assert!(
         !INTEGRATIONS_CACHE.read().unwrap().contains_key(&key),

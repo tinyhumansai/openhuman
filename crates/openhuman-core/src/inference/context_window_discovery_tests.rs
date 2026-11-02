@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+use crate::credentials::AuthService;
 use crate::inference::provider::factory::{BYOK_INCOMPLETE_SENTINEL, CLAUDE_AGENT_SDK_PROVIDER};
-use crate::security::credentials::AuthService;
 use tempfile::TempDir;
 
 fn entry(slug: &str, endpoint: &str, auth_style: AuthStyle) -> CloudProviderCreds {
@@ -23,7 +23,7 @@ fn config(tmp: &TempDir, providers: Vec<CloudProviderCreds>) -> Config {
     config
 }
 
-fn store_key(config: &Config, slug: &str, token: &str) {
+async fn store_key(config: &Config, slug: &str, token: &str) {
     AuthService::from_config(config)
         .store_provider_token(
             &format!("provider:{slug}"),
@@ -32,6 +32,7 @@ fn store_key(config: &Config, slug: &str, token: &str) {
             Default::default(),
             true,
         )
+        .await
         .expect("store provider token");
 }
 
@@ -43,8 +44,8 @@ fn header<'a>(request: &'a DiscoveryRequest, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
-#[test]
-fn openrouter_slug_targets_its_models_listing_with_bearer() {
+#[tokio::test]
+async fn openrouter_slug_targets_its_models_listing_with_bearer() {
     let tmp = TempDir::new().unwrap();
     let config = config(
         &tmp,
@@ -54,7 +55,7 @@ fn openrouter_slug_targets_its_models_listing_with_bearer() {
             AuthStyle::Bearer,
         )],
     );
-    store_key(&config, "openrouter", "sk-or-test");
+    store_key(&config, "openrouter", "sk-or-test").await;
 
     let request = model_limits_request(
         "chat",
@@ -62,6 +63,7 @@ fn openrouter_slug_targets_its_models_listing_with_bearer() {
         "deepseek/deepseek-v4.1-flash",
         &config,
     )
+    .await
     .expect("cloud slug is discoverable");
     assert_eq!(request.endpoint, "https://openrouter.ai/api/v1");
     assert_eq!(request.model, "deepseek/deepseek-v4.1-flash");
@@ -75,8 +77,8 @@ fn openrouter_slug_targets_its_models_listing_with_bearer() {
     assert!(request.pinned_providers.is_empty());
 }
 
-#[test]
-fn temperature_suffix_is_not_part_of_the_model() {
+#[tokio::test]
+async fn temperature_suffix_is_not_part_of_the_model() {
     let tmp = TempDir::new().unwrap();
     let config = config(
         &tmp,
@@ -87,13 +89,14 @@ fn temperature_suffix_is_not_part_of_the_model() {
         )],
     );
     let request = model_limits_request("chat", "proxy:deepseek/x@0.2", "deepseek/x", &config)
+        .await
         .expect("discoverable");
     assert_eq!(request.endpoint, "http://127.0.0.1:9911/v1");
     assert_eq!(request.model, "deepseek/x");
 }
 
-#[test]
-fn anthropic_slug_uses_x_api_key() {
+#[tokio::test]
+async fn anthropic_slug_uses_x_api_key() {
     let tmp = TempDir::new().unwrap();
     let config = config(
         &tmp,
@@ -103,20 +106,21 @@ fn anthropic_slug_uses_x_api_key() {
             AuthStyle::Anthropic,
         )],
     );
-    store_key(&config, "anthropic", "sk-ant-test");
+    store_key(&config, "anthropic", "sk-ant-test").await;
     let request = model_limits_request(
         "chat",
         "anthropic:claude-sonnet-4-6",
         "claude-sonnet-4-6",
         &config,
     )
+    .await
     .expect("discoverable");
     assert_eq!(header(&request, "x-api-key"), Some("sk-ant-test"));
     assert_eq!(header(&request, "Authorization"), None);
 }
 
-#[test]
-fn local_and_subprocess_routes_are_not_discovered() {
+#[tokio::test]
+async fn local_and_subprocess_routes_are_not_discovered() {
     let tmp = TempDir::new().unwrap();
     let config = config(&tmp, Vec::new());
     for provider in [
@@ -125,15 +129,19 @@ fn local_and_subprocess_routes_are_not_discovered() {
         CLAUDE_AGENT_SDK_PROVIDER,
     ] {
         assert!(
-            model_limits_request("chat", provider, "m", &config).is_none(),
+            model_limits_request("chat", provider, "m", &config)
+                .await
+                .is_none(),
             "{provider}"
         );
     }
 }
 
-#[test]
-fn unknown_slug_is_not_discovered() {
+#[tokio::test]
+async fn unknown_slug_is_not_discovered() {
     let tmp = TempDir::new().unwrap();
     let config = config(&tmp, Vec::new());
-    assert!(model_limits_request("chat", "nope:model", "model", &config).is_none());
+    assert!(model_limits_request("chat", "nope:model", "model", &config)
+        .await
+        .is_none());
 }

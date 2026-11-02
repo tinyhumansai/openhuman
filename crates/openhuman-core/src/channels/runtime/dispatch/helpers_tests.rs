@@ -3,54 +3,38 @@ use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
 
-struct DeferredTyping {
-    started: Notify,
-    release: Notify,
-    stopped: std::sync::Mutex<Option<oneshot::Sender<String>>>,
-}
-#[async_trait::async_trait]
-impl crate::channels::Channel for DeferredTyping {
-    fn name(&self) -> &str {
-        "fixture"
-    }
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v22 still requires the legacy send trait method"
-    )]
-    async fn send(&self, _: &tinychannels_bus::SendMessage) -> anyhow::Result<()> {
-        Ok(())
-    }
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v22 still requires the legacy listener trait method"
-    )]
-    async fn listen(
-        &self,
-        _: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn begin_typing_refresh(&self, _: &str, _: u64) -> anyhow::Result<Option<String>> {
-        self.started.notify_one();
-        self.release.notified().await;
-        Ok(Some("module-handle".into()))
-    }
-    async fn end_typing_refresh(&self, handle: &str) -> anyhow::Result<()> {
-        if let Some(sender) = self.stopped.lock().unwrap().take() {
-            let _ = sender.send(handle.into());
-        }
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn canceled_waiter_closes_handle_returned_by_in_flight_typing_start() {
     let (sender, receiver) = oneshot::channel();
-    let channel = Arc::new(DeferredTyping {
-        started: Notify::new(),
-        release: Notify::new(),
-        stopped: std::sync::Mutex::new(Some(sender)),
-    });
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let stopped = Arc::new(std::sync::Mutex::new(Some(sender)));
+    let mut test_channel = crate::channels::runtime::TestChannel::new("fixture");
+    test_channel.begin_typing_refresh = Some(Arc::new({
+        let started = Arc::clone(&started);
+        let release = Arc::clone(&release);
+        move |_, _| {
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            Box::pin(async move {
+                started.notify_one();
+                release.notified().await;
+                Ok(Some("module-handle".into()))
+            })
+        }
+    }));
+    test_channel.end_typing_refresh = Some(Arc::new(move |handle| {
+        let stopped = Arc::clone(&stopped);
+        Box::pin(async move {
+            if let Some(sender) = stopped.lock().unwrap().take() {
+                let _ = sender.send(handle);
+            }
+            Ok(())
+        })
+    }));
+    let channel = Arc::new(crate::channels::runtime::ChannelHandle::Test(Arc::new(
+        test_channel,
+    )));
     let cancellation = tokio_util::sync::CancellationToken::new();
     let waiter = spawn_typing_task(
         &DispatchCtx::unbound(),
@@ -58,10 +42,10 @@ async fn canceled_waiter_closes_handle_returned_by_in_flight_typing_start() {
         "recipient".into(),
         cancellation.clone(),
     );
-    channel.started.notified().await;
+    started.notified().await;
     waiter.abort();
     cancellation.cancel();
-    channel.release.notify_one();
+    release.notify_one();
     assert_eq!(
         tokio::time::timeout(std::time::Duration::from_secs(2), receiver)
             .await
@@ -69,39 +53,6 @@ async fn canceled_waiter_closes_handle_returned_by_in_flight_typing_start() {
             .unwrap(),
         "module-handle"
     );
-}
-
-struct ProbeTyping(std::sync::Mutex<Option<oneshot::Sender<Option<String>>>>);
-#[async_trait::async_trait]
-impl crate::channels::Channel for ProbeTyping {
-    fn name(&self) -> &str {
-        "probe"
-    }
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v22 still requires the legacy send trait method"
-    )]
-    async fn send(&self, _: &tinychannels_bus::SendMessage) -> anyhow::Result<()> {
-        Ok(())
-    }
-    #[allow(
-        deprecated,
-        reason = "TinyChannels v22 still requires the legacy listener trait method"
-    )]
-    async fn listen(
-        &self,
-        _: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn begin_typing_refresh(&self, _: &str, _: u64) -> anyhow::Result<Option<String>> {
-        let agent = crate::core::runtime::CoreContext::current()
-            .and_then(|core| core.session_agent().map(str::to_owned));
-        if let Some(sender) = self.0.lock().unwrap().take() {
-            let _ = sender.send(agent);
-        }
-        Ok(None)
-    }
 }
 
 #[tokio::test]
@@ -120,21 +71,32 @@ async fn typing_task_runs_under_the_handed_context_not_the_active_one() {
     let asha = DispatchCtx::new(agent_ctx("u-asha"));
     let ravi = agent_ctx("u-ravi");
     let (sender, receiver) = oneshot::channel();
-    let channel = Arc::new(ProbeTyping(std::sync::Mutex::new(Some(sender))));
+    let sender = Arc::new(std::sync::Mutex::new(Some(sender)));
+    let mut test_channel = crate::channels::runtime::TestChannel::new("probe");
+    test_channel.begin_typing_refresh = Some(Arc::new(move |_, _| {
+        let sender = Arc::clone(&sender);
+        Box::pin(async move {
+            let agent = crate::core::runtime::CoreContext::current()
+                .and_then(|core| core.session_agent().map(str::to_owned));
+            if let Some(sender) = sender.lock().unwrap().take() {
+                let _ = sender.send(agent);
+            }
+            Ok(None)
+        })
+    }));
+    let channel = Arc::new(crate::channels::runtime::ChannelHandle::Test(Arc::new(
+        test_channel,
+    )));
     let cancellation = tokio_util::sync::CancellationToken::new();
     // The caller's own scope is Ravi's; the typing task was handed Asha's.
-    // The scope intentionally yields the typing task handle; it is awaited below.
-    #[allow(clippy::async_yields_async)]
-    let waiter = CoreContext::scope(ravi, async {
-        Some(spawn_typing_task(
-            &asha,
-            channel,
-            "recipient".into(),
-            cancellation.clone(),
-        ))
+    let (waiter_tx, waiter_rx) = oneshot::channel();
+    CoreContext::scope(ravi, async {
+        tokio::task::yield_now().await;
+        let waiter = spawn_typing_task(&asha, channel, "recipient".into(), cancellation.clone());
+        let _ = waiter_tx.send(waiter);
     })
-    .await
-    .expect("typing task was started");
+    .await;
+    let waiter = waiter_rx.await.unwrap();
     let seen = tokio::time::timeout(std::time::Duration::from_secs(2), receiver)
         .await
         .unwrap()

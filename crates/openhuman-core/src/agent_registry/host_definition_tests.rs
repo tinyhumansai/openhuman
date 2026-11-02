@@ -187,7 +187,7 @@ fn registry_load_merges_builtins_and_custom() {
         "expected at least one built-in plus the custom definition"
     );
     assert!(reg.get("notion_specialist").is_some());
-    assert!(reg.get("critic").is_some());
+    assert!(reg.get("summarizer").is_some());
 }
 
 #[test]
@@ -216,11 +216,11 @@ fn custom_definition_overrides_same_id_builtin() {
     let ws = fresh_workspace();
     let agents_dir = ws.path().join("agents");
     fs::create_dir_all(&agents_dir).unwrap();
-    // Override the built-in `critic` with a custom one.
+    // Override the built-in `summarizer` with a custom one.
     write_toml(
-        &agents_dir.join("critic.toml"),
+        &agents_dir.join("summarizer.toml"),
         r#"
-id = "critic"
+id = "summarizer"
 when_to_use = "CUSTOM OVERRIDE"
 
 [system_prompt]
@@ -236,10 +236,10 @@ inline = "custom prompt"
     let expected_count = baseline.len();
 
     let reg = AgentDefinitionRegistry::load(ws.path()).unwrap();
-    // Same id replaced the built-in `critic` in place, so the
+    // Same id replaced the built-in `summarizer` in place, so the
     // registry size doesn't grow when the custom TOML collides.
     assert_eq!(reg.len(), expected_count);
-    let def = reg.get("critic").unwrap();
+    let def = reg.get("summarizer").unwrap();
     assert_eq!(def.when_to_use, "CUSTOM OVERRIDE");
     assert!(matches!(def.source, DefinitionSource::File(_)));
 }
@@ -265,7 +265,6 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
     let expected: &[(&str, usize)] = &[
         // Extended policy (or high `max_iterations`) -> effective cap raised.
         ("orchestrator", 200),
-        ("planner", 50),
         ("task_manager_agent", 50),
         // Gated with `flows` (#4797) — absent from a slim build.
         #[cfg(feature = "flows")]
@@ -274,7 +273,6 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("workflow_builder", 50),
         // Strict policy, declared `max_iterations` below the old global
         // default (10) -> effective cap lowered.
-        ("critic", 5),
         ("image_agent", 8),
         ("morning_briefing", 8),
         ("summarizer", 1),

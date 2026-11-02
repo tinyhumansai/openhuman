@@ -41,8 +41,8 @@ pub use resolved_endpoints::ResolvedEndpoints;
 mod agent;
 mod autonomy;
 mod capability_providers;
-mod channels;
 mod cli_overrides;
+mod security;
 #[doc(hidden)]
 pub use cli_overrides::AppliedInferenceOverride;
 mod computer;
@@ -52,6 +52,7 @@ mod cron;
 mod dashboard;
 mod desktop;
 pub use desktop::DesktopConfig;
+mod channel_voice;
 mod defaults;
 mod hooks;
 pub use hooks::HooksConfig;
@@ -95,7 +96,6 @@ pub use claude_agent_sdk::ClaudeAgentSdkConfig;
 mod inbound;
 mod inbound_sources;
 mod local_ai;
-mod memes;
 pub(crate) mod memory;
 mod modules;
 mod observability;
@@ -104,6 +104,7 @@ mod proxy;
 mod routes;
 mod runtime;
 mod runtime_local_jail;
+mod runtime_openshell;
 mod scheduler_gate;
 mod task_sources;
 mod tokenjuice;
@@ -112,19 +113,15 @@ mod update;
 mod web_chat_config;
 
 pub use agent::{
-    AgentConfig, DelegateAgentConfig, OrchestratorModelConfig, RequiredOutputContract,
-    TeamModelConfig, ToolSearchConfig,
+    AgentConfig, OrchestratorModelConfig, RequiredOutputContract, TeamModelConfig, ToolSearchConfig,
 };
 pub use autonomy::AutonomyConfig;
 pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrustState};
-pub use channels::{
-    AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig,
-    IrcConfig, LarkConfig, LarkReceiveMode, LinqConfig, MatrixConfig, MattermostConfig, QQConfig,
-    ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig, SignalConfig, SlackConfig,
-    StreamMode, TelegramConfig, WebhookConfig, WhatsAppConfig, YuanbaoConfig,
-};
+pub use channel_voice::{ChannelVoiceConfig, ChannelVoiceOverride, VoiceReplyMode};
 pub(crate) use cli_overrides::set_cli_inference_overrides;
-pub use context::{CompactionSettings, CompactionStrategy, ContextConfig};
+pub use context::{
+    CompactionSettings, CompactionStrategy, ContextConfig, ContextSettings, SummarizerSettings,
+};
 pub use cron::CronConfig;
 pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
 pub use identity_cost::{
@@ -133,7 +130,6 @@ pub use identity_cost::{
 pub use inbound::{InboundConfig, InboundSourceConfig};
 pub use inbound_debounce::{InboundDebounceConfig, InboundDebounceOverride};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
-pub use memes::MemesConfig;
 pub use memory::{
     migrate_legacy_source, MemoryAgentConfig, MemoryConfig, MemoryConversationsConfig,
     MemoryEngineSettings, MemoryLayoutMode, MemorySourceConfig, MemorySourceKind, RecallSettings,
@@ -154,8 +150,18 @@ pub use runtime::{
     DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig, ShellConfig,
 };
 pub use runtime_local_jail::LocalJailConfig;
+pub use runtime_openshell::{OpenShellRuntimeConfig, DEFAULT_OPENSHELL_IMAGE};
 pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGateMode};
+pub use security::{
+    AuditConfig, ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig,
+};
 pub use task_sources::TaskSourcesConfig;
+pub use tinychannels_bus::config::{
+    ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig, IrcConfig,
+    LarkConfig, LarkReceiveMode, LinqConfig, MatrixConfig, MattermostConfig, QQConfig,
+    SignalConfig, SlackConfig, StreamMode, TelegramConfig, WebhookConfig, WhatsAppConfig,
+    YuanbaoConfig,
+};
 pub use tokenjuice::TokenjuiceConfig;
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComposioDirectBaseUrls,

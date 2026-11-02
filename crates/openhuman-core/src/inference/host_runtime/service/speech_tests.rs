@@ -1,8 +1,13 @@
 use super::*;
+#[cfg(feature = "voice")]
 use crate::core::Outcome;
+#[cfg(feature = "voice")]
 use crate::voice::{SttProvider, SttResult};
+#[cfg(feature = "voice")]
 use async_trait::async_trait;
+#[cfg(feature = "voice")]
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+#[cfg(feature = "voice")]
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -26,14 +31,17 @@ fn file_transcription_errors_keep_the_host_path_context() {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg(feature = "voice")]
 struct CapturedAudio {
     bytes: Vec<u8>,
     mime_type: Option<String>,
     file_name: Option<String>,
 }
 
+#[cfg(feature = "voice")]
 struct CapturingSttProvider(Arc<Mutex<Vec<CapturedAudio>>>);
 
+#[cfg(feature = "voice")]
 #[async_trait]
 impl SttProvider for CapturingSttProvider {
     fn name(&self) -> &'static str {
@@ -63,6 +71,7 @@ impl SttProvider for CapturingSttProvider {
     }
 }
 
+#[cfg(feature = "voice")]
 #[tokio::test]
 async fn native_transcription_helpers_preserve_audio_metadata_for_host_stt() {
     let tmp = tempfile::tempdir().unwrap();
@@ -71,11 +80,15 @@ async fn native_transcription_helpers_preserve_audio_metadata_for_host_stt() {
     std::fs::write(&file_path, b"file-audio").unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let provider_calls = Arc::clone(&calls);
+    crate::voice::factory::registry::register_stt_provider(
+        "capturing-stt-host-test",
+        move |_, _| {
+            Ok(Box::new(CapturingSttProvider(Arc::clone(&provider_calls))) as Box<dyn SttProvider>)
+        },
+    );
     let provider = ConfiguredSttProvider {
         config: &config,
-        provider_factory: Box::new(move |_| {
-            Ok(Box::new(CapturingSttProvider(Arc::clone(&provider_calls))) as Box<dyn SttProvider>)
-        }),
+        provider_name: "capturing-stt-host-test".into(),
     };
 
     let file_text = tinyinference_voice::transcription::transcribe_file(&file_path, &provider)
@@ -88,6 +101,7 @@ async fn native_transcription_helpers_preserve_audio_metadata_for_host_stt() {
     )
     .await
     .unwrap();
+    crate::voice::factory::registry::unregister_stt_provider("capturing-stt-host-test");
 
     assert_eq!(file_text, "recognized speech");
     assert_eq!(bytes_text, "recognized speech");
@@ -155,9 +169,9 @@ async fn tts_output_path_allows_workspace_and_local_ai_models_roots() {
     config.action_dir = tmp.path().join("action");
     std::fs::create_dir_all(&config.action_dir).unwrap();
     let runtime = crate::inference::local_runtime_config(&config);
-    let model_root = tinyinference_local::service::paths::config_root_dir(&runtime)
-        .join("models")
-        .join("local-ai");
+    // `enabled_config` anchors `config_path` inside this fixture, so the host
+    // resolves its local-AI models under the fixture root.
+    let model_root = tmp.path().join("models").join("local-ai");
 
     for output in [
         config.workspace_dir.join("speech.wav"),

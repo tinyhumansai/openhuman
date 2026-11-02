@@ -68,6 +68,36 @@ fn refresh_prompt_on_resume_reaches_the_core_definition_and_is_off_by_default() 
 }
 
 #[test]
+fn memory_block_reaches_the_core_definition_and_comes_from_a_template() {
+    let off = AgentDefinitionSpec::new().into_core("plain").unwrap();
+    assert_eq!(off.extensions.memory_block, None, "off unless asked for");
+
+    let template = AgentDefinitionSpec::new().memory_block(MemoryBlockSpec { max_tokens: 300 });
+    let inherited = AgentDefinitionSpec::new()
+        .inherit(template.clone())
+        .unwrap()
+        .into_core("inherits")
+        .unwrap();
+    assert_eq!(
+        inherited
+            .extensions
+            .memory_block
+            .map(|block| block.max_tokens),
+        Some(300)
+    );
+    let own = AgentDefinitionSpec::new()
+        .memory_block(MemoryBlockSpec { max_tokens: 900 })
+        .inherit(template)
+        .unwrap()
+        .into_core("own")
+        .unwrap();
+    assert_eq!(
+        own.extensions.memory_block.map(|block| block.max_tokens),
+        Some(900)
+    );
+}
+
+#[test]
 fn refresh_prompt_on_resume_comes_from_a_template_or_base_unless_set() {
     let template = AgentDefinitionSpec::new().refresh_prompt_on_resume(true);
     let inherited = AgentDefinitionSpec::new()
@@ -180,11 +210,11 @@ fn template_overrides_are_independent_and_keep_restrictions() {
 #[test]
 fn base_can_be_named_or_custom_and_unknown_names_are_typed() {
     let original = AgentDefinitionRegistry::builtins_only()
-        .get("planner")
+        .get("vision_agent")
         .unwrap()
         .clone();
-    let named = AgentDefinitionSpec::from_base("planner")
-        .into_core("my-planner")
+    let named = AgentDefinitionSpec::from_base("vision_agent")
+        .into_core("my-vision-agent")
         .unwrap();
     assert_eq!(named.agent_tier, original.agent_tier);
     let custom = AgentDefinitionSpec::from_base(original.clone())

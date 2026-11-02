@@ -228,7 +228,7 @@ fn turn_host_env(
 pub(crate) async fn run_turn_under_cancel_and_deadline<B, F>(
     ctx: &crate::core::runtime::DispatchCtx,
     cancel_token: CancellationToken,
-    origin: crate::security::turn_origin::AgentTurnOrigin,
+    origin: crate::core::runtime::turn_origin::AgentTurnOrigin,
     approval_ctx: crate::security::approval::ApprovalChatContext,
     build_turn: B,
 ) -> Option<Result<WebChatTaskResult, String>>
@@ -251,7 +251,7 @@ where
             turn_activity::configured_idle_window(),
             ids,
             |activity| {
-                crate::security::turn_origin::with_origin(
+                crate::core::runtime::turn_origin::with_origin(
                     origin,
                     build_turn(
                         env,

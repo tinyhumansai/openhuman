@@ -18,7 +18,7 @@ pub struct AutonomySettingsPatch {
     /// (`AutonomyConfig::enabled`): with it off, classification, the approval
     /// gate, the allowlist, the action budget and containment are all inert,
     /// and every other field in this patch has no effect until it is `true`.
-    /// `is_always_forbidden` applies either way.
+    /// TinySecurity's protected-path floor applies either way.
     pub enabled: Option<bool>,
     /// `"readonly" | "supervised" | "full"` (case-insensitive).
     pub level: Option<String>,
@@ -60,20 +60,6 @@ pub struct AgentSettingsPatch {
     pub tool_dispatcher: Option<String>,
 }
 
-/// Partial update for the agent's editable filesystem roots.
-///
-/// `action_dir` (issue #3240) and the files folder (#5505) are editable.
-/// `workspace_dir` and `projects_dir` are intentionally read-only.
-#[derive(Debug, Clone, Default)]
-pub struct AgentPathsPatch {
-    /// New action sandbox root. `Some("")`/whitespace clears the override and
-    /// reverts to the default; `Some(path)` sets it; `None` leaves it unchanged.
-    pub action_dir: Option<String>,
-    /// New folder for agent deliverables. Same `Some("")` / `Some(path)` /
-    /// `None` semantics as `action_dir`. Affects new artifacts only.
-    pub files_dir: Option<String>,
-}
-
 /// Updates the `[autonomy]` (agent access mode) settings in the configuration.
 ///
 /// After saving, publishes a `DomainEvent::System(AutonomyConfigChanged)` so that
@@ -85,6 +71,18 @@ pub async fn apply_autonomy_settings(
 ) -> Result<Outcome<serde_json::Value>, String> {
     use crate::security::AutonomyLevel;
 
+    // Validate before changing anything, so a rejected patch leaves `config` as it was.
+    if let Some(root) = update
+        .trusted_roots
+        .iter()
+        .flatten()
+        .find(|root| !std::path::Path::new(&super::expand_tilde(&root.path)).is_absolute())
+    {
+        return Err(format!(
+            "trusted root must be an absolute path (got {:?})",
+            root.path
+        ));
+    }
     if let Some(enabled) = update.enabled {
         config.autonomy.enabled = enabled;
     }
@@ -96,7 +94,7 @@ pub async fn apply_autonomy_settings(
             other => {
                 return Err(format!(
                     "invalid autonomy level '{other}' (expected readonly | supervised | full)"
-                ))
+                ));
             }
         };
     }
@@ -135,7 +133,7 @@ pub async fn apply_autonomy_settings(
     crate::security::live_policy::reload_from(&config.autonomy);
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::AutonomyConfigChanged);
 
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -204,7 +202,7 @@ pub async fn apply_agent_settings(
     config: &mut Config,
     update: AgentSettingsPatch,
 ) -> Result<Outcome<serde_json::Value>, String> {
-    use tinytools_std::timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
+    use tinyagents_harness_tools::exec::timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
 
     if let Some(timeout_secs) = update.agent_timeout_secs {
         if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&timeout_secs) {
@@ -254,7 +252,7 @@ pub async fn apply_agent_settings(
         effective
     );
 
-    let snapshot = snapshot_config_json(config)?;
+    let snapshot = snapshot_config_json(config).await?;
     Ok(Outcome::new(
         snapshot,
         vec![format!(
@@ -283,8 +281,8 @@ pub async fn get_agent_settings(ctx: &DispatchCtx) -> Result<Outcome<serde_json:
         "agent_timeout_secs": config.agent.agent_timeout_secs,
         "effective_timeout_secs": crate::tools::timeout::tool_execution_timeout_secs(),
         "env_override": crate::tools::timeout::env_override_active(),
-        "min_timeout_secs": tinytools_std::timeout::MIN_TIMEOUT_SECS,
-        "max_timeout_secs": tinytools_std::timeout::MAX_TIMEOUT_SECS,
+        "min_timeout_secs": tinyagents_harness_tools::exec::timeout::MIN_TIMEOUT_SECS,
+        "max_timeout_secs": tinyagents_harness_tools::exec::timeout::MAX_TIMEOUT_SECS,
         "tool_dispatcher": config.agent.tool_dispatcher,
         "tool_dispatcher_env_override": td::tool_dispatcher_env_override(),
     });

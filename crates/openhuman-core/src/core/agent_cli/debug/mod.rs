@@ -186,6 +186,7 @@ async fn render_via_session(
     agent_id: &str,
 ) -> Result<DumpedPrompt> {
     let mut agent = OpenHumanSessionHost::from_config_for_agent(ctx, config, agent_id)
+        .await
         .with_context(|| format!("building session agent for `{agent_id}`"))?;
 
     // Use the live turn prelude's hydration and surface reconciliation so this
@@ -207,7 +208,7 @@ async fn render_via_session(
     let flow_archetype_text: Option<String> = None;
 
     let text = agent
-        .build_system_prompt_with_flow_archetype(flow_archetype_text.as_deref())
+        .render_current_turn_prompt_with_flow_archetype(flow_archetype_text.as_deref())
         .with_context(|| format!("rendering system prompt for `{agent_id}`"))?;
 
     Ok(session_dump(&agent, agent_id, text))

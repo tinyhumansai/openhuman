@@ -1657,6 +1657,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Открыть на холсте',
   'chat.flowProposal.dismiss': 'Скрыть',
   'chat.flowProposal.error': 'Не удалось сохранить рабочий процесс. Попробуйте еще раз.',
+  'chat.flowProposal.versionConflict':
+    'Этот рабочий процесс изменился после создания предложения, поэтому он не был перезаписан. Запросите новую редакцию.',
   'chat.flowProposal.enableError':
     'Рабочий процесс сохранён, но не удалось его включить. Попробуйте ещё раз или включите его на странице Workflows.',
   'chat.flowProposal.savedConfirmation': 'Сохранено',
@@ -1849,11 +1851,6 @@ const messages: TranslationMap = {
   'chat.todos.ofTotal': '{done} из {total}',
   'chat.todos.receipt': 'Прогресс обновлён · {done}/{total}',
   'chat.subagents.ranFor': 'Длилось {duration}',
-  'chat.subagents.ofTotal': '{complete} из {total}',
-  'chat.subagents.runningCount': 'Выполняется: {count}',
-  'chat.subagents.failedCount': 'С ошибкой: {count}',
-  'chat.subagents.incompleteCount': 'Не завершено: {count}',
-  'chat.subagents.settled': 'Подзадачи завершены. Обрабатываем их результаты.',
   'conversations.planReview.title': 'Проверить план',
   'conversations.planReview.subtitle':
     'Одобрите для запуска, отклоните для отмены или отправьте отзыв для доработки.',
@@ -1889,7 +1886,6 @@ const messages: TranslationMap = {
   'conversations.mcpUi.confirmAllow': 'Разрешить',
   'conversations.mcpUi.confirmDeny': 'Запретить',
   'conversations.tools.delegatedTo': 'Передано агенту {agent}',
-  'conversations.tools.parallelAgentsAggregating': 'Объединение результатов',
   'conversations.tools.openInBrowser': 'Открыть в браузере',
   'conversations.tools.status.running': 'выполняется',
   'conversations.tools.status.done': 'готово',
@@ -1957,22 +1953,6 @@ const messages: TranslationMap = {
     'Повтор не удался. Скачай последнюю версию и попробуй снова.',
   'daemon.serviceBlockingGate.retrying': 'Повтор...',
   'daemon.serviceBlockingGate.title': 'Ядро OpenHuman недоступно',
-  'worktree.label': 'Рабочее дерево',
-  'worktree.dirty': 'Незакоммиченные изменения',
-  'worktree.clean': 'Чисто',
-  'worktree.removing': 'Удаление…',
-  'worktree.removeFailed': 'Не удалось удалить worktree',
-  'worktree.diffFailed': 'Не удалось загрузить diff',
-  'worktree.diffLoading': 'Загрузка diff…',
-  'worktree.diffEmpty': 'Нет изменений относительно HEAD.',
-  'worktree.dirtyConfirm':
-    'В этом worktree есть незакоммиченные изменения. При удалении эта работа будет потеряна. Ветка воркера сохраняется.',
-  'worktree.action.open': 'Открыть папку',
-  'worktree.action.diff': 'Разница',
-  'worktree.action.hideDiff': 'Скрыть diff',
-  'worktree.action.remove': 'Удалить',
-  'worktree.action.removeAnyway': 'Отклонить и удалить',
-  'worktree.action.preserve': 'Сохранить',
   'notifications.card.dismiss': 'Закрыть уведомление',
   'notifications.card.importanceTitle': 'Важность: {pct}%',
   'notifications.center.empty': 'Уведомлений пока нет',
@@ -3519,6 +3499,21 @@ const messages: TranslationMap = {
   'composer.settings.loadingModels': 'Загрузка моделей…',
   'composer.voiceMode': 'Голосовой режим',
   'composer.humanMode': 'Режим человека',
+  'voiceNote.record': 'Записать голосовое сообщение',
+  'voiceNote.stop': 'Остановить запись',
+  'voiceNote.discard': 'Удалить голосовое сообщение',
+  'voiceNote.send': 'Отправить голосовое сообщение',
+  'voiceNote.recording': 'Идёт запись…',
+  'voiceNote.play': 'Воспроизвести голосовое сообщение',
+  'voiceNote.pause': 'Приостановить голосовое сообщение',
+  'voiceNote.seek': 'Перемотать голосовое сообщение',
+  'voiceNote.transcript': 'Расшифровка',
+  'voiceNote.noTranscript': 'Расшифровка недоступна',
+  'voiceNote.label': 'Голосовое сообщение {duration}',
+  'voiceNote.micDenied': 'Доступ к микрофону отклонён или недоступен.',
+  'voiceNote.transcribeFailed': 'Не удалось расшифровать голосовое сообщение.',
+  'voiceNote.loadFailed': 'Не удалось загрузить это голосовое сообщение.',
+  'voiceNote.sendFailed': 'Не удалось отправить голосовое сообщение.',
 
   // Sync budget dialog
 
@@ -4883,8 +4878,6 @@ const messages: TranslationMap = {
   'conversations.tools.updateLearnings.done': 'Изученное обновлено',
   'conversations.tools.delegateTask.active': 'Передача задачи',
   'conversations.tools.delegateTask.done': 'Задача передана',
-  'conversations.tools.runAgentsInParallel.active': 'Параллельный запуск агентов',
-  'conversations.tools.runAgentsInParallel.done': 'Агенты запущены параллельно',
   'conversations.tools.messageAgent.active': 'Отправка сообщения агенту',
   'conversations.tools.messageAgent.done': 'Сообщение агенту отправлено',
   'conversations.tools.waitForAgent.active': 'Ожидание агента',
@@ -4921,6 +4914,8 @@ const messages: TranslationMap = {
   'conversations.tools.checkGoal.done': 'Цель проверена',
   'conversations.tools.completeGoal.active': 'Выполнение цели',
   'conversations.tools.completeGoal.done': 'Цель выполнена',
+  'conversations.tools.resumeGoal.active': 'Возобновление цели',
+  'conversations.tools.resumeGoal.done': 'Цель возобновлена',
   'conversations.tools.scheduleTask.active': 'Планирование задачи',
   'conversations.tools.scheduleTask.done': 'Задача запланирована',
   'conversations.tools.checkSchedules.active': 'Проверка расписаний',
@@ -5153,6 +5148,54 @@ const messages: TranslationMap = {
   'settings.layout.contrast.subtle': 'Незаметный',
 
   'settings.layout.contrast.strong': 'Высокий',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Диагностика политик не включена в эту сборку ядра.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Активная политика безопасности',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Автономность',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Только в рабочей области',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Максимум действий в час',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Требовать подтверждение для среднего риска',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Блокировать команды высокого риска',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Разрешённые команды',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'Нет явно разрешённых команд.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Политика',
+  'settings.approvalHistory.judgeScores':
+    'Намерение {intent} · Обратимость {reversible} · Утечка данных {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'из кэша',
+  'settings.approvalHistory.judgeExpires': 'Истекает {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Всегда разрешённые инструменты',
+  'keyring.settings.toolTrustDescription':
+    'Эти инструменты могут запускаться без запроса подтверждения в этой области безопасности.',
+  'keyring.settings.toolTrustLoading': 'Загрузка разрешённых инструментов…',
+  'keyring.settings.toolTrustLoadFailed': 'Не удалось загрузить разрешённые инструменты.',
+  'keyring.settings.toolTrustRevokeFailed': 'Не удалось отозвать разрешение для этого инструмента.',
+  'keyring.settings.toolTrustEmpty': 'Нет инструментов с постоянным разрешением.',
+  'keyring.settings.toolTrustRetry': 'Повторить',
+  'keyring.settings.toolTrustRevoke': 'Отозвать',
+  'keyring.settings.toolTrustRevoking': 'Отзыв…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Запрос доступа к связке ключей',
+  'keyring.operation.description':
+    'TinySecurity запрашивает доступ к одному элементу связки ключей. Проверьте операцию перед решением.',
+  'keyring.operation.access': 'Доступ',
+  'keyring.operation.requester': 'Запросил',
+  'keyring.operation.origin': 'Источник',
+  'keyring.operation.purpose': 'Назначение',
+  'keyring.operation.name': 'Элемент связки ключей',
+  'keyring.operation.access.read': 'Чтение',
+  'keyring.operation.access.write': 'Запись',
+  'keyring.operation.access.delete': 'Удаление',
+  'keyring.operation.allow': 'Разрешить один раз',
+  'keyring.operation.deny': 'Отклонить',
+  'keyring.operation.submitting': 'Отправка…',
+  'keyring.operation.expires': 'Срок действия запроса истечёт через {seconds} с.',
+  'keyring.operation.error': 'Не удалось отправить решение. Возможно, срок запроса истёк.',
 };
 
 export default messages;

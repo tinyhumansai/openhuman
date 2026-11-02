@@ -89,6 +89,18 @@ impl AuthProfilesStore {
             );
         }
 
+        if !self.use_keychain {
+            // Entries whose secrets are only in the unavailable keychain never
+            // reach `data`; keep them so they resolve once it reads again.
+            for (id, held) in self.read_persisted_locked()?.profiles {
+                if !persisted.profiles.contains_key(&id)
+                    && super::migration::keychain_held_oauth(&held)
+                {
+                    persisted.profiles.insert(id, held);
+                }
+            }
+        }
+
         self.write_persisted_locked(&persisted)
     }
 

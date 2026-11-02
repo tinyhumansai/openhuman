@@ -181,7 +181,7 @@ async fn servers_and_env_secrets_survive_a_restart_of_the_bus_and_host() {
     // a core restart does.
     let second = boot(backend).await;
     let server = second.server("io.example/files").await.unwrap();
-    assert_eq!(server["document_id"], "io.example/files");
+    assert_eq!(server["id"], "io.example/files");
     assert_eq!(
         second
             .secret("mcp_client_env/io.example/files")

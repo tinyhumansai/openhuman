@@ -1,12 +1,10 @@
 use super::*;
 
 #[test]
-fn redactor_reports_an_untouched_body_as_unchanged() {
-    // A false `changed` would make every pointer claim a redaction note for
-    // a body nothing touched, training readers to ignore the note.
+fn redactor_withholds_body_when_tinysecurity_is_unavailable() {
     let out = SanitizingRedactor.redact("ordinary prose with no secrets");
-    assert!(!out.changed);
-    assert_eq!(out.text, "ordinary prose with no secrets");
+    assert!(out.changed);
+    assert_ne!(out.text, "ordinary prose with no secrets");
 }
 
 #[test]

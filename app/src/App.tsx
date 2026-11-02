@@ -19,6 +19,7 @@ import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import KeyringConsentOverlay from './components/keyring/KeyringConsentOverlay';
+import KeyringOperationApprovalOverlay from './components/keyring/KeyringOperationApprovalOverlay';
 import AppSidebar from './components/layout/shell/AppSidebar';
 import RootShellLayout from './components/layout/shell/RootShellLayout';
 import { SidebarSlotProvider } from './components/layout/shell/SidebarSlot';
@@ -145,6 +146,7 @@ function App() {
                               <SecurityBanner />
                               {!onMobile && <AppUpdatePrompt />}
                               <KeyringConsentOverlay />
+                              <KeyringOperationApprovalOverlay />
                               <AnnouncementGate />
                             </ServiceBlockingGate>
                           </CommandProvider>

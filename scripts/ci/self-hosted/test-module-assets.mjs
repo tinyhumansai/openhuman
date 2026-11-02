@@ -25,9 +25,11 @@ export const TEST_MODULE_IDS = [
   "tinywallet",
   "tinychannels",
   "tinymcp",
+  "tinyeventqueues",
   "tinyhosts",
   "tinyconnectors",
   "tinyflows",
+  "tinyvoice",
 ];
 
 /** Concatenate registry.rs and its `registry/records_*.rs` fragments. */

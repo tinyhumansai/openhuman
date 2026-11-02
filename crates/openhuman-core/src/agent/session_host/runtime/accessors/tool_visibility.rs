@@ -111,7 +111,7 @@ impl OpenHumanSessionHost {
         // at all.
         let all_tools = self.all_tool_refs();
         let reachable = self.reachable_tool_names();
-        let mut session = crate::tools::policy_session::build_policy_session(
+        let mut session = tinytools::ToolPolicyEngine::build_session_from_refs(
             &self.agent_definition_name,
             &self.event_channel,
             "session",
@@ -132,8 +132,7 @@ impl OpenHumanSessionHost {
             &self.visible_tool_names,
             &self.tool_policy_session,
         );
-        self.visible_tool_specs = Arc::new(super::super::super::builder::dedup_visible_tool_specs(
-            visible_specs,
-        ));
+        self.visible_tool_specs =
+            Arc::new(tinyagents_runtime::dedup_visible_tool_specs(visible_specs));
     }
 }

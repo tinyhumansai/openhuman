@@ -82,6 +82,10 @@ pub fn core_command(d: &Deployment, extra: &[&str]) -> Command {
     // exercise secret storage without an RPC host installing an OS keyring.
     cmd.env("HOME", d.tmp.path())
         .env("USERPROFILE", d.tmp.path())
+        .env(
+            "OPENHUMAN_STORAGE_URL",
+            format!("sqlite:{}", d.tmp.path().join("storage").display()),
+        )
         .env("OPENHUMAN_KEYRING_BACKEND", "file")
         .env("OPENHUMAN_KEYRING_MASTER_KEY", TEST_MASTER_KEY);
     cmd

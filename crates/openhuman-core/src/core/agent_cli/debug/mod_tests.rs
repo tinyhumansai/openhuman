@@ -4,12 +4,14 @@ use super::*;
 #[tokio::test]
 async fn debug_dump_composes_each_flow_prompt_from_the_copilot_bus() {
     let temp = tempfile::tempdir().expect("workspace");
-    let config = Config {
+    let mut config = Config {
         workspace_dir: temp.path().join("workspace"),
         action_dir: temp.path().join("action"),
         config_path: temp.path().join("config.toml"),
         ..Config::default()
     };
+    config.default_model = Some("test/session-fixture".to_string());
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .expect("initialize builtin registry");
     let ctx = crate::core::runtime::DispatchCtx::host_default();

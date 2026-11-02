@@ -227,17 +227,10 @@ impl CredentialRefScheme {
 
 /// A secret resolved from a [`CredentialRef`].
 ///
-/// Wraps [`Zeroizing`] so the value is wiped on drop, and adds the half
-/// `Zeroizing` does not provide: a `Debug` that does not print it.
-///
-/// **`Zeroizing`'s own `Debug` renders the secret.** It is a
-/// `#[derive(Debug)]` tuple struct (`zeroize-1.9.0/src/lib.rs:602-604`), and a
-/// derived `Debug` prints the field regardless of its visibility — so
-/// `format!("{:?}", Zeroizing::new(secret))` yields `Zeroizing("s3cret")`.
-/// Returning one from this module would have been incoherent: the module
-/// redacts the credential *name* through a manual `Debug`, then hands back a
-/// type that prints the *value* it names. One `tracing::debug!(?secret, …)` at
-/// any future call site is all it would take.
+/// Wraps [`Zeroizing`] so the value is wiped on drop and adds a deliberately
+/// redacted `Debug` representation. Callers should not depend on the
+/// implementation-specific Debug behavior of the inner type: secrets should
+/// stay hidden if that behavior changes in a future dependency release.
 ///
 /// The value is therefore reachable only through
 /// [`expose_secret`](Self::expose_secret), which is named for the `secrecy`

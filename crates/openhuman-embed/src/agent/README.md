@@ -31,7 +31,7 @@ with the same id cannot both pass the duplicate check), then calls
  5. provider model         route stays per turn, never written to config
  6. MCP servers            appended to mcp_client.servers   (mcp feature)
  7. Composio credential    pinned for this agent only
- 8. memory binding         memory.agent_id and memory.root
+ 8. memory binding         memory.agent_id, memory.root, memory.recall_each_turn_ms
  9. config escape hatch    then config_path is reset to the runtime's
 10. create dirs            action_dir, agents/<id>/, agents/<id>/skills/
 11. copy skills            (skills feature)
@@ -71,6 +71,7 @@ directories; transcripts and memory persist with the workspace.
 | [`definition.rs`](definition.rs) | `AgentDefinitionSpec`, `ToolScopeSpec` and `SandboxModeSpec`: a small re-spelling of the core's `AgentDefinition`. |
 | [`layout.rs`](layout.rs) | `AgentLayout`: where one agent's home, skills, transcripts and `action_dir` live. |
 | [`build.rs`](build.rs) | `instantiate`, plus `check_domains_narrow` and `check_tool_groups_narrow`. |
+| [`compact.rs`](compact.rs) | `Agent::compact_thread`, `CompactOptions`, `CompactOutcome`: compact a stored conversation with no model turn. |
 | [`attachments.rs`](attachments.rs) | `Agent::attach_tools`, `runtime_id`, `same_agent`, `ToolAttachmentError`, and the policy that composes attached sources with the agent's own. |
 
 ## Key types
@@ -89,14 +90,52 @@ directories; transcripts and memory persist with the workspace.
   `tools(ToolScopeSpec::Named(..))` or `disallow_tools`. Also sets
   `sandbox` (`None`, `ReadOnly`, `Sandboxed`), `max_iterations`,
   `temperature`, `display_name` and `when_to_use`.
+  `memory_block(MemoryBlockSpec { max_tokens })` ends the system prompt with
+  what the agent's memory binding knows about the user (beliefs, then
+  learnings, between `<memory>` and `</memory>`). It is rendered only when a
+  transcript generation starts (a new thread, a resumed thread without one, a
+  replaced prompt, the first turn after a compaction) and re-sent byte for
+  byte on every other turn, so a memory change never costs the prefix cache
+  or adds the prompt-update note. Empty memory sends no block; a read error
+  sends the recorded one, or none.
 - `MemoryBinding` (`spec.rs`): the memory agent id the turns are logged
-  under, and optionally a layout root such as `team:acme`.
+  under, optionally a layout root such as `team:acme`, and optionally
+  `recall_each_turn(timeout)`: recall for the current message on every turn,
+  waited on for at most `timeout` before the first model call (late recall
+  leaves the turn without a memory note).
 - `AgentLayout` ([`layout.rs`](layout.rs)): `home` is `<workspace>/agents/<id>/`, `skills`
   is `<workspace>/agents/<id>/skills/`, `transcripts` is
   `<workspace>/session_raw/`, and `action_dir` is the resolved acting root.
 - `AgentError` ([`mod.rs`](mod.rs)): `DuplicateId`, `InvalidId`, `WidensRuntime`,
   `Workspace` (an I/O failure laying out directories), `Invalid`, and `Call`
   for a failed turn.
+
+## Compact a thread while its user is idle
+
+`Agent::compact_thread(thread_id, CompactOptions { min_tokens, keep_recent_tokens })`
+compacts a stored conversation with no model turn, so the thread's next turn
+resends a summary instead of the full history. It resolves the thread as
+`Turn::session` does and reads the head transcript generation:
+
+- no conversation: `CompactOutcome::Empty`;
+- below `min_tokens` (the compression middleware's estimate over the head's
+  messages, system prompt included): `Skipped { tokens }`, nothing written;
+- otherwise the agent's own compaction runs (`[context] compaction_strategy`,
+  `summarizer_model`, `summarizer_tool_rendering`,
+  `summarizer_max_output_tokens`). The head generation is sealed unchanged
+  and the next one opens with the system prompt, the summary as a user-role
+  message, and the kept tail (`keep_recent_tokens`, at most half of
+  `min_tokens`): `Compacted { tokens_before, tokens_after }`. Nothing older
+  than the tail to fold is `Skipped` too.
+
+The system prompt and the recorded tool declarations carry over byte for
+byte, so the provider's prefix cache survives. The one exception is a
+`memory_block`, which is rendered afresh for the new generation, so the next
+turn does not seal yet another generation to refresh it. A compaction holds
+the session's turn lock from its read to its write, so a turn sent on the
+thread meanwhile waits, then resumes from the compacted head. Logs:
+`[compact_thread]` with the thread id, the outcome and token counts, never
+content.
 
 ## Tool factories
 
@@ -181,8 +220,9 @@ See the runnable [host_tools example](../../examples/host_tools.rs), region `hos
 
 [`build_tests.rs`](build_tests.rs), [`definition_tests.rs`](definition_tests.rs), [`layout_tests.rs`](layout_tests.rs), [`spec_tests.rs`](spec_tests.rs)
 and [`attachments_tests.rs`](attachments_tests.rs) sit beside their modules. The end-to-end proof of
-agent isolation is [`tests/runtime_agents.rs`](../../tests/runtime_agents.rs), and attachments are covered by
-[`tests/attached_tools.rs`](../../tests/attached_tools.rs).
+agent isolation is [`tests/runtime_agents.rs`](../../tests/runtime_agents.rs), attachments are covered by
+[`tests/attached_tools.rs`](../../tests/attached_tools.rs), and `compact_thread` by
+[`tests/compact_thread.rs`](../../tests/compact_thread.rs).
 
 ```bash
 cargo test -p openhuman-embed --features inference,mcp,skills agent::

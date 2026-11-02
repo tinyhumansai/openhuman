@@ -5,9 +5,10 @@ use tinymemory_tools::lifecycle::turn::TurnPack as NativeTurnPack;
 
 const MAX_PENDING: usize = 16;
 const MAX_PACK_BYTES: usize = 64 * 1024;
-const CACHED_NOTICE: &str = "This is cached memory from a completed background lookup for an earlier turn. It may be incomplete or unrelated to the current question; use explicit memory recall or fetch when you need a current answer.\n\n";
+pub(super) const CACHED_NOTICE: &str = "This is cached memory from a completed background lookup for an earlier turn. It may be incomplete or unrelated to the current question; use explicit memory recall or fetch when you need a current answer.\n\n";
 
-static TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+pub(super) static TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn pack(text: &str) -> TurnPack {
     TurnPack::from_native(NativeTurnPack {
@@ -20,7 +21,7 @@ fn pack(text: &str) -> TurnPack {
     })
 }
 
-async fn drain(cache: &Cache, key: &Key) {
+pub(super) async fn drain(cache: &Cache, key: &Key) {
     tokio::time::timeout(Duration::from_secs(1), async {
         while !cache.0.is_idle(key) {
             tokio::task::yield_now().await;
@@ -135,7 +136,9 @@ async fn pre_turn_logs_channel_metadata_without_writing_legacy_thread_map() {
         false,
         None,
         Some("telegram".into()),
+        None,
     )
+    .await
     .is_none());
     drain(&cache, &key).await;
 
@@ -306,9 +309,9 @@ async fn credential_invalidation_removes_ready_and_rejects_late_inflight_results
     );
 }
 
-struct HeldEngine {
-    inner: tinymemory_api::conformance::ReferenceEngine,
-    release: Arc<tokio::sync::Semaphore>,
+pub(super) struct HeldEngine {
+    pub(super) inner: tinymemory_api::conformance::ReferenceEngine,
+    pub(super) release: Arc<tokio::sync::Semaphore>,
 }
 #[async_trait::async_trait]
 impl tinymemory_api::MemoryEngine for HeldEngine {
@@ -425,22 +428,28 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
         Option<tinymemory_api::ObservedActor>,
     )| {
         let (thread, index, text, in_prompt_from, at, resumed, observed_actor) = input;
-        super::pre_turn(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            config,
-            identity,
-            thread,
-            index,
-            text,
-            in_prompt_from,
-            at,
-            resumed,
-            observed_actor,
-            None,
-        )
+        async move {
+            super::pre_turn(
+                &crate::core::runtime::DispatchCtx::ambient(),
+                config,
+                identity,
+                thread,
+                index,
+                text,
+                in_prompt_from,
+                at,
+                resumed,
+                observed_actor,
+                None,
+                None,
+            )
+            .await
+        }
     };
     let config = Arc::new(config);
-    assert!(pre_turn(config.clone(), identity.clone(), input(0)).is_none());
+    assert!(pre_turn(config.clone(), identity.clone(), input(0))
+        .await
+        .is_none());
     // Even after the old one-millisecond cutoff, the pack remains owned by
     // the background worker instead of being discarded by the live turn.
     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -450,13 +459,16 @@ async fn slow_engine_results_survive_the_manual_pre_turn_cutoff() {
     release.add_permits(100);
     drain(&cache, &key).await;
     let pack = pre_turn(config.clone(), identity.clone(), input(2))
+        .await
         .expect("next turn uses completed slow lookup");
     assert!(pack.markdown.contains("teal"));
     assert!(pack.markdown.contains("earlier turn"));
     drain(&cache, &key).await;
     let mut omitted = identity;
     omitted.recall = false;
-    assert!(pre_turn(config.clone(), omitted.clone(), input(4)).is_none());
+    assert!(pre_turn(config.clone(), omitted.clone(), input(4))
+        .await
+        .is_none());
     drain(&cache, &Key::new(&config, &omitted, "slow", false)).await;
     let turns = crate::memory::test_fixtures::stored(
         &engine.inner,

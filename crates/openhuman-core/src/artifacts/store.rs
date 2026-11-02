@@ -19,7 +19,11 @@ const ARGS_FILENAME: &str = "args.json";
 ///
 /// The root lives at `<workspace_dir>/artifacts/`.
 pub(crate) async fn artifacts_root(workspace_dir: &Path) -> Result<PathBuf, String> {
-    let root = workspace_dir.join(ARTIFACTS_SUBDIR);
+    // Absolute, so the escape guard (which refuses relative paths) also works
+    // for an embedder's relative workspace.
+    let root = std::path::absolute(workspace_dir)
+        .map_err(|e| format!("[artifacts] failed to resolve workspace {workspace_dir:?}: {e}"))?
+        .join(ARTIFACTS_SUBDIR);
     log::debug!("[artifacts] artifacts_root: {:?}", root);
     tokio::fs::create_dir_all(&root).await.map_err(|e| {
         format!(
@@ -233,7 +237,7 @@ pub(crate) async fn delete_artifact(
                     Err(e) => {
                         return Err(format!(
                             "[artifacts] failed to delete file for id={artifact_id}: {e}"
-                        ))
+                        ));
                     }
                 },
                 Err(e) => log::warn!("[artifacts] delete_artifact: leaving file in place: {e}"),

@@ -34,19 +34,18 @@ fn rollup_usage(
 /// child total the codec attached to the atomic transcript append.
 pub(in crate::agent::session_host) async fn account_committed_turn_against_goal(
     workspace_dir: &std::path::Path,
+    context: &crate::core::runtime::DispatchCtx,
     thread_id: Option<&str>,
     sidecar: &crate::agent::tinyagents::host::run_context::SessionTurnSidecar,
 ) {
     let usage = rollup_usage(sidecar);
-    crate::agent::goals::runtime::account_turn_against_goal(
+    crate::agent::goals::account_turn(
         workspace_dir,
+        context,
         thread_id,
         usage.input_tokens,
         usage.output_tokens,
-        sidecar
-            .duration
-            .map(|duration| duration.as_secs())
-            .unwrap_or_default(),
+        sidecar.duration.unwrap_or_default(),
     )
     .await;
 }

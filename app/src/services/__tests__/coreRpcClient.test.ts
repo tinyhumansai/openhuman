@@ -521,7 +521,7 @@ describe('coreRpcClient', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  test('caches a missing token result after the first Tauri lookup failure', async () => {
+  test('looks the token up again after a failed Tauri lookup', async () => {
     vi.resetModules();
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -540,7 +540,7 @@ describe('coreRpcClient', () => {
     const tokenCalls = vi
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd === 'core_rpc_endpoint').length;
-    expect(tokenCalls).toBe(1);
+    expect(tokenCalls).toBe(2);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -782,6 +782,16 @@ describe('coreRpcClient', () => {
 describe('classifyRpcError', () => {
   test.each([
     ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'auth_expired'],
+    [
+      'GET /teams failed (500 Internal Server Error): {"status":401,"error":"Unauthorized"}',
+      undefined,
+      'provider_auth',
+    ],
+    [
+      'GET /teams failed (500 Internal Server Error): {"error":"upstream failed (401 Unauthorized)"}',
+      undefined,
+      'provider_auth',
+    ],
     ['Session expired. Please log in again.', undefined, 'auth_expired'],
     ['some prefix Session expired suffix', undefined, 'auth_expired'],
     [

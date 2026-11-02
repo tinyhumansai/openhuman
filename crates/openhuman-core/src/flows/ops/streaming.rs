@@ -128,15 +128,25 @@ pub(super) async fn finalize_flow_stream(
             .await;
         }
         Err(err) => {
-            crate::web_chat::publish_web_channel_event(crate::web_chat::WebChannelEvent {
-                event: "chat_error".to_string(),
-                client_id: "system".to_string(),
-                thread_id: target.thread_id.clone(),
-                request_id: target.request_id.clone(),
-                message: Some(err.clone()),
-                error_type: Some("agent_error".to_string()),
-                ..Default::default()
-            });
+            crate::web_chat::publish_web_channel_event(
+                crate::web_chat::WebChannelEvent::ChatError {
+                    context: crate::web_chat::event_context(
+                        "system",
+                        target.thread_id.clone(),
+                        target.request_id.clone(),
+                    ),
+                    message: Some(err.clone()),
+                    error_type: Some("agent_error".to_string()),
+                    error_source: None,
+                    error_retryable: None,
+                    error_retry_after_ms: None,
+                    error_provider: None,
+                    error_fallback_available: None,
+                    copy_key: None,
+                    copy_params: None,
+                    guardrail: None,
+                },
+            );
         }
     }
     // Settle this turn's snapshot now the turn is over. `attach_flow_progress_bridge`

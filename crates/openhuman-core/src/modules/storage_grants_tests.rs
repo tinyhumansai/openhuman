@@ -526,10 +526,12 @@ fn the_write_selectors_track_the_contract_selector_sets() {
             "Queues.Redrive",
             "Secrets.Delete",
             "Secrets.Set",
+            "Secrets.SetIf",
             "Streams.Append",
             "Streams.AppendBatch",
             "Streams.AppendBatchIfOffset",
             "Streams.DeleteStream",
+            "Streams.Seal",
             "Streams.TruncateBefore",
         ]
     );
@@ -553,4 +555,74 @@ fn the_event_queues_grant_carries_their_collections_and_queues() {
         grant.queue_backend,
         Some(tinystoragedrivers::QueueConfig::Storage)
     );
+}
+
+#[test]
+fn every_selector_of_a_granted_object_is_decided_rather_than_refused_as_malformed() {
+    // The module's storage client probes `Capabilities` on every object it was
+    // granted, and reads and writes through the selectors the wire contract
+    // added after the grant table was written. A selector that is part of the
+    // contract must reach the grant check, never fall through as malformed.
+    let g = grant();
+    for (object, selector, request) in [
+        (Object::Streams, "Capabilities", json!({})),
+        (Object::Streams, "Info", json!({"stream": "log/a"})),
+        (Object::Streams, "Seal", json!({"stream": "log/a"})),
+        (Object::Secrets, "Capabilities", json!({})),
+        (Object::Secrets, "GetVersioned", json!({"name": "token.a"})),
+        (Object::Secrets, "SetIf", json!({"name": "token.a"})),
+        (Object::Blobs, "ListPage", json!({"prefix": "files/"})),
+    ] {
+        assert!(
+            authorize(&g, object, selector, &request).is_ok(),
+            "{object:?} {selector}"
+        );
+    }
+}
+
+#[test]
+fn the_selectors_added_to_the_wire_keep_the_grants_prefixes_and_read_only_rule() {
+    assert_eq!(
+        authorize(
+            &grant(),
+            Object::Streams,
+            "Seal",
+            &json!({"stream": "audit/a"})
+        ),
+        Err(Denied::Target)
+    );
+    assert_eq!(
+        authorize(
+            &grant(),
+            Object::Secrets,
+            "SetIf",
+            &json!({"name": "other.a"})
+        ),
+        Err(Denied::Target)
+    );
+    assert_eq!(
+        authorize(
+            &read_only(),
+            Object::Streams,
+            "Seal",
+            &json!({"stream": "log/a"})
+        ),
+        Err(Denied::ReadOnly)
+    );
+    assert_eq!(
+        authorize(
+            &read_only(),
+            Object::Secrets,
+            "SetIf",
+            &json!({"name": "token.a"})
+        ),
+        Err(Denied::ReadOnly)
+    );
+    assert!(authorize(
+        &read_only(),
+        Object::Streams,
+        "Info",
+        &json!({"stream": "log/a"})
+    )
+    .is_ok());
 }

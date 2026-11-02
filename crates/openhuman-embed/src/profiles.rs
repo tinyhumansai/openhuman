@@ -78,7 +78,7 @@ pub use openhuman_core::profiles::cron::SweepReport as CronSweepReport;
 pub use openhuman_core::profiles::{OpenError, ProfileId, ProfileIdMode, ProfileSummary};
 pub use openhuman_core::storage::lease::LeaseRecord;
 pub use openhuman_core::threads::{ConversationMessageRecord, ConversationThreadSummary};
-pub use openhuman_core::web_chat::WebChannelEvent;
+pub use openhuman_core::web_chat::{ScopedWebEvent, WebChannelEvent};
 
 /// The kind of backend credential a profile holds (see
 /// [`ProfileRuntime::set_credential`]).

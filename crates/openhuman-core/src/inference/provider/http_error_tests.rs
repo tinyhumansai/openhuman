@@ -11,6 +11,16 @@ fn response(status: StatusCode, body: &str) -> reqwest::Response {
     )
 }
 
+#[tokio::test]
+async fn a_provider_error_body_is_read_only_up_to_the_cap() {
+    let huge = "x".repeat(MAX_ERROR_BODY_BYTES * 4);
+    let body = read_error_body(response(StatusCode::INTERNAL_SERVER_ERROR, &huge)).await;
+    assert_eq!(body.len(), MAX_ERROR_BODY_BYTES);
+
+    let small = read_error_body(response(StatusCode::BAD_REQUEST, "short body")).await;
+    assert_eq!(small, "short body");
+}
+
 const FIXTURE_BACKEND: &str = "fixture-managed-provider";
 
 fn install_fixture_backend_classifier() {
@@ -113,6 +123,23 @@ async fn backend_401_publishes_session_expired_through_reporter() {
 }
 
 #[tokio::test]
+async fn backend_403_does_not_publish_session_expired() {
+    install_fixture_backend_classifier();
+    crate::core::bus::init().await.expect("bus init");
+    let mut rx = crate::core::bus::BUS.get().expect("bus").receiver();
+    let marker = "REPORTER_MARKER_FORBIDDEN a paid plan is required";
+    let _ = api_error(FIXTURE_BACKEND, response(StatusCode::FORBIDDEN, marker)).await;
+    let seen = drain_until(&mut rx, |e| match e {
+        DomainEvent::SessionExpired { reason, .. } if reason.contains(marker) => Some(()),
+        _ => None,
+    });
+    assert!(
+        seen.is_none(),
+        "a backend 403 is a refusal, not an expired session"
+    );
+}
+
+#[tokio::test]
 async fn byo_401_publishes_api_key_rejected_not_session_expired() {
     crate::core::bus::init().await.expect("bus init");
     let mut rx = crate::core::bus::BUS.get().expect("bus").receiver();
@@ -125,17 +152,29 @@ async fn byo_401_publishes_api_key_rejected_not_session_expired() {
         ),
     )
     .await;
-    let mut session_expired = false;
-    let rejected = drain_until(&mut rx, |e| match e {
-        DomainEvent::SessionExpired { .. } => {
-            session_expired = true;
-            None
+    // The bus is process-wide: only a SessionExpired raised by this call (its
+    // body is in the reason) counts, not one from a concurrent test. Drain
+    // every queued event so an expiry published after the rejection is seen.
+    let (mut session_expired, mut rejected) = (false, false);
+    drain_until(&mut rx, |e| -> Option<()> {
+        match e {
+            DomainEvent::SessionExpired { reason, .. }
+                if reason.contains("Invalid or missing API key") || reason.contains(provider) =>
+            {
+                session_expired = true
+            }
+            DomainEvent::ProviderApiKeyRejected { provider: p, .. } if p == provider => {
+                rejected = true
+            }
+            _ => {}
         }
-        DomainEvent::ProviderApiKeyRejected { provider: p, .. } if p == provider => Some(()),
-        _ => None,
+        None
     });
-    assert!(rejected.is_some(), "BYO key rejection must be surfaced");
-    assert!(!session_expired || rejected.is_some());
+    assert!(rejected, "BYO key rejection must be surfaced");
+    assert!(
+        !session_expired,
+        "a BYO key's 401 must not expire the OpenHuman session"
+    );
 }
 
 #[tokio::test]
@@ -166,16 +205,17 @@ async fn backend_provider_does_not_get_byo_key_rejection() {
 /// Sentry). Getting this wrong in either direction is a regression:
 /// over-matching silences real misconfig; under-matching is TAURI-RUST-N.
 #[test]
-fn is_backend_auth_failure_only_matches_openhuman_backend_401_403() {
+fn is_backend_auth_failure_only_matches_openhuman_backend_401() {
     use reqwest::StatusCode;
     install_fixture_backend_classifier();
     let backend = FIXTURE_BACKEND;
 
     assert!(is_backend_auth_failure(backend, StatusCode::UNAUTHORIZED));
-    assert!(is_backend_auth_failure(backend, StatusCode::FORBIDDEN));
 
-    // Non-auth backend statuses stay reportable (real server bugs / transient).
+    // A 403 is a refusal (plan, tier, WAF) and the rest are server faults or
+    // transient: none of them expires the session.
     for s in [
+        StatusCode::FORBIDDEN,
         StatusCode::INTERNAL_SERVER_ERROR,
         StatusCode::TOO_MANY_REQUESTS,
         StatusCode::BAD_REQUEST,
@@ -298,7 +338,7 @@ async fn publish_backend_session_expired_emits_sanitized_session_expired() {
     let mut reason_seen: Option<String> = None;
     loop {
         match rx.try_recv() {
-            Ok(DomainEvent::SessionExpired { source, reason }) => {
+            Ok(DomainEvent::SessionExpired { source, reason, .. }) => {
                 if source == "llm_provider.openhuman_backend" && reason.contains("TEST_MARKER_A") {
                     reason_seen = Some(reason);
                     break;

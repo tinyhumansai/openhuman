@@ -33,3 +33,12 @@ fn lookalikes_and_path_mentions_do_not_match() {
     assert!(!e.is_managed_host("https://other.invalid/api.example.test"));
     assert!(!e.is_managed_host(""));
 }
+
+#[test]
+fn an_at_sign_after_the_query_fragment_or_path_is_not_userinfo() {
+    let e = endpoints();
+    assert!(!e.is_managed_host("https://evil.invalid?@api.example.test/v1"));
+    assert!(!e.is_managed_host("https://evil.invalid#@api.example.test/v1"));
+    assert!(!e.is_managed_host("https://evil.invalid\\@api.example.test/v1"));
+    assert!(e.is_managed_host("https://api.example.test?next=a@b.invalid"));
+}

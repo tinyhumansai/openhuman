@@ -1,145 +1,55 @@
-# Security / Policy
+# Security policy
 
-`SecurityPolicy` and the autonomy/risk machinery it implements. This is where
-every invariant AGENTS.md lists for the autonomy policy is actually enforced:
-`action_dir` vs `workspace_dir`, workspace-internal path protection,
-fail-closed command classification, always-forbidden system/credential paths,
-trusted roots, and the per-hour action budget.
+OpenHuman owns the host context for security operations: autonomy settings,
+workspace and action roots, per-turn trusted roots, approval routing, and
+stable error markers. TinySecurity owns policy decisions for command
+classification/authorization, path authorization and the action budget.
 
-## Autonomy is off by default
+## Command authorization
 
-`SecurityPolicy::enabled` mirrors `[autonomy] enabled` in config and defaults
-to `false`. With the policy disabled, `SecurityPolicy::from_config`
-([`enforcement.rs`](./enforcement.rs)) still builds the struct, but `can_act()`,
-`record_action()`, and `is_rate_limited()` all short-circuit: command
-classification, the approval gate, the command allowlist, the hourly action
-budget, `workspace_only`, `forbidden_paths`, and the workspace-internal
-boundary are all inert. `is_always_forbidden` is not gated on `enabled` and
-still applies either way: credential stores (`~/.ssh`, `~/.gnupg`, `~/.aws`,
-and platform equivalents) and system roots stay unreachable, and so do `..`
-traversal and null bytes in a path. Setting `[autonomy] enabled = true`
-restores the full policy. Note the asymmetry with `Default`: a policy built
-from config defaults to disabled, while a policy built with no config at all
-(`SecurityPolicy::default()`) defaults to enabled; see the comment on that
-impl in [`types.rs`](./types.rs).
+Shell authorization sends the exact requested command, flow and stage to
+TinySecurity through `native_commands.rs` and `modules/security/gap.rs`. Other
+tools send their declared permission level and external-effect flag through
+`ClassifyHostAction2`; OpenHuman does not keep a second command vocabulary or
+shell parser. The host maps the module's stable command class to the approval
+surface and caches class gate answers only for synchronous tool traits that
+cannot await.
 
-## Responsibilities
+`OpenHumanSecurityGate` performs the async gate before dispatch. Shell uses
+TinySecurity's command check directly so read-only shell commands can remain
+available. Flow nodes use the same module gate before HTTP, code, and connector
+operations. A missing module answer refuses the operation.
 
-- Build a `SecurityPolicy` from `AutonomyConfig` (`SecurityPolicy::from_config`).
-- Classify shell commands into a risk level (`CommandRiskLevel`) and a
-  fail-closed gate class (`CommandClass`), and turn that into a `GateDecision`
-  for the current `AutonomyLevel`.
-- Decide whether a filesystem path is reachable at all
-  (`is_always_forbidden`), workspace-internal state
-  (`is_workspace_internal_path`), or covered by a `TrustedRoot`.
-- Track and enforce the hourly action budget (`ActionTracker`).
-- Own the two stable string markers (`POLICY_BLOCKED_MARKER`,
-  `POLICY_DENIED_MARKER`) that the agent harness's repeated-failure
-  middleware keys on to stop retrying a provably futile call.
+## Path authorization
+
+`native_paths.rs` translates OpenHuman's configuration and scoped trusted roots
+into TinySecurity's `PathPolicy`. `CheckPaths2`, `ValidatePath`, and
+`ValidateParent` make the policy decisions, including protected paths, reserved
+workspace state, workspace/action boundaries, and symlink-aware resolution.
+The host keeps only lexical input checks and OS-specific existence,
+canonicalization, and symlink checks where the surrounding API requires them.
+
+Async artifact and media operations ask TinySecurity before using a resolved
+path. Sync-only compatibility traits must be preceded by an async authorization
+at their host call site; their callbacks do not implement a second copy of the
+path policy.
+
+## Action budget
+
+Async acting-tool admission uses TinySecurity `PeekBudget2` and `SpendAction2`.
+The host keeps a cached module snapshot for synchronous filesystem/network
+traits; there is no host-side action counter. The default autonomy flag still
+controls whether OpenHuman asks the module to apply the enabled tier policy.
 
 ## Key files
 
 | File | Purpose |
 | --- | --- |
-| [`types.rs`](./types.rs) | `SecurityPolicy` fields, `AutonomyLevel`, `CommandRiskLevel`, `GateDecision`, `ToolOperation`, `ActionTracker`, `TrustedRoot`/`TrustedAccess`, `WORKSPACE_INTERNAL_DIRS`/`WORKSPACE_INTERNAL_FILES`, the two policy markers |
-| [`path_checks.rs`](./path_checks.rs) | `is_workspace_internal_path`, `is_always_forbidden`, `check_cross_profile`, `is_within_trusted_root`, `is_resolved_path_allowed[_for]`, `check_resolved_against_forbidden` |
-| [`command_checks.rs`](./command_checks.rs) | `classify_command`, `gate_decision`, `check_gated_command`, `is_command_allowed`, `command_risk_level`, `parse_declared_class`, `is_command_executor`, `split_unquoted_segments` |
-| [`enforcement.rs`](./enforcement.rs) | `can_act`, `enforce_write_tier`, `enforce_tool_operation`, `record_action`/`is_rate_limited`, `from_config`, `with_privacy_mode`, `openhuman_scratch_dir`/`ensure_openhuman_scratch_dir`, `validate_path_within_root` |
-| [`command_analysis.rs`](./command_analysis.rs) | `CommandAnalysis::from_shell_analysis`: the production path. TinyBox reports only live segments and redirection; the host derives each segment's class, structural flags and literal path words |
-| [`command_vocabulary.rs`](./command_vocabulary.rs) | The per-segment classifier both paths share (`classify_segment_source`): read/network/install/destructive/executor bases, launchers (`env`, `timeout`, `nohup`, `nice`, …) and leading assignments looked through, quote-split names joined |
+| [`types.rs`](./types.rs) | Host configuration/context types, autonomy tier, stable gate/error types, and trusted roots |
+| [`native_commands.rs`](./native_commands.rs) | TinySecurity command gateway and adaptation to host approval outcomes |
+| [`native_paths.rs`](./native_paths.rs) | Host path context translated to TinySecurity's path-policy contract |
+| [`module_gate.rs`](./module_gate.rs) | Batched path checks and cached module answers for sync-only host traits |
+| [`enforcement.rs`](./enforcement.rs) | Host tool admission, budget snapshots, and scratch-directory mechanics |
 
-## Public surface
-
-Re-exported through `policy/mod.rs` and then through `security/mod.rs`:
-`SecurityPolicy`, `AutonomyLevel`, `CommandClass`, `CommandRiskLevel`,
-`GateDecision`, `ToolOperation`, `ActionTracker`,
-`TrustedRoot`, `TrustedAccess`, `POLICY_BLOCKED_MARKER`,
-`POLICY_DENIED_MARKER`, `validate_path_within_root`,
-`ensure_openhuman_scratch_dir`, `openhuman_scratch_dir`.
-
-`security/live_policy.rs` (a sibling of this directory) holds the current
-`SecurityPolicy` in a process-global cell: new sessions `install` the latest
-policy, and `reload_from` / `reload_privacy` swap it the moment the config is
-saved. `security_scoped_to_root` (`tools/impl/filesystem/gate.rs`, reached through
-`FsGate::scoped_to_workspace`) and `security_for_tool_context`
-(`tools/impl/system/mod.rs`) clone a tool's policy per call and, when the run
-carries a workspace descriptor, set `action_dir` to that root and pushes it
-as a `ReadWrite` `TrustedRoot`. `is_always_forbidden` and
-`is_workspace_internal_path` are evaluated before any trusted-root shortcut,
-so the grant cannot widen them.
-
-## Invariants
-
-Each of these must not be weakened to make a feature work:
-
-- `action_dir` vs `workspace_dir`. `action_dir` is the agent's action
-  sandbox root; tools resolve relative paths and default their cwd there.
-  `workspace_dir` holds core-internal state (memory DBs, sessions, tokens);
-  the workspace root itself is a permitted containment root
-  (`is_resolved_path_allowed_for`), but its internal-state subtree is refused
-  by `check_resolved_against_forbidden` before any trusted-root grant is
-  consulted. Kept as two separate fields on `SecurityPolicy` (`types.rs`) so
-  the two roots can diverge.
-- `is_workspace_internal_path` ([`path_checks.rs`](./path_checks.rs)) is true for any path
-  whose first component under `workspace_dir` is in `WORKSPACE_INTERNAL_DIRS`
-  or `WORKSPACE_INTERNAL_FILES` (`types.rs`), or starts
-  with `memory-`, `memory_tree-`, or `session_raw-`. It is checked against the
-  canonicalized form of both paths when possible, falling back to the raw
-  paths for not-yet-existing targets.
-- `is_always_forbidden` (`path_checks.rs`) does a case-insensitive,
-  segment-based match against `SENSITIVE_COMPONENTS` (`.ssh`, `.gnupg`,
-  `.aws`, `.azure`, `.kube`, `keychains`, Windows DPAPI dirs) plus a prefix
-  match against `SYSTEM_PREFIXES` (`/etc`, `/root`, `/boot`, `/proc`, `/sys`,
-  `/system`, `C:\Windows`, `C:\Program Files[  (x86)]`, `C:\ProgramData`).
-  It is unconditional; a `trusted_root` grant can never reach these paths.
-  Gray-area directories (`/usr`, `/opt`, `/var`, `~/Library`) deliberately
-  stay in the user-overridable `forbidden_paths` list instead, so a grant can
-  still reach, for example, `/usr/local/...`.
-- `classify_command`'s fail-closed floor ([`command_checks.rs`](./command_checks.rs)): a
-  command that is not provably read-only (and not a recognized
-  network/destructive command) is at least `CommandClass::Write`.
-  `classify_command` (tests) and production's `from_shell_analysis` share one
-  segment classifier, and `policy_classifier_parity_tests.rs` runs one corpus
-  through both. The highest
-  class across `;`/`|`/`&&`/`||`/newline-separated segments wins, and any
-  unquoted redirect (`>`, `>>`) or `tee` lifts the whole command to at least
-  `Write`. An LLM-declared category (`parse_declared_class`) is
-  escalate-only: `agent/tinyagents/host/security_gate.rs` combines it as
-  `class = check_gated_command(cmd)?.max(declared)`, so the model can raise
-  the gate but never lower what the runtime determined.
-- Approval gate default-on, marker semantics. `POLICY_BLOCKED_MARKER`
-  (`[policy-blocked]`) prefixes a permanent rejection: the identical call
-  can never succeed in the current tier (read-only blocking a write, a
-  forbidden/credential path, a disallowed high-risk or hidden-execution
-  command). `POLICY_DENIED_MARKER` (`[policy-denied]`) prefixes a this-turn
-  denial: the user said no to an approval prompt, or it timed out. The agent
-  harness's `RepeatedToolFailureMiddleware` keys on these to halt on the first
-  verbatim repeat instead of reiterating a provably futile call. See
-  [`../approval/README.md`](../approval/README.md) for the gate itself and its
-  10-minute default TTL.
-- Hourly action budget. `ActionTracker` (`types.rs`) is a sliding
-  one-hour window; `enforce_tool_operation`'s `Act` arm
-  (`enforcement.rs`) calls `record_action` and refuses once the count exceeds
-  `max_actions_per_hour`. `enforce_write_tier` alone (tier only, no budget) is
-  used by callers that write at a finer grain than one tool call, for example
-  the kernel memory guard under `MemoryCore::store`.
-
-## Tests
-
-- [`policy_tests.rs`](./policy_tests.rs), [`policy_allowlist_tests.rs`](./policy_allowlist_tests.rs), [`policy_injection_tests.rs`](./policy_injection_tests.rs),
-  [`policy_paths_and_risk_tests.rs`](./policy_paths_and_risk_tests.rs), [`policy_trusted_roots_tests.rs`](./policy_trusted_roots_tests.rs), and
-  [`policy_workspace_internal_tests.rs`](./policy_workspace_internal_tests.rs): behavior tests for classification,
-  path checks, and tier enforcement.
-- [`policy_disabled_tests.rs`](./policy_disabled_tests.rs): behavior with `[autonomy] enabled = false`.
-- [`proptest_tests.rs`](./proptest_tests.rs): property tests over command classification.
-- [`policy_classifier_parity_tests.rs`](./policy_classifier_parity_tests.rs): one command corpus through the production and test classifier paths.
-- [`enforcement_scratch_dir_tests_tests.rs`](./enforcement_scratch_dir_tests_tests.rs): `openhuman_scratch_dir` is
-  namespaced on every platform and `ensure_openhuman_scratch_dir` creates it.
-
-## Further reading
-
-- [Parent module (`security`)](../README.md)
-- [Security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
-- [Privacy and security](../../../../../docs/gitbooks/en/features/privacy-and-security.md)
-- [Approval gate](../../../../../docs/gitbooks/en/features/approval-gate.md)
-- [OS keyring and secret storage](../../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)
+See the [security architecture](../../../../../docs/gitbooks/en/developing/architecture/security.md)
+for the wider host/module boundary.

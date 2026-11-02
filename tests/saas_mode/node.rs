@@ -108,10 +108,11 @@ pub fn start_node_logging(
                     .display()
                     .to_string(),
             );
-            if let Some(url) = storage_url {
-                config.push_str(&format!(
-                    "storage_url = {url:?}\nadvertise_url = {base:?}\n"
-                ));
+            let url = storage_url.unwrap_or("sqlite:{tmp}/saas-storage.db");
+            let url = url.replace("{tmp}", &d.tmp.path().display().to_string());
+            config.push_str(&format!("storage_url = {url:?}\n"));
+            if storage_url.is_some() {
+                config.push_str(&format!("advertise_url = {base:?}\n"));
             }
             config.push_str(extra);
             std::fs::write(&config_path, config).unwrap();

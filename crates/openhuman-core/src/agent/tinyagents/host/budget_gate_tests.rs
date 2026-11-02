@@ -334,3 +334,54 @@ async fn acquire_refuses_an_over_budget_call() {
     // The same gate admits an agent the budget does not cover.
     assert!(gate.acquire(&estimate_for("orchestrator")).await.is_ok());
 }
+
+/// With no `default_model` and an estimate that names none, the call still
+/// counts against budgets that don't depend on the model; skipping them let
+/// every configured cap through.
+#[test]
+fn a_call_with_no_model_is_still_checked_against_its_budgets() {
+    let (_tmp, tracker) = ledger_with(2.0, "planner");
+    let gate = budgeted_gate(crate::config::BudgetAction::Refuse);
+    let gate = OpenHumanBudgetGate::new(Arc::new(Config {
+        default_model: None,
+        ..(*gate.config).clone()
+    }));
+    let estimate = CallEstimate {
+        model: String::new(),
+        ..estimate_for("planner")
+    };
+    let refusal = gate
+        .check_budgets_against(&estimate, &gate.live_budgets(), &tracker)
+        .expect("planner is over its cap whatever the model");
+    assert!(refusal.starts_with("BUDGET_EXCEEDED:"), "{refusal}");
+}
+
+/// ...but a model-scoped budget, which has no model to match, does not count it.
+#[test]
+fn a_call_with_no_model_is_outside_model_scoped_budgets() {
+    let (_tmp, tracker) = ledger_with(0.0, "planner");
+    let mut config = config_without_file();
+    config.default_model = None;
+    config.cost.budgets = vec![crate::config::BudgetPolicy {
+        name: Some("per-model token cap".into()),
+        scope: crate::config::BudgetScope::Model,
+        matches: None,
+        period: crate::config::BudgetPeriod::Month,
+        max_usd: None,
+        max_tokens: Some(1),
+        warn_fraction: 0.8,
+        action: crate::config::BudgetAction::Refuse,
+    }];
+    let gate = OpenHumanBudgetGate::new(Arc::new(config));
+    let estimate = CallEstimate {
+        model: String::new(),
+        estimated_input_tokens: 10,
+        estimated_output_tokens: 10,
+        ..estimate_for("planner")
+    };
+    assert!(
+        gate.check_budgets_against(&estimate, &gate.live_budgets(), &tracker)
+            .is_none(),
+        "a model budget refused a call that names no model"
+    );
+}

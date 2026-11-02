@@ -1,4 +1,4 @@
-//! Normal-host prompt composition against the checksum-verified TinyFlows v0.8.29 module.
+//! Normal-host prompt composition against the checksum-verified TinyFlows v0.9.4 module.
 
 #[path = "support/env_guard.rs"]
 mod env_guard;
@@ -45,7 +45,9 @@ fn dump_published_prompt(
         .expect("run the public prompt-dump command");
     assert!(
         output.status.success(),
-        "prompt dump for {agent_id} failed: {}",
+        "prompt dump for {agent_id} failed ({}):\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("decode public prompt-dump JSON")
@@ -64,6 +66,7 @@ async fn prewarm_flow_authoring_in_parent(
         config,
         "orchestrator",
     )
+    .await
     .expect("build a normal host session to schedule resource prewarm");
     session.refresh_prompt_surface().await;
 
@@ -96,7 +99,7 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     let _source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (library, _) = published_tinyflows::staged_v0_8_29_module();
+    let (library, _) = published_tinyflows::staged_v0_9_4_module();
     let module_search_path = library
         .parent()
         .expect("staged module artifact has a search directory");
@@ -121,6 +124,37 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     for path in [&config_path, &local_config_path] {
         std::fs::write(path, &enabled_config).expect("write enabled module override config");
     }
+
+    // `agent dump-prompt` reads the install it is pointed at and builds the real
+    // session agent, which needs a stored backend credential (`SESSION_EXPIRED`
+    // otherwise). Install a local-only key the way a host does, through
+    // `auth_set_credential`, under a per-run master key the child processes
+    // inherit. `api_url` is unroutable, so nothing leaves the machine.
+    let _master_key_guard =
+        EnvVarGuard::set("OPENHUMAN_KEYRING_MASTER_KEY", "5a".repeat(32).as_str());
+    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
+    let credential = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+        .args([
+            "call",
+            "--method",
+            "openhuman.auth_set_credential",
+            "--params",
+            r#"{"token":"th_test_local_only","kind":"api-key"}"#,
+        ])
+        .env("HOME", temp.path())
+        .env("OPENHUMAN_WORKSPACE", &workspace)
+        .env("OPENHUMAN_MODULE_PATH", module_search_path)
+        .env_remove("BACKEND_URL")
+        .env_remove("VITE_BACKEND_URL")
+        .env_remove("OPENHUMAN_BACKEND_API_KEY")
+        .env_remove("OPENHUMAN_BACKEND_SESSION_TOKEN")
+        .output()
+        .expect("install the local test credential");
+    assert!(
+        credential.status.success(),
+        "installing the local test credential failed: {}",
+        String::from_utf8_lossy(&credential.stderr)
+    );
 
     for (agent_id, required, invariant) in [
         ("workflow_builder", "propose_workflow", "propose-only"),
@@ -151,6 +185,13 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
             openhuman_core::config::Config::load_from_config_path(&config_path, &workspace)
                 .await
                 .expect("load the same scoped Config used by the prompt dump");
+        // The in-process host session resolves its credential from this config's
+        // own state directory, not the one the child processes used.
+        openhuman_core::security::credentials::api_key::store_api_key(
+            &config,
+            "th_test_local_only",
+        )
+        .expect("store a local test credential for the in-process host session");
         let ctx = openhuman_core::core::runtime::DispatchCtx::host_default();
         tinyhumans_boot::boot();
         prewarm_flow_authoring_in_parent(&ctx, &config).await;
@@ -306,7 +347,7 @@ async fn published_module_public_import_uses_authoring_bus_in_a_cold_process() {
     let _source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE");
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
-    let (library, digest) = published_tinyflows::staged_v0_8_29_module();
+    let (library, digest) = published_tinyflows::staged_v0_9_4_module();
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace directory");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);

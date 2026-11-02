@@ -112,6 +112,12 @@ pub(crate) fn schemas(function: &str) -> ControllerSchema {
                     comment: "Message payload to append.",
                     required: true,
                 },
+                FieldSchema {
+                    name: "attachments",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Typed attachments (tinychannels ContentPart[], media with an inline data: or http(s) url) staged with the message instead of [IMAGE:]/[FILE:] markers in its content.",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -498,6 +504,12 @@ pub(crate) fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::String,
                     comment: "Replacement message content.",
                     required: true,
+                },
+                FieldSchema {
+                    name: "attachments",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Typed attachments (tinychannels ContentPart[]) sent with the replacement content instead of markers.",
+                    required: false,
                 },
                 FieldSchema {
                     name: "client_id",

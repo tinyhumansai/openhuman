@@ -35,7 +35,7 @@ stores memory on the account, so the run needs a credential:
 
 The script reads the file when it spawns the core and hands the value over in
 the core's environment only; the core seeds it at boot
-([`security/credentials/ops/boot_env.rs`](../../crates/openhuman-core/src/security/credentials/ops/boot_env.rs)). It is never an RPC argument, never
+([`credentials/ops/boot_env.rs`](../../crates/openhuman-core/src/credentials/ops/boot_env.rs)). It is never an RPC argument, never
 printed and never written to the run directory: `core.log`, `rpc.jsonl` and
 every error text are scrubbed of the value itself and of anything `tiny_…` or
 JWT-shaped (`eyJ…`). A core spawned for an engine that should not have a

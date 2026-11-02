@@ -270,7 +270,11 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const [state, setState] = useState<CoreState>(() => getCoreStateSnapshot());
   const snapshotRequestIdRef = useRef(0);
   const teamsRequestIdRef = useRef(0);
-  const logoutGuardUntilRef = useRef(0);
+  // The session token a logout is removing. Until the core stops reporting
+  // it, a snapshot carrying that token is shown signed out — keyed on the
+  // token, not a time window, so a failed logout never silently signs the
+  // user back in, while a genuinely new login (a different token) gets through.
+  const loggingOutTokenRef = useRef<string | null>(null);
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const isMountedRef = useRef(true);
@@ -311,16 +315,16 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     // unmounted refresh doesn't dispatch; the core latches configRecovered, so
     // the next live poll still surfaces it. Guarded internally against re-fire.
     maybeSurfaceConfigRecovery(rawSnapshot.configRecovered, t);
-    if (!snapshot.sessionToken) {
-      logoutGuardUntilRef.current = 0;
+    // Only a current snapshot may lift the logout guard: a poll that started
+    // before `clearSession` can answer "no token" from before the logout.
+    if (!snapshot.sessionToken && requestId === snapshotRequestIdRef.current) {
+      loggingOutTokenRef.current = null;
     }
     // Capture pre-commit identity outside the setState updater so flip
     // detection runs synchronously regardless of React's batching policy.
     const beforeCommit = getCoreStateSnapshot().snapshot;
     const shouldIgnoreTokenDuringLogout =
-      Date.now() < logoutGuardUntilRef.current &&
-      !beforeCommit.sessionToken &&
-      Boolean(snapshot.sessionToken);
+      loggingOutTokenRef.current !== null && snapshot.sessionToken === loggingOutTokenRef.current;
     const nextSnapshot = shouldIgnoreTokenDuringLogout ? toSignedOutSnapshot(snapshot) : snapshot;
     const previousIdentity = snapshotIdentity(beforeCommit);
     const nextIdentity = snapshotIdentity(nextSnapshot);
@@ -607,7 +611,6 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       }
 
       snapshotRequestIdRef.current += 1;
-      logoutGuardUntilRef.current = 0;
 
       void refresh().catch(err => {
         log('refresh failed after deep-link session update: %O', sanitizeError(err));
@@ -683,10 +686,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
 
   const storeSessionToken = useCallback(
     async (token: string, user?: object) => {
-      logoutGuardUntilRef.current = 0;
       sessionTokenBeingStoredRef.current = token;
       try {
         await storeSession(token, user ?? {});
+        // Only an explicit, successful store of the guarded token itself lifts
+        // the logout guard; any other token already passes it.
+        if (loggingOutTokenRef.current === token) loggingOutTokenRef.current = null;
         // refresh() drives refreshCore, which now owns identity-flip detection
         // and dispatches handleIdentityFlip when both prev and next are
         // authenticated and identities differ. The previous standalone
@@ -752,7 +757,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   }, []);
 
   const clearSession = useCallback(async () => {
-    logoutGuardUntilRef.current = Date.now() + 5_000;
+    // A repeated clear after a failed logout sees a null visible token while
+    // the core may still hold the guarded one: keep guarding it.
+    loggingOutTokenRef.current =
+      getCoreStateSnapshot().snapshot.sessionToken ?? loggingOutTokenRef.current;
     snapshotRequestIdRef.current += 1;
     commitState(previous => ({
       ...previous,
@@ -771,13 +779,17 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     // Wrap tauriLogout separately so a failure (e.g. the Rust-side
     // SessionExpiredSubscriber already cleared the session first) does not
     // prevent the subsequent refresh() — which is what actually flips the
-    // router to the login screen.
+    // router to the login screen. The failure is still rethrown afterwards so
+    // the caller can tell the user the logout did not complete.
+    let logoutError: unknown = null;
     await tauriLogout().catch(err => {
       log('tauriLogout failed in clearSession — proceeding with refresh: %O', sanitizeError(err));
+      logoutError = err ?? new Error('logout failed');
     });
     await refresh().catch(err => {
       log('refresh failed after clearSession: %O', sanitizeError(err));
     });
+    if (logoutError) throw logoutError;
   }, [commitState, refresh]);
 
   // When a confirmed session-expiry event arrives while the core is still

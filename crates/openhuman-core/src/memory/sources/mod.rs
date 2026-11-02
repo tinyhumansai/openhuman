@@ -121,7 +121,7 @@ pub fn apply_remove(config: &mut Config, id: &str) -> Option<MemorySourceConfig>
 /// the deletion is queued ([`crate::memory::deletion`]) and runs on the next
 /// sign-in. A failure is queued the same way, and returned.
 pub async fn forget_items(config: &Config, id: &str) -> Result<usize> {
-    let bound = match engine::resolve(config).engine() {
+    let bound = match engine::resolve(config).await.engine() {
         Ok(bound) => Some(bound),
         Err(Error::Off(_)) => None,
         Err(error) => return Err(error),

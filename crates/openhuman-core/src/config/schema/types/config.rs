@@ -186,6 +186,13 @@ pub struct Config {
     #[serde(default)]
     pub output_language: Option<String>,
 
+    /// Trusted interface locale for user-facing native channel replies and
+    /// failure copy. This is separate from `output_language`, which guides
+    /// the assistant's model-authored response. Unsupported or unset locales
+    /// use English for host-generated copy.
+    #[serde(default)]
+    pub channels_locale: Option<String>,
+
     /// The user's IANA time zone (`Asia/Kolkata`), chosen in Settings →
     /// Account. `None` follows the device. Read it through
     /// [`Config::time_zone`], which also validates it.
@@ -206,6 +213,10 @@ pub struct Config {
 
     #[serde(default)]
     pub autonomy: AutonomyConfig,
+
+    /// Durable security audit settings (`[audit]`).
+    #[serde(default)]
+    pub audit: AuditConfig,
 
     /// Operator tool rules (`[tool_rules]`): allow / deny / hide / approval
     /// patterns over tool names, families and tags, applied to every agent's
@@ -282,7 +293,8 @@ pub struct Config {
     /// session-memory extraction cadence. Consumed by
     /// the agent context middleware configuration.
     #[serde(default)]
-    pub context: ContextConfig,
+    #[schemars(with = "super::super::context::ContextConfigSchema")]
+    pub context: ContextSettings,
 
     #[serde(default)]
     pub model_routes: Vec<ModelRouteConfig>,
@@ -375,9 +387,6 @@ pub struct Config {
     /// custom agents and persisted enable/disable/tool-policy overrides.
     #[serde(default)]
     pub agent_registry: crate::agent_registry::types::AgentRegistryConfig,
-
-    #[serde(default)]
-    pub agents: HashMap<String, DelegateAgentConfig>,
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
@@ -475,10 +484,6 @@ pub struct Config {
     #[serde(default)]
     pub tokenjuice: TokenjuiceConfig,
 
-    /// TinyMemes remix tuning (`[memes]`); the switch is `[components] memes`.
-    #[serde(default)]
-    pub memes: MemesConfig,
-
     /// Inbound event queues (`[inbound]`); the switch is
     /// `[components] eventqueues`.
     #[serde(default)]
@@ -542,6 +547,10 @@ pub struct Config {
 
     #[serde(default)]
     pub update: UpdateConfig,
+
+    /// Spoken-reply policy for channels (`[channel_voice]`).
+    #[serde(default)]
+    pub channel_voice: ChannelVoiceConfig,
 
     /// Whether the user has completed the **React UI** onboarding flow.
     ///

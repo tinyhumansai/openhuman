@@ -95,6 +95,7 @@ pub(crate) struct FinishedPlan {
 pub(crate) async fn close_finished_plan(
     workspace_dir: &std::path::Path,
     thread_id: Option<&str>,
+    context: &crate::core::runtime::DispatchCtx,
 ) -> Option<FinishedPlan> {
     let thread_id = thread_id.map(str::trim).filter(|id| !id.is_empty())?;
     let store = crate::storage::sessions::stores_or_ephemeral(workspace_dir).kv;
@@ -107,7 +108,7 @@ pub(crate) async fn close_finished_plan(
                 "[state_block] plan finished: notes moved to the last task"
             );
             let goal =
-                crate::agent::goals::runtime::load_for_thread(workspace_dir, Some(thread_id))
+                crate::agent::goals::load_for_thread(workspace_dir, context, Some(thread_id))
                     .await
                     .map(|goal| goal.objective);
             Some(FinishedPlan { plan, goal })
