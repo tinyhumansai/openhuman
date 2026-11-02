@@ -45,13 +45,19 @@ async fn add_due_job(ctx: &Arc<CoreContext>, config: &Config, name: &str) -> Str
         .id
     })
     .await;
+    wait_due(ctx, config, &id).await;
+    id
+}
+
+/// Waits (bounded) until the clock has reached `id`'s next run.
+async fn wait_due(ctx: &Arc<CoreContext>, config: &Config, id: &str) {
     for _ in 0..200 {
         let next_run = CoreContext::scope(Arc::clone(ctx), async {
-            cron::get_job(config, &id).unwrap().next_run
+            cron::get_job(config, id).unwrap().next_run
         })
         .await;
         if next_run <= chrono::Utc::now() {
-            return id;
+            return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
@@ -103,11 +109,15 @@ async fn an_agent_pass_runs_only_that_agents_due_jobs() {
         0,
         "beta's due job waits for beta's own pass"
     );
+    // Due again: the second pass starts a scheduler on the scope the first
+    // one released and runs it.
+    wait_due(&alpha, &config, &alpha_job).await;
     assert_eq!(
         cron::scheduler::run_agent_pass("pass-alpha").await.unwrap(),
-        Some(0),
+        Some(1),
         "a second pass over the same agent is not refused for its scope"
     );
+    assert_eq!(runs_of(&alpha, &config, &alpha_job).await, 2);
 
     assert_eq!(
         cron::scheduler::run_agent_pass("pass-beta").await.unwrap(),
