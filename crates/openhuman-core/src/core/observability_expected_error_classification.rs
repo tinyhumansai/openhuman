@@ -1,4 +1,3 @@
-
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     let lower = message.to_ascii_lowercase();
     // Explicit host ownership/reportability metadata precedes text heuristics.
@@ -350,6 +349,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// read path no longer emits this error at all (it degrades to a lock-free
 /// read — see `AuthProfilesStore::load`).
 fn is_disk_full_message(lower: &str) -> bool {
+    // A remote response that quotes a disk-full phrase or errno is the
+    // server's disk, not ours: operator-actionable, so it must keep reporting.
+    // Checked before every arm so the `before_send` filter and the report
+    // cooldown (both via `is_disk_full_error`) never swallow it.
+    if is_remote_response_envelope(lower) {
+        return false;
+    }
     if lower.contains("no space left on device")
         || lower.contains("not enough space on the disk")
         || lower.contains("storagefull")
@@ -405,7 +411,7 @@ fn is_disk_full_message(lower: &str) -> bool {
 /// rejected via the `"backend returned "` envelope guard, mirroring the other
 /// local-only disk-full arms.
 fn is_disk_full_os_code(lower: &str, windows: bool) -> bool {
-    if lower.contains("backend returned ") {
+    if is_remote_response_envelope(lower) {
         return false;
     }
     if windows {
@@ -413,6 +419,16 @@ fn is_disk_full_os_code(lower: &str, windows: bool) -> bool {
     } else {
         lower.contains("(os error 28)")
     }
+}
+
+/// Whether `lower` (already lowercased) is framed as a remote service's
+/// response rather than a local error: the non-2xx backend envelope
+/// `"Backend returned <status> … : <detail>"` (`integrations::client::post`,
+/// `composio::client`) or the embeddings envelope `"Embedding API error
+/// (<status>): <body>"` (`OpenAiEmbedding::embed`). A disk-full phrase or
+/// `(os error N)` inside either belongs to the server.
+fn is_remote_response_envelope(lower: &str) -> bool {
+    lower.contains("backend returned ") || lower.contains("embedding api error")
 }
 
 /// Whether `message` is a local host disk-full failure (ENOSPC /

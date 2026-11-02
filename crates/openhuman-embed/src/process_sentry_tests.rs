@@ -105,6 +105,24 @@ fn each_known_noise_class_is_dropped() {
     }
 }
 
+/// A remote server's full disk is operator-actionable: the `disk-full` filter
+/// must not claim backend or embeddings responses that quote the phrase or an
+/// errno (CodeRabbit on #8517).
+#[test]
+fn the_disk_full_filter_ignores_remote_responses() {
+    for message in [
+        "Backend returned 507 Insufficient Storage for PUT https://api.example.test/x: \
+         No space left on device (os error 28)",
+        "Embedding API error (500 Internal Server Error): disk full (os error 112)",
+    ] {
+        assert_ne!(
+            known_noise(&event(message, &[])),
+            Some("disk-full"),
+            "{message}"
+        );
+    }
+}
+
 #[test]
 fn a_real_error_is_kept_scrubbed_and_attributed() {
     let mut event = event("upload failed: api_key=sk-abc123", &[("domain", "memory")]);

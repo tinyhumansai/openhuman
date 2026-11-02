@@ -498,6 +498,41 @@ fn os_error_code_anchor_is_exact_and_local_only() {
     }
 }
 
+/// A server whose own disk is full is operator-actionable: a remote response
+/// quoting any disk-full phrase or errno must keep reaching Sentry. The shared
+/// predicate (used by the `before_send` filter and the report cooldown) and the
+/// `DiskFull` classifier arm both reject the backend and embeddings envelopes
+/// before any disk-full rule (CodeRabbit on #8517).
+#[test]
+fn remote_response_envelopes_are_never_local_disk_full() {
+    let remote = [
+        "Backend returned 500 Internal Server Error for POST https://api.example.test/x: \
+         No space left on device (os error 28)",
+        "Backend returned 507 Insufficient Storage for PUT https://api.example.test/x: \
+         There is not enough space on the disk. (os error 112)",
+        "Backend returned 500 Internal Server Error for POST https://api.example.test/x: \
+         StorageFull",
+        "Embedding API error (500 Internal Server Error): No space left on device (os error 28)",
+        "Embedding API error (500 Internal Server Error): disk full (os error 112) (os error 39)",
+    ];
+    for raw in remote {
+        assert!(!is_disk_full_error(raw), "shared predicate: {raw}");
+        assert_ne!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::DiskFull),
+            "classifier: {raw}"
+        );
+        let lower = raw.to_ascii_lowercase();
+        for windows in [true, false] {
+            assert!(!is_disk_full_os_code(&lower, windows), "os code: {raw}");
+        }
+    }
+    // The same local text without an envelope still classifies.
+    assert!(is_disk_full_error(
+        "transcript persistence failed: No space left on device (os error 28)"
+    ));
+}
+
 #[test]
 fn does_not_classify_unrelated_space_messages() {
     // Generic "space" prose without the errno-text anchor must not be
