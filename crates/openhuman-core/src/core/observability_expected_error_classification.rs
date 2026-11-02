@@ -61,6 +61,15 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_wallet_not_configured_message(&lower) {
         return Some(ExpectedErrorKind::WalletNotConfigured);
     }
+    // TAURI-RUST-1635 and BYOK ElevenLabs payment failures: the user's own key
+    // is a key ID or their own subscription is unpaid (user config, not a code
+    // defect). Hosted failures (15BM / 15CT) are never claimed here.
+    // Checked early: the wrapped body carries `401` / `400` tokens that the
+    // broader matchers below would otherwise claim with a less specific kind.
+    // See `observability_voice_provider_errors.rs`.
+    if is_voice_provider_user_state_message(message) {
+        return Some(ExpectedErrorKind::ProviderUserState);
+    }
     // TAURI-RUST-117K et al. — see `ExpectedErrorKind::ModuleUnavailable`.
     if is_module_unavailable_message(message) {
         return Some(ExpectedErrorKind::ModuleUnavailable);
