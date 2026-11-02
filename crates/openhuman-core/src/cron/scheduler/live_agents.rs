@@ -21,17 +21,19 @@ impl LiveAgentSchedulers {
         self.by_agent
             .retain(|id, _| live.iter().any(|(live_id, _)| live_id == id));
         for (agent_id, ctx) in live {
-            self.tick_agent(agent_id, ctx).await;
+            // Failures are logged in `tick_agent`; the next tick retries.
+            let _ = self.tick_agent(agent_id, ctx).await;
         }
     }
 
     /// Dispatches the due jobs of one live agent under its own context; the
-    /// count dispatched, `0` when its config, policy or store is unavailable.
+    /// count dispatched. Errors when its config, policy or store is
+    /// unavailable.
     async fn tick_agent(
         &mut self,
         agent_id: String,
         ctx: Arc<crate::core::runtime::CoreContext>,
-    ) -> usize {
+    ) -> Result<usize> {
         let scheduler = &mut self.by_agent;
         let dispatch = crate::core::runtime::DispatchCtx::new(ctx.clone());
         crate::core::runtime::CoreContext::scope(ctx, async move {
@@ -39,25 +41,25 @@ impl LiveAgentSchedulers {
                 Ok(config) => config,
                 Err(error) => {
                     tracing::debug!(agent = %agent_id, %error, "[cron:scheduler] agent config unavailable");
-                    return 0;
+                    return Err(anyhow!("agent config unavailable: {error}"));
                 }
             };
             let Some(security) = crate::security::live_policy::effective_in(&dispatch) else {
                 tracing::warn!(agent = %agent_id, "[cron:scheduler] agent has no policy; jobs skipped");
-                return 0;
+                return Err(anyhow!("agent has no security policy"));
             };
             let dispatcher = scheduler
                 .entry(agent_id.clone())
                 .or_insert_with(|| JobDispatcher::new(&dispatch, &config, &security));
             match dispatcher.tick(&config).await {
-                Ok(0) => 0,
+                Ok(0) => Ok(0),
                 Ok(count) => {
                     tracing::debug!(agent = %agent_id, count, "[cron:scheduler] agent jobs dispatched");
-                    count
+                    Ok(count)
                 }
                 Err(error) => {
                     tracing::warn!(agent = %agent_id, "[cron:scheduler] agent poll failed: {error}");
-                    0
+                    Err(error)
                 }
             }
         })
@@ -83,8 +85,9 @@ pub async fn run_live_agent_pass(max_concurrent: usize) {
 }
 
 /// One pass over a single live agent's due jobs, run to completion; the
-/// count dispatched, or `None` when `agent_id` is not live. Errors when a
-/// dispatched job or its run record failed, or the drain did not complete.
+/// count dispatched, or `None` when `agent_id` is not live. Errors when the
+/// agent's config, policy or job store is unavailable, when a dispatched job
+/// or its run record failed, or when the drain did not complete.
 ///
 /// For hosts that decide when an agent's jobs run instead of leaving it to the
 /// scheduler loop's sweep over every live agent: one that opens agents on
@@ -103,8 +106,9 @@ pub async fn run_agent_pass(agent_id: &str) -> Result<Option<usize>> {
     let count = agents
         .tick_agent(agent_id.to_string(), Arc::clone(&ctx))
         .await;
+    // Drain before surfacing a poll error: a partial tick may have dispatched.
     for dispatcher in agents.by_agent.values_mut() {
         dispatcher.try_drain().await?;
     }
-    Ok(Some(count))
+    Ok(Some(count?))
 }
