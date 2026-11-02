@@ -130,6 +130,14 @@ pub async fn create_sandbox_backend_with_config(
             })
         }
         SandboxBackendKind::Docker => docker::docker_backend_handle(config).await,
+        // A box is created on a tenant's first command, so there is nothing
+        // to probe or name yet; the gateway's availability shows on that call.
+        SandboxBackendKind::OpenShell => Ok(SandboxBackendHandle {
+            kind: SandboxBackendKind::OpenShell,
+            status: SandboxStatus::Ready,
+            backend_id: None,
+            isolation: None,
+        }),
     }
 }
 
