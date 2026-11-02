@@ -41,11 +41,6 @@ pub(super) type WebRunner = TurnRunner<
     QueuedPayload,
 >;
 
-/// How long a stopped turn may keep running so the session runtime can persist
-/// the rounds it completed. Just above the runtime's own 2 s driver grace; the
-/// user-facing `chat_cancelled` has already been decided.
-const STOPPED_TURN_PERSIST_GRACE: Duration = Duration::from_secs(3);
-
 /// Upper bound on closing a stopped turn: config, snapshot read and the
 /// closing model call (itself bounded at 45s). Past it the stop is reported as
 /// a `turn_timeout` error, so closing can never be what hangs the turn.

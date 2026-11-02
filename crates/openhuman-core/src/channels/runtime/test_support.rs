@@ -305,10 +305,6 @@ pub(crate) async fn bind_test_core_context_with_provider_endpoint(
     base_config: &crate::config::Config,
     provider_endpoint: &str,
 ) -> Arc<crate::core::runtime::CoreContext> {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("openhuman_core=debug")
-        .try_init();
     use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
 
     let workspace = context.workspace_dir.as_ref().clone();
@@ -435,10 +431,6 @@ impl Tool for HarnessTool {
 }
 
 pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHarnessObservation {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_env_filter("openhuman_core=debug")
-        .try_init();
     // Several messages can share one admitted runtime. Keep the caller's host
     // identity while each invocation still creates its own acting workspace.
     if crate::core::runtime::CoreContext::current_embedder_config().is_some() {

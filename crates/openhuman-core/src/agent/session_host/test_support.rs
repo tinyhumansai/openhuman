@@ -105,13 +105,6 @@ pub(crate) fn install_model_fixture() {
 /// Configure a managed-provider session fixture with its required test credential.
 pub(crate) async fn install_managed_model_fixture(config: &crate::config::Config) {
     install_model_fixture();
-    #[cfg(feature = "security-module")]
-    // Plain fixture credentials do not need the process-wide native secret scope.
-    if config.modules.enabled && config.secrets.encrypt {
-        crate::modules::security::ensure_loaded(config)
-            .await
-            .expect("the staged TinySecurity module should load for managed-model tests");
-    }
     crate::credentials::api_key::store_api_key(config, "test-session-fixture-key")
         .await
         .expect("store the managed inference fixture credential");
