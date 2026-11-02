@@ -87,6 +87,21 @@ pub(crate) fn config_from_toml_str(contents: &str) -> anyhow::Result<Config> {
             < 14;
     crate::config::migrations::retire_cloud_provider_type::rewrite_document(&mut document)?;
     crate::config::migrations::retire_configured_agents::rewrite_document(&mut document);
+    if let Some(backend @ ("firejail" | "bubblewrap")) = document
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("backend"))
+        .or_else(|| {
+            document
+                .get("security")
+                .and_then(|security| security.get("sandbox"))
+                .and_then(|sandbox| sandbox.get("backend"))
+        })
+        .and_then(toml::Value::as_str)
+    {
+        anyhow::bail!(
+            "unsupported sandbox backend '{backend}': this build uses TinyBox for native sandboxing; configure 'landlock', 'docker', 'auto', or 'none'"
+        );
+    }
     reject_non_finite_floats(&document, &mut String::new())?;
     let json = serde_json::to_string(&document)?;
     let mut unknown_keys = Vec::new();

@@ -80,4 +80,4 @@ pub(crate) fn merge_listener_health(
     }
 }
 
-pub(crate) use crate::security::credentials::channel_credential_provider as credential_provider;
+pub(crate) use crate::credentials::channel_credential_provider as credential_provider;

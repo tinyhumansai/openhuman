@@ -80,18 +80,20 @@ async fn managed_factory_and_probe_use_the_explicit_provider_entry() {
         workspace_dir: tmp.path().join("workspace"),
         ..Default::default()
     };
-    crate::security::credentials::AuthService::from_config(&config)
+    crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::APP_SESSION_PROVIDER,
             "default",
             "fixture-session-token",
             Default::default(),
             true,
         )
+        .await
         .expect("store isolated fixture session");
 
     CoreContext::scope(context_b, async {
         let (_, model) = create_chat_model_with_model_id_in(&dispatch, "chat", &config, 0.0)
+            .await
             .expect("explicit model entry builds");
         assert_eq!(model, "context-a-one-shot");
         let simple_chat = crate::inference::host_runtime::ops::agent_chat_simple(
@@ -111,6 +113,7 @@ async fn managed_factory_and_probe_use_the_explicit_provider_entry() {
             Arc::new(config.clone()),
         )
         .build("hint:chat", 0.0, None, None)
+        .await
         .expect("turn set uses explicit model entry");
         let response = turn
             .primary
@@ -122,7 +125,11 @@ async fn managed_factory_and_probe_use_the_explicit_provider_entry() {
             .await
             .expect("explicit model entry is ready");
         let missing = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
-        assert!(create_chat_model_with_model_id_in(&missing, "chat", &config, 0.0).is_err());
+        assert!(
+            create_chat_model_with_model_id_in(&missing, "chat", &config, 0.0)
+                .await
+                .is_err()
+        );
     })
     .await;
     assert!(a_probed.load(Ordering::SeqCst));
@@ -171,16 +178,18 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
             list: Arc::new(|_| {
                 Box::pin(async { Err("model listing is not used by this test".to_string()) })
             }),
-            limits: Some(Arc::new(move |model, _| {
-                Some(tinyinference_llm::model::discover::DiscoveryRequest {
-                    endpoint: format!("https://{name}.example.test/v1"),
-                    model: model.to_string(),
-                    listing_url: None,
-                    probe_single_model: false,
-                    headers: Vec::new(),
-                    pinned_providers: Vec::new(),
-                    ollama_native: None,
-                    timeout: std::time::Duration::from_secs(1),
+            limits: Some(Arc::new(move |request| {
+                Box::pin(async move {
+                    Some(tinyinference_llm::model::discover::DiscoveryRequest {
+                        endpoint: format!("https://{name}.example.test/v1"),
+                        model: request.model,
+                        listing_url: None,
+                        probe_single_model: false,
+                        headers: Vec::new(),
+                        pinned_providers: Vec::new(),
+                        ollama_native: None,
+                        timeout: std::time::Duration::from_secs(1),
+                    })
                 })
             })),
         }
@@ -243,14 +252,15 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
             workspace_dir: tmp.path().join("workspace"),
             ..Default::default()
         };
-        crate::security::credentials::AuthService::from_config(&config)
+        crate::credentials::AuthService::from_config(&config)
             .store_provider_token(
-                crate::security::credentials::APP_SESSION_PROVIDER,
+                crate::credentials::APP_SESSION_PROVIDER,
                 "default",
                 "fixture-session-token",
                 Default::default(),
                 true,
             )
+            .await
             .expect("store isolated fixture session");
         config.chat_provider = Some("p_hosted:fixture/model-v1".to_string());
         config.cloud_providers.push(CloudProviderCreds {
@@ -271,8 +281,10 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
                 &config,
                 Some(resolved.extensions()),
             )
+            .await
             .expect("explicit context catalog supplies limits");
             let one_shot = create_chat_model_with_model_id_in(&dispatch, "chat", &config, 0.0)
+                .await
                 .map(|(_, model)| model)
                 .unwrap_or_else(|error| format!("ERR: {error}"));
             let turn = crate::inference::turn_models::TurnModelSource::new_crate_native(
@@ -281,6 +293,7 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
                 Arc::new(config.clone()),
             )
             .build("hint:chat", 0.0, None, None)
+            .await
             .ok()
             .map(|models| models.primary);
             let turn_response = match turn {
@@ -297,6 +310,7 @@ async fn hosted_cloud_slug_uses_explicit_auth_policy_and_model_entry() {
                 &config,
                 0.0,
             )
+            .await
             .expect("explicit hosted cloud string builds from the ambient owner context");
             (model_id, response(model).await)
         })
@@ -365,7 +379,9 @@ async fn create_chat_model_in_reads_the_models_of_the_explicit_context() {
 
     for reply in ["echo: one", "echo: two"] {
         let ctx = ctx_for(reply);
-        let model = create_chat_model_in(&ctx, "chat", &config, 0.3).expect("explicit model");
+        let model = create_chat_model_in(&ctx, "chat", &config, 0.3)
+            .await
+            .expect("explicit model");
         let response = model
             .invoke(&(), ModelRequest::new(vec![Message::user("hi")]))
             .await

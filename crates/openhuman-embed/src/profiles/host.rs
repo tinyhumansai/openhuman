@@ -74,7 +74,13 @@ impl ProfileRuntimeBuilder {
     #[must_use]
     pub fn tools(
         mut self,
-        factory: impl for<'a> Fn(TurnContext<'a>) -> HostTurnTools + Send + Sync + 'static,
+        factory: impl for<'a> Fn(
+                TurnContext<'a>,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = HostTurnTools> + Send + 'a>,
+            > + Send
+            + Sync
+            + 'static,
     ) -> Self {
         self.host_options.tools = Some(Arc::new(factory));
         self

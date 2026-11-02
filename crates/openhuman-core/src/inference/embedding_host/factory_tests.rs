@@ -1,5 +1,5 @@
 use super::*;
-use crate::security::credentials::{AuthService, APP_SESSION_PROVIDER};
+use crate::credentials::{AuthService, APP_SESSION_PROVIDER};
 use std::collections::HashMap;
 use tempfile::TempDir;
 use tinyinference_embeddings::factory::validate_custom_endpoint;
@@ -28,7 +28,7 @@ fn managed_credential_scope_mirrors_config_not_default_state_dir() {
     let mut config = test_config(&tmp);
     config.secrets.encrypt = false;
 
-    let dir = Some(crate::security::credentials::state_dir_from_config(&config));
+    let dir = Some(crate::credentials::state_dir_from_config(&config));
     let encrypt = config.secrets.encrypt;
     assert_eq!(
         dir.as_deref(),
@@ -45,8 +45,8 @@ fn managed_credential_scope_mirrors_config_not_default_state_dir() {
 /// `AuthService::from_config`) is recovered by the scope the managed branch
 /// feeds the cloud embedder's bearer resolver. This is the round-trip the
 /// old hardcode broke.
-#[test]
-fn managed_scope_resolves_signin_stored_app_session_token() {
+#[tokio::test]
+async fn managed_scope_resolves_signin_stored_app_session_token() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -59,13 +59,15 @@ fn managed_scope_resolves_signin_stored_app_session_token() {
             HashMap::new(),
             true,
         )
+        .await
         .unwrap();
 
     // The exact scope the managed branch uses must recover it.
-    let dir = Some(crate::security::credentials::state_dir_from_config(&config));
+    let dir = Some(crate::credentials::state_dir_from_config(&config));
     let encrypt = config.secrets.encrypt;
     let resolved = AuthService::new(dir.as_deref().unwrap(), encrypt)
         .get_provider_bearer_token(APP_SESSION_PROVIDER, None)
+        .await
         .unwrap();
     assert_eq!(
         resolved.as_deref(),
@@ -80,6 +82,7 @@ fn managed_scope_resolves_signin_stored_app_session_token() {
     let default_like = TempDir::new().unwrap();
     let wrong_scope = AuthService::new(default_like.path(), encrypt)
         .get_provider_bearer_token(APP_SESSION_PROVIDER, None)
+        .await
         .unwrap();
     assert!(
         wrong_scope.is_none(),
@@ -90,8 +93,8 @@ fn managed_scope_resolves_signin_stored_app_session_token() {
 /// The `managed`/`cloud` arm builds a cloud embedder carrying the requested
 /// dimensions (exercises the config-aware factory's managed branch). Mirrors
 /// the existing `factory_managed`/`factory_cloud` assertions (name + dims).
-#[test]
-fn config_aware_factory_builds_managed_provider() {
+#[tokio::test]
+async fn config_aware_factory_builds_managed_provider() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     for provider in ["managed", "cloud"] {
@@ -103,6 +106,7 @@ fn config_aware_factory_builds_managed_provider() {
             "",
             None,
         )
+        .await
         .expect("managed/cloud builds via config-aware factory");
         assert_eq!(p.name(), "cloud");
         assert_eq!(p.dimensions(), DEFAULT_CLOUD_EMBEDDING_DIMENSIONS);
@@ -116,8 +120,8 @@ fn config_aware_factory_builds_managed_provider() {
 /// `create_embedding_provider_with_config` returns `Box<dyn EmbeddingModel>`,
 /// whose trait surface is `name`/`model_id`/`dimensions`/`embed`, so there is
 /// no `base_url()` accessor to assert against here.
-#[test]
-fn config_aware_factory_ollama_honours_config_base_url() {
+#[tokio::test]
+async fn config_aware_factory_ollama_honours_config_base_url() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.local_ai.base_url = Some("http://custom-ollama:12345".to_string());
@@ -125,6 +129,7 @@ fn config_aware_factory_ollama_honours_config_base_url() {
     // Building must succeed with the custom URL.
     let p =
         create_embedding_provider_with_config(&config, "ollama", "nomic-embed-text", 768, "", None)
+            .await
             .expect("ollama provider must build with a custom local_ai.base_url");
     assert_eq!(p.name(), "ollama");
     assert_eq!(p.dimensions(), 768);
@@ -140,6 +145,7 @@ fn config_aware_factory_ollama_honours_config_base_url() {
         "",
         None,
     )
+    .await
     .expect("ollama provider must build with default URL");
     assert_eq!(default_p.name(), "ollama");
 }
@@ -186,6 +192,7 @@ async fn config_aware_factory_ollama_embeds_against_config_base_url() {
 
     let provider =
         create_embedding_provider_with_config(&config, "ollama", "nomic-embed-text", 3, "", None)
+            .await
             .expect("ollama provider builds with a config base_url");
 
     let vectors = provider
@@ -201,29 +208,32 @@ async fn config_aware_factory_ollama_embeds_against_config_base_url() {
 
 /// Non-managed providers delegate unchanged to the credentialed factory —
 /// the config scope has no effect on BYO-key / local providers.
-#[test]
-fn config_aware_factory_delegates_non_managed() {
+#[tokio::test]
+async fn config_aware_factory_delegates_non_managed() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let p =
         create_embedding_provider_with_config(&config, "voyage", "voyage-3-large", 1024, "k", None)
+            .await
             .expect("voyage builds via delegated path");
     assert_eq!(p.dimensions(), 1024);
 
     // Unknown provider still surfaces the same error, not a panic.
     assert!(
-        create_embedding_provider_with_config(&config, "nope", "m", 1, "", None).is_err(),
+        create_embedding_provider_with_config(&config, "nope", "m", 1, "", None)
+            .await
+            .is_err(),
         "unknown provider must error through the delegated factory"
     );
 }
 
-#[test]
-fn default_embedder_falls_back_to_cloud_when_configured_provider_fails() {
+#[tokio::test]
+async fn default_embedder_falls_back_to_cloud_when_configured_provider_fails() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.memory.embedding_provider = "not-a-provider".into();
 
-    let provider = default_embedding_provider_with_config(&config);
+    let provider = default_embedding_provider_with_config(&config).await;
     assert_eq!(
         provider.name(),
         "cloud",
@@ -278,7 +288,7 @@ async fn default_embedder_honors_configured_local_provider() {
     config.memory.embedding_dimensions = 3;
     config.local_ai.base_url = Some(base);
 
-    let provider = default_embedding_provider_with_config(&config);
+    let provider = default_embedding_provider_with_config(&config).await;
     assert_eq!(provider.name(), "ollama");
     assert_eq!(provider.model_id(), "bge-m3");
     assert_eq!(provider.dimensions(), 3);

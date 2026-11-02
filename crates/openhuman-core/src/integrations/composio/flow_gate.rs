@@ -31,16 +31,18 @@ pub(crate) async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<Strin
 
     let integrations = match fetch_connected_integrations_status(config).await {
         FetchConnectedIntegrationsStatus::Authoritative(items) => items,
-        FetchConnectedIntegrationsStatus::Unavailable => match cached_active_integrations(config) {
-            Some(items) => {
-                tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable — using last-known (possibly stale) cached connections for the tool_call allowlist");
-                items
+        FetchConnectedIntegrationsStatus::Unavailable => {
+            match cached_active_integrations(config).await {
+                Some(items) => {
+                    tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable — using last-known (possibly stale) cached connections for the tool_call allowlist");
+                    items
+                }
+                None => {
+                    tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable and no cached snapshot — connected-toolkit allowlist is empty this call");
+                    return None;
+                }
             }
-            None => {
-                tracing::warn!(target: "flows", "[flows] connected-toolkit lookup: backend unavailable and no cached snapshot — connected-toolkit allowlist is empty this call");
-                return None;
-            }
-        },
+        }
     };
     Some(
         integrations

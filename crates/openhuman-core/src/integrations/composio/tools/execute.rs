@@ -105,7 +105,7 @@ impl Tool for ComposioExecuteTool {
         let ctx = dispatch_ctx_for_tool(None);
         let (config, outcome) =
             Box::pin(self.execute_unredacted(&ctx, args, None, None, None)).await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
     async fn execute_with_context(
         &self,
@@ -126,7 +126,7 @@ impl Tool for ComposioExecuteTool {
             ),
         )
         .await;
-        redact_composio_outcome(&config, outcome)
+        redact_composio_outcome(&config, outcome).await
     }
 }
 

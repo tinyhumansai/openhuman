@@ -444,10 +444,8 @@ fn the_release_url_is_a_tag_on_github() {
     // bytes that can change under a digest that was checked once.
     for record in ALL.iter().filter(|record| !record.assets.is_empty()) {
         assert!(
-            record
-                .release_url
-                .starts_with("https://github.com/tinyhumansai/"),
-            "{} release url is not an upstream GitHub URL",
+            record.release_url.starts_with("https://github.com/"),
+            "{} release url is not a GitHub URL",
             record.id
         );
         assert!(

@@ -65,7 +65,7 @@
 
 /// Complete definition accepted by [`AgentDefinitionSpec::from_base`].
 pub use openhuman_core::agent_registry::host_definition::AgentDefinition;
-pub use openhuman_core::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+pub use openhuman_core::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 
 /// The origin of the executing turn, with its original chat or channel route.
 ///
@@ -152,6 +152,7 @@ pub mod profiles;
 pub mod routing;
 mod runtime;
 pub mod secret_storage;
+mod security;
 mod turn;
 mod turn_cancellation;
 mod turn_meter;

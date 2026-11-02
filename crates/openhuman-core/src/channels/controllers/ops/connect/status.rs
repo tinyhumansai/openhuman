@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::credentials;
+use crate::credentials;
 
 use super::shared::{channel_config_connected, credential_provider, merge_listener_health};
 use tinychannels_bus::controllers::ChannelStatusEntry;

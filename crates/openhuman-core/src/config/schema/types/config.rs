@@ -214,6 +214,10 @@ pub struct Config {
     #[serde(default)]
     pub autonomy: AutonomyConfig,
 
+    /// Durable security audit settings (`[audit]`).
+    #[serde(default)]
+    pub audit: AuditConfig,
+
     /// Operator tool rules (`[tool_rules]`): allow / deny / hide / approval
     /// patterns over tool names, families and tags, applied to every agent's
     /// catalogue, `tool_search` and calls. See `tinytools::ToolRules` and

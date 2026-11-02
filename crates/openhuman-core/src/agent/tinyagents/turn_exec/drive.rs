@@ -237,7 +237,7 @@ pub(super) async fn drive_turn(
             .unwrap_or_else(std::sync::PoisonError::into_inner) = turn_journal.clone();
     }
     if !is_subagent {
-        if let Some(crate::security::turn_origin::AgentTurnOrigin::WebChat {
+        if let Some(crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
             request_id: Some(request_id),
             ..
         }) = run_context.origin.as_ref()

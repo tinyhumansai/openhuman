@@ -31,9 +31,8 @@ use serde_json::json;
 use crate::core::events::DomainEvent;
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
-use tinychannels_bus::{
-    ChannelInboundEnvelope, ChannelRef, ContentPart, ConversationRef, SenderRef,
-};
+use tinychannels_bus::channel::{ChannelRef, ConversationRef, SenderRef};
+use tinychannels_bus::ChannelInboundEnvelope;
 #[cfg(test)]
 use tinychannels_runtime::context::conversation_history_key_parts;
 
@@ -467,10 +466,6 @@ fn legacy_descriptor_envelope(descriptor: &ChannelTurnDescriptor<'_>) -> Channel
             ..Default::default()
         },
         text: descriptor.content.to_owned(),
-        parts: vec![ContentPart::Text {
-            text: descriptor.content.to_owned(),
-            markdown_dialect: None,
-        }],
         ..Default::default()
     }
 }
@@ -524,7 +519,9 @@ async fn persist_channel_turn(
         .await
         .map_err(|error| error.to_string())?;
     let thread_id = format!("channel:{}", prepared.history_key);
-    let history_key_ignores_thread = prepared.history_key_ignores_thread;
+    let history_key_ignores_thread =
+        tinychannels_bus::capabilities::capabilities_for(descriptor.channel)
+            .history_key_ignores_thread;
     let session_key = descriptor.inbound_envelope.map(|_| prepared.session_key);
     let title = channel_thread_title(
         descriptor.channel,

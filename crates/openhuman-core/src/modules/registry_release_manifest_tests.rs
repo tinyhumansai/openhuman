@@ -1,5 +1,83 @@
 use super::*;
 
+#[cfg(feature = "security-module")]
+#[test]
+fn tinysecurity_registry_matches_the_verified_v0182_release_manifest() {
+    let security = find("tinysecurity").expect("compiled TinySecurity module");
+    assert_eq!(security.version, "0.18.2");
+    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (1, 33));
+    assert_eq!(
+        security.release_url,
+        "https://github.com/senamakel/tinysecurity/releases/tag/v0.18.2"
+    );
+
+    let mut actual = security
+        .assets
+        .iter()
+        .map(|asset| (asset.host_key, asset.archive, asset.sha256))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut published = [
+        (
+            "macos-15-arm64",
+            "tinysecurity-module-0.18.2-macos-15-arm64.tar.gz",
+            "7cd14bf7bbb11bceb4e09560a8f66c941e28541e94ac42320156ba9a7473952b",
+        ),
+        (
+            "macos-15-x86_64",
+            "tinysecurity-module-0.18.2-macos-15-x86_64.tar.gz",
+            "7829b6e6b41a34d789973e8f94f828235c26ae201050de3645dfd6b53568941c",
+        ),
+        (
+            "macos-26-arm64",
+            "tinysecurity-module-0.18.2-macos-26-arm64.tar.gz",
+            "bc765db3337e98c4f0c96ba6fd47576181c9783e833f9bdeccc745dcab276dc5",
+        ),
+        (
+            "macos-26-x86_64",
+            "tinysecurity-module-0.18.2-macos-26-x86_64.tar.gz",
+            "10575824c14ea3503170420523ecdb6b3fa33cecb85f9ff3d36817666bb7833e",
+        ),
+        (
+            "ubuntu-22.04-arm64",
+            "tinysecurity-module-0.18.2-ubuntu-22.04-arm64.tar.gz",
+            "34c3ef7b6fde18d525ae27fe09716ad2775a91b3152663a1f72b88a0da15e325",
+        ),
+        (
+            "ubuntu-22.04-x86_64",
+            "tinysecurity-module-0.18.2-ubuntu-22.04-x86_64.tar.gz",
+            "000e9a3a07a8388fee3a6b823615998959d5255e584526b978b653959fad8a30",
+        ),
+        (
+            "ubuntu-24.04-arm64",
+            "tinysecurity-module-0.18.2-ubuntu-24.04-arm64.tar.gz",
+            "a91db19a360840fd5f8a7c341ef4856fcdc25db98cc597b7acdd80ac075ab046",
+        ),
+        (
+            "ubuntu-24.04-x86_64",
+            "tinysecurity-module-0.18.2-ubuntu-24.04-x86_64.tar.gz",
+            "4c8d90347c37293d5ea773245e0ce9dda4a18234117736757564beeffea5f5fa",
+        ),
+        (
+            "windows-11-arm64",
+            "tinysecurity-module-0.18.2-windows-11-arm64.zip",
+            "dc6e7b53e7bf65c9adea251d0f1f5852a89f0588c782dbdb6ac0bab08a33c8ef",
+        ),
+        (
+            "windows-2022-x86_64",
+            "tinysecurity-module-0.18.2-windows-2022-x86_64.zip",
+            "105ccd4d6fc2787cefaedba2dcc2f5e40129c0b4759e41095099322da5d6058b",
+        ),
+        (
+            "windows-2025-x86_64",
+            "tinysecurity-module-0.18.2-windows-2025-x86_64.zip",
+            "2b41ef005c4d0756233451ca8667fdce492b73a85234bd7f4e2af06949130b70",
+        ),
+    ];
+    published.sort_unstable();
+    assert_eq!(actual, published);
+}
+
 #[test]
 fn tinychannels_registry_matches_scoped_runtime_release() {
     let record = find("tinychannels").expect("compiled TinyChannels module");

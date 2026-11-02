@@ -483,8 +483,8 @@ fn availability_notes_are_status_not_instructions() {
 /// is genuinely its own transcript. It must therefore not claim the
 /// conversation's durable session identity, or two concurrent workers on one
 /// thread would write into the same file.
-#[test]
-fn a_subagent_thread_binding_claims_no_session_identity() {
+#[tokio::test]
+async fn a_subagent_thread_binding_claims_no_session_identity() {
     let tmp = tempfile::tempdir().unwrap();
     let config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -493,11 +493,13 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
         ..crate::config::Config::default()
     };
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
 
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let mut root =
-        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+            .await
+            .unwrap();
     root.set_thread_id(Some("thread-1"));
     // The exact stem encoding (sanitisation, per-component digest, generation
     // suffix) belongs to tinyagents and is pinned by its own tests. What
@@ -512,7 +514,9 @@ fn a_subagent_thread_binding_claims_no_session_identity() {
     );
 
     let mut child =
-        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator").unwrap();
+        super::OpenHumanSessionHost::from_config_for_agent(&ctx, &config, "orchestrator")
+            .await
+            .unwrap();
     child.session_parent_prefix = Some("1713000000_orchestrator".into());
     child.set_thread_id(Some("thread-1"));
     assert_eq!(child.session_id(), None);

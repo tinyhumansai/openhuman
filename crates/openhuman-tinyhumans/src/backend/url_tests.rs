@@ -2,6 +2,26 @@ use std::sync::MutexGuard;
 
 use super::*;
 
+#[test]
+fn socket_url_uses_the_control_plane_socketio_handshake_path() {
+    assert_eq!(
+        websocket_url("https://api.tinyhumans.ai/base/"),
+        "wss://api.tinyhumans.ai/base/socket.io/?EIO=4&transport=websocket"
+    );
+}
+
+#[test]
+fn socket_endpoint_guard_allows_tls_and_loopback_only() {
+    assert!(is_safe_socket_endpoint(
+        "wss://api.tinyhumans.ai/socket.io/"
+    ));
+    assert!(is_safe_socket_endpoint("ws://127.0.0.1:9000/socket.io/"));
+    assert!(!is_safe_socket_endpoint("ws://example.com/socket.io/"));
+    assert!(!is_safe_socket_endpoint(
+        "wss://user@example.com/socket.io/"
+    ));
+}
+
 // ── Test infrastructure ───────────────────────────────────────────────────
 
 /// Serialises all env-mutating tests via the crate-wide backend env lock

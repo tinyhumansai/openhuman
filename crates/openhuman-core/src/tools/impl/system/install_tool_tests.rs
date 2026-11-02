@@ -151,7 +151,8 @@ async fn install_backend_receives_only_the_explicit_install_environment() {
     let backend = Arc::new(RecordingBackend::default());
     let tool = InstallToolTool::with_backend_and_environment(
         policy(true, AutonomyLevel::Full),
-        AuditLogger::disabled(),
+        AuditSink::disabled(),
+        Arc::new(crate::config::Config::default()),
         backend.clone(),
         expected.clone(),
     );

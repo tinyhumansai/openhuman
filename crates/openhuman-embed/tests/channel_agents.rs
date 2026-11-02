@@ -201,20 +201,27 @@ fn a_telegram_message_is_answered_by_the_bound_runtime_agent() {
                                 ])),
                         )
                         .tools(move |_| {
-                            HostTurnTools::advertised(vec![
-                                Box::new(Probe {
-                                    name: "teeny_read",
-                                    level: PermissionLevel::ReadOnly,
-                                    runs: Arc::clone(&belt_reads),
-                                    origins: Arc::clone(&belt_origins),
-                                }),
-                                Box::new(Probe {
-                                    name: "teeny_write",
-                                    level: PermissionLevel::Write,
-                                    runs: Arc::clone(&belt_writes),
-                                    origins: Arc::clone(&belt_origins),
-                                }),
-                            ])
+                            let (belt_reads, belt_writes, belt_origins) = (
+                                Arc::clone(&belt_reads),
+                                Arc::clone(&belt_writes),
+                                Arc::clone(&belt_origins),
+                            );
+                            Box::pin(async move {
+                                HostTurnTools::advertised(vec![
+                                    Box::new(Probe {
+                                        name: "teeny_read",
+                                        level: PermissionLevel::ReadOnly,
+                                        runs: belt_reads,
+                                        origins: Arc::clone(&belt_origins),
+                                    }),
+                                    Box::new(Probe {
+                                        name: "teeny_write",
+                                        level: PermissionLevel::Write,
+                                        runs: belt_writes,
+                                        origins: belt_origins,
+                                    }),
+                                ])
+                            })
                         }),
                 )
                 .expect("agent instantiates");

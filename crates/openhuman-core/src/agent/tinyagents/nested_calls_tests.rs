@@ -203,26 +203,29 @@ async fn a_nested_call_the_embedder_hook_allows_runs() {
 async fn the_security_gate_refuses_a_nested_call_on_the_hosted_path() {
     let (target, target_ran) = leaf("read_file");
     let outcome = Arc::new(Mutex::new(None));
-    let gate: Arc<dyn SecurityGate> = Arc::new(OpenHumanSecurityGate::new(
-        Arc::new(SecurityPolicy {
-            autonomy: AutonomyLevel::Full,
-            ..SecurityPolicy::default()
-        }),
-        // The gate resolves permission metadata by name, and an unknown tool is
-        // denied, so both the parent and the nested target are registered. The
-        // parent must pass for the nested call to be attempted at all.
-        vec![Arc::new(
-            ["caller", "read_file"]
-                .into_iter()
-                .map(|name| {
-                    Box::new(Leaf {
-                        name,
-                        ran: Arc::new(Mutex::new(0)),
-                    }) as Box<dyn Tool>
-                })
-                .collect(),
-        )],
-    ));
+    let gate: Arc<dyn SecurityGate> = Arc::new(
+        OpenHumanSecurityGate::new(
+            Arc::new(SecurityPolicy {
+                autonomy: AutonomyLevel::Full,
+                ..SecurityPolicy::default()
+            }),
+            // The gate resolves permission metadata by name, and an unknown tool is
+            // denied, so both the parent and the nested target are registered. The
+            // parent must pass for the nested call to be attempted at all.
+            vec![Arc::new(
+                ["caller", "read_file"]
+                    .into_iter()
+                    .map(|name| {
+                        Box::new(Leaf {
+                            name,
+                            ran: Arc::new(Mutex::new(0)),
+                        }) as Box<dyn Tool>
+                    })
+                    .collect(),
+            )],
+        )
+        .with_input_screening(false),
+    );
     let host = HostCapabilities::new(
         Arc::new(StaticContextComposer::empty()),
         Arc::new(InMemoryDefinitionRegistry::new(vec![AgentDefinition::new(

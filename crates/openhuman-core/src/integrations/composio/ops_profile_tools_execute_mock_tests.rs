@@ -60,7 +60,7 @@ async fn composio_get_user_profile_via_mock_returns_provider_profile() {
     // cannot redirect this request to the hosted API.
     let _backend_url_guard = EnvVarGuard::set("BACKEND_URL", &base);
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     let _workspace_env_guard = EnvVarGuard::workspace_unlocked(tmp.path());
     config.save().await.unwrap();
 
@@ -99,7 +99,7 @@ async fn composio_list_tools_via_mock_filters_tags_by_toolkit() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
 
     let gmail = composio_list_tools(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -151,7 +151,7 @@ async fn composio_list_tools_lets_the_module_apply_the_scope_preference_and_cata
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     let outcome = composio_list_tools(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
@@ -188,7 +188,7 @@ async fn composio_execute_via_mock_succeeds_and_logs_elapsed() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     let outcome = composio_execute(&config, "GMAIL_SEND", Some(json!({"to": "a"})), None)
         .await
         .unwrap();
@@ -208,7 +208,7 @@ async fn composio_execute_via_mock_propagates_backend_error() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     let err = composio_execute(&config, "ANY_TOOL", None, None)
         .await
         .unwrap_err();
@@ -242,7 +242,7 @@ async fn composio_list_tools_honours_a_preference_still_in_the_legacy_file() {
     );
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
+    let config = config_with_backend(&tmp, base).await;
     crate::integrations::composio::file_store::save(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,

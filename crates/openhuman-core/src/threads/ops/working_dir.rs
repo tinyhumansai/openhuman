@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// The folder must be an existing absolute directory outside the paths the
 /// security policy never opens (credential stores, system roots), the same
 /// floor that holds with the autonomy policy disabled.
-pub(crate) fn validate_working_dir(raw: Option<&str>) -> Result<Option<String>, String> {
+pub(crate) async fn validate_working_dir(raw: Option<&str>) -> Result<Option<String>, String> {
     let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
         return Ok(None);
     };
@@ -41,7 +41,7 @@ pub(crate) fn validate_working_dir(raw: Option<&str>) -> Result<Option<String>, 
     if !canonical.is_dir() {
         return Err("working folder is not a directory".to_string());
     }
-    if SecurityPolicy::is_always_forbidden(&canonical) {
+    if SecurityPolicy::is_always_forbidden_async(&canonical).await {
         return Err("working folder is in a protected location".to_string());
     }
     Ok(Some(canonical.to_string_lossy().into_owned()))
@@ -66,7 +66,7 @@ pub(crate) async fn thread_working_dir(
     let Some(bound) = bound else {
         return Ok(None);
     };
-    match validate_working_dir(Some(&bound)) {
+    match validate_working_dir(Some(&bound)).await {
         Ok(Some(dir)) => Ok(Some(PathBuf::from(dir))),
         Ok(None) => Ok(None),
         Err(err) => Err(format!("thread working folder is unusable: {err}")),
@@ -79,7 +79,7 @@ pub async fn thread_update_working_dir(
     request: UpdateConversationThreadWorkingDirRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, ThreadsError> {
     let dir = workspace_dir().await?;
-    let working_dir = validate_working_dir(Some(&request.action_dir))?;
+    let working_dir = validate_working_dir(Some(&request.action_dir)).await?;
     let Some(thread) = conversations::blocking::list_threads(ctx.clone(), dir.clone())
         .await?
         .into_iter()

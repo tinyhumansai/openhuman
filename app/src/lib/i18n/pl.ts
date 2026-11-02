@@ -5163,6 +5163,56 @@ const messages: TranslationMap = {
   'settings.layout.corners.round': 'Zaokrąglone',
   'settings.layout.contrast.subtle': 'Subtelny',
   'settings.layout.contrast.default': 'Domyślne',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'Diagnostyka zasad nie jest dostępna w tym rdzeniu.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Aktywne zasady bezpieczeństwa',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomia',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Tylko w obszarze roboczym',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour':
+    'Maksymalna liczba działań na godzinę',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Wymagaj zatwierdzenia przy średnim ryzyku',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blokuj polecenia wysokiego ryzyka',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Dozwolone polecenia',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Żadne polecenia nie są jawnie dozwolone.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Zasady',
+  'settings.approvalHistory.judgeScores':
+    'Intencja {intent} · Odwracalność {reversible} · Eksfiltracja {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'z pamięci podręcznej',
+  'settings.approvalHistory.judgeExpires': 'Wygasa {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Zawsze dozwolone narzędzia',
+  'keyring.settings.toolTrustDescription':
+    'Te narzędzia mogą działać bez pytania o zgodę w tym zakresie bezpieczeństwa.',
+  'keyring.settings.toolTrustLoading': 'Wczytywanie dozwolonych narzędzi…',
+  'keyring.settings.toolTrustLoadFailed': 'Nie udało się wczytać dozwolonych narzędzi.',
+  'keyring.settings.toolTrustRevokeFailed': 'Nie udało się cofnąć tego uprawnienia narzędzia.',
+  'keyring.settings.toolTrustEmpty': 'Brak narzędzi zawsze dozwolonych.',
+  'keyring.settings.toolTrustRetry': 'Ponów',
+  'keyring.settings.toolTrustRevoke': 'Cofnij',
+  'keyring.settings.toolTrustRevoking': 'Cofanie…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Prośba o dostęp do pęku kluczy',
+  'keyring.operation.description':
+    'TinySecurity prosi o dostęp do jednego elementu pęku kluczy. Sprawdź operację przed podjęciem decyzji.',
+  'keyring.operation.access': 'Dostęp',
+  'keyring.operation.requester': 'Prosi',
+  'keyring.operation.origin': 'Źródło',
+  'keyring.operation.purpose': 'Cel',
+  'keyring.operation.name': 'Element pęku kluczy',
+  'keyring.operation.access.read': 'Odczyt',
+  'keyring.operation.access.write': 'Zapis',
+  'keyring.operation.access.delete': 'Usunięcie',
+  'keyring.operation.allow': 'Zezwól raz',
+  'keyring.operation.deny': 'Odmów',
+  'keyring.operation.submitting': 'Wysyłanie…',
+  'keyring.operation.expires': 'Prośba wygaśnie za {seconds}s.',
+  'keyring.operation.error': 'Nie udało się wysłać decyzji. Prośba mogła wygasnąć.',
 };
 
 export default messages;

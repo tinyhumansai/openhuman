@@ -57,7 +57,7 @@ channels/mod.rs
 mcp/host.rs
 modules/registry_contract_tests.rs
 modules/registry.rs
-security/credentials/ops/credential.rs
+credentials/ops/credential.rs
 storage/import/tinyflows.rs
 storage/schema.rs
 skills/bundled/mod.rs

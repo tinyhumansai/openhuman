@@ -22,11 +22,11 @@ use tokio::sync::mpsc;
 
 use crate::config::MultimodalConfig;
 use crate::core::bus::BUS;
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use crate::progress::AgentProgress;
 use crate::security::prompt_injection::{
     enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
 };
-use crate::security::turn_origin::{self, AgentTurnOrigin};
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
 
@@ -238,7 +238,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
                 user_id: Some(channel_name.as_str()),
                 session_id: target_agent_id.as_deref(),
             },
-        );
+        )
+        .await;
         if !matches!(decision.action, PromptEnforcementAction::Allow) {
             tracing::warn!(
                 channel = %channel_name,

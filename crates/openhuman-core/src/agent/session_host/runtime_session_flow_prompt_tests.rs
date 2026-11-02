@@ -12,12 +12,13 @@ async fn cold_flow_prompt_uses_the_module_and_warm_resume_does_not_refetch() {
         config_path: temp.path().join("config.toml"),
         ..Default::default()
     };
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
         &config,
         "flow_discovery",
     )
+    .await
     .expect("flow_discovery session");
     host.ensure_runtime_session().expect("runtime session");
     let mut prelude = host
@@ -67,7 +68,7 @@ async fn explicit_flow_session_prompt_override_does_not_require_tinyflows_or_con
         config_path: temp.path().join("config.toml"),
         ..Default::default()
     };
-    crate::agent::session_host::test_support::install_managed_model_fixture(&config);
+    crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut definition =
         crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()
             .get("workflow_builder")
@@ -81,6 +82,7 @@ async fn explicit_flow_session_prompt_override_does_not_require_tinyflows_or_con
         &config,
         &definition,
     )
+    .await
     .expect("explicit flow definition session");
     host.ensure_runtime_session().expect("runtime session");
     let mut prelude = host

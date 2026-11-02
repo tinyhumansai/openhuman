@@ -3,10 +3,10 @@
 
 use super::consumes_approval_reply;
 use crate::channels::Channel;
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use crate::security::approval::{
     ApprovalChatContext, ApprovalGate, ApprovalTurnContext, GateOutcome,
 };
-use crate::security::turn_origin::{self, AgentTurnOrigin};
 use std::sync::Arc;
 use tinychannels_bus as traits;
 
@@ -20,7 +20,7 @@ impl Channel for Fake {
         "fake"
     }
     fn capabilities(&self) -> traits::ChannelCapabilities {
-        let mut capabilities = traits::ChannelCapabilities::unknown();
+        let mut capabilities = traits::ChannelCapabilities::default();
         capabilities.chat_approvals = self.chat_approvals;
         capabilities
     }

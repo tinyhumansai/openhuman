@@ -24,35 +24,19 @@ fn every_transport_operation_carries_the_channel_scoped_by_the_host() {
     for request in [
         ProgressiveTransportRequest::Send {
             channel: "discord:fixture".into(),
-            turn_id: None,
-            channel_ref: None,
-            conversation: None,
-            sequence: None,
-            idempotency_key: None,
             message: json!({"text":"hello"}),
         },
         ProgressiveTransportRequest::Edit {
             channel: "discord:fixture".into(),
-            turn_id: None,
-            channel_ref: None,
-            conversation: None,
             message_id: "message".into(),
-            receipt: None,
             text: "edited".into(),
         },
         ProgressiveTransportRequest::Delete {
             channel: "discord:fixture".into(),
-            turn_id: None,
-            channel_ref: None,
-            conversation: None,
             message_id: "message".into(),
-            receipt: None,
         },
         ProgressiveTransportRequest::Typing {
             channel: "discord:fixture".into(),
-            turn_id: None,
-            channel_ref: None,
-            conversation: None,
         },
     ] {
         assert_eq!(request_channel(&request), "discord:fixture");

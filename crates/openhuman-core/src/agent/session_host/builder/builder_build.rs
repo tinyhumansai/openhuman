@@ -4,7 +4,7 @@ use super::visible_tool_specs_for_policy;
 use crate::agent::session_host::types::{OpenHumanSessionHost, SessionHostBuilder};
 use anyhow::Result;
 use std::sync::Arc;
-use tinytools::{Tool, ToolSpec};
+use tinytools::{Tool, ToolPolicyEngine, ToolSpec};
 
 impl SessionHostBuilder {
     /// Validates the configuration and constructs a new `OpenHumanSessionHost` instance.
@@ -228,7 +228,7 @@ impl SessionHostBuilder {
             .chain(synthesized_tools.iter())
             .map(|tool| tool.as_ref())
             .collect();
-        let mut tool_policy_session = crate::tools::policy_session::build_policy_session(
+        let mut tool_policy_session = ToolPolicyEngine::build_session_from_refs(
             &agent_definition_name,
             &event_channel,
             "session",
@@ -254,7 +254,7 @@ impl SessionHostBuilder {
         // `tool_policy_session` marks both channel-blocked and role-hidden tools
         // as restricted, so deriving the child ceiling from it would reintroduce
         // exactly that conflation.
-        let channel_policy_session = crate::tools::policy_session::build_policy_session(
+        let channel_policy_session = ToolPolicyEngine::build_session_from_refs(
             &agent_definition_name,
             &event_channel,
             "session",

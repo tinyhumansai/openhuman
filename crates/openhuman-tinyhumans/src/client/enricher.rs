@@ -99,19 +99,7 @@ pub fn deployment_environment(base: &str) -> &'static str {
 /// (`https://host` -> `wss://host/socket.io/?EIO=4&transport=websocket`).
 /// Returned unchanged when `base` does not parse.
 pub fn socket_url_for(base: &str) -> String {
-    let Ok(mut url) = url::Url::parse(base) else {
-        return base.to_string();
-    };
-    let scheme = match url.scheme() {
-        "https" => "wss",
-        "http" => "ws",
-        other => other,
-    }
-    .to_string();
-    let _ = url.set_scheme(&scheme);
-    url.set_path(&format!("{}/socket.io/", url.path().trim_end_matches('/')));
-    url.set_query(Some("EIO=4&transport=websocket"));
-    url.to_string()
+    crate::backend::url::websocket_url(base)
 }
 
 fn header_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {

@@ -162,8 +162,6 @@ async fn linked_module_prepares_legacy_inbound_facts_over_confidential_bus_call(
         timestamp: 42,
         thread_ts: Some("thread/c".into()),
         sender_name: Some("Display".into()),
-        reply_to_id: None,
-        topic_id: None,
     };
     let response: PreparedChannelInbound = client()
         .await

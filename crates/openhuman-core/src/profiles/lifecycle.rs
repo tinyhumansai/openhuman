@@ -219,7 +219,7 @@ impl ProfileHost {
         // would let a re-provisioned profile pick the old credential back up.
         let config = layout::profile_config(layout, id);
         let cleared = CoreContext::scope(self.records_context(id), async {
-            super::credentials::clear(&config)
+            super::credentials::clear(&config).await
         })
         .await;
         if let Err(e) = cleared {
@@ -266,11 +266,12 @@ impl ProfileHost {
     pub(crate) async fn with_records<T>(
         &self,
         id: &ProfileId,
-        change: impl FnOnce(&Config) -> Result<T, String> + Send,
+        change: impl for<'a> FnOnce(&'a Config) -> futures::future::BoxFuture<'a, Result<T, String>>
+            + Send,
     ) -> Result<T, String> {
         let _profile = self.lifecycle.lock(id).await;
         let config = self.provisioned_config(id).await?;
-        CoreContext::scope(self.records_context(id), async move { change(&config) }).await
+        CoreContext::scope(self.records_context(id), change(&config)).await
     }
 
     /// Take `id`'s lease for a lifecycle change, refusing when another node

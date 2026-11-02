@@ -179,7 +179,7 @@ impl OpenHumanTurnPrelude {
             tool_call_format: self.tool_dispatcher.tool_call_format(),
             connected_integrations: &mutable.connected_integrations,
             connected_identities_md: connected_identities_md.to_string(),
-            user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
+            user_identity: crate::credentials::identity::peek_credential_user_identity(),
             personality_roster: vec![],
             agents_md_global: agents_md.global,
             agents_md_local: agents_md.local,

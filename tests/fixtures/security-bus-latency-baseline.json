@@ -1,0 +1,16 @@
+{
+  "path": "OpenHuman isolated in-process event bus; publish_awaited to local handler",
+  "samples": 1000,
+  "metric": "elapsed from publish call through local handler receive",
+  "percentiles_ns": {
+    "p50": 11717,
+    "p95": 12008,
+    "p99": 13900,
+    "max": 101972
+  },
+  "runner": {
+    "architecture": "x86_64",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+  },
+  "note": "Informational characterization from one run; no timing threshold is enforced. Rerun tests/security_bus_latency_baseline.rs to refresh for a different host."
+}

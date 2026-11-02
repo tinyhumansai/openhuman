@@ -54,7 +54,7 @@ fn a_named_scope_admits_the_clock_and_scheduler_but_never_the_shell() {
                         .definition(AgentDefinitionSpec::new().system_prompt("TEENY").tools(
                             ToolScopeSpec::Named(named.iter().map(|n| (*n).to_string()).collect()),
                         ))
-                        .tools(|_| HostTurnTools::advertised(Vec::new())),
+                        .tools(|_| Box::pin(async { HostTurnTools::advertised(Vec::new()) })),
                 )
                 .expect("agent instantiates");
             agent.run("hello").await.expect("the turn runs");

@@ -373,8 +373,8 @@ async fn typed_mode_progress_emission_is_a_noop_without_sink() {
 
 // ── resolve_subagent_source ───────────────────────────────────────────
 
-#[test]
-fn resolve_subagent_source_inherit_uses_parent_source_and_model() {
+#[tokio::test]
+async fn resolve_subagent_source_inherit_uses_parent_source_and_model() {
     let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
     let parent_source = crate::agent::tinyagents::TurnModelSource::from_model(parent.clone());
     let (_resolved_source, resolved_model) = super::super::resolve_subagent_source(
@@ -386,12 +386,13 @@ fn resolve_subagent_source_inherit_uses_parent_source_and_model() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "parent-model-x");
 }
 
-#[test]
-fn resolve_subagent_source_exact_overrides_only_model() {
+#[tokio::test]
+async fn resolve_subagent_source_exact_overrides_only_model() {
     // Exact keeps the parent's provider but replaces the model name.
     // This is the explicit "I want a cheaper tier on the same backend"
     // escape hatch.
@@ -405,12 +406,13 @@ fn resolve_subagent_source_exact_overrides_only_model() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "haiku-mini");
 }
 
-#[test]
-fn resolve_subagent_source_spawn_override_wins_over_definition_model() {
+#[tokio::test]
+async fn resolve_subagent_source_spawn_override_wins_over_definition_model() {
     let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
     let (_resolved_source, resolved_model) = super::super::resolve_subagent_source(
         &ModelSpec::Exact("definition-model".to_string()),
@@ -421,12 +423,13 @@ fn resolve_subagent_source_spawn_override_wins_over_definition_model() {
         false,
         Some("spawn-model-y"),
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "spawn-model-y");
 }
 
-#[test]
-fn resolve_subagent_source_config_model_wins_over_definition_model() {
+#[tokio::test]
+async fn resolve_subagent_source_config_model_wins_over_definition_model() {
     use crate::config::{Config, TeamModelConfig};
 
     let mut config = Config::default();
@@ -448,12 +451,13 @@ fn resolve_subagent_source_config_model_wins_over_definition_model() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "configured-agent-model");
 }
 
-#[test]
-fn resolve_subagent_source_inline_override_wins_over_config_model() {
+#[tokio::test]
+async fn resolve_subagent_source_inline_override_wins_over_config_model() {
     use crate::config::{Config, TeamModelConfig};
 
     let mut config = Config::default();
@@ -475,12 +479,13 @@ fn resolve_subagent_source_inline_override_wins_over_config_model() {
         false,
         Some("inline-model"),
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "inline-model");
 }
 
-#[test]
-fn resolve_subagent_source_agent_suffix_resolves_its_team_pin() {
+#[tokio::test]
+async fn resolve_subagent_source_agent_suffix_resolves_its_team_pin() {
     use crate::config::{Config, TeamModelConfig};
 
     let mut config = Config::default();
@@ -502,12 +507,13 @@ fn resolve_subagent_source_agent_suffix_resolves_its_team_pin() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "research-agent-model");
 }
 
-#[test]
-fn resolve_subagent_source_hint_with_no_config_falls_back() {
+#[tokio::test]
+async fn resolve_subagent_source_hint_with_no_config_falls_back() {
     // The async config load failed (transient I/O, missing file, etc.).
     // The Hint arm must NOT silently swallow the failure and synthesise
     // `{workload}-v1` — that's the OpenHuman-only naming that breaks
@@ -523,15 +529,16 @@ fn resolve_subagent_source_hint_with_no_config_falls_back() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(
         resolved_model, "real-claude-id",
         "model must be parent's current model — NOT '{{workload}}-v1'"
     );
 }
 
-#[test]
-fn resolve_subagent_source_hint_with_config_routes_via_factory() {
+#[tokio::test]
+async fn resolve_subagent_source_hint_with_config_routes_via_factory() {
     crate::agent::session_host::test_support::install_model_fixture();
     // The Hint arm with a real config takes the workload-factory path.
     // We don't assert the *resulting* provider identity here (the
@@ -549,7 +556,8 @@ fn resolve_subagent_source_hint_with_config_routes_via_factory() {
     // global default — drives the resolved tier.
     config.agentic_provider = Some("openhuman".to_string());
     config.default_model = Some("fixture-reasoning".to_string());
-    crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+    crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+        .await
         .expect("store the managed inference fixture credential");
 
     let parent: Arc<dyn ChatModel<()>> = ScriptedProvider::new(vec![]);
@@ -562,7 +570,8 @@ fn resolve_subagent_source_hint_with_config_routes_via_factory() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(
         resolved_model, "test/session-fixture",
         "Hint must resolve through the registered provider model policy, not a retired tier \
@@ -570,8 +579,8 @@ fn resolve_subagent_source_hint_with_config_routes_via_factory() {
     );
 }
 
-#[test]
-fn resolve_subagent_source_hint_falls_back_on_factory_error() {
+#[tokio::test]
+async fn resolve_subagent_source_hint_falls_back_on_factory_error() {
     // An invalid provider string in the workload config (e.g. a typo
     // like "groq:something") makes the factory return Err. The Hint
     // arm must fall back to the parent provider rather than
@@ -591,7 +600,8 @@ fn resolve_subagent_source_hint_falls_back_on_factory_error() {
         false,
         None,
         0.0,
-    );
+    )
+    .await;
     assert_eq!(resolved_model, "fallback-model");
 }
 
@@ -605,8 +615,8 @@ fn resolve_subagent_source_hint_falls_back_on_factory_error() {
 // skipped. These tests pin the new behaviour so that regression
 // can't sneak back in.
 
-#[test]
-fn direct_mode_user_with_stored_key_passes_signed_in_check() {
+#[tokio::test]
+async fn direct_mode_user_with_stored_key_passes_signed_in_check() {
     use crate::integrations::composio::user_is_signed_in_to_composio;
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::config::Config::default();
@@ -617,13 +627,13 @@ fn direct_mode_user_with_stored_key_passes_signed_in_check() {
     config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".into());
     assert!(
-        user_is_signed_in_to_composio(&config),
+        user_is_signed_in_to_composio(&config).await,
         "direct-mode user with stored api key must be reported as signed in"
     );
 }
 
-#[test]
-fn unsigned_in_user_fails_probe() {
+#[tokio::test]
+async fn unsigned_in_user_fails_probe() {
     use crate::integrations::composio::user_is_signed_in_to_composio;
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::config::Config::default();
@@ -632,7 +642,7 @@ fn unsigned_in_user_fails_probe() {
     // "no backend session". Direct fallback is unreachable because
     // mode is not "direct".
     assert!(
-        !user_is_signed_in_to_composio(&config),
+        !user_is_signed_in_to_composio(&config).await,
         "user with neither backend session nor direct key must NOT be reported as signed in"
     );
 }

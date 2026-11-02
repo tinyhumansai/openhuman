@@ -99,7 +99,7 @@ async fn a_registered_chat_model_serves_the_managed_provider_for_a_thread() {
         None,
     );
     let one_shot = crate::core::runtime::CoreContext::scope(library, async {
-        create_chat_model_from_string("chat", PROVIDER_OPENHUMAN, &Config::default(), 0.5)
+        create_chat_model_from_string("chat", PROVIDER_OPENHUMAN, &Config::default(), 0.5).await
     })
     .await;
     unregister_chat_model(PROVIDER_OPENHUMAN);
@@ -129,17 +129,21 @@ async fn a_registered_chat_model_serves_the_managed_provider_for_a_thread() {
     );
 }
 
-#[test]
-fn a_registered_embedding_factory_builds_the_managed_embedding_model() {
+#[tokio::test]
+async fn a_registered_embedding_factory_builds_the_managed_embedding_model() {
     let _guard = crate::inference::inference_test_guard();
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&calls);
     register_embedding(
         PROVIDER_OPENHUMAN,
         Arc::new(move |request| {
-            assert_eq!(request.dimensions, 8);
-            counter.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(tinyinference_embeddings::NoopEmbeddingModel))
+            let counter = Arc::clone(&counter);
+            Box::pin(async move {
+                assert_eq!(request.dimensions, 8);
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(tinyinference_embeddings::NoopEmbeddingModel)
+                    as Box<dyn tinyinference_embeddings::EmbeddingModel>)
+            })
         }),
     );
     let built = crate::inference::embedding_host::create_embedding_provider_with_credentials(
@@ -148,7 +152,8 @@ fn a_registered_embedding_factory_builds_the_managed_embedding_model() {
         8,
         "",
         None,
-    );
+    )
+    .await;
     unregister_embedding(PROVIDER_OPENHUMAN);
     assert!(built.is_ok());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -187,27 +192,32 @@ async fn without_a_catalog_an_unknown_provider_still_errors() {
     assert!(error.contains("no cloud provider"));
 }
 
-#[test]
-fn a_registered_catalog_supplies_the_managed_limits_request() {
+#[tokio::test]
+async fn a_registered_catalog_supplies_the_managed_limits_request() {
     register_catalog(
         PROVIDER_OPENHUMAN,
         CatalogEntry {
             list: Arc::new(|_| Box::pin(async { Err("unused".to_string()) })),
-            limits: Some(Arc::new(|model, _| {
-                Some(DiscoveryRequest::new("https://catalog.example/v1", model))
+            limits: Some(Arc::new(|request| {
+                Box::pin(async move {
+                    Some(DiscoveryRequest::new(
+                        "https://catalog.example/v1",
+                        &request.model,
+                    ))
+                })
             })),
         },
     );
     let request =
-        model_limits_request("chat", PROVIDER_OPENHUMAN, "some-model", &Config::default());
+        model_limits_request("chat", PROVIDER_OPENHUMAN, "some-model", &Config::default()).await;
     unregister_catalog(PROVIDER_OPENHUMAN);
     assert!(request.is_some());
 }
 
 /// With nothing registered under the managed provider id, selecting it yields
 /// the `BACKEND_UNAVAILABLE:` sentinel instead of a panic or a hosted model.
-#[test]
-fn selecting_the_managed_provider_with_nothing_registered_is_backend_unavailable() {
+#[tokio::test]
+async fn selecting_the_managed_provider_with_nothing_registered_is_backend_unavailable() {
     let _guard = crate::inference::inference_test_guard();
     let _exclusive = crate::inference::provider::factory::test_provider_override::exclusive();
     let error = make_openhuman_backend_model_for_thread_in(
@@ -228,7 +238,7 @@ fn selecting_the_managed_provider_with_nothing_registered_is_backend_unavailable
         "unexpected error: {error}"
     );
     let one_shot =
-        create_chat_model_from_string("chat", PROVIDER_OPENHUMAN, &Config::default(), 0.5);
+        create_chat_model_from_string("chat", PROVIDER_OPENHUMAN, &Config::default(), 0.5).await;
     assert!(one_shot.is_err());
 }
 
@@ -289,8 +299,8 @@ async fn a_registered_catalog_receives_the_entrys_provider_key() {
     assert_eq!(seen.lock().unwrap().as_str(), "entry-key");
 }
 
-#[test]
-fn inspection_model_factory_uses_the_callers_context_before_process_fallback() {
+#[tokio::test]
+async fn inspection_model_factory_uses_the_callers_context_before_process_fallback() {
     use crate::core::slots::Extensions;
     use crate::inference::registry::{
         register_inspection_chat_model, register_inspection_chat_model_in,
@@ -298,17 +308,19 @@ fn inspection_model_factory_uses_the_callers_context_before_process_fallback() {
         PreparedInspectionChatModelFactory,
     };
 
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let factory = |endpoint: &'static str| -> PreparedInspectionChatModelFactory {
         Arc::new(move |request| {
-            Ok(InspectionChatModelBuild {
-                model: Arc::new(FakeModel),
-                model_id: format!(
-                    "{endpoint}:{}",
-                    request.context.config.default_model.as_deref().unwrap()
-                ),
-                endpoint: format!("https://{endpoint}.example/v1"),
-                credential: format!("{endpoint}-credential"),
+            Box::pin(async move {
+                Ok(InspectionChatModelBuild {
+                    model: Arc::new(FakeModel),
+                    model_id: format!(
+                        "{endpoint}:{}",
+                        request.context.config.default_model.as_deref().unwrap()
+                    ),
+                    endpoint: format!("https://{endpoint}.example/v1"),
+                    credential: format!("{endpoint}-credential"),
+                })
             })
         })
     };
@@ -345,9 +357,11 @@ fn inspection_model_factory_uses_the_callers_context_before_process_fallback() {
     config_process.default_model = Some("process".into());
     let build_a =
         create_chat_model_with_identity_in_for_inspection(&context_a, "chat", &config_a, 0.0)
+            .await
             .expect("context A inspection provider");
     let build_b =
         create_chat_model_with_identity_in_for_inspection(&context_b, "chat", &config_b, 0.0)
+            .await
             .expect("context B inspection provider");
     let build_process = create_chat_model_with_identity_in_for_inspection(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -355,6 +369,7 @@ fn inspection_model_factory_uses_the_callers_context_before_process_fallback() {
         &config_process,
         0.0,
     )
+    .await
     .expect("process inspection provider");
     unregister_inspection_chat_model(PROVIDER_OPENHUMAN);
     unregister_chat_model(PROVIDER_OPENHUMAN);

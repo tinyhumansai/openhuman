@@ -18,6 +18,7 @@ use std::sync::Arc;
 use super::DirectCredential;
 use crate::config::schema::{COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT};
 use crate::core::slots::HookSlot;
+use futures_util::future::BoxFuture;
 
 // Re-declare the mode strings as local consts so they can be used as
 // pattern arms in the `match` below. `use` imports of `pub const &str`
@@ -53,8 +54,11 @@ impl ComposioRoute {
 
 /// A registered route builder: resolves the [`ComposioRoute`] for one
 /// `composio.mode` value (the empty mode counts as `"backend"`).
-pub type ComposioRouteBuilder =
-    Arc<dyn Fn(&crate::config::Config) -> anyhow::Result<ComposioRoute> + Send + Sync>;
+pub type ComposioRouteBuilder = Arc<
+    dyn for<'a> Fn(&'a crate::config::Config) -> BoxFuture<'a, anyhow::Result<ComposioRoute>>
+        + Send
+        + Sync,
+>;
 
 static ROUTE_BUILDERS: HookSlot<ComposioRouteBuilder> =
     HookSlot::new("integrations::composio::route_builders");
@@ -63,7 +67,10 @@ static ROUTE_BUILDERS: HookSlot<ComposioRouteBuilder> =
 /// resolution for that mode. Nothing registered => the built-in routes apply.
 pub fn register_composio_route_builder<F>(mode: impl Into<String>, builder: F)
 where
-    F: Fn(&crate::config::Config) -> anyhow::Result<ComposioRoute> + Send + Sync + 'static,
+    F: for<'a> Fn(&'a crate::config::Config) -> BoxFuture<'a, anyhow::Result<ComposioRoute>>
+        + Send
+        + Sync
+        + 'static,
 {
     ROUTE_BUILDERS.register(mode, Arc::new(builder));
 }
@@ -120,7 +127,7 @@ fn direct_client(
 ///   signed in.
 /// - `"direct"` — BYO key against `backend.composio.dev`. Requires a
 ///   stored Composio API key under the
-///   [`crate::security::credentials::COMPOSIO_DIRECT_PROVIDER`]
+///   [`crate::integrations::composio::COMPOSIO_DIRECT_PROVIDER`]
 ///   slot **or** an `api_key` value in `config.composio.api_key`. The
 ///   stored key takes precedence so the encrypted keychain remains the
 ///   source of truth — `config.toml` is a fallback for power users.
@@ -132,7 +139,9 @@ fn direct_client(
 ///
 /// Any other mode string is rejected with an explicit error so a typo
 /// in `config.toml` fails loud instead of silently downgrading.
-pub fn resolve_composio_route(config: &crate::config::Config) -> anyhow::Result<ComposioRoute> {
+pub async fn resolve_composio_route(
+    config: &crate::config::Config,
+) -> anyhow::Result<ComposioRoute> {
     if let Some(pinned) = config.composio.host_credential.as_ref() {
         let client = direct_client(pinned.api_key(), pinned.direct_base_urls())?;
         tracing::debug!("[composio-factory] resolved host-pinned direct variant (key redacted)");
@@ -149,7 +158,7 @@ pub fn resolve_composio_route(config: &crate::config::Config) -> anyhow::Result<
     };
     if let Some(builder) = ROUTE_BUILDERS.get(builder_key) {
         tracing::debug!(mode = %builder_key, "[composio-factory] using the registered route builder");
-        return builder(config);
+        return builder(config).await;
     }
 
     match mode {
@@ -169,7 +178,8 @@ pub fn resolve_composio_route(config: &crate::config::Config) -> anyhow::Result<
         }
         MODE_DIRECT_PAT => {
             // Prefer keychain-stored key; fall back to `config.toml`.
-            let stored = crate::security::credentials::get_composio_api_key(config)
+            let stored = crate::integrations::composio::get_composio_api_key(config)
+                .await
                 .map_err(|e| anyhow::anyhow!("failed to read stored composio api key: {e}"))?;
             let api_key = stored
                 .or_else(|| {

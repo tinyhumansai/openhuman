@@ -202,24 +202,14 @@ fn handle_status(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFutu
             }
         };
 
-        let mut policy = super::ops::resolve_sandbox_policy(
-            &ctx,
+        let policy = super::policy::route_for_mode(
             mode,
             &config.workspace_dir,
             &config.workspace_dir,
+            &config.sandbox,
             &config.runtime,
             is_remote,
         );
-        if !crate::core::runtime::is_saas() {
-            super::ops::apply_requested_backend(
-                &mut policy,
-                &config.sandbox,
-                &config.runtime,
-                &config,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
         let handle = super::ops::create_sandbox_backend_with_config(&policy, &config).await?;
         to_json(Outcome::new(handle, vec![]))
     })
@@ -263,24 +253,14 @@ fn handle_resolve_policy(ctx: DispatchCtx, params: Map<String, Value>) -> Contro
         // embedder-supplied config carries whatever `CoreBuilder::action_dir(..)`
         // set directly. Re-deriving it here from `action_dir_override` alone
         // would silently ignore an embedder's programmatic `action_dir` (#6081).
-        let mut policy = super::ops::resolve_sandbox_policy(
-            &ctx,
+        let policy = super::policy::route_for_mode(
             mode,
             &config.action_dir,
             &config.workspace_dir,
+            &config.sandbox,
             &config.runtime,
             is_remote,
         );
-        if !crate::core::runtime::is_saas() {
-            super::ops::apply_requested_backend(
-                &mut policy,
-                &config.sandbox,
-                &config.runtime,
-                &config,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
         to_json(Outcome::new(policy, vec![]))
     })
 }

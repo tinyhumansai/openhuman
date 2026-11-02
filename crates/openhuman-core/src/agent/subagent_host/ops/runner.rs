@@ -407,8 +407,8 @@ async fn run_typed_mode(
     let started = Instant::now();
 
     // Resolve model source + model. See `resolve_subagent_source` for the
-    // semantics of each ModelSpec variant; the helper itself is sync and
-    // unit-tested, and takes the config the caller already loaded.
+    // semantics of each ModelSpec variant; the helper resolves any credential
+    // snapshot before returning and takes the config already loaded here.
     let (subagent_source, model) = resolve_subagent_source(
         &definition.model,
         &definition.id,
@@ -418,7 +418,8 @@ async fn run_typed_mode(
         !definition.subagents.is_empty(),
         options.model_override.as_deref(),
         definition.temperature,
-    );
+    )
+    .await;
     let temperature = definition.temperature;
     let max_output_tokens = definition
         .max_turn_output_tokens
@@ -433,11 +434,10 @@ async fn run_typed_mode(
     // returns the fresh list almost for free on the warm path. Fall back
     // to the parent's frozen list when the live fetch returns empty.
     let live_integrations: Vec<crate::integrations::ConnectedIntegration> = {
-        let signed_in = config
-            .as_ref()
-            .ok()
-            .map(|cfg| crate::integrations::composio::user_is_signed_in_to_composio(cfg))
-            .unwrap_or(false);
+        let signed_in = match config.as_ref() {
+            Ok(cfg) => crate::integrations::composio::user_is_signed_in_to_composio(cfg).await,
+            Err(_) => false,
+        };
         if !signed_in {
             parent.connected_integrations.clone()
         } else {
@@ -595,7 +595,7 @@ async fn run_typed_mode(
         tool_call_format: prompt_tool_call_format,
         connected_integrations: &connected_integrations_for_prompt,
         connected_identities_md,
-        user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
+        user_identity: crate::credentials::identity::peek_credential_user_identity(),
         personality_roster: vec![],
         agents_md_global: agents_md.global.clone(),
         agents_md_local: agents_md.local.clone(),

@@ -1,6 +1,6 @@
 use super::*;
-use crate::security::approval::store as live;
-use crate::security::approval::types::{ApprovalDecision, ApprovalSourceContext};
+use crate::security::approval::storage_schema::{trust_id, APPROVALS, FLOW_TRUST};
+use crate::security::approval::types::ApprovalSourceContext;
 use crate::storage::import::{run_with, Outcome};
 use crate::storage::rusqlite;
 use chrono::{Duration, Utc};
@@ -77,6 +77,17 @@ fn import(config: &Config) -> Outcome {
         .unwrap()
 }
 
+fn stored(config: &Config, collection: &str, id: &str) -> Option<serde_json::Value> {
+    let opened =
+        crate::storage::local::open("approval import test", &config.workspace_dir).unwrap();
+    let docs = std::sync::Arc::clone(opened.scoped().unwrap().documents());
+    let collection = collection.to_string();
+    let id = id.to_string();
+    crate::storage::block_on(async move { docs.get(&collection, &id).await })
+        .unwrap()
+        .map(|stored| stored.doc)
+}
+
 #[test]
 fn legacy_rows_are_imported_once_and_the_file_is_left_alone() {
     let (_dir, config) = workspace();
@@ -97,54 +108,56 @@ fn legacy_rows_are_imported_once_and_the_file_is_left_alone() {
         }
     ));
 
-    let pending = live::list_pending(&config).unwrap();
-    let mut ids: Vec<_> = pending.iter().map(|p| p.request_id.as_str()).collect();
-    ids.sort_unstable();
-    // Listing expires the stale request, as it always did.
-    assert_eq!(ids, ["pending-1"]);
-    let first = &pending[0];
-    assert_eq!(first.tool_name, "composio");
-    assert_eq!(first.action_summary, "summary pending-1");
-    assert_eq!(first.args_redacted["id"], "pending-1");
-    assert_eq!(first.tool_call_id.as_deref(), Some("call-pending-1"));
-    assert_eq!(first.agent_id.as_deref(), Some("agent-7"));
+    let first = stored(&config, APPROVALS, "pending-1").unwrap();
+    assert_eq!(first["tool_name"], "composio");
+    assert_eq!(first["action_summary"], "summary pending-1");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(first["args_redacted"].as_str().unwrap())
+            .unwrap()["id"],
+        "pending-1"
+    );
+    assert_eq!(first["tool_call_id"], "call-pending-1");
+    assert_eq!(first["agent_id"], "agent-7");
     assert!(matches!(
-        first.source_context,
-        Some(ApprovalSourceContext::Flow { ref flow_id, .. }) if flow_id == "flow-1"
+        serde_json::from_str::<ApprovalSourceContext>(first["source_context"].as_str().unwrap()),
+        Ok(ApprovalSourceContext::Flow { ref flow_id, .. }) if flow_id == "flow-1"
     ));
     assert_eq!(
-        live::get_decision(&config, "approved-1").unwrap(),
-        Some(ApprovalDecision::ApproveOnce)
+        stored(&config, APPROVALS, "approved-1").unwrap()["decision"],
+        "approve_once"
     );
     assert_eq!(
-        live::get_decision(&config, "denied-1").unwrap(),
-        Some(ApprovalDecision::Deny)
+        stored(&config, APPROVALS, "denied-1").unwrap()["decision"],
+        "deny"
     );
-    assert!(live::is_flow_tool_trusted(&config, "flow-1", "shell").unwrap());
-    assert!(live::is_flow_tool_trusted(&config, "flow-1", "http").unwrap());
-    assert!(!live::is_flow_tool_trusted(&config, "flow-2", "http").unwrap());
-    // The expiry key was imported: the stale request was expired.
     assert_eq!(
-        live::get_decision(&config, "stale-1").unwrap(),
-        Some(ApprovalDecision::Deny)
+        stored(&config, FLOW_TRUST, &trust_id("flow-1", "shell")).unwrap()["tool_name"],
+        "shell"
+    );
+    assert_eq!(
+        stored(&config, FLOW_TRUST, &trust_id("flow-1", "http")).unwrap()["flow_id"],
+        "flow-1"
+    );
+    assert!(stored(&config, FLOW_TRUST, &trust_id("flow-2", "http")).is_none());
+    assert_eq!(
+        stored(&config, APPROVALS, "stale-1").unwrap()["decision"],
+        serde_json::Value::Null
     );
     assert_eq!(std::fs::read(&db).unwrap(), before, "approval.db untouched");
 
-    // A second run does not import again: a change made since stays made.
-    live::decide(&config, "pending-1", ApprovalDecision::Deny).unwrap();
+    // A second run does not overwrite rows already migrated from the legacy source.
     assert!(matches!(import(&config), Outcome::AlreadyDone));
     assert_eq!(
-        live::get_decision(&config, "pending-1").unwrap(),
-        Some(ApprovalDecision::Deny)
+        stored(&config, APPROVALS, "pending-1").unwrap()["decision"],
+        serde_json::Value::Null
     );
-    assert!(live::list_pending(&config).unwrap().is_empty());
 }
 
 #[test]
 fn a_workspace_with_no_legacy_file_starts_empty() {
     let (_dir, config) = workspace();
     assert!(matches!(import(&config), Outcome::NoSource));
-    assert!(live::list_pending(&config).unwrap().is_empty());
+    assert!(stored(&config, APPROVALS, "missing").is_none());
 }
 
 #[test]
@@ -174,24 +187,9 @@ fn an_old_schema_is_brought_forward_and_its_session_ids_scrubbed() {
     let before = std::fs::read(&db).unwrap();
 
     assert!(matches!(import(&config), Outcome::Imported { .. }));
-    let pending = live::list_pending(&config).unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].request_id, "old");
-    assert!(
-        pending[0].agent_id.is_none(),
-        "an old row is the process's own"
-    );
-    // The credential-shaped session id was scrubbed before it was read.
-    let docs = crate::storage::local::open("test", &config.workspace_dir)
-        .unwrap()
-        .scoped()
-        .unwrap();
-    let docs = std::sync::Arc::clone(docs.documents());
-    let stored =
-        crate::storage::block_on(async move { docs.get("approvals.requests", "old").await })
-            .unwrap()
-            .unwrap();
-    assert_eq!(stored.doc["session_id"], PRE_MIGRATION_SESSION_ID);
+    let old = stored(&config, APPROVALS, "old").unwrap();
+    assert_eq!(old["session_id"], PRE_MIGRATION_SESSION_ID);
+    assert_eq!(old["agent_id"], serde_json::Value::Null);
     assert_eq!(std::fs::read(&db).unwrap(), before, "approval.db untouched");
 }
 

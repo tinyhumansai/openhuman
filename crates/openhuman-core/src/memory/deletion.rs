@@ -134,12 +134,13 @@ struct Executor<'a> {
 
 #[async_trait]
 impl DeletionExecutor for Executor<'_> {
-    fn is_reachable(&self) -> bool {
-        engine::resolve(self.config).is_on()
+    async fn is_reachable(&self) -> bool {
+        engine::resolve(self.config).await.is_on()
     }
 
     async fn run(&self, deletion: &PendingDeletion) -> std::result::Result<usize, String> {
         let bound = engine::resolve(self.config)
+            .await
             .engine()
             .map_err(|error| error.code().to_string())?;
         // Pending source/thread filters keep TinyMemory's ordinary root-tree
@@ -178,7 +179,7 @@ pub async fn forget_thread(config: &Config, thread_id: &str) -> usize {
     if thread_id.trim().is_empty() {
         return 0;
     }
-    let bound = match engine::resolve(config).engine() {
+    let bound = match engine::resolve(config).await.engine() {
         Ok(bound) => Some(bound),
         Err(Error::Off(_)) => None,
         Err(error) => {

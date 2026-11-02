@@ -5217,6 +5217,56 @@ const messages: TranslationMap = {
   'settings.layout.corners.subtle': 'Discret',
 
   'settings.layout.contrast.subtle': 'Discret',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Les diagnostics de stratégie ne sont pas inclus dans ce noyau.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Stratégie de sécurité active',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomie',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Espace de travail uniquement',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Nombre maximal d’actions par heure',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Approbation requise pour les risques moyens',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Bloquer les commandes à haut risque',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Commandes autorisées',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Aucune commande n’est explicitement autorisée.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Politique',
+  'settings.approvalHistory.judgeScores':
+    'Intention {intent} · Réversible {reversible} · Exfiltration {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'en cache',
+  'settings.approvalHistory.judgeExpires': 'Expire le {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Outils toujours autorisés',
+  'keyring.settings.toolTrustDescription':
+    'Ces outils peuvent s’exécuter sans demander d’approbation dans ce périmètre de sécurité.',
+  'keyring.settings.toolTrustLoading': 'Chargement des outils autorisés…',
+  'keyring.settings.toolTrustLoadFailed': 'Impossible de charger les outils autorisés.',
+  'keyring.settings.toolTrustRevokeFailed': 'Impossible de révoquer cette autorisation d’outil.',
+  'keyring.settings.toolTrustEmpty': 'Aucun outil n’est toujours autorisé.',
+  'keyring.settings.toolTrustRetry': 'Réessayer',
+  'keyring.settings.toolTrustRevoke': 'Révoquer',
+  'keyring.settings.toolTrustRevoking': 'Révocation…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Demande d’accès au trousseau',
+  'keyring.operation.description':
+    'TinySecurity demande l’accès à un élément du trousseau. Vérifiez l’opération avant de décider.',
+  'keyring.operation.access': 'Accès',
+  'keyring.operation.requester': 'Demandé par',
+  'keyring.operation.origin': 'Origine',
+  'keyring.operation.purpose': 'Motif',
+  'keyring.operation.name': 'Élément du trousseau',
+  'keyring.operation.access.read': 'Lire',
+  'keyring.operation.access.write': 'Écrire',
+  'keyring.operation.access.delete': 'Supprimer',
+  'keyring.operation.allow': 'Autoriser une fois',
+  'keyring.operation.deny': 'Refuser',
+  'keyring.operation.submitting': 'Envoi…',
+  'keyring.operation.expires': 'La demande expire dans {seconds}s.',
+  'keyring.operation.error': 'Impossible d’envoyer votre décision. La demande a peut-être expiré.',
 };
 
 export default messages;

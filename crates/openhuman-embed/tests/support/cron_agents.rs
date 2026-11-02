@@ -53,7 +53,7 @@ impl Tool for Ping {
         self.seen
             .lock()
             .unwrap()
-            .push(openhuman_core::security::turn_origin::current());
+            .push(openhuman_core::core::runtime::turn_origin::current());
         Ok(tinytools::ToolResult::success("pinged"))
     }
 }
@@ -139,9 +139,10 @@ pub fn a_scheduled_job_runs_a_runtime_agent_with_its_host_tool_as_cron() {
                                 .tools(ToolScopeSpec::Named(vec!["teeny_ping".into()])),
                         )
                         .tools(move |_| {
-                            HostTurnTools::advertised(vec![Box::new(Ping {
-                                seen: Arc::clone(&belt_seen),
-                            })])
+                            let seen = Arc::clone(&belt_seen);
+                            Box::pin(async move {
+                                HostTurnTools::advertised(vec![Box::new(Ping { seen })])
+                            })
                         }),
                 )
                 .expect("agent instantiates");

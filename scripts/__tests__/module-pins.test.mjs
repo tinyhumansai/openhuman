@@ -212,6 +212,28 @@ test("parses a crate-visible record definition", () => {
   assert.equal(records.get("TINYTEST")?.id, "tinytest");
 });
 
+test("parses assets with an optional library digest", () => {
+  const records = parseRecords(`const TINYTEST: ModuleRecord = ModuleRecord {
+    id: "tinytest",
+    version: "1.2.3",
+    assets: &[
+        PlatformAsset {
+            host_key: "linux-x86_64",
+            archive: "tinytest.tar.gz",
+            sha256: "${"a".repeat(64)}",
+            library_sha256: None,
+        },
+    ],
+};`);
+  assert.deepEqual(records.get("TINYTEST")?.assets, [
+    {
+      hostKey: "linux-x86_64",
+      archive: "tinytest.tar.gz",
+      sha256: "a".repeat(64),
+    },
+  ]);
+});
+
 // ── Provider records ──────────────────────────────────────────────────────────
 
 const SHA_A = "a".repeat(40);

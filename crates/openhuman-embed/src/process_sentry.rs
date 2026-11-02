@@ -124,7 +124,7 @@ pub fn resolve_environment(app_env: Option<String>) -> String {
 /// The signed-in user's id from the core's credential identity slot — the
 /// CLI's fallback, and the default for [`SentryConfig::user_id`].
 pub fn credential_user_id() -> Option<String> {
-    openhuman_core::security::credentials::identity::peek_credential_user_identity()
+    openhuman_core::credentials::identity::peek_credential_user_identity()
         .and_then(|identity| identity.id)
 }
 

@@ -103,7 +103,7 @@ async fn cancellation_during_required_output_repair_finalizes_native_run() {
         ..Default::default()
     });
 
-    let origin = crate::security::turn_origin::AgentTurnOrigin::WebChat {
+    let origin = crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
         thread_id: thread_id.into(),
         client_id: "trace-terminal-test".into(),
         request_id: Some(request_id.clone()),

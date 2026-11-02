@@ -19,6 +19,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_pending"),
         schemas("list_recent_decisions"),
+        schemas("list_tool_trust"),
+        schemas("revoke_tool_trust"),
         schemas("decide"),
         schemas("get_gate_state"),
         schemas("preauthorize_flow"),
@@ -34,6 +36,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list_recent_decisions"),
             handler: handle_list_recent_decisions,
+        },
+        RegisteredController {
+            schema: schemas("list_tool_trust"),
+            handler: handle_list_tool_trust,
+        },
+        RegisteredController {
+            schema: schemas("revoke_tool_trust"),
+            handler: handle_revoke_tool_trust,
         },
         RegisteredController {
             schema: schemas("decide"),
@@ -54,6 +64,8 @@ pub(crate) fn all_approval_controller_entries() -> Vec<ControllerEntry> {
     vec![
         ControllerEntry::bound(list_pending_controller()),
         ControllerEntry::bound(list_recent_decisions_controller()),
+        ControllerEntry::bound(list_tool_trust_controller()),
+        ControllerEntry::bound(revoke_tool_trust_controller()),
         ControllerEntry::bound(decide_controller()),
         ControllerEntry::bound(get_gate_state_controller()),
         ControllerEntry::bound(preauthorize_flow_controller()),
@@ -94,6 +106,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "decisions",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("ApprovalAuditEntry"))),
                 comment: "Recently decided approval rows.",
+                required: true,
+            }],
+        },
+        "list_tool_trust" => ControllerSchema {
+            namespace: "approval",
+            function: "list_tool_trust",
+            description: "List live durable whole-tool approval grants in the current tenant scope.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "grants",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("ToolTrustEntry"))),
+                comment: "Live whole-tool grants with opaque revocation IDs.",
+                required: true,
+            }],
+        },
+        "revoke_tool_trust" => ControllerSchema {
+            namespace: "approval",
+            function: "revoke_tool_trust",
+            description: "Revoke a live whole-tool approval grant by its listed opaque ID.",
+            inputs: vec![FieldSchema {
+                name: "request_id",
+                ty: TypeSchema::String,
+                comment: "Opaque ID from approval_list_tool_trust.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "revoked",
+                ty: TypeSchema::Bool,
+                comment: "Whether the grant was still present and has now been revoked.",
                 required: true,
             }],
         },
@@ -217,6 +258,48 @@ fn handle_list_recent_decisions(_ctx: DispatchCtx, params: Map<String, Value>) -
     list_recent_decisions_controller().invoke(_ctx, params)
 }
 
+fn handle_list_tool_trust(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    list_tool_trust_controller().invoke(ctx, params)
+}
+
+fn list_tool_trust_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        schemas("list_tool_trust"),
+        parse_list_tool_trust,
+        run_list_tool_trust,
+    )
+}
+
+fn run_list_tool_trust(ctx: DispatchCtx, _parsed: ()) -> ControllerFuture {
+    Box::pin(async move {
+        let outcome = approval_rpc::approval_list_tool_trust(&ctx)
+            .await
+            .map_err(|error| error.to_string())?;
+        to_json(outcome)
+    })
+}
+
+fn handle_revoke_tool_trust(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    revoke_tool_trust_controller().invoke(ctx, params)
+}
+
+fn revoke_tool_trust_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        schemas("revoke_tool_trust"),
+        parse_revoke_tool_trust,
+        run_revoke_tool_trust,
+    )
+}
+
+fn run_revoke_tool_trust(ctx: DispatchCtx, request_id: String) -> ControllerFuture {
+    Box::pin(async move {
+        let outcome = approval_rpc::approval_revoke_tool_trust(&ctx, &request_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        to_json(outcome)
+    })
+}
+
 fn list_recent_decisions_controller() -> BoundRegisteredController {
     BoundRegisteredController::typed(
         schemas("list_recent_decisions"),
@@ -306,6 +389,14 @@ fn parse_list_pending(params: Map<String, Value>) -> Result<Option<String>, Stri
 
 fn parse_list_recent_decisions(params: Map<String, Value>) -> Result<Option<usize>, String> {
     Ok(read_optional_u64(&params, "limit")?.map(|value| value as usize))
+}
+
+fn parse_list_tool_trust(_params: Map<String, Value>) -> Result<(), String> {
+    Ok(())
+}
+
+fn parse_revoke_tool_trust(params: Map<String, Value>) -> Result<String, String> {
+    read_required_string(&params, "request_id")
 }
 
 fn parse_get_gate_state(_params: Map<String, Value>) -> Result<(), String> {

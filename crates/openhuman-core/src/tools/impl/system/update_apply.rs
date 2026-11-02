@@ -27,7 +27,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::platform::update;
-use crate::security::{SecurityPolicy, ToolOperation};
+use crate::security::SecurityPolicy;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 pub struct UpdateApplyTool {
@@ -37,20 +37,6 @@ pub struct UpdateApplyTool {
 impl UpdateApplyTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
         Self { security }
-    }
-
-    /// Delegate to the shared `SecurityPolicy::enforce_tool_operation`
-    /// path so this tool stays in lock-step with every other act-level
-    /// tool's autonomy + rate-limit handling. Hand-rolling
-    /// `can_act` + `record_action` here used to drift from the canonical
-    /// `[openhuman:policy]` log format and would silently miss any
-    /// future gate the enforcer grows (token budget, supervised
-    /// approval, etc.).
-    fn require_write_access(&self) -> Option<ToolResult> {
-        self.security
-            .enforce_tool_operation(ToolOperation::Act, "update_apply")
-            .err()
-            .map(ToolResult::error)
     }
 
     fn require_consent(args: &Value) -> Option<ToolResult> {
@@ -128,11 +114,6 @@ impl UpdateApplyTool {
             tracing::warn!("[update_apply] blocked: missing user_confirmed");
             return Ok(blocked);
         }
-        if let Some(blocked) = self.require_write_access() {
-            tracing::warn!("[update_apply] blocked: autonomy gate");
-            return Ok(blocked);
-        }
-
         let outcome = update::rpc::update_run(ctx).await;
         for log in &outcome.logs {
             tracing::debug!(target: "update_apply", "{log}");

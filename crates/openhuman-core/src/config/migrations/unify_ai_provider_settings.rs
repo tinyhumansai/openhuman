@@ -1,66 +1,15 @@
-//! Migration 1 → 2: unify the scattered AI provider settings into the new
-//! per-workload provider-string fields and preserve legacy custom endpoints.
-//!
-//! ## What this migration consolidates
-//!
-//! Pre-unification config carried five different vocabularies for the same
-//! question — *"where does this LLM workload run?"*:
-//!
-//! - `inference_url` + `model_routes`        — global cloud preset
-//! - `reasoning_provider` / `agentic_provider` / `coding_provider`
-//!                                          — per-role chat (#1710, partial)
-//! - `local_ai.usage.{embeddings,heartbeat,subconscious}`
-//!                                          — local-vs-cloud booleans
-//!
-//! After this migration there is one grammar — provider strings parsed by
-//! [`crate::inference::provider::factory`] — addressing every workload
-//! uniformly:
-//!
-//! ```text
-//! reasoning_provider, agentic_provider, coding_provider,
-//! memory_provider,    embeddings_provider
-//! ```
-//!
-//! The legacy `local_ai.usage.heartbeat` / `local_ai.usage.subconscious`
-//! booleans are not carried forward: the background loops they routed were
-//! removed, so there is no workload left to derive.
-//!
-//! plus `cloud_providers: Vec<CloudProviderCreds>` and `primary_cloud` for
-//! the credential side.
-//!
-//! ## Behaviour
-//!
-//! - Pure in-memory mutation of `Config`. The caller (`migrations::run_pending`)
-//!   persists the result via `Config::save()` and bumps `schema_version`.
-//! - Idempotent: gated on `*.is_none()` per field. A re-run after a previous
-//!   successful run is a no-op.
-//! - Never touches keys / secrets. API keys remain in
-//!   `auth-profiles.json` via [`crate::security::credentials::AuthService`].
-//! - Migrates `inference_url` into a `Custom` cloud provider entry when the
-//!   URL doesn't look like a registered managed backend.
+//! Migration 1 → 2: derive per-workload provider strings from legacy settings.
 
-use crate::config::schema::cloud_providers::{generate_provider_id, AuthStyle, CloudProviderCreds};
+use crate::config::schema::cloud_providers::{seed_cloud_providers, MigrationStats};
 use crate::config::Config;
-
-/// Counters returned by [`run`] for diagnostics. Logged at INFO once per
-/// successful migration run.
-#[derive(Debug, Default, Clone)]
-pub struct MigrationStats {
-    pub cloud_providers_seeded: usize,
-    pub primary_cloud_set: bool,
-    pub workload_fields_filled: usize,
-}
 
 /// Run the AI-provider unification migration on the given `Config`.
 ///
-/// Synchronous because the body is pure config mutation — no I/O. The caller
-/// is responsible for persisting via `Config::save()` once the runner has
-/// also bumped `schema_version`.
+/// Provider entries are seeded by the config schema helper, which is also
+/// called when initializing a new workspace. This migration additionally
+/// derives the workload routes that replace the legacy local-AI flags.
 pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
-    let mut stats = MigrationStats::default();
-
-    seed_legacy_custom_provider(config, &mut stats);
-    set_primary_cloud(config, &mut stats);
+    let mut stats = seed_cloud_providers(config);
     derive_workload_providers(config, &mut stats);
 
     log::info!(
@@ -70,87 +19,6 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
         stats.workload_fields_filled,
     );
     Ok(stats)
-}
-
-/// Preserve a custom endpoint from the legacy `inference_url` field.
-fn seed_legacy_custom_provider(config: &mut Config, stats: &mut MigrationStats) {
-    let hosts = crate::config::enrichers::managed_hosts_for(config);
-
-    // If there's a legacy `inference_url` pointing at a non-OpenHuman
-    // endpoint, surface it as a Custom entry so the user keeps their
-    // configuration. The actual key continues to live in auth-profiles.json
-    // (or in `api_key` on Config — which is OpenHuman's session JWT and
-    // doesn't apply here; users will re-enter via the new UI).
-    if let Some(raw) = config.inference_url.as_deref() {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty()
-            && !looks_like_managed_backend(&hosts, trimmed)
-            && !config.cloud_providers.iter().any(|entry| {
-                entry
-                    .endpoint
-                    .trim()
-                    .trim_end_matches('/')
-                    .eq_ignore_ascii_case(trimmed.trim_end_matches('/'))
-            })
-        {
-            // Derive a sensible default model from the legacy model_routes
-            // (prefer "reasoning" hint, fall back to whatever is set).
-            let default_model = config
-                .model_routes
-                .iter()
-                .find(|r| r.hint.eq_ignore_ascii_case("reasoning"))
-                .or_else(|| config.model_routes.first())
-                .map(|r| r.model.clone())
-                .filter(|m| !m.is_empty());
-            config.cloud_providers.push(CloudProviderCreds {
-                id: generate_provider_id("custom"),
-                slug: "custom".to_string(),
-                label: "Custom".to_string(),
-                endpoint: trimmed.to_string(),
-                auth_style: AuthStyle::Bearer,
-                default_model,
-            });
-            stats.cloud_providers_seeded += 1;
-            log::info!(
-                "[migrations][unify-ai] seeded Custom cloud_providers entry from legacy \
-                 inference_url_present=true"
-            );
-        }
-    }
-}
-
-/// Default `primary_cloud` to the legacy custom inference entry when one was
-/// present. Hosted fallback selection belongs to the installed host
-/// normalizer, which can supply its own provider identity and endpoint policy.
-fn set_primary_cloud(config: &mut Config, stats: &mut MigrationStats) {
-    if config.primary_cloud.is_some() {
-        return;
-    }
-    let hosts = crate::config::enrichers::managed_hosts_for(config);
-    let legacy_custom = config
-        .inference_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|url| !url.is_empty() && !looks_like_managed_backend(&hosts, url))
-        .and_then(|url| {
-            let normalized = url.trim_end_matches('/').to_ascii_lowercase();
-            config.cloud_providers.iter().find(|entry| {
-                entry
-                    .endpoint
-                    .trim()
-                    .trim_end_matches('/')
-                    .to_ascii_lowercase()
-                    == normalized
-            })
-        });
-    if let Some(entry) = legacy_custom {
-        config.primary_cloud = Some(entry.id.clone());
-        stats.primary_cloud_set = true;
-        log::debug!(
-            "[migrations][unify-ai] primary_cloud set to legacy custom entry id={}",
-            entry.id
-        );
-    }
 }
 
 /// Derive each per-workload `*_provider` field from the legacy flags.
@@ -168,35 +36,15 @@ fn derive_workload_providers(config: &mut Config, stats: &mut MigrationStats) {
         }
     };
 
-    // Summarisation workload: defaults to cloud.
     set_field(&mut config.memory_provider, "cloud".to_string(), stats);
 
-    // Embeddings — uses the embedding_model_id, not chat_model_id.
     let embeddings_value =
         if config.local_ai.usage.embeddings && runtime_on && !embed_model.is_empty() {
-            format!("ollama:{}", embed_model)
+            format!("ollama:{embed_model}")
         } else {
             "cloud".to_string()
         };
     set_field(&mut config.embeddings_provider, embeddings_value, stats);
-
-    // The three chat workloads (reasoning/agentic/coding) intentionally
-    // stay None — the factory treats unset as "cloud" which routes to
-    // primary_cloud. No equivalent of "force this to local" existed in the
-    // legacy config for chat, so there's nothing to derive.
-}
-
-/// Heuristic: does the URL look like a configured managed backend?
-///
-/// Used to decide whether a non-empty `inference_url` should be migrated
-/// into a Custom cloud provider entry. `hosts` are the managed-host patterns
-/// the installed host resolved (`ResolvedEndpoints::managed_hosts`); with none
-/// registered nothing matches.
-///
-/// Matches only on the host component to avoid false positives from custom
-/// endpoints that happen to contain a managed name in a path or query string.
-fn looks_like_managed_backend(hosts: &[String], url: &str) -> bool {
-    crate::config::schema::resolved_endpoints::host_matches_any(url, hosts)
 }
 
 #[cfg(test)]

@@ -241,7 +241,7 @@ impl Tool for ComposioActionTool {
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) =
             Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None)).await;
-        super::tools::redact_composio_outcome(&config, outcome)
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
     async fn execute_with_context(
         &self,
@@ -255,7 +255,7 @@ impl Tool for ComposioActionTool {
             sandbox_mode_for_tool(context),
         ))
         .await;
-        super::tools::redact_composio_outcome(&config, outcome)
+        super::tools::redact_composio_outcome(&config, outcome).await
     }
 }
 

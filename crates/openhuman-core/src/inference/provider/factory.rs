@@ -27,12 +27,12 @@ pub use chat_model::{
     create_chat_model_in, create_chat_model_with_model_id_in, probe_inference_readiness,
 };
 pub(crate) use chat_model::{resolves_to_managed_backend, OpenHumanModelFactory};
-pub(crate) use cloud_slug::resolve_cloud_slug_for;
 pub(crate) use cloud_spec::{cloud_provider_spec, CloudCredentialResolver};
 pub use credentials::{auth_key_for_slug, lookup_key_for_slug};
 pub(crate) use credentials::{
     openai_bearer_is_oauth, redact_endpoint_origin, resolve_codex_routing,
 };
+pub(crate) use credentials::{resolve_cloud_slug_for, RuntimeCredentialSnapshot};
 pub(crate) use inspection::{
     create_chat_model_with_identity_in_for_inspection,
     create_chat_model_with_model_id_in_for_inspection,

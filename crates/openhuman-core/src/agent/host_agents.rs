@@ -181,7 +181,7 @@ impl HostAgent {
     /// the ambient context (tool groups, skill roots) while it assembles the
     /// belt. `session_id` reaches the host belt factory as the turn's
     /// session; `None` when the driver names none.
-    pub fn session_host(
+    pub async fn session_host(
         &self,
         config: &Config,
         session_id: Option<&str>,
@@ -192,7 +192,7 @@ impl HostAgent {
             "[host_agents] building session for host agent"
         );
         let dispatch = DispatchCtx::new(Arc::clone(&self.context));
-        let mut session = CoreContext::sync_scope(Arc::clone(&self.context), || {
+        let mut session = CoreContext::scope(Arc::clone(&self.context), async {
             if crate::profiles::capabilities::ProfileCapabilities::in_ctx(&dispatch).is_some() {
                 return OpenHumanSessionHost::from_config_host_only(
                     &dispatch,
@@ -200,23 +200,31 @@ impl HostAgent {
                     &self.definition,
                     self.host_tools.as_ref(),
                     session_id,
-                );
+                )
+                .await;
             }
             match &self.host_tools {
-                Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
-                    &dispatch,
-                    config,
-                    &self.definition,
-                    host,
-                    session_id,
-                ),
-                None => OpenHumanSessionHost::from_config_with_definition(
-                    &dispatch,
-                    config,
-                    &self.definition,
-                ),
+                Some(host) => {
+                    OpenHumanSessionHost::from_config_with_host_tools(
+                        &dispatch,
+                        config,
+                        &self.definition,
+                        host,
+                        session_id,
+                    )
+                    .await
+                }
+                None => {
+                    OpenHumanSessionHost::from_config_with_definition(
+                        &dispatch,
+                        config,
+                        &self.definition,
+                    )
+                    .await
+                }
             }
-        })?;
+        })
+        .await?;
         // The agent's own callbacks ride the session explicitly: its tool and
         // stop hooks reach every turn's run context, its post-turn hooks join
         // the learning sink.

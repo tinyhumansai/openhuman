@@ -124,7 +124,7 @@ and a fingerprint, never the title text.
 A thread can be bound to an `action_dir` before its first message
 (`threads.update_working_dir`). `validate_working_dir` requires an absolute,
 existing directory with no null byte and refuses anything
-`SecurityPolicy::is_always_forbidden` covers. After the first message the
+`TinySecurity protected-path policy` covers. After the first message the
 folder is fixed: a resumed session keeps its first system prompt and tool list
 verbatim, so moving it would leave the model describing one directory while
 its tools act in another. `web_chat::turn_host` reads the binding through
@@ -149,7 +149,7 @@ subscribes to `DomainEvent::ChannelMessage*` on the core bus and mirrors
 inbound and processed channel turns into the store, using
 `conversation_history_key` for the thread id. It is registered from
 `core/runtime/subscribers.rs`, `channels/runtime/startup/start_channels.rs`
-and `security/credentials/ops/user_scope.rs` (when the user dir activates).
+and `config/user_scope.rs` (when the user dir activates).
 See [store/README.md](store/README.md).
 
 ## Layout

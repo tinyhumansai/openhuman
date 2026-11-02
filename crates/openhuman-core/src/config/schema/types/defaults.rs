@@ -51,6 +51,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
+            audit: AuditConfig::default(),
             tool_rules: tinytools::ToolRules::default(),
             desktop: DesktopConfig::default(),
             computer: ComputerConfig::default(),

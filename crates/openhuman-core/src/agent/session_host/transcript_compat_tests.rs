@@ -579,12 +579,13 @@ fn assert_retired_tool_replay(identity_bound: bool) {
         let live = crate::tools::ops::all_tools(
             Arc::new(config.clone()),
             &security,
-            crate::security::AuditLogger::disabled(),
+            crate::security::AuditSink::disabled(),
             &config.browser,
             &config.http_request,
             root.path(),
             &config,
-        );
+        )
+        .await;
         assert!(
             !live.iter().any(|tool| tool.name() == RETIRED),
             "retired tool must not be restored to the live registry"

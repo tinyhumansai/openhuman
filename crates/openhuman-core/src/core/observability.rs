@@ -14,6 +14,7 @@
 //! and return `Err(_)`, but Sentry never saw it. Funnel error sites through
 //! `report_error` so they show up tagged and grep-friendly in Sentry.
 pub(crate) mod progress_tracing;
+pub mod sentry_scope;
 pub(crate) mod telemetry;
 
 #[path = "observability_channel_message.rs"]
@@ -264,7 +265,7 @@ pub enum ExpectedErrorKind {
     /// Drops Sentry TAURI-RUST-83A (~430 events / 40 users on
     /// `openhuman@0.57.13`). Anchored to the `codex cli auth` /
     /// `.codex/auth.json` envelope produced by
-    /// [`crate::security::credentials::openai_oauth::store::import_codex_cli_auth_from_path`]
+    /// Codex CLI import path in `openhuman_tinyhumans::provider_oauth`.
     /// — a genuine keyring/persist failure in `upsert_profile` carries neither
     /// anchor, so a real defect in the import code still reaches Sentry.
     CodexCliAuthUnavailable,
@@ -308,8 +309,8 @@ pub enum ExpectedErrorKind {
     UpstreamEdgeBlock,
     /// `approval_decide` (`crates/openhuman-core/src/security/approval/rpc.rs`) resolved a request_id
     /// whose pending row was **already decided, lazily expired, or superseded**
-    /// — `store::decide` updated 0 rows because `decided_at` was already set,
-    /// and `store::get_decision` confirms a persisted decision exists. The
+    /// — TinySecurity reports that the request is already terminal, and the
+    /// engine confirms the decision is present. The
     /// inline-approvals design spec
     /// classifies "no pending approval found" as a **benign** outcome: the
     /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call

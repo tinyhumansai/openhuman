@@ -5,7 +5,7 @@ use rand::RngExt as _;
 
 use crate::core_host::config;
 use crate::core_host::core::runtime::DispatchCtx;
-use crate::core_host::security::credentials::session_support;
+use crate::core_host::credentials::session_state;
 use crate::http_host::types::HostedDirAuth;
 use crate::http_host::LOG_PREFIX;
 
@@ -69,7 +69,7 @@ pub(crate) async fn resolve_default_auth_username(ctx: &DispatchCtx) -> Option<S
         }
     };
 
-    match session_support::build_session_state(&config) {
+    match session_state::build_session_state(&config).await {
         Ok(state) => state
             .user
             .as_ref()

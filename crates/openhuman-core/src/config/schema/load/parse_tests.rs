@@ -106,6 +106,19 @@ fn a_type_error_names_the_field_path() {
 }
 
 #[test]
+fn retired_sandbox_backends_fail_with_a_migration_message() {
+    for backend in ["firejail", "bubblewrap"] {
+        let error = config_from_toml_str(&format!("[sandbox]\nbackend = \"{backend}\""))
+            .expect_err("unsupported legacy sandbox backend must be rejected during config load");
+
+        assert!(
+            error.to_string().contains("TinyBox"),
+            "expected a TinyBox migration hint for {backend}: {error}"
+        );
+    }
+}
+
+#[test]
 fn a_non_finite_float_is_rejected_with_its_field_path() {
     let err = config_from_toml_str("default_temperature = nan").unwrap_err();
     assert!(

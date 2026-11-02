@@ -16,7 +16,7 @@ impl OpenHumanSessionHost {
     pub async fn turn_with_origin(
         &mut self,
         user_message: &str,
-        origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Result<String> {
         self.turn_with_approval(user_message, origin, Default::default())
             .await
@@ -29,7 +29,7 @@ impl OpenHumanSessionHost {
     pub async fn turn_with_approval(
         &mut self,
         user_message: &str,
-        origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         self.turn_with_approval_input(user_message, None, origin, approval)
@@ -144,9 +144,9 @@ impl OpenHumanSessionHost {
         };
         let mut options = TurnOptions {
             request_id: origin.and_then(|origin| match origin {
-                crate::security::turn_origin::AgentTurnOrigin::WebChat { request_id, .. } => {
-                    request_id.clone()
-                }
+                crate::core::runtime::turn_origin::AgentTurnOrigin::WebChat {
+                    request_id, ..
+                } => request_id.clone(),
                 _ => None,
             }),
             thread_id: self.thread_id.clone(),

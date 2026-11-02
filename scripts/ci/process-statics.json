@@ -668,5 +668,15 @@
     "category": "A",
     "reason": "One-shot guard that subscribes the proactive web subscriber to the process-wide bus once; it stores no tenant identifiers, and per-event tenant scope arrives on each event.",
     "verification": "web_chat/event_bus_tests.rs: egress_surface_bridges_pending_with_chat_context"
+  },
+  {
+    "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "std::sync::OnceLock<std::sync::Arc<BoxRegistry<BusBoxDriver>>>",
+    "count": 1,
+    "category": "B",
+    "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
+    "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
   }
 ]

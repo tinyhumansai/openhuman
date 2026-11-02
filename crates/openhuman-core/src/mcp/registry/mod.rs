@@ -88,7 +88,7 @@ pub mod connections {
         args: impl serde::Serialize,
     ) -> Result<R, tinybus::module::ModuleCallError> {
         crate::mcp::module_client::McpConfiguredClient::for_config(config)?
-            .call(&host::client_config(config), member, args)
+            .call(&host::client_config(config).await, member, args)
             .await
     }
 
@@ -366,7 +366,7 @@ pub mod boot {
         // read forces that open without recreating connection policy here.
         if let Err(error) = client
             .call::<serde_json::Value>(
-                &host::client_config(config),
+                &host::client_config(config).await,
                 tinymcp_bus::names::methods::STATIC_LIST,
                 (),
             )
@@ -424,7 +424,7 @@ pub mod oauth {
             crate::mcp::module_client::McpConfiguredClient::for_config(config)
                 .map_err(|error| error.to_string())?
                 .call(
-                    &host::client_config(config),
+                    &host::client_config(config).await,
                     tinymcp_bus::names::methods::OAUTH_COMPLETE,
                     (state, code),
                 )
@@ -446,41 +446,61 @@ pub mod oauth {
 /// logged and published with the *rule code* only — the offending text is never
 /// re-emitted, because the payload is the thing that was dangerous.
 #[cfg(feature = "mcp")]
-pub(crate) fn tools_safe_for_agent(
+pub(crate) async fn tools_safe_for_agent(
     server: &str,
     tools: Vec<tinymcp_bus::McpTool>,
 ) -> Vec<tinymcp_bus::McpTool> {
     use crate::core::bus::BUS;
     use crate::core::events::DomainEvent;
-    use crate::security::prompt_injection::scan_tool_definition;
-
-    tools
-        .into_iter()
-        .filter(|tool| {
-            let hit = tool
-                .description
-                .as_deref()
-                .and_then(|text| scan_tool_definition("description", text));
-
-            match hit {
-                Some(hit) => {
-                    tracing::warn!(
-                        server,
-                        tool = %tool.name,
-                        reason = %hit.code,
-                        "[mcp] dropped a remote tool that tripped the input-validation scan"
-                    );
-                    BUS.publish(DomainEvent::McpToolRejected {
-                        server: server.to_string(),
-                        tool: tool.name.clone(),
-                        reason: hit.code.clone(),
-                    });
-                    false
+    let mut safe = Vec::with_capacity(tools.len());
+    for tool in tools {
+        #[cfg(feature = "security-module")]
+        let definition = serde_json::json!({
+            "name": &tool.name,
+            "description": &tool.description,
+            "input_schema": &tool.input_schema,
+            "meta": &tool.meta,
+        });
+        #[cfg(feature = "security-module")]
+        let result =
+            if let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() {
+                match crate::modules::security::client(&config).await {
+                    Ok(client) => client
+                        .scan_tool_definition(tool.name.clone(), &definition)
+                        .await
+                        .ok(),
+                    Err(_) => None,
                 }
-                None => true,
+            } else {
+                None
+            };
+        #[cfg(not(feature = "security-module"))]
+        let result: Option<tinysecurity_bus::ScanResponse> = None;
+        let reason = match result {
+            Some(result) if result.verdict == tinysecurity_bus::ScanVerdict::Clean => {
+                safe.push(tool);
+                continue;
             }
-        })
-        .collect()
+            Some(hit) => hit
+                .rule_ids
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "tool_definition.flagged".into()),
+            None => "scan.unavailable".to_owned(),
+        };
+        tracing::warn!(
+            server,
+            tool = %tool.name,
+            reason = %reason,
+            "[mcp] dropped a remote tool that tripped the input-validation scan"
+        );
+        BUS.publish(DomainEvent::McpToolRejected {
+            server: server.to_string(),
+            tool: tool.name.clone(),
+            reason,
+        });
+    }
+    safe
 }
 
 // ---------------------------------------------------------------------------

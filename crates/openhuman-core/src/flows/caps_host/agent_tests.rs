@@ -578,6 +578,7 @@ async fn headless_child_at_depth_cap_gets_readable_spawn_refusal() {
                     &run_config,
                     "orchestrator",
                 )
+                .await
                 .expect("build the headless depth-cap root");
                 agent.set_agent_definition_name("orchestrator".to_string());
                 let mut host_env = agent.host_env().clone();

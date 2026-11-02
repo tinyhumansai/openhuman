@@ -51,7 +51,7 @@ None of its own. The domain is stateless: it reads the backend credential throug
 - `crate::config::Config`: config struct passed into ops; `config::rpc::load_config_with_timeout` is used by the schema handlers.
 - `crate::core::all::{ControllerFuture, RegisteredController}` and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller registry types.
 - `crate::rpc::RpcOutcome`: return wrapper carrying value + logs.
-- Test-only: `crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME}` for seeding session tokens in unit tests.
+- Test-only: `crate::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME}` for seeding session tokens in unit tests.
 
 ## Used by
 

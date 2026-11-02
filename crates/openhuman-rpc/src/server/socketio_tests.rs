@@ -1,6 +1,6 @@
 use super::{
     channel_connection_update_payload, emit_web_channel_event, event_alias,
-    origin_is_allowed_with_extra, publish_companion_state_changed,
+    origin_is_allowed_with_extra, publish_companion_state_changed, should_broadcast_session_expiry,
     socket_tenant_from_request_extensions, stamp_replay_timestamp,
     subscribe_companion_state_changed, ThreadSubscribePayload,
 };
@@ -37,6 +37,38 @@ fn thread_subscribe_cannot_choose_a_profile_for_review_replay() {
         payload.is_err(),
         "tenant selection is not a client payload field"
     );
+}
+
+#[test]
+fn session_expiry_bridge_only_broadcasts_for_the_current_session_credential() {
+    let old_request = crate::core_host::credentials::backend_credential::credential_fingerprint(
+        "expired-request-token",
+    );
+    assert!(!should_broadcast_session_expiry(
+        Some(&old_request),
+        Some("replacement-token"),
+        false,
+    ));
+    assert!(should_broadcast_session_expiry(
+        Some(&old_request),
+        Some("expired-request-token"),
+        false,
+    ));
+    assert!(should_broadcast_session_expiry(
+        Some(&old_request),
+        None,
+        false,
+    ));
+    assert!(!should_broadcast_session_expiry(
+        None,
+        Some("current-token"),
+        false,
+    ));
+    assert!(!should_broadcast_session_expiry(
+        Some(&old_request),
+        Some("expired-request-token"),
+        true,
+    ));
 }
 
 #[test]
@@ -508,6 +540,109 @@ async fn only_the_core_bearer_completes_the_socketio_handshake() {
     tokio::time::timeout(std::time::Duration::from_secs(30), handshake_bearer_gate())
         .await
         .expect("socket.io handshake test timed out");
+}
+
+#[tokio::test]
+async fn startup_preflight_denies_authenticated_socketio_until_open_and_guards_rpc_events() {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        startup_preflight_socket_gate(),
+    )
+    .await
+    .expect("Socket.IO preflight test timed out");
+}
+
+async fn startup_preflight_socket_gate() {
+    let token = ensure_rpc_token();
+    let gate = crate::server::auth::PreflightGate::new_active();
+    let router = crate::server::http::build_core_http_router_with_preflight(true, gate.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let client = reqwest::Client::new();
+    let denied = client
+        .get(format!("{base}/socket.io/?EIO=4&transport=polling"))
+        .send()
+        .await
+        .expect("preflight Engine.IO open");
+    assert!(
+        denied.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "initial Engine.IO request must be denied before allocating a session: {}",
+        denied.status()
+    );
+    let denial = denied.text().await.unwrap();
+    assert!(
+        denial.contains("startup_preflight"),
+        "preflight body: {denial}"
+    );
+
+    gate.open();
+    let open = client
+        .get(format!("{base}/socket.io/?EIO=4&transport=polling"))
+        .send()
+        .await
+        .expect("engine.io open after gate")
+        .text()
+        .await
+        .unwrap();
+    let open: serde_json::Value =
+        serde_json::from_str(open.trim_start_matches('0')).expect("engine.io open packet");
+    let sid = open["sid"].as_str().expect("engine.io sid").to_owned();
+    let url = format!("{base}/socket.io/?EIO=4&transport=polling&sid={sid}");
+    client
+        .post(&url)
+        .body(format!(
+            "40{}",
+            serde_json::json!({ "token": ensure_rpc_token() })
+        ))
+        .send()
+        .await
+        .expect("authenticated socket connect after gate");
+    let connected = client.get(&url).send().await.unwrap().text().await.unwrap();
+    assert!(
+        connected.contains("\"ready\""),
+        "post-preflight ready: {connected}"
+    );
+
+    // A live authenticated socket must still check the same gate before
+    // dispatching RPC events. Re-closing is test-only; production opens once.
+    gate.close_for_test();
+    client
+        .post(&url)
+        .body(
+            "42[\"rpc:request\",{\"id\":\"probe\",\"method\":\"openhuman.config_get\",\"params\":{}}]",
+        )
+        .send()
+        .await
+        .expect("send authenticated RPC event");
+    let denied_rpc = client.get(&url).send().await.unwrap().text().await.unwrap();
+    assert!(
+        denied_rpc.contains("rpc:error"),
+        "preflight rpc response: {denied_rpc}"
+    );
+    assert!(
+        denied_rpc.contains("unavailable during startup approval preflight"),
+        "preflight must not dispatch the protected method: {denied_rpc}"
+    );
+}
+
+#[test]
+fn keyring_approval_socket_payload_contains_only_operation_metadata() {
+    let request = crate::core_host::core::events::KeyringAccessApprovalRequest {
+        request_id: "request-1".into(),
+        caller_agent: "openhuman.credentials".into(),
+        origin: "LocalOperator".into(),
+        purpose: "OpenHuman auth profile credential access".into(),
+        access: "write".into(),
+        name: "user-1:auth:openai:default".into(),
+        expires_at_ms: 1_800_000_000_000,
+    };
+    let payload = super::keyring_access_approval_payload(&request);
+    assert_eq!(payload["request_id"], "request-1");
+    assert_eq!(payload["access"], "write");
+    assert_eq!(payload["name"], "user-1:auth:openai:default");
+    assert!(payload.get("value").is_none());
 }
 
 async fn handshake_bearer_gate() {

@@ -57,24 +57,24 @@ pub fn agent_memory_on(
 
 /// `identity`'s memory on the configured engine; [`Error::Off`] when no
 /// engine is bound.
-pub fn agent_memory(config: &Config, identity: &ResolvedIdentity) -> Result<AgentMemory> {
-    let bound = engine::resolve(config).engine()?;
+pub async fn agent_memory(config: &Config, identity: &ResolvedIdentity) -> Result<AgentMemory> {
+    let bound = engine::resolve(config).await.engine()?;
     agent_memory_on(bound.engine, config, identity)
 }
 
 /// The memory of `identity` (the default agent for the root identity).
-pub fn current_agent_memory(
+pub async fn current_agent_memory(
     config: &Config,
     identity: &tinymemory_tools::layout::identity::Identity,
 ) -> Result<(AgentMemory, ResolvedIdentity)> {
     let identity = identity.resolve(&crate::memory::scope::identity_pins(config));
-    let memory = agent_memory(config, &identity)?;
+    let memory = agent_memory(config, &identity).await?;
     Ok((memory, identity))
 }
 
 /// An agent id the caller named, resolved under `identity`'s root; `identity`
 /// itself when none is named.
-pub fn named_agent_memory(
+pub async fn named_agent_memory(
     config: &Config,
     identity: &tinymemory_tools::layout::identity::Identity,
     agent_id: Option<&str>,
@@ -83,12 +83,14 @@ pub fn named_agent_memory(
     if let Some(agent_id) = agent_id.map(str::trim).filter(|id| !id.is_empty()) {
         identity.agent_id = agent_id.to_string();
     }
-    let memory = agent_memory(config, &identity).map_err(|error| match error {
-        Error::InvalidRequest(message) => {
-            Error::InvalidRequest(format!("agent `{}`: {message}", identity.agent_id))
-        }
-        other => other,
-    })?;
+    let memory = agent_memory(config, &identity)
+        .await
+        .map_err(|error| match error {
+            Error::InvalidRequest(message) => {
+                Error::InvalidRequest(format!("agent `{}`: {message}", identity.agent_id))
+            }
+            other => other,
+        })?;
     Ok((memory, identity))
 }
 

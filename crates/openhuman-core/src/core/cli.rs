@@ -493,7 +493,7 @@ fn run_call_command(args: &[String]) -> Result<()> {
                     )
                     .map_err(|error| error.to_string())?;
                 }
-                crate::security::credentials::seed_api_key_from_env(&config);
+                crate::security::credentials::seed_api_key_from_env(&config).await;
 
                 // A one-shot CLI call does not boot the long-lived server
                 // runtime, but the agent turn still needs a real owner context

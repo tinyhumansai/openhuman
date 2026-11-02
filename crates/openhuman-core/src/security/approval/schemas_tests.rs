@@ -6,9 +6,11 @@ use serde_json::json;
 
 #[test]
 fn legacy_handlers_keep_their_identity_and_order() {
-    let expected: [(&str, ControllerHandler); 5] = [
+    let expected: [(&str, ControllerHandler); 7] = [
         ("list_pending", handle_list_pending),
         ("list_recent_decisions", handle_list_recent_decisions),
+        ("list_tool_trust", handle_list_tool_trust),
+        ("revoke_tool_trust", handle_revoke_tool_trust),
         ("decide", handle_decide),
         ("get_gate_state", handle_get_gate_state),
         ("preauthorize_flow", handle_preauthorize_flow),
@@ -47,6 +49,18 @@ pub(super) fn parameter_contracts() -> Vec<ControllerParamContract> {
             ],
         },
         ControllerParamContract {
+            method: "approval.list_tool_trust",
+            required: &[],
+            optional: &[],
+            examples: vec![json!({})],
+        },
+        ControllerParamContract {
+            method: "approval.revoke_tool_trust",
+            required: &["request_id"],
+            optional: &[],
+            examples: vec![json!({"request_id": "grant-1"})],
+        },
+        ControllerParamContract {
             method: "approval.decide",
             required: &["request_id", "decision"],
             optional: &["agent_id"],
@@ -71,6 +85,23 @@ pub(super) fn parameter_contracts() -> Vec<ControllerParamContract> {
             ],
         },
     ]
+}
+
+#[test]
+fn revoke_tool_trust_parser_requires_a_string_id() {
+    assert_eq!(
+        parse_revoke_tool_trust(Map::from_iter([("request_id".into(), json!(" grant-1 "))]))
+            .unwrap(),
+        " grant-1 "
+    );
+    assert_eq!(
+        parse_revoke_tool_trust(Map::new()).unwrap_err(),
+        "missing required param 'request_id'"
+    );
+    assert_eq!(
+        parse_revoke_tool_trust(Map::from_iter([("request_id".into(), json!(false))])).unwrap_err(),
+        "invalid 'request_id': expected string, got bool"
+    );
 }
 
 #[test]

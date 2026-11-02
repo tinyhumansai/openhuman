@@ -78,7 +78,7 @@ impl AgentInner {
             config.default_model = Some(model.to_string());
         }
         if let Some(route) = self.provider.route() {
-            if !crate::turn::is_safe_endpoint_for_bearer(&route.base_url) {
+            if !crate::security::is_safe_endpoint_for_bearer(&route.base_url) {
                 log::warn!(
                     "[embed][agent] id={} has an insecure route; not offered to core drivers",
                     self.id

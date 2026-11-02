@@ -270,8 +270,8 @@ fn handle_run(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture 
         tracing::info!(skill_id = %payload.skill_id, "[skill_runtime][rpc] run");
         let origin = ctx
             .turn_origin_or_scoped()
-            .unwrap_or(crate::security::turn_origin::AgentTurnOrigin::Cli);
-        let started = crate::security::turn_origin::with_origin(
+            .unwrap_or(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli);
+        let started = crate::core::runtime::turn_origin::with_origin(
             origin.clone(),
             spawn_workflow_run_background(&ctx, payload.skill_id, payload.inputs, Some(origin)),
         )

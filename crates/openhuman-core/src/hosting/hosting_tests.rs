@@ -547,20 +547,30 @@ fn an_operation_with_the_wrong_typed_outcome_is_reported_once_without_reply_data
     assert!(calls[1].2);
 }
 
-#[test]
-fn workspace_resolution_refuses_absolute_traversal_and_symlink_escape() {
+#[tokio::test]
+async fn workspace_resolution_refuses_absolute_traversal_and_symlink_escape() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
     std::fs::create_dir(workspace.path().join("app")).unwrap();
     std::fs::create_dir(workspace.path().join(".ssh")).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(outside.path(), workspace.path().join("escape")).unwrap();
-    assert!(resolve_in_workspace(workspace.path(), "app").is_ok());
-    assert!(resolve_in_workspace(workspace.path(), "../outside").is_err());
-    assert!(resolve_in_workspace(workspace.path(), ".ssh").is_err());
-    assert!(resolve_in_workspace(workspace.path(), outside.path().to_str().unwrap()).is_err());
+    assert!(resolve_in_workspace(workspace.path(), "app").await.is_ok());
+    assert!(resolve_in_workspace(workspace.path(), "../outside")
+        .await
+        .is_err());
+    assert!(resolve_in_workspace(workspace.path(), ".ssh")
+        .await
+        .is_err());
+    assert!(
+        resolve_in_workspace(workspace.path(), outside.path().to_str().unwrap())
+            .await
+            .is_err()
+    );
     #[cfg(unix)]
-    assert!(resolve_in_workspace(workspace.path(), "escape").is_err());
+    assert!(resolve_in_workspace(workspace.path(), "escape")
+        .await
+        .is_err());
 }
 
 #[test]

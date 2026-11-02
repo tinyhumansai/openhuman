@@ -60,7 +60,7 @@ impl DoctorCheck for Construct {
     }
 
     async fn detect(&self, ctx: &DoctorCtx) -> Vec<Finding> {
-        construct(ctx.config())
+        construct(ctx.config()).await
     }
 }
 
@@ -380,7 +380,7 @@ fn unresolved_provider(path: &str) -> Finding {
     finding
 }
 
-fn construct(config: &Config) -> Vec<Finding> {
+async fn construct(config: &Config) -> Vec<Finding> {
     let mut findings = Vec::new();
     let dispatch = DispatchCtx::ambient();
 
@@ -390,7 +390,8 @@ fn construct(config: &Config) -> Vec<Finding> {
             role,
             config,
             config.default_temperature,
-        );
+        )
+        .await;
         let Err(error) = result else {
             continue;
         };

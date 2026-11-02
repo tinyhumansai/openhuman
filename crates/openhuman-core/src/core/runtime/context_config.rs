@@ -39,6 +39,15 @@ pub(super) fn record_context_config_overlay(
 }
 
 impl CoreContext {
+    pub(crate) fn replace_latest_embedder_config(&self, config: crate::config::Config) {
+        if let Some(snapshot) = &self.latest_embedder_config {
+            if let Ok(mut current) = snapshot.lock() {
+                *current = config;
+                crate::config::Config::bind_context_snapshot(snapshot);
+            }
+        }
+    }
+
     /// The embedder-supplied config for the current dispatch, if there is one.
     ///
     /// The read path for `config::ops::load_config_with_timeout`.

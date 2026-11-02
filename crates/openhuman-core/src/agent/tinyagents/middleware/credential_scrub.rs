@@ -3,8 +3,7 @@
 //! token, which is minted by the host and must survive the scrubber.
 
 use tinyagents_harness::middleware::{
-    redaction_notice, scrub_with_notice, CredentialScrubMiddleware, ToolScrubber,
-    REDACTION_PLACEHOLDER,
+    redaction_notice, CredentialScrubMiddleware, ToolScrubber, REDACTION_PLACEHOLDER,
 };
 
 /// The browser task's `pending.token` is a host-minted, one-time confirmation
@@ -14,47 +13,46 @@ use tinyagents_harness::middleware::{
 ///
 /// The token is removed before scrubbing and put back afterwards, so it is
 /// never seen by (or counted against) the scrubber.
-fn scrub_with_notice_for_tool(tool_name: &str, content: &str) -> Option<(String, usize)> {
-    if tool_name != "browser" {
-        return scrub_with_notice(content);
-    }
-    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
-        return scrub_with_notice(content);
+fn scrub_with_notice_for_tool(_tool_name: &str, content: &str) -> Option<(String, usize)> {
+    #[cfg(feature = "security-module")]
+    let mode = if _tool_name == "browser"
+        && serde_json::from_str::<serde_json::Value>(content)
+            .ok()
+            .is_some_and(|value| {
+                value["status"] == "NeedsConfirmation"
+                    && value["pending"]["token"].as_str().is_some_and(|token| {
+                        token.len() == 36 && uuid::Uuid::parse_str(token).is_ok()
+                    })
+            }) {
+        tinysecurity_bus::RedactMode::BrowserResult
+    } else {
+        tinysecurity_bus::RedactMode::CredentialsOnly
     };
-    if value["status"] != "NeedsConfirmation" {
-        return scrub_with_notice(content);
-    }
-    let Some(token) = value["pending"]["token"].as_str().map(str::to_owned) else {
-        return scrub_with_notice(content);
+    #[cfg(feature = "security-module")]
+    let scrubbed = crate::modules::security::text::redact_blocking(
+        mode,
+        content,
+        std::time::Duration::from_secs(2),
+    );
+    #[cfg(not(feature = "security-module"))]
+    let scrubbed: Result<String, String> = Err("TinySecurity is not built into this host".into());
+    let Ok(scrubbed) = scrubbed else {
+        let count = 1;
+        return Some((
+            format!("{REDACTION_PLACEHOLDER}\n\n{}", redaction_notice(count)),
+            count,
+        ));
     };
-    if token.len() != 36 || uuid::Uuid::parse_str(&token).is_err() {
-        return scrub_with_notice(content);
-    }
-    // Take the token out of the document instead of masking it with a dummy
-    // value: the scrubber redacts secret-looking `token` values of any
-    // length, so a UUID-shaped placeholder is redacted and counted too.
-    if let Some(pending) = value["pending"].as_object_mut() {
-        pending.remove("token");
-    }
-    let protected = match serde_json::to_string(&value) {
-        Ok(protected) => protected,
-        Err(_) => return scrub_with_notice(content),
-    };
-    let scrubbed = tinyinference_core::sanitize::scrub_credentials(&protected);
-    if scrubbed == protected {
+    if scrubbed == content {
         return None;
     }
     let redactions = scrubbed
         .matches(REDACTION_PLACEHOLDER)
         .count()
-        .saturating_sub(protected.matches(REDACTION_PLACEHOLDER).count());
-    let mut result: serde_json::Value = match serde_json::from_str(&scrubbed) {
-        Ok(result) => result,
-        Err(_) => return scrub_with_notice(content),
-    };
-    result["pending"]["token"] = serde_json::Value::String(token);
+        .saturating_sub(content.matches(REDACTION_PLACEHOLDER).count())
+        .max(1);
     Some((
-        format!("{}\n\n{}", result, redaction_notice(redactions)),
+        format!("{scrubbed}\n\n{}", redaction_notice(redactions)),
         redactions,
     ))
 }

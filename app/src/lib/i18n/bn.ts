@@ -5092,6 +5092,54 @@ const messages: TranslationMap = {
   'settings.layout.corners.none': 'কোনোটিই নয়',
 
   'settings.layout.corners.round': 'গোলাকার',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'এই কোরে নীতি নির্ণয় অন্তর্ভুক্ত নেই।',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'সক্রিয় নিরাপত্তা নীতি',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'স্বায়ত্তশাসন',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'শুধু কর্মক্ষেত্র',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'প্রতি ঘণ্টায় সর্বোচ্চ কাজ',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'মাঝারি ঝুঁকিতে অনুমোদন আবশ্যক',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'উচ্চ ঝুঁকির কমান্ড বন্ধ করুন',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'অনুমোদিত কমান্ড',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'কোনো কমান্ড স্পষ্টভাবে অনুমোদিত নয়।',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'নীতি',
+  'settings.approvalHistory.judgeScores':
+    'উদ্দেশ্য {intent} · প্রত্যাবর্তনযোগ্য {reversible} · তথ্য ফাঁস {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'ক্যাশ করা',
+  'settings.approvalHistory.judgeExpires': '{time}-এ মেয়াদ শেষ',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'সবসময় অনুমোদিত টুল',
+  'keyring.settings.toolTrustDescription':
+    'এই নিরাপত্তা পরিসরে অনুমোদন না চেয়েই এই টুলগুলো চালানো যায়।',
+  'keyring.settings.toolTrustLoading': 'অনুমোদিত টুল লোড হচ্ছে…',
+  'keyring.settings.toolTrustLoadFailed': 'অনুমোদিত টুল লোড করা যায়নি।',
+  'keyring.settings.toolTrustRevokeFailed': 'এই টুলের অনুমতি প্রত্যাহার করা যায়নি।',
+  'keyring.settings.toolTrustEmpty': 'সবসময় অনুমোদিত কোনো টুল নেই।',
+  'keyring.settings.toolTrustRetry': 'আবার চেষ্টা করুন',
+  'keyring.settings.toolTrustRevoke': 'প্রত্যাহার',
+  'keyring.settings.toolTrustRevoking': 'প্রত্যাহার হচ্ছে…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'কীরিং অ্যাক্সেসের অনুরোধ',
+  'keyring.operation.description':
+    'TinySecurity একটি কীরিং আইটেমে অ্যাক্সেস চাইছে। সিদ্ধান্তের আগে অপারেশনটি পর্যালোচনা করুন।',
+  'keyring.operation.access': 'অ্যাক্সেস',
+  'keyring.operation.requester': 'অনুরোধকারী',
+  'keyring.operation.origin': 'উৎস',
+  'keyring.operation.purpose': 'উদ্দেশ্য',
+  'keyring.operation.name': 'কীরিং আইটেম',
+  'keyring.operation.access.read': 'পড়া',
+  'keyring.operation.access.write': 'লেখা',
+  'keyring.operation.access.delete': 'মুছে ফেলা',
+  'keyring.operation.allow': 'একবার অনুমতি দিন',
+  'keyring.operation.deny': 'প্রত্যাখ্যান',
+  'keyring.operation.submitting': 'পাঠানো হচ্ছে…',
+  'keyring.operation.expires': 'অনুরোধটি {seconds} সেকেন্ডে মেয়াদোত্তীর্ণ হবে।',
+  'keyring.operation.error': 'সিদ্ধান্ত পাঠানো যায়নি। অনুরোধটির মেয়াদ শেষ হয়ে থাকতে পারে।',
 };
 
 export default messages;

@@ -78,7 +78,7 @@ impl StorageUploadFileTool {
                 return Ok(ToolResult::error(format!(
                     "failed to read {}: {e}",
                     resolved.display()
-                )))
+                )));
             }
         };
         let filename = resolved

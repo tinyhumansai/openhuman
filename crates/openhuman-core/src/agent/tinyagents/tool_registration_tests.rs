@@ -230,7 +230,7 @@ impl Tool for OriginObservingTool {
         self.0.store(
             matches!(
                 crate::core::runtime::CoreContext::current_turn_origin(),
-                Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+                Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
             ),
             Ordering::SeqCst,
         );
@@ -251,7 +251,7 @@ async fn shared_adapter_scopes_tool_execution_to_the_run_origin() {
     let adapter = shared_tool_adapter(tools, "origin_observer").unwrap();
     let mut host = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     host.origin = Some(
-        crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+        crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
             sender_name: None,
             channel: "test".into(),
             sender: None,

@@ -9,14 +9,16 @@
 
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::Outcome;
+use openhuman_embed::__host::credentials::backend_credential::{
+    publish_local_session_expiry, resolve_backend_credential, BackendCredential,
+};
+use openhuman_embed::__host::credentials::session_state::{
+    classify_session_token, load_app_session_profile, session_token_from_profile, SessionTokenCheck,
+};
 use openhuman_embed::__host::inference_registry::{
     BoxFuture, CatalogEntry, CatalogHostRequest, CatalogLimits, CatalogListing, CatalogRequest,
     InspectionCatalogError, InspectionCatalogListing, InspectionCatalogRequest,
     PreparedInspectionCatalog, ProviderContext,
-};
-use openhuman_embed::__host::security::credentials::session_support::{
-    classify_session_token, load_app_session_profile, publish_local_session_expiry,
-    resolve_backend_credential, BackendCredential, SessionTokenCheck,
 };
 use openhuman_embed::__host::util::url::join_url;
 use std::sync::Arc;
@@ -58,8 +60,9 @@ pub(super) fn entry() -> CatalogEntry<ProviderContext> {
             })
         },
     );
-    let limits: CatalogLimits<ProviderContext> =
-        Arc::new(|model: &str, context: &ProviderContext| limits_request(model, &context.config));
+    let limits: CatalogLimits<ProviderContext> = Arc::new(|request| {
+        Box::pin(async move { limits_request(&request.model, &request.context.config).await })
+    });
     CatalogEntry {
         list,
         limits: Some(limits),
@@ -72,12 +75,13 @@ pub(super) fn entry() -> CatalogEntry<ProviderContext> {
 pub(super) fn inspection_entry() -> InspectionCatalogListing {
     Arc::new(|config: Config, request: InspectionCatalogRequest| {
         Box::pin(async move {
-            use openhuman_embed::__host::security::credentials::session_support::{
+            use openhuman_embed::__host::credentials::session_state::{
                 check_session_backend, classify_session_token, load_app_session_profile_read_only,
                 SessionTokenCheck,
             };
 
             let profile = load_app_session_profile_read_only(&config)
+                .await
                 .map_err(|_| InspectionCatalogError::Unavailable)?;
             check_session_backend(&config, profile.as_ref())
                 .map_err(|_| InspectionCatalogError::Unavailable)?;
@@ -87,10 +91,9 @@ pub(super) fn inspection_entry() -> InspectionCatalogListing {
             };
             let provider_key = request.provider_key.trim();
             let api_key = if provider_key.is_empty() {
-                openhuman_embed::__host::security::credentials::api_key::get_api_key_read_only(
-                    &config,
-                )
-                .map_err(|_| InspectionCatalogError::Unavailable)?
+                openhuman_embed::__host::credentials::api_key::get_api_key_read_only(&config)
+                    .await
+                    .map_err(|_| InspectionCatalogError::Unavailable)?
             } else {
                 Some(provider_key.to_owned())
             };
@@ -198,14 +201,18 @@ pub(super) enum ListingAuth {
 /// Pick the listing credential. A live session wins; without one the entry's
 /// provider-scoped key still authenticates, and only when neither exists does
 /// the catalog degrade to empty.
-pub(super) fn listing_auth(check: SessionTokenCheck, provider_key: &str) -> ListingAuth {
+pub(super) async fn listing_auth(
+    check: SessionTokenCheck,
+    selected_token: Option<&str>,
+    provider_key: &str,
+) -> ListingAuth {
     let provider_key = provider_key.trim();
     match check {
         SessionTokenCheck::Live(token) => ListingAuth::Session(token),
         SessionTokenCheck::Expired => {
             // `require_live_session_token` announced this; without it an expired
             // token stays in the store with nothing prompting a re-auth.
-            publish_local_session_expiry("list_configured_models");
+            publish_local_session_expiry("list_configured_models", selected_token).await;
             if provider_key.is_empty() {
                 ListingAuth::Empty("session expired")
             } else {
@@ -225,19 +232,23 @@ pub(super) async fn list_models(
     // Classify the session directly: a store error propagates (a recoverable
     // fault the picker should surface), only an absent or expired session
     // degrades to an empty list, or to the entry's own key.
-    let profile = load_app_session_profile(config)?;
+    let profile = load_app_session_profile(config).await?;
     let check = classify_session_token(profile.as_ref(), chrono::Utc::now());
-    let (token, session_token) = match listing_auth(check, &request.provider_key) {
-        ListingAuth::Session(token) => (token.clone(), true),
-        ListingAuth::ProviderKey(key) => {
-            log::debug!("[tinyhumans][inference] no live session; using the provider-scoped key");
-            (key, false)
-        }
-        ListingAuth::Empty(reason) => {
-            log::info!("[tinyhumans][inference] managed catalog unavailable: {reason}");
-            return empty_catalog(reason);
-        }
-    };
+    let selected_token = session_token_from_profile(profile.as_ref());
+    let (token, session_token) =
+        match listing_auth(check, selected_token.as_deref(), &request.provider_key).await {
+            ListingAuth::Session(token) => (token.clone(), true),
+            ListingAuth::ProviderKey(key) => {
+                log::debug!(
+                    "[tinyhumans][inference] no live session; using the provider-scoped key"
+                );
+                (key, false)
+            }
+            ListingAuth::Empty(reason) => {
+                log::info!("[tinyhumans][inference] managed catalog unavailable: {reason}");
+                return empty_catalog(reason);
+            }
+        };
 
     let url = catalog_url(config);
     log::debug!("[tinyhumans][inference] managed catalog url={url}");
@@ -307,14 +318,14 @@ pub(super) async fn list_models(
 /// inference base so overflow corrections from the chat model land on the same
 /// entry. Authenticated with the backend credential when the URL is safe to
 /// carry it.
-pub(super) fn limits_request(model: &str, config: &Config) -> Option<DiscoveryRequest> {
+pub(super) async fn limits_request(model: &str, config: &Config) -> Option<DiscoveryRequest> {
     let model = model.trim();
     if model.is_empty() {
         return None;
     }
     let inference_base = effective_api_url(&config.api_url);
     let listing_url = catalog_url(config);
-    let auth = match resolve_backend_credential(config) {
+    let auth = match resolve_backend_credential(config).await {
         Ok(BackendCredential::ApiKey(key)) if is_managed_endpoint_for_api_key(&listing_url) => {
             Some(key)
         }

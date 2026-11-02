@@ -40,7 +40,8 @@ Both live in [`../types.rs`](../types.rs), not in this folder:
   a `LoadPolicy` (`Lazy`, loaded on first use, or `Eager`, loaded at boot).
 - `PlatformAsset`: one published artifact per host, `host_key` (for example
   `ubuntu-24.04-x86_64`), the exact release `archive` name, and its lowercase
-  hex SHA-256 `sha256` digest.
+  hex SHA-256 `sha256` digest. `library_sha256` is optional and pins the
+  extracted module library when the publisher includes that digest.
 
 Every record in this folder pins one version and one digest per supported
 host, taken verbatim from that release's own `checksum.toml`. tinybus fetches
@@ -51,6 +52,13 @@ source is what makes the check auditable by reading this file against the
 release page. A digest recomputed from a local build would agree with itself
 no matter what a release actually served, which is why the module doc comment
 on [`../registry.rs`](../registry.rs) says not to do that.
+
+The existing published pins contain archive digests only, so their
+`library_sha256` values are `None`. Archive verification still applies, but
+these legacy pins cannot authorize strict attested calls. Set the field only
+when the publisher supplies a real extracted-library digest in its signed
+checksum manifest; never copy the archive digest into it or infer one from a
+local build.
 
 ## How it fits
 

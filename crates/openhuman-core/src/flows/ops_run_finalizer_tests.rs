@@ -22,7 +22,9 @@ async fn streamed_flow_finalizer_settles_the_bridge_workspace_turn_state() {
         &ctx,
         &config_b,
         "workflow_builder",
-    ) {
+    )
+    .await
+    {
         Ok(agent) => agent,
         Err(error) => {
             eprintln!("build workflow_builder agent: {error:#}");

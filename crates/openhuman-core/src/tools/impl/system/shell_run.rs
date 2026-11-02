@@ -253,12 +253,23 @@ pub(super) async fn run_in_policy(
 
 /// The call's audit entry, to be written once by whoever learns the outcome.
 pub(super) fn audit_once(
-    audit: Arc<crate::security::AuditLogger>,
+    audit: Arc<crate::security::AuditSink>,
+    ctx: crate::core::runtime::DispatchCtx,
+    config: Option<Arc<crate::config::Config>>,
     command: String,
     approved: bool,
 ) -> AuditOnce {
     Mutex::new(Some(Box::new(move |allowed, success, duration_ms| {
-        super::shell::record_audit(&audit, &command, approved, allowed, success, duration_ms);
+        super::shell::record_audit(
+            &audit,
+            ctx,
+            config,
+            &command,
+            approved,
+            allowed,
+            success,
+            duration_ms,
+        );
     })))
 }
 

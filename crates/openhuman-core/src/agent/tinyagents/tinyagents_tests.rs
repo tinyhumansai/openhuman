@@ -16,8 +16,8 @@ fn crate_native_turn_source_retains_only_role_and_config() {
     assert!(source.crate_native.is_some());
 }
 
-#[test]
-fn direct_model_turn_source_builds_without_provider_adapter() {
+#[tokio::test]
+async fn direct_model_turn_source_builds_without_provider_adapter() {
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::replies(vec![
             "done",
@@ -29,6 +29,7 @@ fn direct_model_turn_source_builds_without_provider_adapter() {
 
     let models = source
         .build("mock-model", 0.0, Some(32_000), None)
+        .await
         .expect("direct model source builds");
     assert_eq!(models.provider_id(), "injected");
     assert_eq!(models.context_window(), Some(32_000));

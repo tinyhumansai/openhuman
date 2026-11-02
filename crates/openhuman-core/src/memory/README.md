@@ -43,7 +43,7 @@ with its own store (or a test binary with an in-memory engine) runs the
 whole lifecycle without a TinyHumans session or a CortexDB key.
 
 Whatever engine is bound, TinyMemory's native `EngineBinder` wraps it in a
-scrubbing decorator using `security::scrub::host_policy` and a timing
+scrubbing decorator using `memory::host_policy::host_policy` and a timing
 decorator. Every text a `StoreItem` carries is scrubbed before the engine sees
 it. This also covers writes TinyMemory makes through its own types
 (`AgentMemory::pre_turn`, `Brain::ingest`, background ingests). The timing
@@ -451,7 +451,7 @@ sits in the app directory shared by all accounts
   middleware and the compaction summarizer live under `agent/`.
 - Chat transcripts are owned by `threads`; this folder only reads them for
   backfill and forgets their memory on delete.
-- Credentials come from `security::credentials` and the host's session
+- Credentials come from `credentials` and the host's session
   owner. The core does not sign in or refresh anything here.
 - Cron scheduling is `cron`'s; this folder only handles the due events.
 

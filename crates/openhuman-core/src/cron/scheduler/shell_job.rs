@@ -8,55 +8,25 @@ use tokio::time::Duration;
 
 pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
-/// Check a scheduled shell command using the parser facts from the pinned
-/// TinyBox module. The host owns the allowlist and protected-path decisions;
-/// a missing module is a refusal, never a request to parse locally.
+/// Check and reserve a scheduled shell command through TinySecurity.
 pub(crate) async fn authorize_shell_command(
-    config: &Config,
+    _config: &Config,
     security: &SecurityPolicy,
     command: &str,
 ) -> Result<(), String> {
-    #[cfg(feature = "modules")]
-    {
-        let analysis = match crate::modules::tinybox::analyze_command(config, command.to_owned())
-            .await
-        {
-            Ok(analysis) => analysis,
-            Err(e) => {
-                tracing::warn!(error = %e, "[cron:shell] command analysis unavailable");
-                #[cfg(test)]
-                {
-                    if !config.modules.enabled {
-                        return Err("Command analysis is unavailable.".to_owned());
-                    }
-                    // Scheduler unit tests exercise process and retry behavior
-                    // without loading a native artifact. Production has no
-                    // parser fallback and fails closed below.
-                    security
-                        .check_gated_command(command)
-                        .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-                    if !security.is_command_allowed(command) {
-                        return Err("blocked by security policy: command not allowed".to_owned());
-                    }
-                    return Ok(());
-                }
-                #[cfg(not(test))]
-                return Err("Command analysis is unavailable.".to_owned());
-            }
-        };
-        security
-            .check_gated_command_analysis(&analysis)
-            .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-        if !security.is_command_allowed_analysis(&analysis) {
-            return Err("blocked by security policy: command not allowed".to_owned());
-        }
-        Ok(())
+    let verdict = security
+        .check_command(crate::security::policy::CommandQuery {
+            command,
+            declared: None,
+            flow: crate::security::policy::CommandFlow::Scheduled,
+            stage: crate::security::policy::CommandStage::Execute,
+        })
+        .await
+        .map_err(|reason| reason.to_string())?;
+    if verdict.gate == crate::security::policy::GateDecision::Block {
+        return Err("blocked by security policy: command rejected".to_owned());
     }
-    #[cfg(not(feature = "modules"))]
-    {
-        let _ = (config, security, command);
-        Err("Command analysis is unavailable.".to_owned())
-    }
+    Ok(())
 }
 
 pub(super) async fn run_job_command(
@@ -82,29 +52,8 @@ pub(super) async fn run_job_command_with_timeout(
     job: &CronJob,
     timeout: Duration,
 ) -> (bool, String) {
-    if !security.can_act() {
-        return (
-            false,
-            "blocked by security policy: autonomy is read-only".to_string(),
-        );
-    }
-
-    if security.is_rate_limited() {
-        return (
-            false,
-            "blocked by security policy: rate limit exceeded".to_string(),
-        );
-    }
-
     if let Err(reason) = authorize_shell_command(config, security, &job.command).await {
         return (false, reason);
-    }
-
-    if !security.record_action() {
-        return (
-            false,
-            "blocked by security policy: action budget exhausted".to_string(),
-        );
     }
 
     // Cron keeps host execution semantics (the host's own network, no jail)

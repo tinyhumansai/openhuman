@@ -5136,6 +5136,56 @@ const messages: TranslationMap = {
   'flows.nodeKind.loop': 'Loop',
 
   'settings.layout.corners.round': 'Membulat',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Diagnostik kebijakan tidak disertakan dalam core ini.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Kebijakan keamanan aktif',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Otonomi',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Hanya ruang kerja',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maksimum tindakan per jam',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Perlu persetujuan untuk risiko sedang',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Blokir perintah berisiko tinggi',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Perintah yang diizinkan',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Tidak ada perintah yang diizinkan secara eksplisit.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Kebijakan',
+  'settings.approvalHistory.judgeScores':
+    'Tujuan {intent} · Dapat dibatalkan {reversible} · Eksfiltrasi {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'tersimpan di cache',
+  'settings.approvalHistory.judgeExpires': 'Berakhir {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Alat yang selalu diizinkan',
+  'keyring.settings.toolTrustDescription':
+    'Alat ini dapat dijalankan tanpa meminta persetujuan dalam cakupan keamanan ini.',
+  'keyring.settings.toolTrustLoading': 'Memuat alat yang diizinkan…',
+  'keyring.settings.toolTrustLoadFailed': 'Alat yang diizinkan gagal dimuat.',
+  'keyring.settings.toolTrustRevokeFailed': 'Izin alat ini gagal dicabut.',
+  'keyring.settings.toolTrustEmpty': 'Tidak ada alat yang selalu diizinkan.',
+  'keyring.settings.toolTrustRetry': 'Coba lagi',
+  'keyring.settings.toolTrustRevoke': 'Cabut',
+  'keyring.settings.toolTrustRevoking': 'Mencabut…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Permintaan akses keyring',
+  'keyring.operation.description':
+    'TinySecurity meminta akses ke satu item keyring. Tinjau operasi sebelum memutuskan.',
+  'keyring.operation.access': 'Akses',
+  'keyring.operation.requester': 'Diminta oleh',
+  'keyring.operation.origin': 'Asal',
+  'keyring.operation.purpose': 'Tujuan',
+  'keyring.operation.name': 'Item keyring',
+  'keyring.operation.access.read': 'Baca',
+  'keyring.operation.access.write': 'Tulis',
+  'keyring.operation.access.delete': 'Hapus',
+  'keyring.operation.allow': 'Izinkan sekali',
+  'keyring.operation.deny': 'Tolak',
+  'keyring.operation.submitting': 'Mengirim…',
+  'keyring.operation.expires': 'Permintaan berakhir dalam {seconds} dtk.',
+  'keyring.operation.error': 'Keputusan tidak dapat dikirim. Permintaan mungkin sudah kedaluwarsa.',
 };
 
 export default messages;

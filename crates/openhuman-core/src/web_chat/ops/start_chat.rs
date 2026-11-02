@@ -17,7 +17,9 @@ use super::super::runner::{runtime, scope_of, Admission};
 use super::super::turn_activity::configured_idle_window;
 use crate::agent::queued_turn::QueuedPayload;
 use crate::core::events::DomainEvent;
-use crate::security::prompt_injection::PromptEnforcementAction;
+use crate::security::prompt_injection::{
+    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+};
 
 /// `start_chat`'s error type.
 ///
@@ -348,7 +350,7 @@ async fn start_chat_inner(
 ) -> Result<String, StartChatError> {
     let client_id = client_id.trim().to_string();
     let thread_id = thread_id.trim().to_string();
-    let message = message.trim().to_string();
+    let mut message = message.trim().to_string();
 
     if client_id.is_empty() {
         return Err(StartChatError::Other("client_id is required".to_string()));
@@ -389,6 +391,130 @@ async fn start_chat_inner(
     };
 
     let request_id = Uuid::new_v4().to_string();
+    let prompt_decision = enforce_prompt_input(
+        &message,
+        PromptEnforcementContext {
+            source: "web_chat.start_chat",
+            request_id: Some(&request_id),
+            user_id: Some(&client_id),
+            session_id: Some(&thread_id),
+        },
+    )
+    .await;
+    if !matches!(prompt_decision.action, PromptEnforcementAction::Allow) {
+        log::warn!(
+            "[web-channel] prompt rejected client_id={} thread_id={} request_id={} action={} score={:.2} reasons={} hash={} chars={}",
+            client_id,
+            thread_id,
+            request_id,
+            match prompt_decision.action {
+                PromptEnforcementAction::Allow => "allow",
+                PromptEnforcementAction::Blocked => "block",
+                PromptEnforcementAction::ReviewBlocked => "review_blocked",
+            },
+            prompt_decision.score,
+            prompt_decision
+                .reasons
+                .iter()
+                .map(|r| r.code.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            prompt_decision.prompt_hash,
+            prompt_decision.prompt_chars,
+        );
+        let verdict = match prompt_decision.action {
+            PromptEnforcementAction::Allow => "allow",
+            PromptEnforcementAction::Blocked => "block",
+            PromptEnforcementAction::ReviewBlocked => "review_blocked",
+        }
+        .to_string();
+        return Err(StartChatError::Guardrail {
+            verdict,
+            score: prompt_decision.score as f64,
+            reasons: prompt_decision
+                .reasons
+                .iter()
+                .map(|r| crate::web_chat::GuardrailReason {
+                    code: r.code.clone(),
+                    message: r.message.clone(),
+                })
+                .collect(),
+        });
+    }
+
+    // Chat-native approval: if this thread has a parked approval and the message
+    // is a yes/no reply, route it to the gate rather than starting a new turn.
+    if let Some(gate) = crate::security::approval::ApprovalGate::try_global() {
+        if let Some(request_id) = gate.pending_for_thread(&thread_id) {
+            if let Some(decision) = crate::security::approval::parse_approval_reply(&message) {
+                match gate.decide(&request_id, decision) {
+                    Ok(Some(_)) => {
+                        log::info!(
+                            "[web-channel] routed chat reply to approval gate thread_id={} request_id={} decision={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                        return Ok(request_id);
+                    }
+                    Ok(None) => {
+                        log::warn!(
+                            "[web-channel] approval reply targeted a non-pending/already-decided request thread_id={} request_id={} decision={} — dispatching as fresh turn",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "[web-channel] failed to route chat reply to approval gate thread_id={} request_id={} decision={} err={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Configured `beforeSubmitPrompt` hooks. Deliberately after the
+    // approval-reply routing above: a bare "yes" answering a parked approval is
+    // not a prompt the user is submitting to the model, and handing it to a
+    // prompt hook would let a hook that blocks short messages strand a turn
+    // waiting for an approval it can no longer receive.
+    //
+    // The message here is post-attachment-processing, so a hook sees extracted
+    // text and placeholders rather than a multi-megabyte data URI on stdin.
+    match crate::hooks::ops::prompt_submitted(
+        tinyagents_hooks::command::context::TurnIdentity {
+            conversation_id: Some(thread_id.clone()),
+            ..Default::default()
+        },
+        &message,
+        Vec::new(),
+    )
+    .await
+    {
+        crate::hooks::PromptVerdict::Submit { additional_context } => {
+            if let Some(context) = additional_context {
+                log::debug!(
+                    "[web-channel] beforeSubmitPrompt hook added {} chars of context thread_id={}",
+                    context.chars().count(),
+                    thread_id
+                );
+                message = format!("{message}\n\n{context}");
+            }
+        }
+        crate::hooks::PromptVerdict::Block(reason) => {
+            log::info!(
+                "[web-channel] prompt blocked by a configured hook thread_id={thread_id}: {reason}"
+            );
+            return Err(StartChatError::Other(reason));
+        }
+    }
+
     if let Some(note_id) = voice_note_id.as_deref() {
         bind_voice_note_request_id(ctx, &thread_id, &message, note_id, &request_id).await?;
     }

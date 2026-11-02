@@ -142,6 +142,12 @@ fn a_product_feature_build_carries_all_thirteen_records() {
 #[test]
 fn every_record_maps_to_a_real_component() {
     for record in ALL {
+        // TinySecurity has no product component yet; the global module switch
+        // is its only host gate until its callers move behind the bus.
+        if record.id == "tinysecurity" {
+            assert_eq!(component_for(record.id), None);
+            continue;
+        }
         let component = component_for(record.id)
             .unwrap_or_else(|| panic!("module '{}' has no component mapping", record.id));
         assert!(

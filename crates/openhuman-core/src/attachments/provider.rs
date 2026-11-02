@@ -14,7 +14,7 @@ use async_trait::async_trait;
 #[cfg(test)]
 use tinyinference_llm::model::{ModelResponse, ModelStream};
 
-pub(crate) fn wrap(
+pub(crate) async fn wrap(
     ctx: &crate::core::runtime::DispatchCtx,
     inner: Arc<dyn ChatModel<()>>,
     config: Arc<Config>,
@@ -63,7 +63,7 @@ pub(crate) fn wrap_controlled(
         format!("{provider}:{model}")
     };
     if let Some(request) =
-        crate::inference::context_window::model_limits_request("chat", &route, model, &config)
+        crate::inference::context_window::model_limits_request("chat", &route, model, &config).await
     {
         if let Some(inputs) = tinyinference_llm::model::discover::model_limits_cache()
             .get_variant(&request.endpoint, &request.model, &request.cache_variant())
@@ -226,8 +226,8 @@ fn is_local_reference(source: &str) -> bool {
 }
 
 #[cfg(any(test, windows))]
-use crate::security::secure_open::normalize_windows_path_for_comparison;
-use crate::security::secure_open::secure_open;
+use crate::attachments::secure_open::normalize_windows_path_for_comparison;
+use crate::attachments::secure_open::secure_open;
 
 #[path = "provider_cache.rs"]
 mod cache;

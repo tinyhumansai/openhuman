@@ -13,6 +13,7 @@ pub fn all_keyring_consent_controller_schemas() -> Vec<ControllerSchema> {
         keyring_consent_schema("status"),
         keyring_consent_schema("decide"),
         keyring_consent_schema("retry_probe"),
+        keyring_consent_schema("respond_operation"),
     ]
 }
 
@@ -30,6 +31,10 @@ pub fn all_keyring_consent_registered_controllers() -> Vec<RegisteredController>
             schema: keyring_consent_schema("retry_probe"),
             handler: handle_retry_probe,
         },
+        RegisteredController {
+            schema: keyring_consent_schema("respond_operation"),
+            handler: handle_respond_operation,
+        },
     ]
 }
 
@@ -38,6 +43,7 @@ pub(crate) fn all_keyring_consent_controller_entries() -> Vec<ControllerEntry> {
         ControllerEntry::bound(status_controller()),
         ControllerEntry::bound(decide_controller()),
         ControllerEntry::bound(retry_probe_controller()),
+        ControllerEntry::bound(respond_operation_controller()),
     ]
 }
 
@@ -90,6 +96,31 @@ fn keyring_consent_schema(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "respond_operation" => ControllerSchema {
+            namespace: "keyring_consent",
+            function: "respond_operation",
+            description: "Approve or deny one exact pending TinySecurity keyring operation.",
+            inputs: vec![
+                FieldSchema {
+                    name: "request_id",
+                    ty: TypeSchema::String,
+                    comment: "Opaque request id from the keyring access approval event.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "approved",
+                    ty: TypeSchema::Bool,
+                    comment: "Whether to approve this exact operation once.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Bool,
+                comment: "True when this pending request was resolved; false for an expired or already resolved id.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "keyring_consent",
             function: "unknown",
@@ -117,6 +148,10 @@ fn handle_retry_probe(_ctx: DispatchCtx, _params: Map<String, Value>) -> Control
     retry_probe_controller().invoke(_ctx, _params)
 }
 
+fn handle_respond_operation(ctx: DispatchCtx, params: Map<String, Value>) -> ControllerFuture {
+    respond_operation_controller().invoke(ctx, params)
+}
+
 fn status_controller() -> BoundRegisteredController {
     BoundRegisteredController::typed(keyring_consent_schema("status"), parse_status, run_status)
 }
@@ -133,6 +168,14 @@ fn retry_probe_controller() -> BoundRegisteredController {
     )
 }
 
+fn respond_operation_controller() -> BoundRegisteredController {
+    BoundRegisteredController::typed(
+        keyring_consent_schema("respond_operation"),
+        parse_respond_operation,
+        run_respond_operation,
+    )
+}
+
 fn parse_status(_params: Map<String, Value>) -> Result<(), String> {
     Ok(())
 }
@@ -146,6 +189,19 @@ fn parse_decide(params: Map<String, Value>) -> Result<String, String> {
 
 fn parse_retry_probe(_params: Map<String, Value>) -> Result<(), String> {
     Ok(())
+}
+
+fn parse_respond_operation(params: Map<String, Value>) -> Result<(String, bool), String> {
+    let request_id = params
+        .get("request_id")
+        .and_then(Value::as_str)
+        .ok_or("missing required param 'request_id'")?
+        .to_owned();
+    let approved = params
+        .get("approved")
+        .and_then(Value::as_bool)
+        .ok_or("missing required param 'approved'")?;
+    Ok((request_id, approved))
 }
 
 fn run_status(_ctx: DispatchCtx, (): ()) -> ControllerFuture {
@@ -169,6 +225,17 @@ fn run_retry_probe(_ctx: DispatchCtx, (): ()) -> ControllerFuture {
         super::ops::keyring_retry_probe()
             .await?
             .into_cli_compatible_json()
+    })
+}
+
+fn run_respond_operation(
+    _ctx: DispatchCtx,
+    (request_id, approved): (String, bool),
+) -> ControllerFuture {
+    Box::pin(async move {
+        Ok(serde_json::json!(
+            super::operation_approval::resolve_approval(&request_id, approved,)
+        ))
     })
 }
 

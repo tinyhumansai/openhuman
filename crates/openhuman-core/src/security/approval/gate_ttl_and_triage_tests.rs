@@ -1,4 +1,5 @@
 use super::*;
+use crate::security::approval::engine_stub::State;
 
 #[tokio::test]
 async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
@@ -54,7 +55,7 @@ async fn pending_for_thread_tracks_request_under_chat_context_and_clears() {
 }
 
 /// Regression for #5499: an async-delegated sub-agent carries the `WebChat`
-/// origin across the `tokio::spawn` boundary (`spawn_subagent` calls
+/// origin across the `tokio::spawn` boundary (`spawn_async_subagent` calls
 /// `turn_origin::propagate`) but NOT the chat approval context.
 /// Before the origin-routing fallback the gate parked with `thread_id:
 /// None`, the web-channel surface dropped the `ApprovalRequested` event
@@ -154,12 +155,13 @@ async fn waiter_future_dropped_mid_park_evicts_waiter_clears_routing_and_denies_
         .pending_for_thread("t-test")
         .expect("thread→request mapping must exist while parked");
     assert!(
-        gate.waiters.lock().contains_key(&request_id),
+        gate.parked.waiters.lock().contains_key(&request_id),
         "waiter must be registered while parked"
     );
-    assert!(
-        matches!(store::get_decision(&gate.config, &request_id), Ok(None)),
-        "pending row must be open (undecided) while parked"
+    assert_eq!(
+        stub_of(&gate).state(&request_id),
+        Some(State::Pending),
+        "the request must be open (undecided) while parked"
     );
 
     // External teardown: the wall-clock backstop tears the turn future down
@@ -168,59 +170,24 @@ async fn waiter_future_dropped_mid_park_evicts_waiter_clears_routing_and_denies_
 
     // The RAII guard must have run the cleanup on drop.
     assert!(
-        !gate.waiters.lock().contains_key(&request_id),
+        !gate.parked.waiters.lock().contains_key(&request_id),
         "waiter must be evicted when the parked future is dropped"
     );
     assert!(
         gate.pending_for_thread("t-test").is_none(),
         "thread→request routing must be cleared on external teardown"
     );
-    assert!(
-        matches!(
-            store::get_decision(&gate.config, &request_id),
-            Ok(Some(ApprovalDecision::Deny))
-        ),
-        "pending row must be denied when the parked future is dropped"
-    );
-}
-
-/// The decision channel can drop after `decide()` already committed an
-/// approval. The gate must honour the persisted decision, not deny a call
-/// the durable audit row says was approved.
-#[tokio::test]
-async fn a_dropped_channel_after_a_persisted_approval_allows() {
-    let (gate, _dir) = test_gate();
-    let gate = Arc::new(gate);
-    let g = gate.clone();
-    let handle = tokio::spawn(async move {
-        let turn = ApprovalTurnContext::chat(chat_ctx());
-        turn_origin::with_origin(
-            web_origin(),
-            g.intercept(&turn, "shell", "run ls", serde_json::json!({})),
-        )
-        .await
-    });
+    // The engine cancels the request off the dropped future.
+    let stub = stub_of(&gate);
     let mut tries = 0;
-    let request_id = loop {
-        if let Some(id) = gate.pending_for_thread("t-test") {
-            break id;
-        }
+    while stub.state(&request_id) != Some(State::Cancelled) {
         tries += 1;
-        assert!(tries < 200, "thread mapping never appeared");
+        assert!(
+            tries < 500,
+            "the request must be cancelled when the parked future is dropped"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
-    };
-
-    // The approval is persisted, then the waiter's sender goes away without
-    // delivering it.
-    store::decide(&gate.config, &request_id, ApprovalDecision::ApproveOnce)
-        .expect("persist approval")
-        .expect("row was pending");
-    drop(gate.waiters.lock().remove(&request_id));
-
-    assert!(
-        matches!(handle.await.unwrap(), GateOutcome::Allow),
-        "a persisted approval was denied because the channel dropped"
-    );
+    }
 }
 
 // ── caller park bound (issue #4756) ──────────────────────────────
@@ -316,7 +283,7 @@ fn effective_ttl_uses_env_override_when_valid() {
     unsafe { std::env::set_var("OPENHUMAN_APPROVAL_TTL_SECS", "42") };
     assert_eq!(
         gate.effective_ttl(),
-        Duration::from_secs(42),
+        Some(Duration::from_secs(42)),
         "valid OPENHUMAN_APPROVAL_TTL_SECS must override boot-time TTL"
     );
     unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
@@ -329,7 +296,7 @@ fn effective_ttl_falls_back_to_boot_ttl_for_garbage_value() {
     unsafe { std::env::set_var("OPENHUMAN_APPROVAL_TTL_SECS", "not-a-number") };
     assert_eq!(
         gate.effective_ttl(),
-        BOOT_TTL_UNDER_TEST,
+        Some(BOOT_TTL_UNDER_TEST),
         "garbage OPENHUMAN_APPROVAL_TTL_SECS must fall back to boot-time TTL"
     );
     unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
@@ -342,76 +309,21 @@ fn effective_ttl_falls_back_to_boot_ttl_when_unset() {
     unsafe { std::env::remove_var("OPENHUMAN_APPROVAL_TTL_SECS") };
     assert_eq!(
         gate.effective_ttl(),
-        BOOT_TTL_UNDER_TEST,
+        Some(BOOT_TTL_UNDER_TEST),
         "unset OPENHUMAN_APPROVAL_TTL_SECS must fall back to boot-time TTL"
     );
 }
 
-/// Tests for `resolve_park_ttl` — the pure clamp-selection helper behind
-/// the copilot-streaming TTL shortening (fix/flows-copilot-approval-ttl).
-/// Exercised directly (rather than by actually parking + waiting out a
-/// multi-minute TTL) so the assertions stay fast and deterministic.
-mod resolve_park_ttl_tests {
-    use super::super::*;
-
-    #[test]
-    fn default_park_keeps_the_full_ttl() {
-        let default_ttl = DEFAULT_APPROVAL_TTL;
-        assert_eq!(
-            ApprovalGate::resolve_park_ttl(default_ttl, false, false),
-            default_ttl,
-            "a plain park (no copilot stream) must not be clamped"
-        );
-    }
-
-    #[test]
-    fn copilot_stream_shortens_a_default_ten_minute_park() {
-        let default_ttl = DEFAULT_APPROVAL_TTL;
-        assert_eq!(
-            ApprovalGate::resolve_park_ttl(default_ttl, true, false),
-            COPILOT_APPROVAL_TTL,
-            "a flows_build copilot-streaming park must clamp to COPILOT_APPROVAL_TTL"
-        );
-        assert!(
-            COPILOT_APPROVAL_TTL < DEFAULT_APPROVAL_TTL,
-            "the copilot clamp must actually be shorter than the default TTL"
-        );
-    }
-
-    #[test]
-    fn a_clamp_never_extends_a_shorter_boot_time_ttl() {
-        // Mirrors production's env-override guard: a clamp may only
-        // narrow, never widen, the gate's own effective TTL (e.g. a
-        // debug-only `OPENHUMAN_APPROVAL_TTL_SECS=60` override that is
-        // already shorter than either clamp).
-        let short_ttl = Duration::from_secs(60);
-        assert_eq!(
-            ApprovalGate::resolve_park_ttl(short_ttl, true, false),
-            short_ttl,
-            "copilot clamp must not extend a boot-time TTL that is already shorter"
-        );
-    }
-}
-
 /// Integration regression test for the streaming-to-gate contract
-/// (CodeRabbit review on PR #5112): `resolve_park_ttl` is covered directly
-/// above, but that alone doesn't prove `intercept_audited_inner` actually
-/// persists the clamped TTL when the copilot-streaming context is scoped.
-/// Builds a gate with the full `DEFAULT_APPROVAL_TTL` boot TTL (unlike
-/// `test_gate()` before this suite stopped hard-coding a 2s window, which
-/// would make this assertion vacuous), sets
+/// (CodeRabbit review on PR #5112): proves `intercept_audited_inner` hands the
+/// engine the copilot origin, so the stored expiry is the module's shorter
+/// copilot window. Builds a gate that asks for no window of its own, sets
 /// the copilot flag alongside the chat context + WebChat
 /// origin the way `flows::ops::flows_build` does in production, and
 /// inspects the persisted `expires_at` on the pending row.
 #[tokio::test]
 async fn copilot_streaming_park_persists_the_clamped_expiry() {
-    let dir = TempDir::new().unwrap();
-    let config = Config {
-        workspace_dir: dir.path().to_path_buf(),
-        ..Config::default()
-    };
-    let session = format!("session-{}", uuid::Uuid::new_v4());
-    let gate = ApprovalGate::new(config, session, DEFAULT_APPROVAL_TTL);
+    let (gate, _dir) = test_gate();
     let gate = Arc::new(gate);
 
     let before = chrono::Utc::now();
@@ -429,11 +341,14 @@ async fn copilot_streaming_park_persists_the_clamped_expiry() {
         .await
     });
 
+    let mut tries = 0;
     let pending = loop {
         if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
             break p;
         }
-        tokio::task::yield_now().await;
+        tries += 1;
+        assert!(tries < 500, "the copilot park never appeared");
+        tokio::time::sleep(Duration::from_millis(10)).await;
     };
 
     let expires_at = pending
@@ -442,14 +357,14 @@ async fn copilot_streaming_park_persists_the_clamped_expiry() {
     let ttl_persisted = expires_at - before;
     assert!(
         ttl_persisted
-            <= chrono::Duration::from_std(COPILOT_APPROVAL_TTL).unwrap()
+            <= chrono::Duration::from_std(MODULE_SHORT_WINDOW).unwrap()
                 + chrono::Duration::seconds(5),
-        "copilot-streaming park must persist an expires_at clamped to COPILOT_APPROVAL_TTL \
-         (180s), not the gate's full {:?} boot TTL — got a {ttl_persisted} window",
-        DEFAULT_APPROVAL_TTL
+        "copilot-streaming park must persist an expires_at the module's copilot \
+         window (180s), not its full {:?} window — got a {ttl_persisted} window",
+        MODULE_DEFAULT_WINDOW
     );
     assert!(
-        ttl_persisted < chrono::Duration::from_std(DEFAULT_APPROVAL_TTL).unwrap(),
+        ttl_persisted < chrono::Duration::from_std(MODULE_DEFAULT_WINDOW).unwrap(),
         "sanity: the persisted expiry must be shorter than the unclamped default TTL"
     );
 

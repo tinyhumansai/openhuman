@@ -1,0 +1,74 @@
+name: Security native fixture
+
+on:
+  workflow_call: {}
+  pull_request:
+    branches: [main, release, "epic/**"]
+    paths:
+      - .github/workflows/security-native.yml
+      - .gitmodules
+      - vendor/tinysecurity
+      - crates/openhuman-core/Cargo.toml
+      - crates/openhuman-embed/Cargo.toml
+      - crates/openhuman-tinyhumans/Cargo.toml
+      - crates/openhuman-rpc/Cargo.toml
+      - crates/openhuman-cli/Cargo.toml
+      - crates/openhuman-tui/Cargo.toml
+      - crates/openhuman-app/Cargo.toml
+      - crates/openhuman-core/src/modules/mod.rs
+      - crates/openhuman-core/src/modules/ops.rs
+      - crates/openhuman-core/src/modules/runtime.rs
+      - crates/openhuman-core/src/modules/security/**
+      - crates/openhuman-core/src/modules/registry/records_security.rs
+      - scripts/ci/product-features.txt
+      - scripts/ci/check-security-module-dependencies.mjs
+      - scripts/lib/module-pin-inventory.mjs
+      - scripts/ci/security-native-fixture.sh
+      - Cargo.lock
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native policy fixture (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            module_host_key: ubuntu-24.04-x86_64
+          - os: macos-15
+            module_host_key: macos-15-arm64
+          - os: windows-2025
+            module_host_key: windows-2025-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Enable long Git paths
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Fetch fork-pinned TinySecurity submodule
+        shell: bash
+        run: |
+          git config --global url."https://github.com/senamakel/tinysecurity.git".insteadOf "https://github.com/tinyhumansai/tinysecurity.git"
+          git submodule update --init --recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: security-native-${{ runner.os }}
+      - name: Run native release fixture
+        shell: bash
+        env:
+          OH_MODULE_HOST_KEY: ${{ matrix.module_host_key }}
+        run: bash scripts/ci/security-native-fixture.sh

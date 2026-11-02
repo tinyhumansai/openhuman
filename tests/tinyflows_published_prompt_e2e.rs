@@ -66,6 +66,7 @@ async fn prewarm_flow_authoring_in_parent(
         config,
         "orchestrator",
     )
+    .await
     .expect("build a normal host session to schedule resource prewarm");
     session.refresh_prompt_surface().await;
 

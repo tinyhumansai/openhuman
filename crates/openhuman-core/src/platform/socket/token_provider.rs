@@ -1,87 +1,56 @@
-//! Token-provider abstraction for the WebSocket reconnect loop.
+//! Core credential callback passed through the hosted socket port.
 //!
-//! Separating this into its own module isolates the token contract for unit
-//! testing and keeps token-refresh logic out of the connection-loop hot path.
+//! Keeping credential lookup at this seam lets the host refresh credentials
+//! before each SDK-owned connection attempt.
 //!
 //! ## Why a callback instead of `String`?
 //!
-//! The original `ws_loop` captured the session token once at spawn time and
-//! reused it for every retry. When the backend invalidates a JWT mid-session
-//! (rotation, explicit sign-out, server-side expiry), all subsequent reconnect
-//! attempts carry the same dead token — exactly the "Invalid token" retry storm
-//! tracked as TAURI-RUST-9C (#2892). A callback lets the loop re-read the
-//! latest token from the profile store before each attempt.
+//! The connection transport receives the latest session token before each
+//! attempt rather than retaining an expired credential across reconnects.
 
+pub(super) use super::TokenProvider;
 use std::sync::Arc;
 
-/// Callable that returns the current session token on demand.
-///
-/// `Ok(token)` — a non-empty token was available; use it for the next attempt.
-/// `Err(reason)` — no token is stored (user logged out, profile corrupt); the
-///   caller should surface `reason` and exit the reconnect loop.
-///
-/// The provider is intentionally **synchronous** — reading a token from the
-/// profile store is a lock + disk read, not an async I/O round-trip. Wrapping
-/// it in `Arc` lets it be cheaply cloned into the spawned task without
-/// requiring `async_fn_in_trait` or boxing.
-pub(super) type TokenProvider = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
-
-/// Returns `true` iff the failure reason carries both the Socket.IO CONNECT
-/// prefix AND the `"invalid token"` sentinel — a strict double anchor to avoid
-/// misclassifying unrelated bare 401s (e.g. an upstream HTTP error message
-/// that happens to contain `"invalid token"`).
-///
-/// The upstream shape produced by `read_sio_connect_ack()` is:
-/// ```text
-/// Socket.IO connect error: Invalid token
-/// ```
-/// Matching is case-insensitive so capitalisation variants are also caught.
-///
-/// This function is `pub(super)` so `ws_loop.rs` and the tests module can call
-/// it without exporting it beyond the `socket` domain.
-pub(super) fn is_invalid_token_error(reason: &str) -> bool {
-    let lower = reason.to_ascii_lowercase();
-    // Primary anchor: "invalid token" preceded by "socket.io connect error"
-    // produced by our own `read_sio_connect_ack()`.
-    lower.contains("socket.io connect error") && lower.contains("invalid token")
-}
+/// The provider is asynchronous because session lookup may use the configured
+/// credential store. TinyHumans bridges it to the SDK callback via the shared
+/// storage blocking runtime.
 
 /// Build a static provider that always returns the same token value.
 ///
-/// Used by `SocketManager::connect(url, token)` so the public API does not
-/// change: existing callers that already have a token in hand (e.g. the CLI,
-/// integration tests) can still pass it as a `&str` without touching the
-/// provider layer. On each reconnect the loop will re-call the provider — in
-/// this case it returns the same cloned string — which is equivalent to the
-/// previous behaviour.
+/// Used by the core-facing static-token connect operation.
 ///
 /// For **live** session-token refresh, build a provider via
 /// `token_provider_from_config` (used by `handle_connect_with_session`).
 pub(super) fn static_token_provider(token: String) -> TokenProvider {
     Arc::new(move || {
-        if token.trim().is_empty() {
-            Err("empty session token — authenticate first".to_string())
-        } else {
-            Ok(token.clone())
-        }
+        let token = token.clone();
+        Box::pin(async move {
+            if token.trim().is_empty() {
+                Err("empty session token — authenticate first".to_string())
+            } else {
+                Ok(token)
+            }
+        })
     })
 }
 
 /// Build a provider that reads the latest app-session token from the profile
 /// store on every call. The channel relay requires a user session.
 ///
-/// This is the **live-refresh** path used by `handle_connect_with_session`:
-/// when the loop retries after a disconnect it will see any token that was
-/// refreshed or re-stored since the previous attempt.
+/// The TinyHumans adapter calls this again before every SDK reconnect attempt.
 pub(crate) fn token_provider_from_config(config: Arc<crate::config::Config>) -> TokenProvider {
     Arc::new(move || {
-        let token = crate::security::credentials::session_support::get_session_token(&config)
-            .map_err(|e| format!("failed to read session token: {e}"))?
-            .ok_or_else(|| "no session token stored — user must log in first".to_string())?;
-        if crate::security::credentials::session_support::is_local_session_token(&token) {
-            return Err("offline local session cannot connect to hosted socket".to_string());
-        }
-        Ok(token)
+        let config = Arc::clone(&config);
+        Box::pin(async move {
+            let token = crate::credentials::session_state::get_session_token(&config)
+                .await
+                .map_err(|e| format!("failed to read session token: {e}"))?
+                .ok_or_else(|| "no session token stored — user must log in first".to_string())?;
+            if crate::credentials::session_state::is_local_session_token(&token) {
+                return Err("offline local session cannot connect to hosted socket".to_string());
+            }
+            Ok(token)
+        })
     })
 }
 

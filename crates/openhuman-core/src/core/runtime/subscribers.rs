@@ -111,6 +111,7 @@ pub(super) fn register_domain_subscribers(
     embedded_core: bool,
     domains: crate::core::runtime::DomainSet,
     ctx: &DispatchCtx,
+    defer_credentials: bool,
 ) {
     use crate::core::all::DomainGroup;
     use std::sync::{Arc, Once};
@@ -182,54 +183,19 @@ pub(super) fn register_domain_subscribers(
         // API key is a plain profile write, so it lands before the gate is
         // seeded from the store below; a session token runs the full
         // `set_credential` path and seeds the gate itself when it finishes.
-        crate::security::credentials::seed_api_key_from_env(&config);
-        if std::env::var_os(crate::security::credentials::BACKEND_SESSION_TOKEN_ENV).is_some() {
+        if defer_credentials {
+            crate::platform::llm_gate::set_signed_out(true);
+        } else {
             let config = config.clone();
             let ctx = ctx.clone();
-            tokio::spawn(async move {
-                crate::security::credentials::seed_session_from_env(&ctx, &config).await;
-            });
-        }
-
-        // Seed the scheduler-gate signed-out override from the on-disk
-        // credential — an API key (library runtime) or the app session.
-        // Without this, a sidecar that boots with no stored credential would
-        // happily spin up cron / channel loops and fire LLM requests that all
-        // 401.
-        if crate::security::credentials::api_key::has_api_key(&config) {
-            log::info!("[auth] api-key credential present at startup — scheduler gate signed in");
-            crate::platform::llm_gate::set_signed_out(false);
-        } else {
-            match crate::security::credentials::jwt::get_session_token(&config) {
-                Ok(Some(_)) => {
-                    crate::platform::llm_gate::set_signed_out(false);
-                }
-                Ok(None) => {
-                    log::info!(
-                        "[auth] no session token at startup — scheduler gate set to signed_out \
-                         (config_path={}, keyring_backend={})",
-                        config.config_path.display(),
-                        crate::security::secret_storage::backend_name(),
-                    );
-                    crate::platform::llm_gate::set_signed_out(true);
-                }
-                Err(err) => {
-                    log::warn!(
-                        "[auth] failed to read session token at startup ({err}) — assuming signed_out \
-                         (config_path={}, keyring_backend={})",
-                        config.config_path.display(),
-                        crate::security::secret_storage::backend_name(),
-                    );
-                    crate::platform::llm_gate::set_signed_out(true);
-                }
-            }
+            tokio::spawn(async move { seed_startup_credentials(&ctx, &config).await });
         }
 
         // Register the SessionExpired handler before any subscribers that might
         // publish 401-derived events, so the very first 401 is routed through
         // `clear_session` + the scheduler-gate override.
         if let Some(handle) = crate::core::bus::BUS.subscribe(Arc::new(
-            crate::security::credentials::bus::SessionExpiredSubscriber::new(),
+            crate::credentials::bus::SessionExpiredSubscriber::new(),
         )) {
             std::mem::forget(handle);
         } else {
@@ -449,6 +415,47 @@ pub(super) fn register_domain_subscribers(
     }
 
     log::info!("[event_bus] domain subscriber registration complete: plan={plan:?}");
+}
+
+pub(crate) async fn finish_secret_preflight_credentials(
+    ctx: &DispatchCtx,
+    config: &crate::config::Config,
+) {
+    seed_startup_credentials(ctx, config).await;
+}
+
+async fn seed_startup_credentials(ctx: &DispatchCtx, config: &crate::config::Config) {
+    crate::credentials::seed_api_key_from_env(config).await;
+    if std::env::var_os(crate::credentials::BACKEND_SESSION_TOKEN_ENV).is_some() {
+        crate::credentials::seed_session_from_env(ctx, config).await;
+    }
+
+    if crate::credentials::api_key::has_api_key(config).await {
+        log::info!("[auth] api-key credential present at startup — scheduler gate signed in");
+        crate::platform::llm_gate::set_signed_out(false);
+    } else {
+        match crate::credentials::session_state::get_session_token(config).await {
+            Ok(Some(_)) => crate::platform::llm_gate::set_signed_out(false),
+            Ok(None) => {
+                log::info!(
+                    "[auth] no session token at startup — scheduler gate set to signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::security::secret_storage::backend_name(),
+                );
+                crate::platform::llm_gate::set_signed_out(true);
+            }
+            Err(err) => {
+                log::warn!(
+                    "[auth] failed to read session token at startup ({err}) — assuming signed_out \
+                     (config_path={}, keyring_backend={})",
+                    config.config_path.display(),
+                    crate::security::secret_storage::backend_name(),
+                );
+                crate::platform::llm_gate::set_signed_out(true);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

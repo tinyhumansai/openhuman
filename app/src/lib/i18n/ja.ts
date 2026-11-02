@@ -5446,6 +5446,55 @@ const messages: TranslationMap = {
   'settings.layout.corners.round': '丸み',
 
   'settings.layout.contrast.strong': '強',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'このコアにはポリシー診断が含まれていません。',
+  'devOptions.toolPolicyDiagnostics.policy.title': '有効なセキュリティポリシー',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '自律性',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'ワークスペースのみ',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '1 時間あたりの最大アクション数',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '中リスクで承認を要求',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '高リスクのコマンドをブロック',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '許可されたコマンド',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    '明示的に許可されたコマンドはありません。',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'ポリシー',
+  'settings.approvalHistory.judgeScores':
+    '意図 {intent} · 可逆性 {reversible} · 情報流出 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'キャッシュ済み',
+  'settings.approvalHistory.judgeExpires': '{time} に期限切れ',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '常に許可するツール',
+  'keyring.settings.toolTrustDescription':
+    'このセキュリティ範囲では、これらのツールは承認を求めずに実行できます。',
+  'keyring.settings.toolTrustLoading': '許可されたツールを読み込み中…',
+  'keyring.settings.toolTrustLoadFailed': '許可されたツールを読み込めませんでした。',
+  'keyring.settings.toolTrustRevokeFailed': 'このツールの許可を取り消せませんでした。',
+  'keyring.settings.toolTrustEmpty': '常に許可されたツールはありません。',
+  'keyring.settings.toolTrustRetry': '再試行',
+  'keyring.settings.toolTrustRevoke': '取り消す',
+  'keyring.settings.toolTrustRevoking': '取り消し中…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'キーチェーンアクセスのリクエスト',
+  'keyring.operation.description':
+    'TinySecurity がキーチェーン項目へのアクセスを要求しています。判断する前に操作を確認してください。',
+  'keyring.operation.access': 'アクセス',
+  'keyring.operation.requester': '要求元',
+  'keyring.operation.origin': '発生元',
+  'keyring.operation.purpose': '目的',
+  'keyring.operation.name': 'キーチェーン項目',
+  'keyring.operation.access.read': '読み取り',
+  'keyring.operation.access.write': '書き込み',
+  'keyring.operation.access.delete': '削除',
+  'keyring.operation.allow': '今回のみ許可',
+  'keyring.operation.deny': '拒否',
+  'keyring.operation.submitting': '送信中…',
+  'keyring.operation.expires': 'リクエストは {seconds} 秒後に期限切れになります。',
+  'keyring.operation.error':
+    '判断を送信できませんでした。リクエストの期限が切れた可能性があります。',
 };
 
 export default messages;

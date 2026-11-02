@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
 use crate::config::Config;
-use crate::security::credentials::AuthService;
+use crate::credentials::AuthService;
 use tempfile::TempDir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -117,8 +117,8 @@ fn fixture_managed_entry(id: &str) -> CloudProviderCreds {
 
 use crate::inference::provider::factory::access_gates::host_requires_session;
 
-#[test]
-fn inspection_codex_oauth_metadata_marks_output_budget_unsupported() {
+#[tokio::test]
+async fn inspection_codex_oauth_metadata_marks_output_budget_unsupported() {
     use crate::inference::provider::factory::InspectionOutputBudgetCapability;
     use tinyinference_llm::providers::openai::codex::OpenAiCodexRouting;
 
@@ -139,24 +139,25 @@ fn inspection_codex_oauth_metadata_marks_output_budget_unsupported() {
     );
 }
 
-fn create_test_chat_model_from_string(
+async fn create_test_chat_model_from_string(
     role: &str,
     provider: &str,
     config: &Config,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
-    with_library_test_context(|| {
-        create_chat_model_from_string_with_model_id(role, provider, config, 0.7)
+    with_library_test_context_async(|| async {
+        create_chat_model_from_string_with_model_id(role, provider, config, 0.7).await
     })
+    .await
 }
 
-fn create_test_local_chat_model_from_string(
+async fn create_test_local_chat_model_from_string(
     provider: &str,
     config: &Config,
 ) -> anyhow::Result<(Arc<dyn ChatModel<()>>, String)> {
     create_local_chat_model_from_string(provider, config)
 }
 
-fn create_test_omlx_model(
+async fn create_test_omlx_model(
     model: &str,
     _temperature: Option<f64>,
     config: &Config,
@@ -177,9 +178,9 @@ fn config_with_providers_in_tempdir(tmp: &TempDir, providers: Vec<CloudProviderC
     c
 }
 
-#[test]
-fn inspection_requires_credentials_for_explicit_authenticated_cloud_routes() {
-    with_library_test_context(|| {
+#[tokio::test]
+async fn inspection_requires_credentials_for_explicit_authenticated_cloud_routes() {
+    with_library_test_context_async(|| async {
         let tmp = TempDir::new().expect("temporary provider workspace");
         let mut provider = openai_entry("p_missing_key", "factory-missing-key-test");
         let mut config = config_with_providers_in_tempdir(&tmp, vec![provider.clone()]);
@@ -190,7 +191,8 @@ fn inspection_requires_credentials_for_explicit_authenticated_cloud_routes() {
             "chat",
             &config,
             0.0,
-        );
+        )
+        .await;
         assert!(
             inspection.is_err(),
             "inspection must reject explicit Bearer routes without credentials"
@@ -201,7 +203,8 @@ fn inspection_requires_credentials_for_explicit_authenticated_cloud_routes() {
             "chat",
             &config,
             0.0,
-        );
+        )
+        .await;
         assert!(
             runtime.is_ok(),
             "runtime construction preserves explicit routes before a key is saved: {:?}",
@@ -217,6 +220,7 @@ fn inspection_requires_credentials_for_explicit_authenticated_cloud_routes() {
                 &config,
                 0.0,
             )
+            .await
             .is_err(),
             "inspection must reject explicit Anthropic routes without credentials"
         );
@@ -230,10 +234,12 @@ fn inspection_requires_credentials_for_explicit_authenticated_cloud_routes() {
                 &config,
                 0.0,
             )
+            .await
             .is_ok(),
             "unauthenticated proxy routes do not require a stored credential"
         );
-    });
+    })
+    .await;
 }
 
 fn oh_entry(id: &str) -> CloudProviderCreds {
@@ -313,7 +319,7 @@ fn config_for_api_key_fallback(tmp: &TempDir) -> Config {
 
 /// Store a usable provider key under the new-style `provider:<slug>` profile so
 /// `lookup_key_for_slug` resolves it.
-fn store_byo_key(config: &Config, slug: &str, token: &str) {
+async fn store_byo_key(config: &Config, slug: &str, token: &str) {
     let auth = AuthService::from_config(config);
     auth.store_provider_token(
         &format!("provider:{slug}"),
@@ -322,15 +328,14 @@ fn store_byo_key(config: &Config, slug: &str, token: &str) {
         Default::default(),
         true,
     )
+    .await
     .expect("store provider token");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth_profile() {
     use crate::config::test_env::EnvVarGuard;
-    use crate::security::credentials::openai_oauth::{
-        OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
-    };
+    use crate::credentials::openai_oauth::{OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY};
     use chrono::{Duration, Utc};
 
     let _inference_guard = crate::inference::inference_test_guard_async().await;
@@ -392,6 +397,7 @@ async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth
     .expect("write raw profile fixture without mutable auth APIs");
 
     let selected = AuthService::get_profile_read_only(&config, OPENAI_PROVIDER_KEY, None)
+        .await
         .expect("selected profile is readable without mutable auth")
         .expect("selected API-key profile exists");
     assert_eq!(selected.profile_name, "default");
@@ -401,6 +407,7 @@ async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth
         OPENAI_PROVIDER_KEY,
         Some(OPENAI_OAUTH_PROFILE_NAME),
     )
+    .await
     .expect("named OAuth profile is readable without refreshing")
     .expect("expired OAuth profile exists");
     assert!(oauth
@@ -410,6 +417,7 @@ async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth
         .is_some_and(|expires_at| expires_at < Utc::now()));
     let selected_codex_credential =
         super::credentials::lookup_key_for_slug_read_only("openai", &config)
+            .await
             .expect("read selected OpenAI API-key credential");
     assert_eq!(selected_codex_credential.key, "dummy-selected-api-key");
     assert!(!selected_codex_credential.is_oauth);
@@ -436,7 +444,8 @@ async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth
         "chat",
         &config,
         0.0,
-    );
+    )
+    .await;
     assert!(
         inspected.is_ok(),
         "the selected API-key profile is sufficient for model construction"
@@ -457,6 +466,7 @@ async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth
         "inspection must leave all credential bytes unchanged"
     );
     let selected_after = AuthService::get_profile_read_only(&config, OPENAI_PROVIDER_KEY, None)
+        .await
         .expect("selected profile remains readable")
         .expect("selected profile remains present");
     assert_eq!(selected_after.profile_name, "default");
@@ -469,6 +479,7 @@ async fn inspection_construction_does_not_refresh_unselected_expired_codex_oauth
         OPENAI_PROVIDER_KEY,
         Some(OPENAI_OAUTH_PROFILE_NAME),
     )
+    .await
     .expect("OAuth snapshot remains readable")
     .expect("OAuth snapshot remains present");
     assert_eq!(
@@ -549,6 +560,7 @@ async fn inspection_codex_metadata_matches_the_selected_oauth_profile() {
     let before = std::fs::read(&profiles_path).expect("snapshot profile bytes");
 
     let selected = super::credentials::lookup_key_for_slug_read_only("openai", &config)
+        .await
         .expect("read selected OAuth profile");
     assert_eq!(selected.key, "active-oauth-bearer");
     assert!(selected.is_oauth);
@@ -610,8 +622,8 @@ fn routed_config(endpoint: &str, api_key: &str, model: &str) -> Config {
     config
 }
 
-#[test]
-fn only_library_hosts_are_exempt_from_app_login() {
+#[tokio::test]
+async fn only_library_hosts_are_exempt_from_app_login() {
     use crate::core::types::HostKind;
 
     assert!(!host_requires_session(HostKind::Library));

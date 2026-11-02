@@ -224,12 +224,6 @@ pub(crate) fn reference_policy(
                 path.display()
             ));
         }
-        if crate::security::SecurityPolicy::is_always_forbidden(path) {
-            return Err(format!(
-                "reference path {} is in a protected location",
-                path.display()
-            ));
-        }
         let is_filed_artifact = allowed_artifacts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

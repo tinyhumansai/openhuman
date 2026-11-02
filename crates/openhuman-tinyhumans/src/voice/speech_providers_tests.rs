@@ -3,18 +3,18 @@ use openhuman_embed::__host::voice_registry::{
     create_stt_provider, create_tts_provider, unregister_stt_provider, unregister_tts_provider,
 };
 
-#[test]
-fn registration_covers_every_historical_cloud_slug() {
+#[tokio::test]
+async fn registration_covers_every_historical_cloud_slug() {
     let _registry = crate::registry_test_lock();
 
     register();
     let config = Config::default();
     for slug in STT_SLUGS {
-        let provider = create_stt_provider(slug, "ignored", &config).unwrap();
+        let provider = create_stt_provider(slug, "ignored", &config).await.unwrap();
         assert_eq!(provider.name(), "cloud", "{slug}");
     }
     for slug in TTS_SLUGS {
-        let provider = create_tts_provider(slug, "", &config).unwrap();
+        let provider = create_tts_provider(slug, "", &config).await.unwrap();
         assert_eq!(provider.name(), "cloud", "{slug}");
     }
     for slug in STT_SLUGS {

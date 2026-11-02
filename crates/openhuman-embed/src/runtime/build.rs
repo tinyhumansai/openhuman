@@ -251,7 +251,7 @@ impl RuntimeBuilder {
         // store exactly once, at boot, to decide whether it is signed in.
         let has_api_key = match (self.api_key.as_ref(), config.as_ref()) {
             (Some(key), Some(config)) => {
-                store_api_key(config, key)?;
+                store_api_key(config, key).await?;
                 true
             }
             _ => false,
@@ -551,17 +551,18 @@ pub(crate) fn routed_provider_effective(provider: &Provider, config: Option<&Con
             .is_some_and(|model| !model.trim().is_empty()))
 }
 
-fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
+async fn store_api_key(config: &Config, key: &ApiKey) -> Result<(), RuntimeError> {
     let state_dir = config
         .config_path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| config.config_path.clone());
-    openhuman_core::security::credentials::api_key::store_api_key_in(
+    openhuman_core::credentials::api_key::store_api_key_in(
         &state_dir,
         config.secrets.encrypt,
         key.expose(),
     )
+    .await
     .map(|_| ())
     .map_err(RuntimeError::Build)
 }

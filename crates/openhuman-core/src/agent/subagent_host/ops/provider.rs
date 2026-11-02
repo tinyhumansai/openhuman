@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-pub(crate) fn resolve_subagent_source(
+pub(crate) async fn resolve_subagent_source(
     spec: &tinyagents_definition::ModelSpec,
     agent_id: &str,
     config: Option<&crate::config::Config>,
@@ -43,7 +43,9 @@ pub(crate) fn resolve_subagent_source(
                     workload,
                     config,
                     temperature,
-                ) {
+                )
+                .await
+                {
                     Ok((_model, model_id)) => {
                         tracing::info!(
                             agent_id,

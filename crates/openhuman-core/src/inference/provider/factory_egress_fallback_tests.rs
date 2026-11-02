@@ -29,7 +29,8 @@ async fn create_chat_model_managed_emits_exactly_one_egress_realpath() {
             "scratch",
             &config,
             0.7,
-        );
+        )
+        .await;
     })
     .await;
 
@@ -90,7 +91,8 @@ async fn create_chat_model_local_runtime_does_not_emit_egress_realpath() {
         "chat",
         &config,
         0.7,
-    );
+    )
+    .await;
 
     // Sentinel bounds the drain; if the local marker ever appears as an external
     // transfer before it, the local-suppression contract is broken.
@@ -126,8 +128,8 @@ async fn create_chat_model_local_runtime_does_not_emit_egress_realpath() {
 // pin the routing so a future "never fall back" refactor cannot silently break
 // local-chat + managed-subscription users without a failing test.
 
-#[test]
-fn local_chat_still_routes_background_roles_to_the_managed_backend() {
+#[tokio::test]
+async fn local_chat_still_routes_background_roles_to_the_managed_backend() {
     let mut config = Config::default();
     config.chat_provider = Some("ollama:gemma3:1b".to_string());
 
@@ -150,8 +152,8 @@ fn local_chat_still_routes_background_roles_to_the_managed_backend() {
     }
 }
 
-#[test]
-fn local_chat_role_is_returned_verbatim_and_never_falls_back() {
+#[tokio::test]
+async fn local_chat_role_is_returned_verbatim_and_never_falls_back() {
     let mut config = Config::default();
     config.chat_provider = Some("ollama:gemma3:1b".to_string());
 
@@ -162,8 +164,8 @@ fn local_chat_role_is_returned_verbatim_and_never_falls_back() {
     );
 }
 
-#[test]
-fn explicit_background_route_overrides_the_cloud_fallback() {
+#[tokio::test]
+async fn explicit_background_route_overrides_the_cloud_fallback() {
     let mut config = Config::default();
     config.chat_provider = Some("ollama:gemma3:1b".to_string());
     config.vision_provider = Some("ollama:llava:7b".to_string());
@@ -176,8 +178,8 @@ fn explicit_background_route_overrides_the_cloud_fallback() {
     );
 }
 
-#[test]
-fn a_readable_profile_with_no_stored_key_is_treated_as_missing_credentials() {
+#[tokio::test]
+async fn a_readable_profile_with_no_stored_key_is_treated_as_missing_credentials() {
     // The common BYOK-with-no-key shape: the auth profile reads fine, it just
     // has nothing for this slug, so the lookup succeeds with an empty string.
     // Without an emptiness check the client would be built with a blank bearer
@@ -188,6 +190,7 @@ fn a_readable_profile_with_no_stored_key_is_treated_as_missing_credentials() {
     config.chat_provider = Some("ollama:gemma3:1b".to_string());
 
     let err = create_test_chat_model_from_string("vision", "openai:gpt-4o", &config)
+        .await
         .err()
         .expect("a slug with no stored key must not build a client");
     let message = err.to_string();
@@ -209,13 +212,15 @@ fn a_readable_profile_with_no_stored_key_is_treated_as_missing_credentials() {
     // one this diagnostic exists for) turns a blank key into an error.
     config.vision_provider = Some("openai:gpt-4o".to_string());
     assert!(
-        create_test_chat_model_from_string("vision", "openai:gpt-4o", &config).is_ok(),
+        create_test_chat_model_from_string("vision", "openai:gpt-4o", &config)
+            .await
+            .is_ok(),
         "an explicitly routed provider must still build without a stored key"
     );
 }
 
-#[test]
-fn a_failed_credential_lookup_does_not_echo_its_underlying_error() {
+#[tokio::test]
+async fn a_failed_credential_lookup_does_not_echo_its_underlying_error() {
     // The lookup error can carry stored-credential content, so the user-facing
     // error is the guidance alone; the routing shape goes to the log. The
     // read-only (doctor) lookup fails on an unreadable profile store.
@@ -234,7 +239,9 @@ fn a_failed_credential_lookup_does_not_echo_its_underlying_error() {
         "chat",
         &config,
         0.0,
-    ) {
+    )
+    .await
+    {
         Ok(_) => panic!("an unreadable credential store must not build a client"),
         Err(err) => err,
     };
@@ -249,8 +256,8 @@ fn a_failed_credential_lookup_does_not_echo_its_underlying_error() {
     );
 }
 
-#[test]
-fn implicit_cloud_fallback_is_claimed_only_when_the_role_has_no_route_of_its_own() {
+#[tokio::test]
+async fn implicit_cloud_fallback_is_claimed_only_when_the_role_has_no_route_of_its_own() {
     let mut config = Config::default();
     config.chat_provider = Some("ollama:gemma3:1b".to_string());
 
@@ -276,8 +283,8 @@ fn implicit_cloud_fallback_is_claimed_only_when_the_role_has_no_route_of_its_own
     }
 }
 
-#[test]
-fn cloud_fallback_roles_match_the_roles_provider_for_role_actually_falls_back() {
+#[tokio::test]
+async fn cloud_fallback_roles_match_the_roles_provider_for_role_actually_falls_back() {
     let router = crate::inference::provider::factory::workload_router();
 
     // The native router's metadata is the source of truth for roles that may
@@ -303,8 +310,8 @@ fn cloud_fallback_roles_match_the_roles_provider_for_role_actually_falls_back() 
     }
 }
 
-#[test]
-fn a_routed_turn_resolves_its_roles_to_the_callers_endpoint() {
+#[tokio::test]
+async fn a_routed_turn_resolves_its_roles_to_the_callers_endpoint() {
     use crate::config::schema::EPHEMERAL_ROUTE_SLUG;
     let config = routed_config(
         "http://127.0.0.1:41234/openai",
@@ -321,33 +328,35 @@ fn a_routed_turn_resolves_its_roles_to_the_callers_endpoint() {
     }
 }
 
-#[test]
-fn a_routed_turn_authenticates_with_the_callers_bearer() {
+#[tokio::test]
+async fn a_routed_turn_authenticates_with_the_callers_bearer() {
     use crate::config::schema::EPHEMERAL_ROUTE_SLUG;
     let config = routed_config("http://127.0.0.1:41234/openai", "mdl-token", "x/y");
     // Read straight off the config: there is no auth profile on disk for a slug
     // that exists only in this in-memory copy, so the stored-profile lookup
     // would come back empty and the turn would 401 several layers later.
     assert_eq!(
-        lookup_key_for_slug(EPHEMERAL_ROUTE_SLUG, &config).expect("resolves"),
+        lookup_key_for_slug(EPHEMERAL_ROUTE_SLUG, &config)
+            .await
+            .expect("resolves"),
         "mdl-token"
     );
 }
 
-#[test]
-fn the_routes_bearer_is_not_offered_to_any_other_slug() {
+#[tokio::test]
+async fn the_routes_bearer_is_not_offered_to_any_other_slug() {
     // The containment that makes reusing one config field safe: a background
     // role that fell through to some other cloud slug must not be handed the
     // caller's credential.
     let config = routed_config("http://127.0.0.1:41234/openai", "mdl-token", "x/y");
     for slug in ["openrouter", "anthropic", "openai"] {
-        let key = lookup_key_for_slug(slug, &config).expect("resolves");
+        let key = lookup_key_for_slug(slug, &config).await.expect("resolves");
         assert_ne!(key, "mdl-token", "slug '{slug}' must not see the route key");
     }
 }
 
-#[test]
-fn the_route_resolves_to_a_provider_the_factory_can_build() {
+#[tokio::test]
+async fn the_route_resolves_to_a_provider_the_factory_can_build() {
     // `resolve_cloud_slug` is where a missing `cloud_providers` entry or an
     // empty model turns into an error. Building the model proves the entry
     // `apply` registered is complete enough to be used, not merely present.
@@ -357,12 +366,13 @@ fn the_route_resolves_to_a_provider_the_factory_can_build() {
         &provider_for_role("coding", &config),
         &config,
     )
+    .await
     .expect("the per-call route builds a chat model");
     assert_eq!(model_id, "x/y");
 }
 
-#[test]
-fn a_failed_lookup_keeps_only_its_expiry_signal() {
+#[tokio::test]
+async fn a_failed_lookup_keeps_only_its_expiry_signal() {
     // The doctor reports "requires refresh" and chat routes a Codex expiry to
     // the reconnect copy, both from these fixed phrases; the detail beside
     // them (a refresh response's body) stays out.

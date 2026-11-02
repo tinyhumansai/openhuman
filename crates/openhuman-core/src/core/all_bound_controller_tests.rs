@@ -20,10 +20,13 @@ fn staged_bound_methods() -> Vec<&'static str> {
         "keyring_consent.status",
         "keyring_consent.decide",
         "keyring_consent.retry_probe",
+        "keyring_consent.respond_operation",
     ]);
     methods.extend([
         "approval.list_pending",
         "approval.list_recent_decisions",
+        "approval.list_tool_trust",
+        "approval.revoke_tool_trust",
         "approval.decide",
         "approval.get_gate_state",
         "approval.preauthorize_flow",

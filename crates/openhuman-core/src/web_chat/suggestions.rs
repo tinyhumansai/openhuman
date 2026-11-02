@@ -137,17 +137,23 @@ async fn generate_and_emit(
         return;
     }
 
-    let (chat_model, resolved_model) =
-        match provider::create_chat_model_with_model_id_in(ctx, "summarization", &config, 0.2) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                log::debug!(
-                    "{SUGGESTIONS_LOG_PREFIX} skip thread_id={thread_id} \
+    let (chat_model, resolved_model) = match provider::create_chat_model_with_model_id_in(
+        ctx,
+        "summarization",
+        &config,
+        0.2,
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            log::debug!(
+                "{SUGGESTIONS_LOG_PREFIX} skip thread_id={thread_id} \
                      request_id={request_id}: provider init failed: {error}"
-                );
-                return;
-            }
-        };
+            );
+            return;
+        }
+    };
 
     let request = build_suggestions_request(user_message, assistant_message);
     let call = chat_model.invoke(&(), request);

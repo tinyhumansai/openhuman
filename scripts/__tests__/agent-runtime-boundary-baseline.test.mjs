@@ -22,7 +22,7 @@ test("inbound turn-origin scope is the only pinned task-local exemption", async 
     rule: "openhuman-task-local",
     path: "crates/openhuman-core/src/inbound/pinned.rs",
     line: 97,
-    text: "let outcome = crate::security::turn_origin::with_origin(",
+    text: "let outcome = crate::core::runtime::turn_origin::with_origin(",
     occurrence: 1,
   };
 
@@ -34,8 +34,8 @@ test("inbound turn-origin scope is the only pinned task-local exemption", async 
 
   for (const unreviewed of [
     { ...finding, path: "crates/openhuman-core/src/inbound/other.rs" },
-    { ...finding, text: "crate::security::turn_origin::with_origin(" },
-    { ...finding, text: "crate::security::turn_origin::capture()" },
+    { ...finding, text: "crate::core::runtime::turn_origin::with_origin(" },
+    { ...finding, text: "crate::core::runtime::turn_origin::capture()" },
   ]) {
     assert.equal(
       baseline.some((entry) => identity(entry) === identity(unreviewed)),

@@ -149,7 +149,7 @@ event.
   a legacy `meta.path` with `..` components (a lexical `starts_with` alone
   let `<root>/../x` through) and holds a recorded `file` to the escape guard:
   absolute, no `..`, strictly inside its `file_root` (symlinks resolved), and
-  never `SecurityPolicy::is_always_forbidden`.
+  never `TinySecurity protected-path policy`.
 - `create_artifact` rejects empty titles/extensions and extensions
   containing `/`, `\`, or `.`. Filename stems are lowercased ASCII
   `[a-z0-9_-]`, capped at 80 chars, fallback `artifact`.

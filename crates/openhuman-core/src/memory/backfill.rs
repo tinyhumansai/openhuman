@@ -110,7 +110,7 @@ fn driver(
 /// `memory_conversations_backfill_status`.
 pub async fn status(ctx: &DispatchCtx, config: &Config) -> Result<BackfillView> {
     let running = BACKFILL.is_running(&config.workspace_dir);
-    match engine::resolve(config).engine() {
+    match engine::resolve(config).await.engine() {
         Ok(bound) => {
             driver(ctx.clone(), config, bound.engine)
                 .status(running)
@@ -140,7 +140,7 @@ pub async fn start(
             "storing past chats uploads them to the selected engine; pass consent: true".into(),
         ));
     }
-    let bound = engine::resolve(config).engine()?;
+    let bound = engine::resolve(config).await.engine()?;
     let workspace = config.workspace_dir.clone();
     let Some(guard) = run_slots::reserve(&BACKFILL, &workspace, &[&IMPORT, &MIGRATION]) else {
         return status(ctx, config).await;

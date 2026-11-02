@@ -142,6 +142,7 @@ pub(super) async fn validate_provider_key(
     let api_key = match candidate_key.map(str::trim) {
         Some(k) if !k.is_empty() => k.to_string(),
         _ => crate::inference::provider::factory::lookup_key_for_slug(slug, config)
+            .await
             .unwrap_or_default(),
     };
 

@@ -2,8 +2,8 @@ use super::*;
 
 const UPLOAD: &str = "caption [FILE:data:text/plain;name=note.txt;base64,YQ==]";
 
-fn external_origin() -> crate::security::turn_origin::AgentTurnOrigin {
-    crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+fn external_origin() -> crate::core::runtime::turn_origin::AgentTurnOrigin {
+    crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         sender_name: None,
         channel: "test".into(),
         sender: None,

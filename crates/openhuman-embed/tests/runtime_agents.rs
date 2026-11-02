@@ -132,7 +132,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                     .await
                     .expect("runtime builds"),
             );
-            assert!(runtime.has_api_key());
+            assert!(runtime.has_api_key().await);
 
             // Regression: `has_api_key()` must read the credential store live,
             // not a snapshot taken when the runtime was built — a host that
@@ -145,7 +145,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("clear api key");
             assert!(
-                !runtime.has_api_key(),
+                !runtime.has_api_key().await,
                 "has_api_key() must observe a live clear, not a build-time snapshot"
             );
             runtime
@@ -155,7 +155,7 @@ fn one_runtime_hosts_independently_configured_agents() {
                 .await
                 .expect("restore api key");
             assert!(
-                runtime.has_api_key(),
+                runtime.has_api_key().await,
                 "has_api_key() must observe a live store, not a build-time snapshot"
             );
 
@@ -249,13 +249,18 @@ fn one_runtime_hosts_independently_configured_agents() {
                             AgentDefinitionSpec::new()
                                 .tools(ToolScopeSpec::Named(vec!["shell".to_string()])),
                         )
-                        .tools(|turn| HostTurnTools {
-                            withheld: if turn.session_id() == Some("hidden-turn") {
+                        .tools(|turn| {
+                            let withheld = if turn.session_id() == Some("hidden-turn") {
                                 std::collections::HashSet::from(["shell".to_string()])
                             } else {
                                 std::collections::HashSet::new()
-                            },
-                            ..Default::default()
+                            };
+                            Box::pin(async move {
+                                HostTurnTools {
+                                    withheld,
+                                    ..Default::default()
+                                }
+                            })
                         }),
                 )
                 .expect("withholding agent instantiates");

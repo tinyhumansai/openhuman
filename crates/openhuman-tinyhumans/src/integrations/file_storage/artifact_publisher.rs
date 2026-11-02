@@ -78,10 +78,10 @@ impl StorageArtifactPublisher {
 /// The publisher for `config`, or `None` when there is no integration client
 /// (no backend URL configured, or not signed in) — the same condition under
 /// which the `storage_*` tools are absent.
-pub fn artifact_publisher(
+pub async fn artifact_publisher(
     config: &Config,
 ) -> Option<openhuman_embed::__host::artifact_publisher::ArtifactPublisherBinder> {
-    let client = crate::integrations::build_client(config)?;
+    let client = crate::integrations::build_client(config).await?;
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
@@ -126,8 +126,8 @@ async fn upload_body(
         let resolved = tokio::fs::canonicalize(path)
             .await
             .map_err(|e| anyhow::anyhow!("cannot read the artifact's file: {e}"))?;
-        if let Some(reason) = openhuman_embed::__host::artifact_publisher::refused_path(&resolved) {
-            anyhow::bail!("[policy-blocked] cannot share this artifact: {reason}");
+        if SecurityPolicy::is_always_forbidden_async(&resolved).await {
+            anyhow::bail!("[policy-blocked] cannot share this artifact: path is protected");
         }
         let bytes = tokio::fs::read(&resolved)
             .await

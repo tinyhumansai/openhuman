@@ -189,6 +189,7 @@ impl AttachmentModel {
                 &self.config,
                 0.0,
             )
+            .await
             .map_err(|e| tinyinference_llm::Error::Model(e.to_string()))?;
         let provider = vision
             .profile()
@@ -200,7 +201,8 @@ impl AttachmentModel {
             self.config.clone(),
             &model_id,
             provider,
-        );
+        )
+        .await;
         let known = prepared.profile().is_some_and(|p| p.modalities.image_in)
             || provider == "injected" && vision.profile().is_some_and(|p| p.modalities.image_in);
         if !known || !vision.supports_input(InputModality::Image, mime, InputSource::Base64) {

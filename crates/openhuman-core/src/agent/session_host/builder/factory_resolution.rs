@@ -45,7 +45,7 @@ pub(crate) fn provider_role_for_definition(
 ///
 /// Session construction and triage direct turns share the same resolved source when one
 /// is already available; otherwise the ordinary provider factory owns construction.
-pub(crate) fn resolve_session_model(
+pub(crate) async fn resolve_session_model(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &crate::config::Config,
     agent_id: &str,
@@ -68,7 +68,8 @@ pub(crate) fn resolve_session_model(
                     provider_role,
                     config,
                     config.default_temperature,
-                )?;
+                )
+                .await?;
             let supports_native = model.profile().is_none_or(|profile| profile.tool_calling);
             (model_name, supports_native)
         }

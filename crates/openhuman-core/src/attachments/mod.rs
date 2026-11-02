@@ -17,6 +17,7 @@ pub use host::HostAttachment;
 pub(crate) mod legacy;
 pub(crate) mod parts;
 pub(crate) mod provider;
+pub(crate) mod secure_open;
 
 /// Per-model-call attachment authority copied from the live agent context.
 /// The provider wrapper removes its request carrier before forwarding it.
@@ -37,7 +38,7 @@ pub(crate) fn attach_request_scope(
 ) {
     let external_channel = matches!(
         context.origin,
-        Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+        Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
     );
     let workspace = context
         .workspace
@@ -494,7 +495,7 @@ pub(crate) async fn delegation_prompt(
     prompt: &str,
     args: &serde_json::Value,
     workspace: Option<&tinytools::WorkspaceDescriptor>,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> anyhow::Result<String> {
     let mut prompt = prompt.to_string();
     if let Some(value) = args.get("image_paths") {
@@ -514,7 +515,7 @@ pub(crate) async fn delegation_prompt(
     }
     if matches!(
         origin,
-        Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+        Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
     ) {
         anyhow::bail!("local attachment reads are disabled for external channel input");
     }
@@ -535,7 +536,7 @@ pub(crate) async fn has_resolvable_image(
     ctx: &crate::core::runtime::DispatchCtx,
     prompt: &str,
     workspace: Option<&tinytools::WorkspaceDescriptor>,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> anyhow::Result<bool> {
     let rehydrated = crate::agent::multimodal::rehydrate_image_placeholders(&[
         tinyagents_session::transcript::TranscriptMessage::user(prompt),
@@ -554,7 +555,7 @@ pub(crate) async fn has_resolvable_image(
     let mut config = ctx.load_config().await.map_err(anyhow::Error::msg)?;
     if matches!(
         origin,
-        Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+        Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
     ) {
         anyhow::bail!("local attachment reads are disabled for external channel input");
     }
@@ -638,7 +639,7 @@ pub(crate) async fn stage_turn(
     config: Option<&Config>,
     workspace: Option<&tinytools::WorkspaceDescriptor>,
     thread: Option<&str>,
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> anyhow::Result<String> {
     if !message.contains("[IMAGE:") && !message.contains("[FILE:") {
         return Ok(message.into());
@@ -648,7 +649,7 @@ pub(crate) async fn stage_turn(
         .ok_or_else(|| anyhow::anyhow!("attachment intake requires runtime configuration"))?;
     if matches!(
         origin,
-        Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+        Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
     ) {
         config.multimodal_files =
             crate::config::MultimodalFileConfig::for_untrusted_channel_input();
@@ -659,7 +660,7 @@ pub(crate) async fn stage_turn(
     let scope = AttachmentAccessScope {
         external_channel: matches!(
             origin,
-            Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
+            Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel { .. })
         ),
         workspace: workspace.map(|workspace| workspace.root.clone()),
         ..Default::default()

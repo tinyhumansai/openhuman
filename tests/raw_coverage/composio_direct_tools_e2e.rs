@@ -235,7 +235,7 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
             panic!("direct loopback integrations should be authoritative")
         }
     }
-    assert!(cached_active_integrations(&harness.config).is_some());
+    assert!(cached_active_integrations(&harness.config).await.is_some());
 
     let requests = state.requests.lock().expect("requests").clone();
     assert!(requests.iter().all(|request| {

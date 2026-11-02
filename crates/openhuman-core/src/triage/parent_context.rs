@@ -60,6 +60,7 @@ pub(crate) async fn build_root_parent(
     }
 
     let mut agent = OpenHumanSessionHost::from_config(ctx, config)
+        .await
         .context("build Agent from config for orchestration root parent")?;
 
     let integrations = crate::integrations::composio::fetch_connected_integrations(config).await;

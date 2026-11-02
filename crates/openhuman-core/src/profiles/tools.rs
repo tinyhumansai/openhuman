@@ -304,6 +304,7 @@ pub fn sandbox_policy_with(
         read_only_mounts: Vec::new(),
         read_write_mounts: Vec::new(),
         allow_network: config.network.trim() != "none",
+        mount_workspace: true,
         // Nothing from the host's environment: no PATH, HOME or USER.
         env_passthrough: Vec::new(),
         docker_overrides: Some(DockerOverrides {

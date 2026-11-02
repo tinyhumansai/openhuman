@@ -19,8 +19,8 @@ use crate::agent::subagent_host::{AgentContextPreparedSource, ParentExecutionCon
 use crate::agent::tinyagents::{
     middleware::turn_context::TurnContextMiddleware, turn_policy::ToolPolicyEnforcement,
 };
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::progress::AgentProgress;
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_definition::SandboxMode;
 use tinyagents_harness::store::InMemoryStore as ToolResultArtifactIndexStore;
 use tinyagents_harness::turn_outcome::{ToolCallOutcome, ToolOutcomeSink};

@@ -8,11 +8,25 @@ use tinyagents_harness_tools::net::network::{
 use tinytools::{PermissionLevel, Tool};
 
 fn policy(autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
-    Arc::new(SecurityPolicy {
+    let policy = SecurityPolicy {
         autonomy,
         max_actions_per_hour,
         ..SecurityPolicy::default()
-    })
+    };
+    *policy.budget_snapshot.lock().unwrap() = Some(if autonomy == AutonomyLevel::ReadOnly {
+        tinysecurity_bus::BudgetDecision2::ReadOnlyMode
+    } else {
+        tinysecurity_bus::BudgetDecision2::Allow
+    });
+    *policy.class_gate_snapshot.lock().unwrap() = vec![(
+        CommandClass::Network,
+        if autonomy == AutonomyLevel::ReadOnly {
+            GateDecision::Block
+        } else {
+            GateDecision::Prompt
+        },
+    )];
+    Arc::new(policy)
 }
 
 fn http(security: Arc<SecurityPolicy>) -> HttpRequestTool {
@@ -39,9 +53,9 @@ fn read_only_autonomy_cannot_act() {
 #[test]
 fn the_action_budget_is_shared_with_the_policy() {
     let security = policy(AutonomyLevel::Supervised, 1);
+    *security.budget_snapshot.lock().unwrap() =
+        Some(tinysecurity_bus::BudgetDecision2::RateLimited { max_per_hour: 1 });
     let gate: &dyn NetGate = security.as_ref();
-    assert!(!gate.is_rate_limited());
-    assert!(gate.record_action());
     assert!(gate.is_rate_limited());
     assert!(!gate.record_action());
 }
@@ -61,20 +75,19 @@ fn supervised_network_asks_for_approval_and_read_only_does_not() {
 // --- privacy mode ------------------------------------------------------------
 
 #[test]
-fn local_only_privacy_mode_refuses_with_the_policy_blocked_marker() {
+fn network_gate_refuses_when_the_privacy_module_cannot_answer() {
     let _mode = super::super::local_only_scope();
     let msg = NetGate::local_only_block(&SecurityPolicy::default(), "example.com")
-        .expect("LocalOnly blocks a network fetch");
+        .expect("an unavailable privacy module fails closed");
     assert!(msg.contains("[policy-blocked]"), "got: {msg}");
-    assert!(msg.contains("Local-only"), "got: {msg}");
     assert!(msg.contains("example.com"), "names the host: {msg}");
 }
 
 #[test]
-fn standard_privacy_mode_lets_the_request_through() {
+fn standard_privacy_mode_refuses_when_the_privacy_module_cannot_answer() {
     let _mode =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::Standard);
-    assert!(NetGate::local_only_block(&SecurityPolicy::default(), "example.com").is_none());
+    assert!(NetGate::local_only_block(&SecurityPolicy::default(), "example.com").is_some());
 }
 
 // --- the tools, through the real policy ---------------------------------------

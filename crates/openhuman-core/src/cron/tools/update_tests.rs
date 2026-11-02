@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::config::Config;
-use crate::security::turn_origin::AgentTurnOrigin;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use tempfile::TempDir;
 use tinyagents_harness::{context::RunConfig, ids::CallId, tool::ToolExecutionContext};
 use tinyflows_bus::schedule::types::{DeliveryConfig, JobOrigin, Schedule, SessionTarget};

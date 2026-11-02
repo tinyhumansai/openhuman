@@ -7,7 +7,7 @@
 //! from an external channel keeps running as that channel's turn, so its own
 //! external-effect tools stay gated exactly like its creator's were.
 
-use crate::security::turn_origin::{self, AgentTurnOrigin};
+use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use serde_json::Value;
 use {
     tinyflows_bus::schedule::types::delivery_mode, tinyflows_bus::schedule::types::CronJob,

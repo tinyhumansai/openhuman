@@ -47,9 +47,9 @@ pub(super) struct PendingMemoryTurn {
 /// from an external channel. Event-context labels such as `cron`, `voice`, and
 /// `mcp_server` are not channel owners.
 fn logged_channel(
-    origin: Option<&crate::security::turn_origin::AgentTurnOrigin>,
+    origin: Option<&crate::core::runtime::turn_origin::AgentTurnOrigin>,
 ) -> Option<String> {
-    let Some(crate::security::turn_origin::AgentTurnOrigin::ExternalChannel {
+    let Some(crate::core::runtime::turn_origin::AgentTurnOrigin::ExternalChannel {
         channel,
         message_id,
         ..
@@ -159,7 +159,7 @@ impl OpenHumanTurnPrelude {
         history: &[Message],
         committed_turns: usize,
         current: Option<&Message>,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Option<Arc<MemoryTurn>> {
         let user_text = self
             .mutable

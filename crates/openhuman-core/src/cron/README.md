@@ -136,7 +136,7 @@ disabled (the default), most policy checks are inert; see the project
    `start_cron_turn_clean` sets `suppress_transcript_autoload`. A cron agent has
    no thread, so without this its first turn would resume whatever unthreaded
    transcript was newest for that agent name.
-6. The turn runs inside `security::turn_origin::with_origin` with the origin from
+6. The turn runs inside `core::runtime::turn_origin::with_origin` with the origin from
    `origin::turn_origin_for_job_run`. The morning briefing job also runs under a
    24 hour task-recency window so task-fetch tools only return recent tasks.
 
@@ -283,7 +283,7 @@ current ones, `memory_background` and `memory_sources_sync` (every 15 minutes),
 handled in `memory::bus`. `ensure_memory_jobs` is idempotent: it creates a
 missing row, reschedules a drifted one, and removes the retired
 `memory_context_refresh` row. It runs from [`core/runtime/services.rs`](../core/runtime/services.rs) and from
-[`security/credentials/ops/user_scope.rs`](../security/credentials/ops/user_scope.rs).
+[`config/user_scope.rs`](../config/user_scope.rs).
 
 ### Storage
 
@@ -419,7 +419,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
   `find_flow_schedule_job`. These rows are never created by the `cron_add`
   tool, whose `job_type` is `shell` or `agent` only.
 - `config/ops/ui.rs` calls `seed_proactive_agents`;
-  `security/credentials/ops/user_scope.rs` calls `prune_retired_jobs` and
+  `config/user_scope.rs` calls `prune_retired_jobs` and
   `ensure_memory_jobs` on user-scope activation.
 
 ## Boundaries
@@ -440,7 +440,7 @@ Cron publishes, through [`core/bus.rs`](../core/bus.rs), these `DomainEvent` var
 
 - the LLM gate (`platform::llm_gate`) is not part of cron; it used to live here, but the poll loop does not
   consult it. Its consumers are `modules/memory_host.rs` and
-  [`security/credentials/`](../security/credentials/).
+  [`credentials/`](../credentials/).
 - Dispatch is non-blocking: the module spawns each due job, bounded by
   `scheduler.max_concurrent`, so one long job does not hold up the poll loop. A
   job is claimed (module-side, shared with Run Now) from dispatch until its run

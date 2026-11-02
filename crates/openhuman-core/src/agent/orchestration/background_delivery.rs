@@ -384,7 +384,7 @@ async fn run_system_turn_on_thread(
         &thread_id,
         &run_id,
         &prompt,
-        crate::security::turn_origin::AgentTurnOrigin::Cli,
+        crate::core::runtime::turn_origin::AgentTurnOrigin::Cli,
     )
     .await;
 

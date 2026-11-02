@@ -487,7 +487,7 @@ fn build_registered_controllers() -> Vec<GroupedController> {
     push(
         &mut controllers,
         DomainGroup::Security,
-        crate::security::credentials::all_credentials_registered_controllers(),
+        crate::credentials::all_credentials_registered_controllers(),
     );
     // Desktop service management
     push(

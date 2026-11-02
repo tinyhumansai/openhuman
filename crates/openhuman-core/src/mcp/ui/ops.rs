@@ -150,7 +150,9 @@ pub async fn tool_call(
     } else {
         ToolOperation::Act
     };
-    security.enforce_tool_operation(operation, &format!("mcp_ui:{server_id}/{tool_name}"))?;
+    security
+        .enforce_tool_operation(operation, &format!("mcp_ui:{server_id}/{tool_name}"))
+        .await?;
 
     let start = Instant::now();
     let result = port.call_tool(&server_id, &tool_name, arguments).await;

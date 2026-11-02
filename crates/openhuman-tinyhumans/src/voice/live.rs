@@ -7,7 +7,7 @@
 //! ([`register`]); the core carries no hosted entry of its own.
 
 use openhuman_embed::__host::config::Config;
-use openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential;
+use openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential;
 use openhuman_embed::__host::voice_registry::{
     register_live_provider, LiveProviderEntry, LiveProviderKind, LiveProviderPlacement,
     LiveVoiceError, PreparedProvider, GEMINI_LANGUAGES, GEMINI_VOICES,
@@ -37,8 +37,9 @@ fn non_empty(value: Option<String>) -> Option<String> {
 }
 
 /// Whether a backend credential is available for the hosted providers.
-fn backend_ready(config: &Config) -> bool {
-    resolve_backend_credential(config).is_ok()
+fn backend_ready(config: &Config) -> openhuman_embed::__host::voice_registry::LiveFuture<bool> {
+    let config = config.clone();
+    Box::pin(async move { resolve_backend_credential(&config).await.is_ok() })
 }
 
 /// Shapes the session configuration for `gemini-hosted` from the user's settings.
@@ -94,7 +95,9 @@ async fn mint_gemini_ticket(
     config: &Config,
     live: &LiveConfig,
 ) -> Result<GeminiTicket, LiveVoiceError> {
-    let credential = resolve_backend_credential(config).map_err(LiveVoiceError::not_configured)?;
+    let credential = resolve_backend_credential(config)
+        .await
+        .map_err(LiveVoiceError::not_configured)?;
     let client =
         BackendClient::from_config(config).map_err(|e| LiveVoiceError::backend(e.to_string()))?;
     ensure_secure_backend_url(client.base_url()).map_err(LiveVoiceError::backend)?;

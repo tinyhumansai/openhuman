@@ -17,7 +17,7 @@ pub struct IntegrationClient {
     /// [`crate::client::credential_headers`]). The 401 handling in `errors.rs`
     /// branches on which one it is.
     pub(super) credential:
-        openhuman_embed::__host::security::credentials::session_support::BackendCredential,
+        openhuman_embed::__host::credentials::backend_credential::BackendCredential,
     pub(super) budget_config: Option<Arc<openhuman_embed::__host::config::Config>>,
     // The binary download path never rode the SDK: file storage also consumes
     // Content-Type and Content-Disposition, and the presigned-redirect hop
@@ -34,17 +34,19 @@ impl IntegrationClient {
     pub fn new(backend_url: String, auth_token: String) -> Self {
         Self::new_inner(
             backend_url,
-            openhuman_embed::__host::security::credentials::session_support::BackendCredential::Session(auth_token),
+            openhuman_embed::__host::credentials::backend_credential::BackendCredential::Session(
+                auth_token,
+            ),
             None,
         )
     }
 
     /// A client authenticating with whichever credential
-    /// [`resolve_backend_credential`](openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential)
+    /// [`resolve_backend_credential`](openhuman_embed::__host::credentials::backend_credential::resolve_backend_credential)
     /// chose: the TinyHumans API key or the session JWT.
     pub fn new_with_credential(
         backend_url: String,
-        credential: openhuman_embed::__host::security::credentials::session_support::BackendCredential,
+        credential: openhuman_embed::__host::credentials::backend_credential::BackendCredential,
     ) -> Self {
         Self::new_inner(backend_url, credential, None)
     }
@@ -52,7 +54,7 @@ impl IntegrationClient {
     /// Credential-aware variant of [`Self::new_with_budget_config`].
     pub fn new_with_credential_and_budget_config(
         backend_url: String,
-        credential: openhuman_embed::__host::security::credentials::session_support::BackendCredential,
+        credential: openhuman_embed::__host::credentials::backend_credential::BackendCredential,
         config: Arc<openhuman_embed::__host::config::Config>,
     ) -> Self {
         Self::new_inner(backend_url, credential, Some(config))
@@ -77,7 +79,7 @@ impl IntegrationClient {
 
     fn new_inner(
         backend_url: String,
-        credential: openhuman_embed::__host::security::credentials::session_support::BackendCredential,
+        credential: openhuman_embed::__host::credentials::backend_credential::BackendCredential,
         budget_config: Option<Arc<openhuman_embed::__host::config::Config>>,
     ) -> Self {
         // Defense-in-depth (issue #2075 / Sentry OPENHUMAN-TAURI-H6, -HN):

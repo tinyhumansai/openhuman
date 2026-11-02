@@ -23,15 +23,14 @@ use crate::security::SecurityPolicy;
 /// The two methods answer different questions and produce different errors, so
 /// both are wired rather than collapsing them into one check:
 ///
-/// * [`is_internal_state`](ArtifactPathPolicy::is_internal_state) →
-///   `SecurityPolicy::is_workspace_internal_path`, the specific state locations,
-///   which are refused wherever they sit.
+/// * [`is_internal_state`](ArtifactPathPolicy::is_internal_state) is a
+///   synchronous compatibility hook. The host asks TinySecurity asynchronously
+///   for both `Internal` and `ResolvedWrite` before entering the owner API.
 /// * [`internal_root`](ArtifactPathPolicy::internal_root) → `workspace_dir`
 ///   itself, refused wholesale.
 ///
 /// Offload targets resolve under `action_dir`, never `workspace_dir` — the
-/// invariant `is_workspace_internal_path` enforces fail-closed regardless of
-/// autonomy tier or `trusted_roots`.
+/// policy decision occurs in that async admission path, not in this sync hook.
 #[derive(Debug)]
 pub struct WorkspaceGuard {
     policy: Arc<SecurityPolicy>,
@@ -46,7 +45,8 @@ impl WorkspaceGuard {
 
 impl ArtifactPathPolicy for WorkspaceGuard {
     fn is_internal_state(&self, path: &Path) -> bool {
-        self.policy.is_workspace_internal_path(path)
+        let _ = path;
+        false
     }
 
     fn internal_root(&self) -> Option<&Path> {

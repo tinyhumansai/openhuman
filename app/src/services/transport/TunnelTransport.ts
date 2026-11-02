@@ -181,12 +181,18 @@ export class TunnelTransport implements CoreTransport {
 
     log('[tunnel] handshake sent, waiting for server ephemeral ack');
 
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.handshakeAck = null;
         reject(new Error('[tunnel] handshake ack timed out'));
       }, 10_000);
       this.handshakeAck = { resolve, reject, timeoutId };
+    });
+    await this.sendEnvelope({
+      requestId: crypto.randomUUID(),
+      kind: 'request',
+      seq: 0,
+      payload: { method: 'openhuman.ping', params: {} },
     });
   }
 

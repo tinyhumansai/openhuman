@@ -9,7 +9,7 @@ fn entry(label: &str) -> LiveProviderEntry {
         voices: vec!["v1".into()],
         languages: vec!["en-US".into()],
         key_slug: None,
-        configured: Arc::new(|_| true),
+        configured: Arc::new(|_| Box::pin(async { true })),
         configure: Some(Arc::new(|_, instruction, live| {
             live.system_instruction = Some(format!("registered:{instruction}"));
         })),
@@ -25,8 +25,8 @@ fn entry(label: &str) -> LiveProviderEntry {
     }
 }
 
-#[test]
-fn before_built_in_providers_lead_the_listing_in_registration_order() {
+#[tokio::test]
+async fn before_built_in_providers_lead_the_listing_in_registration_order() {
     let leading = |label: &str| LiveProviderEntry {
         placement: LiveProviderPlacement::BeforeBuiltIn,
         ..entry(label)
@@ -34,7 +34,7 @@ fn before_built_in_providers_lead_the_listing_in_registration_order() {
     register_live_provider("test-first", leading("First"));
     register_live_provider("test-second", leading("Second"));
     register_live_provider("test-last", entry("Last"));
-    let infos = provider_infos(&Config::default());
+    let infos = provider_infos(&Config::default()).await;
     for slug in ["test-first", "test-second", "test-last"] {
         unregister_live_provider(slug);
     }
@@ -45,18 +45,18 @@ fn before_built_in_providers_lead_the_listing_in_registration_order() {
     );
 }
 
-#[test]
-fn nothing_registered_lists_only_the_built_in_providers() {
-    let infos = provider_infos(&Config::default());
+#[tokio::test]
+async fn nothing_registered_lists_only_the_built_in_providers() {
+    let infos = provider_infos(&Config::default()).await;
     let ids: Vec<_> = infos.iter().map(|i| i.id.as_str()).collect();
     // The hosted ids are registered by the hosted-backend layer, not built in.
     assert_eq!(ids, ["gemini", "sarvam"]);
 }
 
-#[test]
-fn a_registered_provider_is_listed_after_the_built_in_ones() {
+#[tokio::test]
+async fn a_registered_provider_is_listed_after_the_built_in_ones() {
     register_live_provider("test-live", entry("Test Live"));
-    let infos = provider_infos(&Config::default());
+    let infos = provider_infos(&Config::default()).await;
     unregister_live_provider("test-live");
     let last = infos.last().unwrap();
     assert_eq!(last.id, "test-live");
@@ -64,12 +64,12 @@ fn a_registered_provider_is_listed_after_the_built_in_ones() {
     assert!(last.configured);
 }
 
-#[test]
-fn a_registered_slug_replaces_the_built_in_row_in_place() {
-    let built_in = provider_infos(&Config::default());
+#[tokio::test]
+async fn a_registered_slug_replaces_the_built_in_row_in_place() {
+    let built_in = provider_infos(&Config::default()).await;
     let first = built_in[0].id.clone();
     register_live_provider(first.clone(), entry("Replaced"));
-    let infos = provider_infos(&Config::default());
+    let infos = provider_infos(&Config::default()).await;
     unregister_live_provider(&first);
     assert_eq!(infos.len(), built_in.len());
     assert_eq!(infos[0].id, first);

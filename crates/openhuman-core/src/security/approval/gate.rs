@@ -4,11 +4,11 @@
 //! Flow (issue #1339):
 //! 1. Agent harness calls [`ApprovalGate::intercept`] with the tool
 //!    name, a redacted JSON of the arguments, and a short summary.
-//! 2. Gate checks the user's "Always allow" allowlist
-//!    (`autonomy.auto_approve`, read live via
-//!    [`crate::security::live_policy`]). Hit → `Allow`
-//!    immediately. An `ApproveAlwaysForTool` decision adds the tool to
-//!    that list via `approval_decide` (config save + policy reload).
+//! 2. Gate registers the call's posture with TinySecurity. Durable whole-tool
+//!    trust is resolved by the module under the exact approval scope;
+//!    `autonomy.auto_approve` is not replayed, so revocations cannot be
+//!    resurrected from legacy config. `ApproveAlwaysForTool` records a grant
+//!    through `GrantTool2` after resolving the current call.
 //! 3. Otherwise: persist a row in `pending_approvals`, publish a
 //!    [`DomainEvent::ApprovalRequested`] event so the UI can pop a
 //!    toast, and park the call on a `oneshot::Sender` keyed by
@@ -31,6 +31,7 @@
 //! so the security invariant is preserved without auto-purging.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -40,12 +41,13 @@ use tokio::sync::oneshot;
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-#[cfg(test)]
-use crate::security::turn_origin;
-use crate::security::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+use crate::core::runtime::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
 use tinytools::status::POLICY_DENIED_MARKER;
 
-use super::store;
+use super::engine::{
+    CallOrigin, CheckInput, Checked, Choice, Delivery, EngineError, Posture, PromptSurface,
+    SharedEngine, Variant,
+};
 use super::types::{
     ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, GateOutcome, PendingApproval,
 };
@@ -68,6 +70,9 @@ pub enum ApprovalError {
     /// The request was parked by a different agent than the one deciding it.
     #[error("approval request {request_id} belongs to another agent")]
     WrongAgent { request_id: String },
+    /// The decision came from a different profile than the parked request.
+    #[error("approval request {request_id} belongs to another tenant")]
+    WrongTenant { request_id: String },
 }
 
 /// The key `thread_to_request` files a parked chat thread under, keyed by
@@ -92,37 +97,8 @@ pub(crate) fn current_route_tenant() -> crate::core::runtime::Tenant {
     crate::core::runtime::tenant::current_tenant_or_isolated("approval_gate")
 }
 
-/// How long the gate will park a future before timing out and
-/// returning `Deny`. 10 minutes matches the default `expires_at`
-/// written into the persisted row.
-const DEFAULT_APPROVAL_TTL: Duration = Duration::from_secs(60 * 10);
-
-/// Shorter park window for approvals raised by the Flow Canvas copilot's
-/// live-run path — `flows_build` streaming into the copilot pane calling
-/// `run_flow` / `resume_flow_run` (PR #5090). A stale ten-minute park on a
-/// copilot pane the user may have already navigated away from is a long time
-/// to leave a live Slack/Gmail/HTTP node waiting; if nobody approves within
-/// three minutes, deny and let the authoring turn continue (the user can
-/// still re-trigger the run from the Runs rail). Scoped by
-/// [`ApprovalTurnContext::copilot_stream`]. Deliberately NOT applied to
-/// main-chat `WebChat` parks — only `flows::ops::flows_build`'s streaming
-/// branch sets the flag.
-const COPILOT_APPROVAL_TTL: Duration = Duration::from_secs(180);
-
-/// Shorter park window for approvals raised inside a sub-agent run — a
-/// delegated worker (`image_agent`, `video_agent`, `skill_setup`, …) calling
-/// an external-effect tool. Same three-minute window and the same rationale
-/// as [`COPILOT_APPROVAL_TTL`]: the prompt is one level removed from what the
-/// user is looking at (an async sub-agent's card lands on a parent turn that
-/// may already have finished), and a ten-minute park left every failed
-/// `media_generate_image` / `media_generate_video` / `skill_registry_install`
-/// blocking for exactly 600s with the result never delivered. If nobody answers
-/// in three minutes the call is denied with an "approval wasn't answered"
-/// result so the parent agent can tell the user and they can ask again.
-const SUBAGENT_APPROVAL_TTL: Duration = Duration::from_secs(180);
-
 /// Phrase every TTL-expiry denial carries, so a caller that renders its own
-/// refusal (the hosted `OpenHumanSecurityGate`) can tell "nobody answered" from
+/// refusal (the approval resolver, `middleware::approval`) can tell "nobody answered" from
 /// "the user said no" without parsing the rest of the reason. See
 /// [`is_unanswered_approval_reason`].
 pub const APPROVAL_UNANSWERED_PHRASE: &str = "nobody answered the approval prompt";
@@ -192,9 +168,8 @@ pub struct ApprovalTurnContext {
     /// callers (CLI, cron, background, detached sub-agents).
     pub chat: Option<ApprovalChatContext>,
     /// The turn is the Flow Canvas copilot's streaming `flows_build` path: the
-    /// park window is clamped to [`COPILOT_APPROVAL_TTL`] instead of the gate's
-    /// own (possibly env-overridden) TTL. Plain main-chat `WebChat` turns leave
-    /// it `false` and keep the full [`DEFAULT_APPROVAL_TTL`].
+    /// module gives the park its shorter copilot window. Plain main-chat
+    /// `WebChat` turns leave it `false` and keep the module's full window.
     pub copilot_stream: bool,
     /// The flow run the turn belongs to, so a park stamps its
     /// `PendingApproval::source_context` with the exact flow and run. `None`
@@ -296,13 +271,14 @@ pub fn try_boot_state() -> Option<ApprovalGateBootState> {
 /// same routing the original `ApprovalRequested` did, without re-deriving it
 /// from ambient task-locals that may no longer be in scope (a decision can
 /// resolve from an RPC call with no chat context of its own).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct RequestRoute {
     pub(crate) thread_id: Option<String>,
     pub(crate) client_id: Option<String>,
     pub(crate) tool_call_id: Option<String>,
     pub(crate) forced: bool,
     pub(crate) agent_id: Option<String>,
+    pub(crate) variant: Variant,
     /// Instance barrier captured at registration, independent of decision context.
     pub(crate) approval_scope: Option<Arc<super::ApprovalScope>>,
     /// The [`thread_route_key`] the request was parked under, so a decision
@@ -312,17 +288,17 @@ pub(crate) struct RequestRoute {
     /// sub-agent routed through the origin fallback (#5499). Carried so the
     /// replay path re-emits the same `detached` flag the live event had.
     pub(crate) detached: bool,
-    /// The store the request was parked in, captured under the parking task's
-    /// storage scope, so a decision made from outside that scope (an RPC with
-    /// no agent or profile of its own) reaches the row where it was written.
-    pub(super) docs: Option<super::store_documents::Docs>,
+    /// The tenant that parked the request, which scopes who may list it.
+    pub(crate) tenant: crate::core::runtime::Tenant,
+    /// What the user is shown for the request: the engine's own redacted
+    /// summary and arguments, with the host's routing correlation.
+    pub(crate) pending: PendingApproval,
 }
 
-/// Coordinator for pending approvals.
-pub struct ApprovalGate {
-    config: Config,
-    session_id: String,
-    ttl: Duration,
+/// The requests parked in this process, shared between the gate and the prompt
+/// surface the engine calls while it makes a request durable.
+#[derive(Default)]
+pub(crate) struct Parked {
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>,
     /// [`thread_route_key`] → request_id for the approval currently parked on
     /// that chat thread, so the web channel can route a yes/no reply to
@@ -331,91 +307,152 @@ pub struct ApprovalGate {
     /// restart, and the oneshot waiter is in-memory anyway).
     thread_to_request: Mutex<HashMap<String, String>>,
     /// request_id → [`RequestRoute`] for every currently-parked call. Populated
-    /// at park time (`intercept_audited_inner`), consulted when a decision
-    /// resolves (`decide`, and the TTL/channel-drop paths in
-    /// `gate_intercept.rs`) so `ApprovalDecided` can mirror the same
-    /// thread/client/tool_call_id the original `ApprovalRequested` carried.
+    /// when the engine delivers the prompt, consulted when a decision resolves
+    /// (`decide`, and the TTL/channel-drop paths in `gate_intercept.rs`) so
+    /// `ApprovalDecided` can mirror the same thread/client/tool_call_id the
+    /// original `ApprovalRequested` carried.
     request_routes: Mutex<HashMap<String, RequestRoute>>,
 }
 
-/// RAII guard that tears the parked waiter down even when the surrounding turn
-/// future is dropped mid-park.
+/// Coordinator for pending approvals.
+///
+/// The lifecycle of each approval is the engine's ([`ApprovalEngine`]); the
+/// gate owns the verified origin, the user's configured posture, the parked
+/// tool-call future, chat routing and the product events.
+pub struct ApprovalGate {
+    config: Config,
+    session_id: String,
+    /// A park window shorter than the module's own, when configured
+    /// (`security.approval.ttl_secs`). The module owns the default window.
+    ttl: Option<Duration>,
+    engine: SharedEngine,
+    parked: Arc<Parked>,
+    /// Once a required terminal audit write fails, external effects fail closed
+    /// for the rest of this process. Already completed tool results are untouched.
+    audit_failure: AtomicBool,
+}
+
+/// What the prompt surface knows about the call it shows requests for.
+struct ParkContext {
+    chat_thread_id: Option<String>,
+    chat_client_id: Option<String>,
+    tool_call_id: Option<String>,
+    forced: bool,
+    variant: Variant,
+    agent_id: Option<String>,
+    approval_scope: Option<Arc<super::ApprovalScope>>,
+    thread_key: Option<String>,
+    detached: bool,
+    tenant: crate::core::runtime::Tenant,
+    source_context: Option<ApprovalSourceContext>,
+}
+
+/// The gate's side of one gated call: where the engine shows the prompt, and
+/// the waiter the decision resumes the call through.
+struct Surface {
+    parked: Arc<Parked>,
+    context: ParkContext,
+    waiter: Mutex<Option<oneshot::Sender<ApprovalDecision>>>,
+    /// The request the engine delivered for this call, once it did.
+    delivered: Mutex<Option<String>>,
+}
+
+/// Tears the parked waiter down even when the surrounding turn future is
+/// dropped mid-park.
 ///
 /// `intercept_audited_inner` only runs its cleanup (`evict_waiter` /
-/// `store::decide(Deny)` / routing-map removal) inside the
-/// `tokio::time::timeout(...).await` match arms — i.e. only when the park
-/// resolves *normally*. Once a turn future can be torn down *externally* — the
-/// harness `max_wall_clock_ms` backstop (#4746) or the outer web backstop
-/// (#4751) firing while a tool call is parked — dropping the future skips those
-/// arms entirely, leaving the in-memory waiter, the thread routing
-/// mappings, and the `pending_approvals` row dangling until the store TTL
-/// sweeps them. A later yes/no arriving before that expiry would then route to a
-/// dead request and return without starting a fresh turn (#4774).
+/// cancelling the request / routing-map removal) in the arms of its park
+/// resolution — i.e. only when the park resolves *normally*. Once a turn
+/// future can be torn down *externally* — the harness `max_wall_clock_ms`
+/// backstop (#4746) or the outer web backstop (#4751) firing while a tool call
+/// is parked — dropping the future skips those arms entirely, leaving the
+/// in-memory waiter, the thread routing mappings, and the pending request
+/// dangling until it expires. A later yes/no arriving before that expiry would
+/// then route to a dead request and return without starting a fresh turn
+/// (#4774).
 ///
-/// The guard is created just before the park await and [`disarm`](Self::disarm)ed
-/// on every normal exit (the match arm already ran the exact teardown for its
-/// outcome), so its `Drop` fires *only* on external cancellation.
-struct WaiterGuard<'a> {
-    gate: &'a ApprovalGate,
-    request_id: String,
-    thread_key: Option<String>,
-    /// Storage scope of the parking call, kept for `Drop`: the acting agent's
-    /// task-local is gone by then.
-    docs: Result<super::store_documents::Docs, String>,
+/// The guard is created before the engine is asked (the prompt can be
+/// delivered while the check is still in flight) and
+/// [`disarm`](Self::disarm)ed on every normal exit (the match arm already ran
+/// the exact teardown for its outcome), so its `Drop` fires *only* on external
+/// cancellation.
+struct CancelGuard {
+    engine: SharedEngine,
+    parked: Arc<Parked>,
+    surface: Arc<Surface>,
     armed: bool,
 }
 
-impl WaiterGuard<'_> {
+impl CancelGuard {
     /// Mark the park as resolved normally so `Drop` becomes a no-op.
     fn disarm(&mut self) {
         self.armed = false;
     }
 }
 
-impl Drop for WaiterGuard<'_> {
+impl Drop for CancelGuard {
     fn drop(&mut self) {
         if !self.armed {
             return;
         }
+        let Some(request_id) = self.surface.delivered_request() else {
+            return;
+        };
         // External teardown: the normal cleanup was skipped. Evict the waiter,
-        // drop the routing mapping so a later chat reply is not
-        // mis-routed to this now-dead request, and deny the still-open pending
-        // row. `store::decide` is `WHERE decided_at IS NULL`, so a decision that
-        // committed in the same instant is honored rather than overwritten.
-        self.gate.evict_waiter(&self.request_id);
+        // drop the routing mapping so a later chat reply is not mis-routed to
+        // this now-dead request, and cancel the still-open request.
+        self.parked.evict_waiter(&request_id);
         // Only clear the routing entry when it still points at *this* request.
         // On external teardown a replacement turn can park a new approval on the
         // same thread and overwrite the mapping before this guard drops;
         // an unconditional `remove` would delete the *new* request's routing, so
         // the next typed yes/no would fall through as a fresh chat turn instead
         // of resolving the live gate (#4774).
-        if let Some(thread_key) = &self.thread_key {
-            self.gate
-                .clear_thread_route_if_owned(thread_key, &self.request_id);
+        if let Some(thread_key) = &self.surface.context.thread_key {
+            self.parked
+                .clear_thread_route_if_owned(thread_key, &request_id);
         }
-        let decided = store::decide_captured(&self.docs, &self.request_id, ApprovalDecision::Deny);
-        if let Ok(Some(row)) = decided {
-            let route = self.gate.take_request_route(&self.request_id);
+        if let Some(route) = self.parked.take_request_route(&request_id) {
             BUS.publish(DomainEvent::ApprovalDecided {
-                request_id: row.request_id,
-                tool_name: row.tool_name,
+                request_id: request_id.clone(),
+                tool_name: route.pending.tool_name.clone(),
                 decision: ApprovalDecision::Deny.as_str().to_string(),
-                thread_id: route.as_ref().and_then(|r| r.thread_id.clone()),
-                client_id: route.as_ref().and_then(|r| r.client_id.clone()),
-                tool_call_id: route.and_then(|r| r.tool_call_id),
+                thread_id: route.thread_id.clone(),
+                client_id: route.client_id.clone(),
+                tool_call_id: route.tool_call_id.clone(),
                 resolution: Some("cancelled".to_string()),
-                agent_id: row.agent_id,
+                agent_id: route.agent_id.clone(),
             });
         }
+        let engine = Arc::clone(&self.engine);
+        let cancelled = request_id.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    if let Err(error) = engine.cancel(&cancelled).await {
+                        tracing::debug!(
+                            request_id = %cancelled,
+                            error = %error,
+                            "[approval::gate] the engine did not cancel the dropped request"
+                        );
+                    }
+                });
+            }
+            Err(_) => tracing::debug!(
+                request_id = %request_id,
+                "[approval::gate] no runtime to cancel the dropped request; it expires on its own"
+            ),
+        }
         tracing::warn!(
-            request_id = %self.request_id,
+            request_id = %request_id,
             "[approval::gate] parked approval future dropped mid-park (external turn teardown) — \
-             evicted waiter, cleared routing, denied pending row (#4774)"
+             evicted waiter, cleared routing, cancelling the request (#4774)"
         );
     }
 }
 
 include!("gate_setup.rs");
+include!("gate_surface.rs");
 include!("gate_intercept.rs");
 include!("gate_intercept_decision.rs");
 include!("gate_state.rs");

@@ -66,8 +66,8 @@ pub const DEFAULT_LEARNING_CONFIDENCE: f32 = tinymemory_tools::ops::DEFAULT_LEAR
 
 /// `memory_engines_list`.
 #[must_use]
-pub fn engines_list(config: &Config) -> EnginesListView {
-    let active = match engine::resolve(config) {
+pub async fn engines_list(config: &Config) -> EnginesListView {
+    let active = match engine::resolve(config).await {
         Binding::On(bound) => Some(bound.id),
         Binding::Off { .. } => None,
     };
@@ -82,7 +82,7 @@ pub async fn engine_get(config: &Config) -> EngineView {
     let configured = Some(config.memory.engine.trim())
         .filter(|id| !id.is_empty())
         .map(str::to_string);
-    match engine::resolve(config) {
+    match engine::resolve(config).await {
         Binding::On(bound) => {
             let health = bound.engine.health().await;
             let (status, reason) = match health {
@@ -96,7 +96,7 @@ pub async fn engine_get(config: &Config) -> EngineView {
             EngineView {
                 engine: Some(bound.id.clone()),
                 endpoint: Some(bound.endpoint.clone()),
-                has_key: engine::has_key(config, &bound.id),
+                has_key: engine::has_key(config, &bound.id).await,
                 status,
                 reason,
                 fetch_modes: bound.engine.descriptor().fetch_modes.clone(),
@@ -109,7 +109,10 @@ pub async fn engine_get(config: &Config) -> EngineView {
         } => {
             let id = id.or(configured);
             EngineView {
-                has_key: id.as_deref().is_some_and(|id| engine::has_key(config, id)),
+                has_key: match id.as_deref() {
+                    Some(id) => engine::has_key(config, id).await,
+                    None => false,
+                },
                 engine: id,
                 endpoint,
                 status: EngineStatus::Off,
@@ -122,7 +125,7 @@ pub async fn engine_get(config: &Config) -> EngineView {
 
 /// Applies `memory_engine_set` to `config` in memory (and to the credential
 /// store for a key). The caller persists `config`.
-pub fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> Result<()> {
+pub async fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> Result<()> {
     let engine_id = params.engine.trim();
     if engine_id == DISABLED_ENGINE {
         // Turning memory off keeps every engine's endpoint and key, so
@@ -161,9 +164,9 @@ pub fn apply_engine_set(config: &mut Config, params: &EngineSetParams) -> Result
     if let Some(key) = params.api_key.as_deref() {
         match engine_id {
             CORTEXDB_ENGINE if key.trim().is_empty() => {
-                engine::clear_cortexdb_key(config)?;
+                engine::clear_cortexdb_key(config).await?;
             }
-            CORTEXDB_ENGINE => engine::store_cortexdb_key(config, key)?,
+            CORTEXDB_ENGINE => engine::store_cortexdb_key(config, key).await?,
             TINYHUMANS_ENGINE => {
                 return Err(Error::InvalidRequest(
                     ("the tinyhumans engine uses your sign-in, not an API key").into(),
@@ -192,8 +195,8 @@ fn validate_endpoint(endpoint: &str) -> Result<()> {
     Ok(())
 }
 
-fn bound(config: &Config) -> Result<BoundEngine> {
-    engine::resolve(config).engine()
+async fn bound(config: &Config) -> Result<BoundEngine> {
+    engine::resolve(config).await.engine()
 }
 
 /// The native request adapter with the authenticated SaaS profile boundary,
@@ -229,7 +232,7 @@ pub async fn recall_with(
     mode: RecallMode,
     exclude_thread: Option<ThreadWindow>,
 ) -> Result<RecallView> {
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let request = memory_ops(config)?.recall_request(RecallOptions {
         question: params.question,
         filter: params.filter,
@@ -265,7 +268,7 @@ pub async fn fetch_with(
     params: FetchParams,
     exclude_thread: Option<ThreadWindow>,
 ) -> Result<FetchView> {
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let descriptor = bound.engine.descriptor();
     match params.mode {
         Some(mode) => descriptor.ensure_mode(mode)?,
@@ -331,7 +334,7 @@ pub async fn learn_with(
 ) -> Result<LearnView> {
     let item = learning_item(params, host_meta)?;
     let item = memory_ops(config)?.store_item(item)?;
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let receipt = bound.engine.store_with(item, options).await?;
     super::lifecycle::prefetch::invalidate(config);
     Ok(LearnView { id: receipt.id.0 })
@@ -351,7 +354,7 @@ pub async fn store_item_with(
     options: WriteOptions,
 ) -> Result<StoreReceipt> {
     let ops = memory_ops(config)?;
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let item = ops.store_item(item)?;
     let receipt = bound.engine.store_with(item, options).await?;
     super::lifecycle::prefetch::invalidate(config);
@@ -365,7 +368,7 @@ pub async fn forget(config: &Config, params: ForgetParams) -> Result<ForgetView>
             ("forget needs at least one id").into(),
         ));
     }
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let report = memory_ops(config)?
         .forget(bound.engine.as_ref(), params.ids, params.reach)
         .await?;
@@ -384,7 +387,7 @@ pub async fn forget(config: &Config, params: ForgetParams) -> Result<ForgetView>
 /// Returns an error if memory is unavailable, the filter is invalid, or the
 /// engine cannot complete the deletion.
 pub async fn forget_filter(config: &Config, filter: MetaFilter) -> Result<usize> {
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let report = memory_ops(config)?
         .forget_filter(bound.engine.as_ref(), filter)
         .await?;
@@ -411,7 +414,7 @@ pub async fn forget_channel(config: &Config, channel: &str) -> Result<usize> {
         return Ok(0);
     }
     let legacy_threads = legacy_channel_threads(&config.workspace_dir, &channel);
-    let bound = match engine::resolve(config).engine() {
+    let bound = match engine::resolve(config).await.engine() {
         Ok(bound) => Some(bound),
         Err(Error::Off(_)) => None,
         Err(error) => return Err(error),
@@ -634,7 +637,7 @@ pub async fn erase_all(
             ("erasing all memory needs confirm: true; nothing erased comes back").into(),
         ));
     }
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     // Earlier durable tool writes must finish or be discarded before the
     // remote wipe; hold the owner barrier until the erase has completed.
     let _writes = super::tool_writes::fence_and_clear(ctx, config).await?;
@@ -658,7 +661,7 @@ pub async fn erase_all(
 
 /// `memory_items_list`.
 pub async fn items_list(config: &Config, params: ItemsListParams) -> Result<ItemsListView> {
-    let bound = bound(config)?;
+    let bound = bound(config).await?;
     let preview = params.preview;
     let filter = super::explore::narrowed(params.filter, &params.path)?;
     let request = memory_ops(config)?.list_request(ListOptions {

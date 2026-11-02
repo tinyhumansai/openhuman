@@ -18,7 +18,7 @@ fn config(tmp: &TempDir) -> Config {
 async fn memory_bearer_reads_the_host_credential_for_each_request() {
     let tmp = TempDir::new().expect("temporary credential workspace");
     let config = config(&tmp);
-    crate::hosted::test_support::store_session(&config, "jwt.first");
+    crate::hosted::test_support::store_session(&config, "jwt.first").await;
     let transport = SdkBackendTransport::new().expect("SDK transport");
     let source = transport
         .memory_bearer_source(Arc::new(config.clone()))
@@ -26,7 +26,7 @@ async fn memory_bearer_reads_the_host_credential_for_each_request() {
 
     assert_eq!(source.bearer().await.unwrap(), "jwt.first");
 
-    crate::hosted::test_support::store_session(&config, "jwt.refreshed");
+    crate::hosted::test_support::store_session(&config, "jwt.refreshed").await;
     assert_eq!(source.bearer().await.unwrap(), "jwt.refreshed");
 }
 
@@ -34,7 +34,7 @@ async fn memory_bearer_reads_the_host_credential_for_each_request() {
 async fn memory_bearer_rejects_the_host_local_session() {
     let tmp = TempDir::new().expect("temporary credential workspace");
     let config = config(&tmp);
-    crate::hosted::test_support::store_session(&config, "desktop.test.local");
+    crate::hosted::test_support::store_session(&config, "desktop.test.local").await;
     let transport = SdkBackendTransport::new().expect("SDK transport");
     let source = transport
         .memory_bearer_source(Arc::new(config))

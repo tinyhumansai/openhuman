@@ -5094,6 +5094,53 @@ const messages: TranslationMap = {
   'settings.appearance.showChatMascot': "Tiny'yi mesaj kutusunda göster",
   'onboarding.custom.localDefaultDisabledReason':
     'Yönetilen kurulum için bir OpenHuman hesabı gerekir. Yerel oturumda her hizmeti kendiniz yapılandırırsınız.',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': 'İlke tanılaması bu çekirdekte yer almıyor.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Etkin güvenlik ilkesi',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Özerklik',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Yalnızca çalışma alanında',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Saat başına en fazla eylem',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': 'Orta risk için onay iste',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Yüksek riskli komutları engelle',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'İzin verilen komutlar',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': 'Açıkça izin verilen komut yok.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'İlke',
+  'settings.approvalHistory.judgeScores':
+    'Amaç {intent} · Geri alınabilirlik {reversible} · Veri sızdırma {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'önbellekte',
+  'settings.approvalHistory.judgeExpires': 'Son kullanma {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Her zaman izin verilen araçlar',
+  'keyring.settings.toolTrustDescription':
+    'Bu araçlar, bu güvenlik kapsamında onay istemeden çalışabilir.',
+  'keyring.settings.toolTrustLoading': 'İzin verilen araçlar yükleniyor…',
+  'keyring.settings.toolTrustLoadFailed': 'İzin verilen araçlar yüklenemedi.',
+  'keyring.settings.toolTrustRevokeFailed': 'Bu araç izni geri alınamadı.',
+  'keyring.settings.toolTrustEmpty': 'Her zaman izin verilen araç yok.',
+  'keyring.settings.toolTrustRetry': 'Yeniden dene',
+  'keyring.settings.toolTrustRevoke': 'Geri al',
+  'keyring.settings.toolTrustRevoking': 'Geri alınıyor…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Anahtarlık erişim isteği',
+  'keyring.operation.description':
+    'TinySecurity bir anahtarlık öğesine erişim istiyor. Karar vermeden önce işlemi inceleyin.',
+  'keyring.operation.access': 'Erişim',
+  'keyring.operation.requester': 'İsteyen',
+  'keyring.operation.origin': 'Kaynak',
+  'keyring.operation.purpose': 'Amaç',
+  'keyring.operation.name': 'Anahtarlık öğesi',
+  'keyring.operation.access.read': 'Oku',
+  'keyring.operation.access.write': 'Yaz',
+  'keyring.operation.access.delete': 'Sil',
+  'keyring.operation.allow': 'Bir kez izin ver',
+  'keyring.operation.deny': 'Reddet',
+  'keyring.operation.submitting': 'Gönderiliyor…',
+  'keyring.operation.expires': 'İstek {seconds} sn içinde sona erecek.',
+  'keyring.operation.error': 'Kararınız gönderilemedi. İsteğin süresi dolmuş olabilir.',
 };
 
 export default messages;

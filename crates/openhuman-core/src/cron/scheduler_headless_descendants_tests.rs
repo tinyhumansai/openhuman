@@ -287,12 +287,16 @@ async fn scheduled_agent_history_includes_its_spawned_child_result() {
             eprintln!(
                 "scheduled child start timeout diagnostics: spawn calls {}, followups {}, run result {result:?}",
                 model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
-                model.accepted_followups.load(std::sync::atomic::Ordering::SeqCst),
+                model
+                    .accepted_followups
+                    .load(std::sync::atomic::Ordering::SeqCst),
             );
             panic!(
-            "scheduled child never reached its model (spawn calls: {}, followups: {}); run result: {result:?}",
-            model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
-            model.accepted_followups.load(std::sync::atomic::Ordering::SeqCst),
+                "scheduled child never reached its model (spawn calls: {}, followups: {}); run result: {result:?}",
+                model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
+                model
+                    .accepted_followups
+                    .load(std::sync::atomic::Ordering::SeqCst),
             );
         }
     }
@@ -378,7 +382,9 @@ async fn scheduled_agent_timeout_cancels_its_blocked_child_before_history_settle
             panic!(
                 "scheduled child never reached its blocking model (spawns: {}, accepted followups: {})",
                 model.spawn_calls.load(std::sync::atomic::Ordering::SeqCst),
-                model.accepted_followups.load(std::sync::atomic::Ordering::SeqCst),
+                model
+                    .accepted_followups
+                    .load(std::sync::atomic::Ordering::SeqCst),
             );
         }
     }

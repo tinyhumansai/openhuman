@@ -12,8 +12,8 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
     c
 }
 
-#[test]
-fn list_tools_tag_filter_policy_matches_supported_toolkits() {
+#[tokio::test]
+async fn list_tools_tag_filter_policy_matches_supported_toolkits() {
     let cases: Vec<(Option<Vec<String>>, bool)> = vec![
         (None, true),
         (Some(vec![]), true),
@@ -102,19 +102,20 @@ async fn start_mock_backend(app: Router) -> String {
     format!("http://127.0.0.1:{}", addr.port())
 }
 
-fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
+async fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
     let mut c = Config::default();
     c.workspace_dir = tmp.path().join("workspace");
     c.config_path = tmp.path().join("config.toml");
     c.api_url = Some(base);
-    crate::security::credentials::AuthService::from_config(&c)
+    crate::credentials::AuthService::from_config(&c)
         .store_provider_token(
-            crate::security::credentials::APP_SESSION_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "test-token",
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store test session token");
     c
 }
@@ -207,19 +208,20 @@ fn conn(id: &str, toolkit: &str, status: &str) -> super::super::types::ComposioC
 
 /// Set up a config with `composio.mode = "direct"` and a stored
 /// direct-mode API key (so `resolve_composio_route` succeeds).
-fn direct_mode_config(tmp: &tempfile::TempDir) -> Config {
+async fn direct_mode_config(tmp: &tempfile::TempDir) -> Config {
     let mut c = Config::default();
     c.workspace_dir = tmp.path().join("workspace");
     c.config_path = tmp.path().join("config.toml");
     c.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.into();
-    crate::security::credentials::AuthService::from_config(&c)
+    crate::credentials::AuthService::from_config(&c)
         .store_provider_token(
-            crate::security::credentials::ops::COMPOSIO_DIRECT_PROVIDER,
-            crate::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            crate::integrations::composio::COMPOSIO_DIRECT_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
             "ck_test_direct_key",
             std::collections::HashMap::new(),
             true,
         )
+        .await
         .expect("store test direct-mode api key");
     c
 }

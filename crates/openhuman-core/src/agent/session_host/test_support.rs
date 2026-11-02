@@ -103,9 +103,10 @@ pub(crate) fn install_model_fixture() {
 }
 
 /// Configure a managed-provider session fixture with its required test credential.
-pub(crate) fn install_managed_model_fixture(config: &crate::config::Config) {
+pub(crate) async fn install_managed_model_fixture(config: &crate::config::Config) {
     install_model_fixture();
-    crate::security::credentials::api_key::store_api_key(config, "test-session-fixture-key")
+    crate::credentials::api_key::store_api_key(config, "test-session-fixture-key")
+        .await
         .expect("store the managed inference fixture credential");
 }
 

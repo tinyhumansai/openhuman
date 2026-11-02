@@ -47,7 +47,7 @@ impl ChannelHealthProbe for ExistingModuleProbe {
         }
 
         #[cfg(all(feature = "modules", feature = "channels"))]
-        let channels = health_config(config, provider);
+        let channels = health_config(config, provider).await;
         #[cfg(all(feature = "modules", feature = "channels"))]
         return crate::modules::channel_health::check_existing(
             config,
@@ -217,14 +217,15 @@ fn proxy_policy(config: &Config, provider: &str) -> HttpProxyPolicy {
     }
 }
 
-fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
+async fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
     let mut channels = config.channels_config.clone();
     #[cfg(feature = "channels")]
     {
         if provider == "email" {
             if let Some(email) = channels.email.take() {
                 channels.email = Some(
-                    crate::channels::credentials::resolve_email_password_read_only(email, config),
+                    crate::channels::credentials::resolve_email_password_read_only(email, config)
+                        .await,
                 );
             }
         }
@@ -233,7 +234,8 @@ fn health_config(config: &Config, provider: &str) -> ChannelsConfig {
                 channels.yuanbao = Some(
                     crate::channels::credentials::resolve_yuanbao_app_secret_read_only(
                         yuanbao, config,
-                    ),
+                    )
+                    .await,
                 );
             }
         }

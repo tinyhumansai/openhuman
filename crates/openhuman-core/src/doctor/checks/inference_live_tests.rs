@@ -331,12 +331,16 @@ async fn managed_chat_probe_uses_the_inspection_only_factory_callback() {
     let model_calls = Arc::clone(&calls);
     let factory: InspectionChatModelFactory = Arc::new(
         move |request: &ChatModelRequest<'_, crate::inference::registry::ProviderContext>| {
-            assert_eq!(request.role, "chat");
-            Ok(crate::inference::registry::InspectionChatModelBuild {
-                model: Arc::new(CountingModel(Arc::clone(&model_calls))) as Arc<dyn ChatModel<()>>,
-                model_id: "managed-test-model".into(),
-                endpoint: "https://managed.test/openai/v1".into(),
-                credential: "frozen-managed-test-token".into(),
+            let model_calls = Arc::clone(&model_calls);
+            Box::pin(async move {
+                assert_eq!(request.role, "chat");
+                Ok(crate::inference::registry::InspectionChatModelBuild {
+                    model: Arc::new(CountingModel(Arc::clone(&model_calls)))
+                        as Arc<dyn ChatModel<()>>,
+                    model_id: "managed-test-model".into(),
+                    endpoint: "https://managed.test/openai/v1".into(),
+                    credential: "frozen-managed-test-token".into(),
+                })
             })
         },
     );

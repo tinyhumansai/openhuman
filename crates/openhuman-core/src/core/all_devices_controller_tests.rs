@@ -7,6 +7,7 @@ fn raw_devices_security_registry_matches_its_independent_contract() {
         group: DomainGroup::Security,
         methods: &[
             ("devices.create_pairing", "openhuman.devices_create_pairing"),
+            ("devices.import_legacy", "openhuman.devices_import_legacy"),
             ("devices.list", "openhuman.devices_list"),
             ("devices.revoke", "openhuman.devices_revoke"),
         ],
@@ -46,21 +47,21 @@ fn raw_devices_security_registry_matches_its_independent_contract() {
     );
     assert_eq!(
         crate::core::all::verify_wire_fields(
-            &entries[1].controller.schema.outputs,
+            &entries[2].controller.schema.outputs,
             &[("devices", Array(Box::new(Ref("PairedDevice"))), true)]
         ),
         Ok(())
     );
     assert_eq!(
         crate::core::all::verify_wire_fields(
-            &entries[2].controller.schema.inputs,
+            &entries[3].controller.schema.inputs,
             &[("channel_id", String, true)]
         ),
         Ok(())
     );
     assert_eq!(
         crate::core::all::verify_wire_fields(
-            &entries[2].controller.schema.outputs,
+            &entries[3].controller.schema.outputs,
             &[("success", Bool, true)]
         ),
         Ok(())
@@ -84,13 +85,13 @@ fn raw_devices_decoders_ignore_extra_fields_and_list_parameters() {
             ("unknown_nested".into(), json!({"ignored": [1, null]})),
         ]))
         .expect("create_pairing ignores undeclared fields");
-    entries[1]
+    entries[2]
         .decode_params(Map::from_iter([
             ("anything".into(), json!({"ignored": true})),
             ("label".into(), json!(false)),
         ]))
         .expect("list ignores its entire parameter map");
-    entries[2]
+    entries[3]
         .decode_params(Map::from_iter([
             ("channel_id".into(), json!("  raw channel id  ")),
             ("extra".into(), json!(false)),

@@ -109,7 +109,7 @@ pub async fn snapshot(config: &Config) -> QueueState {
 /// Runs the selected jobs on the configured engine. Returns the runs it
 /// recorded; see `tinymemory_tools::queue::JobQueue::run` for the retry rules.
 pub async fn run(config: &Config, selection: Selection) -> Result<Vec<JobRun>> {
-    let bound = engine::resolve(config).engine()?;
+    let bound = engine::resolve(config).await.engine()?;
     queue_of(&config.workspace_dir)
         .run(
             bound.engine,

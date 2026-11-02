@@ -26,7 +26,7 @@ fn explicit_definition(id: &str) -> crate::agent_registry::host_definition::Agen
 #[tokio::test]
 async fn from_config_with_definition_stamps_the_definition_on_the_session() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let def = explicit_definition("embedded-alpha");
 
     let agent = OpenHumanSessionHost::from_config_with_definition(
@@ -34,6 +34,7 @@ async fn from_config_with_definition_stamps_the_definition_on_the_session() {
         &config,
         &def,
     )
+    .await
     .expect("build from an explicit definition");
 
     assert_eq!(agent.agent_definition_id, "embedded-alpha");
@@ -54,7 +55,7 @@ async fn resolved_definition_prefers_the_sessions_own_over_a_same_id_registry_en
     // (`sandbox_mode`), never the registry's copy.
     let _ = AgentDefinitionRegistry::init_global_builtins();
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
     let def = explicit_definition("orchestrator");
     assert_ne!(
         AgentDefinitionRegistry::global()
@@ -69,6 +70,7 @@ async fn resolved_definition_prefers_the_sessions_own_over_a_same_id_registry_en
         &config,
         &def,
     )
+    .await
     .expect("build from an explicit definition");
 
     assert_eq!(
@@ -83,10 +85,11 @@ async fn registry_built_sessions_resolve_the_registry_definition() {
     // id carries the registry's definition and reads it back.
     let _ = AgentDefinitionRegistry::init_global_builtins();
     let tmp = tempfile::TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let config = test_config(&tmp).await;
 
     let agent =
         OpenHumanSessionHost::from_config(&crate::core::runtime::DispatchCtx::ambient(), &config)
+            .await
             .expect("orchestrator session");
     let resolved = agent.resolved_definition().expect("registry definition");
     assert_eq!(resolved.id, "orchestrator");

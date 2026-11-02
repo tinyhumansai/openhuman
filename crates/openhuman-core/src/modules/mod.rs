@@ -50,6 +50,8 @@ pub mod accessibility;
 pub mod boot;
 #[cfg(feature = "modules")]
 pub mod browser;
+#[cfg(all(feature = "modules", feature = "security-module"))]
+mod browser_egress_host;
 #[cfg(feature = "modules")]
 pub mod browser_task;
 #[cfg(feature = "modules")]
@@ -90,6 +92,8 @@ pub mod schemas;
 pub mod search;
 #[cfg(feature = "modules")]
 mod search_path;
+#[cfg(feature = "security-module")]
+pub mod security;
 #[cfg(feature = "modules")]
 pub(crate) mod site_memory_host;
 mod source;

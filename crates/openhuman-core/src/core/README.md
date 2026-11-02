@@ -211,7 +211,7 @@ default (30 minutes at most). The store caps at 4096 live tokens.
 
 This is the RPC transport bearer only. User credentials (session JWT, API
 key, offline local token) arrive through `auth.set_credential` in
-`security::credentials`, not here.
+`credentials`, not here.
 
 ### CLI
 
@@ -396,7 +396,7 @@ surface.
   [`crates/openhuman-tinyhumans`](../../../openhuman-tinyhumans/) as an extension, not built into the core.
 - Login, token exchange and `/auth/me` belong to the host's session owner
   (`openhuman_tinyhumans::session`, `openhuman_embed::Auth`). Credential
-  storage and `auth.set_credential` are in `security::credentials`.
+  storage and `auth.set_credential` are in `credentials`.
 - The CLI binary itself and its developer bins are in `crates/openhuman-cli`;
   this folder only provides the argument handling it calls.
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
+use crate::core::runtime::turn_origin::AgentTurnOrigin;
 use crate::core::runtime::{ComponentSet, CoreContext, DomainSet};
-use crate::security::turn_origin::AgentTurnOrigin;
 use tinyagents_harness::{context::RunConfig, ids::CallId, tool::ToolExecutionContext};
 
 fn tool() -> CronTool {

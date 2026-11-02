@@ -451,8 +451,13 @@ impl AgentSpec {
         mut self,
         f: impl for<'a> Fn(
                 openhuman_core::agent::TurnContext<'a>,
-            ) -> openhuman_core::agent::HostTurnTools
-            + Send
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = openhuman_core::agent::HostTurnTools>
+                        + Send
+                        + 'a,
+                >,
+            > + Send
             + Sync
             + 'static,
     ) -> Self {

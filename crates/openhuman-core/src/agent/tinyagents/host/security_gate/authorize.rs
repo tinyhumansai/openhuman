@@ -136,8 +136,8 @@ impl OpenHumanSecurityGate {
         let is_cron_turn = matches!(
             self.turn_origin(),
             Some(
-                crate::security::turn_origin::AgentTurnOrigin::TrustedAutomation {
-                    source: crate::security::turn_origin::TrustedAutomationSource::Cron,
+                crate::core::runtime::turn_origin::AgentTurnOrigin::TrustedAutomation {
+                    source: crate::core::runtime::turn_origin::TrustedAutomationSource::Cron,
                     ..
                 }
             )
@@ -164,113 +164,101 @@ impl OpenHumanSecurityGate {
         //    which OpenHuman's own `ShellTool` permits. So shell answers here
         //    and returns.
         if call.tool_name == SHELL_TOOL {
-            #[cfg(feature = "modules")]
-            {
-                let Some((effective_arguments, analysis)) =
-                    shell_analysis_for_call(call, authorization_context)
-                else {
-                    return Ok(GateDecision::deny(format!(
-                        "{} Shell authorization facts are unavailable or do not match this call.",
-                        tinytools::status::POLICY_BLOCKED_MARKER
-                    )));
-                };
-                match Self::shell_decision(&policy, &effective_arguments, &analysis) {
-                    Err(raw_reason) => {
-                        tracing::warn!(
-                            target: "tinyagents",
-                            tool = %call.tool_name,
-                            "[tinyagents::host::security] shell command blocked by security policy"
-                        );
-                        return Ok(GateDecision::deny(
-                            PolicyDenial::SecurityPolicyBlocked {
-                                tool: &call.tool_name,
-                                raw_reason: &raw_reason,
-                            }
-                            .render(),
-                        ));
-                    }
-                    Ok(PolicyGateDecision::Block) => {
-                        // `check_gated_command_analysis` already rejects the read-only Block
-                        // case; this arm catches a Block produced by the model's
-                        // escalate-only `category` hint.
-                        let raw = format!(
-                            "{} Security policy: this command's category is not permitted in the \
-                         current access tier.",
-                            tinytools::status::POLICY_BLOCKED_MARKER
-                        );
-                        return Ok(GateDecision::deny(
-                            PolicyDenial::SecurityPolicyBlocked {
-                                tool: &call.tool_name,
-                                raw_reason: &raw,
-                            }
-                            .render(),
-                        ));
-                    }
-                    Ok(PolicyGateDecision::Prompt) => {
-                        return Ok(self.park_once(call, channel_approved).await);
-                    }
-                    Ok(PolicyGateDecision::Allow) => {
-                        return Ok(self.settled(channel_approved));
-                    }
-                }
-            }
-            #[cfg(not(feature = "modules"))]
-            {
-                let _ = authorization_context;
+            let _ = authorization_context;
+            let Some(command) = call
+                .arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+            else {
                 return Ok(GateDecision::deny(format!(
-                    "{} Shell command analysis is unavailable in this build.",
+                    "{} Shell command is missing or invalid.",
                     tinytools::status::POLICY_BLOCKED_MARKER
                 )));
-            }
+            };
+            let verdict = match policy
+                .check_command(crate::security::policy::CommandQuery {
+                    command,
+                    declared: None,
+                    flow: crate::security::policy::CommandFlow::Harness,
+                    stage: crate::security::policy::CommandStage::Authorize,
+                })
+                .await
+            {
+                Ok(verdict) => verdict,
+                Err(reason) => return Ok(GateDecision::deny(reason.to_string())),
+            };
+            return Ok(match verdict.gate {
+                PolicyGateDecision::Block => GateDecision::deny(
+                    "[policy-blocked] Command category is not permitted by TinySecurity.",
+                ),
+                PolicyGateDecision::Prompt => self.park_once(call, channel_approved).await,
+                PolicyGateDecision::Allow => self.settled(channel_approved),
+            });
         }
 
         let required = tool.permission_level_with_args(&call.arguments);
-        let acts = required > PermissionLevel::ReadOnly;
-
-        // 4. Autonomy tier + budget. Read-only mode refuses every acting tool
-        //    outright; no in-tier prompt can authorize it.
-        if acts && !policy.can_act() {
-            tracing::warn!(
-                target: "tinyagents",
-                tool = %call.tool_name,
-                %required,
-                "[tinyagents::host::security] denied: read-only autonomy tier"
-            );
-            let raw = format!(
-                "{} Security policy: read-only mode, cannot perform '{}'.",
-                tinytools::status::POLICY_BLOCKED_MARKER,
-                call.tool_name
-            );
-            return Ok(GateDecision::deny(
-                PolicyDenial::SecurityPolicyBlocked {
-                    tool: &call.tool_name,
-                    raw_reason: &raw,
+        let external_effect = tool.external_effect_with_args(&call.arguments);
+        let class = match crate::security::policy::host_action_class(required, external_effect)
+            .await
+        {
+            Ok(class) => match class {
+                tinysecurity_bus::CommandClass::Read => crate::security::policy::CommandClass::Read,
+                tinysecurity_bus::CommandClass::Write => {
+                    crate::security::policy::CommandClass::Write
                 }
-                .render(),
-            ));
-        }
-        // `is_rate_limited` is the read-only twin of `record_action`; the tools
-        // still do the recording themselves (mismatch (1)).
-        if acts && policy.is_rate_limited() {
-            tracing::warn!(
-                target: "tinyagents",
-                tool = %call.tool_name,
-                max_per_hour = policy.max_actions_per_hour,
-                "[tinyagents::host::security] denied: hourly action budget exhausted"
-            );
+                tinysecurity_bus::CommandClass::Network => {
+                    crate::security::policy::CommandClass::Network
+                }
+                tinysecurity_bus::CommandClass::Install => {
+                    crate::security::policy::CommandClass::Install
+                }
+                tinysecurity_bus::CommandClass::Destructive => {
+                    crate::security::policy::CommandClass::Destructive
+                }
+            },
+            Err(error) => {
+                tracing::warn!(target: "tinyagents", tool = %call.tool_name, "TinySecurity action classification unavailable: {error}");
+                return Ok(GateDecision::deny(
+                    "[policy-blocked] TinySecurity action classification unavailable.",
+                ));
+            }
+        };
+        let tier_gate = match policy.command_class_gate(class).await {
+            Ok(gate) => gate,
+            Err(reason) => return Ok(GateDecision::deny(reason.to_string())),
+        };
+        if tier_gate == PolicyGateDecision::Block {
             return Ok(GateDecision::deny(format!(
-                "Rate limit exceeded: action budget exhausted ({} actions/hour). Wait for the \
-                 rolling one-hour window to refill, or raise the limit in Settings -> Advanced \
-                 -> Agent autonomy.",
-                policy.max_actions_per_hour
+                "{} Security policy blocks this action.",
+                tinytools::status::POLICY_BLOCKED_MARKER
             )));
         }
-
-        // 5. Everything else: the tool's own external-effect classification
-        //    decides whether a human is asked.
-        if tool.external_effect_with_args(&call.arguments) && !desktop_approval_disabled {
-            return Ok(self.park_once(call, channel_approved).await);
+        let mut approved = channel_approved;
+        if tier_gate == PolicyGateDecision::Prompt && !desktop_approval_disabled {
+            let decision = self.park_once(call, channel_approved).await;
+            if !decision.is_allowed() {
+                return Ok(decision);
+            }
+            approved = true;
         }
+
+        // Sync-only TinyTools filesystem and network gates read this cached
+        // module answer. Their `record_action` call does not keep a host ledger.
+        let budget: Result<(), String> = if class == crate::security::policy::CommandClass::Read {
+            match policy.peek_action_budget().await {
+                Ok(tinysecurity_bus::BudgetDecision2::RateLimited { .. }) => {
+                    Err("Rate limit exceeded: action budget exhausted".to_owned())
+                }
+                Ok(_) => Ok(()),
+                Err(error) => Err(error),
+            }
+        } else {
+            policy.spend_action(&call.tool_name).await
+        };
+        if let Err(reason) = budget {
+            return Ok(GateDecision::deny(reason));
+        }
+        channel_approved = approved;
 
         tracing::debug!(
             target: "tinyagents",

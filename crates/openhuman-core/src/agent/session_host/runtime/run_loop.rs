@@ -30,7 +30,7 @@ impl OpenHumanSessionHost {
     pub async fn run_single_with_origin(
         &mut self,
         message: &str,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Result<String> {
         self.run_single_with_approval(message, origin, Default::default())
             .await
@@ -42,7 +42,7 @@ impl OpenHumanSessionHost {
     pub async fn run_single_with_approval(
         &mut self,
         message: &str,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         self.run_single_with_input(message, None, origin, approval)
@@ -80,7 +80,8 @@ impl OpenHumanSessionHost {
                 user_id: Some(self.event_channel()),
                 session_id: Some(self.event_session_id()),
             },
-        );
+        )
+        .await;
         // A host-only session reading untrusted data has opted out; see
         // `set_untrusted_input`, which refuses any other session.
         if !self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow) {

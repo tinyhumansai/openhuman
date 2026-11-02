@@ -215,10 +215,10 @@ pub fn searxng_tool_spec() -> McpToolSpec {
 
 /// Every tool this config can serve: the base set plus the search tools with
 /// a usable provider.
-pub fn tool_specs_for_loaded_config(config: &crate::config::Config) -> Vec<McpToolSpec> {
+pub async fn tool_specs_for_loaded_config(config: &crate::config::Config) -> Vec<McpToolSpec> {
     tool_specs_for_config(
         config,
-        crate::search::providers::backend_credential_available(config),
+        crate::search::providers::backend_credential_available(config).await,
     )
 }
 

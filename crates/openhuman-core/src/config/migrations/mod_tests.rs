@@ -108,6 +108,9 @@ async fn run_pending_skips_when_version_current() {
     assert_eq!(before, after, "transcript must be untouched");
 }
 
+#[path = "remove_autonomy_cost_cap_tests.rs"]
+mod remove_autonomy_cost_cap_tests;
+
 #[tokio::test]
 async fn run_pending_runs_phase_out_when_version_zero() {
     let tmp = TempDir::new().unwrap();

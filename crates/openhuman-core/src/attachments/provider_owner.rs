@@ -294,7 +294,9 @@ impl MediaFallbackCache<AttachmentAccessScope> for AttachmentModel {
         _modality: InputModality,
         attachment: &ResolvedAttachment,
     ) -> Option<String> {
-        let key = self.fallback_key(&attachment.name, &attachment.mime, &attachment.bytes);
+        let key = self
+            .fallback_key(&attachment.name, &attachment.mime, &attachment.bytes)
+            .await;
         if let Some(text) = self.fallback_cache.lock().ok()?.get(&key).cloned() {
             return Some(text);
         }
@@ -312,7 +314,9 @@ impl MediaFallbackCache<AttachmentAccessScope> for AttachmentModel {
         attachment: &ResolvedAttachment,
         text: &str,
     ) {
-        let key = self.fallback_key(&attachment.name, &attachment.mime, &attachment.bytes);
+        let key = self
+            .fallback_key(&attachment.name, &attachment.mime, &attachment.bytes)
+            .await;
         if let Ok(mut cache) = self.fallback_cache.lock() {
             cache.insert(key.clone(), text.to_owned());
         }

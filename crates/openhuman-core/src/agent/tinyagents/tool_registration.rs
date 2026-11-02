@@ -145,7 +145,7 @@ pub(crate) fn is_thread_goal_tool(name: &str) -> bool {
 /// `CoreContext` is re-scoped with it so a tool that asks "who is acting"
 /// answers for this turn and not for whichever turn last set a global.
 ///
-/// [`AgentTurnOrigin`]: crate::security::turn_origin::AgentTurnOrigin
+/// [`AgentTurnOrigin`]: crate::core::runtime::turn_origin::AgentTurnOrigin
 pub(crate) struct TurnOriginScope;
 
 impl ToolExecScope for TurnOriginScope {

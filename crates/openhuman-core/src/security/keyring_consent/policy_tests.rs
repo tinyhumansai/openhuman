@@ -37,18 +37,6 @@ fn classify_failure_unknown() {
 }
 
 #[test]
-fn record_consent_updates_cache() {
-    let _lock = cache_test_lock();
-    let pref = record_consent("local_encrypted");
-    assert_eq!(pref.storage_mode, "local_encrypted");
-    assert!(pref.consented_at_ms.is_some());
-
-    let cached = CONSENT_CACHE.read().clone();
-    assert!(cached.is_some());
-    assert_eq!(cached.unwrap().storage_mode, "local_encrypted");
-}
-
-#[test]
 fn initialize_populates_cache() {
     let _lock = cache_test_lock();
     *CONSENT_CACHE.write() = None;

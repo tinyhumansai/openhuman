@@ -4811,6 +4811,52 @@ const messages: TranslationMap = {
 
   'settings.layout.corners.round': '圆角',
   'settings.layout.contrast.subtle': '微妙',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt': '此核心未构建策略诊断功能。',
+  'devOptions.toolPolicyDiagnostics.policy.title': '当前安全策略',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': '自主级别',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': '仅限工作区',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': '每小时最多操作数',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk': '中风险操作需要审批',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': '阻止高风险命令',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': '允许的命令',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands': '没有明确允许的命令。',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': '策略',
+  'settings.approvalHistory.judgeScores':
+    '意图 {intent} · 可逆性 {reversible} · 数据外泄 {exfiltrate}',
+  'settings.approvalHistory.judgeCached': '已缓存',
+  'settings.approvalHistory.judgeExpires': '到期时间：{time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': '始终允许的工具',
+  'keyring.settings.toolTrustDescription': '在此安全范围内，这些工具可以无需审批提示直接运行。',
+  'keyring.settings.toolTrustLoading': '正在加载允许的工具…',
+  'keyring.settings.toolTrustLoadFailed': '无法加载允许的工具。',
+  'keyring.settings.toolTrustRevokeFailed': '无法撤销此工具授权。',
+  'keyring.settings.toolTrustEmpty': '没有始终允许的工具。',
+  'keyring.settings.toolTrustRetry': '重试',
+  'keyring.settings.toolTrustRevoke': '撤销',
+  'keyring.settings.toolTrustRevoking': '正在撤销…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': '密钥环访问请求',
+  'keyring.operation.description':
+    'TinySecurity 请求访问一项密钥环内容。请先查看操作详情，再作出决定。',
+  'keyring.operation.access': '访问权限',
+  'keyring.operation.requester': '请求方',
+  'keyring.operation.origin': '来源',
+  'keyring.operation.purpose': '用途',
+  'keyring.operation.name': '密钥环项目',
+  'keyring.operation.access.read': '读取',
+  'keyring.operation.access.write': '写入',
+  'keyring.operation.access.delete': '删除',
+  'keyring.operation.allow': '仅允许这一次',
+  'keyring.operation.deny': '拒绝',
+  'keyring.operation.submitting': '正在发送…',
+  'keyring.operation.expires': '请求将在 {seconds} 秒后过期。',
+  'keyring.operation.error': '无法发送你的决定。请求可能已过期。',
 };
 
 export default messages;

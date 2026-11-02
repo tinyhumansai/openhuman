@@ -5242,6 +5242,57 @@ const messages: TranslationMap = {
 
   'settings.layout.corners.round': 'Abgerundet',
   'settings.layout.contrast.subtle': 'Dezent',
+  // Security policy diagnostics
+  'devOptions.toolPolicyDiagnostics.notBuilt':
+    'Richtliniendiagnosen sind in diesem Core nicht enthalten.',
+  'devOptions.toolPolicyDiagnostics.policy.title': 'Aktive Sicherheitsrichtlinie',
+  'devOptions.toolPolicyDiagnostics.policy.autonomy': 'Autonomie',
+  'devOptions.toolPolicyDiagnostics.policy.workspaceOnly': 'Nur im Arbeitsbereich',
+  'devOptions.toolPolicyDiagnostics.policy.maxActionsPerHour': 'Maximale Aktionen pro Stunde',
+  'devOptions.toolPolicyDiagnostics.policy.approvalMediumRisk':
+    'Genehmigung bei mittlerem Risiko erforderlich',
+  'devOptions.toolPolicyDiagnostics.policy.blockHighRisk': 'Befehle mit hohem Risiko blockieren',
+  'devOptions.toolPolicyDiagnostics.policy.allowedCommands': 'Erlaubte Befehle',
+  'devOptions.toolPolicyDiagnostics.policy.noAllowedCommands':
+    'Es sind keine Befehle ausdrücklich erlaubt.',
+
+  // Automatic approval attribution
+  'settings.approvalHistory.autoJev': 'Jev',
+  'settings.approvalHistory.autoPolicy': 'Richtlinie',
+  'settings.approvalHistory.judgeScores':
+    'Absicht {intent} · Umkehrbar {reversible} · Datenabfluss {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'im Cache',
+  'settings.approvalHistory.judgeExpires': 'Läuft ab: {time}',
+  // Whole-tool approval grants
+  'keyring.settings.toolTrustTitle': 'Immer erlaubte Tools',
+  'keyring.settings.toolTrustDescription':
+    'Diese Tools können in diesem Sicherheitsbereich ohne Genehmigungsabfrage ausgeführt werden.',
+  'keyring.settings.toolTrustLoading': 'Erlaubte Tools werden geladen…',
+  'keyring.settings.toolTrustLoadFailed': 'Erlaubte Tools konnten nicht geladen werden.',
+  'keyring.settings.toolTrustRevokeFailed': 'Die Tool-Freigabe konnte nicht widerrufen werden.',
+  'keyring.settings.toolTrustEmpty': 'Es sind keine Tools immer erlaubt.',
+  'keyring.settings.toolTrustRetry': 'Erneut versuchen',
+  'keyring.settings.toolTrustRevoke': 'Widerrufen',
+  'keyring.settings.toolTrustRevoking': 'Wird widerrufen…',
+
+  // Per-operation TinySecurity keyring approval.
+  'keyring.operation.title': 'Anfrage für Schlüsselbundzugriff',
+  'keyring.operation.description':
+    'TinySecurity möchte auf einen Schlüsselbund-Eintrag zugreifen. Prüfe den Vorgang, bevor du entscheidest.',
+  'keyring.operation.access': 'Zugriff',
+  'keyring.operation.requester': 'Angefordert von',
+  'keyring.operation.origin': 'Ursprung',
+  'keyring.operation.purpose': 'Zweck',
+  'keyring.operation.name': 'Schlüsselbund-Eintrag',
+  'keyring.operation.access.read': 'Lesen',
+  'keyring.operation.access.write': 'Schreiben',
+  'keyring.operation.access.delete': 'Löschen',
+  'keyring.operation.allow': 'Einmal erlauben',
+  'keyring.operation.deny': 'Ablehnen',
+  'keyring.operation.submitting': 'Wird gesendet…',
+  'keyring.operation.expires': 'Die Anfrage läuft in {seconds}s ab.',
+  'keyring.operation.error':
+    'Deine Entscheidung konnte nicht gesendet werden. Die Anfrage ist möglicherweise abgelaufen.',
 };
 
 export default messages;

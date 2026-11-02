@@ -58,13 +58,15 @@ impl CoreContext {
     }
 
     /// The turn origin bound to this context, if its entry point supplied one.
-    pub(crate) fn turn_origin(&self) -> Option<&crate::security::turn_origin::AgentTurnOrigin> {
+    pub(crate) fn turn_origin(
+        &self,
+    ) -> Option<&crate::core::runtime::turn_origin::AgentTurnOrigin> {
         self.turn_origin.as_ref()
     }
 
     /// Typed origin bound to this immutable per-turn context, if supplied by
     /// its entrypoint. Missing authority retains library/CLI behavior.
-    pub fn current_turn_origin() -> Option<crate::security::turn_origin::AgentTurnOrigin> {
+    pub fn current_turn_origin() -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
         Self::scoped_for_turn()
             .or_else(|| DEFAULT_CONTEXT.get().cloned())
             .and_then(|ctx| ctx.turn_origin.clone())
@@ -75,7 +77,7 @@ impl CoreContext {
     /// untouched.
     pub async fn scope_with_turn_origin<F: Future>(
         ctx: Arc<CoreContext>,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         fut: F,
     ) -> F::Output {
         CURRENT_CONTEXT
@@ -93,7 +95,7 @@ impl CoreContext {
     pub(crate) fn derive_channel_turn(
         &self,
         thread: Option<String>,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
     ) -> Arc<CoreContext> {
         let ctx = self;
         Arc::new(CoreContext {

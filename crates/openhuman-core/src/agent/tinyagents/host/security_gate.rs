@@ -10,11 +10,11 @@
 //! # Domains adapted
 //!
 //! - [`crate::security::policy`] — [`SecurityPolicy`], its
-//!   [`SecurityPolicy::check_gated_command_analysis`] / [`SecurityPolicy::gate_decision`]
+//!   TinySecurity's command authorization operation / [`SecurityPolicy::gate_decision`]
 //!   decisions, and [`AutonomyLevel`].
 //! - [`crate::approval`] — the process-global [`ApprovalGate`],
-//!   [`GateOutcome`], and the `summarize_action` / `redact_args` pair that keep
-//!   raw arguments out of the approval card.
+//!   [`GateOutcome`], and the summary helper; TinySecurity redacts the
+//!   structured arguments before persistence and prompt delivery.
 //! - [`crate::agent_tool_policy`] — a pre-built [`ToolPolicySession`]
 //!   (channel permission boundary).
 //! - [`crate::prompt_injection`] — [`enforce_prompt_input`] for
@@ -79,17 +79,12 @@ use tinyagents_harness::error::Result as TaResult;
 use tinyagents_harness::host::security_gate::{GateDecision, ToolCallRequest};
 
 use crate::agent::tinyagents::policy_denial::PolicyDenial;
-use crate::security::approval::{
-    redact_args, summarize_action, ApprovalGate, ApprovalTurnContext, GateOutcome,
-};
-use crate::security::policy::CommandClass;
+use crate::security::approval::{summarize_action, ApprovalGate, ApprovalTurnContext, GateOutcome};
 use crate::security::policy::{GateDecision as PolicyGateDecision, SecurityPolicy};
 use tinytools::{PermissionLevel, Tool};
 use tinytools::{ToolPolicyAction, ToolPolicySession};
 
-#[path = "security_gate_shell_analysis.rs"]
-mod shell_analysis;
-use shell_analysis::{shell_analysis_for_call, SHELL_TOOL};
+const SHELL_TOOL: &str = "shell";
 
 /// The channel tool-policy's verdict for one tool, as three explicit outcomes.
 ///
@@ -238,7 +233,7 @@ impl OpenHumanSecurityGate {
 
     /// The origin of the turn this gate authorizes for: the run's own context
     /// when it carries one, else the calling task's turn scope.
-    fn turn_origin(&self) -> Option<crate::security::turn_origin::AgentTurnOrigin> {
+    fn turn_origin(&self) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {
         DispatchCtx::from_weak(self.dispatch.as_ref()).turn_origin_or_scoped()
     }
 
@@ -285,31 +280,6 @@ impl OpenHumanSecurityGate {
                 .render(),
             ),
         }
-    }
-
-    /// Classifies a `shell` call and maps OpenHuman's three-way policy verdict
-    /// onto this trait's.
-    ///
-    /// Applies host policy to TinyBox's generic command facts, then raises (never
-    /// lowers) the result with the model's self-declared `category`.
-    #[cfg(feature = "modules")]
-    fn shell_decision(
-        policy: &SecurityPolicy,
-        args: &serde_json::Value,
-        analysis: &serde_json::Value,
-    ) -> std::result::Result<PolicyGateDecision, String> {
-        let analysis: crate::security::policy::CommandAnalysis =
-            serde_json::from_value(analysis.clone())
-                .map_err(|_| "TinyBox command analysis is invalid".to_owned())?;
-        let mut class: CommandClass = policy.check_gated_command_analysis(&analysis)?;
-        if let Some(declared) = args
-            .get("category")
-            .and_then(|v| v.as_str())
-            .and_then(SecurityPolicy::parse_declared_class)
-        {
-            class = class.max(declared);
-        }
-        Ok(policy.gate_decision(class))
     }
 
     /// The allow-shaped answer for a call that reached the end of the stages.
@@ -381,7 +351,6 @@ impl OpenHumanSecurityGate {
         call: &ToolCallRequest,
     ) -> GateDecision {
         let summary = summarize_action(&call.tool_name, &call.arguments);
-        let redacted = redact_args(&call.arguments);
         tracing::debug!(
             target: "tinyagents",
             tool = %call.tool_name,
@@ -393,7 +362,12 @@ impl OpenHumanSecurityGate {
         // executor close the audit row later *without* raising a second
         // approval card. See mismatch (2).
         let (outcome, request_id) = gate
-            .intercept_audited(&self.approval, &call.tool_name, &summary, redacted)
+            .intercept_audited(
+                &self.approval,
+                &call.tool_name,
+                &summary,
+                call.arguments.clone(),
+            )
             .await;
         if matches!(outcome, GateOutcome::Allow) {
             // Only an approval that persisted a row yields an id; the
