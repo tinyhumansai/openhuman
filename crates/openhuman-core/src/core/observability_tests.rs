@@ -122,6 +122,8 @@ fn event_with_exception_value(value: &str) -> sentry::protocol::Event<'static> {
 mod crash_filter_integrations;
 #[path = "observability_crash_filter_messages_tests.rs"]
 mod crash_filter_messages;
+#[path = "observability_error_classification_billing_refusal_tests.rs"]
+mod error_classification_billing_refusal;
 #[path = "observability_error_classification_composio_backoff_tests.rs"]
 mod error_classification_composio_backoff;
 #[path = "observability_error_classification_core_tests.rs"]

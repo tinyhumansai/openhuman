@@ -4359,6 +4359,10 @@ const messages: TranslationMap = {
     'माइक्रोफ़ोन की अनुमति नहीं मिली। सिस्टम सेटिंग में अनुमति दें और फिर कोशिश करें।',
   'voice.live.error.micUnavailable': 'कोई माइक्रोफ़ोन उपलब्ध नहीं है।',
   'voice.live.error.connection': 'वॉइस एजेंट से कनेक्ट नहीं हो सका।',
+  'voice.live.error.insufficientCredits':
+    'लाइव वॉइस के लिए और क्रेडिट चाहिए। जारी रखने के लिए क्रेडिट जोड़ें।',
+  'voice.live.error.paidPlanRequired':
+    'लाइव वॉइस के लिए पेड प्लान ज़रूरी है। जारी रखने के लिए अपग्रेड करें।',
   'voice.live.toolRunning': '{name} चल रहा है',
   'voice.live.toolOk': '{name} पूरा हुआ',
   'voice.live.toolFailed': '{name} विफल रहा',
