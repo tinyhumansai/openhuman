@@ -7857,7 +7857,6 @@ version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
- "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",
@@ -9202,7 +9201,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rustix 1.1.5",
- "schemars",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -9246,7 +9244,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rustix 1.1.5",
- "schemars",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -9357,7 +9354,6 @@ dependencies = [
  "chrono",
  "hex",
  "parking_lot",
- "schemars",
  "serde",
  "serde_json",
  "sha2 0.11.1",
