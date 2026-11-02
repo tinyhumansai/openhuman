@@ -425,15 +425,16 @@ fn native_intent_matches_quote(
                 ..
             } => {
                 use tinywallet_bus::TronTransfer;
-                if quote.chain != WalletChain::Tron || expected_to != &quote.to_address {
+                if quote.chain != WalletChain::Tron {
                     return false;
                 }
                 match (quote.kind, transfer) {
                     (PreparedKind::NativeTransfer, TronTransfer::Native { amount_sun }) => {
-                        quote.amount_raw.parse::<u64>().ok() == Some(*amount_sun)
+                        expected_to == &quote.to_address
+                            && quote.amount_raw.parse::<u64>().ok() == Some(*amount_sun)
                     }
                     (PreparedKind::TokenTransfer, TronTransfer::Trc20 { parameter_hex }) => {
-                        valid_hex(parameter_hex)
+                        trc20::matches(quote, expected_to, parameter_hex)
                     }
                     _ => false,
                 }
@@ -738,6 +739,9 @@ pub(super) async fn install(connection: &tinybus::Connection) -> tinybus::Result
         .request_name(tinywallet_bus::HOST_INTERFACE)
         .await
 }
+
+#[path = "wallet_host_trc20.rs"]
+mod trc20;
 
 #[cfg(test)]
 #[path = "wallet_host_tests.rs"]
