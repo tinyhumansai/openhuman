@@ -152,7 +152,11 @@ pub(super) async fn run_agent_job_for_run(
                 "[cron] building isolated agent for scheduled job"
             );
             match build_cron_agent(ctx, &effective, job, opened).await {
-                Ok(BuiltCronAgent { mut agent, context }) => {
+                Ok(BuiltCronAgent {
+                    mut agent,
+                    context,
+                    _lease,
+                }) => {
                     // Tag events so downstream subscribers can correlate
                     // cron-triggered turns. `cron` is the channel so the
                     // event bus can filter from other flows (`cli`, `web`…).
