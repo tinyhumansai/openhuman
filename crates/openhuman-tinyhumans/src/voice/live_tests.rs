@@ -103,3 +103,17 @@ async fn hosted_providers_report_not_configured_without_a_backend_credential() {
         .unwrap();
     assert_eq!(err.code, "not_configured");
 }
+
+#[test]
+fn mint_error_maps_billing_refusals_to_their_own_codes() {
+    let credits = mint_error(format!(
+        "{INSUFFICIENT_CREDITS_PREFIX}POST /x failed (400): {{}}"
+    ));
+    assert_eq!(credits.code, "insufficient_credits");
+    let plan = mint_error(format!(
+        "{PAID_PLAN_REQUIRED_PREFIX}GET /x failed (403): {{}}"
+    ));
+    assert_eq!(plan.code, "paid_plan_required");
+    let other = mint_error("GET /x failed (500): {}".to_string());
+    assert_eq!(other.code, "backend");
+}

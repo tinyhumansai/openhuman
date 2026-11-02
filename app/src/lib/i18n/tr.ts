@@ -4291,6 +4291,10 @@ const messages: TranslationMap = {
     'Mikrofon erişimi reddedildi. Sistem ayarlarınızdan izin verip yeniden deneyin.',
   'voice.live.error.micUnavailable': 'Kullanılabilir mikrofon yok.',
   'voice.live.error.connection': 'Ses ajanına bağlanılamadı.',
+  'voice.live.error.insufficientCredits':
+    'Canlı ses için daha fazla kredi gerekiyor. Devam etmek için kredi ekleyin.',
+  'voice.live.error.paidPlanRequired':
+    'Canlı ses ücretli bir plan gerektirir. Devam etmek için planınızı yükseltin.',
   'voice.live.toolRunning': '{name} çalışıyor',
   'voice.live.toolOk': '{name} tamamlandı',
   'voice.live.toolFailed': '{name} başarısız oldu',

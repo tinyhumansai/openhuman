@@ -23,10 +23,12 @@ mod port;
 #[path = "memory_bearer_tests.rs"]
 mod memory_bearer_tests;
 
+#[cfg(test)]
+pub(crate) use error::billing_refusal;
 pub use error::map_sdk_error;
 pub use port::{
-    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, QueryParam,
-    TransportProfile,
+    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, BillingRefusal,
+    QueryParam, TransportProfile,
 };
 
 /// One `reqwest::Client` per [`TransportProfile`], each built from

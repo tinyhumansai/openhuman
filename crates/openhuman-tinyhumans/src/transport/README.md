@@ -56,9 +56,12 @@ catch-all), so the classifiers in `client/classify.rs` and the
 integrations client see the same shapes they would see calling the SDK
 directly.
 
-One case gets a typed variant here because only this backend's wire behavior
-says what it means: a 404 on a channel-message path
-(`.../channels/<provider>/messages/<id>`).
+Two cases get a typed variant here because only this backend's wire behavior
+says what they mean: a 404 on a channel-message path
+(`.../channels/<provider>/messages/<id>`), and a billing refusal
+(`billing_refusal`: `errorCode: USER_INSUFFICIENT_CREDITS` on any non-401
+status, or a 403 whose `error` asks for credits or a paid plan), which becomes
+`BillingRefusal { refusal, status, body }`.
 
 ```text
  404 on .../channels/<p>/messages/<id>
@@ -81,7 +84,7 @@ The client recovers from the two differently (`HostedApiError` variants in
 | --- | --- |
 | [`port.rs`](port.rs) | The port: `BackendTransport`, `BackendRequest`, `BackendTransportError`, `TransportProfile`, `BaseUrlPurpose`, `QueryParam`. |
 | [`mod.rs`](mod.rs) | `SdkBackendTransport` and its `BackendTransport` impl. |
-| [`error.rs`](error.rs) | `map_sdk_error`, plus the channel-message path parser and the unmatched-route check. |
+| [`error.rs`](error.rs) | `map_sdk_error`, plus the channel-message path parser, the unmatched-route check and the billing-refusal classifier. |
 
 ## Key types and entry points
 

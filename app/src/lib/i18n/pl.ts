@@ -4419,6 +4419,10 @@ const messages: TranslationMap = {
     'Odmówiono dostępu do mikrofonu. Zezwól na niego w ustawieniach systemu i spróbuj ponownie.',
   'voice.live.error.micUnavailable': 'Brak dostępnego mikrofonu.',
   'voice.live.error.connection': 'Nie udało się połączyć z agentem głosowym.',
+  'voice.live.error.insufficientCredits':
+    'Głos na żywo wymaga więcej środków. Doładuj środki, aby kontynuować.',
+  'voice.live.error.paidPlanRequired':
+    'Głos na żywo wymaga płatnego planu. Przejdź na wyższy plan, aby kontynuować.',
   'voice.live.toolRunning': 'Trwa {name}',
   'voice.live.toolOk': 'Ukończono {name}',
   'voice.live.toolFailed': 'Błąd: {name}',

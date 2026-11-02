@@ -4448,6 +4448,10 @@ const messages: TranslationMap = {
     'Se denegó el acceso al micrófono. Permítelo en la configuración del sistema e inténtalo de nuevo.',
   'voice.live.error.micUnavailable': 'No hay ningún micrófono disponible.',
   'voice.live.error.connection': 'No se pudo conectar con el agente de voz.',
+  'voice.live.error.insufficientCredits':
+    'La voz en directo necesita más créditos. Añade créditos para continuar.',
+  'voice.live.error.paidPlanRequired':
+    'La voz en directo requiere un plan de pago. Mejora tu plan para continuar.',
   'voice.live.toolRunning': 'Ejecutando {name}',
   'voice.live.toolOk': '{name} completado',
   'voice.live.toolFailed': '{name} falló',

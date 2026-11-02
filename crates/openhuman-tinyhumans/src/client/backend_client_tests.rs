@@ -1,8 +1,10 @@
 use super::*;
 use crate::client::classify::{
-    backend_api_body_shape, BACKEND_API_BODY_SHAPE_MAX_BYTES, BACKEND_API_ERROR_BODY_MAX_BYTES,
+    backend_api_body_shape, backend_api_error_code, BACKEND_API_BODY_SHAPE_MAX_BYTES,
+    BACKEND_API_ERROR_BODY_MAX_BYTES,
 };
 use crate::client::{flatten_authed_error, HostedApiError};
+use crate::transport::{billing_refusal, BillingRefusal};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
@@ -393,4 +395,181 @@ async fn non_2xx_error_body_is_truncated_in_the_returned_error() {
         "{}",
         message.len()
     );
+}
+
+#[test]
+fn backend_api_error_code_only_echoes_identifier_like_codes() {
+    let body = r#"{"success":false,"error":"x","errorCode":"INVALID_ARGUMENT"}"#;
+    assert_eq!(
+        backend_api_error_code(body).as_deref(),
+        Some("INVALID_ARGUMENT")
+    );
+    let free_text = r#"{"errorCode":"bad value for jo@example.com"}"#;
+    assert_eq!(backend_api_error_code(free_text), None);
+    assert_eq!(backend_api_error_code("not json"), None);
+}
+
+#[test]
+fn backend_api_error_code_rejects_non_identifier_and_non_string_codes() {
+    let body = r#"{"success":false,"error":"jo@example.com is not entitled","errorCode":"FORBIDDEN_PLAN"}"#;
+    assert_eq!(
+        backend_api_error_code(body).as_deref(),
+        Some("FORBIDDEN_PLAN")
+    );
+    assert_eq!(backend_api_error_code(r#"{"errorCode":7}"#), None);
+    assert_eq!(backend_api_error_code(r#"{"error":"x"}"#), None);
+    assert_eq!(backend_api_error_code("Forbidden"), None);
+}
+
+/// The exact 182-byte body behind TAURI-RUST-13BR (backend
+/// `gemini/liveSessions.ts`): balance below the Gemini Live session reserve.
+const GEMINI_LIVE_RESERVE_BODY: &str = r#"{"success":false,"error":"Gemini Live requires an available balance of at least $1.00 (reserved per open session)","errorCode":"USER_INSUFFICIENT_CREDITS","details":{"reserveUsd":1}}"#;
+
+/// The transport's classifier on a raw body, parsed as the SDK hands it over
+/// (JSON when it parses, otherwise the text as a JSON string).
+fn backend_billing_refusal(status: u16, body: &str) -> Option<BillingRefusal> {
+    let body = serde_json::from_str(body).unwrap_or_else(|_| Value::String(body.into()));
+    billing_refusal(status, &body)
+}
+
+#[test]
+fn backend_billing_refusal_classifies_the_live_voice_gates() {
+    assert_eq!(GEMINI_LIVE_RESERVE_BODY.len(), 182);
+    assert_eq!(
+        backend_billing_refusal(400, GEMINI_LIVE_RESERVE_BODY),
+        Some(BillingRefusal::InsufficientCredits)
+    );
+    // TAURI-RUST-11G3: the voice-agent signed-url gate answers 403 FORBIDDEN.
+    let balance = r#"{"success":false,"error":"Insufficient balance to start a voice session. Add credits to continue.","errorCode":"FORBIDDEN"}"#;
+    assert_eq!(
+        backend_billing_refusal(403, balance),
+        Some(BillingRefusal::InsufficientCredits)
+    );
+    let plan = r#"{"success":false,"error":"Voice sessions require a paid plan.","errorCode":"FORBIDDEN"}"#;
+    assert_eq!(
+        backend_billing_refusal(403, plan),
+        Some(BillingRefusal::PaidPlanRequired)
+    );
+}
+
+#[test]
+fn backend_billing_refusal_leaves_other_failures_alone() {
+    // A real 403 (wrong role) and a validation 400 must keep reaching Sentry.
+    let forbidden = r#"{"success":false,"error":"Forbidden","errorCode":"FORBIDDEN"}"#;
+    assert_eq!(backend_billing_refusal(403, forbidden), None);
+    let invalid = r#"{"success":false,"error":"Invalid request","errorCode":"VALIDATION_ERROR","details":{}}"#;
+    assert_eq!(backend_billing_refusal(400, invalid), None);
+    // The billing wording only counts on a 403, and only in the `error` field.
+    let paid_400 = r#"{"success":false,"error":"Voice sessions require a paid plan.","errorCode":"BAD_REQUEST"}"#;
+    assert_eq!(backend_billing_refusal(400, paid_400), None);
+    let echoed = r#"{"success":false,"error":"Forbidden","details":{"hint":"add credits"}}"#;
+    assert_eq!(backend_billing_refusal(403, echoed), None);
+    assert_eq!(backend_billing_refusal(403, "Insufficient balance"), None);
+}
+
+#[tokio::test]
+async fn authed_json_surfaces_billing_refusals_as_typed_errors() {
+    let app = Router::new()
+        .route(
+            "/agent-integrations/gemini/live/sessions",
+            post(|| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    GEMINI_LIVE_RESERVE_BODY,
+                )
+            }),
+        )
+        .route(
+            "/agent-integrations/coded-budget",
+            post(|| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "success": false,
+                        "error": "Insufficient balance",
+                        "errorCode": "USER_INSUFFICIENT_CREDITS",
+                    })),
+                )
+            }),
+        )
+        .route(
+            "/voice-agent/get-signed-url",
+            get(|| async {
+                (
+                    axum::http::StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "success": false,
+                        "error": "Voice sessions require a paid plan.",
+                        "errorCode": "FORBIDDEN",
+                    })),
+                )
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = BackendClient::new(&format!("http://{addr}")).unwrap();
+
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::POST,
+            "/agent-integrations/gemini/live/sessions",
+            Some(json!({ "mode": "conversation" })),
+        )
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<HostedApiError>().unwrap();
+    let HostedApiError::InsufficientCredits { status, path, .. } = typed else {
+        panic!("expected InsufficientCredits, got {typed:?}");
+    };
+    assert_eq!(*status, 400);
+    assert_eq!(path, "/agent-integrations/gemini/live/sessions");
+    // Same message shape as the generic failure, behind the sentinel.
+    let flattened = flatten_authed_error(err);
+    assert!(
+        flattened.starts_with(
+            "INSUFFICIENT_CREDITS:POST /agent-integrations/gemini/live/sessions failed (400): "
+        ),
+        "{flattened}"
+    );
+    assert!(
+        flattened.contains("USER_INSUFFICIENT_CREDITS"),
+        "{flattened}"
+    );
+
+    // The explicit code wins over the generic budget-text path.
+    assert!(tinyinference_providers::is_budget_exhausted_message(
+        "Insufficient balance"
+    ));
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::POST,
+            "/agent-integrations/coded-budget",
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err.downcast_ref::<HostedApiError>(),
+            Some(HostedApiError::InsufficientCredits { status: 400, .. })
+        ),
+        "expected InsufficientCredits, got {err:?}"
+    );
+
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/voice-agent/get-signed-url", None)
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<HostedApiError>().unwrap();
+    assert!(
+        matches!(typed, HostedApiError::PaidPlanRequired { status: 403, .. }),
+        "expected PaidPlanRequired, got {typed:?}"
+    );
+    assert!(flatten_authed_error(err).starts_with("PAID_PLAN_REQUIRED:"));
 }

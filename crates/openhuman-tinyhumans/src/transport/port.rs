@@ -143,6 +143,15 @@ pub enum BaseUrlPurpose {
     Inference,
 }
 
+/// A billing refusal the backend signals on a gated hosted feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BillingRefusal {
+    /// Balance below the route's reserve.
+    InsufficientCredits,
+    /// The feature needs a paid plan.
+    PaidPlanRequired,
+}
+
 /// Failure of a single backend round-trip, as seen by the core.
 #[derive(Debug, thiserror::Error)]
 pub enum BackendTransportError {
@@ -184,6 +193,14 @@ pub enum BackendTransportError {
         /// Provider message id from the path.
         message_id: String,
     },
+    /// A non-2xx billing refusal on a gated hosted feature (see
+    /// [`BillingRefusal`]). `body` as in [`Self::Status`].
+    #[error("http {status}: {body}")]
+    BillingRefusal {
+        refusal: BillingRefusal,
+        status: u16,
+        body: Value,
+    },
     /// The response carried a `{success:false, ...}` envelope on a 2xx status.
     #[error("backend reported failure: {error}")]
     Envelope {
@@ -210,7 +227,7 @@ impl BackendTransportError {
     /// The HTTP status when this error is a [`Self::Status`].
     pub fn status(&self) -> Option<u16> {
         match self {
-            Self::Status { status, .. } => Some(*status),
+            Self::Status { status, .. } | Self::BillingRefusal { status, .. } => Some(*status),
             Self::ChannelMessageNotFound { .. } | Self::ChannelMessageRouteMissing { .. } => {
                 Some(404)
             }

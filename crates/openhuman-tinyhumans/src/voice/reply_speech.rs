@@ -30,13 +30,8 @@ const LOG_PREFIX: &str = "[voice_reply]";
 /// The route this module posts to.
 const SPEECH_PATH: &str = "/openai/v1/audio/speech";
 
-/// User-facing message for a hosted voice request the backend's own upstream
-/// provider refused. Nothing the user can change, so no instruction. The
-/// failure behind it was already reported (or demoted as transient) by
-/// `authed_json`, so the backend-error classifier marks this message
-/// backend-owned and not reportable (no second event at the RPC boundary).
-pub const HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE: &str =
-    "The voice service is temporarily unavailable. Please try again later.";
+/// Lives with the backend-error classifier, which is not gated on `voice`.
+pub use crate::inference::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
 
 /// The backend's wrappings of an upstream ElevenLabs failure
 /// (`elevenlabsService` in the backend: TTS, streaming TTS, transcription).
