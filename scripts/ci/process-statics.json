@@ -688,5 +688,15 @@
     "category": "B",
     "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
     "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/runtime/context_test_support.rs",
+    "scope": "",
+    "name": "NATIVE_FIXTURE_RUNTIME",
+    "type": "std::sync::LazyLock<tokio::runtime::Runtime>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (cfg(test) module): a retained two-worker runtime that admits the real native security module for fixture contexts, so synchronous host adapters can finish while a current-thread test waits. It holds no tenant data; each admission runs under the fixture's own CoreContext.",
+    "verification": "agent/harness/artifact_offload/artifact_offload_tests.rs: an_action_dir_inside_workspace_dir_is_never_materialized"
   }
 ]
