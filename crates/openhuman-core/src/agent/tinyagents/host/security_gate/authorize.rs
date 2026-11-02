@@ -157,13 +157,6 @@ impl OpenHumanSecurityGate {
             )));
         }
 
-        // Disabled autonomy turns off action classification, approval and
-        // budget policy. The channel boundary, known-tool requirement and
-        // scheduled-turn restriction above remain in force.
-        if !policy.enabled {
-            return Ok(self.settled(channel_approved));
-        }
-
         // 3. `shell` is the one tool whose arguments carry a classifiable
         //    command, and `gate_decision` already encodes the autonomy tier —
         //    at a finer grain than the tool's coarse `Execute` permission
@@ -201,6 +194,14 @@ impl OpenHumanSecurityGate {
                 PolicyGateDecision::Prompt => self.park_once(call, channel_approved).await,
                 PolicyGateDecision::Allow => self.settled(channel_approved),
             });
+        }
+
+        // Disabled autonomy turns off action classification, approval and
+        // budget policy. The channel boundary, known-tool requirement,
+        // scheduled-turn restriction and, for shell, TinySecurity's protected
+        // path floor above remain in force.
+        if !policy.enabled {
+            return Ok(self.settled(channel_approved));
         }
 
         let required = tool.permission_level_with_args(&call.arguments);

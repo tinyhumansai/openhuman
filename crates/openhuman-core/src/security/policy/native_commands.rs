@@ -122,13 +122,9 @@ impl SecurityPolicy {
     }
 
     /// Ask whether `query.command` may run, and whether a human must approve it.
+    /// Asked even when autonomy is disabled: a disabled scope allows every
+    /// command except those naming TinySecurity's protected paths.
     pub async fn check_command(&self, query: CommandQuery<'_>) -> Result<CommandVerdict, Refusal> {
-        if !self.enabled {
-            return Ok(CommandVerdict {
-                class: query.declared.unwrap_or(CommandClass::Write),
-                gate: GateDecision::Allow,
-            });
-        }
         match &self.command_gateway {
             Some(gateway) => gateway.decide(self, &query).await,
             None => self.native_command_verdict(&query).await,
