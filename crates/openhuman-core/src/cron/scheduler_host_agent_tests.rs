@@ -264,3 +264,28 @@ async fn a_job_for_an_unknown_agent_with_no_host_installed_fails_instead_of_runn
 
     assert!(built.is_err());
 }
+
+#[tokio::test]
+async fn a_job_for_a_registry_agent_never_asks_the_host_to_open_it() {
+    let _slot = crate::agent::host_agents::tests::lock();
+    let tmp = TempDir::new().unwrap();
+    let config = config(&tmp).await;
+    crate::agent::session_host::test_support::install_model_fixture();
+    let (installed, asked) = opener(&config, true);
+    host_agents::install(Arc::clone(&installed));
+
+    let built = build_agent_for_cron_job(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+        &agent_job("orchestrator"),
+    )
+    .await;
+    host_agents::clear_if(&installed);
+
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "a built-in agent id is not the host's to open"
+    );
+    assert!(built.expect("the orchestrator builds").context.is_none());
+}
