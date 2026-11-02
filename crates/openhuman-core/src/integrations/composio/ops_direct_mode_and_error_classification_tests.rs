@@ -691,6 +691,7 @@ fn the_direct_key_backoff_is_reported_as_its_demoted_anchor() {
 fn other_op_errors_keep_the_static_message_and_stay_reportable() {
     for rendered in [
         "Backend returned 502 Bad Gateway for GET https://example.test/x: upstream down",
+        "Backend returned 502 Bad Gateway: Direct-mode Composio API key was rejected earlier",
         "HTTP 401: Invalid API key",
         "error sending request: operation timed out",
     ] {

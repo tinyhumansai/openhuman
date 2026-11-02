@@ -168,7 +168,13 @@ pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation:
 /// demotion see the backoff at all.
 pub(crate) fn composio_op_report_message(rendered: &str) -> &'static str {
     let anchor = crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR;
-    if rendered.to_ascii_lowercase().contains(anchor) {
+    // Anchored, so a provider body that merely quotes the phrase stays reportable.
+    let lower = rendered.to_ascii_lowercase();
+    if lower
+        .strip_prefix("[composio-direct] ")
+        .unwrap_or(&lower)
+        .starts_with(anchor)
+    {
         anchor
     } else {
         "connector operation failed"
