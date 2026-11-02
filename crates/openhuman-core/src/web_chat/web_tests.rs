@@ -201,6 +201,8 @@ mod rate_limit_classification_tests;
 mod session_and_concurrency_tests;
 #[path = "web_tests_start_chat_ingress_tests.rs"]
 mod start_chat_ingress_tests;
+#[path = "web_tests_timeout_classification_tests.rs"]
+mod timeout_classification_tests;
 #[path = "web_tests_turn_lifecycle_tests.rs"]
 mod turn_lifecycle_tests;
 
