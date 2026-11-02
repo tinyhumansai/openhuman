@@ -3929,6 +3929,8 @@ const messages: TranslationMap = {
     'O agente executou o número máximo de etapas de ferramentas em um turno sem concluir. Isso geralmente significa que uma ferramenta continuou falhando (muitas vezes por um limite de requisições em uma busca na web). Você pode repetir a mesma pergunta neste tópico quando o limite for liberado.',
   'chat_error.turn_timeout':
     'Este turno passou do limite de tempo sem concluir e foi interrompido para não travar. Isso geralmente significa que uma chamada de ferramenta ou um subagente delegado travou. Você pode repetir sua pergunta neste tópico.',
+  'chat_error.disk_full':
+    'Seu disco está cheio, então esta conversa não pôde ser salva. Libere espaço em disco e envie sua mensagem novamente neste tópico.',
   'chat_error.empty_response':
     'O modelo retornou uma resposta vazia. Tente novamente. Se continuar acontecendo, tente outro modelo ou confira a configuração dele em Conexões → Chaves de API → LLM.',
   'chat_error.chat_template_rejected':
