@@ -33,7 +33,8 @@ pub(crate) struct ClassifiedError {
     /// `session_expired`, `budget_exhausted`, `provider_error`,
     /// `context_overflow`, `model_unavailable`, `payload_too_large`,
     /// `provider_request_rejected`, `capability_unsupported`,
-    /// `chat_template_rejected`, `empty_response`, `network`, `inference`.
+    /// `chat_template_rejected`, `empty_response`, `disk_full`, `network`,
+    /// `inference`.
     pub(crate) error_type: &'static str,
     /// User-facing copy (already includes provider detail block and the
     /// retry-after countdown sentence when available).
@@ -45,6 +46,7 @@ pub(crate) struct ClassifiedError {
     /// - `"openhuman_billing"` — OpenHuman credit/quota exhaustion
     /// - `"transport"`        — network / DNS / TLS / timeout
     /// - `"config"`           — auth, model, context, generic
+    /// - `"local_storage"`    — the user's own disk is full (#8508)
     pub(crate) source: &'static str,
     /// Can the user retry the same prompt in the same thread? `false` for
     /// non-retryable business 429s, auth failures, model_unavailable,
@@ -228,6 +230,18 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             provider,
             fallback_available,
         )
+    } else if provider.is_none() && crate::core::observability::is_disk_full_error(err) {
+        // #8508 / TAURI-RUST-15PJ: the host disk is full, so the turn's
+        // transcript append (or another local write) failed — typically
+        // `transcript persistence failed: … (os error 112)`. Nothing the
+        // provider, the model, or a retry-now can fix: tell the user to free
+        // space. Retryable, because the same message succeeds once space is
+        // back. Gated on `provider.is_none()` so a provider envelope that
+        // merely quotes ENOSPC (a remote server's full disk) keeps its
+        // provider copy instead of blaming the user's machine. Placed high
+        // because the localized OS text can contain words the broad
+        // substring arms below would misread.
+        classified_plain(C::DiskFull, None, None)
     } else if is_codex_token_expired_text(&err.to_ascii_lowercase()) {
         // Codex OAuth refresh failed (#5869): the user must reconnect Codex in
         // Settings → Integrations, NOT sign into OpenHuman. Checked before
