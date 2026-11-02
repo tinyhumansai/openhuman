@@ -68,11 +68,11 @@ impl SecurityProxy {
             Self::Callback(proxy) => proxy
                 .call_confidential(member, args)
                 .await
-                .map_err(|_| "security module call failed".to_owned()),
+                .map_err(call_failed),
             Self::Module(proxy) => proxy
                 .call_confidential(member, args)
                 .await
-                .map_err(|_| "security module call failed".to_owned()),
+                .map_err(call_failed),
         }
     }
 
@@ -82,16 +82,19 @@ impl SecurityProxy {
         args: impl Serialize,
     ) -> Result<R, String> {
         match self {
-            Self::Callback(proxy) => proxy
-                .call(member, args)
-                .await
-                .map_err(|_| "security module call failed".to_owned()),
-            Self::Module(proxy) => proxy
-                .call(member, args)
-                .await
-                .map_err(|_| "security module call failed".to_owned()),
+            Self::Callback(proxy) => proxy.call(member, args).await.map_err(call_failed),
+            Self::Module(proxy) => proxy.call(member, args).await.map_err(call_failed),
         }
     }
+}
+
+/// Callers see one generic refusal; the log keeps the module's redacted reason.
+fn call_failed<E: std::fmt::Display>(error: E) -> String {
+    tracing::debug!(
+        "[security] module call failed: {}",
+        tinybus::error::redact_values(&error.to_string())
+    );
+    "security module call failed".to_owned()
 }
 
 impl Client {
