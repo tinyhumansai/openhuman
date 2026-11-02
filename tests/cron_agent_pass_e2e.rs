@@ -89,7 +89,7 @@ async fn an_agent_pass_runs_only_that_agents_due_jobs() {
     let alpha_job = add_due_job(&alpha, &config, "alpha-job").await;
     let beta_job = add_due_job(&beta, &config, "beta-job").await;
 
-    let dispatched = cron::scheduler::run_agent_pass("pass-alpha").await;
+    let dispatched = cron::scheduler::run_agent_pass("pass-alpha").await.unwrap();
 
     assert_eq!(dispatched, Some(1), "alpha's one due job is dispatched");
     assert_eq!(runs_of(&alpha, &config, &alpha_job).await, 1);
@@ -104,11 +104,16 @@ async fn an_agent_pass_runs_only_that_agents_due_jobs() {
         "beta's due job waits for beta's own pass"
     );
 
-    assert_eq!(cron::scheduler::run_agent_pass("pass-beta").await, Some(1));
+    assert_eq!(
+        cron::scheduler::run_agent_pass("pass-beta").await.unwrap(),
+        Some(1)
+    );
     assert_eq!(runs_of(&beta, &config, &beta_job).await, 1);
 
     assert_eq!(
-        cron::scheduler::run_agent_pass("pass-nobody").await,
+        cron::scheduler::run_agent_pass("pass-nobody")
+            .await
+            .unwrap(),
         None,
         "an agent that is not live has no pass"
     );

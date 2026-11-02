@@ -552,13 +552,19 @@ impl JobDispatcher {
 
     /// Wait for every dispatched job to finish.
     pub(crate) async fn drain(&mut self) {
-        let config = self.binding.config();
-        if self.started.is_none() {
-            return;
-        }
-        if let Err(error) = self.call::<()>(&config, members::DRAIN_SCHEDULER).await {
+        if let Err(error) = self.try_drain().await {
             tracing::warn!(%error, "[cron:dispatch] a dispatched job failed");
         }
+    }
+
+    /// Wait for every dispatched job to finish; errors with the first job or
+    /// persistence failure, or when the module cannot be reached.
+    pub(crate) async fn try_drain(&mut self) -> Result<()> {
+        if self.started.is_none() {
+            return Ok(());
+        }
+        let config = self.binding.config();
+        self.call(&config, members::DRAIN_SCHEDULER).await
     }
 }
 

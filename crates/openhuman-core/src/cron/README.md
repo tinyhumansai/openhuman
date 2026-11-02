@@ -58,8 +58,8 @@ transition-only `HealthChanged` signals and the live-agent reconcile stay in one
 place, and so a test or embedder can run one deterministic pass
 (`run_live_agent_pass`). A host that decides when one agent's jobs run (it
 opens agents on demand, or hands due work to a queue) runs that agent's pass
-alone with `run_agent_pass(agent_id)`, which is `None` when the agent is not
-live. Both are the loop's own run, so occurrence claims keep a pass that races
+alone with `run_agent_pass(agent_id)`, which is `Ok(None)` when the agent is
+not live and errors when a dispatched job or its run record failed. Both are the loop's own run, so occurrence claims keep a pass that races
 the loop, or another process's pass, from running an occurrence twice.
 Dropping a dispatcher stops its scheduler (`StopScheduler`) and unserves its
 object.

@@ -83,7 +83,8 @@ pub async fn run_live_agent_pass(max_concurrent: usize) {
 }
 
 /// One pass over a single live agent's due jobs, run to completion; the
-/// count dispatched, or `None` when `agent_id` is not live.
+/// count dispatched, or `None` when `agent_id` is not live. Errors when a
+/// dispatched job or its run record failed, or the drain did not complete.
 ///
 /// For hosts that decide when an agent's jobs run instead of leaving it to the
 /// scheduler loop's sweep over every live agent: one that opens agents on
@@ -91,11 +92,19 @@ pub async fn run_live_agent_pass(max_concurrent: usize) {
 /// run is the loop's own (claims, retries, delivery, run record and the next
 /// occurrence), so a pass racing the loop or another process's pass over the
 /// same agent runs each occurrence once.
-pub async fn run_agent_pass(agent_id: &str) -> Option<usize> {
-    let ctx = crate::core::runtime::AgentContextRegistry::get(agent_id)?;
+pub async fn run_agent_pass(agent_id: &str) -> Result<Option<usize>> {
+    // Held until `agents` drops: the registry and the dispatcher's callbacks
+    // keep only weak references, and a host may close the agent mid-pass.
+    let Some(ctx) = crate::core::runtime::AgentContextRegistry::get(agent_id) else {
+        return Ok(None);
+    };
     tracing::debug!(agent = %agent_id, "[cron:scheduler] agent pass begin");
     let mut agents = LiveAgentSchedulers::default();
-    let count = agents.tick_agent(agent_id.to_string(), ctx).await;
-    agents.drain().await;
-    Some(count)
+    let count = agents
+        .tick_agent(agent_id.to_string(), Arc::clone(&ctx))
+        .await;
+    for dispatcher in agents.by_agent.values_mut() {
+        dispatcher.try_drain().await?;
+    }
+    Ok(Some(count))
 }
