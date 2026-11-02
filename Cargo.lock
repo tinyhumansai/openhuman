@@ -9964,7 +9964,7 @@ dependencies = [
 
 [[package]]
 name = "tinyflows"
-version = "0.8.28"
+version = "0.9.4"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -10017,7 +10017,7 @@ dependencies = [
  "sha2 0.11.1",
  "tinyflows",
  "tinyflows-catalog",
- "tinytools 0.5.0 (git+https://github.com/senamakel/tinytools?rev=643df90ba25f93187249fa99f6789f9aa7f8bbc8)",
+ "tinytools 0.6.0",
  "tokio",
  "tracing",
 ]
@@ -10063,7 +10063,7 @@ dependencies = [
  "tinyflows-storage",
  "tinystoragedrivers-api",
  "tinystoragedrivers-types",
- "tinytools 0.5.0 (git+https://github.com/senamakel/tinytools?rev=643df90ba25f93187249fa99f6789f9aa7f8bbc8)",
+ "tinytools 0.6.0",
  "tokio",
  "tracing",
  "uuid",
@@ -10581,7 +10581,7 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.1",
  "thiserror 2.0.21",
- "tinytools 0.5.0 (git+https://github.com/senamakel/tinytools?rev=1cd9e9c4a117336e6f42d0c7936ed60e7476d88f)",
+ "tinytools 0.5.0",
  "tokio",
  "url",
 ]
@@ -10829,17 +10829,6 @@ dependencies = [
 name = "tinytools"
 version = "0.5.0"
 source = "git+https://github.com/senamakel/tinytools?rev=1cd9e9c4a117336e6f42d0c7936ed60e7476d88f#1cd9e9c4a117336e6f42d0c7936ed60e7476d88f"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tinytools"
-version = "0.5.0"
-source = "git+https://github.com/senamakel/tinytools?rev=643df90ba25f93187249fa99f6789f9aa7f8bbc8#643df90ba25f93187249fa99f6789f9aa7f8bbc8"
 dependencies = [
  "anyhow",
  "async-trait",
