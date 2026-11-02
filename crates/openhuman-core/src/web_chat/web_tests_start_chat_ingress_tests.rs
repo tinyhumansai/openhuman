@@ -723,4 +723,6 @@ fn classify_inference_error_provider_quoting_enospc_keeps_provider_copy() {
                write failed: No space left on device (os error 28)";
     let classified = classify_inference_error(raw);
     assert_ne!(classified.error_type, "disk_full", "{classified:?}");
+    // The `before_send` filter and report cooldown use the same predicate.
+    assert!(!crate::core::observability::is_disk_full_error(raw));
 }

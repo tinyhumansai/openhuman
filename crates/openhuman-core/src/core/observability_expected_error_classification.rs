@@ -424,11 +424,12 @@ fn is_disk_full_os_code(lower: &str, windows: bool) -> bool {
 /// Whether `lower` (already lowercased) is framed as a remote service's
 /// response rather than a local error: the non-2xx backend envelope
 /// `"Backend returned <status> … : <detail>"` (`integrations::client::post`,
-/// `composio::client`) or the embeddings envelope `"Embedding API error
-/// (<status>): <body>"` (`OpenAiEmbedding::embed`). A disk-full phrase or
-/// `(os error N)` inside either belongs to the server.
+/// `composio::client`) or the provider / embeddings envelope `"<Provider>
+/// [streaming] API error (<status>): <body>"` (`http_error::api_error`,
+/// `OpenAiEmbedding::embed`). A disk-full phrase or `(os error N)` inside
+/// either belongs to the server.
 fn is_remote_response_envelope(lower: &str) -> bool {
-    lower.contains("backend returned ") || lower.contains("embedding api error")
+    lower.contains("backend returned ") || lower.contains("api error (")
 }
 
 /// Whether `message` is a local host disk-full failure (ENOSPC /
