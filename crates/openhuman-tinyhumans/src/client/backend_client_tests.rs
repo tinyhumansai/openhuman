@@ -487,6 +487,19 @@ async fn authed_json_surfaces_billing_refusals_as_typed_errors() {
             }),
         )
         .route(
+            "/agent-integrations/coded-budget",
+            post(|| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "success": false,
+                        "error": "Insufficient balance",
+                        "errorCode": "USER_INSUFFICIENT_CREDITS",
+                    })),
+                )
+            }),
+        )
+        .route(
             "/voice-agent/get-signed-url",
             get(|| async {
                 (
@@ -532,6 +545,27 @@ async fn authed_json_surfaces_billing_refusals_as_typed_errors() {
     assert!(
         flattened.contains("USER_INSUFFICIENT_CREDITS"),
         "{flattened}"
+    );
+
+    // The explicit code wins over the generic budget-text path.
+    assert!(tinyinference_providers::is_budget_exhausted_message(
+        "Insufficient balance"
+    ));
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::POST,
+            "/agent-integrations/coded-budget",
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err.downcast_ref::<HostedApiError>(),
+            Some(HostedApiError::InsufficientCredits { status: 400, .. })
+        ),
+        "expected InsufficientCredits, got {err:?}"
     );
 
     let err = client

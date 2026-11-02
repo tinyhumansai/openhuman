@@ -297,10 +297,11 @@ impl BackendClient {
         let is_transient_infra = is_transient_http_status_code(status_code);
         let is_budget_exhausted =
             status_code == 400 && tinyinference_providers::is_budget_exhausted_message(&text);
-        let billing_refusal = (!is_budget_exhausted)
-            .then(|| backend_billing_refusal(status_code, &text))
-            .flatten();
-        if let Some(refusal) = billing_refusal {
+        // Checked before the budget-text path: an explicit
+        // `USER_INSUFFICIENT_CREDITS` code wins even when the message also
+        // matches a budget phrase. Budget 400s without it fall through as before
+        // (the 403 text match never overlaps the 400-only budget check).
+        if let Some(refusal) = backend_billing_refusal(status_code, &text) {
             tracing::info!(
                 domain = "backend_api",
                 operation = "authed_json",
