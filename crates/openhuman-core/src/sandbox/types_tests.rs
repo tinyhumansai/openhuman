@@ -61,3 +61,13 @@ fn sandbox_status_variants() {
     assert_ne!(SandboxStatus::Ready, SandboxStatus::Busy);
     assert_ne!(SandboxStatus::Busy, SandboxStatus::Error);
 }
+
+#[test]
+fn the_openshell_kind_is_named_openshell_on_the_wire() {
+    assert_eq!(
+        serde_json::to_value(SandboxBackendKind::OpenShell).unwrap(),
+        serde_json::json!("openshell")
+    );
+    let back: SandboxBackendKind = serde_json::from_value(serde_json::json!("openshell")).unwrap();
+    assert_eq!(back, SandboxBackendKind::OpenShell);
+}
