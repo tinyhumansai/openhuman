@@ -1121,3 +1121,41 @@ fn exit_event_without_exit_requested_terminates_on_windows_only() {
     // Other platforms leave the loop before LoopDestroyed fires.
     assert!(!must_terminate_after_exit_event(false, false));
 }
+
+#[tokio::test(start_paused = true)]
+async fn session_end_stops_the_core_before_a_hung_gateway_cleanup_and_bounds_it() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let core_stopped = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&core_stopped);
+    let observed = Arc::clone(&core_stopped);
+    let started = tokio::time::Instant::now();
+    let finished = session_end_teardown(
+        async move { stopped.store(true, Ordering::SeqCst) },
+        async move {
+            // The core must already be stopped when gateway cleanup starts.
+            assert!(observed.load(Ordering::SeqCst));
+            std::future::pending::<()>().await
+        },
+        SESSION_END_GATEWAY_BUDGET,
+    )
+    .await;
+
+    assert!(core_stopped.load(Ordering::SeqCst));
+    assert!(!finished, "a hung gateway cleanup is abandoned");
+    assert_eq!(started.elapsed(), SESSION_END_GATEWAY_BUDGET);
+    // Inside Windows' few-second session-end window.
+    assert!(SESSION_END_GATEWAY_BUDGET < std::time::Duration::from_secs(5));
+}
+
+#[tokio::test(start_paused = true)]
+async fn session_end_reports_a_gateway_cleanup_that_finishes_in_time() {
+    let finished = session_end_teardown(
+        async {},
+        tokio::time::sleep(std::time::Duration::from_millis(100)),
+        SESSION_END_GATEWAY_BUDGET,
+    )
+    .await;
+    assert!(finished);
+}

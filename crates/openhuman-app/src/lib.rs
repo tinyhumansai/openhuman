@@ -1367,6 +1367,76 @@ fn must_terminate_after_exit_event(exit_requested_seen: bool, is_windows: bool) 
     is_windows && !exit_requested_seen
 }
 
+/// How long OS session-end teardown waits for provisioned-gateway cleanup.
+///
+/// Windows gives an app only a few seconds after `WM_ENDSESSION` before it
+/// force-kills the process, so the slow, network-bound gateway close must not
+/// hold up the exit. The core is stopped before this budget starts.
+const SESSION_END_GATEWAY_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Session-end teardown order: stop the core first (itself bounded, see
+/// `CoreProcessHandle::send_terminate_signal`), then give gateway cleanup at
+/// most `gateway_budget`. Returns whether the cleanup finished in time.
+///
+/// Generic over the two steps so the ordering and the bound are unit-testable
+/// without a running app.
+async fn session_end_teardown<C, G>(
+    stop_core: C,
+    gateway_cleanup: G,
+    gateway_budget: std::time::Duration,
+) -> bool
+where
+    C: std::future::Future<Output = ()>,
+    G: std::future::Future<Output = ()>,
+{
+    stop_core.await;
+    tokio::time::timeout(gateway_budget, gateway_cleanup)
+        .await
+        .is_ok()
+}
+
+/// Run-once teardown for an OS-initiated exit (`RunEvent::Exit` without
+/// `ExitRequested`, #8505). Unlike [`perform_early_teardown_sync`], the core
+/// stops first and gateway cleanup is bounded by
+/// [`SESSION_END_GATEWAY_BUDGET`], so a slow container or remote close cannot
+/// delay the core stop or the exit past Windows' session-end window.
+fn perform_session_end_teardown_once(app_handle: &AppHandle<AppRuntime>) {
+    if EARLY_TEARDOWN_RAN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        log::info!("[app] session-end teardown — already ran, skipping");
+        return;
+    }
+    log::info!(
+        "[app] session-end teardown — core first, gateway cleanup bounded to {SESSION_END_GATEWAY_BUDGET:?}"
+    );
+    shutdown_imessage_scanner(app_handle);
+
+    let core = app_handle
+        .try_state::<core_process::CoreProcessHandle>()
+        .map(|core| core.inner().clone());
+    let stop_core = async move {
+        if let Some(core) = core {
+            core.send_terminate_signal().await;
+        }
+    };
+    #[cfg(feature = "gateways")]
+    let gateway_cleanup = gateway::registry::shutdown();
+    #[cfg(not(feature = "gateways"))]
+    let gateway_cleanup = async {};
+
+    let finished = tauri::async_runtime::block_on(session_end_teardown(
+        stop_core,
+        gateway_cleanup,
+        SESSION_END_GATEWAY_BUDGET,
+    ));
+    if finished {
+        log::info!("[app] session-end teardown complete");
+    } else {
+        log::warn!(
+            "[app] session-end teardown: gateway cleanup exceeded {SESSION_END_GATEWAY_BUDGET:?}; exiting without waiting for it"
+        );
+    }
+}
+
 fn perform_early_teardown_sync_once(app_handle: &AppHandle<AppRuntime>, reason: &str) {
     if EARLY_TEARDOWN_RAN.swap(true, std::sync::atomic::Ordering::SeqCst) {
         log::info!(
@@ -2951,7 +3021,7 @@ pub fn run() {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         window_state::save_main(&window);
                     }
-                    perform_early_teardown_sync_once(app_handle, "session_end");
+                    perform_session_end_teardown_once(app_handle);
                 }
                 if must_terminate_after_exit_event(exit_requested_seen, cfg!(target_os = "windows")) {
                     // tao's runner is now `Destroyed` but its message loop
