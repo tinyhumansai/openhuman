@@ -8,9 +8,11 @@
 //! when the last owner of the core drops.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 
-use openhuman_core::agent::host_agents::{HostAgent, HostAgentResolver};
+use openhuman_core::agent::host_agents::{HostAgent, HostAgentResolver, OpenedHostAgent};
 
 use crate::agent::AgentInner;
 
@@ -50,17 +52,72 @@ impl std::ops::DerefMut for AgentRegistry {
     }
 }
 
-pub(crate) struct RuntimeAgents(pub(crate) Arc<AgentMap>);
+/// The host's way to bring up an agent that is not live (see
+/// [`RuntimeBuilder::on_missing_agent`](super::RuntimeBuilder::on_missing_agent)).
+pub(crate) type AgentOpener = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = Option<crate::Agent>> + Send>> + Send + Sync,
+>;
 
-impl HostAgentResolver for RuntimeAgents {
-    fn resolve(&self, agent_id: &str) -> Option<HostAgent> {
+pub(crate) struct RuntimeAgents {
+    pub(crate) agents: Arc<AgentMap>,
+    pub(crate) opener: Option<AgentOpener>,
+    /// Serialises opens, so two due jobs for one missing agent open it once.
+    opening: tokio::sync::Mutex<()>,
+}
+
+impl RuntimeAgents {
+    pub(crate) fn new(agents: Arc<AgentMap>, opener: Option<AgentOpener>) -> Self {
+        Self {
+            agents,
+            opener,
+            opening: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    fn live(&self, agent_id: &str) -> Option<HostAgent> {
         let inner = self
-            .0
+            .agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(agent_id)?
             .upgrade()?;
         inner.host_agent()
+    }
+}
+
+impl HostAgentResolver for RuntimeAgents {
+    fn resolve(&self, agent_id: &str) -> Option<HostAgent> {
+        self.live(agent_id)
+    }
+
+    fn open<'a>(
+        &'a self,
+        agent_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Option<OpenedHostAgent>> + Send + 'a>> {
+        Box::pin(async move {
+            let opener = self.opener.as_ref()?;
+            let _opening = self.opening.lock().await;
+            // Another run may have opened it while this one waited.
+            if let Some(live) = self.live(agent_id) {
+                return Some(OpenedHostAgent::new(live));
+            }
+            log::debug!("[embed][agent] opening missing agent id={agent_id}");
+            let Some(agent) = opener(agent_id.to_string()).await else {
+                log::warn!("[embed][agent] host did not open agent id={agent_id}");
+                return None;
+            };
+            if agent.id() != agent_id {
+                log::warn!(
+                    "[embed][agent] host opened id={} for a request for id={agent_id}; refusing",
+                    agent.id()
+                );
+                return None;
+            }
+            let host = agent.inner.host_agent()?;
+            // The handle is the lease: the agent lives for the run, then the
+            // host's drop of the last clone closes it.
+            Some(OpenedHostAgent::new(host).with_lease(agent))
+        })
     }
 }
 

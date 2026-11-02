@@ -102,6 +102,7 @@ pub struct RuntimeBuilder {
     pub(super) cron_job_handlers: Vec<(crate::cron::JobKind, Arc<dyn crate::cron::JobKindHandler>)>,
     pub(super) seams: HostSeams,
     pub(super) max_agents: usize,
+    pub(super) agent_opener: Option<super::host_agents::AgentOpener>,
     pub(super) agent_defaults: super::AgentDefaults,
     pub(super) config_knobs: super::info::ConfigKnobs,
     pub(super) selection: Option<super::ModuleSelection>,
@@ -149,6 +150,7 @@ impl RuntimeBuilder {
             cron_job_handlers: Vec::new(),
             seams: HostSeams::default(),
             max_agents: DEFAULT_MAX_AGENTS,
+            agent_opener: None,
             agent_defaults: super::AgentDefaults::default(),
             config_knobs: super::info::ConfigKnobs::default(),
             selection: None,
@@ -283,6 +285,28 @@ impl RuntimeBuilder {
         self.cron_job_handlers
             .retain(|(existing, _)| *existing != kind);
         self.cron_job_handlers.push((kind, handler));
+        self
+    }
+
+    /// Open an agent on demand when a scheduled job targets one that is not
+    /// live. `opener` receives the job's agent id and returns the agent after
+    /// creating it (for example with [`Runtime::agent`](crate::Runtime::agent));
+    /// the job then runs as that agent, and the returned handle is held for
+    /// the run and released afterwards, so a host need not keep every agent
+    /// alive between runs. Returning `None`, or an agent under another id,
+    /// fails the job: a job whose agent cannot be found never runs as a
+    /// different one. Without an opener a job for a missing agent fails the
+    /// same way.
+    ///
+    /// The opener is stored in the runtime, so it must not hold a strong
+    /// `Arc<Runtime>` (that would keep the runtime alive forever); capture a
+    /// `Weak`. Concurrent opens are serialised.
+    pub fn on_missing_agent<F, Fut>(mut self, opener: F) -> Self
+    where
+        F: Fn(String) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Option<crate::Agent>> + Send + 'static,
+    {
+        self.agent_opener = Some(Arc::new(move |id| Box::pin(opener(id))));
         self
     }
 

@@ -401,6 +401,7 @@ impl RuntimeBuilder {
             domains,
             tool_groups,
             self.max_agents,
+            self.agent_opener.take(),
             defaults,
             host_kind,
             self.selection,
