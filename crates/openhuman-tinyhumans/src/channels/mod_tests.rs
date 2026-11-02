@@ -25,6 +25,7 @@ fn ctx(
 fn typing(channel: &str) -> ChannelBackendRequest {
     ChannelBackendRequest::ProgressiveTransport(Box::new(ProgressiveTransportRequest::Typing {
         channel: channel.to_string(),
+        turn_id: None,
         channel_ref: None,
         conversation: None,
     }))
@@ -36,7 +37,7 @@ fn typing(channel: &str) -> ChannelBackendRequest {
 /// Unbox the progressive-transport answer of a hosted callback.
 fn transport(answer: ChannelBackendResult) -> ProgressiveTransportResult {
     match answer {
-        ChannelBackendResult::ProgressiveTransport(result) => result,
+        ChannelBackendResult::ProgressiveTransport(result) => *result,
         _ => panic!("expected a progressive transport answer"),
     }
 }
@@ -227,7 +228,7 @@ async fn hosted_callback_declines_module_output_events_without_losing_them_as_se
     let config = test_support::signed_in(&tmp, "http://127.0.0.1:9").await;
     let request = ProgressiveTransportRequest::OutputEvent {
         channel: "telegram".into(),
-        turn_id: "turn-1".into(),
+        turn_id: Some("turn-1".into()),
         channel_ref: None,
         conversation: None,
         sequence: 1,
@@ -391,6 +392,7 @@ async fn a_context_bearing_delete_or_typing_keeps_the_empty_id_guards() {
     for request in [
         ProgressiveTransportRequest::Delete {
             channel: "telegram".into(),
+            turn_id: None,
             channel_ref: None,
             conversation: None,
             receipt: None,
@@ -398,6 +400,7 @@ async fn a_context_bearing_delete_or_typing_keeps_the_empty_id_guards() {
         },
         ProgressiveTransportRequest::Typing {
             channel: " / ".into(),
+            turn_id: None,
             channel_ref: None,
             conversation: None,
         },
