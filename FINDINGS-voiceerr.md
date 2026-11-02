@@ -17,9 +17,12 @@ hides an outage from the only people who can fix it. The first commit did both. 
 - Hosted failures (detected by the backend's `ElevenLabs request failed (` wrapping) are never matched by
   `voice_provider_user_message` / `is_voice_provider_user_state_message`, so they stay Sentry errors.
 - The `classify.rs` demotion from the first commit is reverted: `authed_json` reports them again.
-- Hosted TTS (`reply_speech.rs`) now uses `map_hosted_voice_error`, which swaps the raw backend line for
-  "The voice service is temporarily unavailable. Please try again later." (the raw error was already
-  reported by `authed_json` and is logged at `warn`).
+- Hosted TTS (`openhuman-tinyhumans` `voice/reply_speech.rs`) uses `map_hosted_voice_error`. Only failures
+  of the backend's own ElevenLabs account or service (billing codes or 402, 401/403/412, 429, 5xx, read from
+  the wrapper's upstream status) become "The voice service is temporarily unavailable. Please try again
+  later."; request errors the user can fix (`voice_not_found`, text too long, other 4xx) keep their message.
+  The raw error was already reported by `authed_json`; the mapping logs only the category and upstream status,
+  and the backend-error classifier marks the exact neutral message as not reportable again.
 - Hosted STT (`cloud_transcribe.rs`) is left raw: the RPC boundary is its only report site, and mapping
   there would strip the detail ops needs.
 - The BYOK handling is kept: the external STT/TTS providers use the user's own key, so for them
@@ -47,10 +50,9 @@ backend now surfaces upstream billing/account refusals as a 503 and alerts on th
     Update billing to continue."; "API key ID used as API key" -> "That looks like an ElevenLabs key ID, not a key.
     Keys start with `sk_`. Re-enter the API key."; hosted wrapping -> `None`.
   - `is_voice_provider_user_state_message()`: raw BYOK text and the two mapped messages (RPC re-report stays demoted).
-  - `map_voice_provider_error()` (BYOK) and `map_hosted_voice_error()` (hosted, neutral message).
+  - `map_voice_provider_error()` (BYOK). The hosted mapping lives in `openhuman-tinyhumans` (above).
 - `expected_error_kind` returns `ProviderUserState` for the BYOK cases only.
-- Mapping applied in `ExternalSttProvider`, `ExternalTtsProvider` (BYOK) and `reply_speech.rs` (hosted, neutral).
-  `openhuman-embed/src/host_internals.rs` re-exports `map_hosted_voice_error`.
+- Mapping applied in `ExternalSttProvider`, `ExternalTtsProvider` (BYOK) and `reply_speech.rs` (hosted).
 - Tests: `observability_error_classification_voice_provider_tests.rs` (BYOK payment, key ID, hosted TTS/STT not
   claimed, hosted neutral mapping, mapped-message re-report, pass-through, no over-match).
 
