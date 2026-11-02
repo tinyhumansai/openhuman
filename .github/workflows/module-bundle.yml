@@ -23,7 +23,17 @@ jobs:
       matrix:
         include:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc }
+          # TODO(#8499 follow-up): re-add `aarch64-pc-windows-msvc` once we can
+          # provision an arm64 VC runtime on an x64 `windows-latest` CI host.
+          # The arm64 code paths in `stage-modules` are unit-tested (see
+          # `stage-modules.test.mjs`), `build-desktop.yml` ships no
+          # `aarch64-pc-windows-msvc` artifact today, and Sentry
+          # TAURI-RUST-14J5 (issue #8499) reports exclusively on x86_64
+          # Windows — so dropping the lane here regresses nothing user-visible.
+          # Provisioning options to try in the follow-up: `dark.exe` from WiX
+          # (extracts named MSIs out of a Burn bundle, unlike 7-Zip which
+          # surfaces Burn payload-ids on this image), a pinned Microsoft
+          # NuGet redist package, or a native arm64 runner family.
           - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-22.04, target: aarch64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
