@@ -72,7 +72,7 @@ fn a_job_for_a_missing_agent_opens_it_on_demand_or_fails() {
 
             assert!(runtime.agent_ids().is_empty(), "no agent is live");
             cron.upsert(JobSpec::agent("sleeper-hourly", "sleeper", "wake", HOURLY).retries(0))
-                .unwrap_or_else(|e| panic!("job created: {e:?}"));
+                .map_err(|e| eprintln!("UPSERT ERR {e:?}")).expect("job created");
             let run = cron.run_now("sleeper-hourly").await.expect("job runs");
             assert!(run.success, "{}", run.output);
             assert!(run.output.contains("opened-and-done"), "{}", run.output);
@@ -87,7 +87,7 @@ fn a_job_for_a_missing_agent_opens_it_on_demand_or_fails() {
             // The host declines this one: the job fails, nothing else runs it.
             let before = provider.received_requests().await.expect("recorded").len();
             cron.upsert(JobSpec::agent("ghost-hourly", "ghost", "wake", HOURLY).retries(0))
-                .unwrap_or_else(|e| panic!("job created: {e:?}"));
+                .map_err(|e| eprintln!("UPSERT ERR {e:?}")).expect("job created");
             let run = cron.run_now("ghost-hourly").await.expect("job runs");
             assert!(!run.success, "{}", run.output);
             tokio::time::sleep(Duration::from_millis(100)).await;
