@@ -6,12 +6,9 @@
 //   ElevenLabs key): `payment_required` is the user's own subscription and
 //   "API key ID used as API key" (TAURI-RUST-1635) is a pasted key ID. Both
 //   are user state: mapped to an actionable message and demoted from Sentry.
-// - **Hosted** (`/openai/v1/audio/*` on the TinyHumans backend, which always
-//   calls ElevenLabs with the server's own key and wraps any upstream failure
-//   as `ElevenLabs request failed (<status>): <body>`): a `payment_required`
-//   there (TAURI-RUST-15BM / -15CT) is TinyHumans' own account, which the user
-//   cannot fix. It stays a reported error, and the user is only told the
-//   service is unavailable.
+// - **Hosted** (a host's own voice backend calling ElevenLabs with its own
+//   key): not the user's account. Never matched here (only the BYOK client's
+//   error prefixes are); the host owns mapping and reporting those.
 
 /// User-facing message for an ElevenLabs `payment_required` rejection of the
 /// user's own (BYOK) key.
@@ -21,19 +18,6 @@ pub const VOICE_PROVIDER_PAYMENT_REQUIRED_USER_MESSAGE: &str =
 /// User-facing message for an ElevenLabs key-ID-instead-of-key rejection.
 pub const VOICE_PROVIDER_KEY_ID_USER_MESSAGE: &str =
     "That looks like an ElevenLabs key ID, not a key. Keys start with `sk_`. Re-enter the API key.";
-
-/// User-facing message for a hosted voice request the backend's own upstream
-/// provider refused. Nothing the user can change, so no instruction.
-pub const HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE: &str =
-    "The voice service is temporarily unavailable. Please try again later.";
-
-/// The TinyHumans backend's wrappings of an upstream ElevenLabs failure
-/// (`elevenlabsService` in the backend: TTS, streaming TTS, transcription).
-const HOSTED_ELEVENLABS_FAILURE_MARKERS: &[&str] = &[
-    "elevenlabs request failed (",
-    "elevenlabs streaming tts failed (",
-    "elevenlabs transcription failed (",
-];
 
 /// The BYOK ElevenLabs client's error prefixes (`tinyinference_voice`
 /// `external_stt` / `external_tts`, ElevenLabs API style). The OpenAI-compatible
@@ -53,10 +37,9 @@ enum ByokCondition {
 
 /// Classify `lower` (ASCII-lowercased) as a BYOK ElevenLabs user-config error.
 fn byok_condition(lower: &str) -> Option<ByokCondition> {
-    if is_hosted_elevenlabs_failure(lower)
-        || !BYOK_ELEVENLABS_ERROR_PREFIXES
-            .iter()
-            .any(|prefix| lower.contains(prefix))
+    if !BYOK_ELEVENLABS_ERROR_PREFIXES
+        .iter()
+        .any(|prefix| lower.contains(prefix))
     {
         return None;
     }
@@ -67,14 +50,6 @@ fn byok_condition(lower: &str) -> Option<ByokCondition> {
     } else {
         None
     }
-}
-
-/// Whether `lower` (ASCII-lowercased) is a hosted request refused on the
-/// backend's own ElevenLabs account.
-fn is_hosted_elevenlabs_failure(lower: &str) -> bool {
-    HOSTED_ELEVENLABS_FAILURE_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker))
 }
 
 /// Map a raw BYOK ElevenLabs error to an actionable user-facing message, or
@@ -111,19 +86,5 @@ pub fn map_voice_provider_error(raw: String) -> String {
             user.to_string()
         }
         None => raw,
-    }
-}
-
-/// Replace a hosted voice error caused by the backend's upstream provider with
-/// [`HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE`]. Only for call sites whose raw
-/// failure has already been reported (`authed_json` reports every non-2xx it
-/// does not classify), so only a fixed category is logged here. Other errors
-/// pass through unchanged.
-pub fn map_hosted_voice_error(raw: String) -> String {
-    if is_hosted_elevenlabs_failure(&raw.to_ascii_lowercase()) {
-        tracing::warn!("[voice-provider] hosted upstream provider failure mapped to user message");
-        HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE.to_string()
-    } else {
-        raw
     }
 }

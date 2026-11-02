@@ -30,6 +30,40 @@ const LOG_PREFIX: &str = "[voice_reply]";
 /// The route this module posts to.
 const SPEECH_PATH: &str = "/openai/v1/audio/speech";
 
+/// User-facing message for a hosted voice request the backend's own upstream
+/// provider refused. Nothing the user can change, so no instruction. The
+/// failure behind it was already reported (or demoted as transient) by
+/// `authed_json`, so the backend-error classifier marks this message
+/// backend-owned and not reportable (no second event at the RPC boundary).
+pub const HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE: &str =
+    "The voice service is temporarily unavailable. Please try again later.";
+
+/// The backend's wrappings of an upstream ElevenLabs failure
+/// (`elevenlabsService` in the backend: TTS, streaming TTS, transcription).
+/// The backend always calls ElevenLabs with its own key, so a refusal there
+/// (TAURI-RUST-15BM / -15CT) is TinyHumans' account, not the user's.
+const HOSTED_ELEVENLABS_FAILURE_MARKERS: &[&str] = &[
+    "elevenlabs request failed (",
+    "elevenlabs streaming tts failed (",
+    "elevenlabs transcription failed (",
+];
+
+/// Replace a hosted voice error caused by the backend's upstream provider with
+/// [`HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE`], logging only a fixed category.
+/// Other errors pass through unchanged.
+pub(crate) fn map_hosted_voice_error(raw: String) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if HOSTED_ELEVENLABS_FAILURE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        warn!("{LOG_PREFIX} hosted upstream provider failure mapped to user message");
+        HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE.to_string()
+    } else {
+        raw
+    }
+}
+
 /// Env var that activates the [`test_seam`] short-circuit at runtime. When
 /// set to `1` / `true`, [`synthesize_reply`] records the requested text
 /// into [`test_seam::OBSERVED_CALLS`] and returns a stub
@@ -196,7 +230,7 @@ pub async fn synthesize_reply(
         // The backend's own ElevenLabs account refused (TAURI-RUST-15BM):
         // `authed_json` already reported the raw failure, so the user gets a
         // neutral "unavailable" message instead of a backend error line.
-        .map_err(openhuman_embed::__host::core::observability::map_hosted_voice_error)?;
+        .map_err(map_hosted_voice_error)?;
 
     let result = normalize_response(&raw);
     debug!(

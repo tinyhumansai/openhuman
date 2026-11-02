@@ -56,3 +56,16 @@ fn tts_non_auth_error_is_not_demoted_to_session_expiry() {
         "non-auth TTS error must NOT classify as session expiry: {flat}"
     );
 }
+
+#[test]
+fn hosted_upstream_failure_maps_to_neutral_message() {
+    // TAURI-RUST-15BM: the hosted TTS route wrapping a refusal of the
+    // backend's own ElevenLabs account.
+    let hosted = r#"POST /openai/v1/audio/speech failed (400 Bad Request): {"success":false,"error":"ElevenLabs request failed (401): {\"detail\":{\"status\":\"payment_required\"}}","errorCode":"BAD_REQUEST"}"#;
+    assert_eq!(
+        super::map_hosted_voice_error(hosted.to_string()),
+        super::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE
+    );
+    let other = "POST /openai/v1/audio/speech failed (400 Bad Request): {\"error\":\"x\"}";
+    assert_eq!(super::map_hosted_voice_error(other.to_string()), other);
+}

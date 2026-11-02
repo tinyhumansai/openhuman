@@ -60,21 +60,6 @@ fn hosted_payment_required_is_not_user_state() {
 }
 
 #[test]
-fn hosted_upstream_failure_maps_to_neutral_message() {
-    assert_eq!(
-        map_hosted_voice_error(HOSTED_PAYMENT_TTS.to_string()),
-        HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE
-    );
-    let other = "POST /openai/v1/audio/speech failed (400 Bad Request): {\"error\":\"x\"}";
-    assert_eq!(map_hosted_voice_error(other.to_string()), other);
-    // The neutral message is not demoted.
-    assert_eq!(
-        expected_error_kind(HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE),
-        None
-    );
-}
-
-#[test]
 fn mapped_user_messages_stay_demoted_at_rpc_boundary() {
     for m in [
         VOICE_PROVIDER_PAYMENT_REQUIRED_USER_MESSAGE,
