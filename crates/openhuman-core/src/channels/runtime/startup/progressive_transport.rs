@@ -228,7 +228,6 @@ fn map_edit_outcome(
 
     match outcome.error.as_ref().map(|error| error.kind) {
         Some(SendErrorKind::NotFound) => Result::MessageGone,
-        Some(SendErrorKind::Forbidden) | Some(SendErrorKind::BadFormat) => Result::EditUnsupported,
         _ => Result::Outcome(Box::new(outcome)),
     }
 }
