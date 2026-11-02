@@ -25,6 +25,7 @@ fn named_backend(
             SandboxBackendKind::Local
         }
         SandboxBackend::Docker => SandboxBackendKind::Docker,
+        SandboxBackend::OpenShell => SandboxBackendKind::OpenShell,
         SandboxBackend::Auto | SandboxBackend::None => {
             // `[runtime] kind = "docker"` is the legacy spelling of an operator-required
             // container.
@@ -59,6 +60,9 @@ pub fn route_for_mode(
         SandboxMode::Sandboxed => SandboxBackendKind::Local,
     };
     let docker = &runtime.docker;
+    // A tenant's OpenShell box has its own workspace and no egress: nothing on
+    // the host is mounted into it and no container settings apply.
+    let remote_box = backend == SandboxBackendKind::OpenShell;
     tracing::debug!(
         backend = ?backend,
         remote,
@@ -71,14 +75,14 @@ pub fn route_for_mode(
         state_dir: state_dir.to_path_buf(),
         read_only_mounts: Vec::new(),
         read_write_mounts: Vec::new(),
-        allow_network: !matches!(mode, SandboxMode::Sandboxed) || !remote,
-        mount_workspace: docker.mount_workspace || runtime.kind != "docker",
+        allow_network: !remote_box && (!matches!(mode, SandboxMode::Sandboxed) || !remote),
+        mount_workspace: !remote_box && (docker.mount_workspace || runtime.kind != "docker"),
         env_passthrough: SANDBOX_ENV_PASSTHROUGH
             .iter()
             .map(|s| s.to_string())
             .collect(),
         // Carried whichever executor the module picks; only a container reads it.
-        docker_overrides: Some(DockerOverrides {
+        docker_overrides: (!remote_box).then(|| DockerOverrides {
             image: Some(docker.image.clone()),
             network: Some(docker.network.clone()),
             memory_limit_mb: docker.memory_limit_mb,
@@ -123,13 +127,20 @@ pub(crate) async fn should_plan_command(
         return Ok(true);
     }
     let config = ctx.load_config().await?;
-    Ok(matches!(
-        config.sandbox.backend,
+    Ok(backend_requires_sandbox(&config.sandbox.backend))
+}
+
+/// Whether the operator's backend selection is an explicit isolation
+/// requirement, rather than leaving the choice to the agent's mode.
+pub(crate) fn backend_requires_sandbox(backend: &SandboxBackend) -> bool {
+    matches!(
+        backend,
         SandboxBackend::Landlock
             | SandboxBackend::Firejail
             | SandboxBackend::Bubblewrap
             | SandboxBackend::Docker
-    ))
+            | SandboxBackend::OpenShell
+    )
 }
 
 #[cfg(test)]
