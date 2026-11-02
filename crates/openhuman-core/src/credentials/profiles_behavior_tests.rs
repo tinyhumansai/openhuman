@@ -175,8 +175,9 @@ async fn corrupt_store_is_quarantined_and_reset() {
 /// (e.g. `.secret_key` got regenerated underneath an existing
 /// auth-profiles.json — observed when a workspace gets partially restored
 /// or when OPENHUMAN_WORKSPACE points at a half-populated test dir), the
-/// store must silently drop the unrecoverable profile and rewrite the
-/// file. Without this, `app_state_snapshot` polls infinite-loop on
+/// store must silently drop the unrecoverable profile from the view. A read
+/// never deletes it: the same error comes from a transient cipher outage or
+/// a declined consent, and the document may hold the only copy. Without this, `app_state_snapshot` polls infinite-loop on
 /// "Decryption failed — wrong key or tampered data" and the user can
 /// never log in cleanly because every read pre-empts before reaching
 /// the "no profile" code path.
@@ -236,8 +237,14 @@ async fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
         "active_profiles pointer to the doomed profile must also be cleared"
     );
 
-    // Subsequent load: file was rewritten without the bad profile, so
-    // there's nothing to drop on the second pass — same clean state.
+    assert!(
+        store
+            .read_persisted_locked()
+            .unwrap()
+            .profiles
+            .contains_key(&profile_id),
+        "a read must not delete a profile it could not decrypt"
+    );
     let loaded2 = store.load().await.unwrap();
     assert!(!loaded2.profiles.contains_key(&profile_id));
     }).await;
@@ -255,6 +262,44 @@ async fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
 /// the whole load — otherwise *every* profile becomes unreadable and the
 /// user is locked out of all sessions. Drop just the bad entry, matching
 /// the decrypt-failure recovery pattern.
+
+/// A token profile written before secret locations were recorded keeps its
+/// secret in the keyring. A write through the document-only store must keep
+/// the row as it was, not restamp it as document-owned without a secret.
+#[tokio::test]
+async fn a_document_write_keeps_a_legacy_keyring_held_token_row() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    store
+        .upsert_profile(AuthProfile::new_token("openai", "a", "tok-a".into()), true)
+        .await
+        .unwrap();
+
+    let mut data = store.read_persisted_locked().unwrap();
+    data.profiles.insert(
+        "app-session:default".into(),
+        serde_json::from_value(serde_json::json!({
+            "provider": "app-session",
+            "profile_name": "default",
+            "kind": "token",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z",
+        }))
+        .unwrap(),
+    );
+    store.write_persisted_locked(&data).unwrap();
+
+    store
+        .upsert_profile(AuthProfile::new_token("openai", "b", "tok-b".into()), true)
+        .await
+        .unwrap();
+
+    let held = store.read_persisted_locked().unwrap().profiles["app-session:default"].clone();
+    assert!(
+        held.secret_location.is_none() && held.token.is_none(),
+        "the legacy keyring-held row must be retained unchanged"
+    );
+}
 
 #[tokio::test]
 async fn load_drops_profiles_with_unrecognized_kind_instead_of_failing_load() {

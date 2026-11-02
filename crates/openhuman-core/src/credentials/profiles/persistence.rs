@@ -196,7 +196,9 @@ impl AuthProfilesStore {
         for (id, held) in &previous.profiles {
             if !persisted.profiles.contains_key(id)
                 && (held.secret_location == Some(SecretLocation::Keyring)
-                    || (!self.use_keychain && super::migration::keychain_held_oauth(held)))
+                    || (!self.use_keychain
+                        && (super::migration::keychain_held_oauth(held)
+                            || super::migration::legacy_keychain_held(held))))
             {
                 persisted.profiles.insert(id.clone(), held.clone());
             }

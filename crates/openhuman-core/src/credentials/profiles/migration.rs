@@ -27,6 +27,9 @@ impl AuthProfilesStore {
         mut persisted: super::PersistedAuthProfiles,
     ) -> Result<(AuthProfilesData, super::PersistedAuthProfiles)> {
         let mut dropped_ids: Vec<String> = Vec::new();
+        // A decrypt failure may be transient (module unavailable, consent
+        // declined), so its drop stays in this view and is never published.
+        let mut undecryptable = false;
         let mut pending_keychain_deletes = Vec::new();
         let mut unavailable_keyring_ids = Vec::new();
         let mut profiles = BTreeMap::new();
@@ -34,7 +37,7 @@ impl AuthProfilesStore {
             p.validate_secret_location()?;
             let keyring_owned =
                 p.secret_location == Some(super::persistence::SecretLocation::Keyring);
-            if keyring_owned && !self.use_keychain {
+            if (keyring_owned || legacy_keychain_held(p)) && !self.use_keychain {
                 continue;
             }
             // Current secrets may live in the keyring or in the encrypted
@@ -67,6 +70,7 @@ impl AuthProfilesStore {
                                 p.provider
                             );
                             dropped_ids.push(id.clone());
+                            undecryptable = true;
                             continue;
                         }
                     },
@@ -104,6 +108,7 @@ impl AuthProfilesStore {
                             p.provider
                         );
                         dropped_ids.push(id.clone());
+                        undecryptable = true;
                         continue;
                     }
                 }
@@ -169,6 +174,7 @@ impl AuthProfilesStore {
             );
         }
 
+        let unpublished = undecryptable.then(|| persisted.clone());
         if !dropped_ids.is_empty() {
             for id in &dropped_ids {
                 persisted.profiles.remove(id);
@@ -335,13 +341,23 @@ impl AuthProfilesStore {
             active_profiles: persisted.active_profiles.clone(),
             profiles,
         };
-        Ok((data, persisted))
+        Ok((data, unpublished.unwrap_or(persisted)))
     }
 }
 
 /// An OAuth entry whose secrets are only in the OS keychain: its JSON holds
 /// none of them. While the keychain is unavailable it cannot be resolved, so
 /// it is carried untouched (neither handed out nor purged) until it reads again.
+/// A row written before secret locations were recorded whose secrets are not
+/// in the document: they can only be in the keyring.
+pub(super) fn legacy_keychain_held(p: &PersistedAuthProfile) -> bool {
+    p.secret_location.is_none()
+        && p.access_token.is_none()
+        && p.refresh_token.is_none()
+        && p.id_token.is_none()
+        && p.token.is_none()
+}
+
 pub(super) fn keychain_held_oauth(p: &PersistedAuthProfile) -> bool {
     p.access_token.is_none()
         && p.refresh_token.is_none()
