@@ -170,6 +170,10 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   }, [isLocalSession]);
 
   const refresh = useCallback(async () => {
+    // A full refresh supersedes every poll (and older refresh) still in flight:
+    // advance the generation so a stale old-key rejection landing after this
+    // refresh succeeds cannot restore the error and re-pause polling.
+    configGenerationRef.current += 1;
     const generation = configGenerationRef.current;
     const enabled = fetchEnabled ?? (await resolveFetchEnabled());
     if (!enabled) {
@@ -242,6 +246,14 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
         // concurrent toolkit-leg error.
         nextError = connectionsResult.error;
         console.warn('[composio] direct API key rejected — pausing connection polling');
+      } else if (keyRejectedRef.current) {
+        // A poll under this same generation saw the core's rejection gate open
+        // while this refresh was still waiting (e.g. its connections leg got
+        // plain 401s before the gate opened). That rejection is newer than
+        // anything this refresh fetched, and polling is paused on it: keep its
+        // message rather than replacing it with an older error.
+        console.debug('[composio] refresh kept a newer key-rejection reported by polling');
+        return;
       }
 
       setError(nextError);

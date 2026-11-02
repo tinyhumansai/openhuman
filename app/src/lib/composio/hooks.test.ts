@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockListToolkits = vi.fn();
@@ -340,6 +340,79 @@ describe('useComposioIntegrations — rejected direct-mode key (#8509)', () => {
       () => expect(mockListConnections.mock.calls.length).toBeGreaterThan(callsWhenRejected + 1),
       { timeout: 2000 }
     );
+  });
+
+  it('ignores a rejection from a poll that a manual refresh superseded', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    mockListToolkits.mockResolvedValue({ toolkits: ['gmail'] });
+    let rejectStalePoll: (err: Error) => void = () => {};
+    mockListConnections
+      .mockResolvedValueOnce({ connections: [] }) // initial refresh
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectStalePoll = reject;
+        })
+      ) // first poll, still in flight when the user refreshes
+      .mockResolvedValue({ connections: [] });
+
+    const { result } = renderHook(() => useComposioIntegrations(20));
+    await waitFor(() => expect(mockListConnections.mock.calls.length).toBeGreaterThanOrEqual(2));
+
+    // "Try again" with a working key succeeds, then the old poll's rejection lands.
+    await act(async () => {
+      await result.current.refresh();
+    });
+    rejectStalePoll(new Error(KEY_REJECTED));
+
+    const callsAfterRefresh = mockListConnections.mock.calls.length;
+    await waitFor(
+      () => expect(mockListConnections.mock.calls.length).toBeGreaterThan(callsAfterRefresh + 1),
+      { timeout: 2000 }
+    );
+    expect(result.current.error).toBeNull();
+  });
+
+  it('keeps a rejection reported by polling while an older refresh was still running', async () => {
+    const { useComposioIntegrations } = await import('./hooks');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let finishToolkits: (value: { toolkits: string[] }) => void = () => {};
+    mockListToolkits.mockReturnValue(
+      new Promise(resolve => {
+        finishToolkits = resolve;
+      })
+    );
+    // Before the core's gate opens, Composio answers with plain 401s.
+    let gateOpen = false;
+    mockListConnections.mockImplementation(() =>
+      Promise.reject(new Error(gateOpen ? KEY_REJECTED : 'HTTP 401: Invalid API key'))
+    );
+
+    const { result } = renderHook(() => useComposioIntegrations(20));
+
+    // The refresh's connections leg has exhausted its retries on plain 401s;
+    // the refresh itself is still waiting on the toolkit leg.
+    await waitFor(
+      () =>
+        expect(
+          warn.mock.calls.some(
+            ([msg]) =>
+              typeof msg === 'string' &&
+              msg.includes('leg=connections') &&
+              !msg.includes('retrying silently')
+          )
+        ).toBe(true),
+      { timeout: 3000 }
+    );
+    gateOpen = true;
+    await waitFor(() => expect(result.current.error).toBe(KEY_REJECTED), { timeout: 2000 });
+
+    // The older refresh now completes with its plain-401 error.
+    await act(async () => {
+      finishToolkits({ toolkits: ['gmail'] });
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBe(KEY_REJECTED);
+    warn.mockRestore();
   });
 });
 

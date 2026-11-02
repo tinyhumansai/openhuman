@@ -136,11 +136,12 @@ pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation:
         // Bus failures are reported once, with sanitized module metadata.
         return;
     }
+    let message = composio_op_report_message(rendered.as_str());
     let failure_tag = classify_composio_failure_tag(rendered.as_str());
     if failure_tag == "non_2xx" {
         if let Some(status) = extract_backend_returned_status(&rendered) {
             crate::core::observability::report_error_or_expected(
-                "connector operation failed",
+                message,
                 "composio",
                 operation,
                 &[("failure", failure_tag), ("status", status.as_str())],
@@ -149,11 +150,29 @@ pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation:
         }
     }
     crate::core::observability::report_error_or_expected(
-        "connector operation failed",
+        message,
         "composio",
         operation,
         &[("failure", failure_tag)],
     );
+}
+
+/// The static message [`report_composio_op_error`] reports for `rendered`.
+///
+/// Normally `"connector operation failed"`, so no provider content reaches
+/// Sentry. The direct-mode invalid-key backoff (TAURI-RUST-116R, #8509) is
+/// user state, not a fault: it is reported as its static anchor
+/// [`COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR`](crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR)
+/// instead, which `expected_error_kind` demotes to `ProviderUserState`.
+/// Classifying here, before the message is replaced, is what lets that
+/// demotion see the backoff at all.
+pub(crate) fn composio_op_report_message(rendered: &str) -> &'static str {
+    let anchor = crate::integrations::composio::direct_auth::COMPOSIO_DIRECT_KEY_BACKOFF_ANCHOR;
+    if rendered.to_ascii_lowercase().contains(anchor) {
+        anchor
+    } else {
+        "connector operation failed"
+    }
 }
 
 /// Pick the `failure` tag for a composio op-layer error message based on
