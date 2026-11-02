@@ -39,10 +39,7 @@ pub(super) async fn run_agent_job_for_run(
     // A host-registered agent (`agent::host_agents`) carries its own
     // definition, model and route; the registry overrides below are for
     // registry agents only.
-    let opened = match job.agent_id.as_deref() {
-        Some(id) => crate::agent::host_agents::resolve_or_open(id).await,
-        None => None,
-    };
+    let opened = host_agent_for_job(job).await;
     let is_host_agent = opened.is_some();
     if is_host_agent {
         tracing::debug!(
@@ -345,12 +342,13 @@ pub(super) fn cron_turn_overrides() -> crate::agent::session_host::TurnOverrides
 }
 
 pub(super) struct BuiltCronAgent {
-    /// Keeps an agent the host opened for this run alive until the run ends.
-    pub(crate) _lease: Option<Box<dyn std::any::Any + Send + Sync>>,
     pub(crate) agent: OpenHumanSessionHost,
     /// The host agent's context the turn must run in, when `job.agent_id`
     /// named a host-registered agent (`agent::host_agents`).
     pub(crate) context: Option<std::sync::Arc<crate::core::runtime::CoreContext>>,
+    /// Keeps an agent the host opened for this run alive until the run ends.
+    /// Declared last so it drops after the session built from the agent.
+    pub(crate) _lease: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 
 /// Build the session a cron agent job runs: the host agent named by
@@ -362,11 +360,22 @@ pub(super) async fn build_agent_for_cron_job(
     config: &Config,
     job: &CronJob,
 ) -> anyhow::Result<BuiltCronAgent> {
-    let opened = match job.agent_id.as_deref() {
-        Some(id) => crate::agent::host_agents::resolve_or_open(id).await,
-        None => None,
-    };
+    let opened = host_agent_for_job(job).await;
     build_cron_agent(ctx, config, job, opened).await
+}
+
+/// The host agent `job.agent_id` names: a live one, else one the host opens on
+/// demand. An id the agent registry defines is never offered to the host's
+/// opener, so it cannot be shadowed by an agent opened under a built-in name.
+async fn host_agent_for_job(job: &CronJob) -> Option<crate::agent::host_agents::OpenedHostAgent> {
+    use crate::agent::host_agents;
+    let id = job.agent_id.as_deref()?;
+    let in_registry = crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
+        .is_some_and(|registry| registry.get(id).is_some());
+    if in_registry {
+        return host_agents::resolve(id).map(host_agents::OpenedHostAgent::new);
+    }
+    host_agents::resolve_or_open(id).await
 }
 
 #[cfg(test)]
