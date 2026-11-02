@@ -165,8 +165,9 @@ impl HostAgentResolver for Opener {
     fn open<'a>(
         &'a self,
         agent_id: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<host_agents::OpenedHostAgent>> + Send + 'a>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<host_agents::OpenedHostAgent>> + Send + 'a>,
+    > {
         Box::pin(async move {
             self.asked.fetch_add(1, Ordering::SeqCst);
             if !self.opens {
@@ -210,7 +211,10 @@ async fn a_job_for_an_agent_that_is_not_live_runs_as_the_agent_the_host_opens() 
     let built = built.expect("the opened agent builds");
 
     assert_eq!(asked.load(Ordering::SeqCst), 1);
-    assert!(built.context.is_some(), "the turn runs in the opened agent's context");
+    assert!(
+        built.context.is_some(),
+        "the turn runs in the opened agent's context"
+    );
     assert!(built
         .agent
         .visible_tool_specs_arc()
@@ -244,8 +248,8 @@ async fn a_job_for_an_agent_the_host_declines_to_open_fails_instead_of_running_a
 }
 
 #[tokio::test]
-async fn a_job_for_an_unknown_agent_with_no_host_installed_fails_instead_of_running_as_the_orchestrator()
-{
+async fn a_job_for_an_unknown_agent_with_no_host_installed_fails_instead_of_running_as_the_orchestrator(
+) {
     let _slot = crate::agent::host_agents::tests::lock();
     let tmp = TempDir::new().unwrap();
     let config = config(&tmp).await;

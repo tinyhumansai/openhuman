@@ -632,8 +632,9 @@ impl Runtime {
         storage_backend: Option<Arc<dyn openhuman_core::storage::StorageBackend>>,
     ) -> Self {
         let agents: Arc<host_agents::AgentMap> = Arc::new(Mutex::new(Default::default()));
-        let resolver: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver> =
-            Arc::new(host_agents::RuntimeAgents::new(Arc::clone(&agents), agent_opener));
+        let resolver: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver> = Arc::new(
+            host_agents::RuntimeAgents::new(Arc::clone(&agents), agent_opener),
+        );
         openhuman_core::agent::host_agents::install(Arc::clone(&resolver));
         Self {
             id: uuid::Uuid::new_v4().to_string(),

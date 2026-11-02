@@ -54,9 +54,8 @@ impl std::ops::DerefMut for AgentRegistry {
 
 /// The host's way to bring up an agent that is not live (see
 /// [`RuntimeBuilder::on_missing_agent`](super::RuntimeBuilder::on_missing_agent)).
-pub(crate) type AgentOpener = Arc<
-    dyn Fn(String) -> Pin<Box<dyn Future<Output = Option<crate::Agent>> + Send>> + Send + Sync,
->;
+pub(crate) type AgentOpener =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Option<crate::Agent>> + Send>> + Send + Sync>;
 
 pub(crate) struct RuntimeAgents {
     pub(crate) agents: Arc<AgentMap>,
@@ -95,7 +94,6 @@ impl HostAgentResolver for RuntimeAgents {
         agent_id: &'a str,
     ) -> Pin<Box<dyn Future<Output = Option<OpenedHostAgent>> + Send + 'a>> {
         Box::pin(async move {
-            eprintln!("DBG open called {agent_id}");
             let opener = self.opener.as_ref()?;
             let _opening = self.opening.lock().await;
             // Another run may have opened it while this one waited.
@@ -103,9 +101,7 @@ impl HostAgentResolver for RuntimeAgents {
                 return Some(OpenedHostAgent::new(live));
             }
             log::debug!("[embed][agent] opening missing agent id={agent_id}");
-            let got = opener(agent_id.to_string()).await;
-            eprintln!("DBG opener returned {}", got.is_some());
-            let Some(agent) = got else {
+            let Some(agent) = opener(agent_id.to_string()).await else {
                 log::warn!("[embed][agent] host did not open agent id={agent_id}");
                 return None;
             };
@@ -116,9 +112,7 @@ impl HostAgentResolver for RuntimeAgents {
                 );
                 return None;
             }
-            let host = agent.host_agent();
-            eprintln!("DBG host_agent {}", host.is_some());
-            let host = host?;
+            let host = agent.host_agent()?;
             // The handle is the lease: the agent lives for the run, then the
             // host's drop of the last clone closes it.
             Some(OpenedHostAgent::new(host).with_lease(agent))
