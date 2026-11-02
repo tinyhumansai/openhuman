@@ -9,10 +9,11 @@ const HOSTED_PAYMENT_STT: &str = r#"transcription request failed (400 Bad Reques
 /// Streaming TTS uses a third wrapper.
 const HOSTED_PAYMENT_STREAM_TTS: &str =
     r#"ElevenLabs streaming TTS failed (401): {"detail":{"status":"payment_required"}}"#;
-/// A BYOK request refused because the user's own subscription is unpaid.
-const BYOK_PAYMENT_TTS: &str = r#"[voice-tts] elevenlabs 401 payment_required: "Your subscription has a failed or incomplete payment""#;
+/// A BYOK request refused because the user's own subscription is unpaid, in the
+/// ElevenLabs client's format (`[voice-tts] elevenlabs error {status}: {body}`).
+const BYOK_PAYMENT_TTS: &str = r#"[voice-tts] elevenlabs error 401 Unauthorized: {"detail":{"status":"payment_required","message":"Your subscription has a failed or incomplete payment"}}"#;
 /// TAURI-RUST-1635: a BYOK user pasted the key ID.
-const KEY_ID_STT: &str = r#"[voice-stt] elevenlabs 400 invalid_api_key: "API key ID used as API key - only valid API keys can be used. API keys start with 'sk_'""#;
+const KEY_ID_STT: &str = r#"[voice-stt] elevenlabs error 400 Bad Request: {"detail":{"status":"invalid_api_key","message":"API key ID used as API key - only valid API keys can be used. API keys start with 'sk_'"}}"#;
 
 #[test]
 fn byok_payment_required_maps_and_demotes() {
@@ -101,4 +102,23 @@ fn map_voice_provider_error_passes_unknown_through() {
 #[test]
 fn unrelated_payment_required_is_not_claimed() {
     assert_eq!(voice_provider_user_message("stripe payment_required"), None);
+}
+
+#[test]
+fn other_byok_providers_are_not_claimed() {
+    // OpenAI-compatible and Deepgram styles share the external clients but use
+    // their own prefixes; the ElevenLabs guidance must not reach them.
+    for raw in [
+        r#"[voice-stt] external STT error 400 Bad Request: API key ID used as API key"#,
+        r#"[voice-tts] external TTS error 402 Payment Required: payment_required"#,
+        r#"[voice-stt] deepgram error 401 Unauthorized: API key ID used as API key"#,
+    ] {
+        assert_eq!(voice_provider_user_message(raw), None, "{raw}");
+        assert_ne!(
+            expected_error_kind(raw),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "{raw}"
+        );
+        assert_eq!(map_voice_provider_error(raw.to_string()), raw);
+    }
 }

@@ -35,6 +35,40 @@ const HOSTED_ELEVENLABS_FAILURE_MARKERS: &[&str] = &[
     "elevenlabs transcription failed (",
 ];
 
+/// The BYOK ElevenLabs client's error prefixes (`tinyinference_voice`
+/// `external_stt` / `external_tts`, ElevenLabs API style). The OpenAI-compatible
+/// and Deepgram styles use different prefixes, so matching on these keeps the
+/// ElevenLabs-specific messages off the other providers.
+const BYOK_ELEVENLABS_ERROR_PREFIXES: &[&str] = &[
+    "[voice-stt] elevenlabs error ",
+    "[voice-tts] elevenlabs error ",
+];
+
+/// A BYOK voice-provider condition the user can fix.
+#[derive(Debug, Clone, Copy)]
+enum ByokCondition {
+    KeyId,
+    PaymentRequired,
+}
+
+/// Classify `lower` (ASCII-lowercased) as a BYOK ElevenLabs user-config error.
+fn byok_condition(lower: &str) -> Option<ByokCondition> {
+    if is_hosted_elevenlabs_failure(lower)
+        || !BYOK_ELEVENLABS_ERROR_PREFIXES
+            .iter()
+            .any(|prefix| lower.contains(prefix))
+    {
+        return None;
+    }
+    if lower.contains("api key id used as api key") {
+        Some(ByokCondition::KeyId)
+    } else if lower.contains("payment_required") || lower.contains("failed or incomplete payment") {
+        Some(ByokCondition::PaymentRequired)
+    } else {
+        None
+    }
+}
+
 /// Whether `lower` (ASCII-lowercased) is a hosted request refused on the
 /// backend's own ElevenLabs account.
 fn is_hosted_elevenlabs_failure(lower: &str) -> bool {
@@ -43,26 +77,15 @@ fn is_hosted_elevenlabs_failure(lower: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
-/// Map a raw BYOK voice-provider error to an actionable user-facing message,
-/// or `None` when the error is not one of the known user-config conditions.
-/// Hosted failures are never matched: see the module comment.
-///
-/// Matching is anchored on the upstream wording only; response bodies are not
-/// assumed to have any other structure.
+/// Map a raw BYOK ElevenLabs error to an actionable user-facing message, or
+/// `None` when the error is not one of the known user-config conditions.
+/// Hosted failures and other providers are never matched: see the module
+/// comment and [`BYOK_ELEVENLABS_ERROR_PREFIXES`].
 pub fn voice_provider_user_message(message: &str) -> Option<&'static str> {
-    let lower = message.to_ascii_lowercase();
-    if is_hosted_elevenlabs_failure(&lower) {
-        return None;
+    match byok_condition(&message.to_ascii_lowercase())? {
+        ByokCondition::KeyId => Some(VOICE_PROVIDER_KEY_ID_USER_MESSAGE),
+        ByokCondition::PaymentRequired => Some(VOICE_PROVIDER_PAYMENT_REQUIRED_USER_MESSAGE),
     }
-    if lower.contains("api key id used as api key") {
-        return Some(VOICE_PROVIDER_KEY_ID_USER_MESSAGE);
-    }
-    if lower.contains("elevenlabs")
-        && (lower.contains("payment_required") || lower.contains("failed or incomplete payment"))
-    {
-        return Some(VOICE_PROVIDER_PAYMENT_REQUIRED_USER_MESSAGE);
-    }
-    None
 }
 
 /// Whether `message` is a raw BYOK voice-provider config error or one of our
@@ -76,12 +99,14 @@ pub fn is_voice_provider_user_state_message(message: &str) -> bool {
 }
 
 /// Replace a known BYOK voice-provider error with its user-facing message,
-/// logging the raw error at `warn`. Unknown errors pass through unchanged.
+/// logging only the condition at `warn` (the raw error carries the upstream
+/// response body). Unknown errors pass through unchanged.
 pub fn map_voice_provider_error(raw: String) -> String {
     match voice_provider_user_message(&raw) {
         Some(user) => {
+            let condition = byok_condition(&raw.to_ascii_lowercase());
             tracing::warn!(
-                "[voice-provider] upstream account/key problem mapped to user message: {raw}"
+                "[voice-provider] ElevenLabs account/key problem mapped to user message: {condition:?}"
             );
             user.to_string()
         }
@@ -92,11 +117,11 @@ pub fn map_voice_provider_error(raw: String) -> String {
 /// Replace a hosted voice error caused by the backend's upstream provider with
 /// [`HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE`]. Only for call sites whose raw
 /// failure has already been reported (`authed_json` reports every non-2xx it
-/// does not classify); the raw error is logged at `warn` here. Other errors
+/// does not classify), so only a fixed category is logged here. Other errors
 /// pass through unchanged.
 pub fn map_hosted_voice_error(raw: String) -> String {
     if is_hosted_elevenlabs_failure(&raw.to_ascii_lowercase()) {
-        tracing::warn!("[voice-provider] hosted upstream provider failure: {raw}");
+        tracing::warn!("[voice-provider] hosted upstream provider failure mapped to user message");
         HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE.to_string()
     } else {
         raw
