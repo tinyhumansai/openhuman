@@ -4401,8 +4401,10 @@ const messages: TranslationMap = {
     'Доступ к микрофону запрещён. Разрешите его в настройках системы и попробуйте снова.',
   'voice.live.error.micUnavailable': 'Микрофон недоступен.',
   'voice.live.error.connection': 'Не удалось подключиться к голосовому агенту.',
-  'voice.live.error.insufficientCredits': 'Для голоса в реальном времени нужно больше кредитов. Пополните баланс, чтобы продолжить.',
-  'voice.live.error.paidPlanRequired': 'Для голоса в реальном времени нужен платный тариф. Перейдите на него, чтобы продолжить.',
+  'voice.live.error.insufficientCredits':
+    'Для голоса в реальном времени нужно больше кредитов. Пополните баланс, чтобы продолжить.',
+  'voice.live.error.paidPlanRequired':
+    'Для голоса в реальном времени нужен платный тариф. Перейдите на него, чтобы продолжить.',
   'voice.live.toolRunning': 'Выполняется {name}',
   'voice.live.toolOk': '{name} завершено',
   'voice.live.toolFailed': 'Ошибка: {name}',

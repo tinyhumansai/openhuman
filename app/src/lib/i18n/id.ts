@@ -4395,8 +4395,10 @@ const messages: TranslationMap = {
     'Akses mikrofon ditolak. Izinkan di pengaturan sistem lalu coba lagi.',
   'voice.live.error.micUnavailable': 'Tidak ada mikrofon yang tersedia.',
   'voice.live.error.connection': 'Tidak dapat terhubung ke agen suara.',
-  'voice.live.error.insufficientCredits': 'Suara langsung memerlukan lebih banyak kredit. Tambahkan kredit untuk melanjutkan.',
-  'voice.live.error.paidPlanRequired': 'Suara langsung memerlukan paket berbayar. Tingkatkan paket untuk melanjutkan.',
+  'voice.live.error.insufficientCredits':
+    'Suara langsung memerlukan lebih banyak kredit. Tambahkan kredit untuk melanjutkan.',
+  'voice.live.error.paidPlanRequired':
+    'Suara langsung memerlukan paket berbayar. Tingkatkan paket untuk melanjutkan.',
   'voice.live.toolRunning': 'Menjalankan {name}',
   'voice.live.toolOk': '{name} selesai',
   'voice.live.toolFailed': '{name} gagal',

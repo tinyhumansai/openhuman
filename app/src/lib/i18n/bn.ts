@@ -4352,8 +4352,10 @@ const messages: TranslationMap = {
     'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। সিস্টেম সেটিংসে অনুমতি দিয়ে আবার চেষ্টা করুন।',
   'voice.live.error.micUnavailable': 'কোনো মাইক্রোফোন পাওয়া যায়নি।',
   'voice.live.error.connection': 'ভয়েস এজেন্টের সাথে সংযোগ করা যায়নি।',
-  'voice.live.error.insufficientCredits': 'লাইভ ভয়েসের জন্য আরও ক্রেডিট প্রয়োজন। চালিয়ে যেতে ক্রেডিট যোগ করুন।',
-  'voice.live.error.paidPlanRequired': 'লাইভ ভয়েসের জন্য একটি পেইড প্ল্যান প্রয়োজন। চালিয়ে যেতে আপগ্রেড করুন।',
+  'voice.live.error.insufficientCredits':
+    'লাইভ ভয়েসের জন্য আরও ক্রেডিট প্রয়োজন। চালিয়ে যেতে ক্রেডিট যোগ করুন।',
+  'voice.live.error.paidPlanRequired':
+    'লাইভ ভয়েসের জন্য একটি পেইড প্ল্যান প্রয়োজন। চালিয়ে যেতে আপগ্রেড করুন।',
   'voice.live.toolRunning': '{name} চলছে',
   'voice.live.toolOk': '{name} সম্পন্ন',
   'voice.live.toolFailed': '{name} ব্যর্থ হয়েছে',

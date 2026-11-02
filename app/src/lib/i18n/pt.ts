@@ -4419,8 +4419,10 @@ const messages: TranslationMap = {
     'O acesso ao microfone foi negado. Permita-o nas configurações do sistema e tente novamente.',
   'voice.live.error.micUnavailable': 'Nenhum microfone disponível.',
   'voice.live.error.connection': 'Não foi possível conectar ao agente de voz.',
-  'voice.live.error.insufficientCredits': 'A voz ao vivo precisa de mais créditos. Adicione créditos para continuar.',
-  'voice.live.error.paidPlanRequired': 'A voz ao vivo requer um plano pago. Faça upgrade para continuar.',
+  'voice.live.error.insufficientCredits':
+    'A voz ao vivo precisa de mais créditos. Adicione créditos para continuar.',
+  'voice.live.error.paidPlanRequired':
+    'A voz ao vivo requer um plano pago. Faça upgrade para continuar.',
   'voice.live.toolRunning': 'Executando {name}',
   'voice.live.toolOk': '{name} concluído',
   'voice.live.toolFailed': '{name} falhou',

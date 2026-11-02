@@ -4266,7 +4266,8 @@ const messages: TranslationMap = {
     'تم رفض الوصول إلى الميكروفون. اسمح به من إعدادات النظام ثم حاول مرة أخرى.',
   'voice.live.error.micUnavailable': 'لا يتوفر ميكروفون.',
   'voice.live.error.connection': 'تعذّر الاتصال بالوكيل الصوتي.',
-  'voice.live.error.insufficientCredits': 'يحتاج الصوت المباشر إلى رصيد إضافي. أضف رصيدًا للمتابعة.',
+  'voice.live.error.insufficientCredits':
+    'يحتاج الصوت المباشر إلى رصيد إضافي. أضف رصيدًا للمتابعة.',
   'voice.live.error.paidPlanRequired': 'يتطلب الصوت المباشر خطة مدفوعة. قم بالترقية للمتابعة.',
   'voice.live.toolRunning': 'جارٍ تشغيل {name}',
   'voice.live.toolOk': 'اكتمل {name}',

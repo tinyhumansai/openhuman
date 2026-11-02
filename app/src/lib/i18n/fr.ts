@@ -4469,8 +4469,10 @@ const messages: TranslationMap = {
     "L'accès au micro a été refusé. Autorisez-le dans les réglages système puis réessayez.",
   'voice.live.error.micUnavailable': 'Aucun micro disponible.',
   'voice.live.error.connection': "Impossible de se connecter à l'agent vocal.",
-  'voice.live.error.insufficientCredits': 'La voix en direct nécessite plus de crédits. Ajoutez des crédits pour continuer.',
-  'voice.live.error.paidPlanRequired': 'La voix en direct nécessite un forfait payant. Passez à un forfait supérieur pour continuer.',
+  'voice.live.error.insufficientCredits':
+    'La voix en direct nécessite plus de crédits. Ajoutez des crédits pour continuer.',
+  'voice.live.error.paidPlanRequired':
+    'La voix en direct nécessite un forfait payant. Passez à un forfait supérieur pour continuer.',
   'voice.live.toolRunning': '{name} en cours',
   'voice.live.toolOk': '{name} terminé',
   'voice.live.toolFailed': 'Échec de {name}',
