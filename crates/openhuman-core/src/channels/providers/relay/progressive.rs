@@ -182,24 +182,13 @@ fn outbound_delivery(
             let parts = if parts.is_empty() {
                 vec![text_part(text)]
             } else {
-                parts
-                    .iter()
-                    .cloned()
-                    .map(|part| OutboundContentPart::Content { part })
-                    .collect()
+                parts.clone()
             };
             Some((parts, text.clone()))
         }
         Event::Media { text, parts } => {
-            let mut outbound: Vec<OutboundContentPart> = text
-                .iter()
-                .map(|text| OutboundContentPart::Content {
-                    part: ContentPart::Text {
-                        text: text.clone(),
-                        markdown_dialect: None,
-                    },
-                })
-                .collect();
+            let mut outbound: Vec<OutboundContentPart> =
+                text.iter().map(|text| text_part(text)).collect();
             outbound.extend(
                 parts
                     .iter()

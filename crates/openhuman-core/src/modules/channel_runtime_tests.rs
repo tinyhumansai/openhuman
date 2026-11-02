@@ -131,9 +131,9 @@ impl TransportFixture {
             serde_json::Value::Null
         };
         Ok(
-            tinychannels_bus::ChannelBackendResult::ProgressiveTransport(
+            tinychannels_bus::ChannelBackendResult::ProgressiveTransport(Box::new(
                 ProgressiveTransportResult::Success(value),
-            ),
+            )),
         )
     }
 }
