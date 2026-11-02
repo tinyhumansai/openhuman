@@ -293,9 +293,15 @@ fn hosted_voice_unavailable_copy_is_backend_owned_and_not_reported_again() {
     // `authed_json` already reported (or demoted as transient) the failure the
     // neutral copy replaces; the RPC boundary must not report it a second time.
     let message = crate::voice::reply_speech::HOSTED_VOICE_UNAVAILABLE_USER_MESSAGE;
-    for err in [message.to_string(), format!("voice.reply_synthesize: {message}")] {
+    for err in [
+        message.to_string(),
+        format!("voice.reply_synthesize: {message}"),
+    ] {
         let classification = classify(None, &err);
-        assert!(classification.backend_owned && !classification.reportable, "{err}");
+        assert!(
+            classification.backend_owned && !classification.reportable,
+            "{err}"
+        );
         assert_eq!(classification.kind, None, "{err}");
     }
 }
