@@ -3028,11 +3028,14 @@ pub fn run() {
                     // keeps running. The next dispatched event would panic
                     // with `cannot move state from Destroyed` (#8505). Do
                     // what Tauri and tao would do after this callback
-                    // (tray / resource cleanup, then exit), and exit here.
+                    // (tray cleanup, then exit), and exit here. Not
+                    // `cleanup_before_exit`: on Windows it hides every window,
+                    // and a hide can deliver WM_KILLFOCUS into the destroyed
+                    // runner. Resource tables go with the process.
                     log::warn!(
                         "[app] event loop destroyed by session end — exiting now (#8505)"
                     );
-                    app_handle.cleanup_before_exit();
+                    app_handle.remove_tray_by_id("openhuman-tray");
                     process_kill::sweep_orphan_children();
                     std::process::exit(0);
                 }
