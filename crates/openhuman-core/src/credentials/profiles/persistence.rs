@@ -325,8 +325,16 @@ impl AuthProfilesStore {
         let Some(value) = value else {
             return Ok(None);
         };
-        let persisted = serde_json::from_slice(&value)
+        let persisted: PersistedAuthProfiles = serde_json::from_slice(&value)
             .context("Encrypted auth profile document is not valid JSON")?;
+        // A newer writer may record fields this version would drop on rewrite.
+        if persisted.schema_version > CURRENT_SCHEMA_VERSION {
+            anyhow::bail!(
+                "Unsupported auth profile schema version {} (max supported: {})",
+                persisted.schema_version,
+                CURRENT_SCHEMA_VERSION
+            );
+        }
         Ok(Some(persisted))
     }
 
