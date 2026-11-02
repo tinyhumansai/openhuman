@@ -304,4 +304,13 @@ fn hosted_voice_unavailable_copy_is_backend_owned_and_not_reported_again() {
         );
         assert_eq!(classification.kind, None, "{err}");
     }
+    // Another provider's error that merely quotes the sentence is not exempt.
+    for err in [
+        format!("custom provider error 500: {message}"),
+        format!("{message} (upstream said so)"),
+    ] {
+        let classification = classify(None, &err);
+        assert!(!classification.backend_owned, "{err}");
+        assert!(classification.reportable, "{err}");
+    }
 }
