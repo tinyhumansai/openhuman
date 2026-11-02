@@ -113,7 +113,7 @@ impl HostAgentResolver for RuntimeAgents {
                 );
                 return None;
             }
-            let host = agent.inner.host_agent()?;
+            let host = agent.host_agent()?;
             // The handle is the lease: the agent lives for the run, then the
             // host's drop of the last clone closes it.
             Some(OpenedHostAgent::new(host).with_lease(agent))
