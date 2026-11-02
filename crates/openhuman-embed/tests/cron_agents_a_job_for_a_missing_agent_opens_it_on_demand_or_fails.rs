@@ -74,6 +74,7 @@ fn a_job_for_a_missing_agent_opens_it_on_demand_or_fails() {
             cron.upsert(JobSpec::agent("sleeper-hourly", "sleeper", "wake", HOURLY).retries(0))
                 .map_err(|e| eprintln!("UPSERT ERR {e}")).expect("job created");
             let run = cron.run_now("sleeper-hourly").await.expect("job runs");
+            eprintln!("RUN {} {}", run.success, run.output);
             assert!(run.success, "{}", run.output);
             assert!(run.output.contains("opened-and-done"), "{}", run.output);
             let requests = provider.received_requests().await.expect("recorded");
