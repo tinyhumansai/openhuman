@@ -10571,7 +10571,7 @@ dependencies = [
 
 [[package]]
 name = "tinyskills"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -10581,14 +10581,14 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.1",
  "thiserror 2.0.21",
- "tinytools 0.5.0",
+ "tinytools 0.6.0",
  "tokio",
  "url",
 ]
 
 [[package]]
 name = "tinyskills-drivers"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "cap-std",
  "serde",
@@ -10818,17 +10818,6 @@ dependencies = [
 name = "tinytools"
 version = "0.3.0"
 source = "git+https://github.com/tinyhumansai/tinytools?rev=a5d04a7f3af0abc1dd748f87f94871b36ae9fe71#a5d04a7f3af0abc1dd748f87f94871b36ae9fe71"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tinytools"
-version = "0.5.0"
-source = "git+https://github.com/senamakel/tinytools?rev=1cd9e9c4a117336e6f42d0c7936ed60e7476d88f#1cd9e9c4a117336e6f42d0c7936ed60e7476d88f"
 dependencies = [
  "anyhow",
  "async-trait",
