@@ -12,6 +12,7 @@
 pub mod docker;
 pub(crate) mod local_grants;
 pub(crate) mod native_jail;
+pub mod openshell;
 pub(crate) mod operator;
 pub mod ops;
 #[cfg(feature = "security-module")]

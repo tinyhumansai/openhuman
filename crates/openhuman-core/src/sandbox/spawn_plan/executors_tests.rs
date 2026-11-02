@@ -151,3 +151,24 @@ fn a_jail_that_could_not_be_verified_is_declared_unavailable() {
     assert_eq!(executor.isolation, IsolationLevel2::None);
     assert!(executor.constraints.is_empty());
 }
+
+#[test]
+fn openshell_is_a_container_executor_with_its_own_identity() {
+    let executor = openshell();
+    assert_eq!(executor.executor_id, OPENSHELL_EXECUTOR);
+    assert_ne!(executor.executor_id, DOCKER_EXECUTOR);
+    assert_eq!(executor.backend, SandboxBackend::Docker);
+    assert_eq!(executor.isolation, IsolationLevel2::Kernel);
+    assert!(executor.available);
+    for constraint in [
+        SandboxConstraint2::Filesystem,
+        SandboxConstraint2::Network,
+        SandboxConstraint2::Memory,
+        SandboxConstraint2::CpuMillicores,
+    ] {
+        assert_eq!(
+            enforcement_of(&executor, constraint),
+            Some(ConstraintEnforcement2::Enforced)
+        );
+    }
+}

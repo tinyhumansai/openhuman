@@ -149,6 +149,11 @@ impl SandboxBackendCheck {
                     "Review the sandbox runtime and rerun doctor.",
                 ),
             },
+            SandboxBackend::OpenShell => Finding::skipped(
+                "sandbox/backend",
+                "The OpenShell backend is configured; its gateway is reached when a tenant's first box is created.",
+                "Run a sandboxed command to confirm the OpenShell gateway accepts new boxes.",
+            ),
             SandboxBackend::Firejail | SandboxBackend::Bubblewrap => Finding::error(
                 "sandbox/backend",
                 "The configured sandbox backend is not supported by this build.",

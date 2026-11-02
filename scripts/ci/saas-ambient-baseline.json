@@ -651,6 +651,13 @@
     "occurrence": 1
   },
   {
+    "rule": "bare-spawn",
+    "path": "crates/openhuman-core/src/sandbox/openshell/registry.rs",
+    "line": 231,
+    "text": "tokio::spawn(async move {",
+    "occurrence": 1
+  },
+  {
     "rule": "home-dir",
     "path": "crates/openhuman-core/src/security/policy/native_commands.rs",
     "line": 296,
