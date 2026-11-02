@@ -2,7 +2,7 @@
 //! expected states (typed [`HostedApiError`]s), which are transient noise, and
 //! which are reported.
 
-use crate::transport::BackendTransportError;
+use crate::transport::{BackendTransportError, BillingRefusal};
 use anyhow::{Context, Result};
 use openhuman_embed::__host::core::observability::{
     contains_transient_transport_phrase, is_transient_http_status_code, report_error,
@@ -54,92 +54,12 @@ pub(super) fn backend_api_body_shape(body: &str) -> String {
     }
 }
 
-/// Max bytes of each of the backend's `error` / `details` text echoed by the
-/// opt-in diagnostic log (see [`backend_error_text_logging_enabled`]).
-pub(super) const BACKEND_API_ERROR_TEXT_MAX_BYTES: usize = 300;
-
-/// Env flag that opts in to logging the backend's `error` / `details` text.
-/// Off by default: those values are server-controlled free text and may echo
-/// user content, so they are never put in Sentry reports.
-const LOG_BACKEND_ERROR_TEXT_ENV: &str = "OPENHUMAN_LOG_BACKEND_ERROR_TEXT";
-
-fn backend_error_text_logging_enabled() -> bool {
-    std::env::var(LOG_BACKEND_ERROR_TEXT_ENV)
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
 /// The backend's `errorCode`, only when it is a short ASCII identifier (an
 /// enum-like code such as `INVALID_ARGUMENT`), so it is safe for telemetry.
 pub(super) fn backend_api_error_code(body: &str) -> Option<String> {
     let value = serde_json::from_str::<Value>(body.trim()).ok()?;
     let code = value.get("errorCode")?.as_str()?;
     is_schema_like_key(code).then(|| code.to_string())
-}
-
-/// The backend's `error` and `details` text (the standard
-/// `{success,error,errorCode,details}` failure envelope), each truncated.
-/// Contains server-controlled values: for the opt-in local log only.
-pub(super) fn backend_api_error_text(body: &str) -> Option<String> {
-    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
-    let render = |v: &Value| match v {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    };
-    let mut parts = Vec::new();
-    for key in ["error", "details"] {
-        if let Some(v) = value.get(key).filter(|v| !v.is_null()) {
-            let text = render(v);
-            parts.push(format!(
-                "{key}={}",
-                truncate_at_byte_boundary(&text, BACKEND_API_ERROR_TEXT_MAX_BYTES)
-            ));
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("; "))
-}
-
-/// The backend `errorCode` for an account whose balance is below what the
-/// route reserves (e.g. Gemini Live's per-session reserve).
-const INSUFFICIENT_CREDITS_ERROR_CODE: &str = "USER_INSUFFICIENT_CREDITS";
-
-/// A billing refusal the backend signals on a gated hosted feature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum BillingRefusal {
-    /// Balance below the route's reserve.
-    InsufficientCredits,
-    /// The feature needs a paid plan.
-    PaidPlanRequired,
-}
-
-/// Classify a non-2xx response as a billing refusal: an
-/// `errorCode: USER_INSUFFICIENT_CREDITS` envelope on any status
-/// (TAURI-RUST-13BR, whose message matches no budget phrase), or a 403 whose
-/// `error` text asks to add credits or names a paid plan (the voice-agent
-/// signed-url gate, TAURI-RUST-11G3, which answers with `errorCode: FORBIDDEN`).
-/// Only the `error` field is read for 403s, so a body that merely echoes a
-/// phrase elsewhere does not match.
-pub(super) fn backend_billing_refusal(status: u16, body: &str) -> Option<BillingRefusal> {
-    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
-    if value.get("errorCode").and_then(Value::as_str) == Some(INSUFFICIENT_CREDITS_ERROR_CODE) {
-        return Some(BillingRefusal::InsufficientCredits);
-    }
-    if status != 403 {
-        return None;
-    }
-    let error = value.get("error").and_then(Value::as_str)?;
-    if error.to_ascii_lowercase().contains("paid plan") {
-        Some(BillingRefusal::PaidPlanRequired)
-    } else if tinyinference_providers::is_budget_exhausted_message(error) {
-        Some(BillingRefusal::InsufficientCredits)
-    } else {
-        None
-    }
 }
 
 /// A JSON key safe to echo into telemetry: a short ASCII identifier.
@@ -252,6 +172,47 @@ impl BackendClient {
                     message_id,
                 }));
             }
+            // The transport classifies billing refusals (it owns what a backend
+            // response means); surfacing them as typed errors is ours.
+            Err(BackendTransportError::BillingRefusal {
+                refusal,
+                status,
+                body,
+            }) => {
+                tracing::info!(
+                    domain = "backend_api",
+                    operation = "authed_json",
+                    method = method.as_str(),
+                    path = url.path(),
+                    status,
+                    failure = "non_2xx",
+                    kind = ?refusal,
+                    "[backend_api] billing refusal {status} on {} {}: {refusal:?}, not reporting to Sentry",
+                    method.as_str(),
+                    url.path(),
+                );
+                let text = match body {
+                    Value::String(text) => text,
+                    other => serde_json::to_string(&other).unwrap_or_default(),
+                };
+                let (method, path) = (method.as_str().to_string(), url.path().to_string());
+                let body =
+                    truncate_at_byte_boundary(&text, BACKEND_API_ERROR_BODY_MAX_BYTES).to_string();
+                return Err(anyhow::Error::new(match refusal {
+                    BillingRefusal::InsufficientCredits => HostedApiError::InsufficientCredits {
+                        method,
+                        path,
+                        status,
+                        body,
+                    },
+                    BillingRefusal::PaidPlanRequired => HostedApiError::PaidPlanRequired {
+                        method,
+                        path,
+                        status,
+                        body,
+                    },
+                }));
+            }
             Err(BackendTransportError::Status { status, body }) => (status, body),
             Err(error) => {
                 return Err(anyhow::Error::new(error).context(format!(
@@ -297,41 +258,6 @@ impl BackendClient {
         let is_transient_infra = is_transient_http_status_code(status_code);
         let is_budget_exhausted =
             status_code == 400 && tinyinference_providers::is_budget_exhausted_message(&text);
-        // Checked before the budget-text path: an explicit
-        // `USER_INSUFFICIENT_CREDITS` code wins even when the message also
-        // matches a budget phrase. Budget 400s without it fall through as before
-        // (the 403 text match never overlaps the 400-only budget check).
-        if let Some(refusal) = backend_billing_refusal(status_code, &text) {
-            tracing::info!(
-                domain = "backend_api",
-                operation = "authed_json",
-                method = method.as_str(),
-                path = url.path(),
-                status = status_code,
-                failure = "non_2xx",
-                kind = ?refusal,
-                "[backend_api] billing refusal {status} on {} {}: {refusal:?}, not reporting to Sentry",
-                method.as_str(),
-                url.path(),
-            );
-            let (method, path) = (method.as_str().to_string(), url.path().to_string());
-            let body =
-                truncate_at_byte_boundary(&text, BACKEND_API_ERROR_BODY_MAX_BYTES).to_string();
-            return Err(anyhow::Error::new(match refusal {
-                BillingRefusal::InsufficientCredits => HostedApiError::InsufficientCredits {
-                    method,
-                    path,
-                    status: status_code,
-                    body,
-                },
-                BillingRefusal::PaidPlanRequired => HostedApiError::PaidPlanRequired {
-                    method,
-                    path,
-                    status: status_code,
-                    body,
-                },
-            }));
-        }
         if is_budget_exhausted {
             tracing::info!(
                 method = method.as_str(),
@@ -377,18 +303,6 @@ impl BackendClient {
                 method.as_str(),
                 url.path(),
             );
-            if backend_error_text_logging_enabled() {
-                if let Some(detail) = backend_api_error_text(&text) {
-                    tracing::debug!(
-                        method = method.as_str(),
-                        path = url.path(),
-                        status = status_code,
-                        "[backend_api] {} {} failed ({status}): {detail}",
-                        method.as_str(),
-                        url.path(),
-                    );
-                }
-            }
             report_error(
                 format!(
                     "{} {} failed ({status}); response_body_len={}; body_shape={}{}",

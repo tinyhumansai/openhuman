@@ -1,10 +1,10 @@
 use super::*;
 use crate::client::classify::{
-    backend_api_body_shape, backend_api_error_code, backend_api_error_text,
-    backend_billing_refusal, BillingRefusal, BACKEND_API_BODY_SHAPE_MAX_BYTES,
+    backend_api_body_shape, backend_api_error_code, BACKEND_API_BODY_SHAPE_MAX_BYTES,
     BACKEND_API_ERROR_BODY_MAX_BYTES,
 };
 use crate::client::{flatten_authed_error, HostedApiError};
+use crate::transport::{billing_refusal, BillingRefusal};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
@@ -421,22 +421,16 @@ fn backend_api_error_code_rejects_non_identifier_and_non_string_codes() {
     assert_eq!(backend_api_error_code("Forbidden"), None);
 }
 
-#[test]
-fn backend_api_error_text_extracts_error_and_details_truncated() {
-    let body =
-        r#"{"success":false,"error":"Bad Request","errorCode":"E","details":["model: unknown"]}"#;
-    let text = backend_api_error_text(body).unwrap();
-    assert!(text.contains("error=Bad Request"), "{text}");
-    assert!(text.contains(r#"details=["model: unknown"]"#), "{text}");
-    let long = format!(r#"{{"error":"{}"}}"#, "a".repeat(2000));
-    assert!(backend_api_error_text(&long).unwrap().len() < 400);
-    assert_eq!(backend_api_error_text(r#"{"success":true}"#), None);
-    assert_eq!(backend_api_error_text("<html>"), None);
-}
-
 /// The exact 182-byte body behind TAURI-RUST-13BR (backend
 /// `gemini/liveSessions.ts`): balance below the Gemini Live session reserve.
 const GEMINI_LIVE_RESERVE_BODY: &str = r#"{"success":false,"error":"Gemini Live requires an available balance of at least $1.00 (reserved per open session)","errorCode":"USER_INSUFFICIENT_CREDITS","details":{"reserveUsd":1}}"#;
+
+/// The transport's classifier on a raw body, parsed as the SDK hands it over
+/// (JSON when it parses, otherwise the text as a JSON string).
+fn backend_billing_refusal(status: u16, body: &str) -> Option<BillingRefusal> {
+    let body = serde_json::from_str(body).unwrap_or_else(|_| Value::String(body.into()));
+    billing_refusal(status, &body)
+}
 
 #[test]
 fn backend_billing_refusal_classifies_the_live_voice_gates() {
