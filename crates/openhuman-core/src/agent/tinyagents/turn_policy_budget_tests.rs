@@ -170,3 +170,34 @@ fn a_dead_call_is_retried_at_the_same_cap_without_reasoning_and_new_calls_keep_i
         );
     }
 }
+
+/// With security disabled the endpoint is classified on the host: a loopback
+/// endpoint is self-hosted, a LAN one is not.
+fn assert_endpoints_classified_by_loopback() {
+    assert!(provider_is_self_hosted(
+        "llamacpp:m",
+        Some("http://127.0.0.1:8080/v1")
+    ));
+    assert!(provider_is_self_hosted("vllm:m", Some("http://0.0.0.0:8000/v1")));
+    assert!(!provider_is_self_hosted(
+        "vllm:m",
+        Some("http://192.168.1.20:8000/v1")
+    ));
+    assert!(!provider_is_self_hosted(
+        "openai",
+        Some("http://localhost:8080/v1")
+    ));
+}
+
+#[cfg(not(feature = "security-module"))]
+#[test]
+fn a_build_without_the_module_classifies_local_endpoints_by_loopback() {
+    assert_endpoints_classified_by_loopback();
+}
+
+#[cfg(feature = "security-module")]
+#[test]
+fn security_configured_off_classifies_local_endpoints_by_loopback() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_endpoints_classified_by_loopback();
+}
