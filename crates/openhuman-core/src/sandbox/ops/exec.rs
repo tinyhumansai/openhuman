@@ -207,12 +207,16 @@ pub(crate) async fn execute_resolved(
     meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<ShellRunOutcome> {
     #[cfg(feature = "security-module")]
-    let resolved = match resolved.planned {
-        Some(planned) => (resolved.effective_policy, resolved.config, planned),
-        None => {
+    let resolved = match resolved {
+        ResolvedSandbox {
+            effective_policy,
+            config,
+            planned: Some(planned),
+        } => (effective_policy, config, planned),
+        unplanned => {
             return execute_unchecked(
                 ctx,
-                resolved,
+                unplanned,
                 command,
                 working_dir,
                 extra_env,
@@ -328,7 +332,6 @@ pub(crate) async fn execute_resolved(
 
 /// Run a command that TinySecurity did not plan (security disabled) on the
 /// backend [`unchecked_backend`] chose: the host, a container or the box.
-#[allow(clippy::too_many_arguments)]
 async fn execute_unchecked(
     ctx: &DispatchCtx,
     resolved: ResolvedSandbox,
