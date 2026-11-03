@@ -1,7 +1,7 @@
 //! Versioned, credential-safe runtime capability metadata.
 use super::{LearningSettings, ModelDefaults, Runtime, RuntimeBuilder};
 use openhuman_core::config::{
-    schema::{AutonomyConfig, CronConfig, PrivacyConfig, SecretsConfig},
+    schema::{AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig},
     Config,
 };
 use std::collections::BTreeMap;
@@ -11,6 +11,8 @@ pub(super) struct ConfigKnobs {
     pub autonomy: Option<AutonomyConfig>,
     /// Data egress policy name.
     pub privacy: Option<PrivacyConfig>,
+    /// Whether untrusted input is screened for prompt injection.
+    pub prompt_screen: Option<PromptScreenConfig>,
     pub secrets: Option<SecretsConfig>,
     pub cron: Option<CronConfig>,
     /// Background memory learning policy.
@@ -21,6 +23,7 @@ impl ConfigKnobs {
     pub fn is_set(&self) -> bool {
         self.autonomy.is_some()
             || self.privacy.is_some()
+            || self.prompt_screen.is_some()
             || self.secrets.is_some()
             || self.cron.is_some()
             || self.learning.is_some()
@@ -32,6 +35,9 @@ impl ConfigKnobs {
         }
         if let Some(v) = &self.privacy {
             config.privacy = *v;
+        }
+        if let Some(v) = &self.prompt_screen {
+            config.prompt_screen = *v;
         }
         if let Some(v) = &self.secrets {
             config.secrets = v.clone();

@@ -207,6 +207,20 @@ impl RuntimeBuilder {
         self.config_knobs.privacy = Some(value);
         self
     }
+    /// Whether untrusted input is screened for prompt injection before a turn,
+    /// a tool result or an inbound message is processed (`[prompt_screen]`).
+    ///
+    /// The screen is TinySecurity's, and it fails closed: by default input is
+    /// held for review whenever no verdict can be had, including in a build
+    /// without the `security-module` feature. A host that screens input
+    /// itself, or ships without the TinySecurity module on purpose, passes
+    /// [`PromptScreenConfig::off`](crate::config::PromptScreenConfig::off); the
+    /// runtime then allows input unscreened and says so once at boot. Leaving
+    /// it unset keeps the configured (by default enforced) screen.
+    pub fn prompt_screen(mut self, value: openhuman_core::config::schema::PromptScreenConfig) -> Self {
+        self.config_knobs.prompt_screen = Some(value);
+        self
+    }
     /// Credential encryption policy.
     pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self {
         self.config_knobs.secrets = Some(value);
