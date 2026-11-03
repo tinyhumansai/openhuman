@@ -1,4 +1,5 @@
 use super::*;
+use tinyagents_harness::turn_runner::{IngressDecision, IngressPolicy, IngressStage};
 
 #[test]
 fn channel_deadline_respects_module_floor_and_web_backstop() {
@@ -300,4 +301,85 @@ async fn native_runner_checkouts_serialize_and_cancel_waiters_cleanly() {
     .expect("a later runner can check out a different session in the profile");
     assert_eq!(third_session.session_id, other_session);
     second_shared.record_delivery("native-third", true);
+}
+
+fn hooked_request(
+    text: &str,
+    input: Option<tinyinference_llm::message::Message>,
+) -> TurnRequest<QueuedPayload> {
+    TurnRequest {
+        scope: ScopeKey {
+            agent_id: "orchestrator".into(),
+            profile_id: None,
+        },
+        thread_id: "thread-hooked".into(),
+        request_id: "request-hooked".into(),
+        text: text.into(),
+        payload: QueuedPayload {
+            native_message_input: input,
+            ..Default::default()
+        },
+        host_authored: false,
+        disposition: QueueDisposition::Interrupt,
+        deadline: None,
+        idle_timeout: None,
+    }
+}
+
+/// Spawns the hook under `/bin/sh`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_prompt_hooks_context_reaches_both_inputs_of_a_channel_turn() {
+    crate::hooks::fixture::install_prompt_hooks().await;
+    let input = crate::agent::message_convert::user_message_from_text("ZZ-HOOK-CONTEXT look");
+    let mut request = hooked_request("ZZ-HOOK-CONTEXT look", Some(input));
+
+    let decision = NativeIngress
+        .apply(IngressStage::BeforeSubmit, &mut request)
+        .await
+        .unwrap();
+
+    assert_eq!(decision, IngressDecision::Continue);
+    assert_eq!(request.text, "ZZ-HOOK-CONTEXT look\n\nEXTRACTED-BY-HOOK");
+    let Some(tinyinference_llm::message::Message::User(input)) =
+        request.payload.native_message_input
+    else {
+        panic!("the typed input should stay a user message");
+    };
+    assert!(matches!(
+        input.content.last(),
+        Some(tinyinference_llm::message::ContentBlock::Text(text)) if text == "EXTRACTED-BY-HOOK"
+    ));
+}
+
+/// Spawns the hook under `/bin/sh`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_prompt_hook_screens_the_senders_words_and_blocks_with_its_reason() {
+    crate::hooks::fixture::install_prompt_hooks().await;
+    let enriched = "[Channel context]\nYou are responding via the \"telegram\" channel.\n\nZZ-HOOK-BLOCK please";
+    let mut request = hooked_request(enriched, None);
+    request.payload.native_user_text = Some("ZZ-HOOK-BLOCK please".into());
+
+    let decision = NativeIngress
+        .apply(IngressStage::BeforeSubmit, &mut request)
+        .await
+        .unwrap();
+
+    assert_eq!(decision, IngressDecision::Reject("hook says no".into()));
+    assert_eq!(request.text, enriched);
+}
+
+#[tokio::test]
+async fn a_prompt_no_hook_matches_passes_through_untouched() {
+    crate::hooks::fixture::install_prompt_hooks().await;
+    let mut request = hooked_request("an ordinary message", None);
+
+    let decision = NativeIngress
+        .apply(IngressStage::BeforeSubmit, &mut request)
+        .await
+        .unwrap();
+
+    assert_eq!(decision, IngressDecision::Continue);
+    assert_eq!(request.text, "an ordinary message");
 }

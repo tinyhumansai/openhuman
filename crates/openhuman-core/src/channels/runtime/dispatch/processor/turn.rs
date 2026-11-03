@@ -335,6 +335,7 @@ pub(crate) async fn run_admitted_turn(
                 session_key.clone(),
                 request_id,
                 enriched_message.clone(),
+                msg.content.clone(),
                 ctx.message_timeout_secs,
                 native_message_input,
                 native_staged_parts,
