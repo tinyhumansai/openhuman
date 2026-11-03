@@ -708,5 +708,25 @@
     "category": "A",
     "reason": "Test-only (cfg(test) module): a retained two-worker runtime that admits the real native security module for fixture contexts, so synchronous host adapters can finish while a current-thread test waits. It holds no tenant data; each admission runs under the fixture's own CoreContext.",
     "verification": "agent/harness/artifact_offload/artifact_offload_tests.rs: an_action_dir_inside_workspace_dir_is_never_materialized"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/switch.rs",
+    "scope": "",
+    "name": "CONFIGURED_OFF",
+    "type": "AtomicBool",
+    "count": 1,
+    "category": "A",
+    "reason": "Process configuration: the booted config's `[security] mode = \"off\"`, written once when the core boots and read by TinySecurity-delegated checks that hold no config. OpenHuman runs one Runtime per process, so the booted mode is the process's; it carries no tenant data.",
+    "verification": "security/switch_tests.rs: booting_with_security_off_disables_the_checks_process_wide"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/switch.rs",
+    "scope": "",
+    "name": "TEST_CONFIGURED_OFF",
+    "type": "AtomicBool",
+    "count": 1,
+    "category": "A",
+    "reason": "cfg(test) only: a per-thread stand-in for CONFIGURED_OFF so a test that turns security off cannot reach a test on another thread. Holds one flag, no tenant data, and is not compiled into any shipped build.",
+    "verification": "security/switch_tests.rs: the_test_guard_does_not_reach_another_thread"
   }
 ]
