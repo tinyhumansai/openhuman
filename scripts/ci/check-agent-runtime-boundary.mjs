@@ -916,7 +916,9 @@ for (const path of await filesUnder(
   const crateName = tinyagentsCrateName(path);
   const lines = codeLines(source);
   const parentSource = path.endsWith("_tests.rs")
-    ? await readFile(path.replace(/_tests\.rs$/, ".rs"), "utf8").catch(() => null)
+    ? await readFile(path.replace(/_tests\.rs$/, ".rs"), "utf8").catch(
+        () => null,
+      )
     : null;
   let firstForwardingLine;
   for (const { line, text, raw } of lines) {
