@@ -164,6 +164,7 @@ impl CoreContext {
             Ok(cfg) => {
                 if boot_mode != crate::core::runtime::CoreBootMode::Inspection {
                     init_stores(&cfg, domains).await;
+                    crate::security::prompt_injection::log_prompt_screen_mode(&cfg);
                 }
                 Some(cfg)
             }
