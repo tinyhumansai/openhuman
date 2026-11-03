@@ -245,6 +245,12 @@ pub struct Config {
     #[serde(default)]
     pub privacy: PrivacyConfig,
 
+    /// Whether untrusted input is screened for prompt injection
+    /// (`[prompt_screen]`). Missing block → enforced, failing closed when
+    /// TinySecurity gives no verdict.
+    #[serde(default)]
+    pub prompt_screen: PromptScreenConfig,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 

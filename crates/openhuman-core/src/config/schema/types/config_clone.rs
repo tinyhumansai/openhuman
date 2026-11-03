@@ -41,6 +41,7 @@ impl Clone for Config {
             computer: self.computer.clone(),
             hooks: self.hooks.clone(),
             privacy: self.privacy,
+            prompt_screen: self.prompt_screen,
             sandbox: self.sandbox.clone(),
             runtime: self.runtime.clone(),
             shell: self.shell.clone(),

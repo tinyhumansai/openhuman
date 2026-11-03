@@ -277,6 +277,7 @@ The compiled capability report describes this build:
   "configuration": {
     "autonomy_enabled": true,
     "privacy": "Standard",
+    "prompt_screen_enforced": true,
     "secrets_encrypted": true,
     "cron_enabled": true,
     "learning": {
