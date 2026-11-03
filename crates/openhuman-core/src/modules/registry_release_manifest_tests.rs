@@ -2,13 +2,13 @@ use super::*;
 
 #[cfg(feature = "security-module")]
 #[test]
-fn tinysecurity_registry_matches_the_verified_v0182_release_manifest() {
+fn tinysecurity_registry_matches_the_verified_v0184_release_manifest() {
     let security = find("tinysecurity").expect("compiled TinySecurity module");
-    assert_eq!(security.version, "0.18.2");
-    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (1, 33));
+    assert_eq!(security.version, "0.18.4");
+    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (1, 35));
     assert_eq!(
         security.release_url,
-        "https://github.com/senamakel/tinysecurity/releases/tag/v0.18.2"
+        "https://github.com/tinyhumansai/tinysecurity/releases/tag/v0.18.4"
     );
 
     let mut actual = security
@@ -20,58 +20,58 @@ fn tinysecurity_registry_matches_the_verified_v0182_release_manifest() {
     let mut published = [
         (
             "macos-15-arm64",
-            "tinysecurity-module-0.18.2-macos-15-arm64.tar.gz",
-            "7cd14bf7bbb11bceb4e09560a8f66c941e28541e94ac42320156ba9a7473952b",
+            "tinysecurity-module-0.18.4-macos-15-arm64.tar.gz",
+            "17d143697610cb7ab391d50d7d08d55165c1074ea1b454de08c9486cda19cc28",
         ),
         (
             "macos-15-x86_64",
-            "tinysecurity-module-0.18.2-macos-15-x86_64.tar.gz",
-            "7829b6e6b41a34d789973e8f94f828235c26ae201050de3645dfd6b53568941c",
+            "tinysecurity-module-0.18.4-macos-15-x86_64.tar.gz",
+            "b11d3ffe0a7a99e0a0fd71fd6fdb87d209e9b8e09c1cb4d3af9656376f368e8b",
         ),
         (
             "macos-26-arm64",
-            "tinysecurity-module-0.18.2-macos-26-arm64.tar.gz",
-            "bc765db3337e98c4f0c96ba6fd47576181c9783e833f9bdeccc745dcab276dc5",
+            "tinysecurity-module-0.18.4-macos-26-arm64.tar.gz",
+            "107f42a9cedaae3a95edf09c82818ad85195e7f0668cf1255b51ee4fbc8ac26e",
         ),
         (
             "macos-26-x86_64",
-            "tinysecurity-module-0.18.2-macos-26-x86_64.tar.gz",
-            "10575824c14ea3503170420523ecdb6b3fa33cecb85f9ff3d36817666bb7833e",
+            "tinysecurity-module-0.18.4-macos-26-x86_64.tar.gz",
+            "b408ab2832246c1c66630c21ad2a274d6d6592a0f3eaf59039aa517e9955d8a4",
         ),
         (
             "ubuntu-22.04-arm64",
-            "tinysecurity-module-0.18.2-ubuntu-22.04-arm64.tar.gz",
-            "34c3ef7b6fde18d525ae27fe09716ad2775a91b3152663a1f72b88a0da15e325",
+            "tinysecurity-module-0.18.4-ubuntu-22.04-arm64.tar.gz",
+            "f406c66e69817160527b55cd037e5421ddaadbb586702014e9c78d04622de991",
         ),
         (
             "ubuntu-22.04-x86_64",
-            "tinysecurity-module-0.18.2-ubuntu-22.04-x86_64.tar.gz",
-            "000e9a3a07a8388fee3a6b823615998959d5255e584526b978b653959fad8a30",
+            "tinysecurity-module-0.18.4-ubuntu-22.04-x86_64.tar.gz",
+            "d56513cfc8d3f0ad2552abf31918365e3bbbdb700010a03e3273c79d6ac53b06",
         ),
         (
             "ubuntu-24.04-arm64",
-            "tinysecurity-module-0.18.2-ubuntu-24.04-arm64.tar.gz",
-            "a91db19a360840fd5f8a7c341ef4856fcdc25db98cc597b7acdd80ac075ab046",
+            "tinysecurity-module-0.18.4-ubuntu-24.04-arm64.tar.gz",
+            "61cb28f3ebc5bfb77503b20abf128a4dbf55f2c5ba9f826ba240edf8bd51ff2c",
         ),
         (
             "ubuntu-24.04-x86_64",
-            "tinysecurity-module-0.18.2-ubuntu-24.04-x86_64.tar.gz",
-            "4c8d90347c37293d5ea773245e0ce9dda4a18234117736757564beeffea5f5fa",
+            "tinysecurity-module-0.18.4-ubuntu-24.04-x86_64.tar.gz",
+            "2e51299127281ae7c524c606590bb41ae2f635536c63791abe327d7f6abed0ba",
         ),
         (
             "windows-11-arm64",
-            "tinysecurity-module-0.18.2-windows-11-arm64.zip",
-            "dc6e7b53e7bf65c9adea251d0f1f5852a89f0588c782dbdb6ac0bab08a33c8ef",
+            "tinysecurity-module-0.18.4-windows-11-arm64.zip",
+            "825d2fde75cea1ffb11ff88cc037d1ec9428d784b2d5041f5eec828179f92020",
         ),
         (
             "windows-2022-x86_64",
-            "tinysecurity-module-0.18.2-windows-2022-x86_64.zip",
-            "105ccd4d6fc2787cefaedba2dcc2f5e40129c0b4759e41095099322da5d6058b",
+            "tinysecurity-module-0.18.4-windows-2022-x86_64.zip",
+            "8aa5719147a32209f14f9ad9fd4300e9c114a56dfe31d8f59d019b7540b0f111",
         ),
         (
             "windows-2025-x86_64",
-            "tinysecurity-module-0.18.2-windows-2025-x86_64.zip",
-            "2b41ef005c4d0756233451ca8667fdce492b73a85234bd7f4e2af06949130b70",
+            "tinysecurity-module-0.18.4-windows-2025-x86_64.zip",
+            "fe1f64a199a820d5b58347eea41e29109096b62d81d00e0ed5df083a6fd5005a",
         ),
     ];
     published.sort_unstable();
