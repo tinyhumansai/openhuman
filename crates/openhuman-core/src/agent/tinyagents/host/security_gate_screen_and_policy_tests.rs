@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(feature = "security-module")]
 use tinyinference_llm::message::Message;
 
 // Fails closed only while security is enforced: a build without the
