@@ -73,6 +73,40 @@ async fn a_build_without_the_module_refuses_every_gated_call() {
 }
 
 #[tokio::test]
+async fn a_disabled_engine_grants_ordinary_approvals_without_the_module() {
+    let engine = DisabledEngine::wrapping(Arc::new(UnavailableEngine));
+    let Ok(Checked::Approved { request_id }) = engine.check(input()).await else {
+        panic!("security disabled grants an ordinary approval at once");
+    };
+    assert_eq!(engine.reserve(&request_id).await, Ok(()));
+    assert_eq!(
+        engine
+            .record_execution(&request_id, super::super::types::ExecutionOutcome::Success)
+            .await,
+        Ok(())
+    );
+    assert_eq!(engine.is_decided(&request_id).await, Ok(Some(true)));
+    assert_eq!(engine.cancel(&request_id).await, Ok(()));
+    assert_eq!(engine.expire(&request_id).await, Ok(false));
+    engine.release(&request_id);
+}
+
+#[tokio::test]
+async fn a_disabled_engine_still_sends_forced_approvals_to_the_module() {
+    let engine = DisabledEngine::wrapping(Arc::new(UnavailableEngine));
+    let forced = CheckInput {
+        variant: Variant::Forced,
+        ..input()
+    };
+    assert!(matches!(
+        engine.check(forced).await,
+        Err(EngineError::Unavailable(_))
+    ));
+    // Requests it did not grant are the inner engine's.
+    assert!(engine.reserve("r").await.is_err());
+}
+
+#[tokio::test]
 async fn whole_tool_trust_stays_with_the_exact_tenant_and_variant() {
     let engine = super::super::engine_stub::StubEngine::new();
     let trusted = Tenant {
