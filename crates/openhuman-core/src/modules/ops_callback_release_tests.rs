@@ -296,6 +296,31 @@ async fn a_release_served_callback_module_is_confirmed_by_its_admitted_binding()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_callback_load_whose_caller_gave_up_is_found_by_the_next_caller() {
+    if !isolated("a_callback_load_whose_caller_gave_up_is_found_by_the_next_caller") {
+        return;
+    }
+    // `ensure_loaded_within` bounds only the wait. A caller that gives up
+    // must not strand the admitted binding's host state: TinyBus keeps
+    // resolving, and the next caller has to find the module serving.
+    let cache = private_root();
+    let (archive, library) = stage_release(cache.path());
+    let resolver = resolver(record(&archive, &library), cache.path(), None, HashMap::new());
+
+    let gave_up = tokio::time::timeout(
+        std::time::Duration::ZERO,
+        ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID),
+    )
+    .await;
+    assert!(gave_up.is_err(), "the first caller stops waiting");
+
+    ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
+        .await
+        .expect("the next caller finds the load the first one started");
+    assert!(serving_with_callbacks(&resolver).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_bundled_archive_that_does_not_match_its_pin_is_refused() {
     if !isolated("a_bundled_archive_that_does_not_match_its_pin_is_refused") {
         return;
