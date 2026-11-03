@@ -268,8 +268,7 @@ async fn a_local_file_override_wins_over_the_release() {
     // from the override. `ops::resolver` turns a `path` override, a source
     // build and an `OPENHUMAN_MODULE_PATH` artifact into this source.
     let cache = private_root();
-    let (archive, library) = stage_release(cache.path());
-    let _ = archive;
+    let (_archive, library) = stage_release(cache.path());
     let local = private_root();
     let (path, _) = stage_library(local.path());
     let sources = HashMap::from([(

@@ -712,3 +712,7 @@ mod client_tests;
 #[cfg(test)]
 #[path = "ops_resolver_tests.rs"]
 mod resolver_tests;
+
+#[cfg(test)]
+#[path = "ops_callback_release_tests.rs"]
+mod callback_release_tests;
