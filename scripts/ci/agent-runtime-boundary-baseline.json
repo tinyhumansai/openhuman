@@ -442,34 +442,6 @@
   },
   {
     "rule": "tinyagents-openhuman-domain-name",
-    "path": "vendor/tinyagents/crates/tinyagents-harness/src/turn_runner/mod_api_tests.rs",
-    "line": 2,
-    "text": "use crate::progress::AgentProgress;",
-    "occurrence": 1
-  },
-  {
-    "rule": "tinyagents-openhuman-domain-name",
-    "path": "vendor/tinyagents/crates/tinyagents-harness/src/turn_runner/mod_api_tests.rs",
-    "line": 97,
-    "text": "let started = |call_id: &str| AgentProgress::ToolCallStarted {",
-    "occurrence": 1
-  },
-  {
-    "rule": "tinyagents-openhuman-domain-name",
-    "path": "vendor/tinyagents/crates/tinyagents-harness/src/turn_runner/mod_api_tests.rs",
-    "line": 137,
-    "text": "fn tool_completed(call_id: &str) -> AgentProgress {",
-    "occurrence": 1
-  },
-  {
-    "rule": "tinyagents-openhuman-domain-name",
-    "path": "vendor/tinyagents/crates/tinyagents-harness/src/turn_runner/mod_api_tests.rs",
-    "line": 138,
-    "text": "AgentProgress::ToolCallCompleted {",
-    "occurrence": 1
-  },
-  {
-    "rule": "tinyagents-openhuman-domain-name",
     "path": "vendor/tinyagents/crates/tinyagents-orchestration/src/run_progress_ledger/mod_tests.rs",
     "line": 3,
     "text": "use tinyagents_harness::progress::{AgentProgress, SubagentUsage};",

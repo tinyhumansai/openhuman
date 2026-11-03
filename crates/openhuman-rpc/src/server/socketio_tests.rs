@@ -217,7 +217,7 @@ async fn web_events_reach_client_and_thread_rooms_once_with_compat_aliases() {
         .all(|(_, payload)| payload["full_response"] == "finished"));
     assert!(reconnected_packets
         .iter()
-        .all(|(_, payload)| payload["context"]["threadId"] == "thread-1"));
+        .all(|(_, payload)| payload["thread_id"] == "thread-1"));
     assert_empty_queue(&mut initiator_rx);
     assert_empty_queue(&mut reconnected_rx);
     assert_empty_queue(&mut unrelated_rx);
