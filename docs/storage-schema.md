@@ -94,6 +94,9 @@ Record shapes and migrations stay with their owners.
 
 | Collection | Indexes | Expiry field | Search fields |
 | --- | --- | --- | --- |
+| `channel_remote_bindings` |  |  |  |
+| `channel_remote_busy` |  |  |  |
+| `channel_remote_meta` |  |  |  |
 | `channels.delivery_failed` |  |  |  |
 | `channels.delivery_pending` |  |  |  |
 | `channels.delivery_results` |  |  |  |
@@ -110,6 +113,17 @@ Record shapes and migrations stay with their owners.
 | `channels.whatsapp_session` |  |  |  |
 | `channels.whatsapp_signed_prekey` |  |  |  |
 | `channels.whatsapp_sync_key` |  |  |  |
+| `channels_delivery_failed` |  |  |  |
+| `channels_delivery_pending` |  |  |  |
+| `channels_delivery_results` |  |  |  |
+| `whatsapp_device` |  |  |  |
+| `whatsapp_identity` |  |  |  |
+| `whatsapp_lid_mapping` |  |  |  |
+| `whatsapp_prekey` |  |  |  |
+| `whatsapp_sender_key` |  |  |  |
+| `whatsapp_session` |  |  |  |
+| `whatsapp_signed_prekey` |  |  |  |
+| `whatsapp_sync_key` |  |  |  |
 
 ## tinyconnectors-bus
 
