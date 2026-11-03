@@ -206,3 +206,52 @@ async fn boot_child() {
     assert_eq!(built.wait_for_startup_sweep().await, Some(1));
     assert_eq!(built.wait_for_startup_sweep().await, None);
 }
+
+/// Opening a scope's status store prepares its collections, so a sweep that
+/// only decides per scope to do nothing still costs one preparation per
+/// agent. Neither the `local` scope nor any recorded agent is visited when the
+/// backend is shared.
+#[tokio::test]
+async fn a_shared_backend_sweep_visits_no_scope() {
+    let _guard = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
+    crate::storage::install_with_driver("mongodb", crate::storage::test_support::memory_backend());
+    let agents = ["reaper-shared-a", "reaper-shared-b", "reaper-shared-c"];
+    let contexts: Vec<_> = agents
+        .iter()
+        .map(|agent| crate::storage::agents::test_live_agent(agent))
+        .collect();
+    let tmp = std::env::temp_dir().join(format!("oh-reaper-{}", uuid::Uuid::new_v4()));
+
+    let outcome = sweep(&tmp, None).await;
+
+    assert_eq!(outcome, SweepOutcome { scopes: 0, reaped: 0 });
+    for (agent, context) in agents.iter().zip(&contexts) {
+        crate::agent::context::AgentContextRegistry::deregister(agent, context);
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The counterpart: a backend one process owns is swept scope by scope, so the
+/// shared-backend test above is not passing for want of agents to visit.
+#[tokio::test]
+async fn a_local_backend_sweep_visits_every_agent_scope() {
+    let _guard = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
+    let agents = ["reaper-local-a", "reaper-local-b", "reaper-local-c"];
+    let contexts: Vec<_> = agents
+        .iter()
+        .map(|agent| crate::storage::agents::test_live_agent(agent))
+        .collect();
+    let tmp = std::env::temp_dir().join(format!("oh-reaper-{}", uuid::Uuid::new_v4()));
+
+    let outcome = sweep(&tmp, None).await;
+
+    assert!(outcome.scopes >= agents.len(), "{outcome:?}");
+    for (agent, context) in agents.iter().zip(&contexts) {
+        crate::agent::context::AgentContextRegistry::deregister(agent, context);
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}

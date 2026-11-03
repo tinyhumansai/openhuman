@@ -52,9 +52,21 @@ pub(crate) async fn reap_orphaned_runs(workspace: &Path) -> usize {
     reap_orphaned_runs_before(workspace, None).await
 }
 
+/// What a sweep did: how many storage scopes it visited and how many runs it
+/// moved to `Cancelled`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SweepOutcome {
+    scopes: usize,
+    reaped: usize,
+}
+
 /// [`reap_orphaned_runs`], limited to runs that started before `cutoff` when
 /// one is given (the spawned sweep, which overlaps this process's own work).
 async fn reap_orphaned_runs_before(workspace: &Path, cutoff: Option<SystemTime>) -> usize {
+    sweep(workspace, cutoff).await.reaped
+}
+
+async fn sweep(workspace: &Path, cutoff: Option<SystemTime>) -> SweepOutcome {
     let started = Instant::now();
     let shared = crate::storage::installed_is_shared();
     log::info!(
@@ -73,7 +85,7 @@ async fn reap_orphaned_runs_before(workspace: &Path, cutoff: Option<SystemTime>)
         "[agent] startup run sweep done scopes={scopes} reaped={reaped} elapsed_ms={}",
         started.elapsed().as_millis()
     );
-    reaped
+    SweepOutcome { scopes, reaped }
 }
 
 async fn reap_unless_shared(workspace: &Path, shared: bool, cutoff: Option<SystemTime>) -> usize {
