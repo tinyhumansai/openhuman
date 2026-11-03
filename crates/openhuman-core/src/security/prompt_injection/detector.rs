@@ -138,16 +138,6 @@ fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
     }
 }
 
-/// Say once, when a runtime boots with a config, whether the prompt screen is
-/// off. Silent when it is enforced, which is the default.
-pub(crate) fn log_prompt_screen_mode(config: &crate::config::Config) {
-    if !config.prompt_screen.enforces() {
-        tracing::info!(
-            "[prompt_injection] prompt screen disabled by configuration ([prompt_screen] mode = \"off\"); input is not checked by TinySecurity"
-        );
-    }
-}
-
 /// Screen user or untrusted text through TinySecurity. Missing configuration,
 /// module failure, timeout, and oversized inputs all fail closed as Review,
 /// unless the configuration turns the screen off.
