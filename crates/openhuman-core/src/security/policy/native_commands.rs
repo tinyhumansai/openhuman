@@ -95,11 +95,15 @@ pub type SharedCommandGateway = Arc<dyn CommandGateway>;
 
 impl SecurityPolicy {
     /// Ask TinySecurity to classify a command without applying admission or
-    /// spending budget.
+    /// spending budget. With security disabled nothing is asked: the class is
+    /// the model's declared one, or [`CommandClass::Write`] when none is given.
     pub async fn classify_native_command(
         &self,
         query: CommandQuery<'_>,
     ) -> Result<CommandClass, Refusal> {
+        if crate::security::switch::disabled().is_some() {
+            return Ok(unchecked_class(&query));
+        }
         #[cfg(feature = "security-module")]
         {
             use crate::modules::security::command::{command_decision, CommandOp};
@@ -123,8 +127,16 @@ impl SecurityPolicy {
 
     /// Ask whether `query.command` may run, and whether a human must approve it.
     /// Asked even when autonomy is disabled: a disabled scope allows every
-    /// command except those naming TinySecurity's protected paths.
+    /// command except those naming TinySecurity's protected paths. With security
+    /// disabled (`crate::security::switch`) nothing is asked and every command
+    /// is allowed without approval.
     pub async fn check_command(&self, query: CommandQuery<'_>) -> Result<CommandVerdict, Refusal> {
+        if crate::security::switch::disabled().is_some() {
+            return Ok(CommandVerdict {
+                class: unchecked_class(&query),
+                gate: GateDecision::Allow,
+            });
+        }
         match &self.command_gateway {
             Some(gateway) => gateway.decide(self, &query).await,
             None => self.native_command_verdict(&query).await,
@@ -134,7 +146,7 @@ impl SecurityPolicy {
     /// The tier's gate for an acting call of `class`: the module's answer to a
     /// command of that class. `Err` is a refusal.
     pub async fn command_class_gate(&self, class: CommandClass) -> Result<GateDecision, Refusal> {
-        if !self.enabled {
+        if self.unchecked() {
             self.record_class_gate(class, GateDecision::Allow);
             return Ok(GateDecision::Allow);
         }
@@ -165,7 +177,7 @@ impl SecurityPolicy {
         &self,
         class: CommandClass,
     ) -> Result<GateDecision, Refusal> {
-        if !self.enabled {
+        if self.unchecked() {
             return Ok(GateDecision::Allow);
         }
         if let Some(gateway) = self.command_gateway.clone() {
@@ -179,6 +191,13 @@ impl SecurityPolicy {
         }
         self.native_class_gate_blocking(class)
     }
+}
+
+/// The class of a command nobody classified (security disabled): what the model
+/// declared, or `Write` when it declared nothing. Informational only, since a
+/// disabled scope allows every class.
+fn unchecked_class(query: &CommandQuery<'_>) -> CommandClass {
+    query.declared.unwrap_or(CommandClass::Write)
 }
 
 /// A class-only question: the gate for a command of `class`, with no command

@@ -159,7 +159,7 @@ impl SecurityPolicy {
     /// Whether the autonomy tier lets the agent change anything right now. A module
     /// that cannot answer says no. Always yes with security disabled.
     pub fn tier_allows_acting_blocking(&self) -> bool {
-        if !self.enabled || crate::security::switch::disabled().is_some() {
+        if self.unchecked() {
             return true;
         }
         matches!(
