@@ -1,10 +1,44 @@
 use super::policy::{config_disables_sandbox, sandbox_disabled_by_host};
 use crate::core::runtime::DispatchCtx;
-use crate::sandbox::shell_exec::{ComeBack, ShellRunOutcome};
-use crate::sandbox::types::{SandboxExecResult, SandboxPolicy};
+use crate::sandbox::shell_exec::ShellRunOutcome;
+use crate::sandbox::types::{SandboxBackendKind, SandboxExecResult, SandboxPolicy};
 #[cfg(feature = "security-module")]
-use crate::sandbox::{docker, types::SandboxBackendKind, types::SandboxExecRequest};
+use crate::sandbox::{docker, types::SandboxExecRequest};
 use std::{collections::HashMap, ffi::OsString, path::Path, time::Duration};
+
+/// A sandbox backend resolved for a specific command, before it runs.
+///
+/// Resolving the backend is split from running the command so the shell can
+/// learn whether the backend can leave a command running — and so decide
+/// whether to reserve one of the turn's process slots — *before* it commits to
+/// a run. The same resolution then drives the run, so the reservation decision
+/// and the execution cannot disagree (#8317).
+pub(crate) struct ResolvedSandbox {
+    /// The backend the command will actually run on, after the host override,
+    /// the `[components]` switch and the operator's `[sandbox]` choice.
+    effective_policy: SandboxPolicy,
+    #[cfg(feature = "security-module")]
+    config: crate::config::Config,
+    #[cfg(feature = "security-module")]
+    planned: crate::sandbox::spawn_plan::PlannedSpawn,
+}
+
+impl ResolvedSandbox {
+    /// The backend the command will run on.
+    pub(crate) fn backend(&self) -> SandboxBackendKind {
+        self.effective_policy.backend
+    }
+
+    /// Whether this backend can hand back a still-running command. Only the
+    /// native backends (no sandbox, the native jail) can; Docker and the box
+    /// run one-shot, so a call on them cannot yield and must not hold a slot.
+    pub(crate) fn can_yield(&self) -> bool {
+        matches!(
+            self.backend(),
+            SandboxBackendKind::None | SandboxBackendKind::Local
+        )
+    }
+}
 
 /// Execute a command through the appropriate sandbox backend.
 ///
@@ -33,14 +67,15 @@ pub(crate) async fn execute_in_sandbox_metered(
     timeout: Duration,
     meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<SandboxExecResult> {
-    let outcome = execute_in_sandbox_yielding(
+    let resolved = resolve_sandbox(ctx, policy, command, working_dir, &extra_env).await?;
+    let outcome = execute_resolved(
         ctx,
-        policy,
+        resolved,
         command,
         working_dir,
         extra_env,
         timeout,
-        ComeBack::default(),
+        None,
         meter,
     )
     .await?;
@@ -52,29 +87,30 @@ pub(crate) async fn execute_in_sandbox_metered(
     }
 }
 
-/// [`execute_in_sandbox_metered`] for a call that may come back first: on the
-/// native backends a command still running at `come_back.yield_after` is
-/// handed back as [`ShellRunOutcome::Running`]; Docker cannot leave a command
-/// running, so there `come_back.deadline_instead` bounds it.
-pub(crate) async fn execute_in_sandbox_yielding(
+/// Resolve the sandbox backend for a command without running it.
+///
+/// Applies the host override, the `[components]` switch and the operator's
+/// `[sandbox]` backend choice — everything that decides which backend a
+/// command runs on — and returns it as a [`ResolvedSandbox`] the caller hands
+/// straight to [`execute_resolved`]. Doing this before the caller reserves a
+/// process slot is what lets a one-shot backend (Docker, the box) avoid taking
+/// a slot it can never use (#8317).
+pub(crate) async fn resolve_sandbox(
     ctx: &DispatchCtx,
     policy: &SandboxPolicy,
     command: &str,
     working_dir: &Path,
-    extra_env: HashMap<OsString, OsString>,
-    timeout: Duration,
-    come_back: ComeBack,
-    meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
-) -> anyhow::Result<ShellRunOutcome> {
+    extra_env: &HashMap<OsString, OsString>,
+) -> anyhow::Result<ResolvedSandbox> {
     let config = ctx
         .load_config()
         .await
         .map_err(|error| anyhow::anyhow!("Cannot read sandbox configuration: {error}"))?;
-    let requested_policy = policy.clone();
     let operator_off = !crate::core::runtime::is_saas()
         && (sandbox_disabled_by_host(ctx) || config_disables_sandbox(&config));
     #[cfg(feature = "security-module")]
     {
+        let requested_policy = policy.clone();
         let planned = {
             use crate::sandbox::spawn_plan::{ModuleSource, SpawnRequest, SpawnSource};
             let env = extra_env
@@ -98,7 +134,7 @@ pub(crate) async fn execute_in_sandbox_yielding(
             };
             let source = SpawnSource::from_origin(ctx.turn_origin_or_scoped().as_ref());
             let host_run = operator_off && !crate::core::runtime::is_saas();
-            let planned = crate::sandbox::spawn_plan::plan(SpawnRequest {
+            crate::sandbox::spawn_plan::plan(SpawnRequest {
                 config: &config,
                 policy: &requested_policy,
                 source,
@@ -108,10 +144,53 @@ pub(crate) async fn execute_in_sandbox_yielding(
                 module: ModuleSource::Production,
             })
             .await
-            .map_err(|error| anyhow::anyhow!("Sandbox plan refused: {error}"))?;
-            planned
+            .map_err(|error| anyhow::anyhow!("Sandbox plan refused: {error}"))?
         };
         let effective_policy = planned.apply(&requested_policy);
+        Ok(ResolvedSandbox {
+            effective_policy,
+            config,
+            planned,
+        })
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = (
+            policy,
+            command,
+            working_dir,
+            extra_env,
+            config,
+            operator_off,
+        );
+        anyhow::bail!("TinySecurity is not built into this host; sandboxed execution is refused")
+    }
+}
+
+/// Run a command on an already-[resolved](resolve_sandbox) backend.
+///
+/// A command still running at `yield_after` on a native backend (no sandbox,
+/// the native jail) is handed back as [`ShellRunOutcome::Running`]. Docker and
+/// the box run one-shot and cannot, so a call there carries no `yield_after`
+/// and `timeout` is its whole bound — the caller has already reduced it to the
+/// model's come-back time, as `timeout_secs` was before it yielded.
+pub(crate) async fn execute_resolved(
+    ctx: &DispatchCtx,
+    resolved: ResolvedSandbox,
+    command: &str,
+    working_dir: &Path,
+    extra_env: HashMap<OsString, OsString>,
+    timeout: Duration,
+    yield_after: Option<Duration>,
+    meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
+) -> anyhow::Result<ShellRunOutcome> {
+    #[cfg(feature = "security-module")]
+    {
+        let ResolvedSandbox {
+            effective_policy,
+            config,
+            planned,
+        } = resolved;
         let policy = &effective_policy;
         // Validate the working directory up front so a missing/bad action_dir
         // surfaces an actionable, path-naming error here rather than an opaque OS
@@ -139,7 +218,7 @@ pub(crate) async fn execute_in_sandbox_yielding(
                     working_dir,
                     &extra_env,
                     timeout,
-                    come_back.yield_after,
+                    yield_after,
                     meter,
                 )
                 .await
@@ -161,15 +240,12 @@ pub(crate) async fn execute_in_sandbox_yielding(
                     &extra_env,
                     timeout,
                     false,
-                    come_back.yield_after,
+                    yield_after,
                     meter,
                 )
                 .await
             }
             SandboxBackendKind::Docker => {
-                let timeout = come_back
-                    .deadline_instead
-                    .map_or(timeout, |deadline| timeout.min(deadline));
                 crate::config::ensure_usable_cwd(&policy.workspace_root)?;
                 let request = SandboxExecRequest {
                     command: command.to_string(),
@@ -188,11 +264,8 @@ pub(crate) async fn execute_in_sandbox_yielding(
             }
             // The box has its own workspace (`/sandbox`); no host path or host
             // variable is sent, only the request's own environment. A box cannot
-            // hand back a running command, so the come-back time is a deadline.
+            // hand back a running command, so the caller bounded `timeout`.
             SandboxBackendKind::OpenShell => {
-                let timeout = come_back
-                    .deadline_instead
-                    .map_or(timeout, |deadline| timeout.min(deadline));
                 crate::sandbox::spawn_plan::consume(&planned)
                     .await
                     .map_err(|error| {
@@ -207,15 +280,14 @@ pub(crate) async fn execute_in_sandbox_yielding(
     #[cfg(not(feature = "security-module"))]
     {
         let _ = (
-            requested_policy,
-            operator_off,
-            config,
-            come_back,
-            meter,
+            ctx,
+            resolved,
             command,
             working_dir,
             extra_env,
             timeout,
+            yield_after,
+            meter,
         );
         anyhow::bail!("TinySecurity is not built into this host; sandboxed execution is refused")
     }

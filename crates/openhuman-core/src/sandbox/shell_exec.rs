@@ -100,19 +100,6 @@ impl NativeShellRun {
 pub(crate) static USE_FIXTURE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(true);
 
-/// How a shell call that may come back before its command ends wants a
-/// sandboxed command run.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ComeBack {
-    /// Return with the command still running once it has run this long. Only
-    /// the native backends (no sandbox, native jail) can.
-    pub(crate) yield_after: Option<Duration>,
-    /// For a backend that cannot leave a command running (Docker): the
-    /// caller's own come-back time, enforced as a deadline instead, as the
-    /// model's `timeout_secs` was before it yielded.
-    pub(crate) deadline_instead: Option<Duration>,
-}
-
 /// How a run came back: the command ended, or it was still running at its
 /// yield point and is handed over to be followed.
 pub(crate) enum ShellRunOutcome {
