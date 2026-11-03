@@ -51,8 +51,8 @@ export OPENHUMAN_MODULE_PATH="$module_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MO
 core_features="$(scripts/ci/product-features.sh | sed 's/,os-keyring//' | sed 's/,security-module//')"
 
 security_pin="$(git -C vendor/tinysecurity rev-parse HEAD)"
-release_source="$(git -C vendor/tinysecurity rev-parse 5a45177b818e32465307cfe4ba60121bb77c4364)"
-printf 'TinySecurity fork pin: %s\nPublished v0.18.2 source: %s\n' "$security_pin" "$release_source"
+release_source="$(git -C vendor/tinysecurity rev-parse b53eceb948bd8dedce2176af6f0ec7bb1bd74151)"
+printf 'TinySecurity pin: %s\nPublished v0.18.4 source: %s\n' "$security_pin" "$release_source"
 git -C vendor/tinysecurity merge-base --is-ancestor "$release_source" "$security_pin"
 
 # Prove the library builds without the new gate before exercising it enabled.
@@ -86,11 +86,23 @@ bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhum
 bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
   --test security_native_fixture --no-default-features \
   --features "$core_features,security-module" \
-  native_fixture_fails_closed_without_sandbox_audit_correlation \
+  native_fixture_sandbox_plan_is_audited_before_running \
   -- --ignored --exact --nocapture
 
 bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
   --test security_native_fixture --no-default-features \
   --features "$core_features,security-module" \
-  native_fixture_fails_closed_without_approval_audit_correlation \
+  native_fixture_parks_a_redacted_approval_until_denied \
+  -- --ignored --exact --nocapture
+
+bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
+  --test security_native_fixture --no-default-features \
+  --features "$core_features,security-module" \
+  native_fixture_refuses_a_sandbox_plan_when_the_audit_write_fails \
+  -- --ignored --exact --nocapture
+
+bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
+  --test security_native_fixture --no-default-features \
+  --features "$core_features,security-module" \
+  native_fixture_denies_an_approval_when_the_audit_write_fails \
   -- --ignored --exact --nocapture

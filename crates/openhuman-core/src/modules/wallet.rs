@@ -378,93 +378,93 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
 }
 
 // Embedded library checksums verified from all 17 archives in the
-// registry-pinned TinyWallet v0.27.0 release. Each library is trusted only
+// registry-pinned TinyWallet v0.28.0 release. Each library is trusted only
 // while its archive checksum remains pinned in the supplied ModuleRecord.
 const PINNED_WALLET_LIBRARIES: &[(&str, &str)] = &[
     // archlinux-arm64
     (
-        "739b73d4fe246b108d3d8c15b96e358219e3357554663054bde9b4cfcc1e1547",
-        "a57bf683224966ff71a833f7bc81d0aa11f55e82eb5a31797f4fe2877d63d3fe",
+        "da90ff7b53c2a229896d5a4ab0e3121727488f37a78551b3207a9c78bc4a09a6",
+        "2ba4a00b9783eb3eeea02da506e23459f1a61ff0637ead0c99a9691f24a166aa",
     ),
     // archlinux-x86_64
     (
-        "30ad7f2de3d10d584d677412cd1fa6fc124083fb28ad5c58fcdb63a8c3d88f79",
-        "021bd0b713368717ec1a480a2919c8414ac2f2fa94adf816e5e5ff1208a5bbe0",
+        "1e80c400e50643d938e25b45aa0327de170f66f39fe65645a9d5ccb31b5f4a88",
+        "791a355c0df38b22281a3201dbd7358948b3105742f3e17e4ae21bc5e14c2836",
     ),
     // fedora-43-arm64
     (
-        "e2a185ff78c0f636a1ccbc7a5d6d91e23121394fa5d64683058f33e24b414771",
-        "241d314a7afaa46d49944eb12daed96194d9b9c8fb21377b16c92bae3dcd72e5",
+        "fb2b630ae47e64bd10a975861e647a939bfaa55b664c8f0706cd096779d62c3b",
+        "412e73034a3b0250b4f12b082170809bcce8716700ad5966ba2d5d40724488ea",
     ),
     // fedora-43-x86_64
     (
-        "28f03bfde6eb63dde25e0f6fafaf2ce25e453afdf56a5c9a3277d47bf2fe5400",
-        "e7f9ac37f2e0c1253725b340b35863c14e1953ef64f94c5d0d9fd26ed1f17faa",
+        "84cc92b8775d26def86ad5073ed7315a50aae4b5aa7134a1cf485b923a32c38b",
+        "3538841f3ccb6a9d2b4c213dcb661c8e0050327da0bccee89e9d356542019134",
     ),
     // fedora-44-arm64
     (
-        "574cf3773f405e282c3d42f4fb8ba8e3037e7abcd06ee63c719a134c100f9748",
-        "f3aea9878c4bba896febf0faadc23e7068076240a866c34386577e1ade210ba1",
+        "14a1f4a044a7e5b246aa2df7209c31c165bf1305b38d888a540c2e438c11e202",
+        "b3bb6f4ffbe1f42fb826510af9cffb806a700997b6d54bff117ec5f6737a11d0",
     ),
     // fedora-44-x86_64
     (
-        "af05c0582364306a0bf885df059bea601044cfd40c40c7a14af043499053dc71",
-        "debb137f4883a5c9e77436ba8e47b2dcc66be4d7c924dc1b2562ebf885058a9e",
+        "d550966866d4b3446abef6f3b19fcf6968d914579a445c8b08fff276465b9029",
+        "bfd9c6350be70a25853c60a71c0d308f114ef6001ddfb768f9518644bfe520cb",
     ),
     // macos-15-arm64
     (
-        "554375d3e45eb9332454323937c7923e34a75934a99b2185bff35503b7abeec5",
-        "6f8fa586950899ead7d05720d74fce0f16677db97d631a261ee99697df8f09e5",
+        "c8c791b7464f1db2c6395f286cf63727b24bacb7606e318bb7dad5fa120387e1",
+        "82932d9b0ef1feeea3fafe6df035e107a41eeb9544e9c2c229a892aca32efa40",
     ),
     // macos-15-x86_64
     (
-        "ad4a098b29dedd350bd60bf4d0194fa89cc2f79bff47447f7d52b440f702730a",
-        "f587e4bdfa9b3fd97fd2d4cb0f37524c8f5addd4e481d063fabc56a750944559",
+        "b72c5f5b979302599b3a4f85b6783bd753c119e23ade819c0b1edf9ffd01d729",
+        "4938a14e361d279245a78a51f7eb813a5ae38997785269468cc4a53843ffac7f",
     ),
     // macos-26-arm64
     (
-        "762c4fa1a283df5d499610314a6d35b002663e00f4b57105d56047a5d0cb83a8",
-        "7aca21d586818af307a88b7d21b6c6d89153abc3e8a9c1af0ec8c715464a51bb",
+        "b8d189befa3358f854346f3903187ef23b990b71d314a4a58539531c9212ca82",
+        "5142a3dc985ba33dc7f7fc534dffb7a8a51e16a0a65081edef74010571af098e",
     ),
     // macos-26-x86_64
     (
-        "5973882752b659ac5ef9906fcc418e55796e3cc1375b3be141e16a624bc666c1",
-        "dcdae547da8c68207ec12ef6b8348ea98de757247b66182eba55a61c45914686",
+        "9eb8990e3401b8c6d30ca08a434c64f56ff82e6bc1b6e160d27aae4d30a8c24f",
+        "1ce1b380d9e5a18df2c7d642791c9d15fd9c630c570f76f0a8bfa3171ce33d51",
     ),
     // ubuntu-22.04-arm64
     (
-        "927227ee8d8a23a12966ccb2de972fcab07e80fb6527dad840170e4ffd64f087",
-        "37adb1ac3667f08b745bc9ac747313fc16ef377d6b206a27accd11f5d6afa702",
+        "c753826827230d2ebcb044eeae91f96d1f08d945f1ef37b26030ae0e0843d60c",
+        "6f72f339c6c1a2047afaf9e1f2b6edfc49d80442670bdee576f34aafc344082b",
     ),
     // ubuntu-22.04-x86_64
     (
-        "a031e81172452657a506cd769a41f8702c06d80a75b72ebf6dc9a0f4a8317c25",
-        "76172a4d1b444990090265ecbbc01b0afa756f88f647c20d0e9cf5391b2da8e9",
+        "02cec7d7e33112266b988be1bab6213b71193f7a183db8783dba941e62ef7b46",
+        "ca91f929a01fa6f46a83fc4e40fe1e420becbcc8a27810dd10f5f74bde0060be",
     ),
     // ubuntu-24.04-arm64
     (
-        "6e055459e513707e58b4d07c836a3659a453c3753ee8c632e858930c150b66f4",
-        "eaa566008f1fc5d05d0200ff34719f6cce5c751976e13b21ca33bd87c4c50238",
+        "5b8dc519829098029609e224b95b2149a71cdaad240148e33c0abac71ec5dc07",
+        "309cbd3a20abdadd0fa30907ae3e1c6899f3bceb1f7604d2cc63c2bfa474ca22",
     ),
     // ubuntu-24.04-x86_64
     (
-        "cab0be708a52e8713df7cc57dc13717e3899ce3c8ec57819741b37dc463ccfc7",
-        "8fee5f20bd58505eb2a291e565d9c83928f4418d5c114413baf55613e0120baf",
+        "c2bb2acd7c15b061b66d564db738aa3eac6802544fba753a6715ade541faac86",
+        "92d024c6be951824070c80fdcd44661e2f47a812fd82c247a16a810680075b31",
     ),
     // windows-11-arm64
     (
-        "9e458762f740e166b9b028336b6faed3762dfb71bf46eb57c71ad7e3ec2dc9d3",
-        "ae2e72565b94598e1f3b472400782c84d8a64c9ca008e8fa7349e4058c5dfa57",
+        "02598b083ce4d7e66c6d295785b5b42535861614741b2371462847760bbd2823",
+        "d0064850025aad951b9df7cfb24f4608fb36000fb847b12a4b388625b9ed829d",
     ),
     // windows-2022-x86_64
     (
-        "ff389c8951c0721b31bb8eb4a71e86424f053923eab10464c8ee68bbb1ec25a1",
-        "bcbc74930538e6047744a9dd5c84334acb14f1285238479c89dfdd3fc42517e6",
+        "fdf15c140e0de0492fb0fde449e38e8eef0653cc7af6ebbe71c56218f5d33c17",
+        "2546bd8b69417bb4d855e4379fdac4f7ae2499ded9efc34f7c8f7dccbca00920",
     ),
     // windows-2025-x86_64
     (
-        "b01f58d66e73f73b510bf755fb89d1fa77a5caad00033405511ce12b84086632",
-        "0ec201f01d218327d336d70614ebcf7775c872fb51dacdf9fadae542109fe40c",
+        "a89031486e2aeb8f2f96fc314a5a291ebc4364e3b34dcdcd6a010b1a939b365e",
+        "22e4a21ce38cb9962fb66f57fd073a91e5f756445a020fae245b4583c4b54db4",
     ),
 ];
 

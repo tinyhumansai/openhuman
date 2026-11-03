@@ -7856,6 +7856,7 @@ dependencies = [
 name = "tinycomputer-bus"
 version = "0.16.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -7879,7 +7880,7 @@ dependencies = [
 
 [[package]]
 name = "tinyeventqueues-bus"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -7887,7 +7888,7 @@ dependencies = [
 
 [[package]]
 name = "tinyflows"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -8222,7 +8223,7 @@ dependencies = [
 
 [[package]]
 name = "tinysecurity-bus"
-version = "0.18.3"
+version = "0.18.4"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -8498,7 +8499,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "serde",
  "serde_json",

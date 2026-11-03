@@ -5,8 +5,8 @@ fn tinycomputer_registry_matches_bus_contract_and_published_release() {
     let desktop = find("tinycomputer").expect("compiled computer module");
     assert_eq!(desktop.bus_name, tinycomputer_bus::names::INTERFACE);
     assert_eq!(desktop.object_path, tinycomputer_bus::names::OBJECT_PATH);
-    assert_eq!(desktop.version, "0.15.2");
-    assert_eq!(tinycomputer_bus::CONTRACT_VERSION, (2, 28));
+    assert_eq!(desktop.version, "0.16.0");
+    assert_eq!(tinycomputer_bus::CONTRACT_VERSION, (2, 29));
 
     let mut actual = desktop
         .assets
@@ -16,88 +16,88 @@ fn tinycomputer_registry_matches_bus_contract_and_published_release() {
     let mut published = [
         (
             "archlinux-arm64",
-            "tinycomputer-0.15.2-archlinux-arm64.tar.gz",
-            "c04621d08c6fdea41a933c0565af17284b00e2f59cfd6d4f98d0281570c7ad2b",
+            "tinycomputer-0.16.0-archlinux-arm64.tar.gz",
+            "6dc3229b014f15560fd7dd793fc877b653b88571db9963dc919be8866e58a4f1",
         ),
         (
             "archlinux-x86_64",
-            "tinycomputer-0.15.2-archlinux-x86_64.tar.gz",
-            "eb95063fe8e8694f121a008feb6f4db68eae5e50bce19ab2f85abe82bb1d0e6d",
+            "tinycomputer-0.16.0-archlinux-x86_64.tar.gz",
+            "3f19184a00aefeb218aa1dac6ecb534be0ef9973becceb10506ac075e9911b9d",
         ),
         (
             "fedora-43-arm64",
-            "tinycomputer-0.15.2-fedora-43-arm64.tar.gz",
-            "227680999f0f970a87709e598df2bcd73b0330485f32b5422313cd72a56569d7",
+            "tinycomputer-0.16.0-fedora-43-arm64.tar.gz",
+            "7c0cc88be5169950dbf5f5677df8431c8c76c747cdc4a78d64c7b666e6ad121c",
         ),
         (
             "fedora-43-x86_64",
-            "tinycomputer-0.15.2-fedora-43-x86_64.tar.gz",
-            "aa729616e40aaeeb2246c2748e6e2b5429afa11690b15c571b11a3d17c21330d",
+            "tinycomputer-0.16.0-fedora-43-x86_64.tar.gz",
+            "a203aef368219cf4483cd023d92b712b7ad38e1517074639c7ea38d9ccccbac3",
         ),
         (
             "fedora-44-arm64",
-            "tinycomputer-0.15.2-fedora-44-arm64.tar.gz",
-            "47b3ab7b479a5b9794940b2cb39b7b8c5fcf9dfcfa9797788af990e44bc8ebf3",
+            "tinycomputer-0.16.0-fedora-44-arm64.tar.gz",
+            "05c4dc081306af96846f9196741cfadceaee51a9c221c210fc7486649f690bc3",
         ),
         (
             "fedora-44-x86_64",
-            "tinycomputer-0.15.2-fedora-44-x86_64.tar.gz",
-            "f8acff1ae49334b26649eb3be52ad2695d845fa480ef4c1fc2f663c07b16b0d5",
+            "tinycomputer-0.16.0-fedora-44-x86_64.tar.gz",
+            "dd249cf9cfd0854e0493b4100a40b767e22e20b0cc316e4529625c5b3d500279",
         ),
         (
             "macos-15-arm64",
-            "tinycomputer-0.15.2-macos-15-arm64.tar.gz",
-            "ef5c4158b93888bcea1ea0f9a6f88986d09867da0779875e0ecfef927f7e9e7c",
+            "tinycomputer-0.16.0-macos-15-arm64.tar.gz",
+            "97ef1ef6134d36bc25c770efcbedd239374d43e615ec57cf91f5eb44ac314265",
         ),
         (
             "macos-15-x86_64",
-            "tinycomputer-0.15.2-macos-15-x86_64.tar.gz",
-            "dc1329f968b885fc1e10919f5fe70d3d77a9601b5f9849c013eb6938a81ef39b",
+            "tinycomputer-0.16.0-macos-15-x86_64.tar.gz",
+            "5bafc90beff673f66b1442cb0ffb41acb33512431ed167833d0f0de64f8b6f94",
         ),
         (
             "macos-26-arm64",
-            "tinycomputer-0.15.2-macos-26-arm64.tar.gz",
-            "d6ae6cfd96b63ed079aee6cb1b57d739a5a90be28f46b2bcbbfcff8e58c844f4",
+            "tinycomputer-0.16.0-macos-26-arm64.tar.gz",
+            "a028876b857e62a8a55b850811a0d20f85dd0a2bb8a6533c2c4008a7062b4a35",
         ),
         (
             "macos-26-x86_64",
-            "tinycomputer-0.15.2-macos-26-x86_64.tar.gz",
-            "f58e76987f70b4a1823763406a081d18cfd4b10b81ee54556c6ee242c68ac8e8",
+            "tinycomputer-0.16.0-macos-26-x86_64.tar.gz",
+            "1604838f9793dd1e467ff299b2beda47aedeb94810fb8ac857629fdd061c0812",
         ),
         (
             "ubuntu-22.04-arm64",
-            "tinycomputer-0.15.2-ubuntu-22.04-arm64.tar.gz",
-            "fd5bab476db4b2f480bdd4200fd79cfffdba4d0151baf98eb1a9c7fe42345eba",
+            "tinycomputer-0.16.0-ubuntu-22.04-arm64.tar.gz",
+            "5cce23246a32c23cc6a6d0adf530126e65eaaeaaa864e5cc7b20b63c92ac29e0",
         ),
         (
             "ubuntu-22.04-x86_64",
-            "tinycomputer-0.15.2-ubuntu-22.04-x86_64.tar.gz",
-            "2ff37fc1b586648fb1e694f69634085a87527c66430bc15afaec24b34a7cf318",
+            "tinycomputer-0.16.0-ubuntu-22.04-x86_64.tar.gz",
+            "dbe66666a9ace5e4c1751ba191a12aa2f53e608afbd5f7383e6277d82238407b",
         ),
         (
             "ubuntu-24.04-arm64",
-            "tinycomputer-0.15.2-ubuntu-24.04-arm64.tar.gz",
-            "b79143f18b74b293c6c4860d0a44dc06af3edf5b6ea2499f7d6e28135fd7ef35",
+            "tinycomputer-0.16.0-ubuntu-24.04-arm64.tar.gz",
+            "4a5039effb89b49cc6650c66c5f32efa898c8cd0d18e2d50b3275d4c1cec372d",
         ),
         (
             "ubuntu-24.04-x86_64",
-            "tinycomputer-0.15.2-ubuntu-24.04-x86_64.tar.gz",
-            "238b0f7c561b9f420b8672ab20294dc7953139c9f98f4d5624013a60260d19cf",
+            "tinycomputer-0.16.0-ubuntu-24.04-x86_64.tar.gz",
+            "3144d4dd90f7c4886e4eff899210f2fc8b6f8235e4d14c8c03454f356d00d062",
         ),
         (
             "windows-11-arm64",
-            "tinycomputer-0.15.2-windows-11-arm64.zip",
-            "f5cd876112e18670ebb076a2895c9e4a13b014d2966ae833cc7818b6e222d1c0",
+            "tinycomputer-0.16.0-windows-11-arm64.zip",
+            "857f8723b4624f5f29707797310de7e95439ac09ef0c7e46b7a3aab019805121",
         ),
         (
             "windows-2022-x86_64",
-            "tinycomputer-0.15.2-windows-2022-x86_64.zip",
-            "371b34e4a47afb9dbb1dd03e4975210c9931c5e5c2b2909e3098ba32f6ae7511",
+            "tinycomputer-0.16.0-windows-2022-x86_64.zip",
+            "ec8ce6ef45c8b399b5b3ff6eb93ff5d74f714ad93e7cfc228e52e59fcbf00f1b",
         ),
         (
             "windows-2025-x86_64",
-            "tinycomputer-0.15.2-windows-2025-x86_64.zip",
-            "0bb7ca5f9b7501ee1662899e6a3b43557e9aadc2e136fd227fb4872b5f4b7e89",
+            "tinycomputer-0.16.0-windows-2025-x86_64.zip",
+            "68133c2d864e8f8cbfb5773bd7afd7663e3d2ea0fd731f82570bbb961b37e694",
         ),
     ];
     assert_eq!(desktop.assets.len(), published.len());
