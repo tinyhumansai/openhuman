@@ -14,6 +14,11 @@
 //!   ([`data_class`]). The TinyHumans adapter classifies its backend routes and
 //!   carries that fact on the descriptor; core does not parse backend paths.
 //!
+//! * With security disabled (`crate::security::switch`) the module is not asked.
+//!   `Standard` and `Sensitive` permit the transfer; `LocalOnly` still refuses
+//!   every external one, because local-only is the user's own explicit setting
+//!   and not a module check ([`unchecked_outcome`]).
+//!
 //! The mode is the live session policy's
 //! ([`current_privacy_mode`](crate::security::live_policy::current_privacy_mode));
 //! it defaults to `Standard` when no session policy is installed (CLI, cron,
@@ -100,9 +105,24 @@ fn block_message(mode: PrivacyMode, desc: &EgressDescriptor, outcome: Outcome) -
     )
 }
 
+/// The outcome without the module, for security disabled: only `LocalOnly`
+/// refuses, and only a transfer to an external destination. `None` while
+/// security is enforced, when the module decides.
+fn unchecked_outcome(mode: PrivacyMode, desc: &EgressDescriptor) -> Option<Outcome> {
+    crate::security::switch::disabled()?;
+    Some(if mode == PrivacyMode::LocalOnly && desc.is_external {
+        Outcome::Refused
+    } else {
+        Outcome::Permitted
+    })
+}
+
 /// The refusal for `desc` under `mode`, or `None` when permitted.
 pub async fn egress_blocks_message(mode: PrivacyMode, desc: &EgressDescriptor) -> Option<String> {
-    let outcome = native::decide(mode, desc).await;
+    let outcome = match unchecked_outcome(mode, desc) {
+        Some(outcome) => outcome,
+        None => native::decide(mode, desc).await,
+    };
     refusal(mode, desc, outcome)
 }
 
@@ -111,7 +131,8 @@ pub fn egress_blocks_message_blocking(
     mode: PrivacyMode,
     desc: &EgressDescriptor,
 ) -> Option<String> {
-    let outcome = native::decide_blocking(mode, desc);
+    let outcome =
+        unchecked_outcome(mode, desc).unwrap_or_else(|| native::decide_blocking(mode, desc));
     refusal(mode, desc, outcome)
 }
 
