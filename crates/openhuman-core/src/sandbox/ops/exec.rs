@@ -29,7 +29,7 @@ pub(crate) struct ResolvedSandbox {
 /// still runs it on the host. A container (Docker) and the OpenShell box need no
 /// plan and run as configured. The native jail is built from the module's plan,
 /// so without one the command runs on the host, unconfined.
-fn unchecked_backend(requested: SandboxBackendKind, operator_off: bool) -> SandboxBackendKind {
+pub(super) fn unchecked_backend(requested: SandboxBackendKind, operator_off: bool) -> SandboxBackendKind {
     match requested {
         _ if operator_off => SandboxBackendKind::None,
         SandboxBackendKind::Local => SandboxBackendKind::None,

@@ -416,3 +416,29 @@ async fn the_openshell_handle_is_ready_without_pretending_to_be_a_container() {
     assert_eq!(handle.backend_id, None);
     assert_eq!(handle.isolation, None);
 }
+
+#[test]
+fn security_disabled_runs_the_jail_on_the_host_and_keeps_container_backends() {
+    use super::exec::unchecked_backend;
+    assert_eq!(
+        unchecked_backend(SandboxBackendKind::Local, false),
+        SandboxBackendKind::None
+    );
+    assert_eq!(
+        unchecked_backend(SandboxBackendKind::None, false),
+        SandboxBackendKind::None
+    );
+    assert_eq!(
+        unchecked_backend(SandboxBackendKind::Docker, false),
+        SandboxBackendKind::Docker
+    );
+    assert_eq!(
+        unchecked_backend(SandboxBackendKind::OpenShell, false),
+        SandboxBackendKind::OpenShell
+    );
+    assert_eq!(
+        unchecked_backend(SandboxBackendKind::Docker, true),
+        SandboxBackendKind::None,
+        "the operator's sandbox-off switch still runs on the host"
+    );
+}
