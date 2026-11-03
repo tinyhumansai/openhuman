@@ -12,7 +12,8 @@
 //! the layout TinyBus fills after a verified download. Its record pins the
 //! archive and library digests, so a wrong digest is a refusal and not a load.
 //! It is loaded through [`ensure_loaded_with_storage_callback`], the path the
-//! storage-backed modules take.
+//! storage-backed modules take; TinySecurity and TinyComputer share its
+//! `callback_load` helpers.
 //!
 //! Each test runs in its own process: the module runtime, the resolution table
 //! and the probe's bus name are process-wide, and TinyBus never unloads a
@@ -256,6 +257,45 @@ async fn a_callback_module_in_the_release_cache_loads_with_callbacks() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_release_served_callback_module_is_confirmed_by_its_admitted_binding() {
+    if !isolated("a_release_served_callback_module_is_confirmed_by_its_admitted_binding") {
+        return;
+    }
+    // Every later TinySecurity and TinyComputer load re-checks the binding its
+    // first load admitted. On a release-served module that check must answer
+    // from the retained binding, never ask for a local-file source.
+    let cache = private_root();
+    let (archive, library) = stage_release(cache.path());
+    let resolver = resolver(
+        record(&archive, &library),
+        cache.path(),
+        None,
+        HashMap::new(),
+    );
+    ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
+        .await
+        .expect("a cached release loads with its storage callback");
+    let admitted = super::STORAGE_CALLBACK_LOADS
+        .lock()
+        .await
+        .get(ID)
+        .map(|(binding, _served)| Arc::clone(binding))
+        .expect("the admitted binding is kept");
+
+    super::callback_load::confirm(&resolver, ID, &admitted)
+        .await
+        .expect("the admitted binding is confirmed");
+    let runtime = runtime::runtime().await.unwrap();
+    let (other, _served) = crate::modules::storage_host::prepare_module_callbacks(runtime)
+        .await
+        .unwrap();
+    let error = super::callback_load::confirm(&resolver, ID, &other)
+        .await
+        .unwrap_err();
+    assert!(error.contains("different callback binding"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_bundled_archive_that_does_not_match_its_pin_is_refused() {
     if !isolated("a_bundled_archive_that_does_not_match_its_pin_is_refused") {
         return;
@@ -273,7 +313,10 @@ async fn a_bundled_archive_that_does_not_match_its_pin_is_refused() {
     let error = ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
         .unwrap_err();
+    // A bundled archive that fails its pin is a broken installation: refused,
+    // never replaced by the release cache or a download.
     assert!(error.contains("installer bundle"), "{error}");
+    assert!(error.contains("not cached"), "{error}");
     assert!(!serving_with_callbacks(&resolver).await);
 }
 
@@ -294,8 +337,10 @@ async fn a_cached_library_that_does_not_match_its_pin_is_refused() {
     let error = ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
         .unwrap_err();
-    assert!(error.contains("is unavailable"), "{error}");
-    assert!(!error.contains("local-file"), "{error}");
+    assert!(
+        error.contains("extracted library hash does not match its release checksum"),
+        "{error}"
+    );
     assert!(!serving_with_callbacks(&resolver).await);
 }
 
