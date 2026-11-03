@@ -11,6 +11,10 @@
 //!
 //! Unit tests of what a caller does with an answer install a scripted port
 //! (`modules::security::gap::stub`); production always asks the module.
+//!
+//! With security disabled (`crate::security::switch`) nothing is asked: every
+//! path is usable and none is internal state, the tier allows acting, and a host
+//! action is classed from its own permission level.
 
 use std::path::{Path, PathBuf};
 
@@ -31,24 +35,54 @@ pub enum PathKind {
 
 /// The command class of a host action, from its permission level and whether it
 /// has an external effect. Informational (the gate decides what may run), and the
-/// module's: the host keeps no mapping of its own. `Err` when the module cannot
-/// answer.
+/// module's: the host keeps no mapping of its own while security is enforced.
+/// `Err` when the module cannot answer. With security disabled the class is read
+/// straight off the permission level ([`unchecked_action_class`]).
 pub async fn host_action_class(
     permission: tinytools::PermissionLevel,
     external_effect: bool,
 ) -> Result<tinysecurity_bus::CommandClass, String> {
+    if crate::security::switch::disabled().is_some() {
+        return Ok(unchecked_action_class(permission, external_effect));
+    }
     native::host_action_class(permission, external_effect).await
+}
+
+/// The class of a host action when security is disabled and the module is not
+/// asked. Only informational then: every class is allowed.
+pub(crate) fn unchecked_action_class(
+    permission: tinytools::PermissionLevel,
+    external_effect: bool,
+) -> tinysecurity_bus::CommandClass {
+    use tinysecurity_bus::CommandClass;
+    use tinytools::PermissionLevel as Level;
+    match permission {
+        Level::Dangerous => CommandClass::Destructive,
+        _ if external_effect => CommandClass::Network,
+        Level::None | Level::ReadOnly => CommandClass::Read,
+        Level::Write | Level::Execute => CommandClass::Write,
+    }
+}
+
+/// Every path passes every check but [`PathKind::Internal`] when security is
+/// disabled.
+fn unchecked_path_answers(kind: PathKind, paths: &[PathBuf]) -> Vec<bool> {
+    vec![kind != PathKind::Internal; paths.len()]
 }
 
 impl SecurityPolicy {
     /// One answer per path for `kind`, in order, from a single module call per
     /// batch. `Err` means the module could not answer; callers treat that as a
-    /// refusal of every path.
+    /// refusal of every path. With security disabled every path passes and none
+    /// is internal.
     pub async fn check_paths(
         &self,
         kind: PathKind,
         paths: &[PathBuf],
     ) -> Result<Vec<bool>, String> {
+        if crate::security::switch::disabled().is_some() {
+            return Ok(unchecked_path_answers(kind, paths));
+        }
         self.native_check_paths(kind, paths).await
     }
 
@@ -66,6 +100,9 @@ impl SecurityPolicy {
 
     /// [`Self::check_paths`] for a synchronous caller.
     pub fn check_paths_blocking(&self, kind: PathKind, paths: &[PathBuf]) -> Vec<bool> {
+        if crate::security::switch::disabled().is_some() {
+            return unchecked_path_answers(kind, paths);
+        }
         match self.native_check_paths_blocking(kind, paths) {
             Ok(answers) if answers.len() == paths.len() => answers,
             Ok(_) => {
@@ -105,6 +142,9 @@ impl SecurityPolicy {
 
     /// [`Self::is_internal`] for a synchronous caller.
     pub fn is_internal_blocking(&self, path: &Path) -> bool {
+        if crate::security::switch::disabled().is_some() {
+            return false;
+        }
         match self.native_check_paths_blocking(PathKind::Internal, &[path.to_path_buf()]) {
             Ok(answers) if answers.len() == 1 => answers[0],
             Ok(_) | Err(_) => {
@@ -117,9 +157,9 @@ impl SecurityPolicy {
     }
 
     /// Whether the autonomy tier lets the agent change anything right now. A module
-    /// that cannot answer says no.
+    /// that cannot answer says no. Always yes with security disabled.
     pub fn tier_allows_acting_blocking(&self) -> bool {
-        if !self.enabled {
+        if !self.enabled || crate::security::switch::disabled().is_some() {
             return true;
         }
         matches!(
