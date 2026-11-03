@@ -78,11 +78,7 @@ async fn command_class_for_tool(
 }
 
 pub async fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     build_runtime_tools_with_security(config, security).await
 }
 
@@ -139,11 +135,7 @@ pub async fn classify_tool_call(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> Result<CommandClass, String> {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     classify_tool_call_with_security(config, security, tool_name, args).await
 }
 
@@ -180,11 +172,7 @@ pub async fn execute_tool(
     args: serde_json::Value,
     prefer_markdown: bool,
 ) -> Result<ExecuteToolOutcome, String> {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(config));
     execute_tool_with_security(config, security, tool_name, args, prefer_markdown).await
 }
 
