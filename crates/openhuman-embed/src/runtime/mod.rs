@@ -624,6 +624,7 @@ impl Runtime {
         domains: DomainSet,
         tool_groups: ToolGroups,
         max_agents: usize,
+        agent_opener: Option<host_agents::AgentOpener>,
         defaults: AgentDefaults,
         effective_host_kind: openhuman_core::core::types::HostKind,
         selection: Option<ModuleSelection>,
@@ -631,8 +632,9 @@ impl Runtime {
         storage_backend: Option<Arc<dyn openhuman_core::storage::StorageBackend>>,
     ) -> Self {
         let agents: Arc<host_agents::AgentMap> = Arc::new(Mutex::new(Default::default()));
-        let resolver: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver> =
-            Arc::new(host_agents::RuntimeAgents(Arc::clone(&agents)));
+        let resolver: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver> = Arc::new(
+            host_agents::RuntimeAgents::new(Arc::clone(&agents), agent_opener),
+        );
         openhuman_core::agent::host_agents::install(Arc::clone(&resolver));
         Self {
             id: uuid::Uuid::new_v4().to_string(),

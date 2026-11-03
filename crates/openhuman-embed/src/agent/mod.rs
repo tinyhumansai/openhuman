@@ -228,6 +228,11 @@ impl Agent {
         Self { inner }
     }
 
+    /// This agent as a core driver builds it (see [`AgentInner::host_agent`]).
+    pub(crate) fn host_agent(&self) -> Option<openhuman_core::agent::host_agents::HostAgent> {
+        self.inner.host_agent()
+    }
+
     /// The id this agent was created with.
     pub fn id(&self) -> &str {
         &self.inner.id

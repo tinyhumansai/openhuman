@@ -331,8 +331,8 @@ async fn pinned_loader_serves_resolve_local_grants_from_pinned_tinybox_release()
     );
 
     let record = crate::modules::registry::find(MODULE_ID).expect("TinyBox registry record");
-    assert_eq!(record.version, "0.2.3");
-    assert_eq!(contract::CONTRACT_VERSION, (2, 1));
+    assert_eq!(record.version, "0.2.4");
+    assert_eq!(contract::CONTRACT_VERSION, (2, 3));
     let asset = tinybus::module::platform::host_candidates()
         .iter()
         .find_map(|host_key| record.asset_for(host_key))
