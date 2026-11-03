@@ -7539,6 +7539,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cap-fs-ext",
  "cap-std",
  "serde",
  "serde_json",
@@ -8373,6 +8374,7 @@ dependencies = [
 name = "tinystoragedrivers-fence"
 version = "2.1.2"
 dependencies = [
+ "libc",
  "sysinfo",
 ]
 
