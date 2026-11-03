@@ -4,7 +4,7 @@ mod exec;
 mod policy;
 
 pub use exec::execute_in_sandbox;
-pub(crate) use exec::execute_in_sandbox_yielding;
+pub(crate) use exec::{execute_resolved, resolve_sandbox};
 #[cfg(test)]
 pub(crate) use exec::execute_unsandboxed;
 #[cfg(any(feature = "modules", test))]
