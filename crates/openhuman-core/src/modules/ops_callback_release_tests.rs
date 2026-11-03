@@ -170,14 +170,34 @@ fn resolver(
     })
 }
 
-/// Whether the probe is admitted on the module bus and retains a callback
-/// binding.
-async fn serving_with_callbacks() -> bool {
+/// Whether the probe is admitted on the module bus and retains the storage
+/// callback binding its load prepared.
+async fn serving_with_callbacks(resolver: &Resolver) -> bool {
+    let Some(prepared) = super::STORAGE_CALLBACK_LOADS
+        .lock()
+        .await
+        .get(ID)
+        .map(|(binding, _served)| Arc::clone(binding))
+    else {
+        return false;
+    };
     let host = runtime::runtime().await.unwrap().host();
-    host.list()
+    if !host
+        .list()
         .iter()
         .any(|info| info.manifest.bus_name.as_str() == BUS_NAME)
-        && host.retained_host_callback_binding(BUS_NAME).is_some()
+    {
+        return false;
+    }
+    // A loaded module answers with its retained binding and prepares nothing.
+    resolver
+        .ensure_loaded_with_host_callback_factory(ID, |_attempt| async {
+            Err::<(Arc<tinybus::module::HostCallbackBinding>, serde_json::Value), _>(
+                "nothing to prepare for a loaded module".to_owned(),
+            )
+        })
+        .await
+        .is_ok_and(|retained| retained.unique_name() == prepared.unique_name())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -198,7 +218,7 @@ async fn a_callback_module_in_the_installer_bundle_loads_with_callbacks() {
     ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
         .expect("a bundled release loads with its storage callback");
-    assert!(serving_with_callbacks().await);
+    assert!(serving_with_callbacks(&resolver).await);
     // A later load confirms the retained binding instead of re-presenting it.
     ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
@@ -217,7 +237,7 @@ async fn a_callback_module_in_the_release_cache_loads_with_callbacks() {
     ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
         .expect("a cached release loads with its storage callback");
-    assert!(serving_with_callbacks().await);
+    assert!(serving_with_callbacks(&resolver).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -239,7 +259,7 @@ async fn a_bundled_archive_that_does_not_match_its_pin_is_refused() {
         .await
         .unwrap_err();
     assert!(error.contains("installer bundle"), "{error}");
-    assert!(!serving_with_callbacks().await);
+    assert!(!serving_with_callbacks(&resolver).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -256,7 +276,7 @@ async fn a_cached_library_that_does_not_match_its_pin_is_refused() {
         .unwrap_err();
     assert!(error.contains("is unavailable"), "{error}");
     assert!(!error.contains("local-file"), "{error}");
-    assert!(!serving_with_callbacks().await);
+    assert!(!serving_with_callbacks(&resolver).await);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -282,5 +302,5 @@ async fn a_local_file_override_wins_over_the_release() {
     ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
         .expect("the override loads with its storage callback");
-    assert!(serving_with_callbacks().await);
+    assert!(serving_with_callbacks(&resolver).await);
 }
