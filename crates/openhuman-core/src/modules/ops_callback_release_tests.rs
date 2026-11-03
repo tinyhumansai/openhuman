@@ -305,7 +305,12 @@ async fn a_callback_load_whose_caller_gave_up_is_found_by_the_next_caller() {
     // resolving, and the next caller has to find the module serving.
     let cache = private_root();
     let (archive, library) = stage_release(cache.path());
-    let resolver = resolver(record(&archive, &library), cache.path(), None, HashMap::new());
+    let resolver = resolver(
+        record(&archive, &library),
+        cache.path(),
+        None,
+        HashMap::new(),
+    );
 
     let gave_up = tokio::time::timeout(
         std::time::Duration::ZERO,

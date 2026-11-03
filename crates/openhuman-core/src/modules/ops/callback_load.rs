@@ -15,13 +15,46 @@
 //! accepts only a local-file source, so a release-served module (every shipped
 //! host without `OPENHUMAN_MODULE_PATH`) could neither be loaded nor
 //! re-checked through it. Every callback-bound load goes through [`load`] and
-//! every later check through [`confirm`] instead.
+//! every later check through [`confirm`] instead, each run through
+//! [`detached`] so a caller that stops waiting cannot strand the binding's
+//! host state.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tinybus::module::{HostCallbackBinding, Resolver};
+
+/// Run a callback load on the module runtime and wait for it.
+///
+/// TinyBus finishes a resolution it has started even when every caller stops
+/// waiting (`ensure_loaded_within` bounds only the wait). A callback load also
+/// publishes the admitted binding's host state, a storage endpoint or a
+/// consequence host, into a process-wide cache, and that publication must not
+/// be cancelled with the caller either: the next caller would find the module
+/// serving with a binding nobody holds the state for. Dropping the returned
+/// future drops only the wait; `work` runs to completion.
+///
+/// # Errors
+///
+/// `work`'s error, the module bus failing to start, or the task panicking.
+pub(in crate::modules) async fn detached<T, Fut>(
+    resolver: &Resolver,
+    work: Fut,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    Fut: Future<Output = Result<T, String>> + Send + 'static,
+{
+    let runtime = resolver
+        .runtime()
+        .await
+        .map_err(|error| error.to_string())?;
+    runtime
+        .spawn(work)
+        .await
+        .map_err(|error| format!("the module callback load did not finish: {error}"))?
+}
 
 /// One prepared candidate: its binding, the module configuration naming it,
 /// and the host state that must live as long as the binding is retained.

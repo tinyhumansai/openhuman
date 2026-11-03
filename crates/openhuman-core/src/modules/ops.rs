@@ -255,7 +255,21 @@ type StorageCallbackLoads = tokio::sync::Mutex<
 static STORAGE_CALLBACK_LOADS: std::sync::LazyLock<StorageCallbackLoads> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// Load a storage-backed module with its storage callback, on the module
+/// runtime so a caller that stops waiting cannot strand the binding.
 async fn ensure_loaded_with_storage_callback(
+    resolver: &Resolver,
+    config: &Config,
+    id: &str,
+) -> Result<(), String> {
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        load_with_storage_callback(&task_resolver, &config, &id).await
+    })
+    .await
+}
+
+async fn load_with_storage_callback(
     resolver: &Resolver,
     config: &Config,
     id: &str,
@@ -349,11 +363,28 @@ async fn ensure_loaded_with_security_callback(
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    super::security::host_callbacks::ensure_loaded(resolver, config, id).await
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
 async fn ensure_loaded_with_computer_callback(
+    resolver: &Resolver,
+    config: &Config,
+    id: &str,
+) -> Result<(), String> {
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        load_with_computer_callback(&task_resolver, &config, &id).await
+    })
+    .await
+}
+
+#[cfg(feature = "security-module")]
+async fn load_with_computer_callback(
     resolver: &Resolver,
     config: &Config,
     id: &str,
