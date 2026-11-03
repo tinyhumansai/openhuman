@@ -101,6 +101,7 @@ mod modules;
 mod observability;
 mod privacy;
 mod prompt_screen;
+mod security_mode;
 mod proxy;
 mod routes;
 mod runtime;
@@ -142,6 +143,7 @@ pub use modules::{
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
 pub use privacy::{PrivacyConfig, PrivacyMode};
 pub use prompt_screen::{PromptScreenConfig, PromptScreenMode};
+pub use security_mode::{SecurityMode, SecurityModeConfig};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,

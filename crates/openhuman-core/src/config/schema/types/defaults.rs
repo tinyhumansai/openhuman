@@ -58,6 +58,7 @@ impl Default for Config {
             hooks: HooksConfig::default(),
             privacy: PrivacyConfig::default(),
             prompt_screen: PromptScreenConfig::default(),
+            security: SecurityModeConfig::default(),
             sandbox: SandboxConfig::default(),
             runtime: RuntimeConfig::default(),
             shell: ShellConfig::default(),
