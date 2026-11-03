@@ -36,14 +36,10 @@ fn a_runtime_with_the_prompt_screen_off_sends_the_turn_to_the_model() {
                 )
                 .expect("agent");
 
-            let outcome = agent
-                .turn(INJECTION)
-                .send()
-                .await
-                .unwrap_or_else(|error| {
-                    eprintln!("unscreened turn failed: {error:?}");
-                    panic!("the turn runs with the screen off")
-                });
+            let outcome = agent.turn(INJECTION).send().await.unwrap_or_else(|error| {
+                eprintln!("unscreened turn failed: {error:?}");
+                panic!("the turn runs with the screen off")
+            });
 
             assert_eq!(outcome.reply, "unscreened reply");
             assert_eq!(chat_requests(&model).await.len(), 1);
