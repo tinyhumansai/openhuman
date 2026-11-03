@@ -40,9 +40,11 @@ pub(crate) async fn expire_parked_runs(ctx: &DispatchCtx, config: &Config) -> us
 /// returns only rows it changed; the runs adapter handles event projection and
 /// releases retained callback state for those rows.
 pub(crate) async fn sweep_orphaned_runs_on_boot(ctx: &DispatchCtx, config: &Config) -> usize {
-    sweep_scopes(ctx, crate::storage::installed_is_shared(), |scope_ctx| async move {
-        sweep_one_scope(&scope_ctx, config).await
-    })
+    sweep_scopes(
+        ctx,
+        crate::storage::installed_is_shared(),
+        |scope_ctx| async move { sweep_one_scope(&scope_ctx, config).await },
+    )
     .await
 }
 

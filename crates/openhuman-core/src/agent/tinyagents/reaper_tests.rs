@@ -235,15 +235,18 @@ async fn a_shared_backend_sweep_visits_no_scope() {
     crate::storage::install_with_driver("mongodb", crate::storage::test_support::memory_backend());
     assert!(crate::storage::installed_is_shared());
     let agents = ["reaper-shared-a", "reaper-shared-b", "reaper-shared-c"];
-    let contexts: Vec<_> = agents
-        .iter()
-        .map(|agent| live_agent(agent))
-        .collect();
+    let contexts: Vec<_> = agents.iter().map(|agent| live_agent(agent)).collect();
     let tmp = std::env::temp_dir().join(format!("oh-reaper-{}", uuid::Uuid::new_v4()));
 
     let outcome = sweep(&tmp, None).await;
 
-    assert_eq!(outcome, SweepOutcome { scopes: 0, reaped: 0 });
+    assert_eq!(
+        outcome,
+        SweepOutcome {
+            scopes: 0,
+            reaped: 0
+        }
+    );
     for (agent, context) in agents.iter().zip(&contexts) {
         crate::core::runtime::AgentContextRegistry::deregister(agent, context);
     }
@@ -258,10 +261,7 @@ async fn a_local_backend_sweep_visits_every_agent_scope() {
         crate::storage::test_support::memory_backend(),
     );
     let agents = ["reaper-local-a", "reaper-local-b", "reaper-local-c"];
-    let contexts: Vec<_> = agents
-        .iter()
-        .map(|agent| live_agent(agent))
-        .collect();
+    let contexts: Vec<_> = agents.iter().map(|agent| live_agent(agent)).collect();
     let tmp = std::env::temp_dir().join(format!("oh-reaper-{}", uuid::Uuid::new_v4()));
 
     let outcome = sweep(&tmp, None).await;

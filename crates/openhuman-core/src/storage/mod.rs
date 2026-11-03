@@ -620,9 +620,7 @@ pub fn driver_has_cross_process_cas(driver: &str) -> bool {
 /// host recorded at install ([`install_for_url`], [`install_with_driver`]), so
 /// it holds however the backend was opened. See [`driver_is_shared`].
 pub fn installed_is_shared() -> bool {
-    installed_driver()
-        .as_deref()
-        .is_some_and(driver_is_shared)
+    installed_driver().as_deref().is_some_and(driver_is_shared)
 }
 
 /// A stable key for a legacy import source (a workspace directory), for the

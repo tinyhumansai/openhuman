@@ -232,7 +232,11 @@ fn the_installed_backend_is_shared_by_its_driver_however_it_was_installed() {
     install_with_driver("mongodb", test_support::memory_backend());
     assert!(installed_is_shared());
     assert_eq!(installed_driver().as_deref(), Some("mongodb"));
-    assert_eq!(installed_url(), None, "a driver name never opts into rebind");
+    assert_eq!(
+        installed_url(),
+        None,
+        "a driver name never opts into rebind"
+    );
 
     install_with_driver("sqlite", test_support::memory_backend());
     assert!(!installed_is_shared());
