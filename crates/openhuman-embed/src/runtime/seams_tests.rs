@@ -420,3 +420,23 @@ async fn a_shared_driver_makes_the_installed_backend_shared() {
     drop(installed);
     assert!(!openhuman_core::storage::installed_is_shared());
 }
+
+/// Restoring the backend a runtime replaced restores its driver too, so a
+/// shared backend is still recognised as shared once the runtime is gone.
+#[tokio::test]
+async fn restoring_a_replaced_shared_backend_restores_its_driver() {
+    let _lock = STORAGE_LOCK.lock().await;
+    openhuman_core::storage::install_with_driver("mongodb", memory_backend().await);
+
+    let seams = HostSeams {
+        storage: Some(StorageSource::Backend(memory_backend().await)),
+        storage_driver: Some("memory".into()),
+        ..HostSeams::default()
+    };
+    let installed = seams.install().expect("install");
+    assert!(!openhuman_core::storage::installed_is_shared());
+    drop(installed);
+
+    assert!(openhuman_core::storage::installed_is_shared());
+    openhuman_core::storage::clear();
+}
