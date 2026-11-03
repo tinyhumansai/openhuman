@@ -369,9 +369,13 @@ pub(super) async fn build_agent_for_cron_job(
 /// opener, so it cannot be shadowed by an agent opened under a built-in name.
 async fn host_agent_for_job(job: &CronJob) -> Option<crate::agent::host_agents::OpenedHostAgent> {
     use crate::agent::host_agents;
+    use crate::agent_registry::host_definition::AgentDefinitionRegistry;
     let id = job.agent_id.as_deref()?;
-    let in_registry = crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
-        .is_some_and(|registry| registry.get(id).is_some());
+    // With no registry installed yet the built-ins still define their ids.
+    let in_registry = match AgentDefinitionRegistry::current() {
+        Some(registry) => registry.get(id).is_some(),
+        None => AgentDefinitionRegistry::builtins_only().get(id).is_some(),
+    };
     if in_registry {
         return host_agents::resolve_leased(id);
     }
