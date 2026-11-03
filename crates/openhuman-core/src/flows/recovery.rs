@@ -87,3 +87,7 @@ async fn sweep_one_scope(ctx: &DispatchCtx, config: &Config) -> usize {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod tests;
