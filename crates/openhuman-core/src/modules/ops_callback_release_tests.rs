@@ -34,7 +34,8 @@ const ID: &str = "callbackprobe";
 const VERSION: &str = "0.0.1";
 const ARCHIVE: &str = "callbackprobe-module-0.0.1.tar.gz";
 const BUS_NAME: &str = "ai.tinyhumans.test.StorageProbe";
-const OBJECT_PATH: &str = "/probe";
+/// The module SDK derives the object path from the bus name.
+const OBJECT_PATH: &str = "/ai/tinyhumans/test/StorageProbe";
 const WRONG_DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Re-run `test` alone in a fresh process; `true` means this is that process.
