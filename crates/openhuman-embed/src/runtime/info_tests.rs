@@ -120,11 +120,13 @@ fn typed_configuration_groups_apply_on_top_of_supplied_config() {
 #[test]
 fn the_prompt_screen_is_reported_enforced_unless_the_host_turns_it_off() {
     use openhuman_core::config::schema::PromptScreenConfig;
-    assert!(
+    // A build without the security module has the screen off as well.
+    assert_eq!(
         RuntimeBuilder::new()
             .describe()
             .configuration
-            .prompt_screen_enforced
+            .prompt_screen_enforced,
+        openhuman_core::security::switch::disabled().is_none()
     );
     let info = RuntimeBuilder::new()
         .prompt_screen(PromptScreenConfig::off())

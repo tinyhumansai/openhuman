@@ -184,8 +184,9 @@ pub struct ConfigurationInfo {
     pub autonomy_enabled: bool,
     /// Data egress policy name.
     pub privacy: String,
-    /// Whether untrusted input is screened for prompt injection; false only
-    /// when the host turned the screen off. Absent in older metadata → true.
+    /// Whether untrusted input is screened for prompt injection; false when
+    /// the host turned the screen off, or security is off (see
+    /// `security_enforced`). Absent in older metadata → true.
     #[serde(default = "prompt_screen_enforced_by_default")]
     pub prompt_screen_enforced: bool,
     /// Whether the checks OpenHuman delegates to TinySecurity run and fail
