@@ -222,6 +222,7 @@ impl HostSeams {
 
         let storage = match self.storage {
             Some(StorageSource::Backend(backend)) => {
+                let previous_driver = openhuman_core::storage::installed_driver();
                 let previous = match self.storage_driver.as_deref() {
                     Some(driver) => {
                         openhuman_core::storage::install_with_driver(driver, Arc::clone(&backend))
@@ -233,7 +234,7 @@ impl HostSeams {
                     self.storage_driver,
                     previous.is_some()
                 );
-                Some((backend, previous))
+                Some((backend, previous, previous_driver))
             }
             Some(StorageSource::Url(_)) => {
                 return Err("storage url was not opened before install".to_string());
@@ -255,8 +256,13 @@ impl HostSeams {
 /// A ranker we installed, and what held the slot before it.
 type InstalledRanker = (Arc<dyn ToolRanker>, Option<Arc<dyn ToolRanker>>);
 
-/// A storage backend we installed, and what held the slot before it.
-type InstalledStorage = (Arc<dyn StorageBackend>, Option<Arc<dyn StorageBackend>>);
+/// A storage backend we installed, what held the slot before it, and the
+/// driver that predecessor was installed with.
+type InstalledStorage = (
+    Arc<dyn StorageBackend>,
+    Option<Arc<dyn StorageBackend>>,
+    Option<String>,
+);
 
 /// A hook we installed under `name`, and what held that name before it.
 struct InstalledHook<H: ?Sized> {
@@ -368,13 +374,18 @@ impl Drop for InstalledSeams {
         if !self.restore {
             return;
         }
-        if let Some((ours, previous)) = self.storage.take() {
+        if let Some((ours, previous, previous_driver)) = self.storage.take() {
             let still_ours =
                 openhuman_core::storage::installed().is_some_and(|now| Arc::ptr_eq(&now, &ours));
             if still_ours {
                 match previous {
                     Some(previous) => {
-                        openhuman_core::storage::install(previous);
+                        match previous_driver {
+                            Some(driver) => {
+                                openhuman_core::storage::install_with_driver(&driver, previous)
+                            }
+                            None => openhuman_core::storage::install(previous),
+                        };
                     }
                     None => {
                         openhuman_core::storage::clear();
