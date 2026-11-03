@@ -616,12 +616,13 @@ pub fn driver_has_cross_process_cas(driver: &str) -> bool {
 }
 
 /// Whether the installed backend may be shared with other processes; `false`
-/// when none is installed. See [`driver_is_shared`].
+/// when none is installed or its driver is unknown. Judged by the driver the
+/// host recorded at install ([`install_for_url`], [`install_with_driver`]), so
+/// it holds however the backend was opened. See [`driver_is_shared`].
 pub fn installed_is_shared() -> bool {
-    installed_url()
+    installed_driver()
         .as_deref()
-        .and_then(|url| StorageUrl::parse(url).ok())
-        .is_some_and(|config| driver_is_shared(config.driver()))
+        .is_some_and(driver_is_shared)
 }
 
 /// A stable key for a legacy import source (a workspace directory), for the

@@ -73,6 +73,16 @@ async fn sweep(workspace: &Path, cutoff: Option<SystemTime>) -> SweepOutcome {
         "[agent] startup run sweep start workspace={} shared={shared}",
         workspace.display()
     );
+    if shared {
+        // Visiting a scope prepares its collections and migrations, and there
+        // is nothing to reap on a backend other processes drive: skip them
+        // all instead of visiting every agent to do nothing.
+        log::info!("[agent] startup run sweep skipped: the storage backend is shared");
+        return SweepOutcome {
+            scopes: 0,
+            reaped: 0,
+        };
+    }
     let results = crate::storage::agents::for_each_scope(
         &crate::core::runtime::DispatchCtx::host_default(),
         "run reaper",

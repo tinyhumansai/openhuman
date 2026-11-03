@@ -222,7 +222,12 @@ impl HostSeams {
 
         let storage = match self.storage {
             Some(StorageSource::Backend(backend)) => {
-                let previous = openhuman_core::storage::install(Arc::clone(&backend));
+                let previous = match self.storage_driver.as_deref() {
+                    Some(driver) => {
+                        openhuman_core::storage::install_with_driver(driver, Arc::clone(&backend))
+                    }
+                    None => openhuman_core::storage::install(Arc::clone(&backend)),
+                };
                 log::debug!(
                     "[embed][seams] storage backend installed source_driver={:?} replaced={}",
                     self.storage_driver,
