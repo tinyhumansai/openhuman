@@ -78,3 +78,143 @@ fn turn_workspace_policy() -> (tempfile::TempDir, PathBuf, SecurityPolicy) {
 
 #[path = "policy_action_dir_tests.rs"]
 mod action_dir_tests;
+
+// -- security disabled (`crate::security::switch`) -----------------
+
+/// With security disabled every gate this policy answers allows: paths resolve
+/// locally with no floor or reservation, the tier and budget allow, and actions
+/// are classed without the module. Shared by the no-module build and by a
+/// module build whose booted config says `[security] mode = "off"`.
+pub(super) async fn assert_every_policy_gate_allows() {
+    use super::module_gate::PathKind;
+    use super::native_commands::{CommandFlow, CommandQuery, CommandStage};
+    use std::path::Path;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    fs::write(root.join("notes.md"), "notes").unwrap();
+    let policy = SecurityPolicy {
+        enabled: true,
+        workspace_dir: root.clone(),
+        action_dir: root.clone(),
+        ..SecurityPolicy::default()
+    };
+
+    // Paths.
+    assert!(!SecurityPolicy::is_always_forbidden_async(Path::new("/etc/shadow")).await);
+    assert_eq!(
+        policy.validate_path("notes.md").await.unwrap(),
+        root.join("notes.md")
+    );
+    assert_eq!(
+        policy.validate_parent_path("new/dir/out.txt").await.unwrap(),
+        root.join("new/dir/out.txt")
+    );
+    assert!(
+        policy.validate_path("missing.md").await.is_err(),
+        "a read of a missing file still fails to resolve"
+    );
+    assert!(
+        policy
+            .path_allowed(PathKind::ResolvedWrite, Path::new("/etc/hosts"))
+            .await
+    );
+    assert!(!policy.is_internal(&root.join("memory")).await);
+    assert!(!policy.is_internal_blocking(&root.join("memory")));
+    assert_eq!(
+        policy.check_paths_blocking(PathKind::ResolvedRead, &[root.join("notes.md")]),
+        vec![true]
+    );
+
+    // Tier and budget.
+    policy.spend_action("file_write").await.unwrap();
+    assert_eq!(
+        policy.peek_action_budget().await.unwrap(),
+        tinysecurity_bus::BudgetDecision2::Allow
+    );
+    policy
+        .enforce_tool_operation(ToolOperation::Act, "file_write")
+        .await
+        .unwrap();
+    assert!(policy.can_act());
+    assert!(policy.record_action());
+    assert!(!policy.is_rate_limited());
+    assert!(policy.tier_allows_acting_blocking());
+    assert_eq!(
+        policy.gate_decision(CommandClass::Destructive),
+        GateDecision::Allow
+    );
+    assert_eq!(
+        policy
+            .command_class_gate(CommandClass::Destructive)
+            .await
+            .unwrap(),
+        GateDecision::Allow
+    );
+    assert_eq!(
+        policy
+            .command_class_gate_blocking(CommandClass::Install)
+            .unwrap(),
+        GateDecision::Allow
+    );
+
+    // Classification.
+    assert_eq!(
+        super::host_action_class(tinytools::PermissionLevel::Write, false)
+            .await
+            .unwrap(),
+        tinysecurity_bus::CommandClass::Write
+    );
+    let query = CommandQuery {
+        command: "rm -rf build",
+        declared: None,
+        flow: CommandFlow::Harness,
+        stage: CommandStage::Execute,
+    };
+    let verdict = policy.check_command(query).await.unwrap();
+    assert_eq!(verdict.gate, GateDecision::Allow);
+    assert_eq!(
+        policy.classify_native_command(query).await.unwrap(),
+        CommandClass::Write
+    );
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_allows_every_policy_gate() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_every_policy_gate_allows().await;
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn an_enforcing_policy_without_the_module_still_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("notes.md"), "notes").unwrap();
+    let policy = SecurityPolicy {
+        enabled: true,
+        workspace_dir: dir.path().to_path_buf(),
+        action_dir: dir.path().to_path_buf(),
+        ..SecurityPolicy::default()
+    };
+    assert!(crate::security::switch::disabled().is_none());
+    assert!(!policy.can_act(), "no module answer, no acting tier");
+    assert!(policy.is_rate_limited());
+    assert_eq!(
+        policy.gate_decision(CommandClass::Write),
+        GateDecision::Block
+    );
+}
+
+#[test]
+fn an_unchecked_host_action_is_classed_from_its_permission_level() {
+    use super::module_gate::unchecked_action_class;
+    use tinysecurity_bus::CommandClass as Class;
+    use tinytools::PermissionLevel as Level;
+    assert_eq!(unchecked_action_class(Level::ReadOnly, false), Class::Read);
+    assert_eq!(unchecked_action_class(Level::None, false), Class::Read);
+    assert_eq!(unchecked_action_class(Level::ReadOnly, true), Class::Network);
+    assert_eq!(unchecked_action_class(Level::Write, false), Class::Write);
+    assert_eq!(unchecked_action_class(Level::Execute, false), Class::Write);
+    assert_eq!(unchecked_action_class(Level::Dangerous, true), Class::Destructive);
+}
