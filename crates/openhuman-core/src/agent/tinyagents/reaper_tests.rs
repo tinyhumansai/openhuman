@@ -207,6 +207,22 @@ async fn boot_child() {
     assert_eq!(built.wait_for_startup_sweep().await, None);
 }
 
+/// A context derived for `agent` and registered as that agent's live one, the
+/// way an embed agent is. Each test uses its own agent ids.
+fn live_agent(agent: &str) -> std::sync::Arc<crate::core::runtime::CoreContext> {
+    use crate::core::runtime::{AgentContextRegistry, ContextOverlay, CoreContext, DomainSet};
+    let context = CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::full(),
+            Default::default(),
+        )
+        .session_agent(agent),
+    );
+    AgentContextRegistry::register(agent, &context);
+    context
+}
+
 /// Opening a scope's status store prepares its collections, so a sweep that
 /// only decides per scope to do nothing still costs one preparation per
 /// agent. Neither the `local` scope nor any recorded agent is visited when the
@@ -217,10 +233,11 @@ async fn a_shared_backend_sweep_visits_no_scope() {
         crate::storage::test_support::memory_backend(),
     );
     crate::storage::install_with_driver("mongodb", crate::storage::test_support::memory_backend());
+    assert!(crate::storage::installed_is_shared());
     let agents = ["reaper-shared-a", "reaper-shared-b", "reaper-shared-c"];
     let contexts: Vec<_> = agents
         .iter()
-        .map(|agent| crate::storage::agents::test_live_agent(agent))
+        .map(|agent| live_agent(agent))
         .collect();
     let tmp = std::env::temp_dir().join(format!("oh-reaper-{}", uuid::Uuid::new_v4()));
 
@@ -228,7 +245,7 @@ async fn a_shared_backend_sweep_visits_no_scope() {
 
     assert_eq!(outcome, SweepOutcome { scopes: 0, reaped: 0 });
     for (agent, context) in agents.iter().zip(&contexts) {
-        crate::agent::context::AgentContextRegistry::deregister(agent, context);
+        crate::core::runtime::AgentContextRegistry::deregister(agent, context);
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -243,7 +260,7 @@ async fn a_local_backend_sweep_visits_every_agent_scope() {
     let agents = ["reaper-local-a", "reaper-local-b", "reaper-local-c"];
     let contexts: Vec<_> = agents
         .iter()
-        .map(|agent| crate::storage::agents::test_live_agent(agent))
+        .map(|agent| live_agent(agent))
         .collect();
     let tmp = std::env::temp_dir().join(format!("oh-reaper-{}", uuid::Uuid::new_v4()));
 
@@ -251,7 +268,7 @@ async fn a_local_backend_sweep_visits_every_agent_scope() {
 
     assert!(outcome.scopes >= agents.len(), "{outcome:?}");
     for (agent, context) in agents.iter().zip(&contexts) {
-        crate::agent::context::AgentContextRegistry::deregister(agent, context);
+        crate::core::runtime::AgentContextRegistry::deregister(agent, context);
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }

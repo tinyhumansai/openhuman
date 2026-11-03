@@ -302,6 +302,31 @@ pub fn installed_url() -> Option<String> {
         .clone()
 }
 
+/// The driver of the installed backend, however it was installed. Unlike
+/// [`INSTALLED_URL`] it is also known for a backend a host opened from a URL
+/// and installed with [`install`], and it never makes [`rebind`] manage the
+/// backend.
+static INSTALLED_DRIVER: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_installed_driver(driver: Option<String>) {
+    *INSTALLED_DRIVER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = driver;
+}
+
+/// The driver name of the installed backend (`mongodb`, `sqlite`, `memory`,
+/// `file`), when the host said which one it installed.
+pub fn installed_driver() -> Option<String> {
+    #[cfg(test)]
+    if !slot_visible_here() {
+        return None;
+    }
+    INSTALLED_DRIVER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// The storage URL a host opens at startup: [`STORAGE_URL_VAR`], else
 /// `config`'s `[storage] url`, else the default for `config`'s workspace
 /// ([`config::default_url`]). `None` only in SaaS mode with nothing
@@ -403,6 +428,7 @@ pub fn install(backend: Arc<dyn StorageBackend>) -> Option<Arc<dyn StorageBacken
     #[cfg(test)]
     set_slot_owner(std::thread::current().name().map(str::to_owned));
     set_installed_url(None);
+    set_installed_driver(None);
     let previous = BACKEND.install(backend);
     // What was recorded described the previous backend.
     agents::reset_recorded();
@@ -419,6 +445,20 @@ pub fn install_for_url(
 ) -> Option<Arc<dyn StorageBackend>> {
     let previous = install(backend);
     set_installed_url(Some(url.to_string()));
+    set_installed_driver(StorageUrl::parse(url).ok().map(|u| u.driver().to_string()));
+    previous
+}
+
+/// [`install`] for a backend `driver` opened, remembering the driver name so
+/// [`installed_is_shared`] can tell whether other processes may write to it.
+/// Use it when the backend was opened from a URL the host does not want
+/// [`rebind`] to manage; [`install_for_url`] records the driver from its URL.
+pub fn install_with_driver(
+    driver: &str,
+    backend: Arc<dyn StorageBackend>,
+) -> Option<Arc<dyn StorageBackend>> {
+    let previous = install(backend);
+    set_installed_driver(Some(driver.to_string()));
     previous
 }
 
@@ -434,6 +474,7 @@ pub fn installed() -> Option<Arc<dyn StorageBackend>> {
 /// Removes the installed backend; returns whether there was one.
 pub fn clear() -> bool {
     set_installed_url(None);
+    set_installed_driver(None);
     agents::reset_recorded();
     let cleared = BACKEND.clear();
     // Only after the backend is gone, so other tests never see it in between.
