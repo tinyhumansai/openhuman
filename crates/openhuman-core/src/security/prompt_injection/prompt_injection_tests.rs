@@ -76,8 +76,7 @@ async fn turning_the_screen_off_also_admits_input_over_the_scan_limit() {
     let input = "ordinary text ".repeat(MAX_PROMPT_BYTES / 12 + 1);
     let config = screen_off_config();
 
-    let decision =
-        super::enforce_prompt_input_with_config(&input, context(), Some(&config)).await;
+    let decision = super::enforce_prompt_input_with_config(&input, context(), Some(&config)).await;
 
     assert_eq!(decision.action, PromptEnforcementAction::Allow);
 }

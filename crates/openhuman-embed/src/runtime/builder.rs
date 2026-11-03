@@ -217,7 +217,10 @@ impl RuntimeBuilder {
     /// [`PromptScreenConfig::off`](crate::config::PromptScreenConfig::off); the
     /// runtime then allows input unscreened and says so once at boot. Leaving
     /// it unset keeps the configured (by default enforced) screen.
-    pub fn prompt_screen(mut self, value: openhuman_core::config::schema::PromptScreenConfig) -> Self {
+    pub fn prompt_screen(
+        mut self,
+        value: openhuman_core::config::schema::PromptScreenConfig,
+    ) -> Self {
         self.config_knobs.prompt_screen = Some(value);
         self
     }

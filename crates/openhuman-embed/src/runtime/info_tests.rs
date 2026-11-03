@@ -134,7 +134,9 @@ fn the_prompt_screen_is_reported_enforced_unless_the_host_turns_it_off() {
 #[test]
 fn metadata_written_before_the_prompt_screen_field_reads_as_enforced() {
     let mut json = serde_json::to_value(RuntimeBuilder::new().describe().configuration).unwrap();
-    json.as_object_mut().unwrap().remove("prompt_screen_enforced");
+    json.as_object_mut()
+        .unwrap()
+        .remove("prompt_screen_enforced");
     let info: ConfigurationInfo = serde_json::from_value(json).unwrap();
     assert!(info.prompt_screen_enforced);
 }
