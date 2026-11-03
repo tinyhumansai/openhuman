@@ -124,8 +124,33 @@ fn held_decision(
     decision
 }
 
+/// The decision for input the host has chosen not to screen
+/// (`[prompt_screen] mode = "off"`). Nothing is logged per input: the runtime
+/// says once at boot that screening is off.
+fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
+    PromptEnforcementDecision {
+        verdict: PromptInjectionVerdict::Allow,
+        score: 0.0,
+        reasons: Vec::new(),
+        action: PromptEnforcementAction::Allow,
+        prompt_hash: prompt_hash(input),
+        prompt_chars: input.chars().count(),
+    }
+}
+
+/// Say once, when a runtime boots with a config, whether the prompt screen is
+/// off. Silent when it is enforced, which is the default.
+pub(crate) fn log_prompt_screen_mode(config: &crate::config::Config) {
+    if !config.prompt_screen.enforces() {
+        tracing::info!(
+            "[prompt_injection] prompt screen disabled by configuration ([prompt_screen] mode = \"off\"); input is not checked by TinySecurity"
+        );
+    }
+}
+
 /// Screen user or untrusted text through TinySecurity. Missing configuration,
-/// module failure, timeout, and oversized inputs all fail closed as Review.
+/// module failure, timeout, and oversized inputs all fail closed as Review,
+/// unless the configuration turns the screen off.
 pub async fn enforce_prompt_input(
     input: &str,
     context: PromptEnforcementContext<'_>,
@@ -155,11 +180,16 @@ pub(crate) async fn enforce_prompt_input_in(
 
 /// Screen against the configuration supplied by the owning dispatch. Missing
 /// authority remains a held decision, even if another task has a configuration.
+/// A configuration with `[prompt_screen] mode = "off"` allows the input without
+/// a scan; every screening path goes through here, so all of them honour it.
 pub(crate) async fn enforce_prompt_input_with_config(
     input: &str,
     context: PromptEnforcementContext<'_>,
     config: Option<&crate::config::Config>,
 ) -> PromptEnforcementDecision {
+    if config.is_some_and(|config| !config.prompt_screen.enforces()) {
+        return unscreened_decision(input);
+    }
     if input.len() > MAX_PROMPT_BYTES {
         return held_decision(input, context, "input.oversized");
     }

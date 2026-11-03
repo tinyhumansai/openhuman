@@ -118,6 +118,29 @@ fn typed_configuration_groups_apply_on_top_of_supplied_config() {
     assert_eq!(info.configuration.learning.learnings_limit, 2);
 }
 #[test]
+fn the_prompt_screen_is_reported_enforced_unless_the_host_turns_it_off() {
+    use openhuman_core::config::schema::PromptScreenConfig;
+    assert!(
+        RuntimeBuilder::new()
+            .describe()
+            .configuration
+            .prompt_screen_enforced
+    );
+    let info = RuntimeBuilder::new()
+        .prompt_screen(PromptScreenConfig::off())
+        .describe();
+    assert!(!info.configuration.prompt_screen_enforced);
+}
+#[test]
+fn metadata_written_before_the_prompt_screen_field_reads_as_enforced() {
+    let mut json = serde_json::to_value(RuntimeBuilder::new().describe().configuration).unwrap();
+    json.as_object_mut()
+        .unwrap()
+        .remove("prompt_screen_enforced");
+    let info: ConfigurationInfo = serde_json::from_value(json).unwrap();
+    assert!(info.prompt_screen_enforced);
+}
+#[test]
 fn presets_report_consistent_module_weight_and_optional_gates() {
     let lean = RuntimeBuilder::lean().describe();
     assert_eq!(lean.weight, WeightClass::Lean);

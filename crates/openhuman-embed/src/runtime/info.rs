@@ -1,7 +1,7 @@
 //! Versioned, credential-safe runtime capability metadata.
 use super::{LearningSettings, ModelDefaults, Runtime, RuntimeBuilder};
 use openhuman_core::config::{
-    schema::{AutonomyConfig, CronConfig, PrivacyConfig, SecretsConfig},
+    schema::{AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig},
     Config,
 };
 use std::collections::BTreeMap;
@@ -11,6 +11,8 @@ pub(super) struct ConfigKnobs {
     pub autonomy: Option<AutonomyConfig>,
     /// Data egress policy name.
     pub privacy: Option<PrivacyConfig>,
+    /// Whether untrusted input is screened for prompt injection.
+    pub prompt_screen: Option<PromptScreenConfig>,
     pub secrets: Option<SecretsConfig>,
     pub cron: Option<CronConfig>,
     /// Background memory learning policy.
@@ -21,6 +23,7 @@ impl ConfigKnobs {
     pub fn is_set(&self) -> bool {
         self.autonomy.is_some()
             || self.privacy.is_some()
+            || self.prompt_screen.is_some()
             || self.secrets.is_some()
             || self.cron.is_some()
             || self.learning.is_some()
@@ -32,6 +35,9 @@ impl ConfigKnobs {
         }
         if let Some(v) = &self.privacy {
             config.privacy = *v;
+        }
+        if let Some(v) = &self.prompt_screen {
+            config.prompt_screen = *v;
         }
         if let Some(v) = &self.secrets {
             config.secrets = v.clone();
@@ -169,6 +175,10 @@ pub struct ConfigurationInfo {
     pub autonomy_enabled: bool,
     /// Data egress policy name.
     pub privacy: String,
+    /// Whether untrusted input is screened for prompt injection; false only
+    /// when the host turned the screen off. Absent in older metadata → true.
+    #[serde(default = "prompt_screen_enforced_by_default")]
+    pub prompt_screen_enforced: bool,
     /// Whether stored credentials are encrypted.
     pub secrets_encrypted: bool,
     /// Whether configured cron scheduling is enabled.
@@ -177,6 +187,9 @@ pub struct ConfigurationInfo {
     pub learning: LearningSettings,
     /// Whether global tool rules constrain tools through rules or a deny default.
     pub has_tool_rules: bool,
+}
+fn prompt_screen_enforced_by_default() -> bool {
+    true
 }
 impl RuntimeBuilder {
     /// Describe this builder without booting a core or discovering operator files.
@@ -310,6 +323,7 @@ fn make_info(
         configuration: ConfigurationInfo {
             autonomy_enabled: config.autonomy.enabled,
             privacy: format!("{:?}", config.privacy.mode),
+            prompt_screen_enforced: config.prompt_screen.enforces(),
             secrets_encrypted: config.secrets.encrypt,
             cron_enabled: config.cron.enabled,
             learning: LearningSettings {
