@@ -251,6 +251,9 @@ async fn cron_headless_settlement_does_not_allow_effectful_spawn_aliases() {
     );
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn read_only_autonomy_denies_an_acting_tool() {
     let decision = gate(AutonomyLevel::ReadOnly)

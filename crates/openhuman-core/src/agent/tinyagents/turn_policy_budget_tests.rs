@@ -84,6 +84,9 @@ fn hosted_openai_is_not_treated_as_self_hosted() {
     ));
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[test]
 fn local_runtimes_are_self_hosted_and_endpoint_classification_fails_closed() {
     assert!(provider_is_self_hosted("ollama:llama3", None));
