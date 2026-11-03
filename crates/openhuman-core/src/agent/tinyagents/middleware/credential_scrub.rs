@@ -67,6 +67,6 @@ pub(crate) fn credential_scrub_middleware() -> CredentialScrubMiddleware {
     CredentialScrubMiddleware::with_scrubber(scrubber)
 }
 
-#[cfg(all(test, feature = "security-module"))]
+#[cfg(test)]
 #[path = "credential_scrub_tests.rs"]
 mod tests;
