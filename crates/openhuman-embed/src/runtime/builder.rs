@@ -210,18 +210,37 @@ impl RuntimeBuilder {
     /// Whether untrusted input is screened for prompt injection before a turn,
     /// a tool result or an inbound message is processed (`[prompt_screen]`).
     ///
-    /// The screen is TinySecurity's, and it fails closed: by default input is
-    /// held for review whenever no verdict can be had, including in a build
-    /// without the `security-module` feature. A host that screens input
-    /// itself, or ships without the TinySecurity module on purpose, passes
+    /// The screen is TinySecurity's, and while security is enforced it fails
+    /// closed: input is held for review whenever no verdict can be had. A host
+    /// that runs the module but screens input itself passes
     /// [`PromptScreenConfig::off`](crate::config::PromptScreenConfig::off); the
-    /// runtime then allows input unscreened and says so once at boot. Leaving
-    /// it unset keeps the configured (by default enforced) screen.
+    /// runtime then allows input unscreened and says so once at boot. With
+    /// security off ([`Self::security`]) or a build without the
+    /// `security-module` feature the screen is off whatever this says.
+    /// Leaving it unset keeps the configured (by default enforced) screen.
     pub fn prompt_screen(
         mut self,
         value: openhuman_core::config::schema::PromptScreenConfig,
     ) -> Self {
         self.config_knobs.prompt_screen = Some(value);
+        self
+    }
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`).
+    ///
+    /// Enforced by default: the prompt screen, tool-call classification and
+    /// approvals, path checks, the action budget, egress privacy checks,
+    /// redaction and the audit trail ask the module and fail closed when it
+    /// cannot answer. A host with its own controls passes
+    /// [`SecurityModeConfig::off`](crate::config::SecurityModeConfig::off): those
+    /// checks then allow, tool output, diagnostics and log URLs are not
+    /// redacted, and the runtime says so once at boot. `[privacy] mode =
+    /// "local_only"` still refuses external transfers, and forced one-time
+    /// approvals, the encrypted secret store and device pairing still need the
+    /// module. A build without the `security-module` feature behaves as off.
+    /// Leaving it unset keeps the configured (by default enforced) mode.
+    pub fn security(mut self, value: openhuman_core::config::schema::SecurityModeConfig) -> Self {
+        self.config_knobs.security = Some(value);
         self
     }
     /// Credential encryption policy.
