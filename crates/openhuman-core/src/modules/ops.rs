@@ -39,6 +39,7 @@ use tinybus::module::{
 };
 use tinybus::Proxy;
 
+mod callback_load;
 mod list;
 pub use list::list;
 
@@ -155,10 +156,13 @@ pub fn resolver(config: &Config) -> Resolver {
                 }
             }
             ModuleSource::Release if requires_verified_local_callbacks(record.id) => {
-                // These modules require a per-module storage callback, which
-                // TinyBus can bind only on its verified local-file path.
-                // Route a staged release through that rung; the callback-aware
-                // client below supplies the unique destination at load time.
+                // A staged artifact (`OPENHUMAN_MODULE_SOURCE_DIR` or
+                // `OPENHUMAN_MODULE_PATH`) wins over the release, as a local
+                // file: the search-path rung would admit it without the
+                // callbacks these modules need. With none staged the source
+                // stays the pinned release, which the callback loads in
+                // `callback_load` take from the installer bundle or the
+                // digest-verified release cache.
                 if let Some(path) = source::local_artifact(record.id) {
                     sources.insert(
                         record.id.to_string(),
@@ -265,25 +269,29 @@ async fn ensure_loaded_with_storage_callback(
             // already serving.
             return Ok(());
         }
-        let mut module_config = module_config(config, id).await;
-        module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-        return resolver
-            .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(binding), module_config)
-            .await;
+        return callback_load::confirm(resolver, id, binding).await;
     }
 
     let runtime = resolver
         .runtime()
         .await
         .map_err(|error| error.to_string())?;
-    let (binding, served) = super::storage_host::prepare_module_callbacks(runtime)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut module_config = module_config(config, id).await;
-    module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-    resolver
-        .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(&binding), module_config)
-        .await?;
+    let config = config.clone();
+    let module_id = id.to_owned();
+    let (binding, served) = callback_load::load(resolver, id, move || {
+        let config = config.clone();
+        let id = module_id.clone();
+        async move {
+            let (binding, served) = super::storage_host::prepare_module_callbacks(runtime)
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut module_config = module_config(&config, &id).await;
+            module_config["storage_callback"] =
+                serde_json::json!(binding.unique_name().as_str());
+            Ok((binding, module_config, served))
+        }
+    })
+    .await?;
     loads.insert(id.to_owned(), (binding, served));
     Ok(())
 }
@@ -353,23 +361,27 @@ async fn ensure_loaded_with_computer_callback(
 ) -> Result<(), String> {
     let mut loads = COMPUTER_CALLBACK_LOADS.lock().await;
     if let Some(binding) = loads.get(id) {
-        let module_config = module_config_with_consequence_callback(config, id, binding).await;
-        return resolver
-            .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(binding), module_config)
-            .await;
+        return callback_load::confirm(resolver, id, binding).await;
     }
 
     let runtime = resolver
         .runtime()
         .await
         .map_err(|error| error.to_string())?;
-    let binding = super::browser_egress_host::prepare_consequence_callback(runtime)
-        .await
-        .map_err(|error| error.to_string())?;
-    let module_config = module_config_with_consequence_callback(config, id, &binding).await;
-    resolver
-        .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(&binding), module_config)
-        .await?;
+    let config = config.clone();
+    let module_id = id.to_owned();
+    let (binding, ()) = callback_load::load(resolver, id, move || {
+        let config = config.clone();
+        let id = module_id.clone();
+        async move {
+            let binding = super::browser_egress_host::prepare_consequence_callback(runtime)
+                .await
+                .map_err(|error| error.to_string())?;
+            let module_config = module_config_with_consequence_callback(&config, &id, &binding).await;
+            Ok((binding, module_config, ()))
+        }
+    })
+    .await?;
     loads.insert(id.to_owned(), binding);
     Ok(())
 }
