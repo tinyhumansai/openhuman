@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::user_scope::{
-    activate_user_scope, rebind_after_credential_change, reload_config_or,
+    activate_user_scope, complete_user_scope_activation, rebind_after_credential_change,
+    reload_config_or, roll_back_user_scope_activation, UserScopeActivation,
 };
 use crate::core::observability::sentry_scope;
 use crate::credentials::session_state::{
@@ -11,19 +12,31 @@ use crate::credentials::{
     api_key, identity, AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 
-async fn rollback_failed_credential_rebind(auth: &AuthService, cause: &str) -> String {
+async fn rollback_failed_credential_rebind(
+    auth: &AuthService,
+    activation: Option<UserScopeActivation>,
+    cause: &str,
+) -> String {
     if let Err(rollback) = auth
         .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
         .await
     {
         return format!("credential rebind failed: {cause}; rollback failed: {rollback}");
     }
-    if let Err(rollback) = crate::config::user_scope::deactivate_user_scope() {
-        return format!(
-            "credential rebind failed: {cause}; active-user rollback failed: {rollback}"
-        );
+    rollback_failed_activation(activation, cause)
+}
+
+/// Undo the directory activation of a sign-in that failed before its
+/// credential was committed, so a failure leaves the previous user active and
+/// no half-created profile behind.
+fn rollback_failed_activation(activation: Option<UserScopeActivation>, cause: &str) -> String {
+    let Some(activation) = activation else {
+        return cause.to_string();
+    };
+    match roll_back_user_scope_activation(activation) {
+        Ok(()) => cause.to_string(),
+        Err(rollback) => format!("{cause}; active-user rollback failed: {rollback}"),
     }
-    cause.to_string()
 }
 
 /// Install a backend credential. See the module docs for what the core does
@@ -145,14 +158,20 @@ pub async fn set_credential(
         metadata.insert(SESSION_EXPIRES_AT_META.to_string(), exp.to_rfc3339());
     }
 
+    let mut activation = None;
     let effective_config = if refresh {
         logs.push("credential refreshed (same secret, same user)".to_string());
         config.clone()
     } else {
-        logs.extend(activate_user_scope(ctx, &user_id)?);
+        let activated = activate_user_scope(ctx, &user_id)?;
+        logs.extend(activated.logs.iter().cloned());
+        activation = Some(activated);
         // Reload so auth-profiles.json, the encryption key and the workspace
         // resolve to the user-scoped location before the profile is written.
-        let effective = reload_config_or(ctx, config).await?;
+        let effective = match reload_config_or(ctx, config).await {
+            Ok(effective) => effective,
+            Err(error) => return Err(rollback_failed_activation(activation, &error)),
+        };
         if resolved.kind == CredentialKind::Local {
             match crate::config::ops::set_onboarding_completed(ctx, false).await {
                 Ok(_) => {
@@ -168,15 +187,18 @@ pub async fn set_credential(
     };
 
     let auth = AuthService::from_config(&effective_config);
-    auth.store_provider_token(
-        APP_SESSION_PROVIDER,
-        DEFAULT_AUTH_PROFILE_NAME,
-        &resolved.token,
-        metadata,
-        true,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    if let Err(error) = auth
+        .store_provider_token(
+            APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
+            &resolved.token,
+            metadata,
+            true,
+        )
+        .await
+    {
+        return Err(rollback_failed_activation(activation, &error.to_string()));
+    }
     logs.push(format!("{} credential stored", resolved.kind.as_str()));
 
     if !refresh {
@@ -186,9 +208,12 @@ pub async fn set_credential(
         {
             // A retry of the same credential takes the refresh fast-path, so
             // leaving its profile behind would let it skip this required bind.
-            return Err(rollback_failed_credential_rebind(&auth, &error).await);
+            return Err(rollback_failed_credential_rebind(&auth, activation, &error).await);
         }
         logs.push("process globals rebound after credential install".to_string());
+        if let Some(activation) = &activation {
+            logs.extend(complete_user_scope_activation(ctx, activation));
+        }
         start_credential_gated_services(ctx, &effective_config).await;
         logs.push("credential-gated services started".to_string());
     }
