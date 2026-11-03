@@ -16,8 +16,8 @@
 //!
 //! * With security disabled (`crate::security::switch`) the module is not asked.
 //!   `Standard` and `Sensitive` permit the transfer; `LocalOnly` still refuses
-//!   every external one, because local-only is the user's own explicit setting
-//!   and not a module check ([`unchecked_outcome`]).
+//!   every external, non-control-plane one, because local-only is the user's own
+//!   explicit setting and not a module check ([`unchecked_outcome`]).
 //!
 //! The mode is the live session policy's
 //! ([`current_privacy_mode`](crate::security::live_policy::current_privacy_mode));
@@ -106,15 +106,21 @@ fn block_message(mode: PrivacyMode, desc: &EgressDescriptor, outcome: Outcome) -
 }
 
 /// The outcome without the module, for security disabled: only `LocalOnly`
-/// refuses, and only a transfer to an external destination. `None` while
+/// refuses, and only what the module's own rule refuses under it, a transfer to
+/// an external destination that is not a control-plane round trip. `None` while
 /// security is enforced, when the module decides.
 fn unchecked_outcome(mode: PrivacyMode, desc: &EgressDescriptor) -> Option<Outcome> {
     crate::security::switch::disabled()?;
-    Some(if mode == PrivacyMode::LocalOnly && desc.is_external {
-        Outcome::Refused
-    } else {
-        Outcome::Permitted
-    })
+    Some(
+        if mode == PrivacyMode::LocalOnly
+            && desc.is_external
+            && data_class(desc) != PrivacyClass::ControlPlane
+        {
+            Outcome::Refused
+        } else {
+            Outcome::Permitted
+        },
+    )
 }
 
 /// The refusal for `desc` under `mode`, or `None` when permitted.

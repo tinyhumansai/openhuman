@@ -247,3 +247,49 @@ mod with_module {
         assert!(local_only_tool_block(&desc).await.is_none());
     }
 }
+
+// ── Security disabled (`crate::security::switch`) ─────────────────────────
+
+/// With security disabled the module is not asked: `Standard` and `Sensitive`
+/// permit, `LocalOnly` still refuses an external, non-control-plane transfer.
+async fn assert_only_local_only_refuses() {
+    let desc = external_composio();
+    assert!(egress_blocks_message(PrivacyMode::Standard, &desc)
+        .await
+        .is_none());
+    assert!(egress_blocks_message(PrivacyMode::Sensitive, &desc)
+        .await
+        .is_none());
+    assert!(egress_blocks_message_blocking(PrivacyMode::Standard, &desc).is_none());
+
+    let refused = egress_blocks_message(PrivacyMode::LocalOnly, &desc)
+        .await
+        .expect("local-only is the user's setting, not a module check");
+    assert!(
+        refused.contains("Local-only privacy mode is active"),
+        "{refused}"
+    );
+    assert!(egress_blocks_message_blocking(PrivacyMode::LocalOnly, &desc).is_some());
+
+    let local = EgressDescriptor::inference("ollama", "llama3", false);
+    assert!(egress_blocks_message(PrivacyMode::LocalOnly, &local)
+        .await
+        .is_none());
+    let pricing = EgressDescriptor::integration("pricing").with_control_plane(true);
+    assert!(egress_blocks_message(PrivacyMode::LocalOnly, &pricing)
+        .await
+        .is_none());
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_permits_egress_except_under_local_only() {
+    assert_only_local_only_refuses().await;
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_permits_egress_except_under_local_only() {
+    let _off = crate::security::switch::off_for_this_thread();
+    assert_only_local_only_refuses().await;
+}

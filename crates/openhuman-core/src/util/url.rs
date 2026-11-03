@@ -33,20 +33,29 @@ pub fn provider_host_is_local(host: &str) -> bool {
 }
 
 /// Whether `host` names this machine: `localhost` or a `*.localhost` name, or a
-/// loopback address (`127.0.0.0/8`, `::1`, bracketed or not). The
-/// classification used when security is disabled and TinySecurity is not asked.
-/// Deliberately narrow: a LAN or private address is not on-device, so
-/// local-only privacy mode never treats it as local.
+/// loopback or unspecified IP literal (`127.0.0.0/8`, `0.0.0.0`, `::1`, `::`,
+/// IPv4-mapped forms; bracketed or not). No DNS lookup. The same on-device rule
+/// TinySecurity applies, used when security is disabled and the module is not
+/// asked. A LAN or private address is not on-device, so local-only privacy
+/// mode never treats it as local.
 #[must_use]
 pub fn loopback_host(host: &str) -> bool {
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     if host == "localhost" || host.ends_with(".localhost") {
         return true;
     }
-    host.trim_start_matches('[')
+    let on_device_v4 = |ip: std::net::Ipv4Addr| ip.is_loopback() || ip.is_unspecified();
+    match host
+        .trim_start_matches('[')
         .trim_end_matches(']')
         .parse::<std::net::IpAddr>()
-        .is_ok_and(|ip| ip.is_loopback())
+    {
+        Ok(std::net::IpAddr::V4(ip)) => on_device_v4(ip),
+        Ok(std::net::IpAddr::V6(ip)) => ip
+            .to_ipv4_mapped()
+            .map_or_else(|| ip.is_loopback() || ip.is_unspecified(), on_device_v4),
+        Err(_) => false,
+    }
 }
 
 /// Trim whitespace and strip trailing slashes so all base URLs are in
