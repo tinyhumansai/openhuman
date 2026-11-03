@@ -178,7 +178,10 @@ fn assert_endpoints_classified_by_loopback() {
         "llamacpp:m",
         Some("http://127.0.0.1:8080/v1")
     ));
-    assert!(provider_is_self_hosted("vllm:m", Some("http://0.0.0.0:8000/v1")));
+    assert!(provider_is_self_hosted(
+        "vllm:m",
+        Some("http://0.0.0.0:8000/v1")
+    ));
     assert!(!provider_is_self_hosted(
         "vllm:m",
         Some("http://192.168.1.20:8000/v1")
