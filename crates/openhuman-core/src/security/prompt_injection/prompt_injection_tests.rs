@@ -1,6 +1,5 @@
 use super::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
-    PromptInjectionVerdict, MAX_PROMPT_BYTES,
+    PromptEnforcementAction, PromptEnforcementContext, PromptInjectionVerdict, MAX_PROMPT_BYTES,
 };
 
 #[cfg(feature = "security-module")]
@@ -9,7 +8,7 @@ async fn holds_prompts_over_the_security_module_limit() {
     let input = "ordinary text ".repeat(MAX_PROMPT_BYTES / 12 + 1);
     assert!(input.len() > MAX_PROMPT_BYTES);
 
-    let decision = enforce_prompt_input(
+    let decision = super::enforce_prompt_input(
         &input,
         PromptEnforcementContext {
             source: "unit-test",
