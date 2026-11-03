@@ -5789,8 +5789,8 @@ dependencies = [
  "tinyagents-storage-kit",
  "tinyagents-tasks",
  "tinybox-bus 0.2.4",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinychannels",
  "tinychannels-bus",
  "tinychannels-module",
@@ -5893,7 +5893,7 @@ dependencies = [
  "tinyagents-session",
  "tinyagents-storage-kit",
  "tinyagents-tasks",
- "tinybus 0.3.12",
+ "tinybus",
  "tinychannels",
  "tinycomputer-bus",
  "tinydocs-bus",
@@ -5950,7 +5950,7 @@ dependencies = [
  "tinyagents-harness-tools",
  "tinyagents-hooks",
  "tinyagents-session",
- "tinybus 0.3.12",
+ "tinybus",
  "tinyflows-bus",
  "tinyflows-module",
  "tinyinference-embeddings",
@@ -5978,7 +5978,7 @@ dependencies = [
  "openhuman-rpc",
  "serde_json",
  "tinybox-module",
- "tinybus 0.3.12",
+ "tinybus",
  "tinychannels-module",
  "tinycomputer",
  "tinyconnectors",
@@ -6061,7 +6061,7 @@ dependencies = [
  "tinyagents-harness",
  "tinyagents-live",
  "tinyagents-session",
- "tinybus 0.3.12",
+ "tinybus",
  "tinychannels-bus",
  "tinyhumans-sdk",
  "tinyinference-core",
@@ -9527,8 +9527,8 @@ dependencies = [
  "tinybox-microvm",
  "tinybox-openshell",
  "tinybox-ssh",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinystoragedrivers-api",
  "tinystoragedrivers-busproxy",
  "tinystoragedrivers-types",
@@ -9557,28 +9557,6 @@ dependencies = [
 
 [[package]]
 name = "tinybus"
-version = "0.3.6"
-source = "git+https://github.com/tinyhumansai/tinybus?rev=6ce06bc674e4f4d718aa51e643ef62c1f372e270#6ce06bc674e4f4d718aa51e643ef62c1f372e270"
-dependencies = [
- "async-trait",
- "flate2",
- "libc",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tar",
- "tempfile",
- "thiserror 2.0.21",
- "tinybus-macros 0.3.6",
- "tokio",
- "toml 1.1.8+spec-1.1.0",
- "tracing",
- "ureq",
- "zip 9.0.5",
-]
-
-[[package]]
-name = "tinybus"
 version = "0.3.12"
 dependencies = [
  "async-trait",
@@ -9592,7 +9570,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.21",
- "tinybus-macros 0.3.12",
+ "tinybus-macros",
  "tokio",
  "toml 1.1.8+spec-1.1.0",
  "tracing",
@@ -9602,16 +9580,6 @@ dependencies = [
 
 [[package]]
 name = "tinybus-macros"
-version = "0.3.6"
-source = "git+https://github.com/tinyhumansai/tinybus?rev=6ce06bc674e4f4d718aa51e643ef62c1f372e270#6ce06bc674e4f4d718aa51e643ef62c1f372e270"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "tinybus-macros"
 version = "0.3.12"
 dependencies = [
  "proc-macro2",
@@ -9621,25 +9589,12 @@ dependencies = [
 
 [[package]]
 name = "tinybus-module"
-version = "0.3.6"
-source = "git+https://github.com/tinyhumansai/tinybus?rev=6ce06bc674e4f4d718aa51e643ef62c1f372e270#6ce06bc674e4f4d718aa51e643ef62c1f372e270"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "tinybus 0.3.6",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "tinybus-module"
 version = "0.3.12"
 dependencies = [
  "async-trait",
  "serde",
  "serde_json",
- "tinybus 0.3.12",
+ "tinybus",
  "tokio",
  "tracing",
 ]
@@ -9718,8 +9673,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinychannels",
  "tinychannels-bus",
  "tinychannels-runtime",
@@ -9760,8 +9715,8 @@ dependencies = [
  "getrandom 0.4.3",
  "serde",
  "serde_json",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinycomputer-accessibility",
  "tinycomputer-browser",
  "tinycomputer-bus",
@@ -9883,8 +9838,8 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinyconnectors-bus",
  "tinyconnectors-sync",
  "tinystoragedrivers-api",
@@ -9946,8 +9901,8 @@ dependencies = [
  "serde",
  "sha2 0.11.1",
  "thiserror 2.0.21",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinydocs",
  "tinydocs-bus",
  "tokio",
@@ -9965,8 +9920,8 @@ dependencies = [
  "serde_path_to_error",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinyeventqueues-bus",
  "tinystoragedrivers-api",
  "tinystoragedrivers-busproxy",
@@ -10072,8 +10027,8 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinyflows",
  "tinyflows-bus",
  "tinyflows-catalog",
@@ -10135,8 +10090,8 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "thiserror 2.0.21",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinyhosts-bus",
 ]
 
@@ -10390,12 +10345,12 @@ dependencies = [
 
 [[package]]
 name = "tinyjuice-module"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "log",
  "serde_json",
- "tinybus 0.3.6",
- "tinybus-module 0.3.6",
+ "tinybus",
+ "tinybus-module",
  "tinyjuice",
  "tinyjuice-bus",
  "tinyjuice-drivers",
@@ -10438,8 +10393,8 @@ dependencies = [
  "sha2 0.11.1",
  "thiserror 2.0.21",
  "tinybox-bus 0.1.36",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinymcp-bus",
  "tinystoragedrivers-api",
  "tinystoragedrivers-busproxy",
@@ -10539,8 +10494,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinysearch-bus",
  "tokio",
 ]
@@ -10646,7 +10601,7 @@ version = "2.1.2"
 dependencies = [
  "serde",
  "serde_json",
- "tinybus 0.3.12",
+ "tinybus",
  "tinystoragedrivers-types",
 ]
 
@@ -10659,7 +10614,7 @@ dependencies = [
  "futures-core",
  "serde",
  "serde_json",
- "tinybus 0.3.12",
+ "tinybus",
  "tinystoragedrivers-api",
  "tinystoragedrivers-bus",
  "tinystoragedrivers-types",
@@ -10901,8 +10856,8 @@ dependencies = [
  "serde_json",
  "tinyagents-harness",
  "tinyagents-live",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinytools",
  "tinyvoice",
  "tinyvoice-bus 0.2.0",
@@ -10972,8 +10927,8 @@ dependencies = [
  "reqwest 0.13.5",
  "serde",
  "serde_json",
- "tinybus 0.3.12",
- "tinybus-module 0.3.12",
+ "tinybus",
+ "tinybus-module",
  "tinystoragedrivers-api",
  "tinystoragedrivers-busproxy",
  "tinystoragedrivers-types",
