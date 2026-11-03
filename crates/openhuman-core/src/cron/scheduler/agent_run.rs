@@ -373,7 +373,7 @@ async fn host_agent_for_job(job: &CronJob) -> Option<crate::agent::host_agents::
     let in_registry = crate::agent_registry::host_definition::AgentDefinitionRegistry::current()
         .is_some_and(|registry| registry.get(id).is_some());
     if in_registry {
-        return host_agents::resolve(id).map(host_agents::OpenedHostAgent::new);
+        return host_agents::resolve_leased(id);
     }
     host_agents::resolve_or_open(id).await
 }

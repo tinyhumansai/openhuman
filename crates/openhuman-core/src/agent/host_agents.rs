@@ -261,6 +261,14 @@ pub trait HostAgentResolver: Send + Sync {
     /// The agent registered under `agent_id`, if the host has one.
     fn resolve(&self, agent_id: &str) -> Option<HostAgent>;
 
+    /// Like [`resolve`](Self::resolve), for a driver that runs the agent for
+    /// a while: the [`OpenedHostAgent`] may carry a lease that keeps a live
+    /// agent from being torn down mid-run when its owner drops the last other
+    /// handle. The default holds nothing.
+    fn resolve_leased(&self, agent_id: &str) -> Option<OpenedHostAgent> {
+        self.resolve(agent_id).map(OpenedHostAgent::new)
+    }
+
     /// Bring up the agent `agent_id` when [`resolve`](Self::resolve) found
     /// nothing live, for a driver (a due cron job) that cannot run without
     /// it. `None` -- the default -- means the host cannot or will not open
@@ -349,16 +357,21 @@ pub fn resolve(agent_id: &str) -> Option<HostAgent> {
 
 /// Like [`resolve`], but when the installed resolver has no live `agent_id`
 /// it is asked to [`open`](HostAgentResolver::open) one. `None` when nothing
-/// is installed or the host has no such agent and will not open it.
+/// is installed or the host has no such agent and will not open it, or when
+/// it opens an agent under another id: a driver never runs a different agent
+/// than the one it asked for.
 pub async fn resolve_or_open(agent_id: &str) -> Option<OpenedHostAgent> {
     let resolver = RESOLVER
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .clone()?;
-    if let Some(live) = resolver.resolve(agent_id) {
-        return Some(OpenedHostAgent::new(live));
+    if let Some(live) = resolver.resolve_leased(agent_id) {
+        return Some(live);
     }
-    let opened = resolver.open(agent_id).await;
+    let opened = resolver
+        .open(agent_id)
+        .await
+        .filter(|opened| opened.agent.definition.id == agent_id);
     tracing::debug!(
         agent_id,
         opened = opened.is_some(),
