@@ -355,6 +355,16 @@ pub fn resolve(agent_id: &str) -> Option<HostAgent> {
     hit
 }
 
+/// Like [`resolve`], but the agent comes with the lease its resolver holds
+/// for it (see [`HostAgentResolver::resolve_leased`]).
+pub fn resolve_leased(agent_id: &str) -> Option<OpenedHostAgent> {
+    let resolver = RESOLVER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    resolver.resolve_leased(agent_id)
+}
+
 /// Like [`resolve`], but when the installed resolver has no live `agent_id`
 /// it is asked to [`open`](HostAgentResolver::open) one. `None` when nothing
 /// is installed or the host has no such agent and will not open it, or when

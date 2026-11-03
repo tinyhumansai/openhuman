@@ -73,20 +73,35 @@ impl RuntimeAgents {
         }
     }
 
-    fn live(&self, agent_id: &str) -> Option<HostAgent> {
-        let inner = self
-            .agents
+    fn live_inner(&self, agent_id: &str) -> Option<Arc<AgentInner>> {
+        self.agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(agent_id)?
-            .upgrade()?;
-        inner.host_agent()
+            .upgrade()
+    }
+
+    fn live(&self, agent_id: &str) -> Option<HostAgent> {
+        self.live_inner(agent_id)?.host_agent()
+    }
+
+    /// A live agent with a strong handle as its lease, so a run that reuses an
+    /// agent another run opened keeps it from being torn down when that run
+    /// drops the last other handle.
+    fn live_leased(&self, agent_id: &str) -> Option<OpenedHostAgent> {
+        let inner = self.live_inner(agent_id)?;
+        let host = inner.host_agent()?;
+        Some(OpenedHostAgent::new(host).with_lease(inner))
     }
 }
 
 impl HostAgentResolver for RuntimeAgents {
     fn resolve(&self, agent_id: &str) -> Option<HostAgent> {
         self.live(agent_id)
+    }
+
+    fn resolve_leased(&self, agent_id: &str) -> Option<OpenedHostAgent> {
+        self.live_leased(agent_id)
     }
 
     fn open<'a>(
@@ -97,8 +112,8 @@ impl HostAgentResolver for RuntimeAgents {
             let opener = self.opener.as_ref()?;
             let _opening = self.opening.lock().await;
             // Another run may have opened it while this one waited.
-            if let Some(live) = self.live(agent_id) {
-                return Some(OpenedHostAgent::new(live));
+            if let Some(live) = self.live_leased(agent_id) {
+                return Some(live);
             }
             log::debug!("[embed][agent] opening missing agent id={agent_id}");
             let Some(agent) = opener(agent_id.to_string()).await else {
