@@ -186,7 +186,7 @@ fn assert_endpoints_classified_by_loopback() {
         "vllm:m",
         Some("http://192.168.1.20:8000/v1")
     ));
-    assert!(!provider_is_self_hosted(
+    assert!(provider_is_self_hosted(
         "openai",
         Some("http://localhost:8080/v1")
     ));

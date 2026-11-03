@@ -1,5 +1,8 @@
 use super::*;
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn disabled_autonomy_bypasses_class_gating_but_keeps_the_protected_floor() {
     let root = tempfile::tempdir().unwrap();
