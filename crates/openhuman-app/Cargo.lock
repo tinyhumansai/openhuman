@@ -7856,6 +7856,7 @@ dependencies = [
 name = "tinycomputer-bus"
 version = "0.16.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
