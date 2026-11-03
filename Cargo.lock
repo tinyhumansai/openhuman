@@ -3840,7 +3840,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -9174,7 +9174,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-definition"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9187,7 +9187,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-harness"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9229,7 +9229,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-harness-tools"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9262,7 +9262,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-hooks"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9280,7 +9280,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-live"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "serde_json",
  "tinyagents-harness",
@@ -9291,7 +9291,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-orchestration"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9314,7 +9314,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-registry"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9329,7 +9329,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-runtime"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9349,7 +9349,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-session"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9374,7 +9374,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-storage-kit"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "data-encoding",
  "serde",
@@ -9388,7 +9388,7 @@ dependencies = [
 
 [[package]]
 name = "tinyagents-tasks"
-version = "3.0.0"
+version = "3.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -10243,7 +10243,6 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sha2 0.11.1",
  "thiserror 2.0.21",
  "tinyinference-core 0.5.0",
  "tinyinference-embeddings",
@@ -10414,7 +10413,7 @@ dependencies = [
 
 [[package]]
 name = "tinyliveagents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -12395,7 +12394,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
