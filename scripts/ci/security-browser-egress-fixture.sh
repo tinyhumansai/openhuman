@@ -18,8 +18,11 @@ bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhum
   --no-default-features --features "$features" \
   modules::browser_egress_host::tests::browser_egress_callback
 
+# TinyComputer 0.16 keeps its egress-proxy test connector behind cfg(test)
+# instead of a `test-connector` feature, so exercise it through the crate's
+# own egress tests.
 computer_dir="$repo_root/vendor/tinycomputer"
 (
   cd -- "$computer_dir"
-  bash "$repo_root/scripts/ci-cancel-aware.sh" cargo build -p tinycomputer-browser --features test-connector
+  bash "$repo_root/scripts/ci-cancel-aware.sh" cargo test -p tinycomputer-browser --lib egress
 )
