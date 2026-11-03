@@ -7864,7 +7864,7 @@ dependencies = [
 
 [[package]]
 name = "tinyconnectors-bus"
-version = "0.22.0"
+version = "0.22.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -7872,7 +7872,7 @@ dependencies = [
 
 [[package]]
 name = "tinydocs-bus"
-version = "0.2.5"
+version = "0.2.8"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -7917,7 +7917,7 @@ dependencies = [
 
 [[package]]
 name = "tinyhosts-bus"
-version = "0.4.2"
+version = "0.4.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -8135,7 +8135,7 @@ dependencies = [
 
 [[package]]
 name = "tinymcp-bus"
-version = "0.20.3"
+version = "0.20.6"
 dependencies = [
  "base64 0.23.1",
  "schemars 1.2.3",
@@ -8214,7 +8214,7 @@ dependencies = [
 
 [[package]]
 name = "tinysearch-bus"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "schemars 1.2.3",
  "serde",
