@@ -48,19 +48,6 @@ impl ApprovalGate {
         tool_call_id: Option<&str>,
         mode: Mode,
     ) -> (GateOutcome, Option<String>) {
-        // With security disabled (`crate::security::switch`) there is no
-        // approval engine to ask, so an ordinary call is allowed without
-        // parking or recording anything. A forced call is an explicit one-time
-        // consent for an irreversible action (a wallet send, a secret
-        // decryption, a browser confirmation), not a module check: it still
-        // goes to the engine, and without one it is refused.
-        if !mode.forced && crate::security::switch::disabled_for(Some(&self.config)).is_some() {
-            tracing::debug!(
-                tool = tool_name,
-                "[approval::gate] security disabled; allowed without approval"
-            );
-            return (GateOutcome::Allow, None);
-        }
         #[cfg(not(test))]
         let args_redacted = match self.redact_approval_arguments(args_redacted).await {
             Ok(args) => args,
