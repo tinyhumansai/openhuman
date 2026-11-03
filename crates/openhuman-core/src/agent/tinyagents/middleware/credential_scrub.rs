@@ -14,6 +14,10 @@ use tinyagents_harness::middleware::{
 /// The token is removed before scrubbing and put back afterwards, so it is
 /// never seen by (or counted against) the scrubber.
 fn scrub_with_notice_for_tool(_tool_name: &str, content: &str) -> Option<(String, usize)> {
+    // Security disabled: no redactor, so the result reaches the model as is.
+    if crate::security::switch::disabled().is_some() {
+        return None;
+    }
     #[cfg(feature = "security-module")]
     let mode = if _tool_name == "browser"
         && serde_json::from_str::<serde_json::Value>(content)

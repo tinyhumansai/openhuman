@@ -4,7 +4,8 @@
 //! registers the config enricher (`openhuman-tinyhumans`).
 
 /// Whether the URL host is an on-device provider endpoint according to
-/// TinySecurity's shared U5 classification.
+/// TinySecurity's shared U5 classification. With security disabled, the host's
+/// own loopback classification ([`loopback_host`]).
 pub fn host_is_local(parsed: &::url::Url) -> bool {
     let Some(host) = parsed.host_str() else {
         return false;
@@ -13,6 +14,9 @@ pub fn host_is_local(parsed: &::url::Url) -> bool {
 }
 
 pub fn provider_host_is_local(host: &str) -> bool {
+    if crate::security::switch::disabled().is_some() {
+        return loopback_host(host);
+    }
     #[cfg(feature = "security-module")]
     {
         crate::modules::security::text::classify_provider_host_blocking(
@@ -26,6 +30,23 @@ pub fn provider_host_is_local(host: &str) -> bool {
         let _ = host;
         false
     }
+}
+
+/// Whether `host` names this machine: `localhost` or a `*.localhost` name, or a
+/// loopback address (`127.0.0.0/8`, `::1`, bracketed or not). The
+/// classification used when security is disabled and TinySecurity is not asked.
+/// Deliberately narrow: a LAN or private address is not on-device, so
+/// local-only privacy mode never treats it as local.
+#[must_use]
+pub fn loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Trim whitespace and strip trailing slashes so all base URLs are in
