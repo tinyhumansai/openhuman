@@ -222,6 +222,33 @@ fn only_mongodb_is_shared_between_processes() {
     }
 }
 
+/// The installed backend is shared when its driver is, however the host
+/// installed it: by URL, with a driver name, or (not shared) with neither.
+#[test]
+fn the_installed_backend_is_shared_by_its_driver_however_it_was_installed() {
+    let _guard = test_support::install_backend_for_test(test_support::memory_backend());
+    assert!(!installed_is_shared(), "no driver known");
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(installed_is_shared());
+    assert_eq!(installed_driver().as_deref(), Some("mongodb"));
+    assert_eq!(installed_url(), None, "a driver name never opts into rebind");
+
+    install_with_driver("sqlite", test_support::memory_backend());
+    assert!(!installed_is_shared());
+
+    install_for_url("mongodb://db.example/x", test_support::memory_backend());
+    assert!(installed_is_shared());
+
+    install(test_support::memory_backend());
+    assert!(!installed_is_shared(), "a plain install forgets the driver");
+    assert_eq!(installed_driver(), None);
+
+    install_with_driver("mongodb", test_support::memory_backend());
+    assert!(clear());
+    assert!(!installed_is_shared(), "clearing forgets the driver");
+}
+
 #[test]
 fn only_mongodb_and_sqlite_have_cross_process_cas() {
     for driver in ["mongodb", "sqlite"] {
