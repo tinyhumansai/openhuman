@@ -346,7 +346,7 @@ pub(in crate::threads::attachments) async fn read_staged_file_bounded(
     root: &std::path::Path,
     limit: usize,
 ) -> Result<Vec<u8>, String> {
-    let file = crate::security::secure_open::secure_open(path, root)
+    let file = crate::attachments::secure_open::secure_open(path, root)
         .map_err(|_| "native attachment bytes are unavailable".to_owned())?;
     let metadata = file
         .metadata()

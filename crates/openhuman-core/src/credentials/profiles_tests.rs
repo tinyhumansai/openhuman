@@ -1,5 +1,4 @@
 use super::*;
-use tempfile::TempDir;
 
 // --- Issue #1612: stale auth-profiles.lock recovery -----------------------
 

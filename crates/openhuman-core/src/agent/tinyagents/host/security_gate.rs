@@ -17,7 +17,7 @@
 //!   structured arguments before persistence and prompt delivery.
 //! - [`crate::agent_tool_policy`] — a pre-built [`ToolPolicySession`]
 //!   (channel permission boundary).
-//! - [`crate::prompt_injection`] — [`enforce_prompt_input`] for
+//! - [`crate::prompt_injection`] — [`crate::security::prompt_injection::enforce_prompt_input`] for
 //!   [`SecurityGate::screen_input`].
 //!
 //! # Contract mismatches, resolved in favour of the existing guard
@@ -146,6 +146,8 @@ pub struct OpenHumanSecurityGate {
     /// The owning turn's dispatch context, read from the turn's run context
     /// when the gate is built; `None` falls back to the calling task's.
     dispatch: Option<std::sync::Weak<crate::core::runtime::CoreContext>>,
+    /// Immutable configuration supplied by the owning host invocation.
+    screening_config: Option<Arc<crate::config::Config>>,
     /// Only a root that owns settlement of its headless child tree may use
     /// recursive delegation as orchestration control under the Cron policy.
     /// The Cron origin check remains mandatory at authorization time.
@@ -169,6 +171,7 @@ impl OpenHumanSecurityGate {
             screens_input: true,
             approval: ApprovalTurnContext::default(),
             dispatch: None,
+            screening_config: None,
             headless_descendant_settlement: false,
         }
     }
@@ -176,6 +179,13 @@ impl OpenHumanSecurityGate {
     /// Marks the gate as part of a host-owned headless root turn.
     pub(crate) fn with_headless_descendant_settlement(mut self, enabled: bool) -> Self {
         self.headless_descendant_settlement = enabled;
+        self
+    }
+
+    /// Bind prompt screening to the configuration supplied by the owning host.
+    /// This authority takes precedence over another task's ambient context.
+    pub fn with_config(mut self, config: Arc<crate::config::Config>) -> Self {
+        self.screening_config = Some(config);
         self
     }
 

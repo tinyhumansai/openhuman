@@ -20,6 +20,7 @@ struct CronChildModel {
     accepted_followup: tokio::sync::Notify,
     child_attempts_dangerous_tool: bool,
     child_dangerous_tool_schema_seen: std::sync::atomic::AtomicBool,
+    child_dangerous_tool_requests: std::sync::atomic::AtomicUsize,
     child_started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     child_release: tokio::sync::Notify,
     child_released: std::sync::atomic::AtomicBool,
@@ -67,6 +68,7 @@ fn scheduled_agent_fixture(
     config.action_dir = config.workspace_dir.clone();
     let storage = crate::storage::test_support::sqlite_backend().expect("SQLite test backend");
     config.storage.url = Some(storage.url.clone());
+    config.modules.source = crate::config::schema::ModuleSourceMode::Source;
     let storage_guard =
         crate::storage::test_support::install_for_test(&storage.url, Arc::clone(&storage.backend));
     config.default_model = Some("test-model".into());
@@ -195,6 +197,8 @@ impl ChatModel<()> for CronChildModel {
                         .any(|tool| tool.name == "delete_artifact"),
                     std::sync::atomic::Ordering::SeqCst,
                 );
+                self.child_dangerous_tool_requests
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let mut response = ModelResponse::assistant("");
                 response.message.tool_calls = vec![tinyinference_llm::tool::ToolCall::new(
                     "headless-cron-forbidden-write",
@@ -248,7 +252,9 @@ impl ChatModel<()> for CronChildModel {
     }
 }
 
-#[tokio::test]
+// Tool-result credential scrubbing uses TinySecurity's synchronous bridge,
+// which needs another runtime worker to serve the module call.
+#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "storage-sqlite")]
 async fn scheduled_agent_history_includes_its_spawned_child_result() {
     let _inference = crate::inference::inference_test_guard_async().await;
@@ -260,6 +266,7 @@ async fn scheduled_agent_history_includes_its_spawned_child_result() {
         accepted_followup: tokio::sync::Notify::new(),
         child_attempts_dangerous_tool: false,
         child_dangerous_tool_schema_seen: std::sync::atomic::AtomicBool::new(false),
+        child_dangerous_tool_requests: std::sync::atomic::AtomicUsize::new(0),
         child_started: std::sync::Mutex::new(None),
         child_release: tokio::sync::Notify::new(),
         child_released: std::sync::atomic::AtomicBool::new(false),
@@ -344,7 +351,7 @@ async fn scheduled_agent_history_includes_its_spawned_child_result() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "storage-sqlite")]
 async fn scheduled_agent_timeout_cancels_its_blocked_child_before_history_settles() {
     let _inference = crate::inference::inference_test_guard_async().await;
@@ -356,6 +363,7 @@ async fn scheduled_agent_timeout_cancels_its_blocked_child_before_history_settle
         accepted_followup: tokio::sync::Notify::new(),
         child_attempts_dangerous_tool: false,
         child_dangerous_tool_schema_seen: std::sync::atomic::AtomicBool::new(false),
+        child_dangerous_tool_requests: std::sync::atomic::AtomicUsize::new(0),
         child_started: std::sync::Mutex::new(None),
         child_release: tokio::sync::Notify::new(),
         child_released: std::sync::atomic::AtomicBool::new(false),
@@ -468,7 +476,7 @@ async fn scheduled_agent_timeout_cancels_its_blocked_child_before_history_settle
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "storage-sqlite")]
 async fn scheduled_cron_child_cannot_run_its_declared_destructive_tool() {
     let _inference = crate::inference::inference_test_guard_async().await;
@@ -480,6 +488,7 @@ async fn scheduled_cron_child_cannot_run_its_declared_destructive_tool() {
         accepted_followup: tokio::sync::Notify::new(),
         child_attempts_dangerous_tool: true,
         child_dangerous_tool_schema_seen: std::sync::atomic::AtomicBool::new(false),
+        child_dangerous_tool_requests: std::sync::atomic::AtomicUsize::new(0),
         child_started: std::sync::Mutex::new(None),
         child_release: tokio::sync::Notify::new(),
         child_released: std::sync::atomic::AtomicBool::new(false),
@@ -538,9 +547,11 @@ async fn scheduled_cron_child_cannot_run_its_declared_destructive_tool() {
         1
     );
     assert_eq!(
-        model.child_calls.load(std::sync::atomic::Ordering::SeqCst),
+        model
+            .child_dangerous_tool_requests
+            .load(std::sync::atomic::Ordering::SeqCst),
         1,
-        "the child model requested the declared destructive tool"
+        "the child requests the declared destructive tool exactly once"
     );
     assert!(
         model
@@ -559,11 +570,6 @@ async fn scheduled_cron_child_cannot_run_its_declared_destructive_tool() {
     .try_list_owned(owner)
     .expect("inspect the exact Cron session owner");
     assert_eq!(jobs.len(), 1, "one native child belongs to this Cron job");
-    assert_eq!(
-        jobs[0].status,
-        tinyagents_orchestration::subagent::SubAgentJobStatus::Incomplete,
-        "the child records the policy-blocked action as an incomplete run"
-    );
     let child_run_id = jobs[0]
         .subagent_run_id
         .as_deref()
@@ -585,6 +591,11 @@ async fn scheduled_cron_child_cannot_run_its_declared_destructive_tool() {
         .expect("the native child journal records the denied delete_artifact call");
     assert!(denial.contains("Scheduled agent turns may use read-only tools only"));
     assert!(!denial.contains("not found"));
+    assert_eq!(
+        jobs[0].status,
+        tinyagents_orchestration::subagent::SubAgentJobStatus::Incomplete,
+        "the child records the policy-blocked action as an incomplete run"
+    );
     let runs = list_runs_off_runtime(&config, &job.id)
         .await
         .expect("read persisted run history");

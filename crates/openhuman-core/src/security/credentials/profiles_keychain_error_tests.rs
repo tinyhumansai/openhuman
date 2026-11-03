@@ -51,11 +51,11 @@ impl Drop for Fixture {
 
 /// A store holding one keychain-only OAuth profile and one Token profile,
 /// with keychain reads failing from here on.
-fn locked_keychain_store() -> Fixture {
+async fn locked_keychain_store(encrypt_fallback: bool) -> Fixture {
     let keychain = Arc::new(FlakyKeychain::default());
     crate::security::secret_storage::install_secret_backend(keychain.clone());
     let tmp = TempDir::new().unwrap();
-    let store = AuthProfilesStore::new(tmp.path(), true);
+    let store = AuthProfilesStore::new(tmp.path(), encrypt_fallback);
     let oauth = AuthProfile::new_oauth(
         "openai-codex",
         "default",
@@ -69,12 +69,13 @@ fn locked_keychain_store() -> Fixture {
         },
     );
     let oauth_id = oauth.id.clone();
-    store.upsert_profile(oauth, true).unwrap();
+    store.upsert_profile(oauth, true).await.unwrap();
     store
         .upsert_profile(
             AuthProfile::new_token("anthropic", "default", "kc-token".into()),
             true,
         )
+        .await
         .unwrap();
     let json = std::fs::read_to_string(store.path()).unwrap();
     assert!(
@@ -90,13 +91,13 @@ fn locked_keychain_store() -> Fixture {
     }
 }
 
-#[test]
-fn keychain_read_error_fails_the_load_and_keeps_the_profile() {
-    let f = locked_keychain_store();
+#[tokio::test]
+async fn keychain_read_error_fails_the_load_and_keeps_the_profile() {
+    let f = locked_keychain_store(true).await;
     let json_before = std::fs::read_to_string(f.store.path()).unwrap();
 
     assert!(
-        f.store.load().is_err(),
+        f.store.load().await.is_err(),
         "a keychain read error must fail the load"
     );
 
@@ -105,23 +106,30 @@ fn keychain_read_error_fails_the_load_and_keeps_the_profile() {
         json_before
     );
     f.keychain.fail_reads.store(false, Ordering::SeqCst);
-    let data = f.store.load().expect("load after the keychain unlocks");
+    let data = f
+        .store
+        .load()
+        .await
+        .expect("load after the keychain unlocks");
     assert!(
         data.profiles.contains_key(&f.oauth_id),
         "profile was purged"
     );
 }
 
-#[test]
-fn keychain_read_error_refuses_writes_and_keeps_every_secret() {
-    let f = locked_keychain_store();
+#[tokio::test]
+async fn keychain_read_error_refuses_writes_and_keeps_every_secret() {
+    let f = locked_keychain_store(true).await;
     let json_before = std::fs::read_to_string(f.store.path()).unwrap();
     let keychain_before = f.keychain.map.lock().unwrap().clone();
 
-    let upsert = f.store.upsert_profile(
-        AuthProfile::new_token("openrouter", "default", "new-token".into()),
-        false,
-    );
+    let upsert = f
+        .store
+        .upsert_profile(
+            AuthProfile::new_token("openrouter", "default", "new-token".into()),
+            false,
+        )
+        .await;
 
     assert!(
         upsert.is_err(),
@@ -138,13 +146,13 @@ fn keychain_read_error_refuses_writes_and_keeps_every_secret() {
     );
 }
 
-#[test]
-fn keychain_read_error_with_undecryptable_json_keeps_the_profile() {
+#[tokio::test]
+async fn keychain_read_error_with_undecryptable_json_keeps_the_profile() {
     // The JSON still names an access token for the OAuth profile, but it
     // cannot be decrypted: falling back to it would drop a profile whose
     // secret the keychain may still hold. Only that profile is kept, so the
     // keychain-only Token profile cannot fail the load on its own.
-    let f = locked_keychain_store();
+    let f = locked_keychain_store(true).await;
     let mut json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(f.store.path()).unwrap()).unwrap();
     let profiles = json["profiles"].as_object_mut().unwrap();
@@ -155,7 +163,7 @@ fn keychain_read_error_with_undecryptable_json_keeps_the_profile() {
     let json_before = std::fs::read_to_string(f.store.path()).unwrap();
 
     assert!(
-        f.store.load().is_err(),
+        f.store.load().await.is_err(),
         "an undecryptable fallback must fail the load"
     );
     assert_eq!(
@@ -170,17 +178,19 @@ fn persisted_entry(store: &AuthProfilesStore, id: &str) -> serde_json::Value {
     json["profiles"][id].clone()
 }
 
-#[test]
-fn an_unavailable_keychain_carries_keychain_only_profiles_untouched() {
+#[tokio::test]
+async fn an_unavailable_keychain_carries_keychain_only_profiles_untouched() {
     // A keychain that is locked when the store is built turns the keychain off
     // for that store (`AuthProfilesStore::new`'s availability probe), so its
     // reads never reach the keychain and a keychain-only OAuth profile resolves
     // to no access token. It is carried, not purged, through loads and writes.
-    let mut f = locked_keychain_store();
+    // Only this case writes a synthetic document fallback. Keep the
+    // undecryptable-ciphertext cases above on an encrypted store.
+    let mut f = locked_keychain_store(false).await;
     f.store.use_keychain = false;
     let entry_before = persisted_entry(&f.store, &f.oauth_id);
 
-    let data = f.store.load().expect("load without the keychain");
+    let data = f.store.load().await.expect("load without the keychain");
     assert!(
         !data.profiles.contains_key(&f.oauth_id),
         "an unresolved profile is not handed out"
@@ -190,6 +200,7 @@ fn an_unavailable_keychain_carries_keychain_only_profiles_untouched() {
             AuthProfile::new_token("openrouter", "default", "new-token".into()),
             false,
         )
+        .await
         .expect("a write without the keychain");
     assert_eq!(
         persisted_entry(&f.store, &f.oauth_id),
@@ -199,7 +210,7 @@ fn an_unavailable_keychain_carries_keychain_only_profiles_untouched() {
 
     f.store.use_keychain = true;
     f.keychain.fail_reads.store(false, Ordering::SeqCst);
-    let data = f.store.load().expect("load once the keychain reads");
+    let data = f.store.load().await.expect("load once the keychain reads");
     assert_eq!(
         data.profiles[&f.oauth_id]
             .token_set

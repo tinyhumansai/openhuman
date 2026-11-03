@@ -43,7 +43,8 @@ fn header_scheme_without_header_name_errors() {
 
 #[tokio::test]
 async fn encrypted_upsert_fails_closed_without_module_config() {
-    let (dir, store) = temp_store();
+    let dir = tempfile::tempdir().expect("isolated encrypted credential store");
+    let store = HttpCredentialsStore::new(dir.path(), true);
     let secret = "sk_live_super_secret_value";
     let result = store
         .upsert(&HttpCredential::bearer("stripe", secret))

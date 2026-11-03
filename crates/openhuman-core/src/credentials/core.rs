@@ -56,6 +56,12 @@ impl AuthService {
         }
     }
 
+    pub(super) fn config_document(config: &Config) -> Self {
+        Self {
+            store: AuthProfilesStore::document_with_config(&state_dir_from_config(config), config),
+        }
+    }
+
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self {
             store: AuthProfilesStore::new(state_dir, encrypt_secrets),

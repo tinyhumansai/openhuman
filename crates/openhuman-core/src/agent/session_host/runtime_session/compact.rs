@@ -137,12 +137,15 @@ impl OpenHumanSessionHost {
             .turn_model_source
             .effective_context_window(&self.model_name)
             .await;
-        let models = self.turn_model_source.build(
-            &self.model_name,
-            self.temperature,
-            context_window,
-            Some(&thread_id),
-        )?;
+        let models = self
+            .turn_model_source
+            .build(
+                &self.model_name,
+                self.temperature,
+                context_window,
+                Some(&thread_id),
+            )
+            .await?;
         let summarizer = CompactionSummarizer {
             model: models.summarizer.clone(),
             model_id: models.summarizer_model_id().to_owned(),

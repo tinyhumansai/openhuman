@@ -486,12 +486,13 @@ fn availability_notes_are_status_not_instructions() {
 #[tokio::test]
 async fn a_subagent_thread_binding_claims_no_session_identity() {
     let tmp = tempfile::tempdir().unwrap();
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..crate::config::Config::default()
     };
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
 

@@ -80,7 +80,7 @@ pub(crate) async fn read(
     identity: &ResolvedIdentity,
     max_tokens: u32,
 ) -> Result<Option<String>> {
-    let memory = match super::agent_memory(config, identity) {
+    let memory = match super::agent_memory(config, identity).await {
         Ok(memory) => memory,
         Err(Error::Off(reason)) => {
             tracing::debug!(%reason, "[memory_block] memory is off");

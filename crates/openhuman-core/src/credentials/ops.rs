@@ -7,8 +7,6 @@ mod provider_credentials;
 mod secrets;
 mod session_query;
 
-#[cfg(test)]
-pub(crate) use crate::security::credentials::ops::clear_credential_with;
 pub use crate::security::credentials::ops::{
     clear_composio_api_key, get_composio_api_key, rpc_store_composio_api_key,
     store_composio_api_key, COMPOSIO_DIRECT_PROVIDER,

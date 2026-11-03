@@ -7,7 +7,7 @@ use tinyinference_llm::message::{ContentBlock, Message};
 
 use super::OpenHumanSecurityGate;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_with_config, PromptEnforcementAction, PromptEnforcementContext,
 };
 
 #[async_trait]
@@ -69,7 +69,12 @@ impl SecurityGate for OpenHumanSecurityGate {
             ContentOrigin::Agent => "agent.subagent",
             ContentOrigin::Stored => "agent.stored",
         };
-        let decision = enforce_prompt_input(
+        let config = self.screening_config.clone().or_else(|| {
+            crate::core::runtime::DispatchCtx::from_weak(self.dispatch.as_ref())
+                .embedder_config()
+                .map(std::sync::Arc::new)
+        });
+        let decision = enforce_prompt_input_with_config(
             text,
             PromptEnforcementContext {
                 source,
@@ -77,6 +82,7 @@ impl SecurityGate for OpenHumanSecurityGate {
                 user_id: None,
                 session_id: None,
             },
+            config.as_deref(),
         )
         .await;
 

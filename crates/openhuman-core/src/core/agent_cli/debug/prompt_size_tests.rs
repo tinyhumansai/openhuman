@@ -92,6 +92,7 @@ async fn session_report_measures_the_visible_belt_not_the_registry() {
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     crate::agent::session_host::test_support::install_model_fixture();
     crate::security::credentials::api_key::store_api_key(&config, "test-prompt-size-key")
+        .await
         .expect("test api key");
     let mut definition =
         crate::agent_registry::host_definition::AgentDefinitionRegistry::builtins_only()

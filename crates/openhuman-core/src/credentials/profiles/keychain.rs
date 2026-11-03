@@ -1,8 +1,6 @@
 //! OS-keychain backed secret storage for individual auth profiles.
 
 use anyhow::Context;
-#[cfg(feature = "security-module")]
-use std::time::Duration;
 
 #[derive(Debug)]
 pub(super) enum KeyringConsentError {
@@ -41,7 +39,7 @@ impl AuthProfilesStore {
     ///
     /// The secrets are serialized as a compact JSON object so a single
     /// keychain entry holds all token fields for the profile.
-    pub(super) fn keychain_store_secrets(&self, profile: &AuthProfile) -> anyhow::Result<()> {
+    pub(super) async fn keychain_store_secrets(&self, profile: &AuthProfile) -> anyhow::Result<()> {
         let key = self.keychain_key_for_profile(&profile.id);
         let secrets = serde_json::json!({
             "token": profile.token,
@@ -56,6 +54,7 @@ impl AuthProfilesStore {
             name,
             value: payload.into_bytes(),
         })
+        .await
         .with_context(|| format!("TinySecurity keyring set failed for profile {}", profile.id))?;
         log::debug!(
             "[auth] keychain_store_secrets stored profile_id={} user_id={}",
@@ -69,7 +68,7 @@ impl AuthProfilesStore {
     ///
     /// Returns `None` if no keychain entry exists for the profile, and an error
     /// when the keychain could not be read (locked, denied, unavailable).
-    pub(super) fn keychain_load_secrets(
+    pub(super) async fn keychain_load_secrets(
         &self,
         profile_id: &str,
     ) -> anyhow::Result<Option<KeychainSecrets>> {
@@ -77,6 +76,7 @@ impl AuthProfilesStore {
         let name = self.keyring_name(&key);
         let response = self
             .keyring_operation(tinysecurity_bus::KeyringOperation2::Get { name: name.clone() })
+            .await
             .with_context(|| {
                 format!("TinySecurity keyring read failed for profile {profile_id}")
             })?;
@@ -102,10 +102,12 @@ impl AuthProfilesStore {
     }
 
     /// Delete keychain secrets for a profile (called on profile removal).
-    pub(super) fn keychain_delete_secrets(&self, profile_id: &str) -> anyhow::Result<()> {
+    pub(super) async fn keychain_delete_secrets(&self, profile_id: &str) -> anyhow::Result<()> {
         let key = self.keychain_key_for_profile(profile_id);
         let name = self.keyring_name(&key);
-        if let Err(e) = self.keyring_operation(tinysecurity_bus::KeyringOperation2::Delete { name })
+        if let Err(e) = self
+            .keyring_operation(tinysecurity_bus::KeyringOperation2::Delete { name })
+            .await
         {
             log::warn!(
                 "[auth] keychain_delete_secrets failed profile_id={profile_id} user_id={}: {e}",
@@ -125,7 +127,7 @@ impl AuthProfilesStore {
         namespaced_keyring_name(&self.user_id, logical_key)
     }
 
-    fn keyring_operation(
+    async fn keyring_operation(
         &self,
         operation: tinysecurity_bus::KeyringOperation2,
     ) -> anyhow::Result<tinysecurity_bus::KeyringResponse2> {
@@ -148,14 +150,13 @@ impl AuthProfilesStore {
         };
         #[cfg(feature = "security-module")]
         {
-            let outcome =
-                crate::modules::security::sync_seam::run(Duration::from_secs(125), async move {
-                    let client = crate::modules::security::client(&config)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    let call_id = request.caller.call_id.clone();
-                    client.keyring_access2(request).await.map_err(|error| {
-                        match crate::security::keyring_consent::operation_approval::
+            let outcome = async move {
+                let client = crate::modules::security::client(&config)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let call_id = request.caller.call_id.clone();
+                client.keyring_access2(request).await.map_err(|error| {
+                    match crate::security::keyring_consent::operation_approval::
                                 take_operation_outcome(&call_id)
                             {
                                 Some(
@@ -168,8 +169,9 @@ impl AuthProfilesStore {
                                 ) => "openhuman:consent-pending".to_owned(),
                                 None => error.to_string(),
                             }
-                    })
-                });
+                })
+            }
+            .await;
             outcome.map_err(|error| match error.as_str() {
                 "openhuman:consent-denied" => anyhow::Error::new(KeyringConsentError::Denied),
                 "openhuman:consent-pending" => anyhow::Error::new(KeyringConsentError::Pending),

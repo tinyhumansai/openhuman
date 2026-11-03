@@ -2,9 +2,28 @@ use super::*;
 
 fn temp_store() -> (tempfile::TempDir, HttpCredentialsStore) {
     let dir = tempfile::tempdir().expect("tempdir");
-    // encrypt=true exercises the ChaCha20-Poly1305 at-rest path.
-    let store = HttpCredentialsStore::new(dir.path(), true);
+    let mut config = crate::config::Config {
+        config_path: dir.path().join("config.toml"),
+        workspace_dir: dir.path().join("workspace"),
+        action_dir: dir.path().join("workspace"),
+        ..crate::config::Config::default()
+    };
+    config.modules.enabled = false;
+    let store = HttpCredentialsStore::from_config(&config);
     (dir, store)
+}
+
+fn plaintext_store() -> (tempfile::TempDir, HttpCredentialsStore) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = crate::config::Config {
+        config_path: dir.path().join("config.toml"),
+        workspace_dir: dir.path().join("workspace"),
+        action_dir: dir.path().join("workspace"),
+        ..crate::config::Config::default()
+    };
+    let mut config = config;
+    config.secrets.encrypt = false;
+    (dir, HttpCredentialsStore::from_config(&config))
 }
 
 #[test]
@@ -40,43 +59,36 @@ fn header_scheme_without_header_name_errors() {
     assert!(cred.to_header().is_err());
 }
 
-#[test]
-fn roundtrip_encrypts_secret_at_rest() {
+#[tokio::test]
+async fn encrypted_http_credentials_fail_closed_without_tinysecurity() {
     let (dir, store) = temp_store();
     let secret = "sk_live_super_secret_value";
-    store
+    let error = store
         .upsert(&HttpCredential::bearer("stripe", secret))
-        .unwrap();
+        .await
+        .expect_err("encrypted writes must use the admitted TinySecurity cipher");
+    assert!(error.to_string().contains("TinySecurity"));
 
-    // The on-disk file must NOT contain the plaintext secret.
-    let raw = std::fs::read_to_string(dir.path().join(STORE_FILENAME)).unwrap();
-    assert!(
-        !raw.contains(secret),
-        "plaintext secret leaked into on-disk store: {raw}"
-    );
-    assert!(raw.contains("enc2:"), "secret was not encrypted: {raw}");
-
-    // But get() decrypts it back.
-    let got = store.get("stripe").unwrap().expect("credential present");
-    assert_eq!(got.secret, secret);
-    assert_eq!(got.scheme, HttpCredentialScheme::Bearer);
+    assert!(!dir.path().join(STORE_FILENAME).exists());
 }
 
-#[test]
-fn name_resolution_is_case_insensitive_and_trimmed() {
-    let (_dir, store) = temp_store();
+#[tokio::test]
+async fn plaintext_http_credentials_round_trip_and_normalize_names() {
+    let (_dir, store) = plaintext_store();
     store
         .upsert(&HttpCredential::bearer("Stripe", "tok"))
+        .await
         .unwrap();
-    assert!(store.get("  STRIPE ").unwrap().is_some());
-    assert!(store.get("stripe").unwrap().is_some());
+    assert!(store.get("  STRIPE ").await.unwrap().is_some());
+    assert!(store.get("stripe").await.unwrap().is_some());
 }
 
-#[test]
-fn list_never_exposes_secrets() {
-    let (_dir, store) = temp_store();
+#[tokio::test]
+async fn list_never_exposes_secrets() {
+    let (_dir, store) = plaintext_store();
     store
         .upsert(&HttpCredential::header("apikey", "X-API-Key", "topsecret"))
+        .await
         .unwrap();
     let summaries = store.list().unwrap();
     assert_eq!(summaries.len(), 1);
@@ -93,19 +105,20 @@ fn list_never_exposes_secrets() {
     );
 }
 
-#[test]
-fn get_unknown_name_returns_none() {
-    let (_dir, store) = temp_store();
-    assert!(store.get("does-not-exist").unwrap().is_none());
+#[tokio::test]
+async fn get_unknown_name_returns_none() {
+    let (_dir, store) = plaintext_store();
+    assert!(store.get("does-not-exist").await.unwrap().is_none());
 }
 
-#[test]
-fn remove_deletes_record() {
-    let (_dir, store) = temp_store();
+#[tokio::test]
+async fn remove_deletes_record() {
+    let (_dir, store) = plaintext_store();
     store
         .upsert(&HttpCredential::bearer("stripe", "tok"))
+        .await
         .unwrap();
     assert!(store.remove("stripe").unwrap());
-    assert!(store.get("stripe").unwrap().is_none());
+    assert!(store.get("stripe").await.unwrap().is_none());
     assert!(!store.remove("stripe").unwrap());
 }

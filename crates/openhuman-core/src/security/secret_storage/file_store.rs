@@ -223,8 +223,12 @@ fn parent_dir(path: &Path) -> &Path {
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SecretStorageError> {
     #[cfg(feature = "secret-file")]
     {
-        tinystoragedrivers::secrets::write_atomic_private(path, bytes)
-            .map_err(|error| SecretStorageError::Backend(format!("atomic keyring write: {error}")))
+        tinystoragedrivers::secrets::write_atomic_private(path, bytes).map_err(|error| {
+            SecretStorageError::Backend(format!(
+                "atomic keyring write at {}: {error:?}",
+                path.display()
+            ))
+        })
     }
     #[cfg(not(feature = "secret-file"))]
     write_atomic_fallback(path, bytes)

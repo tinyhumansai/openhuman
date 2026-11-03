@@ -27,7 +27,7 @@ async fn default_temperature_wrapper_preserves_physical_attempt_tracking() {
         }
     }
 
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let _override = test_provider_override::install_model(Arc::new(TrackedModel));
     let wrapped = create_chat_model_in(
         &crate::core::runtime::DispatchCtx::ambient(),

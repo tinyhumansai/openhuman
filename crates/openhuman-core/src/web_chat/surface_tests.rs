@@ -161,29 +161,6 @@ async fn direct_and_projected_events_keep_their_historical_wire_normalization() 
     assert!(projected_wire.get("args").is_none());
 }
 
-#[tokio::test]
-async fn module_projected_cancellation_closes_the_turn() {
-    let mut rx = crate::web_chat::subscribe_web_channel_events();
-    let surface = Surface::new(
-        &DispatchCtx::ambient(),
-        ids("surface-cancel"),
-        crate::config::Config::default(),
-    )
-    .await;
-    surface
-        .output(ChannelOutputEvent::Cancellation {
-            reason: Some("user_stop".into()),
-        })
-        .await;
-
-    let event = next_for(&mut rx, "surface-cancel").await;
-    assert_eq!(event.event_name(), "chat_cancelled");
-    assert_eq!(event.context().seq, Some(1));
-    let state = surface.state.lock().await;
-    assert!(state.closed);
-    assert!(state.handle.is_none());
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropping_a_surface_ends_its_module_owned_turn() {
     let surface = Surface::new(

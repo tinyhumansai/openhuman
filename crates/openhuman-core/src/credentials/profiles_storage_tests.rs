@@ -3,7 +3,9 @@ use super::*;
 #[tokio::test]
 async fn persisted_profile_document_is_encrypted_at_rest() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = AuthProfilesStore::new(tmp.path(), true);
+    // The profile document always encrypts at rest; native per-field cipher
+    // approval is exercised separately by the API-key/native boundary test.
+    let store = AuthProfilesStore::new(tmp.path(), false);
     store
         .upsert_profile(
             AuthProfile::new_token("openai", "default", "profile-secret-token".into()),
@@ -29,7 +31,9 @@ async fn configured_generic_storage_does_not_replace_the_profile_local_document(
         crate::storage::test_support::memory_backend(),
     );
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = AuthProfilesStore::new(tmp.path(), true);
+    // The profile document always encrypts at rest; native per-field cipher
+    // approval is exercised separately by the API-key/native boundary test.
+    let store = AuthProfilesStore::new(tmp.path(), false);
     store
         .upsert_profile(
             AuthProfile::new_token("openai", "default", "local-secret".into()),

@@ -10,12 +10,16 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir) -> Config {
-    Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
-    }
+    };
+    // These fixtures test credential selection and issuer binding with fake
+    // tokens. Secret encryption has dedicated module-backed coverage.
+    config.secrets.encrypt = false;
+    config
 }
 
 #[tokio::test]

@@ -32,8 +32,10 @@ fn classified_halt(note: &str, class: &str) -> TinyagentsTurnOutcome {
     }
 }
 
-#[test]
-fn classified_halt_returns_partial_work_without_provider_usage() {
+#[tokio::test]
+async fn classified_halt_returns_partial_work_without_provider_usage() {
+    crate::agent::session_host::test_support::with_native_security(async {
+
     use tinyagents_harness::turn_outcome::ToolCallOutcome;
     let outcome = TinyagentsTurnOutcome {
         deferred_terminal: None,
@@ -76,7 +78,8 @@ fn classified_halt_returns_partial_work_without_provider_usage() {
         "no raw tool output: {}",
         close.output
     );
-    assert!(close.output.contains("403 Forbidden"), "{}", close.output);
+    assert!(close.output.contains(if cfg!(feature = "security-module") { "403 Forbidden" } else { "[REDACTED]" }), "{}", close.output);
+    }).await;
 }
 
 /// The host adapter delegates generation and verification to TinyAgents while

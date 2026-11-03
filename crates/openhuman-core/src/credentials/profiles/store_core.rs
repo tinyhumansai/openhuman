@@ -14,6 +14,14 @@ impl AuthProfilesStore {
         Self::construct(state_dir, encrypt_secrets, None)
     }
 
+    /// Bind document encryption to its admitted host without migrating API keys
+    /// into the interactive keyring profile store.
+    pub(crate) fn document_with_config(state_dir: &Path, config: &crate::config::Config) -> Self {
+        let mut store = Self::construct(state_dir, config.secrets.encrypt, Some(config.clone()));
+        store.use_keychain = false;
+        store
+    }
+
     pub fn new_with_config(
         state_dir: &Path,
         encrypt_secrets: bool,
@@ -58,17 +66,40 @@ impl AuthProfilesStore {
     /// it before resolving secrets through the async security bus. Documents
     /// are published atomically, so this snapshot stays internally consistent.
     pub async fn load(&self) -> Result<AuthProfilesData> {
-        let persisted = match self.acquire_read_lock()? {
-            Some(_lock) => self.read_persisted_locked()?,
+        let (persisted, can_publish) = match self.acquire_read_lock()? {
+            Some(_lock) => (self.read_persisted_locked()?, true),
             None => {
                 log::warn!(
                     "[auth] profile lease unavailable on a full or read-only filesystem; \
                      serving a lock-free read-only snapshot"
                 );
-                self.read_persisted_locked()?
+                (self.read_persisted_locked()?, false)
             }
         };
-        self.load_resolved(persisted).await
+        let before = serde_json::to_vec(&persisted).context("serialize auth profile snapshot")?;
+        let (data, cleaned) = self.resolve_snapshot(persisted).await?;
+        if can_publish {
+            self.publish_cleanup_if_current(&before, &cleaned)?;
+        }
+        Ok(data)
+    }
+
+    // Keep raw records intact: cleanup must not re-encrypt unrelated secrets
+    // or resurrect a row changed while async secret resolution was in flight.
+    pub(super) fn publish_cleanup_if_current(
+        &self,
+        expected: &[u8],
+        cleaned: &PersistedAuthProfiles,
+    ) -> Result<()> {
+        let candidate = serde_json::to_vec(cleaned).context("serialize cleaned auth profiles")?;
+        if candidate != expected {
+            let _lock = self.acquire_lock()?;
+            let current = self.read_persisted_locked()?;
+            if serde_json::to_vec(&current)? == expected {
+                self.write_persisted_locked(cleaned)?;
+            }
+        }
+        Ok(())
     }
 
     async fn snapshot(&self) -> Result<(PersistedAuthProfiles, Vec<u8>)> {
@@ -135,6 +166,39 @@ impl AuthProfilesStore {
     pub async fn remove_profile(&self, profile_id: &str) -> Result<bool> {
         for _ in 0..8 {
             let (persisted_before, version) = self.snapshot().await?;
+            let Some(profile) = persisted_before.profiles.get(profile_id) else {
+                return Ok(false);
+            };
+            profile.validate_secret_location()?;
+            if let Some(location) = profile.secret_location {
+                let keyring_owned = location == super::persistence::SecretLocation::Keyring;
+                if keyring_owned && !self.use_keychain {
+                    anyhow::bail!("keyring-backed profile removal requires its configured keyring");
+                }
+                // Publish only this metadata edit. No unrelated profile is
+                // resolved, re-encrypted or migrated into another backend.
+                let mut candidate = persisted_before.clone();
+                candidate.schema_version = super::CURRENT_SCHEMA_VERSION;
+                candidate.profiles.remove(profile_id);
+                candidate
+                    .active_profiles
+                    .retain(|_, active| active != profile_id);
+                candidate.updated_at = Utc::now().to_rfc3339();
+                {
+                    let _lock = self.acquire_lock()?;
+                    let current = serde_json::to_vec(&self.read_persisted_locked()?)?;
+                    if current != version {
+                        continue;
+                    }
+                    self.write_persisted_locked(&candidate)?;
+                }
+                if keyring_owned {
+                    if let Err(error) = self.keychain_delete_secrets(profile_id).await {
+                        return self.rollback_profile_removal(profile_id, &persisted_before, error);
+                    }
+                }
+                return Ok(true);
+            }
             let mut data = self.load_resolved(persisted_before.clone()).await?;
             if data.profiles.remove(profile_id).is_none() {
                 return Ok(false);
@@ -150,7 +214,7 @@ impl AuthProfilesStore {
             }
 
             if self.use_keychain {
-                if let Err(delete_error) = self.keychain_delete_secrets(profile_id) {
+                if let Err(delete_error) = self.keychain_delete_secrets(profile_id).await {
                     return self.rollback_profile_removal(
                         profile_id,
                         &persisted_before,
@@ -170,9 +234,23 @@ impl AuthProfilesStore {
         delete_error: anyhow::Error,
     ) -> Result<bool> {
         let _lock = self.acquire_lock()?;
-        let current = self.read_persisted_locked()?;
+        let mut current = self.read_persisted_locked()?;
         if !current.profiles.contains_key(profile_id) {
-            self.write_persisted_locked(persisted_before)?;
+            if let Some(profile) = persisted_before.profiles.get(profile_id) {
+                current
+                    .profiles
+                    .insert(profile_id.to_owned(), profile.clone());
+                for (provider, active) in &persisted_before.active_profiles {
+                    if active == profile_id {
+                        current
+                            .active_profiles
+                            .entry(provider.clone())
+                            .or_insert_with(|| active.clone());
+                    }
+                }
+                current.updated_at = Utc::now().to_rfc3339();
+                self.write_persisted_locked(&current)?;
+            }
         }
         Err(delete_error.context("profile removal was not completed"))
     }

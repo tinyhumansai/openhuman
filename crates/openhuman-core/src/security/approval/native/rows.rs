@@ -141,8 +141,8 @@ impl Rows {
     ///
     /// When the scope cannot be resolved (SaaS mode with no acting profile), so
     /// the call fails instead of reading a shared bucket.
-    pub(super) fn current(config: &Config) -> anyhow::Result<Self> {
-        let opened = local::open(DOMAIN, &config.workspace_dir)?;
+    pub(super) async fn current(config: &Config) -> anyhow::Result<Self> {
+        let opened = local::open_async(DOMAIN, &config.workspace_dir).await?;
         let scoped = opened.scoped()?;
         Ok(Self::over(Arc::clone(scoped.documents())))
     }

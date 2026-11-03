@@ -54,7 +54,7 @@ impl OpenHumanSessionHost {
         &mut self,
         message: &str,
         input: Message,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         self.run_single_with_input(message, Some(input), origin, approval)
@@ -65,7 +65,7 @@ impl OpenHumanSessionHost {
         &mut self,
         message: &str,
         input: Option<Message>,
-        origin: Option<crate::security::turn_origin::AgentTurnOrigin>,
+        origin: Option<crate::core::runtime::turn_origin::AgentTurnOrigin>,
         approval: crate::security::approval::ApprovalTurnContext,
     ) -> Result<String> {
         let origin = origin.or_else(|| {

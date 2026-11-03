@@ -4,9 +4,9 @@ mod exec;
 mod policy;
 
 pub use exec::execute_in_sandbox;
-pub(crate) use exec::{execute_resolved, resolve_sandbox};
 #[cfg(test)]
 pub(crate) use exec::execute_unsandboxed;
+pub(crate) use exec::{execute_resolved, resolve_sandbox};
 #[cfg(any(feature = "modules", test))]
 pub(crate) use policy::local_status_for_jail;
 #[cfg(test)]

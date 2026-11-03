@@ -47,14 +47,18 @@ fn stale_session(root: &Path, session: &str) -> std::path::PathBuf {
 #[tokio::test]
 async fn the_store_materialises_in_the_workspace_not_the_action_dir() {
     let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().join("workspace");
-    let store = build_artifact_store(&workspace, "s").expect("workspace backend is available");
-    assert_eq!(
-        store.materialize_root(),
-        tool_result_artifacts_dir(&workspace)
-    );
-    let pointer = store.path_for_read_tool("shell", Some("c"));
-    assert_eq!(pointer, "harness/tool_results/s/shell/c.txt");
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let workspace = tmp.path().join("workspace");
+        let store = build_artifact_store(&workspace, "s").expect("workspace backend is available");
+        assert_eq!(
+            store.materialize_root(),
+            tool_result_artifacts_dir(&workspace)
+        );
+        let pointer = store.path_for_read_tool("shell", Some("c"));
+        assert_eq!(pointer, "harness/tool_results/s/shell/c.txt");
+    })
+    .await;
 }
 
 /// A large result is stored on the blob store, its pointer opens through the
@@ -62,34 +66,39 @@ async fn the_store_materialises_in_the_workspace_not_the_action_dir() {
 #[tokio::test]
 async fn a_stored_result_survives_a_session_reload() {
     let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().join("workspace");
-    let first =
-        build_artifact_store(&workspace, "thread-1").expect("workspace backend is available");
-    let raw = "z".repeat(4096);
-    let (out, outcome) =
-        apply_per_result_persistence(raw, None, Some(&first), "shell", Some("call-1"), 1024).await;
-    assert!(outcome.persisted, "{out}");
-    let key = outcome.artifact_path.expect("pointer");
-    assert!(
-        key.starts_with("harness/tool_results/thread-1/shell/"),
-        "{key}"
-    );
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let workspace = tmp.path().join("workspace");
+        let first =
+            build_artifact_store(&workspace, "thread-1").expect("workspace backend is available");
+        let raw = "z".repeat(4096);
+        let (out, outcome) =
+            apply_per_result_persistence(raw, None, Some(&first), "shell", Some("call-1"), 1024)
+                .await;
+        assert!(outcome.persisted, "{out}");
+        let key = outcome.artifact_path.expect("pointer");
+        assert!(
+            key.starts_with("harness/tool_results/thread-1/shell/"),
+            "{key}"
+        );
 
-    let reloaded =
-        build_artifact_store(&workspace, "thread-1").expect("workspace backend is available");
-    let mut args = json!({"path": key});
-    reloaded
-        .resolve_read(
-            &mut args,
-            &ArtifactRead {
-                path: key.clone(),
-                offset: 0,
-            },
-        )
-        .await;
-    let path = args["path"].as_str().unwrap();
-    assert!(Path::new(path).starts_with(tool_result_artifacts_dir(&workspace)));
-    assert!(std::fs::read_to_string(path).unwrap().contains("zzzz"));
+        let reloaded =
+            build_artifact_store(&workspace, "thread-1").expect("workspace backend is available");
+        let mut args = json!({"path": key});
+        reloaded
+            .resolve_read(
+                &mut args,
+                &ArtifactRead {
+                    path: key.clone(),
+                    offset: 0,
+                },
+            )
+            .await;
+        let path = args["path"].as_str().unwrap();
+        assert!(Path::new(path).starts_with(tool_result_artifacts_dir(&workspace)));
+        assert!(std::fs::read_to_string(path).unwrap().contains("zzzz"));
+    })
+    .await;
 }
 
 /// Retention sweeps stale materialised copies and nothing in the project.

@@ -112,7 +112,6 @@ tinyagents-harness-tools = { path = "../../vendor/tinyagents/crates/tinyagents-h
     "plan-review",
 ] }
 tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus", features = ["storage"] }
-tinybox-jail = { path = "../../vendor/tinybox/crates/tinybox-jail" }
 tiny-artifacts = { path = "../../vendor/tiny-artifacts/crates/tiny-artifacts" }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 # Live (realtime voice) agent sessions: `tinyagents-live` runs a
@@ -210,7 +209,7 @@ tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus", features = ["s
 # `ChannelInboundEnvelope`, `config/schema/channels.rs` re-exports the config
 # types, so this vocabulary is always-on kernel surface. It costs serde/schemars and nothing
 # this build did not already have.
-tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/tinychannels-bus", features = ["storage"] }
+tinychannels-bus = { version = "0.2", path = "../../vendor/tinychannels/crates/tinychannels-bus", features = ["storage"] }
 # tinybus — the message bus. Owns what `crates/openhuman-core/src/core/event_bus/` used to: the typed
 # pub/sub surface (`EventBus`, `EventHandler`, `SubscriptionHandle`), the
 # in-process zero-serialization request registry (`NativeRegistry`), and peer

@@ -32,15 +32,6 @@ pub async fn execute_composio_action(
     if tool.is_empty() {
         return Err("composio: tool slug must not be empty".to_string());
     }
-    // Privacy epic S2/S7 (#4436, #4441): refuse under LocalOnly, otherwise
-    // disclose the transfer, before the arguments leave the device.
-    let egress = EgressDescriptor::composio(tool);
-    if let Err(e) = enforce_egress(&egress).await {
-        tracing::debug!(tool = %tool, "[composio][dispatch] local-only egress block");
-        return Err(e.to_string());
-    }
-    emit_external_transfer(chat, egress);
-
     // Resolve the mode-aware route on the host first: a module configured
     // without a route answers with an opaque "no connector route" error, so a
     // missing direct-mode key or backend session must fail here with the
@@ -49,6 +40,15 @@ pub async fn execute_composio_action(
         tracing::debug!(tool = %tool, "[composio][dispatch] route unavailable");
         return Err(format!("{e:#}"));
     }
+
+    // Privacy epic S2/S7 (#4436, #4441): refuse under LocalOnly, otherwise
+    // disclose the transfer, before the arguments leave the device.
+    let egress = EgressDescriptor::composio(tool);
+    if let Err(e) = enforce_egress(&egress).await {
+        tracing::debug!(tool = %tool, "[composio][dispatch] local-only egress block");
+        return Err(e.to_string());
+    }
+    emit_external_transfer(chat, egress);
 
     tracing::debug!(
         tool = %tool,

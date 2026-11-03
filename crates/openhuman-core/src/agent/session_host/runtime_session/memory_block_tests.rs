@@ -61,6 +61,7 @@ async fn learn(engine: &tinymemory_api::conformance::ReferenceEngine, config: &C
         config,
         &tinymemory_tools::layout::identity::Identity::root(),
     )
+    .await
     .expect("memory identity");
     engine
         .store(StoreItem::learning(

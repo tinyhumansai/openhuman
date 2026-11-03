@@ -39,6 +39,7 @@ fn agent_test_config(tmp: &tempfile::TempDir) -> Config {
         ..Config::default()
     };
     config.default_model = Some("test/session-fixture".to_string());
+    config.secrets.encrypt = false;
     std::fs::create_dir_all(&config.workspace_dir).unwrap();
     let fixture_config = config.clone();
     crate::storage::block_on_anyhow(async move {

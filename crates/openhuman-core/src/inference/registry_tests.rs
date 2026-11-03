@@ -131,7 +131,7 @@ async fn a_registered_chat_model_serves_the_managed_provider_for_a_thread() {
 
 #[tokio::test]
 async fn a_registered_embedding_factory_builds_the_managed_embedding_model() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&calls);
     register_embedding(
@@ -218,7 +218,7 @@ async fn a_registered_catalog_supplies_the_managed_limits_request() {
 /// the `BACKEND_UNAVAILABLE:` sentinel instead of a panic or a hosted model.
 #[tokio::test]
 async fn selecting_the_managed_provider_with_nothing_registered_is_backend_unavailable() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     let _exclusive = crate::inference::provider::factory::test_provider_override::exclusive();
     let error = make_openhuman_backend_model_for_thread_in(
         None,

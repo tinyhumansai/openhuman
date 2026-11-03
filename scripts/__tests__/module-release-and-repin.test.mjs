@@ -318,3 +318,26 @@ test("a failed pin gate is reported as failed", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("repinning assets with optional library pins updates every archive digest", () => {
+  const records = RECORDS.replaceAll(
+    `sha256: "${OLD}",`,
+    `sha256: "${OLD}",\n            library_sha256: None,`,
+  );
+  const { src } = rewriteRecord(records, "tinyx", "0.3.0", parseChecksumToml(CHECKSUM));
+  const target = src.split('id: "tinyx",')[1];
+  assert.ok(target.includes(`sha256: "${SHA_X}"`));
+  assert.ok(target.includes(`sha256: "${SHA_A}"`));
+  assert.ok(!target.includes("tinyx-module-0.2.0"));
+  assert.ok(target.includes("library_sha256: None"));
+  assert.deepEqual(unusedChecksums(src, "tinyx", parseChecksumToml(CHECKSUM)), []);
+  assert.throws(
+    () => rewriteRecord(records.replaceAll("library_sha256: None", `library_sha256: Some("${OLD}")`),
+      "tinyx", "0.3.0", parseChecksumToml(CHECKSUM)),
+    /verified library pins require published library checksums/,
+  );
+  assert.throws(
+    () => rewriteRecord(records, "tinyx", "0.3.0", new Map()),
+    /no entry for/,
+  );
+});

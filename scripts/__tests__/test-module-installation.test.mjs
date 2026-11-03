@@ -328,6 +328,7 @@ for (const id of [
   "tinymcp",
   "tinyhosts",
   "tinyvoice",
+  "tinysecurity",
 ]) {
   test(`native ${id} regressions receive their pinned release fixture`, () => {
     const assets = resolveTestModuleAssets(
@@ -575,6 +576,7 @@ test("the CI installer stages callback modules as registry releases", () => {
   );
   const connectors = assets.find((asset) => asset.id === "tinyconnectors");
   const eventqueues = assets.find((asset) => asset.id === "tinyeventqueues");
+  const security = assets.find((asset) => asset.id === "tinysecurity");
   assert.ok(
     connectors,
     "the installer resolves tinyconnectors from the registry",
@@ -584,7 +586,9 @@ test("the CI installer stages callback modules as registry releases", () => {
   assert.ok(eventqueues, "the installer stages tinyeventqueues from the registry");
   assert.match(eventqueues.sha256, /^[a-f0-9]{64}$/);
   assert.match(eventqueues.url, /\/releases\/download\/v\d+\.\d+\.\d+\//);
-  assert.match(source, /tinymcp tinyeventqueues tinyjuice/);
+  assert.ok(security, "the installer stages TinySecurity for policy tests");
+  assert.match(security.sha256, /^[a-f0-9]{64}$/);
+  assert.match(source, /tinymcp tinyeventqueues tinyjuice[\s\S]*tinysecurity/);
 });
 
 test("the core workflow isolates tests that need staged callback modules", () => {

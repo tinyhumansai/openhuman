@@ -36,6 +36,7 @@ impl std::error::Error for SecurityError {}
 #[derive(Clone)]
 pub struct Client {
     object: SecurityProxy,
+    audit_scope: Option<crate::security::approval::native::SecretScope>,
 }
 
 /// One admitted security API connection. Production calls travel through the
@@ -67,11 +68,11 @@ impl SecurityProxy {
             Self::Callback(proxy) => proxy
                 .call_confidential(member, args)
                 .await
-                .map_err(|_| "security module call failed".to_owned()),
+                .map_err(call_failed),
             Self::Module(proxy) => proxy
                 .call_confidential(member, args)
                 .await
-                .map_err(|_| "security module call failed".to_owned()),
+                .map_err(call_failed),
         }
     }
 
@@ -81,16 +82,19 @@ impl SecurityProxy {
         args: impl Serialize,
     ) -> Result<R, String> {
         match self {
-            Self::Callback(proxy) => proxy
-                .call(member, args)
-                .await
-                .map_err(|_| "security module call failed".to_owned()),
-            Self::Module(proxy) => proxy
-                .call(member, args)
-                .await
-                .map_err(|_| "security module call failed".to_owned()),
+            Self::Callback(proxy) => proxy.call(member, args).await.map_err(call_failed),
+            Self::Module(proxy) => proxy.call(member, args).await.map_err(call_failed),
         }
     }
+}
+
+/// Callers see one generic refusal; the log keeps the module's redacted reason.
+fn call_failed<E: std::fmt::Display>(error: E) -> String {
+    tracing::debug!(
+        "[security] module call failed: {}",
+        tinybus::error::redact_values(&error.to_string())
+    );
+    "security module call failed".to_owned()
 }
 
 impl Client {
@@ -109,14 +113,65 @@ impl Client {
             )
             .map_err(|_| "pinned security module proxy unavailable".to_owned())?;
         let object = SecurityProxy::callback(proxy);
-        Ok(Self { object })
+        let audit_scope = super::super::ops::security_secret_scope()
+            .await
+            .ok_or_else(|| "security audit scope unavailable".to_owned())?;
+        Ok(Self {
+            object,
+            audit_scope: Some(audit_scope),
+        })
     }
 
     #[cfg(test)]
     fn from_object(object: tinybus::module::ModuleObjectClient) -> Self {
         Self {
             object: SecurityProxy::Module(object),
+            audit_scope: None,
         }
+    }
+
+    async fn audited_permission(
+        &self,
+        request: tinysecurity_bus::PermissionRequest2,
+    ) -> Result<tinysecurity_bus::PermissionResult2, SecurityError> {
+        self.audited::<_, Option<tinysecurity_bus::PermissionResult2>>(
+            tinysecurity_bus::names::methods::CHECK_PERMISSION_AUDITED2,
+            request,
+        )
+        .await?
+        .ok_or_else(|| SecurityError::Unavailable("native permission result unavailable".into()))
+    }
+
+    /// Call an audited member; its decision counts only with a committed receipt.
+    async fn audited<T, D>(&self, member: &str, request: T) -> Result<D, SecurityError>
+    where
+        T: Serialize + Send,
+        D: DeserializeOwned + Send,
+    {
+        let scope = self
+            .audit_scope
+            .as_ref()
+            .ok_or_else(|| SecurityError::Unavailable("security audit scope unavailable".into()))?;
+        let _ordered = scope.lock().await;
+        let generation = self.policy_info().await?.generation;
+        let audit = scope
+            .correlation(generation)
+            .await
+            .map_err(SecurityError::Unavailable)?;
+        let response: tinysecurity_bus::AuditedResponse2<D> = self
+            .object
+            .call_confidential(
+                member,
+                (tinysecurity_bus::AuditedRequest2 { request, audit },),
+            )
+            .await
+            .map_err(SecurityError::Unavailable)?;
+        if !response.audit.permitted || !response.audit.committed {
+            return Err(SecurityError::Unavailable(
+                "native permission audit was not committed".into(),
+            ));
+        }
+        Ok(response.decision)
     }
 
     /// Run a paired-device lifecycle operation inside TinySecurity.
@@ -297,6 +352,18 @@ impl Client {
         &self,
         request: PathBatchRequest2,
     ) -> Result<PathBatchResponse2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::CheckPaths(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Paths(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(tinysecurity_bus::names::methods::CHECK_PATHS2, (request,))
             .await
@@ -308,6 +375,18 @@ impl Client {
         &self,
         request: PathValidationRequest,
     ) -> Result<PathValidationResult, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::ValidatePath(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Path(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(tinysecurity_bus::names::methods::VALIDATE_PATH, (request,))
             .await
@@ -319,6 +398,20 @@ impl Client {
         &self,
         request: PathValidationRequest,
     ) -> Result<PathValidationResult, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::ValidateParent(
+                    request,
+                ))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Path(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(
                 tinysecurity_bus::names::methods::VALIDATE_PARENT,
@@ -383,6 +476,18 @@ impl Client {
         &self,
         request: PrivacyCheckRequest2,
     ) -> Result<Decision, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::PrivacyCheck(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Privacy(result) => Ok(result.decision),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         let response: PrivacyCheckResponse2 = self
             .object
             .call_confidential(tinysecurity_bus::names::methods::PRIVACY_CHECK2, (request,))
@@ -577,6 +682,15 @@ impl Client {
         &self,
         request: CommandRequest,
     ) -> Result<CommandDecision, SecurityError> {
+        if self.audit_scope.is_some() {
+            return self
+                .audited::<_, Option<CommandDecision>>(
+                    tinysecurity_bus::names::methods::CHECK_COMMAND_AUDITED2,
+                    request,
+                )
+                .await?
+                .ok_or_else(|| SecurityError::Unavailable("command decision unavailable".into()));
+        }
         self.object
             .call_confidential(tinysecurity_bus::names::methods::CHECK_COMMAND, (request,))
             .await
@@ -588,6 +702,14 @@ impl Client {
         &self,
         request: BudgetRequest2,
     ) -> Result<BudgetDecision2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return self
+                .audited(
+                    tinysecurity_bus::names::methods::RESERVE_ACTION_BUDGET_AUDITED2,
+                    request,
+                )
+                .await;
+        }
         self.object
             .call_confidential(tinysecurity_bus::names::methods::SPEND_ACTION2, (request,))
             .await
@@ -599,6 +721,18 @@ impl Client {
         &self,
         request: BudgetRequest2,
     ) -> Result<BudgetDecision2, SecurityError> {
+        if self.audit_scope.is_some() {
+            return match self
+                .audited_permission(tinysecurity_bus::PermissionRequest2::PeekBudget(request))
+                .await?
+            {
+                tinysecurity_bus::PermissionResult2::Budget(result) => Ok(result),
+                _ => Err(SecurityError::Unavailable(
+                    "native permission reply does not match request".into(),
+                )),
+            };
+        }
+
         self.object
             .call_confidential(tinysecurity_bus::names::methods::PEEK_BUDGET2, (request,))
             .await

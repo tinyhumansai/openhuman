@@ -167,7 +167,8 @@ async fn process_channel_message_sends_typing_before_the_provider_reply() {
             &mut runtime_ctx,
             linked.config(),
             &linked.provider_endpoint(),
-        );
+        )
+        .await;
     let runtime_ctx = Arc::new(runtime_ctx);
     let configured_account = runtime_ctx
         .channels_by_name

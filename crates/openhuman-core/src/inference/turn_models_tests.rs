@@ -7,11 +7,7 @@ use tinyinference_llm::message::ContentBlock;
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse};
 
 async fn managed_fixture_config(tmp: &tempfile::TempDir) -> crate::config::Config {
-    let config = crate::config::Config {
-        config_path: tmp.path().join("config.toml"),
-        workspace_dir: tmp.path().join("workspace"),
-        ..Default::default()
-    };
+    let config = crate::credentials::test_support::plaintext_fixture_config(tmp.path());
     crate::credentials::AuthService::from_config(&config)
         .store_provider_token(
             crate::credentials::APP_SESSION_PROVIDER,

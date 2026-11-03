@@ -292,6 +292,11 @@ fn keyring_error_kinds_are_fixed_labels_that_carry_no_key() {
         ),
     ];
 
+    assert_eq!(
+        keyring_error_kind(&SecretStorageError::MasterKeyUnavailable),
+        "master-key-unavailable"
+    );
+
     for (err, expected) in cases {
         let kind = keyring_error_kind(&err);
         assert_eq!(kind, expected);

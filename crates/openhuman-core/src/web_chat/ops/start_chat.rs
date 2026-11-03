@@ -18,7 +18,7 @@ use super::super::turn_activity::configured_idle_window;
 use crate::agent::queued_turn::QueuedPayload;
 use crate::core::events::DomainEvent;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
 };
 
 /// `start_chat`'s error type.
@@ -391,7 +391,8 @@ async fn start_chat_inner(
     };
 
     let request_id = Uuid::new_v4().to_string();
-    let prompt_decision = enforce_prompt_input(
+    let prompt_decision = enforce_prompt_input_in(
+        ctx,
         &message,
         PromptEnforcementContext {
             source: "web_chat.start_chat",
