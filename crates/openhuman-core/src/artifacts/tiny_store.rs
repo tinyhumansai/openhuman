@@ -171,8 +171,7 @@ async fn import_legacy_file(
     legacy: &FileRef,
     key: &str,
 ) -> anyhow::Result<FileRef> {
-    let source = roots.resolve(&legacy.key).await?;
-    let bytes = tokio::fs::read(&source.path).await?;
+    let (source, bytes) = roots.read(&legacy.key).await?;
     let media_type = legacy
         .media_type
         .as_deref()
@@ -306,11 +305,10 @@ impl LegacyUiBridge {
             if let Some(file) = latest.file.as_ref() {
                 self.write_file_version(file, &dest).await?
             } else {
-                let source = self.source_roots.resolve(&latest.body).await?;
+                let (source, bytes) = self.source_roots.read(&latest.body).await?;
                 if same_file(&source.path, &dest) {
                     tokio::fs::metadata(&dest).await?.len()
                 } else {
-                    let bytes = tokio::fs::read(&source.path).await?;
                     self.write_visible_file(&dest, &bytes, source.media_type.as_deref())
                         .await?
                 }
@@ -460,11 +458,16 @@ fn contains(folder: &Path, inside: &Path) -> bool {
     canon(inside).starts_with(canon(folder))
 }
 
-/// [`file_roots`] as the crate's folders. Protected-path policy is checked in
-/// the async artifact resolver through TinySecurity; this synchronous adapter
-/// carries only the trusted-root list.
+/// [`file_roots`] as the crate's folders, guarded by TinySecurity's
+/// protected-path policy. The crate runs the guard on the canonical path and
+/// keeps that file open while it reads, so a protected file's bytes are never
+/// read and a swapped path cannot be read in its place.
 pub fn guarded_roots(roots: Vec<PathBuf>) -> tiny_artifacts::FileRoots {
-    tiny_artifacts::FileRoots::new(roots)
+    tiny_artifacts::FileRoots::new(roots).with_async_guard(|path| async move {
+        super::files::check_protected_artifact_path(&path)
+            .await
+            .err()
+    })
 }
 
 /// The artifact service for one workspace: OpenHuman's store and UI bridge,

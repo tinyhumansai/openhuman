@@ -219,7 +219,7 @@ pub(crate) async fn resolve_file(
     Ok(file)
 }
 
-async fn check_protected_artifact_path(path: &Path) -> Result<(), String> {
+pub(super) async fn check_protected_artifact_path(path: &Path) -> Result<(), String> {
     if SecurityPolicy::is_always_forbidden_async(path).await {
         return Err("[artifacts] file is in a protected location".into());
     }

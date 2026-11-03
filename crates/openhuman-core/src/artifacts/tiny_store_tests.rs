@@ -581,6 +581,21 @@ async fn a_protected_file_inside_the_working_folder_is_refused() {
     assert!(err.to_string().contains("protected location"), "{err}");
 }
 
+#[tokio::test]
+async fn the_guarded_roots_refuse_to_read_a_protected_file() {
+    let (workspace, _files) = temp_dirs();
+    let home = workspace.parent().unwrap().join("home");
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    std::fs::write(home.join(".ssh/id_ed25519"), b"PRIVATE").unwrap();
+    std::fs::write(home.join("notes.txt"), b"hello").unwrap();
+    let roots = guarded_roots(vec![home]);
+
+    let err = roots.read(".ssh/id_ed25519").await.unwrap_err();
+    assert!(err.to_string().contains("protected location"), "{err}");
+    let (_, bytes) = roots.read("notes.txt").await.unwrap();
+    assert_eq!(bytes, b"hello");
+}
+
 #[test]
 fn a_working_folder_that_contains_the_workspace_is_not_trusted() {
     let (workspace, files) = temp_dirs();
