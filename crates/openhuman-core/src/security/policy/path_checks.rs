@@ -22,8 +22,12 @@ impl SecurityPolicy {
     }
 
     /// Ask TinySecurity whether a path intersects its unconditional protected
-    /// floor. An unavailable module refuses access.
+    /// floor. An unavailable module refuses access. With security disabled
+    /// there is no floor and nothing is forbidden.
     pub async fn is_always_forbidden_async(path: &Path) -> bool {
+        if crate::security::switch::disabled().is_some() {
+            return false;
+        }
         #[cfg(feature = "security-module")]
         {
             match crate::modules::security::gap::protected_paths(&[path.to_path_buf()]).await {
