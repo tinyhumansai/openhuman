@@ -72,6 +72,7 @@ pub use schema::{
 // above stays byte-identical and rustfmt-stable.
 pub use schema::RequiredOutputContract;
 pub use schema::SummarizerSettings;
+pub use schema::{SecurityMode, SecurityModeConfig};
 pub use schema::{InboundDebounceConfig, InboundDebounceOverride};
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
