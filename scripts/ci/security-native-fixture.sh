@@ -86,11 +86,11 @@ bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhum
 bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
   --test security_native_fixture --no-default-features \
   --features "$core_features,security-module" \
-  native_fixture_fails_closed_without_sandbox_audit_correlation \
+  native_fixture_sandbox_plan_is_audited_before_running \
   -- --ignored --exact --nocapture
 
 bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
   --test security_native_fixture --no-default-features \
   --features "$core_features,security-module" \
-  native_fixture_fails_closed_without_approval_audit_correlation \
+  native_fixture_parks_a_redacted_approval_until_denied \
   -- --ignored --exact --nocapture

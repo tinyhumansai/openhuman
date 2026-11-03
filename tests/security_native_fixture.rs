@@ -307,11 +307,41 @@ async fn native_fixture_denies_keyring_before_backend_access() {
     );
 }
 
-/// Without a request-bound audit correlation the released module refuses to
-/// plan a sandbox command before the shell can run.
+/// The host's approval store, read back directly: `(tails, events)` of every
+/// audit stream in `workspace`. Test-only, so the fixture can prove an audit
+/// event was stored rather than trusting the module's `committed` claim.
+async fn stored_audit(workspace: &std::path::Path) -> (Vec<u64>, Vec<String>) {
+    use openhuman_core::storage::DocumentStore as _;
+    let opened = openhuman_core::storage::local::open_async("approval::rows", workspace)
+        .await
+        .expect("open the host approval store");
+    let storage = opened.scoped().expect("scope the host approval store");
+    let docs = storage.documents();
+    let all = tinystoragedrivers::Query::all();
+    let tails = docs
+        .query("approval_tails", &all)
+        .await
+        .expect("read audit tails")
+        .items
+        .iter()
+        .filter_map(|tail| tail.doc["tail"].as_u64())
+        .collect();
+    let events = docs
+        .query("approval_events", &all)
+        .await
+        .expect("read audit events")
+        .items
+        .iter()
+        .filter_map(|event| event.doc["event"].as_str().map(str::to_owned))
+        .collect();
+    (tails, events)
+}
+
+/// The released module plans the command only after the host has stored its
+/// audit event, then the shell runs it.
 #[test]
-#[ignore = "loads the pinned module and verifies sandbox planning fails closed without audit correlation"]
-fn native_fixture_fails_closed_without_sandbox_audit_correlation() {
+#[ignore = "loads the pinned module and verifies a sandbox plan is audited before the command runs"]
+fn native_fixture_sandbox_plan_is_audited_before_running() {
     run_on_agent_stack("native-sandbox-fixture", || async {
         let scratch = tempfile::tempdir().expect("scratch workspace");
         let home = scratch.path().join("home");
@@ -328,7 +358,7 @@ fn native_fixture_fails_closed_without_sandbox_audit_correlation() {
         config.modules.enabled = true;
         config.autonomy.enabled = false;
         config.autonomy.forbidden_paths.clear();
-        config.workspace_dir = workspace;
+        config.workspace_dir = workspace.clone();
         config.config_path = home.join(".openhuman/config.toml");
         config.action_dir = scratch.path().join("action");
         config.action_dir_override = Some(config.action_dir.clone());
@@ -358,13 +388,17 @@ fn native_fixture_fails_closed_without_sandbox_audit_correlation() {
             ),
         )
         .await;
+        let output = result.expect("the audited sandbox plan should run");
+        assert!(output.success(), "fixture command should succeed");
+        assert!(output.stdout.contains("sandbox-fixture"));
+        let (tails, events) = stored_audit(&workspace).await;
         assert!(
-            result.is_err(),
-            "sandbox execution must fail closed without audit correlation"
+            tails.iter().any(|tail| *tail >= 1),
+            "the host must have committed the plan's audit event: {tails:?}"
         );
         assert!(
-            result.unwrap_err().to_string().contains("Audit"),
-            "released module must refuse the unaudited sandbox plan"
+            events.iter().any(|event| event.contains("sandbox-plan")),
+            "the stored audit must hold the sandbox-plan event"
         );
         shutdown.cancel();
         server
@@ -374,13 +408,13 @@ fn native_fixture_fails_closed_without_sandbox_audit_correlation() {
     });
 }
 
-/// Verifies that the released module fails closed when a synthetic approval
-/// request cannot provide the required request-bound audit correlation.
+/// A WebChat shell call parks as one pending approval with its credential
+/// argument redacted, and a human denial resolves the parked call as denied.
 #[test]
-#[ignore = "loads the pinned module and verifies approval evaluation fails closed without audit correlation"]
-fn native_fixture_fails_closed_without_approval_audit_correlation() {
+#[ignore = "loads the pinned module and verifies a parked approval is redacted and can be denied"]
+fn native_fixture_parks_a_redacted_approval_until_denied() {
     run_on_agent_stack("native-approval-fixture", || async {
-        let private_argument = "approval-callback-private-sentinel";
+        let credential = "approval-callback-private-sentinel";
         let scratch = tempfile::tempdir().expect("scratch workspace");
         let home = scratch.path().join("home");
         let workspace = scratch.path().join("workspace");
@@ -431,7 +465,7 @@ fn native_fixture_fails_closed_without_approval_audit_correlation() {
                         "run harmless fixture command",
                         json!({
                             "command":"echo approval-fixture",
-                            "private_argument": private_argument,
+                            "api_key": credential,
                         }),
                     ),
                 )
@@ -450,15 +484,27 @@ fn native_fixture_fails_closed_without_approval_audit_correlation() {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
         let rows = rpc_result(&pending).as_array().expect("pending row list");
-        assert!(rows.is_empty(), "a denied request must not become pending");
+        assert_eq!(rows.len(), 1, "the shell call should park once: {rows:?}");
+        assert_eq!(rows[0]["tool_name"], "shell");
         assert!(
-            !pending.to_string().contains(private_argument),
-            "the released module must not reflect request data through the unscoped callback path"
+            !pending.to_string().contains(credential),
+            "a pending approval must not show its credential argument"
         );
+        let request_id = rows[0]["request_id"]
+            .as_str()
+            .expect("pending request id")
+            .to_owned();
+        let decided = rpc_http(
+            port,
+            "openhuman.approval_decide",
+            json!({"request_id": request_id, "decision": "deny"}),
+        )
+        .await;
+        rpc_result(&decided);
         let outcome = parked.await.expect("parked caller");
         assert!(
-            matches!(outcome, GateOutcome::Deny { ref reason } if reason.contains("EvaluateApproval2 failed")),
-            "required audit failure must deny approval evaluation: {outcome:?}"
+            matches!(outcome, GateOutcome::Deny { .. }),
+            "a human denial must deny the parked call: {outcome:?}"
         );
         shutdown.cancel();
         server
