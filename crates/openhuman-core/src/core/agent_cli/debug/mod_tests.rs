@@ -11,6 +11,7 @@ async fn debug_dump_composes_each_flow_prompt_from_the_copilot_bus() {
         ..Config::default()
     };
     config.default_model = Some("test/session-fixture".to_string());
+    config.secrets.encrypt = false;
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .expect("initialize builtin registry");

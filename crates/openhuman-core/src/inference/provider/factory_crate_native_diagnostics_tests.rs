@@ -4,7 +4,7 @@ use tinyinference_llm::providers::registry::openrouter_default_provider_options;
 
 #[tokio::test]
 async fn crate_native_chat_model_factory_preserves_invalid_route_diagnostics() {
-    let _guard = crate::inference::inference_test_guard();
+    let _guard = crate::inference::inference_test_guard_async().await;
     super::with_library_test_context_async(|| async {
         let config = Config::default();
 

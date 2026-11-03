@@ -1,4 +1,9 @@
 use super::*;
+use crate::security::credentials::api_key;
+use crate::security::credentials::ops::clear_credential_with;
+use crate::security::credentials::ops::restore_api_key;
+use crate::security::credentials::session_support::CredentialKind;
+use serde_json::json;
 
 #[test]
 fn process_wide_credentials_are_single_user_only() {
@@ -26,19 +31,19 @@ async fn restore_api_key_puts_the_key_back_and_tolerates_a_failed_store() {
         ..Config::default()
     };
 
-    restore_api_key(&config, None, "test");
-    assert!(!api_key::has_api_key(&config), "nothing to put back");
+    restore_api_key(&config, None, "test").await;
+    assert!(!api_key::has_api_key(&config).await, "nothing to put back");
 
-    restore_api_key(&config, Some("sk-restored"), "test");
+    restore_api_key(&config, Some("sk-restored"), "test").await;
     assert_eq!(
-        api_key::get_api_key(&config).unwrap().as_deref(),
+        api_key::get_api_key(&config).await.unwrap().as_deref(),
         Some("sk-restored")
     );
 
     // A blank key cannot be stored: the failure is logged and the stored key stays.
-    restore_api_key(&config, Some("   "), "test");
+    restore_api_key(&config, Some("   "), "test").await;
     assert_eq!(
-        api_key::get_api_key(&config).unwrap().as_deref(),
+        api_key::get_api_key(&config).await.unwrap().as_deref(),
         Some("sk-restored")
     );
 }
@@ -69,7 +74,7 @@ async fn signed_in_with_key() -> Config {
     .await
     .unwrap();
     assert_eq!(
-        api_key::get_api_key(&user_scoped).unwrap().as_deref(),
+        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
         Some("sk-keep"),
         "control"
     );
@@ -97,14 +102,14 @@ async fn a_failed_carry_during_sign_out_puts_the_api_key_back() {
         &DispatchCtx::process_default(),
         &user_scoped,
         Some(CredentialKind::Session),
-        |_, _| Err(anyhow::anyhow!("injected carry failure")),
+        |_, _| async { Err(anyhow::anyhow!("injected carry failure")) },
     )
     .await
     .unwrap_err();
     assert!(error.contains("injected carry failure"), "{error}");
     assert!(!error.contains("must be entered again"), "{error}");
     assert_eq!(
-        api_key::get_api_key(&user_scoped).unwrap().as_deref(),
+        api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
         Some("sk-keep"),
         "a failed carry must put the API key back where it was"
     );

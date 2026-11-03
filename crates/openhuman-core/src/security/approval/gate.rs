@@ -137,7 +137,7 @@ pub struct ApprovalChatContext {
 /// Per-run flow context (flow-approval-surface, PR2 of the tinyflows
 /// approval-surfacing design). `flows::ops::flows_run` / `flows_resume`
 /// hand it to the engine's capabilities, alongside the existing
-/// `Workflow` [`AgentTurnOrigin`](crate::security::turn_origin::AgentTurnOrigin),
+/// `Workflow` [`AgentTurnOrigin`](crate::core::runtime::turn_origin::AgentTurnOrigin),
 /// so a tool call parked from that run can correlate
 /// [`PendingApproval::source_context`](super::types::PendingApproval) back to
 /// the exact flow + run (the origin alone only carries `flow_id`, not

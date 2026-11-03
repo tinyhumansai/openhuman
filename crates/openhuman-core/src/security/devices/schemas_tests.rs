@@ -35,13 +35,13 @@ pub(super) fn parameter_contracts() -> Vec<ControllerParamContract> {
             ],
         },
         ControllerParamContract {
-            method: "devices.list",
+            method: "devices.import_legacy",
             required: &[],
             optional: &[],
             examples: vec![json!({})],
         },
         ControllerParamContract {
-            method: "devices.import_legacy",
+            method: "devices.list",
             required: &[],
             optional: &[],
             examples: vec![json!({})],

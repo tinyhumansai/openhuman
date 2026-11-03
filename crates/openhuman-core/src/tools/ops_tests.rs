@@ -8,12 +8,15 @@ use tinytools::ToolContent;
 use tinytools::ToolResult;
 
 fn test_config(tmp: &TempDir) -> Config {
-    Config {
+    let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
-    }
+    };
+    // Catalog tests use fake tokens, including builds without TinySecurity.
+    config.secrets.encrypt = false;
+    config
 }
 
 fn tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {

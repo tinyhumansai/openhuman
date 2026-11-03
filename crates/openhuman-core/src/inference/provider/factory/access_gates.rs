@@ -406,18 +406,9 @@ fn verify_session_active_with_snapshot_for_host(
 /// in a Library host. Library mode exempts caller-owned provider credentials;
 /// it cannot manufacture a TinyHumans account credential.
 pub(crate) async fn verify_backend_session_active(config: &Config) -> anyhow::Result<()> {
-    let state_dir = config
-        .config_path
-        .parent()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            directories::UserDirs::new()
-                .map(|d| d.home_dir().join(".openhuman"))
-                .unwrap_or_else(|| std::path::PathBuf::from(".openhuman"))
-        });
     // An API key is a standing credential: no session to be active, nothing
     // for the scheduler gate to have expired.
-    if crate::credentials::api_key::has_api_key_in(&state_dir, config.secrets.encrypt).await {
+    if crate::credentials::api_key::has_api_key(config).await {
         log::debug!(
             "[providers][access-gate] api-key credential satisfies the backend session gate"
         );
@@ -430,7 +421,7 @@ pub(crate) async fn verify_backend_session_active(config: &Config) -> anyhow::Re
         );
     }
     // Verify the app-session JWT actually exists in auth-profiles.
-    let auth = AuthService::new(&state_dir, config.secrets.encrypt);
+    let auth = AuthService::from_config(config);
     let has_session = auth
         .get_provider_bearer_token(crate::credentials::APP_SESSION_PROVIDER, None)
         .await?

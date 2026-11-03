@@ -237,19 +237,6 @@ async fn for_each_secret(
         )
         .await?;
     }
-    if let Some(ref mut w) = ch.webhook {
-        process_secret!(&mut w.secret, "webhook.secret");
-    }
-    if let Some(ref mut mx) = ch.matrix {
-        migrated |= string_secret(
-            &mut mx.access_token,
-            "matrix.access_token",
-            store,
-            encrypt,
-            strict,
-        )
-        .await?;
-    }
     if let Some(ref mut wa) = ch.whatsapp {
         process_secret!(&mut wa.access_token, "whatsapp.access_token");
         process_secret!(&mut wa.verify_token, "whatsapp.verify_token");

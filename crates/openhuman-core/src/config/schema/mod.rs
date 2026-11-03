@@ -158,9 +158,8 @@ pub use security::{
 pub use task_sources::TaskSourcesConfig;
 pub use tinychannels_bus::config::{
     ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig, IrcConfig,
-    LarkConfig, LarkReceiveMode, LinqConfig, MatrixConfig, MattermostConfig, QQConfig,
-    SignalConfig, SlackConfig, StreamMode, TelegramConfig, WebhookConfig, WhatsAppConfig,
-    YuanbaoConfig,
+    LarkConfig, LarkReceiveMode, LinqConfig, MattermostConfig, QQConfig, SignalConfig, SlackConfig,
+    StreamMode, TelegramConfig, WhatsAppConfig, YuanbaoConfig,
 };
 pub use tokenjuice::TokenjuiceConfig;
 pub use tools::{

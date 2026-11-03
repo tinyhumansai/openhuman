@@ -23,7 +23,7 @@
   {
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-core/src/agent/turn_host.rs",
-    "line": 163,
+    "line": 161,
     "text": "Box::pin(with_origin(origin, turn)).await",
     "occurrence": 1
   },
@@ -31,7 +31,7 @@
     "rule": "openhuman-task-local",
     "path": "crates/openhuman-core/src/channels/proactive.rs",
     "line": 229,
-    "text": "let (outcome, request_id) = crate::security::turn_origin::with_origin(",
+    "text": "let (outcome, request_id) = crate::core::runtime::turn_origin::with_origin(",
     "occurrence": 1
   },
   {

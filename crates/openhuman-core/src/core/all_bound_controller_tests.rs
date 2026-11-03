@@ -62,7 +62,12 @@ fn staged_bound_methods() -> Vec<&'static str> {
         "voice.live_test_provider",
     ]);
     methods.push("threads.upsert");
-    methods.extend(["devices.create_pairing", "devices.list", "devices.revoke"]);
+    methods.extend([
+        "devices.create_pairing",
+        "devices.import_legacy",
+        "devices.list",
+        "devices.revoke",
+    ]);
     methods.extend([
         "profiles.provision",
         "profiles.deprovision",

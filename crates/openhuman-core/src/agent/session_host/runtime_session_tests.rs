@@ -125,12 +125,13 @@ async fn committed_progress_carries_the_sidecar_stop_on_turn_completed() {
 #[tokio::test]
 async fn clearing_progress_releases_warm_prelude_sender() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let config = crate::config::Config {
+    let mut config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
+    config.secrets.encrypt = false;
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),
@@ -234,6 +235,7 @@ async fn desktop_browser_setting_keeps_deferred_tools_in_fresh_and_resumed_surfa
     };
     config.browser.enabled = true;
     config.http_request.allowed_domains = vec!["example.com".into()];
+    config.secrets.encrypt = false;
     crate::agent::session_host::test_support::install_managed_model_fixture(&config).await;
     let mut host = crate::agent::OpenHumanSessionHost::from_config_for_agent(
         &crate::core::runtime::DispatchCtx::ambient(),

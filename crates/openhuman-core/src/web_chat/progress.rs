@@ -108,7 +108,8 @@ impl ProgressProjection {
             &ids.client_id,
             &ids.thread_id,
             &ids.request_id,
-        );
+        )
+        .await;
         let ledger = for_turn(
             &config.workspace_dir,
             &ids.client_id,

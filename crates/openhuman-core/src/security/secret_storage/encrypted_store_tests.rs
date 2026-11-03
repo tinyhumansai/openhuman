@@ -43,6 +43,20 @@ async fn disabled_encryption_preserves_plaintext() {
     assert_eq!(store.decrypt_via_security("plain").await.unwrap(), "plain");
 }
 
+#[tokio::test]
+async fn disabled_encryption_keeps_legacy_migration_as_a_plaintext_noop() {
+    let temp = TempDir::new().unwrap();
+    let store = SecretStore::new(&temp.path(), false);
+
+    let (plaintext, replacement) = store
+        .decrypt_and_migrate_via_security("legacy plaintext")
+        .await
+        .unwrap();
+
+    assert_eq!(plaintext, "legacy plaintext");
+    assert_eq!(replacement, None);
+}
+
 #[test]
 fn encrypted_prefixes_remain_compatible() {
     assert!(SecretStore::is_encrypted("enc2:ciphertext"));

@@ -2,11 +2,7 @@ use super::*;
 use crate::credentials::backend_credential::{resolve_backend_credential, BackendCredential};
 
 fn config_in(dir: &std::path::Path) -> Config {
-    let mut config = Config::default();
-    config.config_path = dir.join("config.toml");
-    config.workspace_dir = dir.join("workspace");
-    config.secrets.encrypt = false;
-    config
+    crate::credentials::test_support::plaintext_fixture_config(dir)
 }
 
 #[tokio::test]
@@ -113,4 +109,33 @@ async fn api_key_wins_over_an_expired_session() {
             .expect("credential"),
         BackendCredential::ApiKey("th_key".to_string())
     );
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn encrypted_api_key_retains_the_admitted_host_configuration() {
+    let dir = tempfile::tempdir().expect("isolated credentials");
+    let mut config = config_in(dir.path());
+    config.secrets.encrypt = true;
+    let worker_config = config.clone();
+    crate::credentials::test_support::with_native_cipher_approval(&config, async move {
+        store_api_key(&worker_config, "fixture-encrypted-api-key")
+            .await
+            .expect("store with admitted host configuration");
+        assert_eq!(
+            get_api_key(&worker_config)
+                .await
+                .expect("read encrypted key")
+                .as_deref(),
+            Some("fixture-encrypted-api-key")
+        );
+        assert!(clear_api_key(&worker_config)
+            .await
+            .expect("remove encrypted key"));
+        assert_eq!(
+            get_api_key(&worker_config).await.expect("read removed key"),
+            None
+        );
+    })
+    .await;
 }

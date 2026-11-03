@@ -202,7 +202,7 @@ async fn native_turn_preserves_deepseek_route_metadata_after_cloud_resolution() 
             auth_style: AuthStyle::Bearer,
             default_model: Some("deepseek-chat".into()),
         }],
-        ..Default::default()
+        ..crate::credentials::test_support::plaintext_fixture_config(tmp.path())
     };
     crate::credentials::AuthService::from_config(&config)
         .store_provider_token(

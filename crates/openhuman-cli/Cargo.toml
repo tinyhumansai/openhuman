@@ -525,7 +525,7 @@ tinydocs-bus = { path = "../../vendor/tinydocs/crates/tinydocs-bus" }
 tinyeventqueues-bus = { path = "../../vendor/tinyeventqueues/crates/tinyeventqueues-bus" }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus" }
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
-tinychannels = { version = "0.1", features = ["email"] }
+tinychannels = { version = "0.2", features = ["email"] }
 tinyinference-core = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
 tinyinference-local = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-local" }
 tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }

@@ -30,7 +30,9 @@ pub(crate) async fn load_profile_read_only(
     readonly::load_profile(config, provider, profile_override).await
 }
 
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+// Version 2 records authoritative secret ownership. Older readers must refuse
+// it rather than prefer a stale keyring entry over an explicit document value.
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Compact secret payload stored as a single keychain entry per auth profile.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -170,6 +170,16 @@
     "verification": "core/slots_tests.rs: entries_keep_registration_order_and_re_registering_keeps_position"
   },
   {
+    "file": "crates/openhuman-core/src/cron/channel_bridge.rs",
+    "scope": "",
+    "name": "BRIDGE",
+    "type": "HookSlot<Bridge>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: the running channel runtime's send adapters (core::slots::HookSlot), registered on channel start and removed on shutdown. It holds module object clients, never tenant data; under cfg(test) the table is per-thread.",
+    "verification": "cron/scheduler/origin_delivery_channel_tests.rs: channel_origin_fails_when_the_channel_runtime_is_not_running"
+  },
+  {
     "file": "crates/openhuman-core/src/hooks/host.rs",
     "scope": "",
     "name": "ENGINE",
@@ -670,6 +680,16 @@
     "verification": "web_chat/event_bus_tests.rs: egress_surface_bridges_pending_with_chat_context"
   },
   {
+    "file": "crates/openhuman-core/src/security/credentials/profiles.rs",
+    "scope": "",
+    "name": "REGISTRY",
+    "type": "OnceLock<Mutex<HashMap<PathBuf,Arc<InProcessAuthLock>>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "The process-local registry shares only lock objects keyed by canonical profile-store path; it serializes same-process access without storing profile contents or tenant identifiers.",
+    "verification": "security/credentials/profiles_store_lock_tests.rs: acquire_lock_serializes_same_process_acquirers"
+  },
+  {
     "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
     "scope": "",
     "name": "REGISTRY",
@@ -678,5 +698,15 @@
     "category": "B",
     "reason": "The process's OpenShell box registry holds one box per tenant, keyed on the whole authenticated Tenant (profile and agent), never the profile alone; a call with no tenant is refused before the registry is touched, so no two tenants can share a box.",
     "verification": "sandbox/openshell/registry_tests.rs: embedded_users_of_one_host_get_separate_boxes; sandbox/openshell/mod_tests.rs: an_unscoped_command_creates_no_box"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/runtime/context_test_support.rs",
+    "scope": "",
+    "name": "NATIVE_FIXTURE_RUNTIME",
+    "type": "std::sync::LazyLock<tokio::runtime::Runtime>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only (cfg(test) module): a retained two-worker runtime that admits the real native security module for fixture contexts, so synchronous host adapters can finish while a current-thread test waits. It holds no tenant data; each admission runs under the fixture's own CoreContext.",
+    "verification": "agent/harness/artifact_offload/artifact_offload_tests.rs: an_action_dir_inside_workspace_dir_is_never_materialized"
   }
 ]

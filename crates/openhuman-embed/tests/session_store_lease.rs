@@ -23,7 +23,7 @@ impl SessionStoreProvider for FixedBackend {
     }
 
     fn lease_for_agent(&self, agent_id: &str) -> Result<SessionStoreLease, SessionStoreLeaseError> {
-        Ok(SessionStoreLease::pinned(self.for_agent(agent_id)))
+        self.0.lease_for_agent(agent_id)
     }
 }
 

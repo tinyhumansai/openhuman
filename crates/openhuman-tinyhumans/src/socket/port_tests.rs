@@ -212,10 +212,12 @@ async fn actor_shutdown_fails_an_emit_queued_during_reconnect_promptly() {
         receiver,
         shutdown_receiver,
         done,
-        state,
-        transport_connected,
-        Arc::clone(&loop_active),
-        stopped_on_failure,
+        SocketActorShared {
+            state,
+            transport_connected,
+            loop_active: Arc::clone(&loop_active),
+            stopped_on_failure,
+        },
     ));
 
     let (result, response) = oneshot::channel();
@@ -269,10 +271,12 @@ async fn actor_shutdown_fails_an_ack_queued_during_reconnect_promptly() {
         receiver,
         shutdown_receiver,
         done,
-        state,
-        transport_connected,
-        Arc::clone(&loop_active),
-        stopped_on_failure,
+        SocketActorShared {
+            state,
+            transport_connected,
+            loop_active: Arc::clone(&loop_active),
+            stopped_on_failure,
+        },
     ));
 
     let (result, response) = oneshot::channel();

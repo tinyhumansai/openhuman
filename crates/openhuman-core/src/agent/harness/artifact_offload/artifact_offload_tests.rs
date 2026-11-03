@@ -117,33 +117,39 @@ async fn an_action_dir_inside_workspace_dir_is_never_materialized() {
     // INSIDE the workspace root, so only the host's check stands between an
     // agent and core state. The result stays inline and nothing is written.
     let dir = tempfile::tempdir().expect("tempdir");
-    let workspace_dir = dir.path().to_path_buf();
-    let action_dir = workspace_dir.join("action");
-    std::fs::create_dir_all(&action_dir).expect("action dir");
-    let policy = policy_with(action_dir.clone(), workspace_dir);
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let workspace_dir = dir.path().to_path_buf();
+        let action_dir = workspace_dir.join("action");
+        std::fs::create_dir_all(&action_dir).expect("action dir");
+        let policy = policy_with(action_dir.clone(), workspace_dir);
 
-    let offload = new_artifact_offload(memory_blobs(), Some(policy.clone()), "agent", "task");
-    let big = "x".repeat(10_000);
-    let (text, artifact) = offload_oversized_result(
-        big.clone(),
-        &offload,
-        DEFAULT_OFFLOAD_THRESHOLD_BYTES,
-        &action_dir,
-        Some(&policy),
-    )
+        let offload = new_artifact_offload(memory_blobs(), Some(policy.clone()), "agent", "task");
+        let big = "x".repeat(10_000);
+        let (text, artifact) = offload_oversized_result(
+            big.clone(),
+            &offload,
+            DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+            &action_dir,
+            Some(&policy),
+        )
+        .await;
+
+        assert_eq!(text, big, "the inline payload must survive the refusal");
+        assert!(artifact.is_none());
+        assert!(
+            !action_dir.join("outputs").exists(),
+            "nothing may be materialized under workspace_dir"
+        );
+    })
     .await;
-
-    assert_eq!(text, big, "the inline payload must survive the refusal");
-    assert!(artifact.is_none());
-    assert!(
-        !action_dir.join("outputs").exists(),
-        "nothing may be materialized under workspace_dir"
-    );
 }
 
 #[tokio::test]
 async fn explicit_workspace_policy_blocks_unguarded_offload_before_writing() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&config, async {
     let workspace_dir = dir.path().to_path_buf();
     let action_dir = workspace_dir.join("action");
     std::fs::create_dir_all(&action_dir).expect("action dir");
@@ -151,6 +157,11 @@ async fn explicit_workspace_policy_blocks_unguarded_offload_before_writing() {
     // A caller may pass a writer whose own ArtifactPathPolicy is absent or
     // different from the explicit policy argument.
     let unguarded = ArtifactOffload::new(memory_blobs(), "worker", "task");
+    let key = unguarded.resolve(ArtifactKind::Output, &unguarded.default_result_name())
+        .expect("artifact key");
+    #[cfg(feature = "security-module")]
+    assert!(policy.path_allowed(crate::security::policy::PathKind::ResolvedWrite, &action_dir.join(&key)).await,
+        "the general path policy is available; the artifact-only private-workspace reservation must refuse it");
     let big = "x".repeat(10_000);
 
     let (text, artifact) = offload_oversized_result(
@@ -168,6 +179,9 @@ async fn explicit_workspace_policy_blocks_unguarded_offload_before_writing() {
         !action_dir.join("outputs").exists(),
         "authorization must happen before an artifact is stored or materialized"
     );
+    assert!(unguarded.read(&key).await.expect("probe stored artifact").is_none(),
+        "refusal precedes blob persistence as well as filesystem materialization");
+    }).await;
 }
 
 #[tokio::test]
@@ -175,83 +189,91 @@ async fn a_wired_writer_redacts_before_the_bytes_reach_disk() {
     // `new_artifact_offload` always installs the redactor, so no call site can
     // produce an unredacted writer by omission.
     let dir = tempfile::tempdir().expect("tempdir");
-    let action_dir = dir.path().join("action");
-    let workspace_dir = dir.path().join("state");
-    std::fs::create_dir_all(&action_dir).expect("action dir");
-    std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let action_dir = dir.path().join("action");
+        let workspace_dir = dir.path().join("state");
+        std::fs::create_dir_all(&action_dir).expect("action dir");
+        std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
 
-    let offload = new_artifact_offload(
-        memory_blobs(),
-        Some(policy_with(dir.path().join("action"), workspace_dir)),
-        "agent",
-        "task",
-    );
+        let offload = new_artifact_offload(
+            memory_blobs(),
+            Some(policy_with(dir.path().join("action"), workspace_dir)),
+            "agent",
+            "task",
+        );
 
-    let secret = "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
-    let artifact = offload
-        .write(ArtifactKind::Output, "creds.md", secret)
-        .await
-        .expect("write");
+        let secret = "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+        let artifact = offload
+            .write(ArtifactKind::Output, "creds.md", secret)
+            .await
+            .expect("write");
 
-    let on_disk = offload
-        .read(&artifact.relative_path)
-        .await
-        .expect("read back")
-        .expect("stored");
-    // Whether this particular shape trips `sanitize_text` is that function's
-    // business; what this pins is that the two agree. A redactor reported as
-    // having fired must have actually rewritten the stored bytes.
-    assert_eq!(
-        artifact.redacted,
-        on_disk != secret,
-        "the redacted flag must match what actually reached the blob store"
-    );
+        let on_disk = offload
+            .read(&artifact.relative_path)
+            .await
+            .expect("read back")
+            .expect("stored");
+        // Whether this particular shape trips `sanitize_text` is that function's
+        // business; what this pins is that the two agree. A redactor reported as
+        // having fired must have actually rewritten the stored bytes.
+        assert_eq!(
+            artifact.redacted,
+            on_disk != secret,
+            "the redacted flag must match what actually reached the blob store"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn oversized_result_is_offloaded_and_the_parent_gets_a_readable_pointer() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let action_dir = dir.path().join("action");
-    let workspace_dir = dir.path().join("state");
-    std::fs::create_dir_all(&action_dir).expect("action dir");
-    std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
+    let fixture_config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    crate::core::runtime::CoreContext::scope_test_native_config(&fixture_config, async {
+        let action_dir = dir.path().join("action");
+        let workspace_dir = dir.path().join("state");
+        std::fs::create_dir_all(&action_dir).expect("action dir");
+        std::fs::create_dir_all(&workspace_dir).expect("workspace dir");
 
-    let offload = new_artifact_offload(
-        memory_blobs(),
-        Some(policy_with(dir.path().join("action"), workspace_dir)),
-        "worker",
-        "task-1",
-    );
-    let big = "x".repeat(10_000);
+        let offload = new_artifact_offload(
+            memory_blobs(),
+            Some(policy_with(dir.path().join("action"), workspace_dir)),
+            "worker",
+            "task-1",
+        );
+        let big = "x".repeat(10_000);
 
-    let (text, artifact) = offload_oversized_result(
-        big.clone(),
-        &offload,
-        DEFAULT_OFFLOAD_THRESHOLD_BYTES,
-        &action_dir,
-        None,
-    )
+        let (text, artifact) = offload_oversized_result(
+            big.clone(),
+            &offload,
+            DEFAULT_OFFLOAD_THRESHOLD_BYTES,
+            &action_dir,
+            None,
+        )
+        .await;
+        let artifact = artifact.expect("an artifact was written");
+
+        assert!(text.starts_with(ARTIFACT_POINTER_PREFIX));
+        // The pointer must name OpenHuman's reading tool, not the crate's idea of
+        // one — this is the wiring the READ_TOOL parameter exists for.
+        assert!(
+            text.contains(READ_TOOL),
+            "pointer must name the host read tool: {text}"
+        );
+        // And the path it quotes must be the one a parent can actually extract.
+        assert_eq!(
+            extract_artifact_paths(&text),
+            vec![artifact.relative_path.clone()]
+        );
+
+        // The pointer's path is openable by `file_read` against the action root.
+        let on_disk = tokio::fs::read_to_string(action_dir.join(&artifact.relative_path))
+            .await
+            .expect("read back");
+        assert_eq!(on_disk, big, "full fidelity is preserved on disk");
+    })
     .await;
-    let artifact = artifact.expect("an artifact was written");
-
-    assert!(text.starts_with(ARTIFACT_POINTER_PREFIX));
-    // The pointer must name OpenHuman's reading tool, not the crate's idea of
-    // one — this is the wiring the READ_TOOL parameter exists for.
-    assert!(
-        text.contains(READ_TOOL),
-        "pointer must name the host read tool: {text}"
-    );
-    // And the path it quotes must be the one a parent can actually extract.
-    assert_eq!(
-        extract_artifact_paths(&text),
-        vec![artifact.relative_path.clone()]
-    );
-
-    // The pointer's path is openable by `file_read` against the action root.
-    let on_disk = tokio::fs::read_to_string(action_dir.join(&artifact.relative_path))
-        .await
-        .expect("read back");
-    assert_eq!(on_disk, big, "full fidelity is preserved on disk");
 }
 
 #[tokio::test]

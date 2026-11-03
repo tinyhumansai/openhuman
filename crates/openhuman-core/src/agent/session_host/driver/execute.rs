@@ -30,6 +30,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             hosted_base.security_policy.clone(),
             Vec::new(),
         )
+        .with_config(hosted_base.config.clone())
         .with_input_screening(!request.run_context.data.untrusted_input_turn)
         .with_approval(request.run_context.data.approval.clone())
         .with_dispatch(request.run_context.data.dispatch_ctx());

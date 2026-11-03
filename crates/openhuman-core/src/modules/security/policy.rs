@@ -2,9 +2,8 @@
 
 use crate::config::Config;
 
-/// Wire contract served by the checksum-pinned v0.18.0 module. The fork bus
-/// contains newer host APIs, but this adapter invokes only this exact subset.
-pub const MODULE_CONTRACT_VERSION: (u32, u32) = (1, 33);
+/// The host requires the audited native permission vocabulary from its contract.
+pub const MODULE_CONTRACT_VERSION: (u32, u32) = tinysecurity_bus::CONTRACT_VERSION;
 
 /// Check the exact published artifact contract this adapter was built for.
 #[must_use]
@@ -27,7 +26,12 @@ pub fn policy_config(config: &Config) -> tinysecurity_bus::PolicyConfig {
             Vec::new()
         },
         forbidden_paths: if config.autonomy.enabled {
-            config.autonomy.forbidden_paths.clone()
+            config
+                .autonomy
+                .forbidden_paths
+                .iter()
+                .map(|path| crate::config::expand_tilde(path))
+                .collect()
         } else {
             Vec::new()
         },
@@ -51,8 +55,7 @@ pub fn validate(config: &Config) -> Result<(), &'static str> {
     {
         return Err("enabled policy allows only argument-free command names");
     }
-    if config
-        .autonomy
+    if policy_config(config)
         .forbidden_paths
         .iter()
         .any(|path| !std::path::Path::new(path).is_absolute())

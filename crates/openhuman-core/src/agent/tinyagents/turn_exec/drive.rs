@@ -51,6 +51,7 @@ pub(super) async fn drive_turn(
                     base.security_policy.clone(),
                     tool_sets.clone(),
                 )
+                .with_config(base.config.clone())
                 .with_input_screening(!run_context.untrusted_input_turn)
                 .with_approval(run_context.approval.clone())
                 .with_dispatch(run_context.dispatch_ctx())
