@@ -170,6 +170,16 @@
     "verification": "core/slots_tests.rs: entries_keep_registration_order_and_re_registering_keeps_position"
   },
   {
+    "file": "crates/openhuman-core/src/cron/channel_bridge.rs",
+    "scope": "",
+    "name": "BRIDGE",
+    "type": "HookSlot<Bridge>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: the running channel runtime's send adapters (core::slots::HookSlot), registered on channel start and removed on shutdown. It holds module object clients, never tenant data; under cfg(test) the table is per-thread.",
+    "verification": "cron/scheduler/origin_delivery_channel_tests.rs: channel_origin_fails_when_the_channel_runtime_is_not_running"
+  },
+  {
     "file": "crates/openhuman-core/src/hooks/host.rs",
     "scope": "",
     "name": "ENGINE",
