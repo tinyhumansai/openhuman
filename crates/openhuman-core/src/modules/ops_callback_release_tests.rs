@@ -119,8 +119,17 @@ fn stage_release(root: &Path) -> (String, String) {
     builder
         .append_path_with_name(directory.join("modules.toml"), "modules.toml")
         .unwrap();
-    builder.into_inner().unwrap().finish().unwrap().flush().unwrap();
-    (tinybus::module::sha256_file(&archive).unwrap(), library_digest)
+    builder
+        .into_inner()
+        .unwrap()
+        .finish()
+        .unwrap()
+        .flush()
+        .unwrap();
+    (
+        tinybus::module::sha256_file(&archive).unwrap(),
+        library_digest,
+    )
 }
 
 /// The registry record pinning `archive_sha256` and `library_sha256`.
@@ -233,7 +242,12 @@ async fn a_callback_module_in_the_release_cache_loads_with_callbacks() {
     }
     let cache = private_root();
     let (archive, library) = stage_release(cache.path());
-    let resolver = resolver(record(&archive, &library), cache.path(), None, HashMap::new());
+    let resolver = resolver(
+        record(&archive, &library),
+        cache.path(),
+        None,
+        HashMap::new(),
+    );
 
     ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await
@@ -270,7 +284,12 @@ async fn a_cached_library_that_does_not_match_its_pin_is_refused() {
     }
     let cache = private_root();
     let (archive, _library) = stage_release(cache.path());
-    let resolver = resolver(record(&archive, WRONG_DIGEST), cache.path(), None, HashMap::new());
+    let resolver = resolver(
+        record(&archive, WRONG_DIGEST),
+        cache.path(),
+        None,
+        HashMap::new(),
+    );
 
     let error = ensure_loaded_with_storage_callback(&resolver, &Config::default(), ID)
         .await

@@ -193,14 +193,11 @@ pub(in crate::modules) async fn ensure_loaded(
         if state.key_path != key_path {
             return Err("security secret scope changed after module admission".into());
         }
-        let module_config = state.module_config(config)?;
-        resolver
-            .ensure_loaded_with_host_callbacks(
-                id,
-                std::sync::Arc::clone(&state.binding),
-                module_config,
-            )
-            .await?;
+        // Confirm the admitted module still retains this binding. Re-presenting
+        // it would be refused (a binding is spent once a module takes it), and
+        // the single-binding path accepts only a local-file source, so it
+        // failed every later call on a host served from the release.
+        super::super::ops::callback_load::confirm(resolver, id, &state.binding).await?;
         register_scope(config, state).await?;
         return Ok(());
     }

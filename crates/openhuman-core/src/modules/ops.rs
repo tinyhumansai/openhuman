@@ -39,7 +39,7 @@ use tinybus::module::{
 };
 use tinybus::Proxy;
 
-mod callback_load;
+pub(super) mod callback_load;
 mod list;
 pub use list::list;
 
@@ -286,8 +286,7 @@ async fn ensure_loaded_with_storage_callback(
                 .await
                 .map_err(|error| error.to_string())?;
             let mut module_config = module_config(&config, &id).await;
-            module_config["storage_callback"] =
-                serde_json::json!(binding.unique_name().as_str());
+            module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
             Ok((binding, module_config, served))
         }
     })
@@ -377,7 +376,8 @@ async fn ensure_loaded_with_computer_callback(
             let binding = super::browser_egress_host::prepare_consequence_callback(runtime)
                 .await
                 .map_err(|error| error.to_string())?;
-            let module_config = module_config_with_consequence_callback(&config, &id, &binding).await;
+            let module_config =
+                module_config_with_consequence_callback(&config, &id, &binding).await;
             Ok((binding, module_config, ()))
         }
     })
