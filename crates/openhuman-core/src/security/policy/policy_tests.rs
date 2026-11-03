@@ -107,7 +107,10 @@ pub(super) async fn assert_every_policy_gate_allows() {
         root.join("notes.md")
     );
     assert_eq!(
-        policy.validate_parent_path("new/dir/out.txt").await.unwrap(),
+        policy
+            .validate_parent_path("new/dir/out.txt")
+            .await
+            .unwrap(),
         root.join("new/dir/out.txt")
     );
     assert!(
@@ -213,8 +216,14 @@ fn an_unchecked_host_action_is_classed_from_its_permission_level() {
     use tinytools::PermissionLevel as Level;
     assert_eq!(unchecked_action_class(Level::ReadOnly, false), Class::Read);
     assert_eq!(unchecked_action_class(Level::None, false), Class::Read);
-    assert_eq!(unchecked_action_class(Level::ReadOnly, true), Class::Network);
+    assert_eq!(
+        unchecked_action_class(Level::ReadOnly, true),
+        Class::Network
+    );
     assert_eq!(unchecked_action_class(Level::Write, false), Class::Write);
     assert_eq!(unchecked_action_class(Level::Execute, false), Class::Write);
-    assert_eq!(unchecked_action_class(Level::Dangerous, true), Class::Destructive);
+    assert_eq!(
+        unchecked_action_class(Level::Dangerous, true),
+        Class::Destructive
+    );
 }

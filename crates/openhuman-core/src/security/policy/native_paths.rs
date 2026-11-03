@@ -143,7 +143,10 @@ impl SecurityPolicy {
         let mut ancestor = absolute.parent().map(std::path::Path::to_path_buf);
         while let Some(dir) = ancestor {
             if let Ok(resolved) = tokio::fs::canonicalize(&dir).await {
-                return Ok(missing.iter().rev().fold(resolved, |at, part| at.join(part)));
+                return Ok(missing
+                    .iter()
+                    .rev()
+                    .fold(resolved, |at, part| at.join(part)));
             }
             match dir.file_name() {
                 Some(name) => missing.push(name.to_owned()),

@@ -282,7 +282,8 @@ pub async fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinit
     #[cfg(not(feature = "security-module"))]
     let _ = config;
     #[cfg(feature = "security-module")]
-    let Some(config) = config else {
+    let Some(config) = config
+    else {
         return Some(ToolDefinitionScanHit {
             code: "scan.unavailable".into(),
             message: describe("scan.unavailable").into(),

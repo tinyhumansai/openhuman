@@ -21,6 +21,10 @@ fn a_runtime_without_a_security_switch_follows_the_build() {
         );
     } else {
         assert_eq!(outcome.runs, 1, "tool result: {}", outcome.tool_result);
-        assert!(outcome.tool_result.contains("probe ran"), "{}", outcome.tool_result);
+        assert!(
+            outcome.tool_result.contains("probe ran"),
+            "{}",
+            outcome.tool_result
+        );
     }
 }

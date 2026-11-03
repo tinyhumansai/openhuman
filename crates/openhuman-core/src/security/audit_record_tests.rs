@@ -60,7 +60,10 @@ fn an_event() -> HostAuditEvent {
 #[tokio::test]
 async fn a_build_without_the_module_records_nothing_and_succeeds() {
     let ctx = crate::core::runtime::DispatchCtx::ambient();
-    assert_eq!(record(&ctx, Some(&audited_config()), an_event()).await, Ok(()));
+    assert_eq!(
+        record(&ctx, Some(&audited_config()), an_event()).await,
+        Ok(())
+    );
 }
 
 #[cfg(feature = "security-module")]

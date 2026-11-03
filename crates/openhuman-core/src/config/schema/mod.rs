@@ -101,13 +101,13 @@ mod modules;
 mod observability;
 mod privacy;
 mod prompt_screen;
-mod security_mode;
 mod proxy;
 mod routes;
 mod runtime;
 mod runtime_local_jail;
 mod runtime_openshell;
 mod scheduler_gate;
+mod security_mode;
 mod task_sources;
 mod tokenjuice;
 mod tools;
@@ -143,7 +143,6 @@ pub use modules::{
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
 pub use privacy::{PrivacyConfig, PrivacyMode};
 pub use prompt_screen::{PromptScreenConfig, PromptScreenMode};
-pub use security_mode::{SecurityMode, SecurityModeConfig};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
@@ -159,6 +158,7 @@ pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGate
 pub use security::{
     AuditConfig, ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig,
 };
+pub use security_mode::{SecurityMode, SecurityModeConfig};
 pub use task_sources::TaskSourcesConfig;
 pub use tinychannels_bus::config::{
     ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig, IrcConfig,

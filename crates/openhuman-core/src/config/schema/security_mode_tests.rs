@@ -14,7 +14,10 @@ fn mode_serializes_snake_case() {
         serde_json::to_string(&SecurityMode::Enforce).unwrap(),
         "\"enforce\""
     );
-    assert_eq!(serde_json::to_string(&SecurityMode::Off).unwrap(), "\"off\"");
+    assert_eq!(
+        serde_json::to_string(&SecurityMode::Off).unwrap(),
+        "\"off\""
+    );
 }
 
 #[test]

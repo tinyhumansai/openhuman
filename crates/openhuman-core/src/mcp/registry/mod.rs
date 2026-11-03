@@ -469,18 +469,17 @@ pub(crate) async fn tools_safe_for_agent(
             "meta": &tool.meta,
         });
         #[cfg(feature = "security-module")]
-        let result =
-            if let Some(config) = embedder_config.as_ref() {
-                match crate::modules::security::client(&config).await {
-                    Ok(client) => client
-                        .scan_tool_definition(tool.name.clone(), &definition)
-                        .await
-                        .ok(),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            };
+        let result = if let Some(config) = embedder_config.as_ref() {
+            match crate::modules::security::client(&config).await {
+                Ok(client) => client
+                    .scan_tool_definition(tool.name.clone(), &definition)
+                    .await
+                    .ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
         #[cfg(not(feature = "security-module"))]
         let result: Option<tinysecurity_bus::ScanResponse> = None;
         let reason = match result {

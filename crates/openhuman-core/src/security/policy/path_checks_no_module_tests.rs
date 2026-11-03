@@ -24,7 +24,10 @@ async fn missing_tinysecurity_allows_the_protected_floor_and_resolves_paths_loca
         .validate_path("notes.md")
         .await
         .expect("file access needs no TinySecurity authorization when it is not built");
-    assert_eq!(resolved, dir.path().join("notes.md").canonicalize().unwrap());
+    assert_eq!(
+        resolved,
+        dir.path().join("notes.md").canonicalize().unwrap()
+    );
 }
 
 #[tokio::test]

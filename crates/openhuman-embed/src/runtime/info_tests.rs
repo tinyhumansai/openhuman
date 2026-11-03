@@ -146,7 +146,10 @@ fn security_is_reported_enforced_unless_the_host_turns_it_off_or_the_module_is_a
         .describe()
         .configuration;
     assert!(!off.security_enforced);
-    assert!(!off.prompt_screen_enforced, "security off implies the screen is off");
+    assert!(
+        !off.prompt_screen_enforced,
+        "security off implies the screen is off"
+    );
 }
 #[test]
 fn metadata_written_before_the_security_field_reads_as_enforced() {

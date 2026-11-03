@@ -19,5 +19,9 @@ fn a_runtime_with_security_off_runs_the_tool_the_model_calls() {
         "{}",
         outcome.tool_result
     );
-    assert!(outcome.tool_result.contains("probe ran"), "{}", outcome.tool_result);
+    assert!(
+        outcome.tool_result.contains("probe ran"),
+        "{}",
+        outcome.tool_result
+    );
 }
