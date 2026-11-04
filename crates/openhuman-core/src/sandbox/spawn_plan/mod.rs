@@ -201,10 +201,10 @@ fn options(policy: &SandboxPolicy, host_run: bool) -> SandboxPlanOptions2 {
         preferred_backend: match policy.backend {
             SandboxBackendKind::None => None,
             SandboxBackendKind::Local => Some(SandboxBackend::Jail),
-            // OpenShell is the only container executor declared for it.
-            SandboxBackendKind::Docker | SandboxBackendKind::OpenShell => {
-                Some(SandboxBackend::Docker)
-            }
+            // OpenShell and agent37 are container executors declared for it.
+            SandboxBackendKind::Docker
+            | SandboxBackendKind::OpenShell
+            | SandboxBackendKind::Agent37 => Some(SandboxBackend::Docker),
         },
         require_preferred_backend: policy.backend != SandboxBackendKind::None,
         no_workspace: !policy.mount_workspace,
@@ -232,8 +232,9 @@ async fn probe(
             .map_err(|error| format!("docker status: {error}"))
     };
     let (jail, docker) = match policy.backend {
-        // A box is created on the tenant's first command; there is nothing to probe.
+        // A box is created on first use; there is nothing to probe.
         SandboxBackendKind::OpenShell => return Ok(vec![executors::openshell()]),
+        SandboxBackendKind::Agent37 => return Ok(vec![executors::agent37()]),
         SandboxBackendKind::Local => (Some(jail().await), None),
         SandboxBackendKind::Docker => (None, Some(docker().await)),
         SandboxBackendKind::None => {

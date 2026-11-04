@@ -154,6 +154,11 @@ impl SandboxBackendCheck {
                 "The OpenShell backend is configured; its gateway is reached when a tenant's first box is created.",
                 "Run a sandboxed command to confirm the OpenShell gateway accepts new boxes.",
             ),
+            SandboxBackend::Agent37 => Finding::skipped(
+                "sandbox/backend",
+                "The agent37 backend is configured; its hosted service is reached when a box is created for a command.",
+                "Run a sandboxed command to confirm agent37 accepts new boxes (needs AGENT37_API_KEY).",
+            ),
             SandboxBackend::Firejail | SandboxBackend::Bubblewrap => Finding::error(
                 "sandbox/backend",
                 "The configured sandbox backend is not supported by this build.",

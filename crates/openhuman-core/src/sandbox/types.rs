@@ -18,6 +18,9 @@ pub enum SandboxBackendKind {
     /// The tenant's long-lived OpenShell box (`sandbox::openshell`).
     #[serde(rename = "openshell")]
     OpenShell,
+    /// A box per command on the hosted agent37 service (`sandbox::agent37`).
+    #[serde(rename = "agent37")]
+    Agent37,
 }
 
 /// Per-session sandbox policy resolved from agent definition, session

@@ -9,6 +9,7 @@
 //! workspace mounts, network policy, environment passthrough, and
 //! explicit elevated escape paths.
 
+pub mod agent37;
 pub mod docker;
 pub(crate) mod local_grants;
 pub(crate) mod native_jail;

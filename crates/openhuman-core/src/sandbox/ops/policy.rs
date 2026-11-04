@@ -138,6 +138,14 @@ pub async fn create_sandbox_backend_with_config(
             backend_id: None,
             isolation: None,
         }),
+        // A box is created per command on the hosted service; nothing to probe
+        // or name until that call.
+        SandboxBackendKind::Agent37 => Ok(SandboxBackendHandle {
+            kind: SandboxBackendKind::Agent37,
+            status: SandboxStatus::Ready,
+            backend_id: None,
+            isolation: None,
+        }),
     }
 }
 
