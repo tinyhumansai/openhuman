@@ -51,8 +51,8 @@ export OPENHUMAN_MODULE_PATH="$module_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MO
 core_features="$(scripts/ci/product-features.sh | sed 's/,os-keyring//' | sed 's/,security-module//')"
 
 security_pin="$(git -C vendor/tinysecurity rev-parse HEAD)"
-release_source="$(git -C vendor/tinysecurity rev-parse b53eceb948bd8dedce2176af6f0ec7bb1bd74151)"
-printf 'TinySecurity pin: %s\nPublished v0.18.4 source: %s\n' "$security_pin" "$release_source"
+release_source="$(git -C vendor/tinysecurity rev-parse 17c12844c64fe6c561f6eacd4693dcae10623642)"
+printf 'TinySecurity pin: %s\nPublished v0.19.0 source: %s\n' "$security_pin" "$release_source"
 git -C vendor/tinysecurity merge-base --is-ancestor "$release_source" "$security_pin"
 
 # Prove the library builds without the new gate before exercising it enabled.

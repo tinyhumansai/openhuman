@@ -110,7 +110,7 @@ fn module_outcome(outcome: ExecutionOutcome) -> ModuleOutcome {
     match outcome {
         ExecutionOutcome::Success => ModuleOutcome::Succeeded,
         ExecutionOutcome::Failure => ModuleOutcome::Failed,
-        ExecutionOutcome::Aborted => ModuleOutcome::Cancelled,
+        ExecutionOutcome::Aborted => ModuleOutcome::Abandoned,
     }
 }
 
@@ -308,3 +308,7 @@ impl NativeEngine {
 
 #[path = "engine_impl.rs"]
 mod engine_impl;
+
+#[cfg(test)]
+#[path = "engine_outcome_tests.rs"]
+mod outcome_tests;
