@@ -25,31 +25,38 @@ type SecurityCallbackLoads =
 static SECURITY_CALLBACK_LOADS: std::sync::LazyLock<SecurityCallbackLoads> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-/// The secret scope (its `.secret_key` path) currently using each admitted
-/// module, or no entry once that scope's owner has been released.
+/// Which secret scope (its `.secret_key` path) is using each admitted module.
 ///
 /// TinySecurity keeps the secret scope it was admitted with for the life of
 /// the module: its secret registration and audit stream cannot be replaced by
 /// reinitialization, and a loaded module is never unloaded. So a module is
 /// handed to one scope at a time. Another scope is refused while the current
-/// one is live, and may take the module over only after
-/// [`release_scope_owner`] says the current one is gone.
+/// one is live. Once the host releases the current one ([`release_scopes`]),
+/// the module may be taken over, but only by the admitting scope itself or by
+/// a scope the host declared transient ([`declare_transient_scope`]): a
+/// durable scope must never encrypt state it keeps under a master key that
+/// belongs to a different scope.
 ///
 /// A plain mutex, not the async one guarding [`SECURITY_CALLBACK_LOADS`], so a
 /// host can release its scope from a synchronous `Drop`.
-static SECURITY_SCOPE_OWNERS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, PathBuf>>,
-> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct ScopeOwnership {
+    /// The live owner of each admitted module; no entry once released.
+    owners: std::collections::HashMap<String, PathBuf>,
+    /// Scopes whose secret state does not outlive their runtime.
+    transient: std::collections::HashSet<PathBuf>,
+    /// Bumped by every release. A load that started before a release must
+    /// not publish its scope as the owner when it finishes after it.
+    epoch: u64,
+}
 
-/// Whether the secret scope at `requested` may use a module whose current
-/// owner is `owner` (`None`: released). A released module is taken over by
-/// the requesting scope.
-fn claim_scope(owner: Option<&Path>, requested: &Path) -> Result<ScopeClaim, String> {
-    match owner {
-        Some(owner) if owner == requested => Ok(ScopeClaim::Held),
-        Some(_) => Err("security secret scope changed after module admission".into()),
-        None => Ok(ScopeClaim::TakenOver),
-    }
+static SECURITY_SCOPE_OWNERSHIP: std::sync::LazyLock<std::sync::Mutex<ScopeOwnership>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn ownership() -> std::sync::MutexGuard<'static, ScopeOwnership> {
+    SECURITY_SCOPE_OWNERSHIP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// How a later caller came to use an admitted module's secret scope.
@@ -61,32 +68,73 @@ enum ScopeClaim {
     TakenOver,
 }
 
-fn scope_owner(id: &str) -> Option<PathBuf> {
-    SECURITY_SCOPE_OWNERS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(id)
-        .cloned()
-}
-
-fn set_scope_owner(id: &str, key_path: PathBuf) {
-    SECURITY_SCOPE_OWNERS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(id.to_owned(), key_path);
-}
-
-/// Mark the scope using module `id` as released. See
-/// [`super::release_secret_scope`].
-pub(in crate::modules) fn release_scope_owner(id: &str) {
-    let released = SECURITY_SCOPE_OWNERS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(id)
-        .is_some();
-    if released {
-        log::debug!("[security] secret scope owner released module={id}");
+/// Whether the secret scope at `requested` may use a module admitted with
+/// `admitted`, whose live owner is `owner` (`None`: released).
+fn claim_scope(
+    owner: Option<&Path>,
+    admitted: &Path,
+    requested: &Path,
+    transient: bool,
+) -> Result<ScopeClaim, String> {
+    match owner {
+        Some(owner) if owner == requested => Ok(ScopeClaim::Held),
+        Some(_) => Err("security secret scope changed after module admission".into()),
+        None if requested == admitted || transient => Ok(ScopeClaim::TakenOver),
+        None => Err("security secret scope changed after module admission; \
+             a durable scope cannot take over a released one"
+            .into()),
     }
+}
+
+/// The current release epoch, captured before a load is scheduled.
+pub(in crate::modules) fn scope_epoch() -> u64 {
+    ownership().epoch
+}
+
+/// Claim module `id` for `requested`, given the scope it was admitted with.
+fn claim(id: &str, admitted: &Path, requested: &Path) -> Result<ScopeClaim, String> {
+    let ownership = ownership();
+    claim_scope(
+        ownership.owners.get(id).map(PathBuf::as_path),
+        admitted,
+        requested,
+        ownership.transient.contains(requested),
+    )
+}
+
+/// Record `key_path` as the live owner of module `id`, unless a release
+/// happened since `epoch` was captured: the load that started before it
+/// belongs to a released runtime. Returns whether the owner was recorded.
+fn publish_owner(id: &str, key_path: PathBuf, epoch: u64) -> bool {
+    let mut ownership = ownership();
+    if ownership.epoch != epoch {
+        log::debug!("[security] scope released during load; owner not recorded module={id}");
+        return false;
+    }
+    ownership.owners.insert(id.to_owned(), key_path);
+    true
+}
+
+fn secret_key_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(".secret_key")
+}
+
+/// Declare the config directory `config_dir` transient. See
+/// [`crate::security::declare_transient_secret_scope`].
+pub(crate) fn declare_transient_scope(config_dir: &Path) {
+    ownership()
+        .transient
+        .insert(secret_key_path(config_dir));
+}
+
+/// Release every module's live owner and forget the declared transient
+/// scopes. See [`crate::security::release_secret_scope`].
+pub(crate) fn release_scopes() {
+    let mut ownership = ownership();
+    ownership.epoch = ownership.epoch.wrapping_add(1);
+    ownership.transient.clear();
+    let released = ownership.owners.drain().count();
+    log::debug!("[security] secret scope owners released count={released}");
 }
 
 impl SecurityCallbackState {
@@ -242,31 +290,30 @@ fn opaque_id(label: &str, path: &Path, suffix: &str) -> String {
     format!("{:x}", hasher.finalize())[..32].to_owned()
 }
 
+/// Admit module `id` for `config`'s secret scope, or confirm the admitted one
+/// may serve it. `epoch` is [`scope_epoch`] captured when the caller asked,
+/// before the load was scheduled.
 pub(in crate::modules) async fn ensure_loaded(
     resolver: &Resolver,
     config: &Config,
     id: &str,
+    epoch: u64,
 ) -> Result<(), String> {
     let mut loads = SECURITY_CALLBACK_LOADS.lock().await;
     if let Some(state) = loads.get(id) {
-        let key_path = config
-            .config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(".secret_key");
-        let claim = claim_scope(scope_owner(id).as_deref(), &key_path)?;
+        let key_path = secret_key_path(config.config_path.parent().unwrap_or_else(|| Path::new(".")));
+        let claim = claim(id, &state.key_path, &key_path)?;
         // Confirm the admitted module still retains this binding. Re-presenting
         // it would be refused (a binding is spent once a module takes it), and
         // the single-binding path accepts only a local-file source, so it
         // failed every later call on a host served from the release.
         super::super::ops::callback_load::confirm(resolver, id, &state.binding).await?;
         register_scope(config, state).await?;
-        if claim == ScopeClaim::TakenOver {
-            // The loads lock is held, so no other caller claims it meanwhile.
+        // The loads lock is held, so no other caller claims it meanwhile.
+        if claim == ScopeClaim::TakenOver && publish_owner(id, key_path, epoch) {
             log::info!(
                 "[security] secret scope taken over after its owner was released module={id}"
             );
-            set_scope_owner(id, key_path);
         }
         return Ok(());
     }
@@ -276,7 +323,7 @@ pub(in crate::modules) async fn ensure_loaded(
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    let key_path = key_dir.join(".secret_key");
+    let key_path = secret_key_path(&key_dir);
     let user_id =
         crate::security::secret_storage::encrypted_store::keyring_user_id_from_dir(&key_dir);
     let subject = tinysecurity_bus::SubjectScope {
@@ -392,7 +439,7 @@ pub(in crate::modules) async fn ensure_loaded(
         .ok_or_else(|| "admitted security callback state unavailable".to_owned())?;
     candidates.clear();
     loads.insert(id.to_owned(), std::sync::Arc::clone(&state));
-    set_scope_owner(id, state.key_path.clone());
+    publish_owner(id, state.key_path.clone(), epoch);
 
     register_scope(config, &state).await?;
     Ok(())
