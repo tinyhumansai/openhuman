@@ -10,6 +10,9 @@ on:
       - vendor/tinysecurity
       - crates/openhuman-core/Cargo.toml
       - crates/openhuman-embed/Cargo.toml
+      - crates/openhuman-embed/src/runtime/**
+      - crates/openhuman-embed/tests/security_live_scope.rs
+      - crates/openhuman-embed/tests/security_second_runtime.rs
       - crates/openhuman-tinyhumans/Cargo.toml
       - crates/openhuman-rpc/Cargo.toml
       - crates/openhuman-cli/Cargo.toml

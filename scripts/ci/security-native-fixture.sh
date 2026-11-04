@@ -106,3 +106,18 @@ bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhum
   --features "$core_features,security-module" \
   native_fixture_denies_an_approval_when_the_audit_write_fails \
   -- --ignored --exact --nocapture
+
+# TinySecurity keeps the secret scope it was admitted with for the process. An
+# embedded runtime built after an earlier one was released takes the module
+# over; another scope is refused while the admitting runtime is live.
+bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-embed \
+  --test security_second_runtime --no-default-features \
+  --features "$core_features,security-module" \
+  a_runtime_built_after_another_is_released_still_screens_its_prompts \
+  -- --ignored --exact --nocapture
+
+bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-embed \
+  --test security_live_scope --no-default-features \
+  --features "$core_features,security-module" \
+  a_different_secret_scope_is_refused_while_the_admitting_runtime_is_live \
+  -- --ignored --exact --nocapture
