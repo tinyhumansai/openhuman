@@ -21,7 +21,8 @@
 //! [`disabled_for`], which also honours that configuration's own `[security]`.
 //!
 //! Some things stay on when security is disabled, because they are not module
-//! checks: `[privacy] mode = "local_only"` still refuses external egress; the
+//! checks: `[privacy] mode = "local_only"` still refuses external egress and
+//! shell commands that may reach the network; the
 //! approval gate is unchanged, so a call a channel, flow or origin requires a
 //! person to approve still waits for one (and is refused where no approval
 //! engine exists), although the module-driven approval prompts are skipped

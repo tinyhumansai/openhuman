@@ -1,6 +1,7 @@
 //! Host context and adapters for TinySecurity policy operations.
 
 mod enforcement;
+mod local_only_commands;
 mod module_gate;
 mod native_commands;
 mod native_paths;

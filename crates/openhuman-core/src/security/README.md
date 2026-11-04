@@ -16,8 +16,11 @@ decisions:
   build without the `security-module` feature, or when the booted config says
   `[security] mode = "off"` (`RuntimeBuilder::security` for an embedder). The
   checks are then permissive: the prompt screen, tool classification and
-  approvals, path checks, the action budget and the audit trail allow, egress
-  is permitted unless `[privacy] mode = "local_only"`, and redaction passes tool
+  approvals, path checks (no path policy at all, protected floor included),
+  the action budget and the audit trail allow, egress and network shell
+  commands are permitted unless `[privacy] mode = "local_only"`
+  (`policy/local_only_commands.rs` classifies shell commands then), and
+  redaction passes tool
   output, diagnostics and log URLs through unredacted. The approval gate is
   unchanged: approvals a channel, flow or origin demands still need a person
   (and an engine), while the module's own approval prompts are skipped. The

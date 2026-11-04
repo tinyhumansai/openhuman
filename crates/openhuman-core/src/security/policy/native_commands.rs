@@ -102,7 +102,9 @@ impl SecurityPolicy {
         query: CommandQuery<'_>,
     ) -> Result<CommandClass, Refusal> {
         if crate::security::switch::disabled().is_some() {
-            return Ok(unchecked_class(&query));
+            return self
+                .unchecked_command_verdict(&query)
+                .map(|verdict| verdict.class);
         }
         #[cfg(feature = "security-module")]
         {
@@ -129,13 +131,11 @@ impl SecurityPolicy {
     /// Asked even when autonomy is disabled: a disabled scope allows every
     /// command except those naming TinySecurity's protected paths. With security
     /// disabled (`crate::security::switch`) nothing is asked and every command
-    /// is allowed without approval.
+    /// is allowed without approval, except one that may reach the network under
+    /// local-only privacy mode (`local_only_commands`).
     pub async fn check_command(&self, query: CommandQuery<'_>) -> Result<CommandVerdict, Refusal> {
         if crate::security::switch::disabled().is_some() {
-            return Ok(CommandVerdict {
-                class: unchecked_class(&query),
-                gate: GateDecision::Allow,
-            });
+            return self.unchecked_command_verdict(&query);
         }
         match &self.command_gateway {
             Some(gateway) => gateway.decide(self, &query).await,
@@ -191,13 +191,6 @@ impl SecurityPolicy {
         }
         self.native_class_gate_blocking(class)
     }
-}
-
-/// The class of a command nobody classified (security disabled): what the model
-/// declared, or `Write` when it declared nothing. Informational only, since a
-/// disabled scope allows every class.
-fn unchecked_class(query: &CommandQuery<'_>) -> CommandClass {
-    query.declared.unwrap_or(CommandClass::Write)
 }
 
 /// A class-only question: the gate for a command of `class`, with no command
@@ -260,6 +253,11 @@ pub(crate) fn refusal_message(denial: Refusal) -> String {
         Refusal::Unavailable => format!(
             "{POLICY_BLOCKED_MARKER} TinySecurity command authorization unavailable; command denied"
         ),
+        Refusal::LocalOnly => format!(
+            "{POLICY_BLOCKED_MARKER} Local-only privacy mode is active: this command may reach \
+             the network. Do not retry it; use a local alternative, or disable local-only mode \
+             in Settings to allow it."
+        ),
     }
 }
 
@@ -276,6 +274,9 @@ pub enum Refusal {
     Category,
     /// The module could not answer: missing, untrusted, faulted or too slow.
     Unavailable,
+    /// Local-only privacy mode is active and the command may reach the network
+    /// (security disabled, so the host decided; see `local_only_commands`).
+    LocalOnly,
 }
 
 impl std::fmt::Display for Refusal {

@@ -391,3 +391,46 @@ async fn an_enforcing_gate_denies_a_tool_the_module_cannot_classify() {
         "{write:?}"
     );
 }
+
+/// Local-only privacy mode still refuses a shell command that may reach the
+/// network when security is disabled; a local command still runs.
+async fn local_only_shell_decisions() -> (GateDecision, GateDecision) {
+    let _mode =
+        crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::LocalOnly);
+    let gate = gate(AutonomyLevel::Full);
+    let network = gate
+        .authorize_tool(&req(
+            SHELL_TOOL,
+            json!({ "command": "curl https://example.com" }),
+        ))
+        .await
+        .unwrap();
+    let local = gate
+        .authorize_tool(&req(SHELL_TOOL, json!({ "command": "ls -la" })))
+        .await
+        .unwrap();
+    (network, local)
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_keeps_local_only_for_the_shell_tool() {
+    let (network, local) = local_only_shell_decisions().await;
+    assert!(!network.is_allowed());
+    assert!(network
+        .denial_reason()
+        .is_some_and(|reason| reason.contains("Local-only privacy mode")));
+    assert_eq!(local, GateDecision::Allow);
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_keeps_local_only_for_the_shell_tool() {
+    let _off = crate::security::switch::off_for_this_thread();
+    let (network, local) = local_only_shell_decisions().await;
+    assert!(!network.is_allowed());
+    assert!(network
+        .denial_reason()
+        .is_some_and(|reason| reason.contains("Local-only privacy mode")));
+    assert_eq!(local, GateDecision::Allow);
+}
