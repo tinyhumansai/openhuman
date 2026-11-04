@@ -496,7 +496,9 @@ uuid = { version = "1", features = ["v4"] }
 # the library crates' own manifests (`default-features = false`; the gates come
 # from this crate's features through `openhuman-rpc`), so the dev graphs unify
 # and `cargo test -p` reuses one core build.
-openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false }
+# `test-keyring-consent` answers the credential store's keyring prompts in the
+# in-process tests; dev-dependency features never reach the shipped binary.
+openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false, features = ["test-keyring-consent"] }
 openhuman-embed = { workspace = true }
 openhuman-tinyhumans = { workspace = true }
 tinymemory-tools = { path = "../../vendor/tinymemory/crates/tinymemory-tools" }

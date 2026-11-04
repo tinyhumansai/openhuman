@@ -271,6 +271,9 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # schedule itself is pinned by a unit test that ignores this variable.
   export OPENHUMAN_MODEL_RETRY_BACKOFF_MS="${OPENHUMAN_MODEL_RETRY_BACKOFF_MS:-100}"
 fi
+# Credential saves ask the user to approve each TinySecurity keyring operation;
+# the test builds answer for them (keyring_consent/test_responder.rs).
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 
 log "running complete instrumented Rust suite (runner: ${OH_COV_RUNNER:-cargo})"
 llvm_cov clean --workspace

@@ -233,7 +233,8 @@ fn a_pending_prompt_is_listed_until_it_is_decided_or_expires() {
 fn consent_request(call_id: &str, timeout_ms: u32) -> tinysecurity_bus::KeyringConsentRequest2 {
     tinysecurity_bus::KeyringConsentRequest2 {
         caller: tinysecurity_bus::CallerContext {
-            agent: "openhuman.credentials".into(),
+            // Not the credential store, which test builds answer.
+            agent: "registry-test".into(),
             call_id: call_id.into(),
             ..Default::default()
         },
@@ -312,4 +313,19 @@ async fn a_caller_that_goes_away_releases_its_reservation() {
     assert!(waiting.await.unwrap_err().is_cancelled());
     assert!(!reserved());
     assert_eq!(take_operation_outcome(call_id), None);
+}
+
+#[tokio::test]
+async fn a_test_build_answers_the_credential_stores_prompts() {
+    let mut request = consent_request("credential-store-prompt", 5_000);
+    request.caller.agent = "openhuman.credentials".into();
+    // Unit tests approve unless the lane says otherwise.
+    let expected = match std::env::var("OPENHUMAN_TEST_KEYRING_CONSENT").as_deref() {
+        Ok("deny") => Some(false),
+        Ok("approve") | Err(_) => Some(true),
+        Ok(_) => None,
+    };
+    if expected.is_some() {
+        assert_eq!(request_approval(request).await, expected);
+    }
 }

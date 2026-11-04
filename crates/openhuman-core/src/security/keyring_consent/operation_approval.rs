@@ -162,6 +162,10 @@ pub(crate) async fn request_approval(
     };
     crate::core::bus::BUS
         .publish(crate::core::events::DomainEvent::KeyringAccessApprovalRequested(shown));
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    if let Some(approved) = super::test_responder::decision(&request.caller.agent) {
+        resolve_approval(&prompt.request_id, approved);
+    }
 
     let decision = await_decision(pending(), &prompt.request_id, waiter, timeout).await;
     reservation.outcome = match decision {

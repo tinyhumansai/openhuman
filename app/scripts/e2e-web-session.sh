@@ -308,6 +308,9 @@ export OPENHUMAN_CORE_TOKEN="$PW_CORE_RPC_TOKEN"
 # disclosure choreography. Advertise the compiled tool packs for this harness
 # core only; production hosts retain the fail-closed packed default.
 export OPENHUMAN_E2E=1
+# Sign-in stores the session through TinySecurity's keyring, which asks the
+# user to approve each operation; the e2e-test-support core answers for them.
+export OPENHUMAN_TEST_KEYRING_CONSENT="${OPENHUMAN_TEST_KEYRING_CONSENT:-approve}"
 # The skills registry defaults to a public HermesHub fetch. The browser E2E
 # lane must remain deterministic and offline, so serve its compact catalog
 # fixture from the local mock backend instead. The registry's fetch guard
