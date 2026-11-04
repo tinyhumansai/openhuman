@@ -46,19 +46,18 @@ const ALL = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, true]));
 const NONE = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, false]));
 const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
 
-test("EX63 verifies preinstalled tools before cache setup and validation", () => {
+test("EX63 verifies preinstalled tools before validation", () => {
   const privateJob = ciLanes.slice(
     ciLanes.indexOf("  ex63:"),
     ciLanes.indexOf("  plan:"),
   );
   const verify = privateJob.indexOf("- name: Verify private runner contract");
-  const cache = privateJob.indexOf("- name: Setup Tinymold");
   const detect = privateJob.indexOf("- name: Detect changed areas");
   const start = privateJob.indexOf("- name: Start lanes");
-  assert.ok(verify >= 0 && cache > verify && detect > cache && start > detect);
+  assert.ok(verify >= 0 && detect > verify && start > detect);
   assert.match(privateJob, /bash scripts\/ci\/self-hosted\/verify-runner\.sh/);
   assert.doesNotMatch(privateJob, /setup-python|apt-get|JQ_SHA256|sccache/);
-  assert.match(privateJob, /Save Tinymold cache[\s\S]*continue-on-error: true/);
+  assert.doesNotMatch(privateJob, /tinymold|TINYMOLD/i);
 });
 
 const plans = () => [

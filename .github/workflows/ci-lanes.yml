@@ -9,7 +9,8 @@
 #   ex63    one job on one throwaway Firecracker microVM (runner group
 #           `openhuman-ex63`, host code in tinyhumansai/gh-hosted-runner). Lanes
 #           run sequentially and reuse compatible target dirs under target/.
-#           Tinymold uses the signed remote store; package caches stay on /cache.
+#           Builds compile from scratch each run (no remote compile cache);
+#           package caches stay on /cache.
 #   hosted  the same lanes split over a few GitHub-hosted jobs sized to fit
 #           those runners, with GitHub's Actions cache.
 #
@@ -75,29 +76,6 @@ jobs:
 
       - name: Verify private runner contract
         run: bash scripts/ci/self-hosted/verify-runner.sh
-
-      - name: Set Tinymold diagnostic log path
-        # RUNNER_TEMP is available to steps, but not to the job-level env block.
-        run: echo "TINYMOLD_LOG=$RUNNER_TEMP/tinymold.log" >> "$GITHUB_ENV"
-
-      - name: Setup Tinymold
-        id: tinymold
-        uses: tinyhumansai/tinymold@c4a7ea77ce4a95bf0a65fb403de310bd624197d4
-        with:
-          install: none
-          backend: remote
-          store: /scratch/tinymold
-          # Instrumented test executables link the whole core (~0.5-1 GB each,
-          # ~90 GB per run). Stored, they share inodes with the target, so
-          # neither copy can be freed: that filled the 160 GB scratch disk
-          # (runs 39315551099, 39331958941, 39340683561). Scratch is 320 GB
-          # now, so they are stored and the core test harness is not
-          # recompiled on every run.
-          max-executable-size: 2G
-          remote-url: ${{ env.TINYMOLD_REMOTE_URL }}
-          remote-auth: ${{ env.TINYMOLD_REMOTE_AUTH }}
-          remote-signing-key: ${{ env.TINYMOLD_REMOTE_SIGNING_KEY }}
-          remote-trusted-keys: ${{ env.TINYMOLD_REMOTE_TRUSTED_KEYS }}
 
       - name: Detect changed areas
         id: filter
@@ -175,31 +153,6 @@ jobs:
           (steps.filter.outputs['rust-core'] == 'true' ||
            steps.filter.outputs['rust-tauri'] == 'true')
         run: node scripts/ci/self-hosted/verify-linkage.mjs
-
-      - name: Start cache save timer
-        if: ${{ always() && steps.tinymold.outcome == 'success' }}
-        run: |
-          mkdir -p ci-out
-          date +%s > ci-out/cache-save-start
-
-      - name: Save Tinymold cache
-        if: ${{ always() && steps.tinymold.outcome == 'success' }}
-        continue-on-error: true
-        # A measured cache push took 8m36s; keep headroom and a finite bound.
-        timeout-minutes: 15
-        uses: tinyhumansai/tinymold/save@c4a7ea77ce4a95bf0a65fb403de310bd624197d4
-
-      - name: Record cache statistics and save time
-        if: ${{ always() && steps.tinymold.outcome == 'success' }}
-        run: |
-          mkdir -p ci-out
-          tinymold stats > ci-out/tinymold-stats.txt || true
-          # One line per compile (outcome, crate, time, why not stored), for
-          # ranking the misses after the run.
-          [ -f "${TINYMOLD_LOG:-}" ] && cp "${TINYMOLD_LOG}" ci-out/tinymold.log || true
-          if [ -f ci-out/cache-save-start ]; then
-            echo "$(( $(date +%s) - $(cat ci-out/cache-save-start) ))" > ci-out/cache-save-seconds.txt
-          fi
 
       - name: Upload lane logs, timings and coverage
         if: always()
