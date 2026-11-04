@@ -152,3 +152,50 @@ env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
   --features "$core_features,security-module" \
   native_fixture_serves_later_calls_after_a_release_admission \
   -- --ignored --exact --nocapture
+
+# The callback-bound modules load the same way in the shipped app: a pinned
+# release with no local-file source. Stage each verified archive as a bundled
+# module and check that it admits and reloads.
+callback_modules="tinymcp,tinyeventqueues,tinychannels,tinycomputer"
+loadable_modules=""
+while IFS=$'\t' read -r module_id module_url module_archive module_sha; do
+  module_path="$OPENHUMAN_TEST_SECURITY_FIXTURE_DIR/$module_archive"
+  curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
+    "$module_url" --output "$module_path"
+  node - "$module_path" "$module_sha" <<'NODE'
+const { createHash } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+
+const [file, expected] = process.argv.slice(2);
+const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+if (actual !== expected) {
+  throw new Error(`callback module fixture digest mismatch: expected ${expected}, got ${actual}`);
+}
+NODE
+  module_version="${module_archive#"$module_id"-module-}"
+  module_version="${module_version#"$module_id"-}"
+  module_version="${module_version%%-"$host_key"*}"
+  stage_bundled "$module_id" "$module_version" "$module_path" "$module_archive"
+  # A Linux module that links a system library this runner lacks (TinyComputer
+  # links libxdo and libasound) cannot be dlopened here at all; say so and
+  # check the rest rather than fail on the runner's package set.
+  if [[ "$(uname -s)" == Linux ]]; then
+    module_dir="$bundled_dir/$module_id/$module_version/$host_key"
+    missing="$(find "$module_dir" -name '*.so' -exec ldd {} + | awk '/not found/ {print $1}' | sort -u | tr '\n' ' ')"
+    if [[ -n "$missing" ]]; then
+      echo "callback module fixture: skipping $module_id; this runner lacks: $missing" >&2
+      continue
+    fi
+  fi
+  loadable_modules="${loadable_modules:+$loadable_modules,}$module_id"
+done < <(node scripts/ci/self-hosted/test-module-assets.mjs "$host_key" "$callback_modules")
+echo "callback module fixture: checking $loadable_modules" >&2
+test -n "$loadable_modules"
+env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
+  OPENHUMAN_TEST_CALLBACK_MODULES="$loadable_modules" \
+  OPENHUMAN_KEYRING_MASTER_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')" \
+  bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
+  --test callback_module_release_fixture --no-default-features \
+  --features "$core_features,security-module" \
+  native_fixture_loads_callback_modules_from_a_release_source \
+  -- --ignored --exact --nocapture
