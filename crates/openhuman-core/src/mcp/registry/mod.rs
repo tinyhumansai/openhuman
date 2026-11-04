@@ -470,7 +470,7 @@ pub(crate) async fn tools_safe_for_agent(
         });
         #[cfg(feature = "security-module")]
         let result = if let Some(config) = embedder_config.as_ref() {
-            match crate::modules::security::client(&config).await {
+            match crate::modules::security::client(config).await {
                 Ok(client) => client
                     .scan_tool_definition(tool.name.clone(), &definition)
                     .await
