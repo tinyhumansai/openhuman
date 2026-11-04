@@ -299,6 +299,7 @@ fn make_info(
         ("integrations", services.integrations),
         ("memory_sync", services.memory_sync),
     ];
+    let security_enforced = openhuman_core::security::switch::disabled_for(Some(config)).is_none();
     RuntimeInfo {
         schema_version: 1,
         configuration_resolved: true,
