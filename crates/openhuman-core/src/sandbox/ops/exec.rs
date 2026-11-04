@@ -329,6 +329,16 @@ pub(crate) async fn execute_resolved(
                     .await
                     .map(ShellRunOutcome::Finished)
             }
+            SandboxBackendKind::Agent37 => {
+                crate::sandbox::spawn_plan::consume(&planned)
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("Sandbox plan could not be consumed: {error}")
+                    })?;
+                crate::sandbox::agent37::execute(ctx, &config, command, &extra_env, timeout)
+                    .await
+                    .map(ShellRunOutcome::Finished)
+            }
         }
     }
 }
@@ -365,6 +375,11 @@ async fn execute_unchecked(
         }
         SandboxBackendKind::OpenShell => {
             crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
+                .await
+                .map(ShellRunOutcome::Finished)
+        }
+        SandboxBackendKind::Agent37 => {
+            crate::sandbox::agent37::execute(ctx, &config, command, &extra_env, timeout)
                 .await
                 .map(ShellRunOutcome::Finished)
         }

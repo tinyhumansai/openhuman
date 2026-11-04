@@ -20,6 +20,9 @@ pub(crate) const DOCKER_EXECUTOR: &str = "tinybox-docker";
 /// The OpenShell executor's identity on the bus. It is declared as a container
 /// backend, so a plan that selects it names it by this id.
 pub(crate) const OPENSHELL_EXECUTOR: &str = "tinybox-openshell";
+/// The agent37 executor's identity on the bus. Like OpenShell, it is a
+/// container backend reached through the TinyBox module.
+pub(crate) const AGENT37_EXECUTOR: &str = "tinybox-agent37";
 
 fn enforcement(reported: &str) -> ConstraintEnforcement2 {
     match reported.trim() {
@@ -108,6 +111,27 @@ pub(crate) fn openshell() -> SandboxExecutor2 {
     SandboxExecutor2 {
         executor_id: OPENSHELL_EXECUTOR.into(),
         capability_id: "tinybox-openshell|box|fs:own|net:denied|mem|cpu".into(),
+        backend: SandboxBackend::Docker,
+        available: true,
+        isolation: IsolationLevel2::Kernel,
+        constraints: vec![
+            support(SandboxConstraint2::Filesystem, enforced),
+            support(SandboxConstraint2::Network, enforced),
+            support(SandboxConstraint2::Memory, enforced),
+            support(SandboxConstraint2::CpuMillicores, enforced),
+        ],
+    }
+}
+
+/// A box per command on the hosted agent37 service: a container with its own
+/// workspace and egress denied, bounded by `[runtime.docker]`'s CPU and memory.
+/// Nothing on the host is mounted into it. Whether the service accepts boxes
+/// shows when a box is created for a command, so it is declared available.
+pub(crate) fn agent37() -> SandboxExecutor2 {
+    let enforced = ConstraintEnforcement2::Enforced;
+    SandboxExecutor2 {
+        executor_id: AGENT37_EXECUTOR.into(),
+        capability_id: "tinybox-agent37|box|fs:own|net:denied|mem|cpu".into(),
         backend: SandboxBackend::Docker,
         available: true,
         isolation: IsolationLevel2::Kernel,

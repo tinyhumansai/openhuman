@@ -1,0 +1,165 @@
+//! The agent37 sandbox backend: a box per command on the hosted agent37 service.
+//!
+//! With `[security.sandbox] backend = "agent37"`, a sandboxed shell command
+//! runs in a box the TinyBox module creates on agent37's hosted HTTP service,
+//! through the module's *generic* resource lifecycle (`Reserve` → `Create` with
+//! backend `"agent37"` → `Exec` → `Close`) — the same contract the Docker and
+//! OpenShell backends use. The agent37 module backend (`tinybox-agent37`) owns
+//! the HTTP transport and its credential (`AGENT37_API_KEY`, with the hosts
+//! fixed and overridable via `AGENT37_API_BASE` / `AGENT37_SANDBOX_BASE`);
+//! OpenHuman only maps policy onto the create request and runs the command.
+//!
+//! Unlike OpenShell, which keeps one long-lived box per tenant, this backend
+//! currently creates a box per command and closes it afterwards. The box image
+//! and limits come from `[runtime.docker]`, which already describes the shell
+//! sandbox; network is always `Denied`, since widening egress is the service's
+//! decision, not this host's. The command is wrapped in `timeout` so the box
+//! stops it itself, exactly as the OpenShell backend does.
+
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::time::Duration;
+
+use super::types::SandboxExecResult;
+use crate::config::Config;
+use crate::core::runtime::DispatchCtx;
+
+/// The TinyBox backend name for agent37 boxes.
+pub(crate) const BACKEND: &str = "agent37";
+
+/// `timeout` reports this exit code when it stops a command (coreutils).
+const TIMED_OUT_EXIT: i32 = 124;
+
+/// Grace added to the command deadline for the bus round-trip, so the box's own
+/// `timeout` fires before the bus call gives up.
+const BUS_REPLY_GRACE: Duration = Duration::from_secs(10);
+
+/// Run `command` in a fresh agent37 box and return its result.
+///
+/// # Errors
+///
+/// Returns an error when the TinyBox module cannot create the box or run the
+/// command (for example, no `AGENT37_API_KEY`), or when module support is
+/// compiled out.
+pub(crate) async fn execute(
+    _ctx: &DispatchCtx,
+    config: &Config,
+    command: &str,
+    extra_env: &std::collections::HashMap<OsString, OsString>,
+    timeout: Duration,
+) -> anyhow::Result<SandboxExecResult> {
+    #[cfg(feature = "modules")]
+    {
+        tracing::debug!(
+            timeout_secs = timeout.as_secs(),
+            "[sandbox:agent37] running a command"
+        );
+        run_command(config, command, extra_env, timeout).await
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (config, command, extra_env, timeout);
+        anyhow::bail!(
+            "TinyBox module support is disabled; agent37 sandbox execution is unavailable"
+        )
+    }
+}
+
+#[cfg(feature = "modules")]
+async fn run_command(
+    config: &Config,
+    command: &str,
+    extra_env: &std::collections::HashMap<OsString, OsString>,
+    timeout: Duration,
+) -> anyhow::Result<SandboxExecResult> {
+    use crate::modules::tinybox::{self, contract};
+
+    let resource = tinybox::reserve(config, contract::ReserveRequest::Resource)
+        .await
+        .map_err(|error| anyhow::anyhow!("agent37 reserve failed: {error}"))?;
+
+    let docker = &config.runtime.docker;
+    let resources = contract::ResourceLimits {
+        cpu_millis: docker
+            .cpu_limit
+            .map_or(1000, |cores| (cores * 1000.0).round() as u32),
+        memory_bytes: docker
+            .memory_limit_mb
+            .map_or(512 * 1024 * 1024, |mb| mb.saturating_mul(1024 * 1024)),
+        ..contract::ResourceLimits::default()
+    };
+
+    if let Err(error) = tinybox::create(
+        config,
+        contract::CreateRequest {
+            resource: resource.clone(),
+            backend: BACKEND.to_owned(),
+            host: contract::HostConfig::Local,
+            workspace: contract::Workspace::Image(docker.image.clone()),
+            network: contract::NetworkPolicy::Denied,
+            resources,
+            ports: Vec::new(),
+            env: BTreeMap::new(),
+        },
+    )
+    .await
+    {
+        return Err(anyhow::anyhow!("agent37 create failed: {error}"));
+    }
+
+    let secs = whole_seconds(timeout);
+    let outcome = tinybox::exec_within(
+        config,
+        contract::ExecRequest {
+            resource: resource.clone(),
+            argv: timeout_argv(secs, command),
+            cwd: None,
+            env: utf8_env(extra_env),
+            stdin: None,
+        },
+        timeout.saturating_add(BUS_REPLY_GRACE),
+    )
+    .await;
+
+    // Best-effort cleanup: close the box now rather than waiting for the
+    // service's own idle reaper.
+    let _ = tinybox::close(config, resource).await;
+
+    match outcome {
+        Ok(output) => Ok(SandboxExecResult {
+            exit_code: output.exit_code,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            timed_out: output.exit_code == TIMED_OUT_EXIT,
+        }),
+        Err(error) => Err(anyhow::anyhow!("agent37 execution failed: {error}")),
+    }
+}
+
+/// `timeout -k 5 <secs> sh -c <command>`: the box stops the command itself.
+#[cfg(feature = "modules")]
+fn timeout_argv(secs: u64, command: &str) -> Vec<String> {
+    ["timeout", "-k", "5", &secs.to_string(), "sh", "-c", command]
+        .map(str::to_owned)
+        .to_vec()
+}
+
+/// `timeout` counts whole seconds: round up, and never ask for none.
+#[cfg(feature = "modules")]
+fn whole_seconds(timeout: Duration) -> u64 {
+    (timeout.as_secs() + u64::from(timeout.subsec_nanos() > 0)).max(1)
+}
+
+/// The per-command environment as UTF-8 string pairs, dropping any entry whose
+/// name or value is not UTF-8 (the module contract carries strings).
+#[cfg(feature = "modules")]
+fn utf8_env(extra_env: &std::collections::HashMap<OsString, OsString>) -> BTreeMap<String, String> {
+    extra_env
+        .iter()
+        .filter_map(|(name, value)| Some((name.to_str()?.to_owned(), value.to_str()?.to_owned())))
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "agent37_tests.rs"]
+mod tests;
