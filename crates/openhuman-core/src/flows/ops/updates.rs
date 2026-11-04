@@ -93,6 +93,36 @@ pub(crate) async fn flows_update_with_context(
     require_approval: Option<bool>,
     expected_version: Option<String>,
 ) -> Result<Outcome<Flow>, String> {
+    flows_update_with_disarm(
+        ctx,
+        config,
+        id,
+        name,
+        graph_json,
+        require_approval,
+        expected_version,
+        false,
+    )
+    .await
+}
+
+/// Same as [`flows_update_with_context`], but lets the caller force the
+/// automatic-trigger disarm. The builder host sets it on every graph save
+/// (#8489): a builder-authored revision must not go live on an
+/// already-enabled automatic-trigger flow without review. The module
+/// evaluates the flag against its freshly read row, so forcing it is a
+/// no-op on flows that aren't live automatic (already-disabled flows stay
+/// quiet, metadata-only saves are unaffected).
+pub(crate) async fn flows_update_with_disarm(
+    ctx: &crate::core::runtime::DispatchCtx,
+    config: &Config,
+    id: &str,
+    name: Option<String>,
+    graph_json: Option<Value>,
+    require_approval: Option<bool>,
+    expected_version: Option<String>,
+    disarm_automatic: bool,
+) -> Result<Outcome<Flow>, String> {
     ctx.enter(async move {
         flows_update_inner(
             ctx,
@@ -102,7 +132,7 @@ pub(crate) async fn flows_update_with_context(
             graph_json,
             require_approval,
             expected_version,
-            false,
+            disarm_automatic,
         )
         .await
     })
@@ -159,7 +189,8 @@ async fn flows_update_inner(
         "[flows] flows_update: persisting changes"
     );
     // The module computes automatic-trigger disarm against its freshly read
-    // row; the explicit request flag is reserved for remote-authoring flows.
+    // row; the explicit request flag is set by authoring surfaces whose
+    // revisions must not go live without review (the builder host, #8489).
     let updated = store::update_flow_graph(
         config,
         id,
