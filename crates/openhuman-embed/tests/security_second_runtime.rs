@@ -61,8 +61,11 @@ async fn screened_turn(name: &str) -> Result<String, String> {
 fn a_runtime_built_after_another_is_released_still_screens_its_prompts() {
     runtime().block_on(async {
         tokio::spawn(async {
-            assert_eq!(screened_turn("first").await.as_deref(), Ok("Paris"));
-            assert_eq!(screened_turn("second").await.as_deref(), Ok("Paris"));
+            for name in ["first", "second"] {
+                let outcome = screened_turn(name).await;
+                eprintln!("{name} runtime: {outcome:?}");
+                assert_eq!(outcome.as_deref(), Ok("Paris"), "{name} runtime");
+            }
         })
         .await
         .expect("test task");
