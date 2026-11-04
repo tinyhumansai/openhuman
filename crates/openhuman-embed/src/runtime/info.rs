@@ -3,7 +3,7 @@ use super::{LearningSettings, ModelDefaults, Runtime, RuntimeBuilder};
 use openhuman_core::config::{
     schema::{
         AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig,
-        SecurityModeConfig,
+        SecurityJudgeRoute, SecurityModeConfig,
     },
     Config,
 };

@@ -144,7 +144,7 @@ fn sandbox_planning_keeps_its_audit_sink_when_optional_audit_is_disabled() {
 #[test]
 fn module_bootstrap_binds_the_trusted_host_identity() {
     let config = Config::default();
-    let translated = module_config_for_host(&config, Some(":1.42".into())).unwrap();
+    let translated = module_config_for_host(&config, Some(":1.42".into()), None).unwrap();
 
     assert_eq!(translated.trusted_host.as_deref(), Some(":1.42"));
     assert_eq!(translated.contract_version, MODULE_CONTRACT_VERSION);
@@ -154,7 +154,7 @@ fn module_bootstrap_binds_the_trusted_host_identity() {
 #[test]
 fn module_bootstrap_rejects_an_absent_trusted_host_identity() {
     assert_eq!(
-        module_config_for_host(&Config::default(), None),
+        module_config_for_host(&Config::default(), None, None),
         Err("module host identity unavailable")
     );
 }
@@ -194,4 +194,14 @@ fn module_contract_requires_the_exact_host_wire_version() {
     assert!(!supports_contract((1, 32)));
     assert!(!supports_contract((2, 0)));
     assert!(!supports_contract((1, 27)));
+}
+
+#[test]
+fn the_host_config_carries_the_judge_it_is_given() {
+    let judge = super::super::judge::tests::a_judge();
+    let translated =
+        module_config_for_host(&Config::default(), Some(":1.42".into()), Some(judge.clone()))
+            .unwrap();
+
+    assert_eq!(translated.judge, Some(judge));
 }

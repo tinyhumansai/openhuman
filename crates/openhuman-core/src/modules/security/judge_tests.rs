@@ -5,6 +5,11 @@ fn route() -> SecurityJudgeRoute {
     SecurityJudgeRoute::open_router("a-working-key")
 }
 
+/// A judge as the default settings build it, for other modules' tests.
+pub(in crate::modules::security) fn a_judge() -> JudgeConfig {
+    build(&Config::default(), route()).expect("on by default")
+}
+
 #[test]
 fn a_route_turns_the_judge_on_by_default() {
     let judge = build(&Config::default(), route()).expect("on by default");
