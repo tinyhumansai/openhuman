@@ -25,6 +25,9 @@ pub(crate) struct PendingConsentRegistry {
     pending: HashMap<String, oneshot::Sender<bool>>,
     reserved_call_ids: HashSet<String>,
     outcomes: HashMap<String, OperationOutcome>,
+    /// The prompt each pending request shows, for a renderer that cannot
+    /// receive the approval event (no socket before sign-in).
+    prompts: HashMap<String, crate::core::events::KeyringAccessApprovalRequest>,
 }
 
 static PENDING: OnceLock<Mutex<PendingConsentRegistry>> = OnceLock::new();
@@ -65,6 +68,7 @@ impl PendingConsentRegistry {
     }
 
     pub(crate) fn resolve(&mut self, request_id: &str, approved: bool) -> bool {
+        self.prompts.remove(request_id);
         self.pending
             .remove(request_id)
             .is_some_and(|sender| sender.send(approved).is_ok())
@@ -72,10 +76,29 @@ impl PendingConsentRegistry {
 
     pub(crate) fn cancel(&mut self, request_id: &str) {
         self.pending.remove(request_id);
+        self.prompts.remove(request_id);
+    }
+
+    /// The prompts still waiting for a decision at `now_ms`.
+    pub(crate) fn pending_prompts(
+        &self,
+        now_ms: u64,
+    ) -> Vec<crate::core::events::KeyringAccessApprovalRequest> {
+        let mut prompts: Vec<_> = self
+            .prompts
+            .values()
+            .filter(|prompt| {
+                prompt.expires_at_ms > now_ms && self.pending.contains_key(&prompt.request_id)
+            })
+            .cloned()
+            .collect();
+        prompts.sort_by_key(|prompt| prompt.expires_at_ms);
+        prompts
     }
 
     fn finish(&mut self, request_id: &str, call_id: &str, outcome: Option<OperationOutcome>) {
         self.pending.remove(request_id);
+        self.prompts.remove(request_id);
         if self.reserved_call_ids.remove(call_id) {
             if let Some(outcome) = outcome {
                 self.outcomes.insert(call_id.to_owned(), outcome);
@@ -103,24 +126,27 @@ pub(crate) async fn request_approval(
     };
     let timeout = std::time::Duration::from_millis(u64::from(request.timeout_ms.min(120_000)));
     let call_id = request.caller.call_id;
-    let (prompt, waiter) = pending()
-        .lock()
-        .ok()?
-        .register(access, &request.name, &call_id, timeout)
-        .ok()?;
-    crate::core::bus::BUS.publish(
-        crate::core::events::DomainEvent::KeyringAccessApprovalRequested(
-            crate::core::events::KeyringAccessApprovalRequest {
-                request_id: prompt.request_id.clone(),
-                caller_agent: request.caller.agent.clone(),
-                origin: format!("{:?}", request.caller.origin),
-                purpose: request.purpose,
-                access: prompt.access,
-                name: prompt.name,
-                expires_at_ms: prompt.expires_at_ms,
-            },
-        ),
-    );
+    let (prompt, waiter, shown) = {
+        let mut registry = pending().lock().ok()?;
+        let (prompt, waiter) = registry
+            .register(access, &request.name, &call_id, timeout)
+            .ok()?;
+        let shown = crate::core::events::KeyringAccessApprovalRequest {
+            request_id: prompt.request_id.clone(),
+            caller_agent: request.caller.agent.clone(),
+            origin: format!("{:?}", request.caller.origin),
+            purpose: request.purpose,
+            access: prompt.access.clone(),
+            name: prompt.name.clone(),
+            expires_at_ms: prompt.expires_at_ms,
+        };
+        registry
+            .prompts
+            .insert(prompt.request_id.clone(), shown.clone());
+        (prompt, waiter, shown)
+    };
+    crate::core::bus::BUS
+        .publish(crate::core::events::DomainEvent::KeyringAccessApprovalRequested(shown));
 
     let decision = await_decision(pending(), &prompt.request_id, waiter, timeout).await;
     let outcome = match decision {
@@ -157,6 +183,15 @@ async fn await_decision(
             None
         }
     }
+}
+
+/// The keyring operations waiting for a decision. Display-safe metadata only,
+/// the same the approval event carries; never a secret value.
+pub(crate) fn pending_requests() -> Vec<crate::core::events::KeyringAccessApprovalRequest> {
+    pending()
+        .lock()
+        .map(|registry| registry.pending_prompts(now_ms()))
+        .unwrap_or_default()
 }
 
 /// Resolve one currently pending request. Each id can be consumed once.

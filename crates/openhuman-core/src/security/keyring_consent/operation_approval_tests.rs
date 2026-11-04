@@ -180,3 +180,52 @@ fn unconsumed_denials_reserve_capacity_before_new_requests_register() {
         )
         .is_ok());
 }
+
+fn shown(prompt: &ApprovalPrompt) -> crate::core::events::KeyringAccessApprovalRequest {
+    crate::core::events::KeyringAccessApprovalRequest {
+        request_id: prompt.request_id.clone(),
+        caller_agent: "openhuman.credentials".into(),
+        origin: "LocalOperator".into(),
+        purpose: "OpenHuman auth profile credential access".into(),
+        access: prompt.access.clone(),
+        name: prompt.name.clone(),
+        expires_at_ms: prompt.expires_at_ms,
+    }
+}
+
+#[test]
+fn a_pending_prompt_is_listed_until_it_is_decided_or_expires() {
+    let mut registry = PendingConsentRegistry::default();
+    let timeout = std::time::Duration::from_secs(120);
+    let (decided, _decided_waiter) = registry
+        .register("write", "app-session:default", "call-decided", timeout)
+        .unwrap();
+    let (open, _open_waiter) = registry
+        .register("read", "auth:openai:default", "call-open", timeout)
+        .unwrap();
+    for prompt in [&decided, &open] {
+        registry
+            .prompts
+            .insert(prompt.request_id.clone(), shown(prompt));
+    }
+
+    let listed = registry.pending_prompts(now_ms());
+    assert_eq!(listed.len(), 2);
+    assert!(listed
+        .iter()
+        .all(|prompt| prompt.caller_agent == "openhuman.credentials"));
+
+    assert!(registry.resolve(&decided.request_id, true));
+    let listed = registry.pending_prompts(now_ms());
+    assert_eq!(
+        listed
+            .iter()
+            .map(|prompt| prompt.request_id.as_str())
+            .collect::<Vec<_>>(),
+        [open.request_id.as_str()]
+    );
+
+    assert!(registry.pending_prompts(open.expires_at_ms).is_empty());
+    registry.cancel(&open.request_id);
+    assert!(registry.pending_prompts(now_ms()).is_empty());
+}

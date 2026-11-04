@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useKeyringOperationApprovals } from './useKeyringOperationApprovals';
 
@@ -16,7 +16,10 @@ const off = vi.hoisted(() =>
     handlers.get(event)?.delete(cb);
   })
 );
-vi.mock('../services/socketService', () => ({ socketService: { on, off } }));
+const isConnected = vi.hoisted(() => vi.fn(() => true));
+vi.mock('../services/socketService', () => ({ socketService: { on, off, isConnected } }));
+const listPending = vi.hoisted(() => vi.fn(async (): Promise<unknown[]> => []));
+vi.mock('../services/keyringApi', () => ({ listPendingKeyringOperations: listPending }));
 
 const EVENTS = ['keyring:access_approval_requested', 'keyring_access_approval_requested'];
 const REQUEST = {
@@ -42,6 +45,12 @@ describe('useKeyringOperationApprovals', () => {
     handlers.clear();
     on.mockClear();
     off.mockClear();
+    isConnected.mockReset().mockReturnValue(true);
+    listPending.mockReset().mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('subscribes to both Socket.IO aliases', () => {
@@ -87,5 +96,34 @@ describe('useKeyringOperationApprovals', () => {
     for (const event of EVENTS) {
       expect(off).toHaveBeenCalledWith(event, expect.any(Function));
     }
+  });
+
+  it('asks the core for pending requests while no socket is connected', async () => {
+    vi.useFakeTimers();
+    isConnected.mockReturnValue(false);
+    listPending.mockResolvedValue([REQUEST]);
+    const { result } = renderHook(() => useKeyringOperationApprovals());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(listPending).toHaveBeenCalled();
+    expect(result.current.requests).toEqual([REQUEST]);
+
+    // The same request arriving over the socket later is not shown twice.
+    emit(REQUEST);
+    expect(result.current.requests).toEqual([REQUEST]);
+  });
+
+  it('does not poll once the socket is connected', async () => {
+    vi.useFakeTimers();
+    renderHook(() => useKeyringOperationApprovals());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(listPending).not.toHaveBeenCalled();
   });
 });

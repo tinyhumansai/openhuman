@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { listPendingKeyringOperations } from '../services/keyringApi';
 import { socketService } from '../services/socketService';
 
 const EVENT_COLON = 'keyring:access_approval_requested';
 const EVENT_UNDERSCORE = 'keyring_access_approval_requested';
+/** How often to ask the core for pending requests while no socket is connected. */
+const POLL_INTERVAL_MS = 1_000;
 
 export type KeyringOperationAccess = 'read' | 'write' | 'delete';
 
@@ -68,10 +71,25 @@ export function useKeyringOperationApprovals(): {
       const now = Date.now();
       setRequests(current => current.filter(request => request.expires_at_ms > now));
     }, 1_000);
+    // The socket connects only once a session exists, so a keyring write made
+    // while signing in would never be shown. Until it connects, ask the core.
+    let polling = false;
+    const pollTimer = window.setInterval(() => {
+      if (polling || socketService.isConnected()) return;
+      polling = true;
+      listPendingKeyringOperations()
+        .then(pending => pending.forEach(handleRequest))
+        // A failed poll is retried on the next tick.
+        .catch(() => undefined)
+        .finally(() => {
+          polling = false;
+        });
+    }, POLL_INTERVAL_MS);
     return () => {
       socketService.off(EVENT_COLON, handleRequest);
       socketService.off(EVENT_UNDERSCORE, handleRequest);
       window.clearInterval(expiryTimer);
+      window.clearInterval(pollTimer);
     };
   }, [handleRequest]);
 
