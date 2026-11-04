@@ -39,7 +39,7 @@ test("private runner rejects missing, stale and unqualified guest image metadata
   }
 });
 
-test("private workflow pins checkout, image and signed Tinymold without artifact caches", () => {
+test("private workflow pins checkout and image without a compile or artifact cache", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/ci-lanes.yml", import.meta.url),
     "utf8",
@@ -56,32 +56,13 @@ test("private workflow pins checkout, image and signed Tinymold without artifact
   assert.match(privateJob, /fetch-depth: 0/);
   assert.match(privateJob, /submodule-depth: 0/);
   assert.match(privateJob, /allow-unsafe-pr-checkout: true/);
-  assert.match(privateJob, /tinyhumansai\/tinymold@[a-f0-9]{40}/);
-  assert.match(privateJob, /install: none/);
-  // The per-compile log is what ranks misses and uncacheable compiles.
-  assert.match(
-    privateJob,
-    /TINYMOLD_LOG=\$RUNNER_TEMP\/tinymold\.log.*GITHUB_ENV/s,
-  );
-  assert.ok(
-    privateJob.indexOf("TINYMOLD_LOG=$RUNNER_TEMP/tinymold.log") <
-      privateJob.indexOf("- name: Setup Tinymold"),
-  );
-  assert.match(privateJob, /backend: remote/);
-  assert.match(privateJob, /remote-signing-key:/);
-  assert.match(privateJob, /remote-trusted-keys:/);
-  assert.match(privateJob, /tinyhumansai\/tinymold\/save@[a-f0-9]{40}/);
   assert.doesNotMatch(
     privateJob,
-    /Swatinem\/rust-cache|sccache|actions\/cache/,
+    /Swatinem\/rust-cache|sccache|actions\/cache|tinymold|TINYMOLD/i,
   );
   assert.ok(
     privateJob.indexOf("verify-runner.sh") <
       privateJob.indexOf("- name: Start lanes"),
-  );
-  assert.match(
-    privateJob,
-    /name: Save Tinymold cache\n\s+if:.*always\(\).*\n\s+continue-on-error: true/,
   );
 });
 
@@ -184,30 +165,21 @@ test("membership gate routes mixed identities, outsiders and bots away from EX63
   }
 });
 
-test("private validation and cache save have measured budgets without suppressing artifacts", () => {
+test("private validation has a measured budget without suppressing artifacts", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/ci-lanes.yml", import.meta.url),
     "utf8",
   ).split("  # ── hosted:")[0];
-  const saveStart = workflow.indexOf("      - name: Save Tinymold cache");
-  const saveEnd = workflow.indexOf("\n      - name:", saveStart + 1);
-  const save = workflow.slice(saveStart, saveEnd);
-  assert.match(save, /timeout-minutes: 15/);
   const job = workflow.slice(
     workflow.indexOf("  ex63:"),
     workflow.indexOf("    steps:"),
   );
   assert.match(job, /timeout-minutes: 180/);
-  assert.match(save, /continue-on-error: true/);
   const upload = workflow.slice(
     workflow.indexOf("      - name: Upload lane logs, timings and coverage"),
   );
   assert.match(upload, /if: always\(\)/);
-  assert.ok(
-    workflow.indexOf("      - name: Upload lane logs, timings and coverage") >
-      saveEnd,
-  );
-  assert.doesNotMatch(upload, /tinymold\.outcome|success\(\)/);
+  assert.doesNotMatch(upload, /success\(\)/);
 });
 
 test("private LLVM preflight rejects missing tools before publishing environment", () => {
@@ -289,5 +261,6 @@ printf "%s\\n" "$FIXTURE_LIBDIR"
   }
   const invocation = source.indexOf('\nverify_llvm_tools "$channel"\n');
   assert.ok(invocation > source.indexOf("channel="));
-  assert.ok(invocation < source.indexOf("for key in TINYMOLD_REMOTE_URL"));
+  assert.ok(invocation < source.indexOf('echo "RUSTUP_TOOLCHAIN=$channel"'));
+  assert.doesNotMatch(source, /TINYMOLD|tinymold/);
 });

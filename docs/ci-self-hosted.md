@@ -123,11 +123,8 @@ for any commit without posting it.
   - The pinned shared checkout action fetches the PR merge ref with
     `fetch-depth: 0` and `submodule-depth: 0`: full root and recursive submodule
     history for pin ancestry checks, with unused `wiki` submodules excluded.
-  - The pinned Tinymold setup/save actions use the image's binary and signed
-    remote cache. The supervisor supplies credentials through guest metadata;
-    the workflow masks them and needs no additional repository secrets. Cache
-    save runs after failures, has a fifteen-minute limit, and cannot replace the
-    validation result or indefinitely delay artifact upload.
+  - There is no Rust compile cache: each run builds in its own target dirs, so
+    the runner contract asks for no cache credentials.
   - Cargo's target linker points at `/usr/local/bin/rust-mold-linker`. It survives
     coverage clearing `RUSTFLAGS`. `verify-linkage.mjs` checks `.comment` and LLVM
     sections in actual ordinary and instrumented lane executables and archives proof.
@@ -171,7 +168,7 @@ for any commit without posting it.
     (`diskUsageReport` in `lanes.mjs`, ex63 only); read those before changing
     anything else.
   - Cargo registry, pnpm store, and content-based frontend caches remain on the
-    slot cache disk. Rust output caching uses Tinymold alone.
+    slot cache disk. Rust build output is not cached between runs.
   - VM sizing is a supervisor setting; it is not assumed by the lane scheduler.
     The frontend lint/check lane sets `NODE_OPTIONS=--max-old-space-size=4096`
     (4096 MiB of old-space heap); hosted keeps its default Node budget.
@@ -204,11 +201,10 @@ node scripts/ci/self-hosted/compare-runs.mjs --lanes    # include historical lan
 
 The comparison script requires a matching legacy CI Lite run, so it does not
 measure commits that only have the current lane flows. For current measurements,
-use workflow elapsed time and the uploaded per-check and cache timing records.
+use workflow elapsed time and the uploaded per-check timing records.
 
 Each run uploads `ci-out-*` artifacts with per-lane logs, `ci-timings.json`
-(per-check timings and target-dir sizes), linkage proof, and lcov. Tinymold
-setup/save logs contain cache hit/miss and save timings. See the suite inventory
+(per-check timings and target-dir sizes), linkage proof, and lcov. See the suite inventory
 and measurement record in [ci-private-validation.md](ci-private-validation.md).
 
 ## Local use
@@ -223,7 +219,7 @@ CI_AREA_DOCS=true node scripts/ci/self-hosted/lanes.mjs --profile hosted --lanes
 Publish and smoke-test the image first. Roll the pinned rootfs into idle slots
 without interrupting active jobs, then change `guest-image.txt`. Check the metadata
 inside a new guest rather than trusting only the supervisor configuration. The
-current image ships Rust 1.99.1 (the pinned toolchain), mold 2.40.4, bubblewrap 0.13.1, Tinymold 0.3.0 and nextest 0.9.148.
+current image ships Rust 1.99.1 (the pinned toolchain), mold 2.40.4, bubblewrap 0.13.1 and nextest 0.9.148 (the image may still carry a Tinymold binary; CI no longer uses it).
 
 Private workflow routing runs from the trusted base branch. A PR run can therefore
 exercise the previous workflow; green pre-merge CI alone does not prove a workflow

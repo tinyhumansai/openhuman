@@ -39,6 +39,7 @@ use tinybus::module::{
 };
 use tinybus::Proxy;
 
+pub(super) mod callback_load;
 mod list;
 pub use list::list;
 
@@ -155,10 +156,13 @@ pub fn resolver(config: &Config) -> Resolver {
                 }
             }
             ModuleSource::Release if requires_verified_local_callbacks(record.id) => {
-                // These modules require a per-module storage callback, which
-                // TinyBus can bind only on its verified local-file path.
-                // Route a staged release through that rung; the callback-aware
-                // client below supplies the unique destination at load time.
+                // A staged artifact (`OPENHUMAN_MODULE_SOURCE_DIR` or
+                // `OPENHUMAN_MODULE_PATH`) wins over the release, as a local
+                // file: the search-path rung would admit it without the
+                // callbacks these modules need. With none staged the source
+                // stays the pinned release, which the callback loads in
+                // `callback_load` take from the installer bundle or the
+                // digest-verified release cache.
                 if let Some(path) = source::local_artifact(record.id) {
                     sources.insert(
                         record.id.to_string(),
@@ -251,41 +255,18 @@ type StorageCallbackLoads = tokio::sync::Mutex<
 static STORAGE_CALLBACK_LOADS: std::sync::LazyLock<StorageCallbackLoads> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// Load a storage-backed module with its storage callback, on the module
+/// runtime so a caller that stops waiting cannot strand the binding.
 async fn ensure_loaded_with_storage_callback(
     resolver: &Resolver,
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    let mut loads = STORAGE_CALLBACK_LOADS.lock().await;
-    if let Some((binding, _served)) = loads.get(id) {
-        if matches!(state_of(id), ModuleState::Ready) {
-            // Already serving with this binding: a binding is spent once the
-            // module takes it, so re-presenting it would be refused. The module
-            // is process-wide, so every later workspace's client finds it
-            // already serving.
-            return Ok(());
-        }
-        let mut module_config = module_config(config, id).await;
-        module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-        return resolver
-            .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(binding), module_config)
-            .await;
-    }
-
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    let (binding, served) = super::storage_host::prepare_module_callbacks(runtime)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut module_config = module_config(config, id).await;
-    module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-    resolver
-        .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(&binding), module_config)
-        .await?;
-    loads.insert(id.to_owned(), (binding, served));
-    Ok(())
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        callback_load::load_with_storage_callback(&task_resolver, &config, &id).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
@@ -342,7 +323,11 @@ async fn ensure_loaded_with_security_callback(
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    super::security::host_callbacks::ensure_loaded(resolver, config, id).await
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
@@ -351,27 +336,11 @@ async fn ensure_loaded_with_computer_callback(
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
-    let mut loads = COMPUTER_CALLBACK_LOADS.lock().await;
-    if let Some(binding) = loads.get(id) {
-        let module_config = module_config_with_consequence_callback(config, id, binding).await;
-        return resolver
-            .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(binding), module_config)
-            .await;
-    }
-
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    let binding = super::browser_egress_host::prepare_consequence_callback(runtime)
-        .await
-        .map_err(|error| error.to_string())?;
-    let module_config = module_config_with_consequence_callback(config, id, &binding).await;
-    resolver
-        .ensure_loaded_with_host_callbacks(id, std::sync::Arc::clone(&binding), module_config)
-        .await?;
-    loads.insert(id.to_owned(), binding);
-    Ok(())
+    let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    callback_load::detached(resolver, async move {
+        callback_load::load_with_computer_callback(&task_resolver, &config, &id).await
+    })
+    .await
 }
 
 #[cfg(feature = "security-module")]
@@ -712,3 +681,7 @@ mod client_tests;
 #[cfg(test)]
 #[path = "ops_resolver_tests.rs"]
 mod resolver_tests;
+
+#[cfg(test)]
+#[path = "ops_callback_release_tests.rs"]
+mod callback_release_tests;
