@@ -43,7 +43,9 @@ impl CoreContext {
         if let Some(snapshot) = &self.latest_embedder_config {
             if let Ok(mut current) = snapshot.lock() {
                 *current = config;
-                crate::config::Config::bind_context_snapshot(snapshot);
+                // Bound under this guard: relocking the snapshot here would
+                // deadlock the thread.
+                current.runtime_state.context_snapshot = Some(Arc::downgrade(snapshot));
             }
         }
     }
