@@ -223,6 +223,17 @@ async fn flows_update_inner(
         );
     }
 
+    // A forced disarm is an enabled→disabled transition exactly like an
+    // explicit disable (#8489): tear down the previous automatic-dispatch
+    // binding, so the old schedule cron job does not linger ticking against
+    // a disabled flow — boot reconciliation only re-binds enabled flows, so
+    // the stale job would otherwise survive it. `should_disarm` is only
+    // true on a real enabled→disabled transition, and `unbind_trigger` is
+    // a no-op for non-schedule trigger kinds.
+    if should_disarm {
+        unbind_trigger(config, &existing);
+    }
+
     if graph_changed && updated.enabled {
         let rebind = match (
             bus::describe_trigger(config, &existing),
