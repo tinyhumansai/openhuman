@@ -176,6 +176,16 @@ impl RuntimeBuilder {
         let inherit = self.workspace.is_operator_owned();
         let resolved = ResolvedWorkspace::resolve(&self.workspace, self.action_dir.as_deref())
             .map_err(map_ws)?;
+        // A scratch directory's secrets go with it, so this runtime may take
+        // over the TinySecurity module a released runtime left admitted (it is
+        // loaded once per process and keeps its first secret scope). A durable
+        // directory may not: its secrets would be kept under another scope's
+        // master key.
+        if resolved._temp.is_some() {
+            if let Some(config_dir) = resolved.config_path.parent() {
+                openhuman_core::security::declare_transient_secret_scope(config_dir);
+            }
+        }
 
         // Discovered: the core loads its own config during boot; nothing to
         // assemble here. Resolved: `Inherit` starts from the operator's own

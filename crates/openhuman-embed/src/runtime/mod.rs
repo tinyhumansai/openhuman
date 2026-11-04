@@ -116,11 +116,12 @@ pub(crate) static RUNTIME_LIVE: AtomicBool = AtomicBool::new(false);
 /// Also releases the secret scope the TinySecurity module was admitted with.
 /// The module stays loaded for the process and keeps that scope, but the scope
 /// belonged to the released runtime's config; the next runtime, built in its
-/// own directory, takes the module over instead of being refused every
-/// security call.
+/// own scratch directory, takes the module over instead of being refused
+/// every security call. Unconditional: the core decides whether TinySecurity
+/// is built in (its default features include it even when this crate's own
+/// `security-module` feature is off).
 pub(crate) fn release_process_slot() {
-    #[cfg(feature = "security-module")]
-    openhuman_core::modules::security::release_secret_scope();
+    openhuman_core::security::release_secret_scope();
     RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
 }
 
