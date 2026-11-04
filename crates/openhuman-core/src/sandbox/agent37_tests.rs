@@ -40,3 +40,15 @@ fn utf8_env_keeps_utf8_pairs_and_drops_the_rest() {
     assert_eq!(out.get("KEY").map(String::as_str), Some("value"));
     assert_eq!(out.len(), 1);
 }
+
+#[test]
+fn local_only_privacy_forbids_agent37() {
+    let mut config = Config::default();
+    // Standard (the default) allows agent37's off-device execution.
+    assert!(!local_only_forbids_agent37(&config));
+    config.privacy.mode = crate::config::PrivacyMode::LocalOnly;
+    assert!(local_only_forbids_agent37(&config));
+    // Sensitive is not local-only, so it still allows agent37.
+    config.privacy.mode = crate::config::PrivacyMode::Sensitive;
+    assert!(!local_only_forbids_agent37(&config));
+}

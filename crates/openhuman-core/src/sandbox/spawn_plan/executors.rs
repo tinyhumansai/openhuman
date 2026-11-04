@@ -124,22 +124,27 @@ pub(crate) fn openshell() -> SandboxExecutor2 {
 }
 
 /// A box per command on the hosted agent37 service: a container with its own
-/// workspace and egress denied, bounded by `[runtime.docker]`'s CPU and memory.
-/// Nothing on the host is mounted into it. Whether the service accepts boxes
-/// shows when a box is created for a command, so it is declared available.
+/// workspace and egress denied. Filesystem and network are enforced, but the
+/// service snaps CPU and memory up to fixed instance shapes, so those are
+/// best effort — a requested bound is a floor the service rounds up, never a
+/// ceiling it holds the box to. Reporting them as enforced would feed
+/// TinySecurity false capability facts. Nothing on the host is mounted into
+/// it. Whether the service accepts boxes shows when a box is created for a
+/// command, so it is declared available.
 pub(crate) fn agent37() -> SandboxExecutor2 {
     let enforced = ConstraintEnforcement2::Enforced;
+    let best_effort = ConstraintEnforcement2::BestEffort;
     SandboxExecutor2 {
         executor_id: AGENT37_EXECUTOR.into(),
-        capability_id: "tinybox-agent37|box|fs:own|net:denied|mem|cpu".into(),
+        capability_id: "tinybox-agent37|box|fs:own|net:denied|mem:besteffort|cpu:besteffort".into(),
         backend: SandboxBackend::Docker,
         available: true,
         isolation: IsolationLevel2::Kernel,
         constraints: vec![
             support(SandboxConstraint2::Filesystem, enforced),
             support(SandboxConstraint2::Network, enforced),
-            support(SandboxConstraint2::Memory, enforced),
-            support(SandboxConstraint2::CpuMillicores, enforced),
+            support(SandboxConstraint2::Memory, best_effort),
+            support(SandboxConstraint2::CpuMillicores, best_effort),
         ],
     }
 }

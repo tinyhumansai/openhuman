@@ -303,3 +303,16 @@ fn an_openshell_plan_that_reaches_the_network_is_refused() {
         "the sandbox plan grants network to an OpenShell box, which has none"
     );
 }
+
+#[test]
+fn a_container_plan_on_the_agent37_executor_maps_to_a_hosted_box() {
+    // Regression: the agent37 executor must map to its own PlannedExecutor, not
+    // fall through to Docker (which would route execution to docker_exec).
+    let mut planned = artifact(SandboxBackend::Docker);
+    planned.executor_id = crate::sandbox::spawn_plan::AGENT37_EXECUTOR.into();
+    let plan = BoxPlan::from_artifact(&planned, None).unwrap();
+    assert_eq!(plan.executor, PlannedExecutor::Agent37);
+    assert_ne!(plan.executor, PlannedExecutor::Docker);
+    assert_eq!(plan.network, NetworkPolicy::Denied);
+    assert!(!plan.jail.allow_net);
+}

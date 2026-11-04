@@ -18,6 +18,9 @@ pub struct RuntimeConfig {
     /// Boxes for the OpenShell sandbox backend (`[runtime.openshell]`).
     #[serde(default)]
     pub openshell: super::OpenShellRuntimeConfig,
+    /// Boxes for the agent37 sandbox backend (`[runtime.agent37]`).
+    #[serde(default)]
+    pub agent37: super::Agent37RuntimeConfig,
     #[serde(default)]
     pub reasoning_enabled: Option<bool>,
     /// Reasoning ("thinking") effort for agent turns: `none`, `minimal`,
@@ -111,6 +114,7 @@ impl Default for RuntimeConfig {
             docker: DockerRuntimeConfig::default(),
             local_jail: super::LocalJailConfig::default(),
             openshell: super::OpenShellRuntimeConfig::default(),
+            agent37: super::Agent37RuntimeConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
             reasoning_effort_by_model: BTreeMap::new(),

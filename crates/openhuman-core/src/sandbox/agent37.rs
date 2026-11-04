@@ -48,6 +48,16 @@ pub(crate) async fn execute(
     extra_env: &std::collections::HashMap<OsString, OsString>,
     timeout: Duration,
 ) -> anyhow::Result<SandboxExecResult> {
+    // agent37 runs the command — and its environment — on a hosted service off
+    // this device. Under local-only privacy that egress is not permitted, so
+    // refuse before anything leaves the host. This holds independently of the
+    // security module, so it is enforced even when security is disabled.
+    if local_only_forbids_agent37(config) {
+        anyhow::bail!(
+            "agent37 sandbox execution is unavailable under [privacy] mode = \"local_only\": \
+             it would send the command and its environment to a hosted service"
+        );
+    }
     #[cfg(feature = "modules")]
     {
         tracing::debug!(
@@ -65,6 +75,51 @@ pub(crate) async fn execute(
     }
 }
 
+/// Whether `[privacy] mode = "local_only"` forbids agent37 execution. agent37
+/// sends the command and its environment to a hosted service, which local-only
+/// privacy does not permit; every other mode allows it.
+fn local_only_forbids_agent37(config: &Config) -> bool {
+    config.privacy.mode == crate::config::PrivacyMode::LocalOnly
+}
+
+/// Owns an agent37 reservation between create and close so a cancelled turn
+/// still tears the hosted box down. While armed (`resource` is `Some`), dropping
+/// the guard — which is what a cancelled future does to its locals — closes the
+/// box on a detached task, since `Drop` cannot await. The happy path disarms it
+/// with [`BoxGuard::disarm`] and closes the box itself.
+#[cfg(feature = "modules")]
+struct BoxGuard {
+    config: Config,
+    resource: Option<crate::modules::tinybox::contract::ResourceId>,
+}
+
+#[cfg(feature = "modules")]
+impl BoxGuard {
+    fn disarm(&mut self) -> Option<crate::modules::tinybox::contract::ResourceId> {
+        self.resource.take()
+    }
+}
+
+#[cfg(feature = "modules")]
+impl Drop for BoxGuard {
+    fn drop(&mut self) {
+        let Some(resource) = self.resource.take() else {
+            return;
+        };
+        let config = self.config.clone();
+        // Cancelled between create and close. Drop cannot await, so close the box
+        // on a detached task rather than leak it until the service's idle reaper
+        // takes it.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Err(error) = crate::modules::tinybox::close(&config, resource).await {
+                    tracing::warn!(%error, "[sandbox:agent37] cancelled-box cleanup failed");
+                }
+            });
+        }
+    }
+}
+
 #[cfg(feature = "modules")]
 async fn run_command(
     config: &Config,
@@ -77,6 +132,12 @@ async fn run_command(
     let resource = tinybox::reserve(config, contract::ReserveRequest::Resource)
         .await
         .map_err(|error| anyhow::anyhow!("agent37 reserve failed: {error}"))?;
+
+    // From here the box must be closed on every path, cancellation included.
+    let mut guard = BoxGuard {
+        config: config.clone(),
+        resource: Some(resource.clone()),
+    };
 
     let docker = &config.runtime.docker;
     let resources = contract::ResourceLimits {
@@ -95,7 +156,9 @@ async fn run_command(
             resource: resource.clone(),
             backend: BACKEND.to_owned(),
             host: contract::HostConfig::Local,
-            workspace: contract::Workspace::Image(docker.image.clone()),
+            // agent37 starts a box from a registered template name, not an OCI
+            // image; forwarding the Docker image slot is rejected with HTTP 400.
+            workspace: contract::Workspace::Image(config.runtime.agent37.template.clone()),
             network: contract::NetworkPolicy::Denied,
             resources,
             ports: Vec::new(),
@@ -104,6 +167,9 @@ async fn run_command(
     )
     .await
     {
+        // No box to close: the backend tears a half-created instance down
+        // itself, so disarm rather than close an id the service never kept.
+        guard.disarm();
         return Err(anyhow::anyhow!("agent37 create failed: {error}"));
     }
 
@@ -121,9 +187,11 @@ async fn run_command(
     )
     .await;
 
-    // Best-effort cleanup: close the box now rather than waiting for the
-    // service's own idle reaper.
-    let _ = tinybox::close(config, resource).await;
+    // Reached the end without cancellation: close the box ourselves and disarm
+    // the guard so it does not close the same reservation again.
+    if let Some(resource) = guard.disarm() {
+        let _ = tinybox::close(config, resource).await;
+    }
 
     match outcome {
         Ok(output) => Ok(SandboxExecResult {
