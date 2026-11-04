@@ -145,6 +145,29 @@ stage_bundled() {
     tar --no-same-owner -xzf "$dir/$name" -C "$dir"
   fi
 }
+# Download a registry-pinned release, check its digest and stage it; leaves the
+# staged directory in $module_dir.
+fetch_bundled() {
+  local id="$1" url="$2" archive="$3" sha="$4" path version
+  path="$OPENHUMAN_TEST_SECURITY_FIXTURE_DIR/$archive"
+  curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
+    "$url" --output "$path"
+  node - "$path" "$sha" <<'NODE'
+const { createHash } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+
+const [file, expected] = process.argv.slice(2);
+const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+if (actual !== expected) {
+  throw new Error(`module fixture digest mismatch: expected ${expected}, got ${actual}`);
+}
+NODE
+  version="${archive#"$id"-module-}"
+  version="${version#"$id"-}"
+  version="${version%%-"$host_key"*}"
+  stage_bundled "$id" "$version" "$path" "$archive"
+  module_dir="$bundled_dir/$id/$version/$host_key"
+}
 stage_bundled tinysecurity "$release_version" "$archive_path" "$archive"
 env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
   bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
@@ -159,28 +182,11 @@ env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
 callback_modules="tinymcp,tinyeventqueues,tinychannels,tinycomputer"
 loadable_modules=""
 while IFS=$'\t' read -r module_id module_url module_archive module_sha; do
-  module_path="$OPENHUMAN_TEST_SECURITY_FIXTURE_DIR/$module_archive"
-  curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-    "$module_url" --output "$module_path"
-  node - "$module_path" "$module_sha" <<'NODE'
-const { createHash } = require("node:crypto");
-const { readFileSync } = require("node:fs");
-
-const [file, expected] = process.argv.slice(2);
-const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
-if (actual !== expected) {
-  throw new Error(`callback module fixture digest mismatch: expected ${expected}, got ${actual}`);
-}
-NODE
-  module_version="${module_archive#"$module_id"-module-}"
-  module_version="${module_version#"$module_id"-}"
-  module_version="${module_version%%-"$host_key"*}"
-  stage_bundled "$module_id" "$module_version" "$module_path" "$module_archive"
+  fetch_bundled "$module_id" "$module_url" "$module_archive" "$module_sha"
   # A Linux module that links a system library this runner lacks (TinyComputer
   # links libxdo and libasound) cannot be dlopened here at all; say so and
   # check the rest rather than fail on the runner's package set.
   if [[ "$(uname -s)" == Linux ]]; then
-    module_dir="$bundled_dir/$module_id/$module_version/$host_key"
     missing="$(find "$module_dir" -name '*.so' -exec ldd {} + | awk '/not found/ {print $1}' | sort -u | tr '\n' ' ')"
     if [[ -n "$missing" ]]; then
       echo "callback module fixture: skipping $module_id; this runner lacks: $missing" >&2
@@ -199,3 +205,63 @@ env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
   --features "$core_features,security-module" \
   native_fixture_loads_callback_modules_from_a_release_source \
   -- --ignored --exact --nocapture
+
+# Desktop sign-in, end to end: the desktop core with TinySecurity from its
+# bundled release and no socket stores the session token in the OS keyring
+# once the keyring prompt is approved, and stays signed out when it is denied.
+# TinySecurity's Linux build keeps keyring entries in the Secret Service, so
+# each run gets a private D-Bus session and an unlocked throwaway keyring. A
+# runner without one skips it, as above for missing system libraries, unless
+# OPENHUMAN_TEST_REQUIRE_KEYRING_E2E=1 says this runner must run it.
+sign_in_fixture() {
+  local keyring_home
+  keyring_home="$(mktemp -d)"
+  mkdir -p "$keyring_home/data" "$keyring_home/run" && chmod 700 "$keyring_home/run"
+  env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
+    XDG_DATA_HOME="$keyring_home/data" XDG_RUNTIME_DIR="$keyring_home/run" \
+    OPENHUMAN_TEST_SIGN_IN_WORKSPACE="$keyring_home/workspace" \
+    OPENHUMAN_KEYRING_MASTER_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')" \
+    FIXTURE_FEATURES="$core_features,security-module" \
+    dbus-run-session -- bash -c '
+      set -euo pipefail
+      printf "fixture-keyring" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+      # The cases share one keyring and one workspace, in order.
+      for test_name in "$@"; do
+        bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
+          --test desktop_sign_in_fixture --no-default-features --features "$FIXTURE_FEATURES" \
+          "$test_name" -- --ignored --exact --nocapture
+      done
+      # An approved sign-in leaves its entry in the OS keyring; a denied one does not.
+      if command -v secret-tool >/dev/null; then
+        echo "Secret Service entries for service=openhuman:"
+        secret-tool search --all service openhuman 2>&1 | grep -E "^(label|attribute)" || echo "(none)"
+      else
+        echo "secret-tool is not installed; the keyring listing is skipped"
+      fi
+    ' sign-in-fixture "$@"
+  rm -rf "$keyring_home"
+}
+sign_in_missing=""
+if [[ "$(uname -s)" != Linux ]]; then
+  sign_in_missing="a Linux Secret Service"
+else
+  for tool in gnome-keyring-daemon dbus-run-session; do
+    command -v "$tool" >/dev/null || sign_in_missing="${sign_in_missing:+$sign_in_missing }$tool"
+  done
+fi
+if [[ -n "$sign_in_missing" ]]; then
+  echo "desktop sign-in E2E: skipping; this runner lacks: $sign_in_missing" >&2
+  if [[ "${OPENHUMAN_TEST_REQUIRE_KEYRING_E2E:-}" == 1 ]]; then
+    echo "desktop sign-in E2E: OPENHUMAN_TEST_REQUIRE_KEYRING_E2E=1, so a skip is a failure" >&2
+    exit 1
+  fi
+else
+  # Signing in prunes retired cron jobs through TinyFlows before it commits
+  # (config/user_scope.rs), and the shipped app bundles TinyFlows too.
+  while IFS=$'\t' read -r module_id module_url module_archive module_sha; do
+    fetch_bundled "$module_id" "$module_url" "$module_archive" "$module_sha"
+  done < <(node scripts/ci/self-hosted/test-module-assets.mjs "$host_key" tinyflows)
+  sign_in_fixture desktop_sign_in_stores_the_token_in_the_os_keyring_after_approval \
+    desktop_restart_reads_the_keyring_token_once_approved_at_startup
+  sign_in_fixture desktop_sign_in_denied_at_the_keyring_prompt_leaves_the_device_signed_out
+fi
