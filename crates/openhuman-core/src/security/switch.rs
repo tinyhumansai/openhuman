@@ -104,11 +104,27 @@ pub fn disabled_for(config: Option<&crate::config::Config>) -> Option<DisabledRe
     })
 }
 
+/// Whether `config` alone, in this build, has security disabled: the feature
+/// is absent or the config says `off`. Unlike [`disabled_for`] it ignores the
+/// process's booted mode, for describing a configuration that has not booted.
+#[must_use]
+pub fn disabled_by_config(config: &crate::config::Config) -> Option<DisabledReason> {
+    if cfg!(not(feature = "security-module")) {
+        Some(DisabledReason::FeatureAbsent)
+    } else if !config.security.enforces() {
+        Some(DisabledReason::ConfiguredOff)
+    } else {
+        None
+    }
+}
+
 /// Record the booted configuration's `[security]` mode for the process and say
 /// once whether checks are off. Called when the core boots with a resolved
-/// configuration (never for an inspection boot). Logs exactly one line when
-/// something is off: security as a whole, or only the prompt screen.
-pub(crate) fn apply_boot_config(config: &crate::config::Config) {
+/// configuration (never for an inspection boot), and by an embedding host whose
+/// builder sets `[security]` over a configuration the core discovered itself.
+/// Logs one line when something is off: security as a whole, or only the
+/// prompt screen.
+pub fn apply_boot_config(config: &crate::config::Config) {
     set_configured_off(!config.security.enforces());
     if let Some(reason) = disabled() {
         tracing::info!(

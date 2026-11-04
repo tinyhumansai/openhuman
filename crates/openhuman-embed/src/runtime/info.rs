@@ -239,6 +239,13 @@ impl RuntimeBuilder {
             self.selection.as_ref(),
         );
         info.configuration_resolved = self.config_source == super::ConfigSource::Resolved;
+        // This builder's own mode, not the mode a runtime already running in
+        // this process booted with.
+        let security_enforced =
+            openhuman_core::security::switch::disabled_by_config(&config).is_none();
+        info.configuration.security_enforced = security_enforced;
+        info.configuration.prompt_screen_enforced =
+            config.prompt_screen.enforces() && security_enforced;
         info.storage = StorageInfo::describe(
             self.seams.storage.as_ref(),
             &config,

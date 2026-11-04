@@ -80,3 +80,21 @@ fn reasons_are_described_for_the_boot_line() {
         "[security] mode = \"off\""
     );
 }
+
+#[test]
+fn a_config_alone_describes_its_mode_whatever_the_process_booted() {
+    #[cfg(feature = "security-module")]
+    {
+        let _off = off_for_this_thread();
+        assert_eq!(disabled_by_config(&Config::default()), None);
+        assert_eq!(
+            disabled_by_config(&off_config()),
+            Some(DisabledReason::ConfiguredOff)
+        );
+    }
+    #[cfg(not(feature = "security-module"))]
+    assert_eq!(
+        disabled_by_config(&off_config()),
+        Some(DisabledReason::FeatureAbsent)
+    );
+}

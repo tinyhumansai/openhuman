@@ -152,6 +152,19 @@ fn security_is_reported_enforced_unless_the_host_turns_it_off_or_the_module_is_a
     );
 }
 #[test]
+fn describe_reports_the_builders_own_security_mode() {
+    use openhuman_core::config::schema::SecurityModeConfig;
+    let built_with_module = openhuman_core::security::switch::disabled_by_config(
+        &openhuman_core::config::Config::default(),
+    )
+    .is_none();
+    let enforce = RuntimeBuilder::new()
+        .security(SecurityModeConfig::default())
+        .describe()
+        .configuration;
+    assert_eq!(enforce.security_enforced, built_with_module);
+}
+#[test]
 fn metadata_written_before_the_security_field_reads_as_enforced() {
     let mut json = serde_json::to_value(RuntimeBuilder::new().describe().configuration).unwrap();
     json.as_object_mut().unwrap().remove("security_enforced");
