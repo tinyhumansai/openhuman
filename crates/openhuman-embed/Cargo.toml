@@ -207,3 +207,9 @@ required-features = ["mcp", "modules", "skills", "storage-sqlite"]
 [[test]]
 name = "security_second_runtime"
 required-features = ["security-module"]
+
+# While the runtime that admitted TinySecurity is live, another secret scope is
+# refused the module. Ignored by default: it needs the module's release.
+[[test]]
+name = "security_live_scope"
+required-features = ["security-module"]
