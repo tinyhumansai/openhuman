@@ -242,13 +242,9 @@ fn segment_may_reach_network(words: &[String]) -> bool {
     }
     if program == "find" {
         return args
-            .windows(2)
-            .any(|pair| matches!(pair[0].as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")
-                && segment_may_reach_network(&pair[1..].to_vec()))
-            || args
-                .iter()
-                .position(|arg| matches!(arg.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir"))
-                .is_some_and(|at| segment_may_reach_network(&args[at + 1..]));
+            .iter()
+            .position(|arg| matches!(arg.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir"))
+            .is_some_and(|at| segment_may_reach_network(&args[at + 1..]));
     }
     if let Some((_, subcommands)) = NETWORK_SUBCOMMANDS.iter().find(|(name, _)| *name == program) {
         if subcommands == &[""] {
