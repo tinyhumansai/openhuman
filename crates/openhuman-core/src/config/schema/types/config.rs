@@ -258,6 +258,12 @@ pub struct Config {
     #[serde(default)]
     pub security: SecurityModeConfig,
 
+    /// The Jev judge's route when the host supplies its own credential.
+    /// Absent from the user wire format: it holds a secret.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub security_judge: Option<SecurityJudgeRoute>,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 

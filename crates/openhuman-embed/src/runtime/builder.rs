@@ -243,6 +243,21 @@ impl RuntimeBuilder {
         self.config_knobs.security = Some(value);
         self
     }
+    /// The route to TinySecurity's Jev judge, for a host that holds its own
+    /// Jev credential.
+    ///
+    /// The judge is on by default: it may settle a call that needs approval
+    /// when it is sure the call is intended, reversible and sends nothing out,
+    /// and anything else still goes to a person. Without a route the core
+    /// looks for the credentials it already has, and with none the judge stays
+    /// out. Turn it off with `judge` on [`Self::security`].
+    pub fn security_judge(
+        mut self,
+        value: openhuman_core::config::schema::SecurityJudgeRoute,
+    ) -> Self {
+        self.config_knobs.security_judge = Some(value);
+        self
+    }
     /// Credential encryption policy.
     pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self {
         self.config_knobs.secrets = Some(value);

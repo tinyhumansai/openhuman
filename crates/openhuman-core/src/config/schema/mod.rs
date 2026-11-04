@@ -158,7 +158,9 @@ pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGate
 pub use security::{
     AuditConfig, ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig,
 };
-pub use security_mode::{SecurityMode, SecurityModeConfig};
+pub use security_mode::{
+    JudgeMode, SecurityJudgeDialect, SecurityJudgeRoute, SecurityMode, SecurityModeConfig,
+};
 pub use task_sources::TaskSourcesConfig;
 pub use tinychannels_bus::config::{
     ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig, IrcConfig,

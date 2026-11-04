@@ -12,6 +12,7 @@ pub(crate) mod command;
 mod device_pairing_store;
 pub(crate) mod gap;
 pub(super) mod host_callbacks;
+pub(super) mod judge;
 mod policy;
 pub(crate) mod policy_translation;
 pub(crate) mod sandbox;

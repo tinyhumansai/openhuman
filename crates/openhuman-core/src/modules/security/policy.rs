@@ -139,11 +139,13 @@ fn audit_init_config(config: &Config) -> tinysecurity_bus::AuditConfig2 {
 pub fn module_config_for_host(
     config: &Config,
     trusted_host: Option<String>,
+    judge: Option<tinysecurity_bus::JudgeConfig>,
 ) -> Result<tinysecurity_bus::ModuleConfig, &'static str> {
     let trusted_host = trusted_host.ok_or("module host identity unavailable")?;
     Ok(tinysecurity_bus::ModuleConfig {
         contract_version: MODULE_CONTRACT_VERSION,
         trusted_host: Some(trusted_host),
+        judge,
         ..module_config(config)
     })
 }
@@ -153,6 +155,7 @@ pub fn module_config_for_host(
 pub(crate) fn module_config_for_secret_scope(
     config: &Config,
     trusted_host: Option<String>,
+    judge: Option<tinysecurity_bus::JudgeConfig>,
     scope: &crate::security::approval::native::SecretScope,
     registration_id: String,
     consumer_id: String,
@@ -165,7 +168,7 @@ pub(crate) fn module_config_for_secret_scope(
         SecretCipherConfig2, SecretConfig2, SecretLimits2, SecretRegistration2,
     };
 
-    let mut result = module_config_for_host(config, trusted_host)?;
+    let mut result = module_config_for_host(config, trusted_host, judge)?;
     let approval = result.approvals.get_or_insert_with(approval_init_config);
     approval.scopes.push(ApprovalScope2 {
         scope_id: scope.scope_id().to_owned(),
