@@ -201,7 +201,7 @@ node scripts/ci/self-hosted/compare-runs.mjs --lanes    # include historical lan
 
 The comparison script requires a matching legacy CI Lite run, so it does not
 measure commits that only have the current lane flows. For current measurements,
-use workflow elapsed time and the uploaded per-check and cache timing records.
+use workflow elapsed time and the uploaded per-check timing records.
 
 Each run uploads `ci-out-*` artifacts with per-lane logs, `ci-timings.json`
 (per-check timings and target-dir sizes), linkage proof, and lcov. See the suite inventory
