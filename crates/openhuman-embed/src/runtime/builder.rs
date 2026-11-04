@@ -235,9 +235,9 @@ impl RuntimeBuilder {
     /// [`SecurityModeConfig::off`](crate::config::SecurityModeConfig::off): those
     /// checks then allow, tool output, diagnostics and log URLs are not
     /// redacted, and the runtime says so once at boot. `[privacy] mode =
-    /// "local_only"` still refuses external transfers, and forced one-time
-    /// approvals, the encrypted secret store and device pairing still need the
-    /// module. A build without the `security-module` feature behaves as off.
+    /// "local_only"` still refuses external transfers, approvals a channel or
+    /// flow demands still need a person, and the encrypted secret store and
+    /// device pairing still need the module. A build without the `security-module` feature behaves as off.
     /// Leaving it unset keeps the configured (by default enforced) mode.
     pub fn security(mut self, value: openhuman_core::config::schema::SecurityModeConfig) -> Self {
         self.config_knobs.security = Some(value);

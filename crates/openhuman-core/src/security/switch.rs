@@ -21,10 +21,12 @@
 //! [`disabled_for`], which also honours that configuration's own `[security]`.
 //!
 //! Some things stay on when security is disabled, because they are not module
-//! checks: `[privacy] mode = "local_only"` still refuses external egress, an
-//! explicit one-time approval (`ApprovalGate::intercept_forced`) still asks a
-//! person, and the encrypted secret store, keychain and device pairing still need
-//! the module's cryptography.
+//! checks: `[privacy] mode = "local_only"` still refuses external egress; the
+//! approval gate is unchanged, so a call a channel, flow or origin requires a
+//! person to approve still waits for one (and is refused where no approval
+//! engine exists), although the module-driven approval prompts are skipped
+//! upstream; and the encrypted secret store, keychain and device pairing still
+//! need the module's cryptography.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

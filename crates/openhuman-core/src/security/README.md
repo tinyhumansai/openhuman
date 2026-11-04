@@ -18,8 +18,10 @@ decisions:
   checks are then permissive: the prompt screen, tool classification and
   approvals, path checks, the action budget and the audit trail allow, egress
   is permitted unless `[privacy] mode = "local_only"`, and redaction passes tool
-  output, diagnostics and log URLs through unredacted. Forced one-time approvals,
-  the encrypted secret store, the keychain and device pairing still need the
+  output, diagnostics and log URLs through unredacted. The approval gate is
+  unchanged: approvals a channel, flow or origin demands still need a person
+  (and an engine), while the module's own approval prompts are skipped. The
+  encrypted secret store, the keychain and device pairing still need the
   module. Enabled security is unchanged: it fails closed. The core logs one line
   at boot when security is disabled, and why.
 - `approval/` parks the live tool future, publishes the existing approval
