@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::core::runtime::CoreContext;
 use crate::config::Config;
+use crate::core::runtime::CoreContext;
 use crate::modules::types::ModuleState;
 use tinybus::module::{HostCallbackBinding, Resolver};
 
@@ -219,9 +219,10 @@ pub(super) async fn load_with_computer_callback(
         let config = config.clone();
         let id = module_id.clone();
         async move {
-            let binding = crate::modules::browser_egress_host::prepare_consequence_callback(runtime)
-                .await
-                .map_err(|error| error.to_string())?;
+            let binding =
+                crate::modules::browser_egress_host::prepare_consequence_callback(runtime)
+                    .await
+                    .map_err(|error| error.to_string())?;
             let module_config =
                 super::module_config_with_consequence_callback(&config, &id, &binding).await;
             Ok((binding, module_config, ()))
