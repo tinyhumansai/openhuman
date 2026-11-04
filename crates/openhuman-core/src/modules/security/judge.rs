@@ -102,4 +102,4 @@ fn build(config: &Config, route: SecurityJudgeRoute) -> Option<JudgeConfig> {
 
 #[cfg(test)]
 #[path = "judge_tests.rs"]
-mod tests;
+pub(super) mod tests;

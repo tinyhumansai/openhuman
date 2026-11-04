@@ -112,6 +112,7 @@ async fn secret_scope_bootstrap_enables_bounded_pairing_and_legacy_source_bindin
     let module = module_config_for_secret_scope(
         &config,
         Some(":1.42".into()),
+        None,
         &scope,
         "1".repeat(32),
         "2".repeat(32),
