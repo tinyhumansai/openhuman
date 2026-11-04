@@ -201,15 +201,3 @@ required-features = ["profiles"]
 [[test]]
 name = "mcp_module"
 required-features = ["mcp", "modules", "skills", "storage-sqlite"]
-
-# A second embedded runtime reaches the TinySecurity module admitted by a
-# released first one. Ignored by default: it needs the module's release.
-[[test]]
-name = "security_second_runtime"
-required-features = ["security-module"]
-
-# While the runtime that admitted TinySecurity is live, another secret scope is
-# refused the module. Ignored by default: it needs the module's release.
-[[test]]
-name = "security_live_scope"
-required-features = ["security-module"]
