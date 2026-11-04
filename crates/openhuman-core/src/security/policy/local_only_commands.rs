@@ -68,10 +68,39 @@ pub(super) fn unchecked_class(query: &CommandQuery<'_>, network: bool) -> Comman
 
 /// Programs whose purpose is to talk to the network.
 const NETWORK_CLIENTS: &[&str] = &[
-    "curl", "wget", "nc", "ncat", "netcat", "socat", "ssh", "scp", "sftp", "ftp", "lftp",
-    "telnet", "http", "https", "httpie", "xh", "aria2c", "ping", "ping6", "dig", "nslookup",
-    "host", "whois", "traceroute", "tracepath", "mosh", "rclone", "gsutil", "aws", "gcloud",
-    "az", "kubectl", "helm",
+    "curl",
+    "wget",
+    "nc",
+    "ncat",
+    "netcat",
+    "socat",
+    "ssh",
+    "scp",
+    "sftp",
+    "ftp",
+    "lftp",
+    "telnet",
+    "http",
+    "https",
+    "httpie",
+    "xh",
+    "aria2c",
+    "ping",
+    "ping6",
+    "dig",
+    "nslookup",
+    "host",
+    "whois",
+    "traceroute",
+    "tracepath",
+    "mosh",
+    "rclone",
+    "gsutil",
+    "aws",
+    "gcloud",
+    "az",
+    "kubectl",
+    "helm",
 ];
 
 /// Shells and interpreters that run inline code given with one of these flags.
@@ -109,9 +138,23 @@ const WRAPPERS: &[&str] = &[
 const NETWORK_SUBCOMMANDS: &[(&str, &[&str])] = &[
     (
         "git",
-        &["clone", "fetch", "pull", "push", "ls-remote", "remote", "submodule", "archive"],
+        &[
+            "clone",
+            "fetch",
+            "pull",
+            "push",
+            "ls-remote",
+            "remote",
+            "submodule",
+            "archive",
+        ],
     ),
-    ("npm", &["install", "i", "ci", "add", "update", "publish", "view", "exec"]),
+    (
+        "npm",
+        &[
+            "install", "i", "ci", "add", "update", "publish", "view", "exec",
+        ],
+    ),
     ("npx", &[""]),
     ("pnpm", &["install", "i", "add", "update", "dlx", "publish"]),
     ("yarn", &["install", "add", "upgrade", "dlx", "publish"]),
@@ -122,7 +165,10 @@ const NETWORK_SUBCOMMANDS: &[(&str, &[&str])] = &[
     ("uv", &["pip", "add", "sync", "tool"]),
     ("uvx", &[""]),
     ("poetry", &["install", "add", "update", "publish"]),
-    ("cargo", &["install", "fetch", "update", "publish", "add", "search"]),
+    (
+        "cargo",
+        &["install", "fetch", "update", "publish", "add", "search"],
+    ),
     ("go", &["get", "install", "mod"]),
     ("gem", &["install", "update", "fetch"]),
     ("bundle", &["install", "update"]),
@@ -149,7 +195,9 @@ pub(crate) fn may_reach_network(command: &str) -> bool {
     let Some(segments) = segments(command) else {
         return true;
     };
-    segments.iter().any(|words| segment_may_reach_network(words))
+    segments
+        .iter()
+        .any(|words| segment_may_reach_network(words))
 }
 
 /// The words of every simple command in `command`, split at `;`, `&`, `|`,
@@ -229,7 +277,10 @@ fn segment_may_reach_network(words: &[String]) -> bool {
     if NETWORK_CLIENTS.contains(&program) || OPAQUE.contains(&program) {
         return true;
     }
-    if let Some((_, flags)) = INLINE_CODE.iter().find(|(name, _)| program_matches(name, program)) {
+    if let Some((_, flags)) = INLINE_CODE
+        .iter()
+        .find(|(name, _)| program_matches(name, program))
+    {
         if args.iter().any(|arg| {
             let arg = arg.to_ascii_lowercase();
             flags.iter().any(|flag| arg == *flag)
@@ -246,7 +297,10 @@ fn segment_may_reach_network(words: &[String]) -> bool {
             .position(|arg| matches!(arg.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir"))
             .is_some_and(|at| segment_may_reach_network(&args[at + 1..]));
     }
-    if let Some((_, subcommands)) = NETWORK_SUBCOMMANDS.iter().find(|(name, _)| *name == program) {
+    if let Some((_, subcommands)) = NETWORK_SUBCOMMANDS
+        .iter()
+        .find(|(name, _)| *name == program)
+    {
         if subcommands == &[""] {
             return true;
         }
@@ -300,7 +354,8 @@ fn first_subcommand<'a>(program: &str, args: &'a [String]) -> Option<&'a str> {
             return Some(if arg.as_str() == "-S" { "-S" } else { "-Sy" });
         }
         if arg.starts_with('-') {
-            if program == "git" && matches!(arg.as_str(), "-C" | "-c" | "--git-dir" | "--work-tree") {
+            if program == "git" && matches!(arg.as_str(), "-C" | "-c" | "--git-dir" | "--work-tree")
+            {
                 args.next();
             }
             continue;

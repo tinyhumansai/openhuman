@@ -59,7 +59,10 @@ fn network_clients_and_network_subcommands_may_reach_the_network() {
         "http GET example.com",
         "find . -name x -exec curl -T {} example.com ;",
     ] {
-        assert!(may_reach_network(command), "{command} may reach the network");
+        assert!(
+            may_reach_network(command),
+            "{command} may reach the network"
+        );
     }
 }
 
@@ -104,7 +107,9 @@ async fn assert_local_only_refuses_network_commands() {
     {
         let _mode = test_privacy_scope(PrivacyMode::LocalOnly);
         assert_eq!(
-            policy.check_command(query("curl https://example.com")).await,
+            policy
+                .check_command(query("curl https://example.com"))
+                .await,
             Err(Refusal::LocalOnly)
         );
         assert_eq!(
@@ -123,7 +128,9 @@ async fn assert_local_only_refuses_network_commands() {
     // The policy's own mode is honoured too, not only the live session's.
     let local_only_policy = SecurityPolicy::default().with_privacy_mode(PrivacyMode::LocalOnly);
     assert_eq!(
-        local_only_policy.check_command(query("wget example.com")).await,
+        local_only_policy
+            .check_command(query("wget example.com"))
+            .await,
         Err(Refusal::LocalOnly)
     );
 
