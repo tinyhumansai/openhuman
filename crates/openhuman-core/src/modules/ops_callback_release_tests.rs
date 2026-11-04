@@ -311,9 +311,8 @@ async fn a_callback_load_whose_caller_gave_up_is_found_by_the_next_caller() {
         None,
         HashMap::new(),
     );
-    // The module bus is up before any module load in the core (boot starts
-    // it); starting it is not what this caller gives up on.
-    runtime::runtime().await.unwrap();
+    // The bus is not started yet: the caller gives up before its host
+    // callbacks are installed, which must not cancel the load either.
 
     let gave_up = tokio::time::timeout(
         std::time::Duration::ZERO,

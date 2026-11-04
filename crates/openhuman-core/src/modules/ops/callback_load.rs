@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::core::runtime::CoreContext;
 use tinybus::module::{HostCallbackBinding, Resolver};
 
 /// Run a callback load on the module runtime and wait for it.
@@ -35,6 +36,13 @@ use tinybus::module::{HostCallbackBinding, Resolver};
 /// serving with a binding nobody holds the state for. Dropping the returned
 /// future drops only the wait; `work` runs to completion.
 ///
+/// The task is scheduled before anything is awaited, so a caller that gives
+/// up while the module bus is still installing its host callbacks does not
+/// lose the load either: the task awaits them itself. It runs under the
+/// caller's [`CoreContext`], captured here: TinySecurity's first load prepares
+/// its secret scope inside `work`, and that resolves the caller's profile,
+/// agent and storage scope from the ambient context.
+///
 /// # Errors
 ///
 /// `work`'s error, the module bus failing to start, or the task panicking.
@@ -46,13 +54,17 @@ where
     T: Send + 'static,
     Fut: Future<Output = Result<T, String>> + Send + 'static,
 {
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    runtime
-        .spawn(work)
-        .await
+    let work = CoreContext::propagate(work);
+    let resolver = resolver.clone();
+    let task = crate::modules::runtime::spawn_on_bus(async move {
+        resolver
+            .runtime()
+            .await
+            .map_err(|error| error.to_string())?;
+        work.await
+    })
+    .map_err(|error| error.to_string())?;
+    task.await
         .map_err(|error| format!("the module callback load did not finish: {error}"))?
 }
 

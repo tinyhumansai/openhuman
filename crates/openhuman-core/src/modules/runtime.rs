@@ -80,6 +80,17 @@ where
     Ok(runtime_now()?.spawn(future))
 }
 
+/// Run `future` on the module bus's own executor, starting the bus if needed
+/// but without awaiting its host callbacks. The task outlives whichever caller
+/// spawned it; work that needs the callbacks awaits [`runtime`] inside it.
+pub(crate) fn spawn_on_bus<F>(future: F) -> tinybus::Result<tokio::task::JoinHandle<F::Output>>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    Ok(runtime_now()?.spawn(future))
+}
+
 fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
     let started = RUNTIME.get_or_init(|| {
         let names = RuntimeNames {
