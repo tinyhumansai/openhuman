@@ -25,18 +25,18 @@ pub(crate) struct ResolvedSandbox {
 }
 
 /// The backend a command runs on when security is disabled and TinySecurity
-/// does not plan the spawn. The operator's switch that turns the sandbox off
-/// still runs it on the host. A container (Docker) and the OpenShell box need no
-/// plan and run as configured. The native jail is built from the module's plan,
-/// so without one the command runs on the host, unconfined.
+/// does not plan the spawn: the one configured. Only the operator's switch that
+/// turns the sandbox off runs it on the host; disabling security never drops a
+/// requested jail or container. The native jail is then built by the host
+/// ([`native_jail::host_jail`](crate::sandbox::native_jail::host_jail)).
 pub(super) fn unchecked_backend(
     requested: SandboxBackendKind,
     operator_off: bool,
 ) -> SandboxBackendKind {
-    match requested {
-        _ if operator_off => SandboxBackendKind::None,
-        SandboxBackendKind::Local => SandboxBackendKind::None,
-        other => other,
+    if operator_off {
+        SandboxBackendKind::None
+    } else {
+        requested
     }
 }
 
@@ -368,7 +368,31 @@ async fn execute_unchecked(
                 .await
                 .map(ShellRunOutcome::Finished)
         }
-        SandboxBackendKind::None | SandboxBackendKind::Local => {
+        SandboxBackendKind::Local => {
+            crate::config::ensure_usable_cwd(working_dir)?;
+            let policy = crate::sandbox::local_grants::with_resolved_grants(&config, &policy)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "[sandbox] toolchain grants unavailable; the jail keeps configured grants only");
+                    policy.clone()
+                });
+            let jail = crate::sandbox::native_jail::host_jail(&policy);
+            crate::sandbox::native_jail::execute(
+                ctx,
+                &config,
+                &policy,
+                &jail,
+                command,
+                working_dir,
+                &extra_env,
+                timeout,
+                false,
+                yield_after,
+                meter,
+            )
+            .await
+        }
+        SandboxBackendKind::None => {
             crate::config::ensure_usable_cwd(working_dir)?;
             execute_unsandboxed(
                 ctx,
