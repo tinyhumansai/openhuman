@@ -10,12 +10,10 @@
 //! This file is the seam between the two. It holds no module types, so the gate
 //! compiles in a build without the module; the only implementations are the
 //! native one (`native/`, behind `security-module`), which asks the module over
-//! its bus contract, the unavailable one a slim build gets, which refuses
-//! everything, and [`DisabledEngine`], which the gate is built with when security
-//! is disabled (`crate::security::switch`). The trait is sealed: nothing outside
-//! this crate can name an implementation, so a holder of an
-//! [`ApprovalGate`](super::ApprovalGate) cannot swap in an allow-everything
-//! engine; only the host's own security switch selects one.
+//! its bus contract, and the unavailable one a slim build gets, which refuses
+//! everything. The trait is sealed: nothing outside this crate can name an
+//! implementation, so a holder of an [`ApprovalGate`](super::ApprovalGate)
+//! cannot swap in an allow-everything engine.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -401,144 +399,6 @@ impl ApprovalEngine for UnavailableEngine {
         _flow_id: &str,
     ) -> Result<Vec<String>, EngineError> {
         Ok(Vec::new())
-    }
-}
-
-/// The engine for a gate whose security is disabled: an ordinary approval is
-/// granted at once, with nothing parked or recorded, so no tool call waits on a
-/// module. A forced approval (`Variant::Forced`: an explicit one-time consent for
-/// an irreversible action such as a wallet send or a secret decryption) is not a
-/// module check and still goes to `inner`, the engine the build would otherwise
-/// use, which refuses it when there is no module.
-#[derive(Debug)]
-pub(crate) struct DisabledEngine {
-    inner: SharedEngine,
-}
-
-impl DisabledEngine {
-    pub(crate) fn wrapping(inner: SharedEngine) -> Self {
-        Self { inner }
-    }
-
-    /// Whether `request_id` is one this engine granted itself.
-    fn granted_here(request_id: &str) -> bool {
-        request_id.starts_with(DISABLED_REQUEST_PREFIX)
-    }
-}
-
-/// Prefix of the request ids [`DisabledEngine`] grants without the module.
-const DISABLED_REQUEST_PREFIX: &str = "security-off-";
-
-impl Sealed for DisabledEngine {}
-
-#[async_trait]
-impl ApprovalEngine for DisabledEngine {
-    async fn check(&self, input: CheckInput) -> Result<Checked, EngineError> {
-        if input.variant == Variant::Forced {
-            return self.inner.check(input).await;
-        }
-        Ok(Checked::Approved {
-            request_id: format!("{DISABLED_REQUEST_PREFIX}{}", input.call_id),
-        })
-    }
-    async fn decide(
-        &self,
-        request_id: &str,
-        choice: Choice,
-        label: &str,
-    ) -> Result<Decided, EngineError> {
-        self.inner.decide(request_id, choice, label).await
-    }
-    async fn reserve(&self, request_id: &str) -> Result<(), EngineError> {
-        if Self::granted_here(request_id) {
-            return Ok(());
-        }
-        self.inner.reserve(request_id).await
-    }
-    async fn record_execution(
-        &self,
-        request_id: &str,
-        outcome: super::types::ExecutionOutcome,
-    ) -> Result<(), EngineError> {
-        if Self::granted_here(request_id) {
-            return Ok(());
-        }
-        self.inner.record_execution(request_id, outcome).await
-    }
-    async fn expire(&self, request_id: &str) -> Result<bool, EngineError> {
-        if Self::granted_here(request_id) {
-            return Ok(false);
-        }
-        self.inner.expire(request_id).await
-    }
-    fn release(&self, request_id: &str) {
-        if !Self::granted_here(request_id) {
-            self.inner.release(request_id);
-        }
-    }
-    async fn cancel(&self, request_id: &str) -> Result<(), EngineError> {
-        if Self::granted_here(request_id) {
-            return Ok(());
-        }
-        self.inner.cancel(request_id).await
-    }
-    async fn is_decided(&self, request_id: &str) -> Result<Option<bool>, EngineError> {
-        if Self::granted_here(request_id) {
-            return Ok(Some(true));
-        }
-        self.inner.is_decided(request_id).await
-    }
-    async fn history(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<super::types::ApprovalAuditEntry>, EngineError> {
-        self.inner.history(limit).await
-    }
-    async fn grant_tool_trust(
-        &self,
-        tenant: &Tenant,
-        variant: Variant,
-        tool: &str,
-    ) -> Result<(), EngineError> {
-        self.inner.grant_tool_trust(tenant, variant, tool).await
-    }
-    async fn tool_trust(
-        &self,
-        tenant: &Tenant,
-        variant: Variant,
-        posture: Posture,
-    ) -> Result<Vec<super::types::ToolTrustEntry>, EngineError> {
-        self.inner.tool_trust(tenant, variant, posture).await
-    }
-    async fn revoke_tool_trust_by_id(
-        &self,
-        tenant: &Tenant,
-        variant: Variant,
-        posture: Posture,
-        request_id: &str,
-    ) -> Result<bool, EngineError> {
-        self.inner
-            .revoke_tool_trust_by_id(tenant, variant, posture, request_id)
-            .await
-    }
-    async fn grant_flow_trust(
-        &self,
-        tenant: &Tenant,
-        flow_id: &str,
-        tool: &str,
-    ) -> Result<(), EngineError> {
-        self.inner.grant_flow_trust(tenant, flow_id, tool).await
-    }
-    async fn revoke_flow_trust(
-        &self,
-        tenant: &Tenant,
-        flow_id: &str,
-        tool: &str,
-    ) -> Result<bool, EngineError> {
-        self.inner.revoke_flow_trust(tenant, flow_id, tool).await
-    }
-    async fn flow_trust(&self, tenant: &Tenant, flow_id: &str) -> Result<Vec<String>, EngineError> {
-        self.inner.flow_trust(tenant, flow_id).await
     }
 }
 

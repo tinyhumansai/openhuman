@@ -45,18 +45,16 @@ impl ApprovalGate {
     }
 
     /// The engine this build asks: the TinySecurity module, or, in a build
-    /// without it, one that refuses every gated call. With security disabled
-    /// (`crate::security::switch`) that engine is wrapped in
-    /// [`DisabledEngine`](super::engine::DisabledEngine), which grants every
-    /// ordinary approval at once and leaves only forced approvals to it.
+    /// without it, one that refuses every gated call.
     fn engine_for(config: &Config) -> SharedEngine {
         #[cfg(feature = "security-module")]
-        let engine: SharedEngine = Arc::new(super::native::NativeEngine::production(config.clone()));
+        {
+            Arc::new(super::native::NativeEngine::production(config.clone()))
+        }
         #[cfg(not(feature = "security-module"))]
-        let engine: SharedEngine = Arc::new(super::engine::UnavailableEngine);
-        match crate::security::switch::disabled_for(Some(config)) {
-            Some(_) => Arc::new(super::engine::DisabledEngine::wrapping(engine)),
-            None => engine,
+        {
+            let _ = config;
+            Arc::new(super::engine::UnavailableEngine)
         }
     }
 
