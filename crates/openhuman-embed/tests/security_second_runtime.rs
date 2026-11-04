@@ -62,7 +62,10 @@ impl Tool for Lookup {
 async fn screened_turn(name: &str) -> Result<String, String> {
     let backend = stub_backend().await;
     let model = scripted_provider(
-        vec![tool_call_completion("lookup", "{}"), chat_completion("Paris")],
+        vec![
+            tool_call_completion("lookup", "{}"),
+            chat_completion("Paris"),
+        ],
         "Paris",
     )
     .await;
@@ -87,9 +90,7 @@ async fn screened_turn(name: &str) -> Result<String, String> {
                         .bare_prompt("Use lookup then answer")
                         .tools(ToolScopeSpec::HostOnly),
                 )
-                .tools(|_| {
-                    Box::pin(async { HostTurnTools::advertised(vec![Box::new(Lookup)]) })
-                }),
+                .tools(|_| Box::pin(async { HostTurnTools::advertised(vec![Box::new(Lookup)]) })),
         )
         .map_err(|error| format!("{name} agent: {error}"))?;
     let outcome = agent.turn(BENIGN).send().await;
