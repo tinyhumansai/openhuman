@@ -342,10 +342,8 @@ fn make_info(
         configuration: ConfigurationInfo {
             autonomy_enabled: config.autonomy.enabled,
             privacy: format!("{:?}", config.privacy.mode),
-            prompt_screen_enforced: config.prompt_screen.enforces()
-                && openhuman_core::security::switch::disabled_for(Some(&config)).is_none(),
-            security_enforced: openhuman_core::security::switch::disabled_for(Some(&config))
-                .is_none(),
+            prompt_screen_enforced: config.prompt_screen.enforces() && security_enforced,
+            security_enforced,
             secrets_encrypted: config.secrets.encrypt,
             cron_enabled: config.cron.enabled,
             learning: LearningSettings {
