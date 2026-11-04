@@ -55,7 +55,10 @@ an ephemeral one), and the installed session store. Both `Runtime` and every
 agent or in-flight turn exists, even after the host drops its `Runtime`. When
 the last owner drops, the guard drops the core while the process slot is
 still claimed, restores the previous session store if it still owns the
-slot, drops its handle on an ephemeral workspace, and releases `RUNTIME_LIVE`.
+slot, drops its handle on an ephemeral workspace, and releases `RUNTIME_LIVE`
+together with the TinySecurity secret scope (`release_process_slot`): the
+module stays loaded with the scope it was admitted with, and the next runtime
+takes it over instead of being refused every security call.
 The ephemeral root (`EphemeralRoot`) is removed with a short retry loop
 (background writers can recreate subdirectories just after a turn returns)
 when its last holder drops. A dropped agent's deferred MCP cleanup retains the

@@ -324,8 +324,12 @@ async fn ensure_loaded_with_security_callback(
     id: &str,
 ) -> Result<(), String> {
     let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
+    // Captured before the load is scheduled: if the caller's runtime is
+    // released while the detached load runs, the load must not record that
+    // runtime's scope as the module's owner.
+    let epoch = super::security::host_callbacks::scope_epoch();
     callback_load::detached(resolver, async move {
-        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id).await
+        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id, epoch).await
     })
     .await
 }
