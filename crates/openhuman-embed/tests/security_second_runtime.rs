@@ -63,8 +63,6 @@ async fn screened_turn(name: &str) -> Result<String, String> {
 #[test]
 #[ignore = "needs the TinySecurity release; run by scripts/ci/security-native-fixture.sh"]
 fn a_runtime_built_after_another_is_released_still_screens_its_prompts() {
-    let _ = env_logger::builder().is_test(true).try_init(); // TEMPDEBUG
-    let _ = tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).try_init(); // TEMPDEBUG
     runtime().block_on(async {
         tokio::spawn(async {
             for name in ["first", "second"] {
