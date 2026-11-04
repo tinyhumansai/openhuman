@@ -88,6 +88,12 @@ path = "../../tests/security_native_fixture.rs"
 required-features = ["security-module"]
 
 [[test]]
+# TinySecurity from a pinned release (no local-file source) serves later loads.
+name = "security_release_reuse_fixture"
+path = "../../tests/security_release_reuse_fixture.rs"
+required-features = ["security-module"]
+
+[[test]]
 # Loads tinydocs from the linked executable and calls GenerateDocx end to end.
 # `scripts/test-rust-e2e.sh --suite tinydocs_linked_e2e` enables its local-only
 # `linked-modules,documents` feature requirements explicitly.

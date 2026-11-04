@@ -122,3 +122,33 @@ bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhum
   --features "$core_features,security-module" \
   a_different_secret_scope_is_refused_while_the_admitting_runtime_is_live \
   -- --ignored --exact --nocapture
+
+# The shipped app loads TinySecurity as a pinned release, never from a local
+# file. Present the same verified archive as a bundled module instead, with no
+# local-file source, so later loads exercise the retained callback binding.
+release_version="${archive#tinysecurity-module-}"
+release_version="${release_version%%-"$host_key"*}"
+bundled_dir="$OPENHUMAN_TEST_SECURITY_FIXTURE_DIR/bundled"
+rm -rf "$bundled_dir"
+# Lay a verified archive out as an installer bundle does
+# (scripts/release/stage-modules.mjs): `<id>/<version>/<host_key>/` holding the
+# archive and its extracted module side by side.
+stage_bundled() {
+  local id="$1" version="$2" source="$3" name="$4"
+  local dir="$bundled_dir/$id/$version/$host_key"
+  mkdir -p "$dir"
+  cp "$source" "$dir/$name"
+  if [[ "$name" == *.zip ]]; then
+    powershell.exe -NoProfile -Command \
+      "Expand-Archive -LiteralPath '$(cygpath -w "$dir/$name")' -DestinationPath '$(cygpath -w "$dir")' -Force"
+  else
+    tar --no-same-owner -xzf "$dir/$name" -C "$dir"
+  fi
+}
+stage_bundled tinysecurity "$release_version" "$archive_path" "$archive"
+env -u OPENHUMAN_MODULE_PATH OPENHUMAN_BUNDLED_MODULES="$bundled_dir" \
+  bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-cli \
+  --test security_release_reuse_fixture --no-default-features \
+  --features "$core_features,security-module" \
+  native_fixture_serves_later_calls_after_a_release_admission \
+  -- --ignored --exact --nocapture
