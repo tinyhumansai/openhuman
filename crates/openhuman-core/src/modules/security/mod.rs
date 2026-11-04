@@ -591,6 +591,22 @@ pub(crate) async fn validate_host_path(
     Err("TinySecurity is not built into this host".into())
 }
 
+/// Release the secret scope using the admitted TinySecurity module, for a host
+/// whose core is gone.
+///
+/// TinySecurity keeps the secret scope it was admitted with (the approval
+/// subject, audit stream and master-key registration derived from the admitting
+/// config) for as long as the module is loaded, which is the life of the
+/// process. A later core whose config derives a different scope is refused the
+/// module while the admitting core is live, so one live scope is never handed
+/// another's master key. A host that releases its core and builds a new one in
+/// the same process (an embedder's `Runtime`, each in its own scratch
+/// directory) calls this once the old core is dropped: the next core then takes
+/// the admitted module over instead of being refused every security call.
+pub fn release_secret_scope() {
+    host_callbacks::release_scope_owner(MODULE_ID);
+}
+
 /// Replace the running module configuration through the loader control plane.
 /// Any reinitialization failure is returned to the caller; policy consumers must
 /// keep denying while the configuration is uncertain.
