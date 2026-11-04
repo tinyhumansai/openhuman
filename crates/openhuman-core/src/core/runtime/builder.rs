@@ -541,6 +541,7 @@ impl CoreRuntime {
             .expect("core config lock poisoned")
             .clone()
             .ok_or_else(|| anyhow::anyhow!("secret preflight has no loaded config"))?;
+        log::debug!("[core-runtime] secret preflight: decrypting config secrets");
         let migrated = config.decrypt_secrets_after_preflight().await?;
         if migrated {
             if let Err(error) = config.save().await {
@@ -550,17 +551,21 @@ impl CoreRuntime {
             }
         }
         self.ctx.replace_latest_embedder_config(config.clone());
+        log::debug!("[core-runtime] secret preflight: loading startup credentials");
         crate::core::runtime::subscribers::finish_secret_preflight_credentials(
             &crate::core::runtime::DispatchCtx::new(Arc::clone(&self.ctx)),
             &config,
         )
         .await;
+        log::debug!("[core-runtime] secret preflight: running legacy migrations");
         crate::core::runtime::services::run_legacy_migrations(&config).await;
+        log::debug!("[core-runtime] secret preflight: starting the startup sweep");
         let sweep = start_startup_sweep(&config.workspace_dir).await;
         *self.startup_sweep.lock().await = sweep;
         *self.config.write().expect("core config lock poisoned") = Some(config);
         self.secret_preflight_complete
             .store(true, std::sync::atomic::Ordering::Release);
+        log::debug!("[core-runtime] secret preflight: complete");
         Ok(())
     }
 

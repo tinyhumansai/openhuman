@@ -262,6 +262,7 @@ pub async fn serve(
                     Err(error)
                 }
                 Ok(Ok(())) => {
+                    log::debug!("[core] secret preflight complete; starting services");
                     let startup_runtime = Arc::clone(&runtime);
                     let mut service_start =
                         tokio::spawn(async move { startup_runtime.start_services().await });
@@ -278,6 +279,7 @@ pub async fn serve(
                                     // config have been refreshed, then expose the full
                                     // router. A concurrent shutdown must still stop
                                     // the listener while these services are starting.
+                                    log::debug!("[core] services started; opening the full router");
                                     gate.open();
                             await_http_server(&mut server, server_shutdown.as_ref()).await
                                 }
