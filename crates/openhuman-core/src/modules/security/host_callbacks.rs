@@ -122,9 +122,7 @@ fn secret_key_path(config_dir: &Path) -> PathBuf {
 /// Declare the config directory `config_dir` transient. See
 /// [`crate::security::declare_transient_secret_scope`].
 pub(crate) fn declare_transient_scope(config_dir: &Path) {
-    ownership()
-        .transient
-        .insert(secret_key_path(config_dir));
+    ownership().transient.insert(secret_key_path(config_dir));
 }
 
 /// Release every module's live owner and forget the declared transient
@@ -301,7 +299,12 @@ pub(in crate::modules) async fn ensure_loaded(
 ) -> Result<(), String> {
     let mut loads = SECURITY_CALLBACK_LOADS.lock().await;
     if let Some(state) = loads.get(id) {
-        let key_path = secret_key_path(config.config_path.parent().unwrap_or_else(|| Path::new(".")));
+        let key_path = secret_key_path(
+            config
+                .config_path
+                .parent()
+                .unwrap_or_else(|| Path::new(".")),
+        );
         let claim = claim(id, &state.key_path, &key_path)?;
         // Confirm the admitted module still retains this binding. Re-presenting
         // it would be refused (a binding is spent once a module takes it), and
