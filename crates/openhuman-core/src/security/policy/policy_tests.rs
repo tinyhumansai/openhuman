@@ -129,6 +129,29 @@ pub(super) async fn assert_every_policy_gate_allows() {
         vec![true]
     );
 
+    // No protected floor: a credential store under a home directory is a
+    // path like any other.
+    let home = root.join("home");
+    fs::create_dir_all(home.join(".ssh")).unwrap();
+    fs::write(home.join(".ssh/id_rsa"), "key").unwrap();
+    let key = home.join(".ssh/id_rsa");
+    assert!(!SecurityPolicy::is_always_forbidden_async(&key).await);
+    assert_eq!(
+        policy.validate_path(&key.to_string_lossy()).await.unwrap(),
+        key
+    );
+    assert_eq!(
+        policy
+            .validate_parent_path(&home.join(".ssh/new_key").to_string_lossy())
+            .await
+            .unwrap(),
+        home.join(".ssh/new_key")
+    );
+    assert!(!policy.is_internal(&key).await);
+    // Input validation, not policy: a parent traversal or a NUL is malformed.
+    assert!(policy.validate_path("../notes.md").await.is_err());
+    assert!(policy.validate_path("notes\0.md").await.is_err());
+
     // Tier and budget.
     policy.spend_action("file_write").await.unwrap();
     assert_eq!(
@@ -202,6 +225,28 @@ async fn an_enforcing_policy_without_the_module_still_refuses() {
     };
     assert!(crate::security::switch::disabled().is_none());
     assert!(!policy.can_act(), "no module answer, no acting tier");
+
+    // A credential store is refused when the module cannot be asked.
+    let key = dir.path().join("home/.ssh/id_rsa");
+    fs::create_dir_all(key.parent().unwrap()).unwrap();
+    fs::write(&key, "key").unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(temp.path());
+    config.modules.enabled = false;
+    let context = crate::core::runtime::CoreContext::for_test_with_config(
+        crate::core::runtime::DomainSet::full(),
+        config,
+    );
+    let refused = crate::core::runtime::CoreContext::scope(context, async {
+        policy.validate_path(&key.to_string_lossy()).await
+    })
+    .await;
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.contains("[policy-blocked]")),
+        "{refused:?}"
+    );
     assert!(policy.is_rate_limited());
     assert_eq!(
         policy.gate_decision(CommandClass::Write),
