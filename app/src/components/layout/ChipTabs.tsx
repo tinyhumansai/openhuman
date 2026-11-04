@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 
 import { cn } from '../../lib/cn';
 import { IS_DEV } from '../../utils/config';
@@ -108,6 +108,10 @@ export default function ChipTabs<T extends string>({
   compact = false,
 }: ChipTabsProps<T>) {
   const spacingClass = compact ? compactChipSpacingClass : defaultChipSpacingClass;
+  const lastRadixSelection = useRef<T | null>(null);
+  useEffect(() => {
+    lastRadixSelection.current = null;
+  }, [value]);
 
   if (as === 'nav') {
     return (
@@ -145,11 +149,26 @@ export default function ChipTabs<T extends string>({
     <TabsRoot
       value={value}
       onValueChange={v => {
+        // A pointer activation can notify from both mousedown and focus before
+        // a controlled parent commits its new value. Dispatch it only once.
+        if (lastRadixSelection.current === v) return;
+        lastRadixSelection.current = v as T;
         debug('select', { id: v });
         onChange(v as T);
       }}
       className="contents">
-      <TabsList className={className} aria-label={ariaLabel} data-testid={testId}>
+      <TabsList
+        className={className}
+        aria-label={ariaLabel}
+        data-testid={testId}
+        onBlurCapture={() => {
+          lastRadixSelection.current = null;
+        }}
+        onKeyUpCapture={() => {
+          // Keep deduplication within one keyboard interaction. A controlled
+          // parent may reject a selection; the next arrow press must retry it.
+          lastRadixSelection.current = null;
+        }}>
         {items.map(item => {
           const chipTestId =
             item.testId ?? (testIdPrefix ? `${testIdPrefix}-${item.id}` : undefined);
@@ -161,17 +180,15 @@ export default function ChipTabs<T extends string>({
               data-testid={chipTestId}
               id={item.labelledBy}
               aria-controls={item.controls}
-              // Radix selects on `onMouseDown` (real pointer interaction), not
-              // `onClick` — `fireEvent.click()` in RTL fires only a `click`
-              // event with no preceding `mousedown`, so relying on Radix's
-              // built-in activation alone leaves every `fireEvent.click(chip)`
-              // test across the app selecting nothing. Firing `onChange`
-              // directly here covers both: real pointer users hit
-              // `onMouseDown` (redundant, same value) and `click`-only
-              // dispatchers hit this.
+              // Radix dispatches during pointer/key activation. Keep a click-only
+              // fallback for synthetic consumers but never dispatch twice.
               onClick={() => {
-                debug('select', { id: item.id });
-                onChange(item.id);
+                if (lastRadixSelection.current === item.id) {
+                  lastRadixSelection.current = null;
+                  return;
+                }
+                lastRadixSelection.current = null;
+                if (item.id !== value) onChange(item.id);
               }}
               className={cn(baseChipClass, spacingClass, inactiveChipClass, activeChipClass)}>
               {item.label}

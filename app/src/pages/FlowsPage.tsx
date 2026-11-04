@@ -460,6 +460,7 @@ export default function FlowsPage() {
   );
 
   const { view, setView, nav } = usePageWelcomeView({
+    defaultView: 'main',
     ariaLabel: t('nav.flows'),
     welcomeLabel: t('flows.welcome.nav'),
     mainLabel: t('flows.welcome.main'),
