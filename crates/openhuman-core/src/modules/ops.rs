@@ -307,6 +307,12 @@ pub(crate) async fn security_secret_registration_id() -> Option<String> {
     super::security::host_callbacks::secret_registration_id().await
 }
 
+/// The secret key path the admitted TinySecurity serves, if it is admitted.
+#[cfg(feature = "security-module")]
+pub(crate) async fn security_admitted_key_path() -> Option<PathBuf> {
+    super::security::host_callbacks::admitted_key_path().await
+}
+
 #[cfg(feature = "security-module")]
 pub(crate) async fn security_callback_identity() -> Option<String> {
     super::security::host_callbacks::identity().await

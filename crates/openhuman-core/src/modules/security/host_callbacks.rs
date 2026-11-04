@@ -158,6 +158,24 @@ impl SecurityCallbackState {
     }
 }
 
+/// The secret key path TinySecurity serves, if it is admitted: its live
+/// owner, or once released the admitting scope, the only durable scope that
+/// may take it over ([`claim_scope`]).
+pub(in crate::modules) async fn admitted_key_path() -> Option<PathBuf> {
+    let admitted = SECURITY_CALLBACK_LOADS
+        .lock()
+        .await
+        .get(super::MODULE_ID)
+        .map(|state| state.key_path.clone())?;
+    Some(
+        ownership()
+            .owners
+            .get(super::MODULE_ID)
+            .cloned()
+            .unwrap_or(admitted),
+    )
+}
+
 pub(in crate::modules) async fn binding() -> Option<std::sync::Arc<HostCallbackBinding>> {
     SECURITY_CALLBACK_LOADS
         .lock()

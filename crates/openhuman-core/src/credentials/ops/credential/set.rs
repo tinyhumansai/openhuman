@@ -99,6 +99,7 @@ pub async fn set_credential(
         .clone()
         .expect("session and local credentials always resolve a user id");
     let mut logs = Vec::new();
+    let needs_restart = sign_in_needs_restart(&user_id).await;
 
     // Refresh vs. install vs. account switch, decided on the stored profile.
     let existing = load_app_session_profile(config).await?;
@@ -163,6 +164,9 @@ pub async fn set_credential(
         logs.push("credential refreshed (same secret, same user)".to_string());
         config.clone()
     } else {
+        if needs_restart {
+            return sign_in_across_restart(ctx, &user_id, logs);
+        }
         let activated = activate_user_scope(ctx, &user_id)?;
         logs.extend(activated.logs.iter().cloned());
         activation = Some(activated);
@@ -249,6 +253,68 @@ pub async fn set_credential(
     let state = build_session_state(&effective_config).await?;
     publish_credential_changed(ctx, resolved.kind.as_str());
     Ok(Outcome::new(state, logs))
+}
+
+/// Whether signing `user_id` in moves this process to a profile its
+/// TinySecurity was not admitted for. That identity is fixed for the life of
+/// the process, so the sign-in completes only after a restart.
+async fn sign_in_needs_restart(user_id: &str) -> bool {
+    #[cfg(feature = "security-module")]
+    {
+        if !crate::config::user_scope::operator_user_activation_allowed() {
+            return false;
+        }
+        let Some(admitted) = crate::modules::ops::security_admitted_key_path().await else {
+            return false;
+        };
+        let Ok(root) = crate::config::default_root_openhuman_dir() else {
+            return false;
+        };
+        crate::credentials::session_state::is_profile_switch(
+            &admitted,
+            &crate::config::user_openhuman_dir(&root, user_id).join(".secret_key"),
+        )
+    }
+    #[cfg(not(feature = "security-module"))]
+    {
+        let _ = user_id;
+        false
+    }
+}
+
+/// Refusal text for a sign-in that needs the process restarted first.
+const SIGN_IN_AGAIN: &str =
+    "restart required to finish switching profiles; sign in again after restarting";
+
+/// Activate `user_id`'s profile and report that the process must restart:
+/// this process's TinySecurity cannot serve it. Nothing is stored under this
+/// process's profile; the user signs in again once it has restarted.
+fn sign_in_across_restart(
+    ctx: &DispatchCtx,
+    user_id: &str,
+    mut logs: Vec<String>,
+) -> Result<Outcome<AuthStateResponse>, String> {
+    let activation = activate_user_scope(ctx, user_id)?;
+    logs.push(SIGN_IN_AGAIN.to_string());
+    logs.extend(activation.logs.iter().cloned());
+    tracing::info!(
+        domain = "credentials",
+        operation = "set_credential",
+        "{LOG_PREFIX} profile switch: restart required"
+    );
+    Ok(Outcome::new(
+        AuthStateResponse {
+            is_authenticated: false,
+            user_id: Some(user_id.to_owned()),
+            user: None,
+            profile_id: None,
+            credential: None,
+            expires_at: None,
+            issuing_backend: None,
+            restart_required: true,
+        },
+        logs,
+    ))
 }
 
 #[cfg(test)]
