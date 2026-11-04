@@ -25,6 +25,70 @@ type SecurityCallbackLoads =
 static SECURITY_CALLBACK_LOADS: std::sync::LazyLock<SecurityCallbackLoads> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// The secret scope (its `.secret_key` path) currently using each admitted
+/// module, or no entry once that scope's owner has been released.
+///
+/// TinySecurity keeps the secret scope it was admitted with for the life of
+/// the module: its secret registration and audit stream cannot be replaced by
+/// reinitialization, and a loaded module is never unloaded. So a module is
+/// handed to one scope at a time. Another scope is refused while the current
+/// one is live, and may take the module over only after
+/// [`release_scope_owner`] says the current one is gone.
+///
+/// A plain mutex, not the async one guarding [`SECURITY_CALLBACK_LOADS`], so a
+/// host can release its scope from a synchronous `Drop`.
+static SECURITY_SCOPE_OWNERS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, PathBuf>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Whether the secret scope at `requested` may use a module whose current
+/// owner is `owner` (`None`: released). A released module is taken over by
+/// the requesting scope.
+fn claim_scope(owner: Option<&Path>, requested: &Path) -> Result<ScopeClaim, String> {
+    match owner {
+        Some(owner) if owner == requested => Ok(ScopeClaim::Held),
+        Some(_) => Err("security secret scope changed after module admission".into()),
+        None => Ok(ScopeClaim::TakenOver),
+    }
+}
+
+/// How a later caller came to use an admitted module's secret scope.
+#[derive(Debug, PartialEq, Eq)]
+enum ScopeClaim {
+    /// The caller's scope is the one already using the module.
+    Held,
+    /// The previous owner was released; the caller's scope now uses it.
+    TakenOver,
+}
+
+fn scope_owner(id: &str) -> Option<PathBuf> {
+    SECURITY_SCOPE_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+        .cloned()
+}
+
+fn set_scope_owner(id: &str, key_path: PathBuf) {
+    SECURITY_SCOPE_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(id.to_owned(), key_path);
+}
+
+/// Mark the scope using module `id` as released. See
+/// [`super::release_secret_scope`].
+pub(in crate::modules) fn release_scope_owner(id: &str) {
+    let released = SECURITY_SCOPE_OWNERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(id)
+        .is_some();
+    if released {
+        log::debug!("[security] secret scope owner released module={id}");
+    }
+}
+
 impl SecurityCallbackState {
     fn module_config(&self, config: &Config) -> Result<serde_json::Value, String> {
         let trusted_host = self.binding.unique_name().to_string();
@@ -190,15 +254,20 @@ pub(in crate::modules) async fn ensure_loaded(
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join(".secret_key");
-        if state.key_path != key_path {
-            return Err("security secret scope changed after module admission".into());
-        }
+        let claim = claim_scope(scope_owner(id).as_deref(), &key_path)?;
         // Confirm the admitted module still retains this binding. Re-presenting
         // it would be refused (a binding is spent once a module takes it), and
         // the single-binding path accepts only a local-file source, so it
         // failed every later call on a host served from the release.
         super::super::ops::callback_load::confirm(resolver, id, &state.binding).await?;
         register_scope(config, state).await?;
+        if claim == ScopeClaim::TakenOver {
+            // The loads lock is held, so no other caller claims it meanwhile.
+            log::info!(
+                "[security] secret scope taken over after its owner was released module={id}"
+            );
+            set_scope_owner(id, key_path);
+        }
         return Ok(());
     }
 
@@ -323,6 +392,7 @@ pub(in crate::modules) async fn ensure_loaded(
         .ok_or_else(|| "admitted security callback state unavailable".to_owned())?;
     candidates.clear();
     loads.insert(id.to_owned(), std::sync::Arc::clone(&state));
+    set_scope_owner(id, state.key_path.clone());
 
     register_scope(config, &state).await?;
     Ok(())
@@ -362,3 +432,7 @@ async fn register_scope(config: &Config, state: &SecurityCallbackState) -> Resul
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "host_callbacks_tests.rs"]
+mod tests;
