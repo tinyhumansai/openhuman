@@ -110,9 +110,10 @@ bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhum
 # TinySecurity keeps the secret scope it was admitted with for the process. An
 # embedded runtime built after an earlier one was released takes the module
 # over; another scope is refused while the admitting runtime is live.
+# The facade's default features on purpose: they reach TinySecurity through
+# the core's defaults without naming the facade's own `security-module`.
 bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml -p openhuman-embed \
-  --test security_second_runtime --no-default-features \
-  --features "$core_features,security-module" \
+  --test security_second_runtime \
   a_runtime_built_after_another_is_released_still_screens_its_prompts \
   -- --ignored --exact --nocapture
 
