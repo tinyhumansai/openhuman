@@ -402,3 +402,34 @@ async fn a_local_file_override_wins_over_the_release() {
         .expect("the override loads with its storage callback");
     assert!(serving_with_callbacks(&resolver).await);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_detached_callback_load_runs_under_the_callers_context() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+
+    // TinySecurity's first load prepares its secret scope inside the detached
+    // work, and that reads the ambient context (profile, agent, storage
+    // scope). The task on the module runtime must act for its caller, not
+    // for the process default.
+    let caller = CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(Config::default(), DomainSet::full(), Default::default())
+            .session_agent("callback-load-caller"),
+    );
+    let cache = private_root();
+    let resolver = resolver(
+        record(WRONG_DIGEST, WRONG_DIGEST),
+        cache.path(),
+        None,
+        HashMap::new(),
+    );
+
+    let seen = CoreContext::scope(
+        caller,
+        super::callback_load::detached(&resolver, async {
+            Ok(CoreContext::current().and_then(|ctx| ctx.session_agent().map(str::to_owned)))
+        }),
+    )
+    .await
+    .expect("the detached work runs");
+    assert_eq!(seen.as_deref(), Some("callback-load-caller"));
+}
