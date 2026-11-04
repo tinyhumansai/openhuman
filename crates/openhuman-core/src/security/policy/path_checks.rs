@@ -11,6 +11,11 @@ impl SecurityPolicy {
 
     /// Synchronous lexical preflight only. TinySecurity performs authorization,
     /// protected-floor and reservation decisions in the async validators.
+    ///
+    /// This is input validation, not policy: an empty path, a NUL byte or a
+    /// parent traversal (`..`, including its percent-encoded forms) is a
+    /// malformed tool argument, refused whether security is enforced or
+    /// disabled. With security disabled it is the only check a path gets.
     pub fn is_path_string_allowed(&self, path: &str) -> bool {
         !path.is_empty()
             && !path.contains('\0')
