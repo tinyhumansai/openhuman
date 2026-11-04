@@ -38,12 +38,9 @@ async fn screened_turn(name: &str) -> Result<String, String> {
         "{name} runtime enforces security"
     );
     let agent = runtime
-        .agent(
-            AgentSpec::new(name).provider(
-                Provider::openai_compatible(format!("{}/v1", model.uri()), "fixture")
-                    .model("fixture"),
-            ),
-        )
+        .agent(AgentSpec::new(name).provider(
+            Provider::openai_compatible(format!("{}/v1", model.uri()), "fixture").model("fixture"),
+        ))
         .map_err(|error| format!("{name} agent: {error}"))?;
     let outcome = agent.turn(BENIGN).send().await;
     let requests = chat_requests(&model).await.len();
