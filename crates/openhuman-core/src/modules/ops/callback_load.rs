@@ -24,6 +24,8 @@ use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::core::runtime::CoreContext;
+use crate::config::Config;
+use crate::modules::types::ModuleState;
 use tinybus::module::{HostCallbackBinding, Resolver};
 
 /// Run a callback load on the module runtime and wait for it.
@@ -151,5 +153,81 @@ pub(in crate::modules) async fn confirm(
             "module '{id}' is serving with a different callback binding"
         ));
     }
+    Ok(())
+}
+
+/// The body [`super::ensure_loaded_with_storage_callback`] runs detached.
+pub(super) async fn load_with_storage_callback(
+    resolver: &Resolver,
+    config: &Config,
+    id: &str,
+) -> Result<(), String> {
+    let mut loads = super::STORAGE_CALLBACK_LOADS.lock().await;
+    if let Some((binding, _served)) = loads.get(id) {
+        if matches!(super::state_of(id), ModuleState::Ready) {
+            // Already serving with this binding: a binding is spent once the
+            // module takes it, so re-presenting it would be refused. The module
+            // is process-wide, so every later workspace's client finds it
+            // already serving.
+            return Ok(());
+        }
+        return confirm(resolver, id, binding).await;
+    }
+
+    let runtime = resolver
+        .runtime()
+        .await
+        .map_err(|error| error.to_string())?;
+    let config = config.clone();
+    let module_id = id.to_owned();
+    let (binding, served) = load(resolver, id, move || {
+        let config = config.clone();
+        let id = module_id.clone();
+        async move {
+            let (binding, served) = crate::modules::storage_host::prepare_module_callbacks(runtime)
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut module_config = super::module_config(&config, &id).await;
+            module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
+            Ok((binding, module_config, served))
+        }
+    })
+    .await?;
+    loads.insert(id.to_owned(), (binding, served));
+    Ok(())
+}
+
+#[cfg(feature = "security-module")]
+/// The body [`super::ensure_loaded_with_computer_callback`] runs detached.
+pub(super) async fn load_with_computer_callback(
+    resolver: &Resolver,
+    config: &Config,
+    id: &str,
+) -> Result<(), String> {
+    let mut loads = super::COMPUTER_CALLBACK_LOADS.lock().await;
+    if let Some(binding) = loads.get(id) {
+        return confirm(resolver, id, binding).await;
+    }
+
+    let runtime = resolver
+        .runtime()
+        .await
+        .map_err(|error| error.to_string())?;
+    let config = config.clone();
+    let module_id = id.to_owned();
+    let (binding, ()) = load(resolver, id, move || {
+        let config = config.clone();
+        let id = module_id.clone();
+        async move {
+            let binding = crate::modules::browser_egress_host::prepare_consequence_callback(runtime)
+                .await
+                .map_err(|error| error.to_string())?;
+            let module_config =
+                super::module_config_with_consequence_callback(&config, &id, &binding).await;
+            Ok((binding, module_config, ()))
+        }
+    })
+    .await?;
+    loads.insert(id.to_owned(), binding);
     Ok(())
 }

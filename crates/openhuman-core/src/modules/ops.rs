@@ -264,49 +264,9 @@ async fn ensure_loaded_with_storage_callback(
 ) -> Result<(), String> {
     let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
     callback_load::detached(resolver, async move {
-        load_with_storage_callback(&task_resolver, &config, &id).await
+        callback_load::load_with_storage_callback(&task_resolver, &config, &id).await
     })
     .await
-}
-
-async fn load_with_storage_callback(
-    resolver: &Resolver,
-    config: &Config,
-    id: &str,
-) -> Result<(), String> {
-    let mut loads = STORAGE_CALLBACK_LOADS.lock().await;
-    if let Some((binding, _served)) = loads.get(id) {
-        if matches!(state_of(id), ModuleState::Ready) {
-            // Already serving with this binding: a binding is spent once the
-            // module takes it, so re-presenting it would be refused. The module
-            // is process-wide, so every later workspace's client finds it
-            // already serving.
-            return Ok(());
-        }
-        return callback_load::confirm(resolver, id, binding).await;
-    }
-
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    let config = config.clone();
-    let module_id = id.to_owned();
-    let (binding, served) = callback_load::load(resolver, id, move || {
-        let config = config.clone();
-        let id = module_id.clone();
-        async move {
-            let (binding, served) = super::storage_host::prepare_module_callbacks(runtime)
-                .await
-                .map_err(|error| error.to_string())?;
-            let mut module_config = module_config(&config, &id).await;
-            module_config["storage_callback"] = serde_json::json!(binding.unique_name().as_str());
-            Ok((binding, module_config, served))
-        }
-    })
-    .await?;
-    loads.insert(id.to_owned(), (binding, served));
-    Ok(())
 }
 
 #[cfg(feature = "security-module")]
@@ -378,43 +338,9 @@ async fn ensure_loaded_with_computer_callback(
 ) -> Result<(), String> {
     let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
     callback_load::detached(resolver, async move {
-        load_with_computer_callback(&task_resolver, &config, &id).await
+        callback_load::load_with_computer_callback(&task_resolver, &config, &id).await
     })
     .await
-}
-
-#[cfg(feature = "security-module")]
-async fn load_with_computer_callback(
-    resolver: &Resolver,
-    config: &Config,
-    id: &str,
-) -> Result<(), String> {
-    let mut loads = COMPUTER_CALLBACK_LOADS.lock().await;
-    if let Some(binding) = loads.get(id) {
-        return callback_load::confirm(resolver, id, binding).await;
-    }
-
-    let runtime = resolver
-        .runtime()
-        .await
-        .map_err(|error| error.to_string())?;
-    let config = config.clone();
-    let module_id = id.to_owned();
-    let (binding, ()) = callback_load::load(resolver, id, move || {
-        let config = config.clone();
-        let id = module_id.clone();
-        async move {
-            let binding = super::browser_egress_host::prepare_consequence_callback(runtime)
-                .await
-                .map_err(|error| error.to_string())?;
-            let module_config =
-                module_config_with_consequence_callback(&config, &id, &binding).await;
-            Ok((binding, module_config, ()))
-        }
-    })
-    .await?;
-    loads.insert(id.to_owned(), binding);
-    Ok(())
 }
 
 #[cfg(feature = "security-module")]
