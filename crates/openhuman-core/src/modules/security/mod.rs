@@ -591,6 +591,16 @@ pub(crate) async fn validate_host_path(
     Err("TinySecurity is not built into this host".into())
 }
 
+/// See [`crate::security::release_secret_scope`].
+pub(crate) fn release_secret_scope() {
+    host_callbacks::release_scopes();
+}
+
+/// See [`crate::security::declare_transient_secret_scope`].
+pub(crate) fn declare_transient_secret_scope(config_dir: &std::path::Path) {
+    host_callbacks::declare_transient_scope(config_dir);
+}
+
 /// Replace the running module configuration through the loader control plane.
 /// Any reinitialization failure is returned to the caller; policy consumers must
 /// keep denying while the configuration is uncertain.
