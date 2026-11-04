@@ -41,7 +41,7 @@ struct SlotClaim {
 impl Drop for SlotClaim {
     fn drop(&mut self) {
         if self.armed {
-            RUNTIME_LIVE.store(false, std::sync::atomic::Ordering::Release);
+            super::release_process_slot();
             log::debug!("[embed][runtime] build did not complete; process slot released");
         }
     }
