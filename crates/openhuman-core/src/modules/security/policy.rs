@@ -81,13 +81,21 @@ pub fn module_config(config: &Config) -> tinysecurity_bus::ModuleConfig {
             keyring: Some(tinysecurity_bus::KeyringConfig2 {
                 service: "openhuman".into(),
                 backend: tinysecurity_bus::KeyringBackend2::Os,
-                consent_timeout_ms: 120_000,
+                consent_timeout_ms: KEYRING_CONSENT_TIMEOUT_MS,
             }),
             pairing: None,
         }),
         ..tinysecurity_bus::ModuleConfig::default()
     }
 }
+
+/// TinySecurity's deadline for the host's answer to one keyring prompt. It
+/// outlasts the host's own wait, so an unanswered prompt comes back as
+/// pending from the host rather than racing the module's timer.
+pub(crate) const KEYRING_CONSENT_TIMEOUT_MS: u32 =
+    crate::security::keyring_consent::operation_approval::MAX_CONSENT_WAIT_MS + 5_000;
+// TinySecurity accepts up to 300 s.
+const _: () = assert!(KEYRING_CONSENT_TIMEOUT_MS <= 300_000);
 
 const AUDIT_CALLBACK_TIMEOUT_MS: u32 = 20_000;
 

@@ -229,3 +229,87 @@ fn a_pending_prompt_is_listed_until_it_is_decided_or_expires() {
     registry.cancel(&open.request_id);
     assert!(registry.pending_prompts(now_ms()).is_empty());
 }
+
+fn consent_request(call_id: &str, timeout_ms: u32) -> tinysecurity_bus::KeyringConsentRequest2 {
+    tinysecurity_bus::KeyringConsentRequest2 {
+        caller: tinysecurity_bus::CallerContext {
+            agent: "openhuman.credentials".into(),
+            call_id: call_id.into(),
+            ..Default::default()
+        },
+        purpose: "OpenHuman auth profile credential access".into(),
+        access: tinysecurity_bus::KeyringAccess2::Write,
+        name: "user-1:auth:app-session:default".into(),
+        timeout_ms,
+    }
+}
+
+#[tokio::test]
+async fn unanswered_prompts_in_a_row_never_exhaust_the_capacity() {
+    // The keychain takes each outcome once the module answers; more
+    // unanswered prompts than the capacity must all still register.
+    for index in 0..=MAX_PENDING_APPROVALS {
+        let call_id = format!("unanswered-in-a-row-{index}");
+        assert_eq!(request_approval(consent_request(&call_id, 1)).await, None);
+        assert_eq!(
+            take_operation_outcome(&call_id),
+            Some(OperationOutcome::Pending),
+            "prompt {index} registered and timed out"
+        );
+    }
+}
+
+#[test]
+fn an_outcome_no_caller_took_frees_its_slot_once_stale() {
+    let mut registry = PendingConsentRegistry::default();
+    for index in 0..MAX_PENDING_APPROVALS {
+        let call_id = format!("abandoned-{index}");
+        let (prompt, _waiter) = registry
+            .register(
+                "write",
+                "auth:profile",
+                &call_id,
+                std::time::Duration::from_secs(120),
+            )
+            .unwrap();
+        registry.finish(&prompt.request_id, &call_id, Some(OperationOutcome::Denied));
+    }
+    for (_, decided_at) in registry.outcomes.values_mut() {
+        *decided_at = decided_at.saturating_sub(OUTCOME_TTL_MS);
+    }
+
+    assert!(registry
+        .register(
+            "write",
+            "auth:next",
+            "call:next",
+            std::time::Duration::from_secs(120)
+        )
+        .is_ok());
+    assert!(registry.outcomes.is_empty());
+}
+
+#[tokio::test]
+async fn a_caller_that_goes_away_releases_its_reservation() {
+    let call_id = "caller-goes-away";
+    let waiting = tokio::spawn(request_approval(consent_request(call_id, 60_000)));
+    let reserved = || {
+        pending()
+            .lock()
+            .unwrap()
+            .reserved_call_ids
+            .contains(call_id)
+    };
+    for _ in 0..200 {
+        if reserved() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(reserved(), "the prompt registered");
+
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    assert!(!reserved());
+    assert_eq!(take_operation_outcome(call_id), None);
+}
