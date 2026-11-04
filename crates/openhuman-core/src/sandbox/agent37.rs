@@ -187,10 +187,13 @@ async fn run_command(
     )
     .await;
 
-    // Reached the end without cancellation: close the box ourselves and disarm
-    // the guard so it does not close the same reservation again.
-    if let Some(resource) = guard.disarm() {
+    // Close the box ourselves, but keep the guard armed across the await: a turn
+    // cancelled during this close drops the future, and the still-armed guard
+    // then closes the box on its detached task. Disarm only once close has
+    // returned, so the reservation is never closed twice.
+    if let Some(resource) = guard.resource.clone() {
         let _ = tinybox::close(config, resource).await;
+        guard.disarm();
     }
 
     match outcome {
