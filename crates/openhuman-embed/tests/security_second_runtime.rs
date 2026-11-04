@@ -15,7 +15,7 @@ use common::{chat_requests, offline_config, provider, runtime, stub_backend};
 use std::sync::Arc;
 
 use openhuman_embed::{AgentSpec, Provider, Runtime, Workspace};
-use tinyagents_session::testkit::InMemorySessionStores;
+use tinyagents_session::port::InMemorySessionStores;
 
 /// A plain request the prompt screen lets through.
 const BENIGN: &str = "What is the capital of France?";
