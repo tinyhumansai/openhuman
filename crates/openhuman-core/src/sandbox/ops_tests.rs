@@ -416,3 +416,43 @@ async fn the_openshell_handle_is_ready_without_pretending_to_be_a_container() {
     assert_eq!(handle.backend_id, None);
     assert_eq!(handle.isolation, None);
 }
+
+#[test]
+fn security_disabled_keeps_the_configured_backend_unless_the_operator_turns_it_off() {
+    use super::exec::unchecked_backend;
+    for backend in [
+        SandboxBackendKind::Local,
+        SandboxBackendKind::None,
+        SandboxBackendKind::Docker,
+        SandboxBackendKind::OpenShell,
+    ] {
+        assert_eq!(unchecked_backend(backend, false), backend);
+        assert_eq!(
+            unchecked_backend(backend, true),
+            SandboxBackendKind::None,
+            "the operator's sandbox-off switch still runs on the host"
+        );
+    }
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn security_disabled_jails_with_the_policys_own_grants() {
+    let mut policy = crate::sandbox::policy::route_for_mode(
+        SandboxMode::Sandboxed,
+        Path::new("/tmp/action"),
+        Path::new("/tmp/state"),
+        &SandboxConfig::default(),
+        &RuntimeConfig::default(),
+        false,
+    );
+    policy.read_only_mounts = vec!["/opt/tools".into()];
+    policy.read_write_mounts = vec!["/srv/out".into()];
+    policy.allow_network = false;
+    let jail = crate::sandbox::native_jail::host_jail(&policy);
+    assert_eq!(jail.read_only, vec!["/opt/tools".to_string()]);
+    assert_eq!(jail.read_write, vec!["/srv/out".to_string()]);
+    assert!(!jail.allow_net);
+    assert!(jail.deny_read.is_empty());
+    assert!(!jail.require_process_isolation);
+}

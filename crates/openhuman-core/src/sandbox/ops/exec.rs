@@ -2,7 +2,6 @@ use super::policy::{config_disables_sandbox, sandbox_disabled_by_host};
 use crate::core::runtime::DispatchCtx;
 use crate::sandbox::shell_exec::ShellRunOutcome;
 use crate::sandbox::types::{SandboxBackendKind, SandboxExecResult, SandboxPolicy};
-#[cfg(feature = "security-module")]
 use crate::sandbox::{docker, types::SandboxExecRequest};
 use std::{collections::HashMap, ffi::OsString, path::Path, time::Duration};
 
@@ -17,10 +16,28 @@ pub(crate) struct ResolvedSandbox {
     /// The backend the command will actually run on, after the host override,
     /// the `[components]` switch and the operator's `[sandbox]` choice.
     effective_policy: SandboxPolicy,
-    #[cfg(feature = "security-module")]
     config: crate::config::Config,
+    /// The module's admitted plan. `None` with security disabled
+    /// (`crate::security::switch`): nothing was planned, see
+    /// [`unchecked_backend`].
     #[cfg(feature = "security-module")]
-    planned: crate::sandbox::spawn_plan::PlannedSpawn,
+    planned: Option<crate::sandbox::spawn_plan::PlannedSpawn>,
+}
+
+/// The backend a command runs on when security is disabled and TinySecurity
+/// does not plan the spawn: the one configured. Only the operator's switch that
+/// turns the sandbox off runs it on the host; disabling security never drops a
+/// requested jail or container. The native jail is then built by the host
+/// ([`native_jail::host_jail`](crate::sandbox::native_jail::host_jail)).
+pub(super) fn unchecked_backend(
+    requested: SandboxBackendKind,
+    operator_off: bool,
+) -> SandboxBackendKind {
+    if operator_off {
+        SandboxBackendKind::None
+    } else {
+        requested
+    }
 }
 
 impl ResolvedSandbox {
@@ -108,6 +125,21 @@ pub(crate) async fn resolve_sandbox(
         .map_err(|error| anyhow::anyhow!("Cannot read sandbox configuration: {error}"))?;
     let operator_off = !crate::core::runtime::is_saas()
         && (sandbox_disabled_by_host(ctx) || config_disables_sandbox(&config));
+    if crate::security::switch::disabled_for(Some(&config)).is_some() {
+        let mut effective_policy = policy.clone();
+        effective_policy.backend = unchecked_backend(policy.backend, operator_off);
+        tracing::debug!(
+            backend = ?effective_policy.backend,
+            "[sandbox] security disabled; running without a TinySecurity spawn plan"
+        );
+        let _ = (command, working_dir, extra_env);
+        return Ok(ResolvedSandbox {
+            effective_policy,
+            config,
+            #[cfg(feature = "security-module")]
+            planned: None,
+        });
+    }
     #[cfg(feature = "security-module")]
     {
         let requested_policy = policy.clone();
@@ -150,19 +182,12 @@ pub(crate) async fn resolve_sandbox(
         Ok(ResolvedSandbox {
             effective_policy,
             config,
-            planned,
+            planned: Some(planned),
         })
     }
     #[cfg(not(feature = "security-module"))]
     {
-        let _ = (
-            policy,
-            command,
-            working_dir,
-            extra_env,
-            config,
-            operator_off,
-        );
+        // Unreachable: a build without the module always has security disabled.
         anyhow::bail!("TinySecurity is not built into this host; sandboxed execution is refused")
     }
 }
@@ -185,12 +210,41 @@ pub(crate) async fn execute_resolved(
     meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
 ) -> anyhow::Result<ShellRunOutcome> {
     #[cfg(feature = "security-module")]
-    {
-        let ResolvedSandbox {
+    let resolved = match resolved {
+        ResolvedSandbox {
             effective_policy,
             config,
-            planned,
-        } = resolved;
+            planned: Some(planned),
+        } => (effective_policy, config, planned),
+        unplanned => {
+            return execute_unchecked(
+                ctx,
+                unplanned,
+                command,
+                working_dir,
+                extra_env,
+                timeout,
+                yield_after,
+                meter,
+            )
+            .await
+        }
+    };
+    #[cfg(not(feature = "security-module"))]
+    return execute_unchecked(
+        ctx,
+        resolved,
+        command,
+        working_dir,
+        extra_env,
+        timeout,
+        yield_after,
+        meter,
+    )
+    .await;
+    #[cfg(feature = "security-module")]
+    {
+        let (effective_policy, config, planned) = resolved;
         let policy = &effective_policy;
         // Validate the working directory up front so a missing/bad action_dir
         // surfaces an actionable, path-naming error here rather than an opaque OS
@@ -277,19 +331,82 @@ pub(crate) async fn execute_resolved(
             }
         }
     }
-    #[cfg(not(feature = "security-module"))]
-    {
-        let _ = (
-            ctx,
-            resolved,
-            command,
-            working_dir,
-            extra_env,
-            timeout,
-            yield_after,
-            meter,
-        );
-        anyhow::bail!("TinySecurity is not built into this host; sandboxed execution is refused")
+}
+
+/// Run a command that TinySecurity did not plan (security disabled) on the
+/// backend [`unchecked_backend`] chose: the host, a container or the box.
+async fn execute_unchecked(
+    ctx: &DispatchCtx,
+    resolved: ResolvedSandbox,
+    command: &str,
+    working_dir: &Path,
+    extra_env: HashMap<OsString, OsString>,
+    timeout: Duration,
+    yield_after: Option<Duration>,
+    meter: Option<crate::sandbox::shell_progress::ShellOutputMeter>,
+) -> anyhow::Result<ShellRunOutcome> {
+    let ResolvedSandbox {
+        effective_policy: policy,
+        config,
+        ..
+    } = resolved;
+    match policy.backend {
+        SandboxBackendKind::Docker => {
+            crate::config::ensure_usable_cwd(&policy.workspace_root)?;
+            let request = SandboxExecRequest {
+                command: command.to_string(),
+                working_dir: working_dir.to_path_buf(),
+                env: extra_env,
+                timeout,
+            };
+            docker::docker_exec(&config, &policy, &request)
+                .await
+                .map(ShellRunOutcome::Finished)
+        }
+        SandboxBackendKind::OpenShell => {
+            crate::sandbox::openshell::execute(ctx, &config, command, &extra_env, timeout)
+                .await
+                .map(ShellRunOutcome::Finished)
+        }
+        SandboxBackendKind::Local => {
+            crate::config::ensure_usable_cwd(working_dir)?;
+            let policy = crate::sandbox::local_grants::with_resolved_grants(&config, &policy)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "[sandbox] toolchain grants unavailable; the jail keeps configured grants only");
+                    policy.clone()
+                });
+            let jail = crate::sandbox::native_jail::host_jail(&policy);
+            crate::sandbox::native_jail::execute(
+                ctx,
+                &config,
+                &policy,
+                &jail,
+                command,
+                working_dir,
+                &extra_env,
+                timeout,
+                false,
+                yield_after,
+                meter,
+            )
+            .await
+        }
+        SandboxBackendKind::None => {
+            crate::config::ensure_usable_cwd(working_dir)?;
+            execute_unsandboxed(
+                ctx,
+                &config,
+                &policy,
+                command,
+                working_dir,
+                &extra_env,
+                timeout,
+                yield_after,
+                meter,
+            )
+            .await
+        }
     }
 }
 

@@ -251,6 +251,9 @@ async fn cron_headless_settlement_does_not_allow_effectful_spawn_aliases() {
     );
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn read_only_autonomy_denies_an_acting_tool() {
     let decision = gate(AutonomyLevel::ReadOnly)
@@ -331,3 +334,60 @@ async fn shell_authorization_ignores_stale_facts_and_uses_request_command() {
 
 #[path = "security_gate_screen_and_policy_tests.rs"]
 mod screen_and_policy;
+
+// -- security disabled (`crate::security::switch`) -----------------
+
+/// What an enabled-autonomy gate decides for an acting tool and a shell command.
+async fn acting_decisions() -> (GateDecision, GateDecision) {
+    let policy = Arc::new(SecurityPolicy {
+        enabled: true,
+        autonomy: AutonomyLevel::Supervised,
+        ..SecurityPolicy::default()
+    });
+    let gate = OpenHumanSecurityGate::new(policy, registry());
+    let write = gate
+        .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
+        .await
+        .unwrap();
+    let shell = gate
+        .authorize_tool(&req(SHELL_TOOL, json!({ "command": "rm -rf build" })))
+        .await
+        .unwrap();
+    (write, shell)
+}
+
+#[cfg(not(feature = "security-module"))]
+#[tokio::test]
+async fn a_build_without_the_module_authorizes_tools_without_classifying_them() {
+    let (write, shell) = acting_decisions().await;
+    assert_eq!(write, GateDecision::Allow);
+    assert_eq!(shell, GateDecision::Allow);
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn security_configured_off_authorizes_tools_without_classifying_them() {
+    let _off = crate::security::switch::off_for_this_thread();
+    let (write, shell) = acting_decisions().await;
+    assert_eq!(write, GateDecision::Allow);
+    assert_eq!(shell, GateDecision::Allow);
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn an_enforcing_gate_denies_a_tool_the_module_cannot_classify() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(temp.path());
+    config.modules.enabled = false;
+    let context = CoreContext::for_test_with_config(DomainSet::full(), config);
+    let (write, _) = CoreContext::scope(context, acting_decisions()).await;
+    assert!(!write.is_allowed());
+    assert!(
+        write
+            .denial_reason()
+            .expect("a Deny carries a reason")
+            .contains(tinytools::status::POLICY_BLOCKED_MARKER),
+        "{write:?}"
+    );
+}

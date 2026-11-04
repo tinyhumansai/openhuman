@@ -364,6 +364,12 @@ impl RuntimeBuilder {
             }
             self.access.apply(&mut base_config);
             apply_provider(&mut base_config, &self.provider);
+            // The core booted with the configuration it discovered; a
+            // `[security]` mode the host set on the builder governs the
+            // process-wide checks too, not only the agents' config.
+            if self.config_knobs.security.is_some() && !inspection {
+                openhuman_core::security::switch::apply_boot_config(&base_config);
+            }
         }
 
         if seams.has_pending_live_policy() {

@@ -251,6 +251,13 @@ pub struct Config {
     #[serde(default)]
     pub prompt_screen: PromptScreenConfig,
 
+    /// Whether the checks OpenHuman delegates to TinySecurity run
+    /// (`[security]`). Missing block → enforced, failing closed when the
+    /// module cannot answer. `off` allows every delegated check and implies
+    /// the prompt screen is off.
+    #[serde(default)]
+    pub security: SecurityModeConfig,
+
     #[serde(default)]
     pub sandbox: SandboxConfig,
 

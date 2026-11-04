@@ -120,16 +120,56 @@ fn typed_configuration_groups_apply_on_top_of_supplied_config() {
 #[test]
 fn the_prompt_screen_is_reported_enforced_unless_the_host_turns_it_off() {
     use openhuman_core::config::schema::PromptScreenConfig;
-    assert!(
+    // A build without the security module has the screen off as well.
+    assert_eq!(
         RuntimeBuilder::new()
             .describe()
             .configuration
-            .prompt_screen_enforced
+            .prompt_screen_enforced,
+        openhuman_core::security::switch::disabled().is_none()
     );
     let info = RuntimeBuilder::new()
         .prompt_screen(PromptScreenConfig::off())
         .describe();
     assert!(!info.configuration.prompt_screen_enforced);
+}
+#[test]
+fn security_is_reported_enforced_unless_the_host_turns_it_off_or_the_module_is_absent() {
+    use openhuman_core::config::schema::SecurityModeConfig;
+    let built_with_module = openhuman_core::security::switch::disabled().is_none();
+    let default = RuntimeBuilder::new().describe().configuration;
+    assert_eq!(default.security_enforced, built_with_module);
+    assert_eq!(default.prompt_screen_enforced, built_with_module);
+
+    let off = RuntimeBuilder::new()
+        .security(SecurityModeConfig::off())
+        .describe()
+        .configuration;
+    assert!(!off.security_enforced);
+    assert!(
+        !off.prompt_screen_enforced,
+        "security off implies the screen is off"
+    );
+}
+#[test]
+fn describe_reports_the_builders_own_security_mode() {
+    use openhuman_core::config::schema::SecurityModeConfig;
+    let built_with_module = openhuman_core::security::switch::disabled_by_config(
+        &openhuman_core::config::Config::default(),
+    )
+    .is_none();
+    let enforce = RuntimeBuilder::new()
+        .security(SecurityModeConfig::default())
+        .describe()
+        .configuration;
+    assert_eq!(enforce.security_enforced, built_with_module);
+}
+#[test]
+fn metadata_written_before_the_security_field_reads_as_enforced() {
+    let mut json = serde_json::to_value(RuntimeBuilder::new().describe().configuration).unwrap();
+    json.as_object_mut().unwrap().remove("security_enforced");
+    let info: ConfigurationInfo = serde_json::from_value(json).unwrap();
+    assert!(info.security_enforced);
 }
 #[test]
 fn metadata_written_before_the_prompt_screen_field_reads_as_enforced() {

@@ -199,8 +199,10 @@ impl OpenHumanSecurityGate {
         // Disabled autonomy turns off action classification, approval and
         // budget policy. The channel boundary, known-tool requirement,
         // scheduled-turn restriction and, for shell, TinySecurity's protected
-        // path floor above remain in force.
-        if !policy.enabled {
+        // path floor above remain in force. Disabled security
+        // (`crate::security::switch`) skips the same stages: there is no
+        // module to classify the action or keep the budget.
+        if policy.unchecked() {
             return Ok(self.settled(channel_approved));
         }
 

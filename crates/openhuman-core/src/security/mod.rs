@@ -21,6 +21,7 @@ pub mod policy;
 pub mod prompt_injection;
 pub mod scrub;
 pub mod secret_storage;
+pub mod switch;
 
 #[allow(unused_imports)]
 pub use self::secret_storage::SecretStore;

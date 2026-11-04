@@ -73,7 +73,7 @@ pub use tinytools::{
 /// Typed runtime builder policy groups from the core configuration contract.
 pub use openhuman_core::config::schema::{
     AutonomyConfig, CronConfig, PrivacyConfig, PrivacyMode, PromptScreenConfig, PromptScreenMode,
-    SecretsConfig,
+    SecretsConfig, SecurityMode, SecurityModeConfig,
 };
 /// The core's config type, as [`crate::RuntimeConfig`].
 pub use openhuman_core::config::Config as RuntimeConfig;

@@ -1,5 +1,8 @@
 use super::*;
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[test]
 fn policy_denial_keeps_its_class_when_error_details_are_withheld() {
     let policy = HostFailurePolicy::new(

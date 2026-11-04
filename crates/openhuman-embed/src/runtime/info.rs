@@ -1,7 +1,10 @@
 //! Versioned, credential-safe runtime capability metadata.
 use super::{LearningSettings, ModelDefaults, Runtime, RuntimeBuilder};
 use openhuman_core::config::{
-    schema::{AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig},
+    schema::{
+        AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig,
+        SecurityModeConfig,
+    },
     Config,
 };
 use std::collections::BTreeMap;
@@ -13,6 +16,8 @@ pub(super) struct ConfigKnobs {
     pub privacy: Option<PrivacyConfig>,
     /// Whether untrusted input is screened for prompt injection.
     pub prompt_screen: Option<PromptScreenConfig>,
+    /// Whether TinySecurity-delegated checks run.
+    pub security: Option<SecurityModeConfig>,
     pub secrets: Option<SecretsConfig>,
     pub cron: Option<CronConfig>,
     /// Background memory learning policy.
@@ -24,6 +29,7 @@ impl ConfigKnobs {
         self.autonomy.is_some()
             || self.privacy.is_some()
             || self.prompt_screen.is_some()
+            || self.security.is_some()
             || self.secrets.is_some()
             || self.cron.is_some()
             || self.learning.is_some()
@@ -38,6 +44,9 @@ impl ConfigKnobs {
         }
         if let Some(v) = &self.prompt_screen {
             config.prompt_screen = *v;
+        }
+        if let Some(v) = &self.security {
+            config.security = *v;
         }
         if let Some(v) = &self.secrets {
             config.secrets = v.clone();
@@ -175,10 +184,17 @@ pub struct ConfigurationInfo {
     pub autonomy_enabled: bool,
     /// Data egress policy name.
     pub privacy: String,
-    /// Whether untrusted input is screened for prompt injection; false only
-    /// when the host turned the screen off. Absent in older metadata → true.
+    /// Whether untrusted input is screened for prompt injection; false when
+    /// the host turned the screen off, or security is off (see
+    /// `security_enforced`). Absent in older metadata → true.
     #[serde(default = "prompt_screen_enforced_by_default")]
     pub prompt_screen_enforced: bool,
+    /// Whether the checks OpenHuman delegates to TinySecurity run and fail
+    /// closed; false when the host turned them off (`[security] mode = "off"`)
+    /// or the build has no `security-module` feature, and they then allow.
+    /// Absent in older metadata → true.
+    #[serde(default = "security_enforced_by_default")]
+    pub security_enforced: bool,
     /// Whether stored credentials are encrypted.
     pub secrets_encrypted: bool,
     /// Whether configured cron scheduling is enabled.
@@ -189,6 +205,9 @@ pub struct ConfigurationInfo {
     pub has_tool_rules: bool,
 }
 fn prompt_screen_enforced_by_default() -> bool {
+    true
+}
+fn security_enforced_by_default() -> bool {
     true
 }
 impl RuntimeBuilder {
@@ -220,6 +239,13 @@ impl RuntimeBuilder {
             self.selection.as_ref(),
         );
         info.configuration_resolved = self.config_source == super::ConfigSource::Resolved;
+        // This builder's own mode, not the mode a runtime already running in
+        // this process booted with.
+        let security_enforced =
+            openhuman_core::security::switch::disabled_by_config(&config).is_none();
+        info.configuration.security_enforced = security_enforced;
+        info.configuration.prompt_screen_enforced =
+            config.prompt_screen.enforces() && security_enforced;
         info.storage = StorageInfo::describe(
             self.seams.storage.as_ref(),
             &config,
@@ -280,6 +306,7 @@ fn make_info(
         ("integrations", services.integrations),
         ("memory_sync", services.memory_sync),
     ];
+    let security_enforced = openhuman_core::security::switch::disabled_for(Some(config)).is_none();
     RuntimeInfo {
         schema_version: 1,
         configuration_resolved: true,
@@ -323,7 +350,8 @@ fn make_info(
         configuration: ConfigurationInfo {
             autonomy_enabled: config.autonomy.enabled,
             privacy: format!("{:?}", config.privacy.mode),
-            prompt_screen_enforced: config.prompt_screen.enforces(),
+            prompt_screen_enforced: config.prompt_screen.enforces() && security_enforced,
+            security_enforced,
             secrets_encrypted: config.secrets.encrypt,
             cron_enabled: config.cron.enabled,
             learning: LearningSettings {

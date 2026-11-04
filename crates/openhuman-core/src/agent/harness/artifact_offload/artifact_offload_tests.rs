@@ -145,6 +145,9 @@ async fn an_action_dir_inside_workspace_dir_is_never_materialized() {
     .await;
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn explicit_workspace_policy_blocks_unguarded_offload_before_writing() {
     let dir = tempfile::tempdir().expect("tempdir");

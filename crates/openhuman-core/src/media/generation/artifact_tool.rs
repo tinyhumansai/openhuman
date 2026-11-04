@@ -271,7 +271,8 @@ async fn check_media_reference_floor(args: &Value) -> Result<(), String> {
             }
         }
     }
-    if paths.is_empty() {
+    // Security disabled (`crate::security::switch`): no protected floor.
+    if paths.is_empty() || crate::security::switch::disabled().is_some() {
         return Ok(());
     }
     #[cfg(not(feature = "security-module"))]

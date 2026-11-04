@@ -57,7 +57,12 @@ impl ArtifactPathPolicy for WorkspaceGuard {
 /// Artifact materialization reserves the complete private workspace, beyond the
 /// general acting-tool policy's named internal subdirectories. Ask the native
 /// engine to resolve aliases and prospective parents before any blob is stored.
+/// With security disabled (`crate::security::switch`) nothing is reserved and
+/// every path is allowed.
 pub(super) async fn materialization_allowed(policy: &SecurityPolicy, path: &Path) -> bool {
+    if crate::security::switch::disabled().is_some() {
+        return true;
+    }
     #[cfg(feature = "security-module")]
     {
         use tinysecurity_bus::{PathCheckKind, PathReservation};

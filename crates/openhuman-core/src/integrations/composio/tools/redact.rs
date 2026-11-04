@@ -64,26 +64,39 @@ async fn redact_exact(config: &Config, text: &str, secrets: &[String]) -> Result
 }
 
 /// Redact every Composio key from a diagnostic before reporting it. The
-/// original diagnostic is never returned if the module cannot answer.
+/// original diagnostic is never returned if the module cannot answer. With
+/// security disabled (`crate::security::switch`) it is reported unredacted.
 pub(crate) async fn redact_and_report(config: &Config, operation: &str, rendered: &str) -> String {
-    let secrets = composio_secrets(config).await;
-    let redacted = if secrets.is_empty() {
+    let redacted = if crate::security::switch::disabled_for(Some(config)).is_some() {
         rendered.to_owned()
     } else {
-        redact_exact(config, rendered, &secrets)
-            .await
-            .unwrap_or_else(|_| crate::core::log_redaction::SUPPRESSED.to_owned())
+        redact_known_secrets(config, rendered).await
     };
     super::super::ops::report_composio_op_error(operation, &redacted);
     redacted
 }
 
+async fn redact_known_secrets(config: &Config, rendered: &str) -> String {
+    let secrets = composio_secrets(config).await;
+    if secrets.is_empty() {
+        rendered.to_owned()
+    } else {
+        redact_exact(config, rendered, &secrets)
+            .await
+            .unwrap_or_else(|_| crate::core::log_redaction::SUPPRESSED.to_owned())
+    }
+}
+
 /// Redact a tool result or error with call-specific credentials before it
-/// reaches the model. A malformed result or module failure is withheld.
+/// reaches the model. A malformed result or module failure is withheld. With
+/// security disabled the outcome is returned unredacted.
 pub(crate) async fn redact_composio_outcome(
     config: &Config,
     outcome: anyhow::Result<ToolResult>,
 ) -> anyhow::Result<ToolResult> {
+    if crate::security::switch::disabled_for(Some(config)).is_some() {
+        return outcome;
+    }
     let secrets = composio_secrets(config).await;
     if secrets.is_empty() {
         return outcome;

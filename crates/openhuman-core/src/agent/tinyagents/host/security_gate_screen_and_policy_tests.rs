@@ -1,6 +1,10 @@
 use super::*;
+#[cfg(feature = "security-module")]
 use tinyinference_llm::message::Message;
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn injection_payloads_are_blocked_from_every_origin() {
     let gate = gate(AutonomyLevel::Full);
@@ -149,6 +153,9 @@ async fn channel_approval_does_not_bypass_the_readonly_tier() {
 /// The tier still governs a tool the channel allows outright, which is the
 /// control for the test above: the denial there must come from the tier,
 /// not from the channel verdict.
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn the_readonly_tier_refuses_an_acting_tool_the_channel_allowed() {
     let decision = OpenHumanSecurityGate::new(policy(AutonomyLevel::ReadOnly), registry())
@@ -179,6 +186,9 @@ async fn allow_and_deny_channel_verdicts_are_unchanged() {
 }
 
 /// Input is held when the shared TinySecurity scanner is unavailable.
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
     let gate = gate(AutonomyLevel::Full);
@@ -202,6 +212,9 @@ async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
     assert_eq!(untrusted, ScreenOutcome::Pass);
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn screening_holds_the_new_user_row_when_tinysecurity_is_unavailable() {
     let gate = gate(AutonomyLevel::Full);

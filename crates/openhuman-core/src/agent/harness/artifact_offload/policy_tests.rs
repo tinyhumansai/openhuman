@@ -1,5 +1,8 @@
 use super::*;
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[test]
 fn redactor_withholds_body_when_tinysecurity_is_unavailable() {
     let out = SanitizingRedactor.redact("ordinary prose with no secrets");

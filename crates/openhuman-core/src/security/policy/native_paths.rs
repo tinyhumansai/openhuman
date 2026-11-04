@@ -96,6 +96,9 @@ impl SecurityPolicy {
         path: &str,
         parent: bool,
     ) -> Result<PathBuf, String> {
+        if crate::security::switch::disabled().is_some() {
+            return self.resolve_unchecked(path, parent).await;
+        }
         let scope = self.native_path_policy();
         #[cfg(feature = "security-module")]
         let result = crate::modules::security::validate_host_path(scope, path, parent).await;
@@ -105,6 +108,53 @@ impl SecurityPolicy {
             Err("TinySecurity is not built into this host".to_owned())
         };
         project_native_result(path, result)
+    }
+}
+
+impl SecurityPolicy {
+    /// Resolve `path` without asking TinySecurity, for security disabled
+    /// (`crate::security::switch`). Resolution follows the module's own shape so
+    /// callers see the same paths: `~/` expanded, relative paths joined onto
+    /// `action_dir`, a read resolved through symlinks (it must exist), a write
+    /// target resolved through its nearest existing ancestor. No root, floor or
+    /// reservation is applied.
+    async fn resolve_unchecked(&self, path: &str, parent: bool) -> Result<PathBuf, String> {
+        let expanded = PathBuf::from(self.expand_tilde(path));
+        let absolute = if expanded.is_absolute() {
+            expanded
+        } else {
+            self.action_dir.join(expanded)
+        };
+        let unresolved = || format!("Failed to resolve path '{path}'");
+        if !parent {
+            return tokio::fs::canonicalize(&absolute)
+                .await
+                .map_err(|_| unresolved());
+        }
+        let Some(filename) = absolute.file_name().map(ToOwned::to_owned) else {
+            return Err(format!("Invalid path: {path}"));
+        };
+        if tokio::fs::symlink_metadata(&absolute).await.is_ok() {
+            return tokio::fs::canonicalize(&absolute)
+                .await
+                .map_err(|_| unresolved());
+        }
+        let mut missing = vec![filename];
+        let mut ancestor = absolute.parent().map(std::path::Path::to_path_buf);
+        while let Some(dir) = ancestor {
+            if let Ok(resolved) = tokio::fs::canonicalize(&dir).await {
+                return Ok(missing
+                    .iter()
+                    .rev()
+                    .fold(resolved, |at, part| at.join(part)));
+            }
+            match dir.file_name() {
+                Some(name) => missing.push(name.to_owned()),
+                None => break,
+            }
+            ancestor = dir.parent().map(std::path::Path::to_path_buf);
+        }
+        Err(unresolved())
     }
 }
 

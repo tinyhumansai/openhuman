@@ -445,6 +445,9 @@ pub mod oauth {
 /// A tool whose description trips a rule is dropped, and the drop is
 /// logged and published with the *rule code* only — the offending text is never
 /// re-emitted, because the payload is the thing that was dangerous.
+///
+/// With security disabled (`crate::security::switch`) nothing is scanned and
+/// every tool is kept.
 #[cfg(feature = "mcp")]
 pub(crate) async fn tools_safe_for_agent(
     server: &str,
@@ -452,6 +455,10 @@ pub(crate) async fn tools_safe_for_agent(
 ) -> Vec<tinymcp_bus::McpTool> {
     use crate::core::bus::BUS;
     use crate::core::events::DomainEvent;
+    let embedder_config = crate::core::runtime::CoreContext::current_embedder_config();
+    if crate::security::switch::disabled_for(embedder_config.as_ref()).is_some() {
+        return tools;
+    }
     let mut safe = Vec::with_capacity(tools.len());
     for tool in tools {
         #[cfg(feature = "security-module")]
@@ -462,18 +469,17 @@ pub(crate) async fn tools_safe_for_agent(
             "meta": &tool.meta,
         });
         #[cfg(feature = "security-module")]
-        let result =
-            if let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() {
-                match crate::modules::security::client(&config).await {
-                    Ok(client) => client
-                        .scan_tool_definition(tool.name.clone(), &definition)
-                        .await
-                        .ok(),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            };
+        let result = if let Some(config) = embedder_config.as_ref() {
+            match crate::modules::security::client(config).await {
+                Ok(client) => client
+                    .scan_tool_definition(tool.name.clone(), &definition)
+                    .await
+                    .ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
         #[cfg(not(feature = "security-module"))]
         let result: Option<tinysecurity_bus::ScanResponse> = None;
         let reason = match result {

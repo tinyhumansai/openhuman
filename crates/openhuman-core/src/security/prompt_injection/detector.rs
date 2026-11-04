@@ -124,7 +124,8 @@ fn held_decision(
     decision
 }
 
-/// The decision for input the host has chosen not to screen
+/// The decision for input that is not screened: security is disabled
+/// (`crate::security::switch`) or the host turned the screen off
 /// (`[prompt_screen] mode = "off"`). Nothing is logged per input: the runtime
 /// says once at boot that screening is off.
 fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
@@ -138,19 +139,9 @@ fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
     }
 }
 
-/// Say once, when a runtime boots with a config, whether the prompt screen is
-/// off. Silent when it is enforced, which is the default.
-pub(crate) fn log_prompt_screen_mode(config: &crate::config::Config) {
-    if !config.prompt_screen.enforces() {
-        tracing::info!(
-            "[prompt_injection] prompt screen disabled by configuration ([prompt_screen] mode = \"off\"); input is not checked by TinySecurity"
-        );
-    }
-}
-
 /// Screen user or untrusted text through TinySecurity. Missing configuration,
 /// module failure, timeout, and oversized inputs all fail closed as Review,
-/// unless the configuration turns the screen off.
+/// unless security is disabled or the configuration turns the screen off.
 pub async fn enforce_prompt_input(
     input: &str,
     context: PromptEnforcementContext<'_>,
@@ -180,14 +171,18 @@ pub(crate) async fn enforce_prompt_input_in(
 
 /// Screen against the configuration supplied by the owning dispatch. Missing
 /// authority remains a held decision, even if another task has a configuration.
-/// A configuration with `[prompt_screen] mode = "off"` allows the input without
-/// a scan; every screening path goes through here, so all of them honour it.
+/// Disabled security (no `security-module` feature, or `[security] mode =
+/// "off"`) and a configuration with `[prompt_screen] mode = "off"` allow the
+/// input without a scan; every screening path goes through here, so all of them
+/// honour both.
 pub(crate) async fn enforce_prompt_input_with_config(
     input: &str,
     context: PromptEnforcementContext<'_>,
     config: Option<&crate::config::Config>,
 ) -> PromptEnforcementDecision {
-    if config.is_some_and(|config| !config.prompt_screen.enforces()) {
+    if crate::security::switch::disabled_for(config).is_some()
+        || config.is_some_and(|config| !config.prompt_screen.enforces())
+    {
         return unscreened_decision(input);
     }
     if input.len() > MAX_PROMPT_BYTES {
@@ -278,9 +273,17 @@ pub struct ToolDefinitionScanHit {
 }
 
 /// Scan tool metadata through TinySecurity. Failure is represented as a hit.
+/// With security disabled nothing is scanned and there is no hit.
 pub async fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinitionScanHit> {
+    let config = crate::core::runtime::CoreContext::current_embedder_config();
+    if crate::security::switch::disabled_for(config.as_ref()).is_some() {
+        return None;
+    }
+    #[cfg(not(feature = "security-module"))]
+    let _ = config;
     #[cfg(feature = "security-module")]
-    let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() else {
+    let Some(config) = config
+    else {
         return Some(ToolDefinitionScanHit {
             code: "scan.unavailable".into(),
             message: describe("scan.unavailable").into(),

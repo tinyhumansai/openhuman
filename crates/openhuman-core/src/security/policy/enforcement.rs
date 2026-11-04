@@ -7,12 +7,19 @@ use std::sync::Arc;
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 impl SecurityPolicy {
+    /// Whether the tier, class gate and action budget are skipped: the autonomy
+    /// policy is disabled (`[autonomy] enabled = false`), or security as a whole
+    /// is (`crate::security::switch`), so there is no module to keep a budget.
+    pub(crate) fn unchecked(&self) -> bool {
+        !self.enabled || crate::security::switch::disabled().is_some()
+    }
+
     /// Reserve one action from TinySecurity's hourly ledger.
     #[cfg(feature = "security-module")]
     pub async fn spend_action(&self, operation_name: &str) -> Result<(), String> {
         use tinysecurity_bus::BudgetDecision2;
 
-        if !self.enabled {
+        if self.unchecked() {
             if let Ok(mut snapshot) = self.budget_snapshot.lock() {
                 *snapshot = Some(BudgetDecision2::Allow);
             }
@@ -57,7 +64,7 @@ impl SecurityPolicy {
     /// Read the module-owned action budget without reserving an action.
     #[cfg(feature = "security-module")]
     pub async fn peek_action_budget(&self) -> Result<tinysecurity_bus::BudgetDecision2, String> {
-        if !self.enabled {
+        if self.unchecked() {
             return Ok(tinysecurity_bus::BudgetDecision2::Allow);
         }
         let policy = self
@@ -78,7 +85,7 @@ impl SecurityPolicy {
     /// Without the module there is no budget authority, so the tier is unknown.
     #[cfg(not(feature = "security-module"))]
     pub async fn peek_action_budget(&self) -> Result<tinysecurity_bus::BudgetDecision2, String> {
-        if !self.enabled {
+        if self.unchecked() {
             return Ok(tinysecurity_bus::BudgetDecision2::Allow);
         }
         Err("TinySecurity action budget unavailable".into())
@@ -87,7 +94,7 @@ impl SecurityPolicy {
     /// Without the module there is no budget authority, so acting is refused.
     #[cfg(not(feature = "security-module"))]
     pub async fn spend_action(&self, _operation_name: &str) -> Result<(), String> {
-        if !self.enabled {
+        if self.unchecked() {
             return Ok(());
         }
         Err(format!(
@@ -100,7 +107,7 @@ impl SecurityPolicy {
     ///
     /// Always `true` when the policy is disabled ([`SecurityPolicy::enabled`]).
     pub fn can_act(&self) -> bool {
-        if !self.enabled {
+        if self.unchecked() {
             return true;
         }
         let Ok(snapshot) = self.budget_snapshot.lock() else {
@@ -118,7 +125,7 @@ impl SecurityPolicy {
     /// enabled policy with no answer fails closed.
     pub fn gate_decision(&self, class: super::types::CommandClass) -> super::types::GateDecision {
         use super::types::GateDecision;
-        if !self.enabled {
+        if self.unchecked() {
             return GateDecision::Allow;
         }
         let Ok(snapshot) = self.class_gate_snapshot.lock() else {
@@ -177,7 +184,7 @@ impl SecurityPolicy {
     /// TinySecurity and refreshed `budget_snapshot`; this method keeps no
     /// local counter and never re-enters a Tokio runtime.
     pub fn record_action(&self) -> bool {
-        if !self.enabled {
+        if self.unchecked() {
             return true;
         }
         !self.is_rate_limited()
@@ -185,7 +192,7 @@ impl SecurityPolicy {
 
     /// Check if the rate limit would be exceeded without recording.
     pub fn is_rate_limited(&self) -> bool {
-        if !self.enabled {
+        if self.unchecked() {
             return false;
         }
         let Ok(snapshot) = self.budget_snapshot.lock() else {

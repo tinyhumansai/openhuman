@@ -4,7 +4,8 @@
 //! registers the config enricher (`openhuman-tinyhumans`).
 
 /// Whether the URL host is an on-device provider endpoint according to
-/// TinySecurity's shared U5 classification.
+/// TinySecurity's shared U5 classification. With security disabled, the host's
+/// own loopback classification ([`loopback_host`]).
 pub fn host_is_local(parsed: &::url::Url) -> bool {
     let Some(host) = parsed.host_str() else {
         return false;
@@ -13,6 +14,9 @@ pub fn host_is_local(parsed: &::url::Url) -> bool {
 }
 
 pub fn provider_host_is_local(host: &str) -> bool {
+    if crate::security::switch::disabled().is_some() {
+        return loopback_host(host);
+    }
     #[cfg(feature = "security-module")]
     {
         crate::modules::security::text::classify_provider_host_blocking(
@@ -25,6 +29,32 @@ pub fn provider_host_is_local(host: &str) -> bool {
     {
         let _ = host;
         false
+    }
+}
+
+/// Whether `host` names this machine: `localhost` or a `*.localhost` name, or a
+/// loopback or unspecified IP literal (`127.0.0.0/8`, `0.0.0.0`, `::1`, `::`,
+/// IPv4-mapped forms; bracketed or not). No DNS lookup. The same on-device rule
+/// TinySecurity applies, used when security is disabled and the module is not
+/// asked. A LAN or private address is not on-device, so local-only privacy
+/// mode never treats it as local.
+#[must_use]
+pub fn loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    let on_device_v4 = |ip: std::net::Ipv4Addr| ip.is_loopback() || ip.is_unspecified();
+    match host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+    {
+        Ok(std::net::IpAddr::V4(ip)) => on_device_v4(ip),
+        Ok(std::net::IpAddr::V6(ip)) => ip
+            .to_ipv4_mapped()
+            .map_or_else(|| ip.is_loopback() || ip.is_unspecified(), on_device_v4),
+        Err(_) => false,
     }
 }
 

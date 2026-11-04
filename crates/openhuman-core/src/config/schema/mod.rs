@@ -107,6 +107,7 @@ mod runtime;
 mod runtime_local_jail;
 mod runtime_openshell;
 mod scheduler_gate;
+mod security_mode;
 mod task_sources;
 mod tokenjuice;
 mod tools;
@@ -157,6 +158,7 @@ pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGate
 pub use security::{
     AuditConfig, ResourceLimitsConfig, SandboxBackend, SandboxConfig, SecurityConfig,
 };
+pub use security_mode::{SecurityMode, SecurityModeConfig};
 pub use task_sources::TaskSourcesConfig;
 pub use tinychannels_bus::config::{
     ChannelsConfig, DingTalkConfig, DiscordConfig, EmailConfig, IMessageConfig, IrcConfig,

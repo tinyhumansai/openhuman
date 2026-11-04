@@ -4,13 +4,14 @@
 //! config includes, path normalisation and the credential-ancestor check. The
 //! host owns the policy context: TinySecurity supplies its protected-path floor
 //! and credential roots, which OpenHuman re-applies to returned grants before
-//! passing them to TinyBox.
+//! passing them to TinyBox. With security disabled (`crate::security::switch`)
+//! TinySecurity is not asked and TinyBox resolves the grants with no floor.
 
 use std::path::PathBuf;
 
 use super::types::SandboxPolicy;
 use crate::config::Config;
-#[cfg(all(feature = "modules", feature = "security-module"))]
+#[cfg(feature = "modules")]
 use crate::config::LocalJailConfig;
 
 /// Paths the jail is granted beyond the workspace root.
@@ -38,11 +39,11 @@ pub(crate) async fn with_resolved_grants(
     config: &Config,
     policy: &SandboxPolicy,
 ) -> anyhow::Result<SandboxPolicy> {
-    #[cfg(all(feature = "modules", feature = "security-module"))]
+    #[cfg(feature = "modules")]
     let mut policy = policy.clone();
-    #[cfg(not(all(feature = "modules", feature = "security-module")))]
+    #[cfg(not(feature = "modules"))]
     let policy = policy.clone();
-    #[cfg(all(feature = "modules", feature = "security-module"))]
+    #[cfg(feature = "modules")]
     {
         let home = grant_home(crate::core::runtime::is_saas(), dirs::home_dir);
         let grants = resolve(config, home.as_deref(), &config.runtime.local_jail).await?;
@@ -54,7 +55,7 @@ pub(crate) async fn with_resolved_grants(
         merge(&mut policy.read_only_mounts, grants.read_only);
         merge(&mut policy.read_write_mounts, grants.read_write);
     }
-    #[cfg(not(all(feature = "modules", feature = "security-module")))]
+    #[cfg(not(feature = "modules"))]
     let _ = config;
     Ok(policy)
 }
@@ -68,15 +69,20 @@ fn merge(into: &mut Vec<PathBuf>, extra: Vec<PathBuf>) {
     }
 }
 
-#[cfg(all(feature = "modules", feature = "security-module"))]
+#[cfg(feature = "modules")]
 async fn resolve(
     config: &Config,
     home: Option<&std::path::Path>,
     jail: &LocalJailConfig,
 ) -> anyhow::Result<JailGrants> {
-    let request = grant_request(home, jail).await.map_err(|error| {
-        anyhow::anyhow!("TinySecurity could not provide the local jail path floor: {error}")
-    })?;
+    let protected = if crate::security::switch::disabled_for(Some(config)).is_some() {
+        unchecked_floor()
+    } else {
+        protected_floor(home).await.map_err(|error| {
+            anyhow::anyhow!("TinySecurity could not provide the local jail path floor: {error}")
+        })?
+    };
+    let request = grant_request(home, jail, protected);
     let reply = crate::modules::tinybox::resolve_local_grants(config, request)
         .await
         .map_err(|error| anyhow::anyhow!("TinyBox could not resolve local jail grants: {error}"))?;
@@ -86,20 +92,56 @@ async fn resolve(
     })
 }
 
-/// Build the `ResolveLocalGrants` request from TinySecurity's floor vocabulary.
+/// No floor: the grants when security is disabled and TinySecurity is not asked.
+#[cfg(feature = "modules")]
+fn unchecked_floor() -> crate::modules::tinybox::contract::ProtectedPaths {
+    crate::modules::tinybox::contract::ProtectedPaths {
+        components: Vec::new(),
+        component_pairs: Vec::new(),
+        prefixes: Vec::new(),
+        credential_roots: Vec::new(),
+    }
+}
+
+/// TinySecurity's protected-path floor and credential roots, in TinyBox's
+/// vocabulary.
 #[cfg(all(feature = "modules", feature = "security-module"))]
-pub(crate) async fn grant_request(
+pub(crate) async fn protected_floor(
     home: Option<&std::path::Path>,
-    jail: &LocalJailConfig,
-) -> Result<crate::modules::tinybox::contract::ResolveLocalGrantsRequest, String> {
-    use crate::modules::tinybox::contract::{
-        LocalGrantConfig, ProtectedPaths, ResolveLocalGrantsRequest,
-    };
+) -> Result<crate::modules::tinybox::contract::ProtectedPaths, String> {
     let floor = crate::modules::security::gap::protected_floor().await?;
     let credential_roots =
         crate::modules::security::gap::credential_roots(home.map(std::path::Path::to_path_buf))
             .await?;
-    Ok(ResolveLocalGrantsRequest {
+    Ok(crate::modules::tinybox::contract::ProtectedPaths {
+        components: floor.components.into_iter().chain(floor.files).collect(),
+        component_pairs: floor.pairs,
+        prefixes: floor.prefixes,
+        credential_roots: credential_roots
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+    })
+}
+
+/// Without the module there is no floor to ask for. Unreachable in practice: a
+/// build without it always has security disabled.
+#[cfg(all(feature = "modules", not(feature = "security-module")))]
+pub(crate) async fn protected_floor(
+    _home: Option<&std::path::Path>,
+) -> Result<crate::modules::tinybox::contract::ProtectedPaths, String> {
+    Err("TinySecurity is not built into this host".into())
+}
+
+/// Build the `ResolveLocalGrants` request around a protected-path floor.
+#[cfg(feature = "modules")]
+pub(crate) fn grant_request(
+    home: Option<&std::path::Path>,
+    jail: &LocalJailConfig,
+    protected: crate::modules::tinybox::contract::ProtectedPaths,
+) -> crate::modules::tinybox::contract::ResolveLocalGrantsRequest {
+    use crate::modules::tinybox::contract::{LocalGrantConfig, ResolveLocalGrantsRequest};
+    ResolveLocalGrantsRequest {
         home: home.map(|h| h.display().to_string()),
         config: LocalGrantConfig {
             toolchain_homes: jail.toolchain_homes,
@@ -107,16 +149,8 @@ pub(crate) async fn grant_request(
             extra_read_write: jail.extra_read_write.clone(),
             allow_proc: jail.allow_proc,
         },
-        protected: ProtectedPaths {
-            components: floor.components.into_iter().chain(floor.files).collect(),
-            component_pairs: floor.pairs,
-            prefixes: floor.prefixes,
-            credential_roots: credential_roots
-                .into_iter()
-                .map(|path| path.display().to_string())
-                .collect(),
-        },
-    })
+        protected,
+    }
 }
 
 #[cfg(all(test, feature = "modules", feature = "security-module"))]
