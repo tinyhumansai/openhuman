@@ -48,7 +48,7 @@ pub enum SandboxBackend {
     #[serde(rename = "openshell")]
     OpenShell,
     /// A box per command on the hosted agent37 HTTP sandbox service, through
-    /// the TinyBox module (box image and limits from `[runtime.docker]`).
+    /// the TinyBox module (`[runtime.agent37]`).
     #[serde(rename = "agent37")]
     Agent37,
     None,

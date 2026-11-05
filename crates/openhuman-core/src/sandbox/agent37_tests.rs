@@ -1,5 +1,5 @@
 //! Pure helpers for the agent37 backend: the `timeout` wrapping, whole-second
-//! rounding, and the UTF-8 environment projection. The command path itself goes
+//! rounding, the box limits, and the UTF-8 environment projection. The command path itself goes
 //! through the TinyBox module and is exercised by integration tests, not here.
 #![cfg(feature = "modules")]
 
@@ -51,4 +51,26 @@ fn local_only_privacy_forbids_agent37() {
     // Sensitive is not local-only, so it still allows agent37.
     config.privacy.mode = crate::config::PrivacyMode::Sensitive;
     assert!(!local_only_forbids_agent37(&config));
+}
+
+#[test]
+fn box_resources_come_from_the_agent37_runtime_config() {
+    let mut config = Config::default();
+    config.runtime.docker.cpu_limit = Some(8.0);
+    config.runtime.docker.memory_limit_mb = Some(1);
+    config.runtime.agent37.cpu_millis = 4_000;
+    config.runtime.agent37.memory_mb = 16_384;
+
+    let resources = box_resources(&config);
+
+    assert_eq!(resources.cpu_millis, 4_000);
+    assert_eq!(resources.memory_bytes, 16_384 * 1024 * 1024);
+}
+
+#[test]
+fn box_resources_ask_for_the_maximum_when_memory_overflows() {
+    let mut config = Config::default();
+    config.runtime.agent37.memory_mb = u64::MAX;
+
+    assert_eq!(box_resources(&config).memory_bytes, u64::MAX);
 }
