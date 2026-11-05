@@ -568,9 +568,13 @@ mod on_a_real_shell {
 
         let wrote = write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", &bytes).await;
 
-        assert!(
-            matches!(wrote, Err(BoxError::FileTransfer { .. })),
-            "{wrote:?}"
+        assert_eq!(
+            wrote,
+            Err(BoxError::FileTransfer {
+                action: "write",
+                path: "a.bin".into(),
+                detail: "the file was not written in full".into(),
+            })
         );
         assert_eq!(driver.created(), 2);
         assert!(!driver.box_dir("box-1").unwrap().join("a.bin").exists());

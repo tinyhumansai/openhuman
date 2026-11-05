@@ -151,6 +151,80 @@ pub(crate) async fn execute(
     }
 }
 
+/// Write `bytes` to `path` (relative to the box's work folder) in the box of
+/// `tenant`, replacing any file there and creating its folders. The box comes
+/// from the process's registry, built from `config` on first use.
+///
+/// # Errors
+///
+/// Every [`BoxError`] [`write_file_in`] returns, and a refusal when this build
+/// has no module support.
+pub async fn write_file(
+    tenant: Result<Tenant, NoTenant>,
+    config: &Config,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), BoxError> {
+    let tenant = Ok(tenant_for_box(tenant)?);
+    #[cfg(feature = "modules")]
+    {
+        write_file_in(
+            registry(config),
+            tenant,
+            &config.runtime.openshell,
+            path,
+            bytes,
+        )
+        .await
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (tenant, config, path, bytes);
+        Err(modules_disabled())
+    }
+}
+
+/// Read the file at `path` (relative to the box's work folder) from the box of
+/// `tenant`. A file over `max_bytes`, or over [`MAX_FILE_BYTES`], is refused
+/// before any of it is transferred. The box comes from the process's registry,
+/// built from `config` on first use.
+///
+/// # Errors
+///
+/// Every [`BoxError`] [`read_file_in`] returns, and a refusal when this build
+/// has no module support.
+pub async fn read_file(
+    tenant: Result<Tenant, NoTenant>,
+    config: &Config,
+    path: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, BoxError> {
+    let tenant = Ok(tenant_for_box(tenant)?);
+    #[cfg(feature = "modules")]
+    {
+        read_file_in(
+            registry(config),
+            tenant,
+            &config.runtime.openshell,
+            path,
+            max_bytes,
+        )
+        .await
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (tenant, config, path, max_bytes);
+        Err(modules_disabled())
+    }
+}
+
+#[cfg(not(feature = "modules"))]
+fn modules_disabled() -> BoxError {
+    BoxError::Driver(
+        "TinyBox module support is disabled; OpenShell sandbox files are unavailable".to_owned(),
+    )
+}
+
 /// Close `tenant`'s box, if the process has one.
 pub async fn release(tenant: &Tenant) {
     #[cfg(feature = "modules")]

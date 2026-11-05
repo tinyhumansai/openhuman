@@ -201,3 +201,15 @@ async fn release_and_shutdown_before_any_box_exists_are_no_ops() {
     release(&embedded("u1")).await;
     shutdown().await;
 }
+
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn files_are_refused_without_a_tenant() {
+    let config = Config::default();
+
+    let wrote = write_file(Err(NoTenant), &config, "a.txt", b"x").await;
+    let read = read_file(Err(NoTenant), &config, "a.txt", 10).await;
+
+    assert_eq!(wrote, Err(BoxError::NoTenant));
+    assert_eq!(read, Err(BoxError::NoTenant));
+}

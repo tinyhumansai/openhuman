@@ -28,6 +28,10 @@ pub(crate) mod shell_progress;
 pub(crate) mod spawn_plan;
 pub mod types;
 
+pub use openshell::{
+    read_file as read_box_file, write_file as write_box_file, BoxError,
+    MAX_FILE_BYTES as MAX_BOX_FILE_BYTES,
+};
 pub use ops::{create_sandbox_backend, execute_in_sandbox};
 pub use schemas::{
     all_controller_schemas as all_sandbox_controller_schemas,
