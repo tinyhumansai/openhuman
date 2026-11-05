@@ -71,6 +71,8 @@ pub async fn apply_autonomy_settings(
 ) -> Result<Outcome<serde_json::Value>, String> {
     use crate::security::AutonomyLevel;
 
+    #[cfg(feature = "security-module")]
+    let before = config.autonomy.clone();
     // Validate before changing anything, so a rejected patch leaves `config` as it was.
     if let Some(root) = update
         .trusted_roots
@@ -126,6 +128,16 @@ pub async fn apply_autonomy_settings(
     }
     if let Some(auto_approve_all) = update.auto_approve_all {
         config.autonomy.auto_approve_all = auto_approve_all;
+    }
+    // TinySecurity refuses an enabled policy it cannot represent (relative
+    // forbidden paths, commands with arguments). Saved, such a policy would make
+    // every TinySecurity call fail until the file was edited by hand, so refuse
+    // it here and leave the settings as they were.
+    #[cfg(feature = "security-module")]
+    if let Err(error) = crate::modules::security::validate_policy(config) {
+        log::debug!("[config][autonomy] patch rejected: {error}");
+        config.autonomy = before;
+        return Err(format!("autonomy settings not saved: {error}"));
     }
 
     config.save().await.map_err(super::config_save_error)?;

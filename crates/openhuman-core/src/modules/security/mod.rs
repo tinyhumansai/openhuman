@@ -28,6 +28,7 @@ mod tests;
 pub(crate) use client::SecurityProxy;
 pub use client::{Client, SecurityError};
 pub use policy::policy_config;
+pub(crate) use policy::validate as validate_policy;
 pub(super) use policy::{module_config, module_config_for_host, module_config_for_secret_scope};
 pub(crate) use secret_cipher::Output as SecretCipherOutput;
 
