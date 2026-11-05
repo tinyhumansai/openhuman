@@ -214,7 +214,12 @@ pub(crate) fn rebind_after_credential_change(
             rebound.from, rebound.to
         ));
     }
-    crate::cron::seed::prune_retired_jobs(config).map_err(|error| error.to_string())?;
+    // Housekeeping, as at boot: a TinyFlows that cannot load must not undo a
+    // sign-in whose credential is already stored.
+    if let Err(error) = crate::cron::seed::prune_retired_jobs(config) {
+        log::warn!("[cron] failed to prune retired jobs after a credential change: {error}");
+        logs.push(format!("retired cron jobs not pruned: {error}"));
+    }
     crate::core::runtime::context::CoreContext::rebind_default_workspace_with_config(
         &config.workspace_dir,
         Some(&config.config_path),
