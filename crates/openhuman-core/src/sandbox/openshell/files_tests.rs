@@ -115,6 +115,28 @@ fn a_refused_path_says_what_to_use_instead() {
 }
 
 #[tokio::test]
+async fn a_name_reserved_for_transfers_is_refused_before_any_box_is_touched() {
+    let driver = ScriptedDriver::new();
+    let boxes = registry(&driver);
+    let path = "out/.openhuman-transfer-0123.tmp";
+
+    let wrote = write_file_in(&boxes, Ok(embedded("u1")), &config(), path, b"x").await;
+    let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), path, 10).await;
+
+    let refusal = Err(BoxError::InvalidPath(
+        "that file name is reserved for transfers",
+    ));
+    assert_eq!(wrote, refusal);
+    assert_eq!(
+        read,
+        Err(BoxError::InvalidPath(
+            "that file name is reserved for transfers"
+        ))
+    );
+    assert!(driver.calls().is_empty());
+}
+
+#[tokio::test]
 async fn a_file_over_the_host_limit_is_refused_before_any_box_is_touched() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
@@ -648,7 +670,10 @@ mod on_a_real_shell {
         );
         std::fs::write(&old, b"half").unwrap();
         std::fs::write(&fresh, b"in flight").unwrap();
-        let (_, _, code) = run_in(&dir, "touch -d '3 hours ago' .openhuman-transfer-00000000000000000000000000000001.tmp");
+        let (_, _, code) = run_in(
+            &dir,
+            "touch -d '3 hours ago' .openhuman-transfer-00000000000000000000000000000001.tmp",
+        );
         assert_eq!(code, 0);
 
         write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/a.txt", b"y")
