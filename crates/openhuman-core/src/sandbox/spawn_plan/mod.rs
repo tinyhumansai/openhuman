@@ -35,7 +35,7 @@ use tinysecurity_bus::{
     SubjectScope, Verdict,
 };
 
-pub(crate) use executors::OPENSHELL_EXECUTOR;
+pub(crate) use executors::{AGENT37_EXECUTOR, OPENSHELL_EXECUTOR};
 pub(crate) use facts::SpawnSource;
 pub(crate) use operation::SpawnOperation;
 
@@ -471,6 +471,7 @@ impl PlannedSpawn {
             super::plan::PlannedExecutor::Docker => SandboxBackendKind::Docker,
             super::plan::PlannedExecutor::Host => SandboxBackendKind::None,
             super::plan::PlannedExecutor::OpenShell => SandboxBackendKind::OpenShell,
+            super::plan::PlannedExecutor::Agent37 => SandboxBackendKind::Agent37,
         };
         let workspace = policy.workspace_root.to_str();
         let paths = |list: &[String]| -> Vec<std::path::PathBuf> {

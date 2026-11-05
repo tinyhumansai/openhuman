@@ -104,6 +104,7 @@ mod prompt_screen;
 mod proxy;
 mod routes;
 mod runtime;
+mod runtime_agent37;
 mod runtime_local_jail;
 mod runtime_openshell;
 mod scheduler_gate;
@@ -152,6 +153,7 @@ pub use routes::{EmbeddingRouteConfig, ModelRouteConfig};
 pub use runtime::{
     DockerRuntimeConfig, ReliabilityConfig, RuntimeConfig, SchedulerConfig, ShellConfig,
 };
+pub use runtime_agent37::{Agent37RuntimeConfig, DEFAULT_AGENT37_TEMPLATE};
 pub use runtime_local_jail::LocalJailConfig;
 pub use runtime_openshell::{OpenShellRuntimeConfig, DEFAULT_OPENSHELL_IMAGE};
 pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGateMode};
