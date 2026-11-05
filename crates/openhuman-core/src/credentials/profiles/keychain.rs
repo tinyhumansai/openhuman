@@ -6,6 +6,8 @@ use anyhow::Context;
 pub(super) enum KeyringConsentError {
     Denied,
     Pending,
+    /// Not asked: see [`without_keyring`].
+    HeldBack,
 }
 
 impl std::fmt::Display for KeyringConsentError {
@@ -13,11 +15,30 @@ impl std::fmt::Display for KeyringConsentError {
         match self {
             Self::Denied => f.write_str("human denied this keyring operation"),
             Self::Pending => f.write_str("keyring operation approval timed out"),
+            Self::HeldBack => f.write_str("keyring not asked while no one can approve it"),
         }
     }
 }
 
 impl std::error::Error for KeyringConsentError {}
+
+tokio::task_local! {
+    /// Present while `future` given to [`without_keyring`] runs.
+    static KEYRING_HELD_BACK: ();
+}
+
+/// Run `future` without asking the keyring for anything. The keyring is
+/// TinySecurity's, so asking it while TinySecurity is still loading waits on
+/// that same load; and before the core serves RPC no prompt can be answered.
+/// Profiles held there read as unavailable instead, and a write is refused
+/// rather than moved into the document.
+pub(crate) async fn without_keyring<F: std::future::Future>(future: F) -> F::Output {
+    KEYRING_HELD_BACK.scope((), future).await
+}
+
+fn keyring_held_back() -> bool {
+    KEYRING_HELD_BACK.try_with(|_| ()).is_ok()
+}
 
 pub(super) fn is_consent_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<KeyringConsentError>().is_some()
@@ -79,6 +100,11 @@ where
     if let Some(secrets) = read_cache().secrets.get(name).cloned() {
         log::debug!("[auth] keyring read served from this process's cache");
         return Ok(Some(secrets));
+    }
+    // Served from the cache above or not at all: waiting behind another
+    // read's gate could mean waiting on a prompt no one can answer.
+    if keyring_held_back() {
+        return Err(anyhow::Error::new(KeyringConsentError::HeldBack));
     }
     let gate = Arc::clone(read_cache().gates.entry(name.to_owned()).or_default());
     let _turn = gate.lock().await;
@@ -225,6 +251,13 @@ impl AuthProfilesStore {
         &self,
         operation: tinysecurity_bus::KeyringOperation2,
     ) -> anyhow::Result<tinysecurity_bus::KeyringResponse2> {
+        if keyring_held_back() {
+            log::debug!(
+                "[auth] keyring operation held back user_id={}",
+                self.user_id
+            );
+            return Err(anyhow::Error::new(KeyringConsentError::HeldBack));
+        }
         let config = self
             .security_config
             .clone()

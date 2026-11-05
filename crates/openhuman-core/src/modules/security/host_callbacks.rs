@@ -230,8 +230,7 @@ pub(in crate::modules) async fn identity() -> Option<String> {
 pub(in crate::modules) async fn module_config(
     config: &Config,
 ) -> Result<serde_json::Value, String> {
-    // Resolved before the lock: finding a credential can take a while.
-    let judge = super::judge::resolve(config).await;
+    let judge = super::judge::resolve(config);
     let loads = SECURITY_CALLBACK_LOADS.lock().await;
     loads
         .get(super::MODULE_ID)
@@ -450,7 +449,7 @@ pub(in crate::modules) async fn ensure_loaded(
                     state.scope.scope_id().to_owned(),
                     state.pairing_store.clone(),
                 );
-                let judge = super::judge::resolve(&config).await;
+                let judge = super::judge::resolve(&config);
                 let module_config = state.module_config(&config, judge)?;
                 candidates
                     .lock()

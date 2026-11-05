@@ -11,6 +11,7 @@ use std::time::Duration;
 mod keychain;
 #[cfg(test)]
 pub(crate) use keychain::namespaced_keyring_name;
+pub(crate) use keychain::without_keyring;
 mod lock;
 mod migration;
 mod persistence;
