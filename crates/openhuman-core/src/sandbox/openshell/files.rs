@@ -151,7 +151,7 @@ pub async fn read_file_in<D: BoxDriver>(
     let sized = target
         .run(&format!(
             "test -f {quoted} || exit {NOT_A_FILE_EXIT}; {GUARD} \
-             inside \"$(realpath -- {quoted})\"; stat -c '%s %d:%i:%Y' -- {quoted}"
+             inside \"$(realpath -- {quoted})\"; stat -L -c '%s %d:%i:%Y' -- {quoted}"
         ))
         .await?;
     if sized.exit_code == NOT_A_FILE_EXIT {
@@ -289,7 +289,7 @@ fn write_command(
 /// taken, before or after the read.
 fn read_command(quoted: &str, identity: &str, start: usize, want: u64) -> String {
     let same = format!(
-        "[ \"$(stat -c '%d:%i:%Y' -- {quoted})\" = {} ] || \
+        "[ \"$(stat -L -c '%d:%i:%Y' -- {quoted})\" = {} ] || \
          {{ echo 'the file changed while it was read' >&2; exit 1; }}; ",
         quote(identity)
     );

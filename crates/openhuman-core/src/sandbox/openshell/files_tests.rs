@@ -609,6 +609,26 @@ mod on_a_real_shell {
     }
 
     #[tokio::test]
+    async fn a_link_to_a_file_inside_the_work_folder_reads_the_files_bytes() {
+        let (_root, driver, boxes) = host_boxes();
+        write_file_in(
+            &boxes,
+            Ok(embedded("u1")),
+            &config(),
+            "target.bin",
+            b"real bytes",
+        )
+        .await
+        .unwrap();
+        let dir = driver.box_dir("box-0").unwrap();
+        std::os::unix::fs::symlink("target.bin", dir.join("alias.bin")).unwrap();
+
+        let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), "alias.bin", 100).await;
+
+        assert_eq!(back, Ok(b"real bytes".to_vec()));
+    }
+
+    #[tokio::test]
     async fn a_file_named_dash_is_a_file_and_not_standard_input() {
         let (_root, _driver, boxes) = host_boxes();
 
@@ -718,7 +738,7 @@ mod on_a_real_shell {
     fn a_file_replaced_between_chunks_fails_the_read() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.bin"), b"abcd").unwrap();
-        let identity = run_in(dir.path(), "stat -c '%d:%i:%Y' -- ./a.bin").0;
+        let identity = run_in(dir.path(), "stat -L -c '%d:%i:%Y' -- ./a.bin").0;
         let command = read_command("'./a.bin'", identity.trim(), 1, 4);
         assert_eq!(run_in(dir.path(), &command).0.trim(), encoded(b"abcd"));
 
