@@ -410,7 +410,6 @@ async fn a_missing_artifact_is_an_error() {
     assert!(err.contains("not found"), "{err}");
 }
 
-#[cfg(feature = "security-module")]
 /// Files a `text` artifact titled `title` through the service and returns the
 /// visible file's name and the card's `path`.
 async fn file_text_titled(
@@ -537,6 +536,7 @@ fn only_inert_text_formats_are_recognised_from_a_title() {
     }
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn an_image_filed_through_the_service_gets_a_card_and_a_copy_in_files() {
     let _floor = crate::modules::security::gap::install_path_floor_port(
