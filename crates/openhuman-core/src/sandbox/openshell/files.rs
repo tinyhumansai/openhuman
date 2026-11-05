@@ -138,7 +138,7 @@ pub async fn read_file_in<D: BoxDriver>(
     let quoted = quote(path);
     let sized = target
         .run(&format!(
-            "test -f -- {quoted} || exit {NOT_A_FILE_EXIT}; wc -c < {quoted}"
+            "test -f {quoted} || exit {NOT_A_FILE_EXIT}; wc -c < {quoted}"
         ))
         .await?;
     if sized.exit_code == NOT_A_FILE_EXIT {
@@ -243,7 +243,9 @@ fn write_command(
     ));
     if index + 1 == count {
         command.push_str(&format!(
-            " && test \"$(wc -c < {quoted_part})\" -eq {size} && mv -f -- {quoted_part} {quoted_path}"
+            " && if test \"$(wc -c < {quoted_part})\" -eq {size}; \
+             then mv -f -- {quoted_part} {quoted_path}; \
+             else echo 'the file was not written in full' >&2; exit 1; fi"
         ));
     }
     command

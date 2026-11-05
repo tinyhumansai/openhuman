@@ -262,7 +262,7 @@ async fn a_missing_file_is_reported_by_name() {
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "gone.pdf", 100).await;
 
     assert_eq!(read, Err(BoxError::FileNotFound("gone.pdf".into())));
-    assert!(commands(&driver)[0].starts_with("test -f -- 'gone.pdf' || exit 66"));
+    assert!(commands(&driver)[0].starts_with("test -f 'gone.pdf' || exit 66"));
 }
 
 #[tokio::test]
