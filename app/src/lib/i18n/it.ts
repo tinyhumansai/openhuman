@@ -3942,6 +3942,8 @@ const messages: TranslationMap = {
     'Questo turno ha superato il suo limite di tempo senza finire ed è stato interrotto per non restare bloccato. Di solito significa che una chiamata a uno strumento o un sub-agente delegato si è bloccato. Puoi riprovare la tua domanda in questo thread.',
   'chat_error.disk_full':
     "Il disco è pieno, quindi non è stato possibile salvare questa conversazione. Libera un po' di spazio su disco, poi invia di nuovo il messaggio in questo thread.",
+  'chat_error.prompt_screened':
+    "Il controllo di sicurezza di OpenHuman ha trattenuto questo messaggio, quindi non è stato inviato al modello. Se cita istruzioni rivolte a un assistente (ad esempio da una pagina web o da un'email), rimuovile e riprova. Se vengono trattenuti anche i messaggi normali, il modulo di sicurezza potrebbe non essere disponibile: riavvia OpenHuman e riprova.",
   'chat_error.empty_response':
     'Il modello ha restituito una risposta vuota. Riprova. Se continua a succedere, prova un altro modello o controlla la sua configurazione in Connessioni → Chiavi API → LLM.',
   'chat_error.chat_template_rejected':

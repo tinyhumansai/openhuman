@@ -177,6 +177,16 @@ fn only_local_session_refused(err: &str) -> bool {
     }
 }
 
+/// Whether `lower` is one of the host's prompt-screen refusals: the session
+/// guard's (`session_host/runtime/run_loop.rs`) or the hosted gate's
+/// (`agent/tinyagents/host/security_gate_impl.rs`). The texts are the host's
+/// own, so they cannot collide with an upstream provider's error.
+fn is_prompt_screen_refusal(lower: &str) -> bool {
+    lower.contains("prompt flagged for security review")
+        || lower.contains("prompt blocked by security policy")
+        || lower.contains("rejected by the prompt-injection screen")
+}
+
 pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     use FailureClass as C;
     let lower = err.to_lowercase();
@@ -211,7 +221,13 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // "iteration", so they MUST be checked before the generic provider-429
     // branch — otherwise users see a confusing "your AI provider is
     // rate-limiting you" message for limits OpenHuman itself enforced (#2364).
-    let classified = if only_local_session_refused(err) {
+    let classified = if is_prompt_screen_refusal(&lower) {
+        // The turn never reached the model: the prompt-injection screen held
+        // the message or a tool output. Saying "something went wrong" with
+        // the provider as the source sent users to their model settings.
+        log::debug!("[chat-error][classify] error_type=prompt_screened source=security");
+        classified_plain(C::PromptScreened, None, None)
+    } else if only_local_session_refused(err) {
         // #6932: `resolve_bearer` refuses the offline local session before the
         // request, so the backend `401 "Invalid token"` that
         // `is_session_expired_message` claims — and that told a locally

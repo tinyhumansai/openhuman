@@ -3931,6 +3931,8 @@ const messages: TranslationMap = {
     'Ta tura przekroczyła limit czasu bez zakończenia i została zatrzymana, aby się nie zawiesić. Zwykle oznacza to, że zawiesiło się wywołanie narzędzia lub delegowany podagent. Możesz ponowić pytanie w tym wątku.',
   'chat_error.disk_full':
     'Dysk jest pełny, więc nie udało się zapisać tej rozmowy. Zwolnij trochę miejsca na dysku, a potem wyślij wiadomość ponownie w tym wątku.',
+  'chat_error.prompt_screened':
+    'Kontrola bezpieczeństwa OpenHuman wstrzymała tę wiadomość, więc nie została wysłana do modelu. Jeśli cytuje ona instrukcje przeznaczone dla asystenta (na przykład ze strony internetowej lub e-maila), usuń je i spróbuj ponownie. Jeśli wstrzymywane są też zwykłe wiadomości, moduł bezpieczeństwa może być niedostępny: uruchom ponownie OpenHuman i spróbuj jeszcze raz.',
   'chat_error.empty_response':
     'Model zwrócił pustą odpowiedź. Spróbuj ponownie. Jeśli to się powtarza, wypróbuj inny model lub sprawdź jego konfigurację w Połączenia → Klucze API → LLM.',
   'chat_error.chat_template_rejected':
