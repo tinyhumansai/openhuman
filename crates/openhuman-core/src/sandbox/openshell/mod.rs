@@ -37,6 +37,7 @@ use std::time::Duration;
 pub use bus_driver::BusBoxDriver;
 pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::BoxRegistry;
+pub(crate) use registry::BOX_WORKDIR;
 pub use types::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, RegistryLimits};
 
 use super::types::SandboxExecResult;

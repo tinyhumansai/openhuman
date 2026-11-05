@@ -204,7 +204,9 @@ async fn a_path_elsewhere_in_the_box_is_refused() {
 
     assert!(result.is_error);
     assert!(
-        result.output().contains("relative to the sandbox work folder"),
+        result
+            .output()
+            .contains("relative to the sandbox work folder"),
         "{}",
         result.output()
     );
