@@ -1,6 +1,9 @@
 //! Tests for the surrounding module.
 
-use super::{builtin_cloud_providers, builtin_presets, is_slug_reserved, AuthStyle};
+use super::{
+    builtin_cloud_providers, builtin_presets, is_slug_reserved, slug_shadowed_by_local_runtime,
+    AuthStyle,
+};
 use tinyinference_providers::builtin::endpoint_host;
 
 #[test]
@@ -378,5 +381,70 @@ fn builtin_table_is_only_the_upstream_provider_catalog() {
             tinyinference_providers::builtin::BuiltinAuthStyle::Anthropic => AuthStyle::Anthropic,
         };
         assert_eq!(mapped.auth_style, expected, "{}", mapped.slug);
+    }
+}
+
+// A cloud provider saved under a slug that the factory hands to a local runtime
+// is unreachable: `"<slug>:<model>"` is built as the local runtime before
+// `cloud_providers` is consulted.
+#[test]
+fn local_runtime_names_and_aliases_shadow_a_cloud_slug() {
+    for slug in [
+        "vllm",
+        "llamacpp",
+        "llama.cpp",
+        "mlx",
+        "mlx-server",
+        "mlx_lm",
+        "omlx",
+        "omlx-server",
+        "local-openai",
+        "local_openai",
+        "custom-openai",
+        "custom_openai",
+        // Routing lowercases the prefix, so case does not escape it.
+        "VLLM",
+        " vllm ",
+    ] {
+        assert!(
+            slug_shadowed_by_local_runtime(slug),
+            "{slug:?} is routed to a local runtime and must be refused as a cloud slug"
+        );
+    }
+}
+
+#[test]
+fn ordinary_slugs_are_not_shadowed() {
+    // `ollama` and `lmstudio` are registered by the settings panel as synthetic
+    // entries for the /models probe (see `ollama_and_lmstudio_are_not_reserved`).
+    // `openai:<model>` is the cloud provider: the classifier special-cases that
+    // prefix, and the probe must inherit it.
+    for slug in [
+        "openai",
+        "ollama",
+        "lmstudio",
+        "anthropic",
+        "openrouter",
+        "my-vllm",
+        "vllm-prod",
+        "myopenai",
+        "",
+    ] {
+        assert!(
+            !slug_shadowed_by_local_runtime(slug),
+            "{slug:?} must remain usable as a cloud provider slug"
+        );
+    }
+}
+
+// Guard: refusing local-runtime names must never reach a shipped preset.
+#[test]
+fn no_builtin_cloud_provider_slug_is_shadowed() {
+    for provider in builtin_cloud_providers().iter() {
+        assert!(
+            !slug_shadowed_by_local_runtime(provider.slug),
+            "built-in cloud provider {} would be refused",
+            provider.slug
+        );
     }
 }

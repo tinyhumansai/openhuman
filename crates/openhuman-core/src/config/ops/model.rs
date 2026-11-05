@@ -102,11 +102,59 @@ pub struct LocalAiSettingsPatch {
     pub api_key: Option<String>,
 }
 
+/// Reject cloud providers saved under a slug that a local runtime claims.
+///
+/// The factory routes `"<slug>:<model>"` to a local runtime (`vllm`, `llamacpp`,
+/// `mlx`, `omlx`, `local-openai` and their aliases) before it consults
+/// `cloud_providers`, so such a provider would be saved, listed in the model
+/// dropdown, and then silently ignored by chat. An error at save time tells the
+/// user to pick another slug instead.
+///
+/// Only slugs that are *not already stored* are refused. A config saved by an
+/// older build may hold such an entry; the settings panel echoes the whole list
+/// back on every save, and refusing it would make every unrelated settings
+/// change fail. Those entries are kept and logged.
+fn reject_new_local_runtime_slugs(
+    stored: &[crate::config::schema::cloud_providers::CloudProviderCreds],
+    incoming: &[crate::config::schema::cloud_providers::CloudProviderCreds],
+) -> Result<(), String> {
+    use crate::config::schema::cloud_providers::slug_shadowed_by_local_runtime;
+
+    for entry in incoming {
+        let slug = entry.slug.trim();
+        if slug.is_empty() || !slug_shadowed_by_local_runtime(slug) {
+            continue;
+        }
+        if stored.iter().any(|existing| existing.slug.trim() == slug) {
+            log::warn!(
+                "[config] apply_model_settings: stored cloud provider slug '{slug}' is claimed \
+                 by a local runtime, so chat routed to '{slug}:<model>' never reaches it; \
+                 rename it"
+            );
+            continue;
+        }
+        log::debug!(
+            "[config] apply_model_settings: refusing cloud provider slug '{slug}' (local runtime name)"
+        );
+        return Err(format!(
+            "cloud provider slug '{slug}' is the name of a built-in local runtime, so chat \
+             routed to '{slug}:<model>' would go to that runtime and never to this provider. \
+             Use a different slug, for example 'my-{slug}'."
+        ));
+    }
+    Ok(())
+}
+
 /// Updates the model-related settings in the configuration.
 pub async fn apply_model_settings(
     config: &mut Config,
     update: ModelSettingsPatch,
 ) -> Result<Outcome<serde_json::Value>, String> {
+    // Refuse a *new* cloud provider whose slug a local runtime already claims.
+    // Checked before any field is applied so a refusal leaves `config` untouched.
+    if let Some(providers) = update.cloud_providers.as_deref() {
+        reject_new_local_runtime_slugs(&config.cloud_providers, providers)?;
+    }
     if let Some(api_url) = update.api_url {
         config.api_url = if api_url.trim().is_empty() {
             None
