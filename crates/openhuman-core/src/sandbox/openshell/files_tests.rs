@@ -629,6 +629,31 @@ mod on_a_real_shell {
     }
 
     #[tokio::test]
+    async fn a_part_file_abandoned_by_a_cancelled_upload_is_reclaimed_by_the_next_write() {
+        let (_root, driver, boxes) = host_boxes();
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/seed.txt", b"x")
+            .await
+            .unwrap();
+        let dir = driver.box_dir("box-0").unwrap().join("out");
+        let (old, fresh) = (
+            dir.join(".openhuman-old.tmp"),
+            dir.join(".openhuman-new.tmp"),
+        );
+        std::fs::write(&old, b"half").unwrap();
+        std::fs::write(&fresh, b"in flight").unwrap();
+        let (_, _, code) = run_in(&dir, "touch -d '3 hours ago' .openhuman-old.tmp");
+        assert_eq!(code, 0);
+
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/a.txt", b"y")
+            .await
+            .unwrap();
+
+        assert!(!old.exists(), "an hour-old part file is removed");
+        assert!(fresh.exists(), "a recent one may be an upload in flight");
+        assert!(dir.join("a.txt").is_file());
+    }
+
+    #[tokio::test]
     async fn a_file_named_dash_is_a_file_and_not_standard_input() {
         let (_root, _driver, boxes) = host_boxes();
 

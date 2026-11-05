@@ -18,7 +18,8 @@
 //!   file's length and only then renames it over `<path>`, so a reader never
 //!   sees half a file, and a box replaced mid-write (it forgets the earlier
 //!   chunks) fails the length check instead of keeping a truncated file. A
-//!   failure removes the part file.
+//!   failure removes the part file; one abandoned by a cancelled transfer is
+//!   removed by the next write into its folder once it is an hour old.
 //! - **Read** checks the file exists and reads its size first, refuses a file
 //!   over the limit before moving any of it, then reads
 //!   [`READ_CHUNK_BYTES`] at a time (a hosted exec keeps at most 512 KB of
@@ -57,6 +58,13 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The exit status the size check uses for "not a regular file".
 const NOT_A_FILE_EXIT: i32 = 66;
+
+/// A part file this old was abandoned (its transfer was cancelled or its host
+/// went away, so nothing removed it); the next write into the folder removes it.
+const STALE_PART_MINUTES: u32 = 60;
+
+/// The pattern every part file's name matches (see [`part_path`]).
+const STALE_PART_GLOB: &str = ".openhuman-*.tmp";
 
 /// The longest box message kept in an error.
 const DETAIL_MAX_CHARS: usize = 200;
@@ -267,6 +275,8 @@ fn write_command(
             "d={folder}; while ! test -e \"$d\" && ! test -L \"$d\"; do d=$(dirname \"$d\"); done; \
              inside \"$(realpath -- \"$d\")\"; mkdir -p -- {folder} || exit 1; \
              inside \"$(realpath -- {folder})\"; \
+             find {folder} -maxdepth 1 -type f -name '{STALE_PART_GLOB}' -mmin +{STALE_PART_MINUTES} \
+             -exec rm -f -- {{}} + 2>/dev/null; \
              ( set -C; printf %s '{encoded}' | base64 -d > {quoted_part} ) || exit 1"
         ));
     } else {
