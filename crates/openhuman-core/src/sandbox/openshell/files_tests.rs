@@ -616,7 +616,7 @@ mod on_a_real_shell {
             Ok(embedded("u1")),
             &config(),
             "target.bin",
-            b"real bytes",
+            b"the real bytes of the target",
         )
         .await
         .unwrap();
@@ -625,7 +625,7 @@ mod on_a_real_shell {
 
         let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), "alias.bin", 100).await;
 
-        assert_eq!(back, Ok(b"real bytes".to_vec()));
+        assert_eq!(back, Ok(b"the real bytes of the target".to_vec()));
     }
 
     #[tokio::test]

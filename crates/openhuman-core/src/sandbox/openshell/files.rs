@@ -151,7 +151,7 @@ pub async fn read_file_in<D: BoxDriver>(
     let sized = target
         .run(&format!(
             "test -f {quoted} || exit {NOT_A_FILE_EXIT}; {GUARD} \
-             inside \"$(realpath -- {quoted})\"; stat -L -c '%s %d:%i:%Y' -- {quoted}"
+             inside \"$(realpath -- {quoted})\"; stat -c '%s %d:%i:%Y' -- {quoted}"
         ))
         .await?;
     if sized.exit_code == NOT_A_FILE_EXIT {
