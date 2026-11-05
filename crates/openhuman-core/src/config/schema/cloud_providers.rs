@@ -375,6 +375,31 @@ pub fn is_slug_reserved(s: &str) -> bool {
     matches!(s.trim(), "" | "cloud" | "openhuman" | "pid")
 }
 
+/// Whether a `"<slug>:<model>"` provider string for `slug` is claimed by a
+/// local runtime before the factory ever looks at `cloud_providers`.
+///
+/// The factory builds local runtimes (`vllm:`, `llamacpp:`, `mlx:`, `omlx:`,
+/// `local-openai:` and their aliases) ahead of the cloud-slug lookup, and the
+/// privacy and session gates classify those strings as local too. A cloud
+/// provider saved under such a slug is therefore unreachable: its chat goes to
+/// the local runtime's base URL and its own endpoint and key are never used.
+///
+/// The probe goes through the same classifier the factory uses
+/// (`kind_from_provider_string`), so the alias list cannot drift from routing
+/// and the `openai` prefix exception (`openai:<model>` is the cloud provider)
+/// carries over. `ollama` and `lmstudio` are excluded on purpose: the AI
+/// settings panel registers a synthetic cloud entry under those slugs so the
+/// model dropdown can resolve the user's base URL (see [`is_slug_reserved`]).
+pub fn slug_shadowed_by_local_runtime(slug: &str) -> bool {
+    use tinyinference_local::profile::{kind_from_provider_string, LocalProviderKind};
+
+    let probe = format!("{}:probe", slug.trim());
+    matches!(
+        kind_from_provider_string(&probe),
+        Some(kind) if !matches!(kind, LocalProviderKind::Ollama | LocalProviderKind::LmStudio)
+    )
+}
+
 /// Generate a short opaque id for a new provider entry.
 ///
 /// Format: `"p_<slug>_<5 random alphanumerics>"`, e.g. `"p_openai_a8c3f"`.
