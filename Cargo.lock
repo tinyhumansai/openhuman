@@ -5711,7 +5711,7 @@ dependencies = [
  "tinyagents-session",
  "tinyagents-storage-kit",
  "tinyagents-tasks",
- "tinybox-bus 0.2.4",
+ "tinybox-bus 0.2.5",
  "tinybus",
  "tinybus-module",
  "tinychannels",
@@ -9242,6 +9242,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinybox-agent37"
+version = "0.2.5"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tinybox-core",
+]
+
+[[package]]
 name = "tinybox-bus"
 version = "0.1.36"
 source = "git+https://github.com/tinyhumansai/tinybox?tag=v0.1.36#39fe22189431bdf787dafce5eea6d7d49d1a00f8"
@@ -9251,7 +9263,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-bus"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "schemars",
  "serde",
@@ -9260,17 +9272,17 @@ dependencies = [
 
 [[package]]
 name = "tinybox-core"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "serde",
  "thiserror 2.0.21",
- "tinybox-bus 0.2.4",
+ "tinybox-bus 0.2.5",
 ]
 
 [[package]]
 name = "tinybox-docker"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "ipnet",
@@ -9284,12 +9296,12 @@ dependencies = [
 
 [[package]]
 name = "tinybox-drivers"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "log",
  "serde",
  "serde_json",
- "tinybox-bus 0.2.4",
+ "tinybox-bus 0.2.5",
  "tinybox-core",
  "tinybox-jail",
  "tinystoragedrivers-api",
@@ -9299,7 +9311,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-host"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "cap-std",
@@ -9307,7 +9319,7 @@ dependencies = [
  "futures-timer",
  "futures-util",
  "nix 0.31.3",
- "tinybox-bus 0.2.4",
+ "tinybox-bus 0.2.5",
  "tinybox-core",
  "tinybox-jail",
  "tokio",
@@ -9315,13 +9327,13 @@ dependencies = [
 
 [[package]]
 name = "tinybox-jail"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "landlock",
  "log",
  "serde",
  "serde_json",
- "tinybox-bus 0.2.4",
+ "tinybox-bus 0.2.5",
  "tinybox-core",
  "tinybox-linux",
  "windows-sys 0.61.2",
@@ -9329,7 +9341,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-linux"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "tinybox-core",
@@ -9337,7 +9349,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-microvm"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "serde",
@@ -9347,12 +9359,13 @@ dependencies = [
 
 [[package]]
 name = "tinybox-module"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "log",
  "nix 0.31.3",
  "tempfile",
- "tinybox-bus 0.2.4",
+ "tinybox-agent37",
+ "tinybox-bus 0.2.5",
  "tinybox-core",
  "tinybox-docker",
  "tinybox-drivers",
@@ -9373,16 +9386,17 @@ dependencies = [
 
 [[package]]
 name = "tinybox-openshell"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "serde_json",
+ "sha2 0.10.9",
  "tinybox-core",
 ]
 
 [[package]]
 name = "tinybox-ssh"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "async-trait",
  "tinybox-core",
