@@ -642,9 +642,10 @@ mod on_a_real_shell {
         let a = binary(WRITE_CHUNK_BYTES * 3);
         let b: Vec<u8> = a.iter().map(|byte| byte.wrapping_add(1)).collect();
 
+        let cfg = config();
         let (first, second) = tokio::join!(
-            write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", &a),
-            write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", &b),
+            write_file_in(&boxes, Ok(embedded("u1")), &cfg, "a.bin", &a),
+            write_file_in(&boxes, Ok(embedded("u1")), &cfg, "a.bin", &b),
         );
         first.unwrap();
         second.unwrap();
