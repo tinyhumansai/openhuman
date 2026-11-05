@@ -1,7 +1,10 @@
 use super::*;
 use crate::core::runtime::NoTenant;
 use crate::sandbox::openshell::scripted_driver::{Call, ExecStep, ScriptedDriver};
+use crate::sandbox::openshell::{BoxOutput, RegistryLimits};
 use base64::Engine as _;
+use std::sync::Arc;
+use std::time::Duration;
 
 fn embedded(id: &str) -> Tenant {
     Tenant {
@@ -289,7 +292,10 @@ async fn a_chunk_that_is_not_base64_fails_the_read() {
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 100).await;
 
-    assert!(matches!(read, Err(BoxError::FileTransfer { .. })), "{read:?}");
+    assert!(
+        matches!(read, Err(BoxError::FileTransfer { .. })),
+        "{read:?}"
+    );
 }
 
 #[tokio::test]
@@ -297,7 +303,11 @@ async fn a_failing_chunk_command_fails_the_read_with_the_boxs_message() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
     driver.then(reply(0, "4\n", ""));
-    driver.then(reply(1, "", "tail: error reading 'a.bin': Input/output error\n"));
+    driver.then(reply(
+        1,
+        "",
+        "tail: error reading 'a.bin': Input/output error\n",
+    ));
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 100).await;
 
@@ -319,7 +329,10 @@ async fn a_size_the_box_does_not_report_as_a_number_fails_the_read() {
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 100).await;
 
-    assert!(matches!(read, Err(BoxError::FileTransfer { .. })), "{read:?}");
+    assert!(
+        matches!(read, Err(BoxError::FileTransfer { .. })),
+        "{read:?}"
+    );
 }
 
 #[tokio::test]
@@ -405,17 +418,33 @@ mod on_a_real_shell {
         let bytes = binary(READ_CHUNK_BYTES * 2 + WRITE_CHUNK_BYTES + 17);
         assert!(bytes.contains(&0) && std::str::from_utf8(&bytes).is_err());
 
-        write_file_in(&boxes, Ok(embedded("u1")), &config(), "work/out.bin", &bytes)
-            .await
-            .unwrap();
-        let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), "work/out.bin", MAX_FILE_BYTES)
-            .await
-            .unwrap();
+        write_file_in(
+            &boxes,
+            Ok(embedded("u1")),
+            &config(),
+            "work/out.bin",
+            &bytes,
+        )
+        .await
+        .unwrap();
+        let back = read_file_in(
+            &boxes,
+            Ok(embedded("u1")),
+            &config(),
+            "work/out.bin",
+            MAX_FILE_BYTES,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(back, bytes);
         let on_disk = driver.box_dir("box-0").unwrap().join("work/out.bin");
         assert_eq!(std::fs::read(on_disk).unwrap(), bytes);
-        assert!(!driver.box_dir("box-0").unwrap().join("work/out.bin.part").exists());
+        assert!(!driver
+            .box_dir("box-0")
+            .unwrap()
+            .join("work/out.bin.part")
+            .exists());
     }
 
     #[tokio::test]
@@ -491,7 +520,10 @@ mod on_a_real_shell {
         let wrote = write_file_in(&boxes, Ok(embedded("u1")), &config(), "d", b"y").await;
         let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "d", 10).await;
 
-        assert!(matches!(wrote, Err(BoxError::FileTransfer { .. })), "{wrote:?}");
+        assert!(
+            matches!(wrote, Err(BoxError::FileTransfer { .. })),
+            "{wrote:?}"
+        );
         assert_eq!(read, Err(BoxError::FileNotFound("d".into())));
     }
 
@@ -517,7 +549,11 @@ mod on_a_real_shell {
         assert_eq!(theirs, Err(BoxError::FileNotFound("secret.txt".into())));
         assert_eq!(mine, Ok(b"mine".to_vec()));
         assert_eq!(driver.created(), 2);
-        assert!(driver.box_dir("box-0").unwrap().join("secret.txt").is_file());
+        assert!(driver
+            .box_dir("box-0")
+            .unwrap()
+            .join("secret.txt")
+            .is_file());
         assert!(!driver.box_dir("box-1").unwrap().join("secret.txt").exists());
     }
 
@@ -532,7 +568,10 @@ mod on_a_real_shell {
 
         let wrote = write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", &bytes).await;
 
-        assert!(matches!(wrote, Err(BoxError::FileTransfer { .. })), "{wrote:?}");
+        assert!(
+            matches!(wrote, Err(BoxError::FileTransfer { .. })),
+            "{wrote:?}"
+        );
         assert_eq!(driver.created(), 2);
         assert!(!driver.box_dir("box-1").unwrap().join("a.bin").exists());
     }

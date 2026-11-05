@@ -35,6 +35,7 @@ use std::time::Duration;
 
 #[cfg(feature = "modules")]
 pub use bus_driver::BusBoxDriver;
+pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::BoxRegistry;
 pub use types::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, RegistryLimits};
 

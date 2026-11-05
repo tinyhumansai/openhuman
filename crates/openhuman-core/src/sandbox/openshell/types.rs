@@ -134,6 +134,38 @@ pub enum BoxError {
     /// A variable for the command is not UTF-8.
     #[error("sandbox environment is not UTF-8")]
     NonUtf8Env,
+    /// A file path for the box is not a file inside its work folder.
+    #[error("the sandbox file path is not allowed: {0}")]
+    InvalidPath(&'static str),
+    /// A file is over the transfer limit.
+    #[error("the file is {size} bytes, over the {limit} byte limit")]
+    FileTooLarge {
+        /// The file's size in bytes.
+        size: u64,
+        /// The limit it is over.
+        limit: u64,
+    },
+    /// The box has no regular file at the path.
+    #[error("there is no file `{0}` in the sandbox")]
+    FileNotFound(String),
+    /// Fewer bytes of a file arrived than it holds.
+    #[error("the sandbox returned {got} of the file's {expected} bytes")]
+    ShortRead {
+        /// The file's size in bytes.
+        expected: u64,
+        /// The bytes that arrived.
+        got: u64,
+    },
+    /// A command moving a file failed in the box.
+    #[error("could not {action} `{path}` in the sandbox: {detail}")]
+    FileTransfer {
+        /// `read` or `write`.
+        action: &'static str,
+        /// The path, relative to the work folder.
+        path: String,
+        /// What the box said, or why the command failed.
+        detail: String,
+    },
     /// The driver failed for another reason.
     #[error("the sandbox service failed: {0}")]
     Driver(String),
