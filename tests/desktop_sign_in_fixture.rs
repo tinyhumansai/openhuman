@@ -305,24 +305,34 @@ async fn start_signed_out_desktop() -> Desktop {
     desktop
 }
 
-/// Read the session token back, approving the keyring reads it asks for.
-async fn read_token_approving(port: u16) -> Value {
-    let token_read = tokio::spawn(async move {
-        rpc(
-            port,
-            "openhuman.auth_get_session_token",
-            json!({}),
-            Duration::from_secs(180),
-        )
-        .await
-    });
-    let mut read_prompts = 0;
-    while !token_read.is_finished() {
-        read_prompts += approve_pending_keyring_prompts(port).await;
+/// Call `method`, approving any keyring prompt it raises; the response and
+/// the number of prompts approved.
+async fn call_approving(port: u16, method: &'static str) -> (Value, usize) {
+    let call =
+        tokio::spawn(async move { rpc(port, method, json!({}), Duration::from_secs(180)).await });
+    let mut prompts = 0;
+    while !call.is_finished() {
+        prompts += approve_pending_keyring_prompts(port).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    eprintln!("token read prompts: {read_prompts}");
-    token_read.await.expect("token read task")
+    (call.await.expect("rpc task"), prompts)
+}
+
+/// Poll the auth state and the session token the way the app does, a few
+/// times each; the number of keyring prompts they raised. Once this process
+/// has read or written the token, none.
+async fn poll_auth_approving(port: u16) -> usize {
+    let mut prompts = 0;
+    for _ in 0..5 {
+        let (state, asked) = call_approving(port, "openhuman.auth_get_state").await;
+        assert_eq!(result(&state)["isAuthenticated"], json!(true), "{state}");
+        prompts += asked;
+        let (token, asked) = call_approving(port, "openhuman.auth_get_session_token").await;
+        assert_eq!(result(&token)["token"], json!(session_token()), "{token}");
+        prompts += asked;
+    }
+    eprintln!("prompts over 5 auth state and 5 token reads: {prompts}");
+    prompts
 }
 
 /// Sign in with a session credential and answer every keyring prompt the
@@ -388,21 +398,11 @@ fn desktop_sign_in_stores_the_token_in_the_os_keyring_after_approval() {
             "storing the token asks to approve a keyring write: {answered:?}"
         );
 
-        // Same process, no relaunch: the token reads back from the keyring.
-        let token_read = read_token_approving(port).await;
-        assert_eq!(
-            result(&token_read)["token"],
-            json!(session_token()),
-            "{token_read}"
-        );
-        let state = rpc(
-            port,
-            "openhuman.auth_get_state",
-            json!({}),
-            Duration::from_secs(5),
-        )
-        .await;
-        assert_eq!(result(&state)["isAuthenticated"], json!(true), "{state}");
+        eprintln!("sign-in keyring prompts: {}", answered.len());
+
+        // Same process, no relaunch: the token this process stored reads back
+        // without asking again, however often the app polls.
+        assert_eq!(poll_auth_approving(port).await, 0);
         shutdown.cancel();
         remove_own_workspace(&scratch);
     });
@@ -462,9 +462,9 @@ fn desktop_restart_reads_the_keyring_token_once_approved_at_startup() {
     run_on_agent_stack(|| async {
         let desktop = start_desktop().await;
         eprintln!("startup keyring prompts: {}", desktop.startup_prompts);
-        assert!(
-            desktop.startup_prompts > 0,
-            "reading the stored token at startup asks the user"
+        assert_eq!(
+            desktop.startup_prompts, 1,
+            "reading the stored token at startup asks the user once"
         );
         assert_eq!(
             desktop.state["isAuthenticated"],
@@ -472,12 +472,7 @@ fn desktop_restart_reads_the_keyring_token_once_approved_at_startup() {
             "{}",
             desktop.state
         );
-        let token_read = read_token_approving(desktop.port).await;
-        assert_eq!(
-            result(&token_read)["token"],
-            json!(session_token()),
-            "{token_read}"
-        );
+        assert_eq!(poll_auth_approving(desktop.port).await, 0);
         desktop.shutdown.cancel();
     });
 }
