@@ -8,7 +8,7 @@ use crate::sandbox::openshell::{read_file_in, BoxOutput, BoxRegistry, RegistryLi
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::time::Duration;
-use tiny_artifacts::Author;
+use tiny_artifacts::{Author, UpdateArtifactTool};
 
 /// Box files from a registry over a scripted driver, so a test says what the
 /// box holds and sees every command sent to it.
@@ -75,6 +75,20 @@ impl Fixture {
     }
 
     fn tool_with(&self, keeps: Option<bool>, tenant: Result<Tenant, NoTenant>) -> BoxSourced {
+        self.build(keeps, tenant, false)
+    }
+
+    /// `update_artifact` over the same stores, behind the same box files.
+    fn update_tool(&self, keeps: bool, tenant: Result<Tenant, NoTenant>) -> BoxSourced {
+        self.build(Some(keeps), tenant, true)
+    }
+
+    fn build(
+        &self,
+        keeps: Option<bool>,
+        tenant: Result<Tenant, NoTenant>,
+        update: bool,
+    ) -> BoxSourced {
         let ctx = DispatchCtx::process_default();
         let service = artifacts_service(
             &self.workspace,
@@ -90,12 +104,17 @@ impl Fixture {
                 max_live: 10,
             },
         );
-        BoxSourced::new(
-            CreateArtifactTool::new(Arc::new(service), Author::agent("agent")),
-            Arc::new(ScriptedBoxes { keeps, registry }),
-            tenant,
-            staging_dir(&self.workspace),
-        )
+        let service = Arc::new(service);
+        let boxes = Arc::new(ScriptedBoxes { keeps, registry });
+        let staging = staging_dir(&self.workspace);
+        let author = Author::agent("agent");
+        if update {
+            let tool = UpdateArtifactTool::new(Arc::clone(&service), author);
+            BoxSourced::new(tool, KindSource::Record(service), boxes, tenant, staging)
+        } else {
+            let tool = CreateArtifactTool::new(service, author);
+            BoxSourced::new(tool, KindSource::Args, boxes, tenant, staging)
+        }
     }
 
     /// The box holds `bytes` at whatever path is asked for.
@@ -346,4 +365,65 @@ fn a_box_path_is_the_name_relative_to_the_work_folder() {
     assert_eq!(box_path("/sandbox/out/report.pdf"), "out/report.pdf");
     assert_eq!(box_path("/sandboxed/report.pdf"), "/sandboxed/report.pdf");
     assert_eq!(box_path("/sandbox"), "/sandbox");
+}
+
+#[tokio::test]
+async fn an_update_reads_its_new_file_from_the_callers_box() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
+    let fixture = Fixture::new();
+    fixture.the_box_holds(b"first");
+    let id = created_id(&fixture.tool(true, user("u1")), file_args("a.pdf")).await;
+    // A host file of the same name must not be what the update files.
+    std::fs::write(fixture.action.join("a.pdf"), b"host bytes").unwrap();
+    fixture.the_box_holds(b"second");
+    let update = fixture.update_tool(true, user("u1"));
+
+    let result = update
+        .execute(json!({"artifact_id": id, "path": "a.pdf"}))
+        .await
+        .unwrap();
+
+    assert!(!result.is_error, "{}", result.output());
+    let stored = read_artifact_bytes(&fixture.workspace, FileRoots::new(&fixture.files), &id)
+        .await
+        .unwrap();
+    assert_eq!(stored, b"second");
+    assert_eq!(fixture.staged_files(), 0, "the host copy is not kept");
+}
+
+#[tokio::test]
+async fn an_update_of_a_text_artifact_never_touches_a_box() {
+    let fixture = Fixture::new();
+    let created = fixture
+        .tool(true, user("u1"))
+        .execute(json!({"kind": "markdown", "title": "Notes", "body": "one"}))
+        .await
+        .unwrap();
+    let id = serde_json::from_str::<Value>(&created.output()).unwrap()["artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let result = fixture
+        .update_tool(true, user("u1"))
+        .execute(json!({"artifact_id": id, "body": "two", "path": "ignored.pdf"}))
+        .await
+        .unwrap();
+
+    assert!(!result.is_error, "{}", result.output());
+    assert!(fixture.driver.calls().is_empty(), "no box was touched");
+}
+
+#[tokio::test]
+async fn a_staged_copy_is_removed_when_its_call_is_dropped_before_it_finishes() {
+    let staging = tempfile::tempdir().unwrap();
+    let staged = stage(staging.path(), "out/a.pdf", b"bytes").await.unwrap();
+    let dir = staged.dir.clone();
+    assert!(dir.join("a.pdf").is_file());
+
+    drop(staged);
+
+    assert!(!dir.exists());
 }
