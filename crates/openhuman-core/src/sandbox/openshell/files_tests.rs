@@ -45,7 +45,14 @@ fn encoded(bytes: &[u8]) -> String {
 
 /// The part file a write's first command names: the quoted `./...part` word.
 fn part_in(command: &str) -> String {
-    let end = command.find(".tmp'").expect("a part file") + ".tmp".len();
+    // The part file's name carries a UUID; the stale-file sweep names a glob.
+    let marker = ".openhuman-";
+    let name = command
+        .match_indices(marker)
+        .map(|(at, _)| at)
+        .find(|at| !command[at + marker.len()..].starts_with('*'))
+        .expect("a part file");
+    let end = name + command[name..].find(".tmp'").expect("a part file") + ".tmp".len();
     let start = command[..end].rfind("'./").expect("a quoted path") + 1;
     command[start..end].to_owned()
 }
