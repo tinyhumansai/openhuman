@@ -32,15 +32,20 @@ driver supports them and no box contract grows. The generic forms
 
 - Paths are relative to the box work folder (`BOX_WORKDIR`, the one place that
   names it). Absolute paths, `..`, NUL and empty paths are refused; every path
-  that reaches the shell is single-quoted. Files over `MAX_FILE_BYTES` (8 MiB)
+  that reaches the shell is single-quoted and written `./<path>`. Every command
+  resolves the path inside the box and refuses one that leaves the work folder
+  (a symlink out of it included). Files over `MAX_FILE_BYTES` (8 MiB)
   are refused, and a read also honours the caller's `max_bytes`.
-- Write: 48 KiB raw per command (`printf %s '<base64>' | base64 -d >> <path>.part`;
-  a Linux argument is at most 128 KiB). The last command checks the part file's
+- Write: 48 KiB raw per command (`printf %s '<base64>' | base64 -d >> <part>`;
+  a Linux argument is at most 128 KiB). The part file is beside the target, named
+  uniquely per transfer and created exclusively, so an existing file or a
+  concurrent upload is never overwritten. The last command checks the part file's
   length and renames it over the target, so a box replaced mid-write fails
   instead of keeping a truncated file. A failure removes the part file.
-- Read: `test -f` and `wc -c` first, a file over the limit is refused before any
+- Read: `test -f` and `stat` (size and identity) first, a file over the limit is refused before any
   chunk moves, then 256 KiB raw per `tail | head | base64 -w0` (a hosted exec
-  keeps 512 KB of output per stream). A short read is an error.
+  keeps 512 KB of output per stream). The identity is checked before and after
+  every chunk, so a file replaced mid-read fails. A short read is an error.
 - Failures are typed `BoxError`s (`InvalidPath`, `FileTooLarge`, `FileNotFound`,
   `ShortRead`, `FileTransfer`) whose messages read as a tool result; none names a
   host path.
