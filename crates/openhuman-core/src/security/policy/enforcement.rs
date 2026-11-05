@@ -120,6 +120,55 @@ impl SecurityPolicy {
         )
     }
 
+    /// Take `governing`'s cached TinySecurity answers (budget and class gates),
+    /// so the sync tool gates holding this instance read the decision the host
+    /// gate made on `governing`. When `governing` is unchecked it allows
+    /// everything, which is what this instance's tools are told too.
+    ///
+    /// Each [`from_config`](Self::from_config) owns its cells, so the session
+    /// policy the tools hold and the live or agent policy the host gate answers
+    /// against are separate. Without this, an enabled tool policy never gets an
+    /// answer and refuses as read-only.
+    pub(crate) fn adopt_answers_from(&self, governing: &SecurityPolicy) {
+        use super::types::{CommandClass, GateDecision};
+        // Read before writing, so cells shared by a clone never lock twice.
+        let (budget, gates) = if governing.unchecked() {
+            let all = [
+                CommandClass::Read,
+                CommandClass::Write,
+                CommandClass::Network,
+                CommandClass::Install,
+                CommandClass::Destructive,
+            ];
+            (
+                Some(tinysecurity_bus::BudgetDecision2::Allow),
+                all.map(|class| (class, GateDecision::Allow)).to_vec(),
+            )
+        } else {
+            let budget = governing
+                .budget_snapshot
+                .lock()
+                .map(|snapshot| snapshot.clone())
+                .unwrap_or(None);
+            let gates = governing
+                .class_gate_snapshot
+                .lock()
+                .map(|snapshot| snapshot.clone())
+                .unwrap_or_default();
+            (budget, gates)
+        };
+        log::debug!(
+            "[openhuman:policy] tool policy adopted the host gate's answers: budget={budget:?} classes={}",
+            gates.len()
+        );
+        if let Ok(mut snapshot) = self.budget_snapshot.lock() {
+            *snapshot = budget;
+        }
+        if let Ok(mut snapshot) = self.class_gate_snapshot.lock() {
+            *snapshot = gates;
+        }
+    }
+
     /// Cached class decision from TinySecurity for synchronous tool adapters.
     /// The async host gate refreshes it before the tool is dispatched; an
     /// enabled policy with no answer fails closed.

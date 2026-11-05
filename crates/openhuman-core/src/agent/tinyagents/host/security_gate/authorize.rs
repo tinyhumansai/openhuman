@@ -203,6 +203,7 @@ impl OpenHumanSecurityGate {
         // (`crate::security::switch`) skips the same stages: there is no
         // module to classify the action or keep the budget.
         if policy.unchecked() {
+            self.share_answers(&policy);
             return Ok(self.settled(channel_approved));
         }
 
@@ -268,6 +269,7 @@ impl OpenHumanSecurityGate {
         if let Err(reason) = budget {
             return Ok(GateDecision::deny(reason));
         }
+        self.share_answers(&policy);
         channel_approved = approved;
 
         tracing::debug!(

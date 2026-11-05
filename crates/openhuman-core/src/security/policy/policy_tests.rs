@@ -272,3 +272,35 @@ fn an_unchecked_host_action_is_classed_from_its_permission_level() {
         Class::Destructive
     );
 }
+
+/// TS-E2E-025: a policy takes another instance's cached TinySecurity answers,
+/// so the tools read what the host gate was told. Adopting from a clone, which
+/// shares the cells, must not deadlock.
+#[cfg(feature = "security-module")]
+#[test]
+fn a_policy_adopts_the_answers_another_instance_was_given() {
+    let governing = default_policy();
+    *governing.budget_snapshot.lock().unwrap() = Some(tinysecurity_bus::BudgetDecision2::Allow);
+    governing
+        .class_gate_snapshot
+        .lock()
+        .unwrap()
+        .push((CommandClass::Write, GateDecision::Prompt));
+    let tools = default_policy();
+    assert!(!tools.can_act());
+
+    tools.adopt_answers_from(&governing);
+    assert!(tools.can_act());
+    assert_eq!(
+        tools.gate_decision(CommandClass::Write),
+        GateDecision::Prompt
+    );
+    assert_eq!(
+        tools.gate_decision(CommandClass::Install),
+        GateDecision::Block
+    );
+
+    let shared = tools.clone();
+    tools.adopt_answers_from(&shared);
+    assert!(tools.can_act());
+}

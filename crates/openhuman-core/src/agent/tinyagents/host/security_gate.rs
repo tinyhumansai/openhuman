@@ -241,6 +241,15 @@ impl OpenHumanSecurityGate {
             .unwrap_or_else(|| self.policy.clone())
     }
 
+    /// Hand the answers TinySecurity gave for `evaluated` to the constructor
+    /// policy, which the session's tools hold, when the two are different
+    /// instances. The tools' sync gates read only their own cached answers.
+    fn share_answers(&self, evaluated: &Arc<SecurityPolicy>) {
+        if !Arc::ptr_eq(evaluated, &self.policy) {
+            self.policy.adopt_answers_from(evaluated);
+        }
+    }
+
     /// The origin of the turn this gate authorizes for: the run's own context
     /// when it carries one, else the calling task's turn scope.
     fn turn_origin(&self) -> Option<crate::core::runtime::turn_origin::AgentTurnOrigin> {

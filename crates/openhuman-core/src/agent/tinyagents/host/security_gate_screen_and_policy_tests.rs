@@ -391,3 +391,40 @@ async fn prompt_screening_uses_the_bound_dispatch_configuration() {
     })
     .await;
 }
+
+/// TS-E2E-025: the session's tools hold the constructor policy, but the gate
+/// answers against the live one. Whatever the gate allowed, the tools' own
+/// gates must read too, or an enabled tool policy with no cached answer
+/// refuses every write as "autonomy is read-only".
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_session_tools_can_act_on_what_the_live_policy_allowed() {
+    let session = Arc::new(SecurityPolicy {
+        enabled: true,
+        ..SecurityPolicy::default()
+    });
+    let live = Arc::new(SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    });
+    let _live = crate::security::live_policy::install_scoped(
+        live,
+        std::path::PathBuf::new(),
+        std::path::PathBuf::new(),
+    );
+    assert!(
+        !session.can_act(),
+        "no answer is cached before the gate runs"
+    );
+
+    let decision = OpenHumanSecurityGate::new(session.clone(), registry())
+        .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
+        .await
+        .unwrap();
+
+    assert_eq!(decision, GateDecision::Allow);
+    assert!(
+        session.can_act(),
+        "the tools' policy must take the live policy's answer"
+    );
+}
