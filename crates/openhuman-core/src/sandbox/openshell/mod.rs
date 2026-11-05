@@ -25,6 +25,7 @@
 
 #[cfg(feature = "modules")]
 mod bus_driver;
+mod files;
 mod registry;
 mod types;
 
