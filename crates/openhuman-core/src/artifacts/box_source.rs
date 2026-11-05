@@ -147,7 +147,12 @@ impl BoxSourced {
             KindSource::Record(artifacts) => {
                 let id = args.get("artifact_id")?.as_str()?;
                 // A store failure or an unknown id is the crate's tool to report.
-                artifacts.get(id).await.ok().flatten().map(|record| record.kind)
+                artifacts
+                    .get(id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|record| record.kind)
             }
         }
     }

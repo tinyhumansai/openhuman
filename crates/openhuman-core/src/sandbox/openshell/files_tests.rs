@@ -144,7 +144,7 @@ async fn a_small_file_is_one_command_that_writes_a_part_file_and_renames_it() {
     );
     let part = part_in(&sent[0]);
     assert!(
-        part.starts_with("./out/.a.txt.") && part.ends_with(".part"),
+        part.starts_with("./out/.openhuman-") && part.ends_with(".tmp"),
         "{part}"
     );
     assert!(
@@ -593,6 +593,19 @@ mod on_a_real_shell {
         );
         assert_eq!(driver.created(), 2);
         assert!(!driver.box_dir("box-1").unwrap().join("a.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn a_name_at_the_filesystem_limit_still_stages() {
+        let (_root, _driver, boxes) = host_boxes();
+        let name = "n".repeat(255);
+
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), &name, b"long")
+            .await
+            .unwrap();
+        let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), &name, 10).await;
+
+        assert_eq!(back, Ok(b"long".to_vec()));
     }
 
     #[tokio::test]
