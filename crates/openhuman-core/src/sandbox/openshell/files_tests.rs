@@ -43,6 +43,13 @@ fn encoded(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+/// The part file a write's first command names: the quoted `./...part` word.
+fn part_in(command: &str) -> String {
+    let end = command.find(".part'").expect("a part file") + ".part".len();
+    let start = command[..end].rfind("'./").expect("a quoted path") + 1;
+    command[start..end].to_owned()
+}
+
 /// The shell command of every exec the driver saw, in order.
 fn commands(driver: &ScriptedDriver) -> Vec<String> {
     driver
@@ -129,15 +136,16 @@ async fn a_small_file_is_one_command_that_writes_a_part_file_and_renames_it() {
 
     let sent = commands(&driver);
     assert_eq!(sent.len(), 1, "{sent:?}");
-    assert!(sent[0].contains("mkdir -p -- 'out'"), "{}", sent[0]);
+    assert!(sent[0].contains("mkdir -p -- './out'"), "{}", sent[0]);
     assert!(
         sent[0].contains(&format!("printf %s '{}' | base64 -d", encoded(b"hi"))),
         "{}",
         sent[0]
     );
-    assert!(sent[0].contains("'out/a.txt.part'"), "{}", sent[0]);
+    let part = part_in(&sent[0]);
+    assert!(part.starts_with("./out/.a.txt.") && part.ends_with(".part"), "{part}");
     assert!(
-        sent[0].contains("mv -f -- 'out/a.txt.part' 'out/a.txt'"),
+        sent[0].contains(&format!("mv -f -- '{part}' './out/a.txt'")),
         "{}",
         sent[0]
     );
@@ -157,8 +165,9 @@ async fn a_large_file_is_sent_in_chunks_that_fit_one_argument() {
     assert_eq!(sent.len(), 3);
     assert!(sent.iter().all(|command| command.len() < 128 * 1024));
     // The first chunk starts the part file; the rest append; only the last renames.
-    assert!(sent[0].contains("base64 -d > 'a.bin.part'"), "{}", sent[0]);
-    assert!(sent[1].contains("base64 -d >> 'a.bin.part'"));
+    let part = part_in(&sent[0]);
+    assert!(sent[0].contains(&format!("base64 -d > '{part}'")), "{}", sent[0]);
+    assert!(sent[1].contains(&format!("base64 -d >> '{part}'")));
     assert!(!sent[0].contains("mv -f") && !sent[1].contains("mv -f"));
     assert!(sent[2].contains("mv -f"));
 }
@@ -183,7 +192,7 @@ async fn a_failed_chunk_removes_the_part_file_and_reports_what_the_box_said() {
     );
     let sent = commands(&driver);
     assert_eq!(sent.len(), 3, "{sent:?}");
-    assert_eq!(sent[2], "rm -f -- 'a.bin.part'");
+    assert_eq!(sent[2], format!("rm -f -- '{}'", part_in(&sent[0])));
 }
 
 #[test]
@@ -219,7 +228,7 @@ fn a_failed_transfer_reads_well_as_a_tool_result() {
 async fn a_file_over_the_callers_limit_is_refused_before_any_chunk_is_read() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
-    driver.then(reply(0, "1000\n", ""));
+    driver.then(reply(0, "1000 1:2:3\n", ""));
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 999).await;
 
@@ -238,7 +247,7 @@ async fn a_file_over_the_callers_limit_is_refused_before_any_chunk_is_read() {
 async fn the_host_limit_caps_a_callers_larger_limit() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
-    driver.then(reply(0, &format!("{}\n", MAX_FILE_BYTES + 1), ""));
+    driver.then(reply(0, &format!("{} 1:2:3\n", MAX_FILE_BYTES + 1), ""));
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", u64::MAX).await;
 
@@ -261,14 +270,14 @@ async fn a_missing_file_is_reported_by_name() {
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "gone.pdf", 100).await;
 
     assert_eq!(read, Err(BoxError::FileNotFound("gone.pdf".into())));
-    assert!(commands(&driver)[0].starts_with("test -f 'gone.pdf' || exit 66"));
+    assert!(commands(&driver)[0].starts_with("test -f './gone.pdf' || exit 66"));
 }
 
 #[tokio::test]
 async fn a_short_chunk_fails_the_read_instead_of_returning_a_short_file() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
-    driver.then(reply(0, "10\n", ""));
+    driver.then(reply(0, "10 1:2:3\n", ""));
     driver.then(reply(0, &encoded(b"1234"), ""));
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 100).await;
@@ -286,7 +295,7 @@ async fn a_short_chunk_fails_the_read_instead_of_returning_a_short_file() {
 async fn a_chunk_that_is_not_base64_fails_the_read() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
-    driver.then(reply(0, "4\n", ""));
+    driver.then(reply(0, "4 1:2:3\n", ""));
     driver.then(reply(0, "!!!!", ""));
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 100).await;
@@ -301,7 +310,7 @@ async fn a_chunk_that_is_not_base64_fails_the_read() {
 async fn a_failing_chunk_command_fails_the_read_with_the_boxs_message() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
-    driver.then(reply(0, "4\n", ""));
+    driver.then(reply(0, "4 1:2:3\n", ""));
     driver.then(reply(
         1,
         "",
@@ -338,7 +347,7 @@ async fn a_size_the_box_does_not_report_as_a_number_fails_the_read() {
 async fn an_empty_file_reads_as_no_bytes_without_a_chunk() {
     let driver = ScriptedDriver::new();
     let boxes = registry(&driver);
-    driver.then(reply(0, "0\n", ""));
+    driver.then(reply(0, "0 1:2:3\n", ""));
 
     let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", 100).await;
 
@@ -439,11 +448,11 @@ mod on_a_real_shell {
         assert_eq!(back, bytes);
         let on_disk = driver.box_dir("box-0").unwrap().join("work/out.bin");
         assert_eq!(std::fs::read(on_disk).unwrap(), bytes);
-        assert!(!driver
-            .box_dir("box-0")
+        let left: Vec<_> = std::fs::read_dir(driver.box_dir("box-0").unwrap().join("work"))
             .unwrap()
-            .join("work/out.bin.part")
-            .exists());
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["out.bin"], "no part file is left behind");
     }
 
     #[tokio::test]
@@ -577,5 +586,126 @@ mod on_a_real_shell {
         );
         assert_eq!(driver.created(), 2);
         assert!(!driver.box_dir("box-1").unwrap().join("a.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn a_file_named_dash_is_a_file_and_not_standard_input() {
+        let (_root, _driver, boxes) = host_boxes();
+
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "-", b"dash")
+            .await
+            .unwrap();
+        let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), "-", 10).await;
+
+        assert_eq!(back, Ok(b"dash".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn each_write_stages_in_a_part_file_of_its_own() {
+        let (_root, _driver, boxes) = host_boxes();
+        let driver = ScriptedDriver::new();
+        let recorded = registry(&driver);
+        for _ in 0..2 {
+            write_file_in(&recorded, Ok(embedded("u1")), &config(), "a.txt", b"x")
+                .await
+                .unwrap();
+        }
+        let sent = commands(&driver);
+        assert_ne!(part_in(&sent[0]), part_in(&sent[1]));
+        drop(boxes);
+    }
+
+    #[tokio::test]
+    async fn a_file_that_is_named_like_the_old_part_file_is_left_alone() {
+        let (_root, driver, boxes) = host_boxes();
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.txt.part", b"mine")
+            .await
+            .unwrap();
+
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.txt", b"new")
+            .await
+            .unwrap();
+
+        let dir = driver.box_dir("box-0").unwrap();
+        assert_eq!(std::fs::read(dir.join("a.txt.part")).unwrap(), b"mine");
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"new");
+    }
+
+    #[tokio::test]
+    async fn interleaved_uploads_of_one_path_never_publish_a_mix() {
+        let (_root, _driver, boxes) = host_boxes();
+        let a = binary(WRITE_CHUNK_BYTES * 3);
+        let b: Vec<u8> = a.iter().map(|byte| byte.wrapping_add(1)).collect();
+
+        let (first, second) = tokio::join!(
+            write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", &a),
+            write_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", &b),
+        );
+        first.unwrap();
+        second.unwrap();
+        let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", MAX_FILE_BYTES)
+            .await
+            .unwrap();
+
+        assert!(back == a || back == b, "the file is one upload or the other");
+    }
+
+    #[tokio::test]
+    async fn a_link_out_of_the_work_folder_is_not_followed_to_read_or_write() {
+        let (root, driver, boxes) = host_boxes();
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "seed", b"x")
+            .await
+            .unwrap();
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("passwd"), b"secret").unwrap();
+        let dir = driver.box_dir("box-0").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("out")).unwrap();
+
+        let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "out/passwd", 100).await;
+        let wrote =
+            write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/new.txt", b"x").await;
+        let nested =
+            write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/deeper/new.txt", b"x").await;
+
+        for result in [read.map(|_| ()), wrote, nested] {
+            let Err(BoxError::FileTransfer { detail, .. }) = result else {
+                panic!("expected a refusal, got {result:?}");
+            };
+            assert!(detail.contains("outside the sandbox work folder"), "{detail}");
+        }
+        assert!(!outside.join("new.txt").exists());
+        assert!(!outside.join("deeper").exists());
+    }
+
+    #[test]
+    fn a_file_replaced_between_chunks_fails_the_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.bin"), b"abcd").unwrap();
+        let identity = run_in(dir.path(), "stat -c '%d:%i:%Y' -- ./a.bin").0;
+        let command = read_command("'./a.bin'", identity.trim(), 1, 4);
+        assert_eq!(run_in(dir.path(), &command).0.trim(), encoded(b"abcd"));
+
+        // Same length, new file: every size check would pass.
+        std::fs::write(dir.path().join("new"), b"wxyz").unwrap();
+        std::fs::rename(dir.path().join("new"), dir.path().join("a.bin")).unwrap();
+        let (_, stderr, code) = run_in(dir.path(), &command);
+
+        assert_eq!(code, 1);
+        assert!(stderr.contains("changed while it was read"), "{stderr}");
+    }
+
+    /// Run `command` under `sh -c` in `dir`: its stdout, stderr and exit code.
+    fn run_in(dir: &std::path::Path, command: &str) -> (String, String, i32) {
+        let output = std::process::Command::new("sh")
+            .args(["-c", command])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+            output.status.code().unwrap_or(-1),
+        )
     }
 }
