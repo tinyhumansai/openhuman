@@ -2,7 +2,6 @@ use super::*;
 use crate::core::runtime::NoTenant;
 use crate::sandbox::openshell::scripted_driver::{Call, ExecStep, ScriptedDriver};
 use crate::sandbox::openshell::{BoxOutput, RegistryLimits};
-use base64::Engine as _;
 use std::sync::Arc;
 use std::time::Duration;
 
