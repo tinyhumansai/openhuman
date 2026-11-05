@@ -509,10 +509,8 @@ describe('SearchPanel — add a provider', () => {
     );
 
     await rowAction('keenable', 'settings.search.actionAddKey');
-    await screen.findByTestId('search-connect-keenable');
-    expect(screen.getByTestId('search-connect-keenable-key-optional')).toHaveTextContent(
-      'settings.search.optionalKeyHint'
-    );
+    const dialog = await screen.findByTestId('search-connect-keenable');
+    expect(within(dialog).getByText('settings.search.optionalKeyHint')).toBeInTheDocument();
     const submit = screen.getByTestId('search-connect-keenable-submit');
     expect(submit).toBeDisabled();
     fireEvent.change(screen.getByTestId('search-connect-keenable-key'), {
