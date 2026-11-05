@@ -130,6 +130,17 @@ impl AuthProfilesStore {
         };
 
         for (id, profile) in &data.profiles {
+            // Rewrite only what changed. An untouched row keeps its secret
+            // where it is, so saving one profile never moves another into the
+            // keyring or asks the user to approve storing it.
+            if let Some(held) = previous.profiles.get(id) {
+                if held.secret_location.is_some()
+                    && held.updated_at == profile.updated_at.to_rfc3339()
+                {
+                    persisted.profiles.insert(id.clone(), held.clone());
+                    continue;
+                }
+            }
             // The profile document itself is encrypted by TSD. Keep tokens in
             // the keyring when one is available; otherwise the outer encrypted
             // document protects the fields directly.

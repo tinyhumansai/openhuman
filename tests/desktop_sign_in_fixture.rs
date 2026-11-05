@@ -308,8 +308,13 @@ async fn start_signed_out_desktop() -> Desktop {
 /// Call `method`, approving any keyring prompt it raises; the response and
 /// the number of prompts approved.
 async fn call_approving(port: u16, method: &'static str) -> (Value, usize) {
+    call_approving_with(port, method, json!({})).await
+}
+
+/// [`call_approving`] with `params`.
+async fn call_approving_with(port: u16, method: &'static str, params: Value) -> (Value, usize) {
     let call =
-        tokio::spawn(async move { rpc(port, method, json!({}), Duration::from_secs(180)).await });
+        tokio::spawn(async move { rpc(port, method, params, Duration::from_secs(180)).await });
     let mut prompts = 0;
     while !call.is_finished() {
         prompts += approve_pending_keyring_prompts(port).await;
@@ -403,6 +408,18 @@ fn desktop_sign_in_stores_the_token_in_the_os_keyring_after_approval() {
         // Same process, no relaunch: the token this process stored reads back
         // without asking again, however often the app polls.
         assert_eq!(poll_auth_approving(port).await, 0);
+
+        // Saving another credential asks once, to store that one; the session
+        // stored above stays where it is.
+        let (saved, asked) = call_approving_with(
+            port,
+            "openhuman.auth_store_provider_credentials",
+            json!({"provider": "openai", "token": "synthetic-provider-key"}),
+        )
+        .await;
+        assert!(saved.get("error").is_none(), "{saved}");
+        eprintln!("provider key save keyring prompts: {asked}");
+        assert_eq!(asked, 1, "one save asks to store only what it saves");
         shutdown.cancel();
         remove_own_workspace(&scratch);
     });
