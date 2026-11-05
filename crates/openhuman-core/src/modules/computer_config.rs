@@ -23,7 +23,7 @@ use crate::credentials::session_state::is_local_session_token;
 use crate::inference::provider::factory::lookup_key_for_slug;
 
 /// A stored provider key, falling back to its environment variable.
-async fn provider_key(config: &Config, slug: &str, env: &str) -> Option<String> {
+pub(super) async fn provider_key(config: &Config, slug: &str, env: &str) -> Option<String> {
     lookup_key_for_slug(slug, config)
         .await
         .ok()
@@ -33,7 +33,7 @@ async fn provider_key(config: &Config, slug: &str, env: &str) -> Option<String> 
 
 /// The signed-in TinyHumans bearer, if any. The offline local token is not
 /// a backend credential.
-async fn tinyhumans_bearer(config: &Config) -> Option<String> {
+pub(super) async fn tinyhumans_bearer(config: &Config) -> Option<String> {
     resolve_backend_credential(config)
         .await
         .ok()

@@ -136,11 +136,16 @@ pub(crate) fn release_scopes() {
 }
 
 impl SecurityCallbackState {
-    fn module_config(&self, config: &Config) -> Result<serde_json::Value, String> {
+    fn module_config(
+        &self,
+        config: &Config,
+        judge: Option<tinysecurity_bus::JudgeConfig>,
+    ) -> Result<serde_json::Value, String> {
         let trusted_host = self.binding.unique_name().to_string();
         let config = super::module_config_for_secret_scope(
             config,
             Some(trusted_host),
+            judge,
             &self.scope,
             self.registration_id.clone(),
             self.consumer_id.clone(),
@@ -207,11 +212,13 @@ pub(in crate::modules) async fn identity() -> Option<String> {
 pub(in crate::modules) async fn module_config(
     config: &Config,
 ) -> Result<serde_json::Value, String> {
+    // Resolved before the lock: finding a credential can take a while.
+    let judge = super::judge::resolve(config).await;
     let loads = SECURITY_CALLBACK_LOADS.lock().await;
     loads
         .get(super::MODULE_ID)
         .ok_or_else(|| "security callback binding unavailable".to_owned())?
-        .module_config(config)
+        .module_config(config, judge)
 }
 
 fn callback_endpoints() -> Result<Vec<HostCallbackEndpoint>, String> {
@@ -425,7 +432,8 @@ pub(in crate::modules) async fn ensure_loaded(
                     state.scope.scope_id().to_owned(),
                     state.pairing_store.clone(),
                 );
-                let module_config = state.module_config(&config)?;
+                let judge = super::judge::resolve(&config).await;
+                let module_config = state.module_config(&config, judge)?;
                 candidates
                     .lock()
                     .await

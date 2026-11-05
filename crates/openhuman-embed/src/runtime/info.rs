@@ -3,7 +3,7 @@ use super::{LearningSettings, ModelDefaults, Runtime, RuntimeBuilder};
 use openhuman_core::config::{
     schema::{
         AutonomyConfig, CronConfig, PrivacyConfig, PromptScreenConfig, SecretsConfig,
-        SecurityModeConfig,
+        SecurityJudgeRoute, SecurityModeConfig,
     },
     Config,
 };
@@ -18,6 +18,8 @@ pub(super) struct ConfigKnobs {
     pub prompt_screen: Option<PromptScreenConfig>,
     /// Whether TinySecurity-delegated checks run.
     pub security: Option<SecurityModeConfig>,
+    /// The host's own route to the Jev judge.
+    pub security_judge: Option<SecurityJudgeRoute>,
     pub secrets: Option<SecretsConfig>,
     pub cron: Option<CronConfig>,
     /// Background memory learning policy.
@@ -30,6 +32,7 @@ impl ConfigKnobs {
             || self.privacy.is_some()
             || self.prompt_screen.is_some()
             || self.security.is_some()
+            || self.security_judge.is_some()
             || self.secrets.is_some()
             || self.cron.is_some()
             || self.learning.is_some()
@@ -47,6 +50,9 @@ impl ConfigKnobs {
         }
         if let Some(v) = &self.security {
             config.security = *v;
+        }
+        if let Some(v) = &self.security_judge {
+            config.security_judge = Some(v.clone());
         }
         if let Some(v) = &self.secrets {
             config.secrets = v.clone();

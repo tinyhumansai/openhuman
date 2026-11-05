@@ -42,6 +42,7 @@ impl Clone for Config {
             hooks: self.hooks.clone(),
             privacy: self.privacy,
             prompt_screen: self.prompt_screen,
+            security_judge: self.security_judge.clone(),
             security: self.security,
             sandbox: self.sandbox.clone(),
             runtime: self.runtime.clone(),

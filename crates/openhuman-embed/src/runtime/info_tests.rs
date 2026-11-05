@@ -301,3 +301,18 @@ fn a_stateless_builder_reports_the_memory_storage_it_will_install() {
         "only a stateless workspace defaults"
     );
 }
+
+#[test]
+fn the_hosts_judge_route_reaches_the_runtime_config() {
+    let route = openhuman_core::config::schema::SecurityJudgeRoute::open_router("a-working-key");
+    let knobs = super::ConfigKnobs {
+        security_judge: Some(route.clone()),
+        ..super::ConfigKnobs::default()
+    };
+    let mut config = openhuman_core::config::Config::default();
+
+    assert!(knobs.is_set());
+    knobs.apply(&mut config);
+
+    assert_eq!(config.security_judge, Some(route));
+}

@@ -45,3 +45,23 @@ fn a_config_file_reads_the_security_table_and_defaults_without_it() {
     let reloaded: crate::config::Config = toml::from_str(&saved).unwrap();
     assert_eq!(reloaded.security, SecurityModeConfig::off());
 }
+
+#[test]
+fn the_judge_is_on_unless_a_config_says_otherwise() {
+    let config: SecurityModeConfig = toml::from_str("").unwrap();
+    assert_eq!(config.judge, JudgeMode::On);
+    assert_eq!(SecurityModeConfig::default().judge, JudgeMode::On);
+}
+
+#[test]
+fn the_judge_can_be_turned_off_on_its_own() {
+    let config: SecurityModeConfig = toml::from_str("judge = \"off\"").unwrap();
+    assert_eq!(config.judge, JudgeMode::Off);
+    assert!(config.enforces());
+}
+
+#[test]
+fn a_judge_route_never_prints_its_key() {
+    let route = SecurityJudgeRoute::open_router("a-working-key");
+    assert!(!format!("{route:?}").contains("a-working-key"));
+}
