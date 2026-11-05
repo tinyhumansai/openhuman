@@ -260,7 +260,8 @@ const MAX_SANITIZED_FILENAME_LEN: usize = 80;
 /// stem. Strips path-traversal characters, collapses whitespace to
 /// single dashes, lowercases, and caps the length. Falls back to
 /// `"artifact"` when the resulting stem is empty (e.g. title was
-/// `"///"` or only emoji that survive ASCII-only sanitisation).
+/// `"///"` or only emoji that survive ASCII-only sanitisation), and a `_`
+/// prefix on a Windows device name.
 fn sanitize_filename_stem(title: &str) -> String {
     let mut out = String::with_capacity(title.len().min(MAX_SANITIZED_FILENAME_LEN));
     let mut prev_dash = false;
@@ -286,9 +287,22 @@ fn sanitize_filename_stem(title: &str) -> String {
     let trimmed = out.trim_matches('-').to_string();
     if trimmed.is_empty() {
         "artifact".to_string()
+    } else if is_windows_device_name(&trimmed) {
+        format!("_{trimmed}")
     } else {
         trimmed
     }
+}
+
+/// Whether Windows reserves lowercase `stem` as a device, with any extension:
+/// `con.txt` opens the console, not a file.
+fn is_windows_device_name(stem: &str) -> bool {
+    let port = |prefix| {
+        stem.strip_prefix(prefix).is_some_and(|digit| {
+            matches!(digit, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+    };
+    matches!(stem, "con" | "prn" | "aux" | "nul") || port("com") || port("lpt")
 }
 
 /// `title` without a trailing `.<ext>` (compared case-insensitively), so a title

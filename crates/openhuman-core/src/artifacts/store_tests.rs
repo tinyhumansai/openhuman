@@ -617,4 +617,3 @@ fn a_name_that_only_starts_like_a_device_stays_as_it_is() {
         assert_eq!(sanitize_filename_stem(title), title);
     }
 }
-
