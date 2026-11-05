@@ -300,12 +300,13 @@ fn read_command(quoted: &str, identity: &str, start: usize, want: u64) -> String
 }
 
 /// A unique part-file path beside `path`: hidden, and named for this transfer
-/// so no other file or transfer shares it.
+/// alone (not for the target, so a target name near the filesystem's 255-byte
+/// limit still stages) so no other file or transfer shares it.
 fn part_path(path: &str) -> String {
-    let token = uuid::Uuid::new_v4().simple();
+    let name = format!(".openhuman-{}.tmp", uuid::Uuid::new_v4().simple());
     match path.rsplit_once('/') {
-        Some((folder, name)) => format!("{folder}/.{name}.{token}.part"),
-        None => format!(".{path}.{token}.part"),
+        Some((folder, _)) => format!("{folder}/{name}"),
+        None => name,
     }
 }
 

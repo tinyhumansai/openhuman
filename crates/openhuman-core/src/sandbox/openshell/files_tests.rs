@@ -45,7 +45,7 @@ fn encoded(bytes: &[u8]) -> String {
 
 /// The part file a write's first command names: the quoted `./...part` word.
 fn part_in(command: &str) -> String {
-    let end = command.find(".part'").expect("a part file") + ".part".len();
+    let end = command.find(".tmp'").expect("a part file") + ".tmp".len();
     let start = command[..end].rfind("'./").expect("a quoted path") + 1;
     command[start..end].to_owned()
 }
