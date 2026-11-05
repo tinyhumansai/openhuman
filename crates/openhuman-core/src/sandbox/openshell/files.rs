@@ -246,7 +246,9 @@ fn write_command(
     size: u64,
 ) -> String {
     let (quoted_path, quoted_part) = (quote(&relative(path)), quote(&relative(part)));
-    let folder = quote(&relative(path.rsplit_once('/').map_or(".", |(folder, _)| folder)));
+    let folder = quote(&relative(
+        path.rsplit_once('/').map_or(".", |(folder, _)| folder),
+    ));
     let encoded = base64::engine::general_purpose::STANDARD.encode(chunk);
     let last = index + 1 == count;
     let mut command = String::new();

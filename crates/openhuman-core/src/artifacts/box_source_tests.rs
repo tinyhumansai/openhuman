@@ -74,11 +74,7 @@ impl Fixture {
         self.tool_with(Some(keeps), tenant)
     }
 
-    fn tool_with(
-        &self,
-        keeps: Option<bool>,
-        tenant: Result<Tenant, NoTenant>,
-    ) -> BoxSourcedCreate {
+    fn tool_with(&self, keeps: Option<bool>, tenant: Result<Tenant, NoTenant>) -> BoxSourcedCreate {
         let ctx = DispatchCtx::process_default();
         let service = artifacts_service(
             &self.workspace,

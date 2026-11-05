@@ -143,7 +143,10 @@ async fn a_small_file_is_one_command_that_writes_a_part_file_and_renames_it() {
         sent[0]
     );
     let part = part_in(&sent[0]);
-    assert!(part.starts_with("./out/.a.txt.") && part.ends_with(".part"), "{part}");
+    assert!(
+        part.starts_with("./out/.a.txt.") && part.ends_with(".part"),
+        "{part}"
+    );
     assert!(
         sent[0].contains(&format!("mv -f -- '{part}' './out/a.txt'")),
         "{}",
@@ -166,7 +169,11 @@ async fn a_large_file_is_sent_in_chunks_that_fit_one_argument() {
     assert!(sent.iter().all(|command| command.len() < 128 * 1024));
     // The first chunk starts the part file; the rest append; only the last renames.
     let part = part_in(&sent[0]);
-    assert!(sent[0].contains(&format!("base64 -d > '{part}'")), "{}", sent[0]);
+    assert!(
+        sent[0].contains(&format!("base64 -d > '{part}'")),
+        "{}",
+        sent[0]
+    );
     assert!(sent[1].contains(&format!("base64 -d >> '{part}'")));
     assert!(!sent[0].contains("mv -f") && !sent[1].contains("mv -f"));
     assert!(sent[2].contains("mv -f"));
@@ -641,11 +648,20 @@ mod on_a_real_shell {
         );
         first.unwrap();
         second.unwrap();
-        let back = read_file_in(&boxes, Ok(embedded("u1")), &config(), "a.bin", MAX_FILE_BYTES)
-            .await
-            .unwrap();
+        let back = read_file_in(
+            &boxes,
+            Ok(embedded("u1")),
+            &config(),
+            "a.bin",
+            MAX_FILE_BYTES,
+        )
+        .await
+        .unwrap();
 
-        assert!(back == a || back == b, "the file is one upload or the other");
+        assert!(
+            back == a || back == b,
+            "the file is one upload or the other"
+        );
     }
 
     #[tokio::test]
@@ -661,16 +677,24 @@ mod on_a_real_shell {
         std::os::unix::fs::symlink(&outside, dir.join("out")).unwrap();
 
         let read = read_file_in(&boxes, Ok(embedded("u1")), &config(), "out/passwd", 100).await;
-        let wrote =
-            write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/new.txt", b"x").await;
-        let nested =
-            write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/deeper/new.txt", b"x").await;
+        let wrote = write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/new.txt", b"x").await;
+        let nested = write_file_in(
+            &boxes,
+            Ok(embedded("u1")),
+            &config(),
+            "out/deeper/new.txt",
+            b"x",
+        )
+        .await;
 
         for result in [read.map(|_| ()), wrote, nested] {
             let Err(BoxError::FileTransfer { detail, .. }) = result else {
                 panic!("expected a refusal, got {result:?}");
             };
-            assert!(detail.contains("outside the sandbox work folder"), "{detail}");
+            assert!(
+                detail.contains("outside the sandbox work folder"),
+                "{detail}"
+            );
         }
         assert!(!outside.join("new.txt").exists());
         assert!(!outside.join("deeper").exists());
