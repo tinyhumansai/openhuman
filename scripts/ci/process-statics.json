@@ -693,11 +693,11 @@
     "file": "crates/openhuman-core/src/credentials/profiles/keychain.rs",
     "scope": "",
     "name": "READ_CACHE",
-    "type": "OnceLock<Mutex<HashMap<(PathBuf,String),KeychainSecrets>>>",
+    "type": "OnceLock<Mutex<ReadCache>>",
     "count": 1,
     "category": "B",
-    "reason": "Profile secrets this process already read or wrote through the keyring, kept so polling the auth state does not ask the user again. Every key is the profile store's path plus the user-namespaced keyring name, so two users or workspaces never share an entry; writes and deletes drop the entry, failed or refused reads never fill one, and nothing is persisted.",
-    "verification": "credentials/profiles/keychain_tests.rs: another_profile_store_does_not_see_the_cached_secret; a_delete_or_a_write_forgets_the_cached_secret_even_when_it_fails"
+    "reason": "Profile secrets this process already read or wrote through the keyring, kept so polling the auth state does not ask the user again. Every key is the user-namespaced keyring entry name, the same identity the keyring itself uses, so two users never share an entry; writes and deletes drop the entry and bump its generation so an overtaken read is not cached, failed or refused reads never fill one, and nothing is persisted.",
+    "verification": "credentials/profiles/keychain_tests.rs: another_profile_store_does_not_see_the_cached_secret; stores_for_the_same_keyring_entry_share_its_invalidation; a_read_overtaken_by_a_write_does_not_cache_what_it_read"
   },
   {
     "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
