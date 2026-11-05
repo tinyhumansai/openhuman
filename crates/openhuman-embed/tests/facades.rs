@@ -10,8 +10,8 @@ use openhuman_embed::artifacts::{
 use openhuman_embed::chat_surface::{
     publish_web_channel_event, subscribe_web_channel_events, WebChannelEvent, WebEventContext,
 };
-use openhuman_embed::sandbox::{read_file, write_file, BoxError, MAX_FILE_BYTES};
 use openhuman_embed::identity::{peek_credential_user_identity, UserIdentity};
+use openhuman_embed::sandbox::{read_file, write_file, BoxError, MAX_FILE_BYTES};
 
 #[tokio::test]
 async fn an_artifact_resolves_only_once_ready_and_only_under_its_roots() {
@@ -173,7 +173,13 @@ async fn sandbox_files_are_refused_without_a_tenant() {
     let config = openhuman_embed::RuntimeConfig::default();
 
     let wrote = write_file(Err(openhuman_embed::NoTenant), &config, "a.txt", b"x").await;
-    let read = read_file(Err(openhuman_embed::NoTenant), &config, "a.txt", MAX_FILE_BYTES).await;
+    let read = read_file(
+        Err(openhuman_embed::NoTenant),
+        &config,
+        "a.txt",
+        MAX_FILE_BYTES,
+    )
+    .await;
 
     assert_eq!(wrote, Err(BoxError::NoTenant));
     assert_eq!(read, Err(BoxError::NoTenant));
