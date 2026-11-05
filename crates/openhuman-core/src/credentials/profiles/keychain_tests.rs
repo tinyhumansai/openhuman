@@ -131,7 +131,7 @@ async fn a_read_overtaken_by_a_write_does_not_cache_what_it_read() {
         read.unwrap().unwrap().token.as_deref(),
         Some("before-the-write")
     );
-    assert!(read_cache().secrets.get(name).is_none());
+    assert!(!read_cache().secrets.contains_key(name));
 }
 
 fn held_back(error: &anyhow::Error) -> bool {
