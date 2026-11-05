@@ -151,7 +151,10 @@ fn an_endpoint_the_client_refuses_is_left_out_rather_than_failing_the_module() {
         "https://api.example.test/v1/systemone?key=value",
         "https://api.example.test/v1/systemone#part",
     ] {
-        assert!(build(&config, with_endpoint(refused)).is_none(), "{refused}");
+        assert!(
+            build(&config, with_endpoint(refused)).is_none(),
+            "{refused}"
+        );
     }
 }
 

@@ -200,9 +200,12 @@ fn module_contract_requires_the_exact_host_wire_version() {
 #[test]
 fn the_host_config_carries_the_judge_it_is_given() {
     let judge = super::super::judge::tests::a_judge();
-    let translated =
-        module_config_for_host(&Config::default(), Some(":1.42".into()), Some(judge.clone()))
-            .unwrap();
+    let translated = module_config_for_host(
+        &Config::default(),
+        Some(":1.42".into()),
+        Some(judge.clone()),
+    )
+    .unwrap();
 
     assert_eq!(translated.judge, Some(judge));
 }
