@@ -8,7 +8,7 @@ use crate::sandbox::openshell::{read_file_in, BoxOutput, BoxRegistry, RegistryLi
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::time::Duration;
-use tiny_artifacts::{Author, UpdateArtifactTool};
+use tiny_artifacts::{Author, CreateArtifactTool, UpdateArtifactTool};
 
 /// Box files from a registry over a scripted driver, so a test says what the
 /// box holds and sees every command sent to it.
