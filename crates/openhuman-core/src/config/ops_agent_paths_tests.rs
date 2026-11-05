@@ -325,6 +325,64 @@ async fn apply_agent_paths_env_set_reports_source_env() {
     }
 }
 
+/// The action_dir edit, expected to be refused without storing an override.
+async fn action_dir_rejected(cfg: &mut Config, value: &std::path::Path) -> String {
+    let err = apply_agent_paths_settings(
+        cfg,
+        AgentPathsPatch {
+            action_dir: Some(value.to_string_lossy().to_string()),
+            files_dir: None,
+        },
+    )
+    .await
+    .expect_err("action_dir must be rejected");
+    assert!(cfg.action_dir_override.is_none(), "a rejected value is not stored");
+    err
+}
+
+/// TS-E2E-021: the agent's working folder becomes its read-write root, so a
+/// credential store, an OS directory or a symlink to one must be refused.
+#[tokio::test]
+async fn apply_agent_paths_rejects_a_protected_action_dir() {
+    let _g = ENV_LOCK.lock().await;
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let ssh = tmp.path().join(".ssh");
+    std::fs::create_dir_all(&ssh).unwrap();
+
+    let err = action_dir_rejected(&mut cfg, &ssh).await;
+    assert!(err.contains("protected"), "{err}");
+    #[cfg(unix)]
+    {
+        let err = action_dir_rejected(&mut cfg, std::path::Path::new("/etc")).await;
+        assert!(err.contains("protected"), "{err}");
+        let link = tmp.path().join("projects-link");
+        std::os::unix::fs::symlink(&ssh, &link).unwrap();
+        let err = action_dir_rejected(&mut cfg, &link).await;
+        assert!(err.contains("protected"), "{err}");
+    }
+}
+
+/// TS-E2E-021: a folder inside the OpenHuman data folder holds internal state
+/// and must not become the agent's working folder.
+#[tokio::test]
+async fn apply_agent_paths_rejects_an_action_dir_inside_the_data_folder() {
+    let _g = ENV_LOCK.lock().await;
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let inside = cfg.workspace_dir.join("vault");
+
+    let err = action_dir_rejected(&mut cfg, &inside).await;
+    assert!(err.contains("OpenHuman data folder"), "{err}");
+    assert!(!inside.exists(), "nothing is created for a rejected value");
+}
+
 // --- #3353 regression tests -------------------------------------------------
 
 #[test]
