@@ -4,19 +4,29 @@
 //! inside the argument of a `sh -c` command, so every box driver supports it
 //! and no box contract grows. Paths are relative to the box's work folder
 //! ([`BOX_WORKDIR`](super::registry::BOX_WORKDIR), the directory every command
-//! runs in), and every path that reaches the shell is single-quoted.
+//! runs in), and every path that reaches the shell is single-quoted and
+//! written as `./<path>`, so a file named `-` is a file and not an option or
+//! standard input. Every command first resolves the path inside the box and
+//! refuses one that leaves the work folder (a symlink pointing out of it
+//! included).
 //!
 //! - **Write** sends [`WRITE_CHUNK_BYTES`] at a time (a Linux argument is at
-//!   most 128 KiB; the encoding adds a third), appending to `<path>.part`.
-//!   The last command checks the part file's length and only then renames it
-//!   over `<path>`, so a reader never sees half a file, and a box replaced
-//!   mid-write (it forgets the earlier chunks) fails the length check instead
-//!   of keeping a truncated file. A failure removes the part file.
+//!   most 128 KiB; the encoding adds a third), appending to a part file
+//!   beside `<path>` whose name is unique to the transfer and created
+//!   exclusively, so neither a file the user already has nor another
+//!   upload's chunks can be overwritten. The last command checks the part
+//!   file's length and only then renames it over `<path>`, so a reader never
+//!   sees half a file, and a box replaced mid-write (it forgets the earlier
+//!   chunks) fails the length check instead of keeping a truncated file. A
+//!   failure removes the part file.
 //! - **Read** checks the file exists and reads its size first, refuses a file
 //!   over the limit before moving any of it, then reads
 //!   [`READ_CHUNK_BYTES`] at a time (a hosted exec keeps at most 512 KB of
-//!   output per stream) and checks the total. A read that comes back short is
-//!   an error, never a short file.
+//!   output per stream) and checks the total. The file's identity (device,
+//!   inode and modification time) is taken with its size and checked before
+//!   and after every chunk, so a file replaced mid-read is an error rather
+//!   than a mix of two versions. A read that comes back short is an error,
+//!   never a short file.
 //!
 //! Both are keyed on the whole tenant like a command is; a call with no tenant
 //! is refused before a box is touched.
@@ -86,7 +96,7 @@ pub async fn write_file_in<D: BoxDriver>(
         path,
     };
 
-    let part = format!("{path}.part");
+    let part = part_path(path);
     let chunks: Vec<&[u8]> = if bytes.is_empty() {
         vec![bytes]
     } else {
@@ -100,7 +110,9 @@ pub async fn write_file_in<D: BoxDriver>(
             Err(error) => error,
         };
         // Best effort: the box may be gone, and the transfer failed already.
-        let _ = target.run(&format!("rm -f -- {}", quote(&part))).await;
+        let _ = target
+            .run(&format!("rm -f -- {}", quote(&relative(&part))))
+            .await;
         return Err(failed);
     }
     Ok(())
@@ -135,10 +147,11 @@ pub async fn read_file_in<D: BoxDriver>(
         path,
     };
 
-    let quoted = quote(path);
+    let quoted = quote(&relative(path));
     let sized = target
         .run(&format!(
-            "test -f {quoted} || exit {NOT_A_FILE_EXIT}; wc -c < {quoted}"
+            "test -f {quoted} || exit {NOT_A_FILE_EXIT}; {GUARD} \
+             inside \"$(realpath -- {quoted})\"; stat -c '%s %d:%i:%Y' -- {quoted}"
         ))
         .await?;
     if sized.exit_code == NOT_A_FILE_EXIT {
@@ -147,15 +160,17 @@ pub async fn read_file_in<D: BoxDriver>(
     if sized.exit_code != 0 {
         return Err(failed_command("read", path, &sized));
     }
-    let size: u64 = sized
-        .stdout
-        .trim()
-        .parse()
-        .map_err(|_| BoxError::FileTransfer {
-            action: "read",
-            path: path.to_owned(),
-            detail: "the sandbox did not report the file's size".to_owned(),
-        })?;
+    let unreported = || BoxError::FileTransfer {
+        action: "read",
+        path: path.to_owned(),
+        detail: "the sandbox did not report the file's size".to_owned(),
+    };
+    let mut fields = sized.stdout.split_whitespace();
+    let size: u64 = fields
+        .next()
+        .and_then(|size| size.parse().ok())
+        .ok_or_else(unreported)?;
+    let identity = fields.next().ok_or_else(unreported)?;
     let limit = max_bytes.min(MAX_FILE_BYTES);
     if size > limit {
         return Err(BoxError::FileTooLarge { size, limit });
@@ -164,10 +179,7 @@ pub async fn read_file_in<D: BoxDriver>(
     let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
     while (bytes.len() as u64) < size {
         let want = (size - bytes.len() as u64).min(READ_CHUNK_BYTES as u64);
-        let command = format!(
-            "tail -c +{} -- {quoted} | head -c {want} | base64 -w0",
-            bytes.len() + 1
-        );
+        let command = read_command(&quoted, identity, bytes.len() + 1, want);
         let chunk = target.run(&command).await?;
         if chunk.exit_code != 0 {
             return Err(failed_command("read", path, &chunk));
@@ -215,9 +227,16 @@ impl<D: BoxDriver> Target<'_, D> {
     }
 }
 
-/// The command for chunk `index` of `count`. The first starts the part file
-/// (and its folders); the rest append; the last checks the part file holds all
-/// `size` bytes and renames it into place.
+/// Shell that defines `inside`, which exits the command unless the path it is
+/// given (already resolved) is the work folder or under it.
+const GUARD: &str = "base=$(realpath .) || exit 1; \
+    inside() { case \"$1\" in \"$base\"|\"$base\"/*) ;; \
+    *) echo 'it resolves outside the sandbox work folder' >&2; exit 1;; esac; }; ";
+
+/// The command for chunk `index` of `count`. The first resolves the folder
+/// inside the work folder, creates it, and starts the part file exclusively;
+/// the rest append; the last checks the part file holds all `size` bytes and
+/// renames it into place.
 fn write_command(
     path: &str,
     part: &str,
@@ -226,29 +245,72 @@ fn write_command(
     count: usize,
     size: u64,
 ) -> String {
-    let (quoted_path, quoted_part) = (quote(path), quote(part));
+    let (quoted_path, quoted_part) = (quote(&relative(path)), quote(&relative(part)));
+    let folder = quote(&relative(path.rsplit_once('/').map_or(".", |(folder, _)| folder)));
     let encoded = base64::engine::general_purpose::STANDARD.encode(chunk);
+    let last = index + 1 == count;
     let mut command = String::new();
-    if index == 0 {
+    if index == 0 || last {
+        command.push_str(GUARD);
         command.push_str(&format!(
             "if test -d {quoted_path}; then echo 'it is a folder' >&2; exit 1; fi; "
         ));
-        if let Some((folder, _)) = path.rsplit_once('/') {
-            command.push_str(&format!("mkdir -p -- {} && ", quote(folder)));
-        }
     }
-    let redirect = if index == 0 { ">" } else { ">>" };
-    command.push_str(&format!(
-        "printf %s '{encoded}' | base64 -d {redirect} {quoted_part}"
-    ));
-    if index + 1 == count {
+    if index == 0 {
+        // Check the deepest folder that exists already, then create the rest
+        // and check the whole again: nothing is made outside the work folder.
         command.push_str(&format!(
-            " && if test \"$(wc -c < {quoted_part})\" -eq {size}; \
+            "d={folder}; while ! test -e \"$d\" && ! test -L \"$d\"; do d=$(dirname \"$d\"); done; \
+             inside \"$(realpath -- \"$d\")\"; mkdir -p -- {folder} || exit 1; \
+             inside \"$(realpath -- {folder})\"; \
+             ( set -C; printf %s '{encoded}' | base64 -d > {quoted_part} ) || exit 1"
+        ));
+    } else {
+        command.push_str(&format!(
+            "if test -L {quoted_part}; then echo 'the part file is a link' >&2; exit 1; fi; \
+             printf %s '{encoded}' | base64 -d >> {quoted_part}"
+        ));
+    }
+    if last {
+        command.push_str(&format!(
+            "; inside \"$(realpath -- {folder})\"; \
+             if test \"$(wc -c < {quoted_part})\" -eq {size}; \
              then mv -f -- {quoted_part} {quoted_path}; \
              else echo 'the file was not written in full' >&2; exit 1; fi"
         ));
     }
     command
+}
+
+/// The command that reads `want` bytes of the file `quoted` from byte
+/// `start` (1-based), failing if the file is not the one whose `identity` was
+/// taken, before or after the read.
+fn read_command(quoted: &str, identity: &str, start: usize, want: u64) -> String {
+    let same = format!(
+        "[ \"$(stat -c '%d:%i:%Y' -- {quoted})\" = {} ] || \
+         {{ echo 'the file changed while it was read' >&2; exit 1; }}; ",
+        quote(identity)
+    );
+    format!(
+        "{GUARD}inside \"$(realpath -- {quoted})\"; {same}\
+         tail -c +{start} -- {quoted} | head -c {want} | base64 -w0; {same}"
+    )
+}
+
+/// A unique part-file path beside `path`: hidden, and named for this transfer
+/// so no other file or transfer shares it.
+fn part_path(path: &str) -> String {
+    let token = uuid::Uuid::new_v4().simple();
+    match path.rsplit_once('/') {
+        Some((folder, name)) => format!("{folder}/.{name}.{token}.part"),
+        None => format!(".{path}.{token}.part"),
+    }
+}
+
+/// `path` as an explicit relative path, so a name starting with `-` is never
+/// read as an option, nor `-` as standard input.
+fn relative(path: &str) -> String {
+    format!("./{path}")
 }
 
 /// Refuse a path that is not a file inside the box's work folder.
