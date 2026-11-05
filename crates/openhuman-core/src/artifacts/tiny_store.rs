@@ -72,6 +72,10 @@ fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)>
     Some(shape)
 }
 
+pub(crate) fn text_extension_of_title(_title: &str) -> Option<&'static str> {
+    None
+}
+
 pub(crate) fn legacy_kind_for_extension(ext: &str) -> LegacyArtifactKind {
     match ext {
         "pptx" | "ppt" | "key" | "odp" => LegacyArtifactKind::Presentation,
