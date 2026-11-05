@@ -74,7 +74,7 @@ fn first_load_and_reinit_share_one_policy_translator() {
         .expect("profile keyring backend is configured");
     assert_eq!(keyring.service, "openhuman");
     assert_eq!(keyring.backend, tinysecurity_bus::KeyringBackend2::Os);
-    assert_eq!(keyring.consent_timeout_ms, 120_000);
+    assert_eq!(keyring.consent_timeout_ms, KEYRING_CONSENT_TIMEOUT_MS);
 }
 
 #[test]
@@ -187,13 +187,11 @@ fn enabled_policy_rejects_commands_the_module_cannot_represent() {
 
 #[test]
 fn module_contract_requires_the_exact_host_wire_version() {
-    assert!(supports_contract((1, 35)));
+    assert!(supports_contract((2, 0)));
+    assert!(!supports_contract((1, 35)));
+    assert!(!supports_contract((2, 1)));
+    assert!(!supports_contract((3, 0)));
     assert!(!supports_contract((1, 34)));
-    assert!(!supports_contract((1, 36)));
-    assert!(!supports_contract((1, 28)));
-    assert!(!supports_contract((1, 29)));
-    assert!(!supports_contract((1, 32)));
-    assert!(!supports_contract((2, 0)));
     assert!(!supports_contract((1, 27)));
 }
 

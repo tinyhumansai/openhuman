@@ -180,3 +180,152 @@ fn unconsumed_denials_reserve_capacity_before_new_requests_register() {
         )
         .is_ok());
 }
+
+fn shown(prompt: &ApprovalPrompt) -> crate::core::events::KeyringAccessApprovalRequest {
+    crate::core::events::KeyringAccessApprovalRequest {
+        request_id: prompt.request_id.clone(),
+        caller_agent: "openhuman.credentials".into(),
+        origin: "LocalOperator".into(),
+        purpose: "OpenHuman auth profile credential access".into(),
+        access: prompt.access.clone(),
+        name: prompt.name.clone(),
+        expires_at_ms: prompt.expires_at_ms,
+    }
+}
+
+#[test]
+fn a_pending_prompt_is_listed_until_it_is_decided_or_expires() {
+    let mut registry = PendingConsentRegistry::default();
+    let timeout = std::time::Duration::from_secs(120);
+    let (decided, _decided_waiter) = registry
+        .register("write", "app-session:default", "call-decided", timeout)
+        .unwrap();
+    let (open, _open_waiter) = registry
+        .register("read", "auth:openai:default", "call-open", timeout)
+        .unwrap();
+    for prompt in [&decided, &open] {
+        registry
+            .prompts
+            .insert(prompt.request_id.clone(), shown(prompt));
+    }
+
+    let listed = registry.pending_prompts(now_ms());
+    assert_eq!(listed.len(), 2);
+    assert!(listed
+        .iter()
+        .all(|prompt| prompt.caller_agent == "openhuman.credentials"));
+
+    assert!(registry.resolve(&decided.request_id, true));
+    let listed = registry.pending_prompts(now_ms());
+    assert_eq!(
+        listed
+            .iter()
+            .map(|prompt| prompt.request_id.as_str())
+            .collect::<Vec<_>>(),
+        [open.request_id.as_str()]
+    );
+
+    assert!(registry.pending_prompts(open.expires_at_ms).is_empty());
+    registry.cancel(&open.request_id);
+    assert!(registry.pending_prompts(now_ms()).is_empty());
+}
+
+fn consent_request(call_id: &str, timeout_ms: u32) -> tinysecurity_bus::KeyringConsentRequest2 {
+    tinysecurity_bus::KeyringConsentRequest2 {
+        caller: tinysecurity_bus::CallerContext {
+            // Not the credential store, which test builds answer.
+            agent: "registry-test".into(),
+            call_id: call_id.into(),
+            ..Default::default()
+        },
+        purpose: "OpenHuman auth profile credential access".into(),
+        access: tinysecurity_bus::KeyringAccess2::Write,
+        name: "user-1:auth:app-session:default".into(),
+        timeout_ms,
+    }
+}
+
+#[tokio::test]
+async fn unanswered_prompts_in_a_row_never_exhaust_the_capacity() {
+    // The keychain takes each outcome once the module answers; more
+    // unanswered prompts than the capacity must all still register.
+    for index in 0..=MAX_PENDING_APPROVALS {
+        let call_id = format!("unanswered-in-a-row-{index}");
+        assert_eq!(request_approval(consent_request(&call_id, 1)).await, None);
+        assert_eq!(
+            take_operation_outcome(&call_id),
+            Some(OperationOutcome::Pending),
+            "prompt {index} registered and timed out"
+        );
+    }
+}
+
+#[test]
+fn an_outcome_no_caller_took_frees_its_slot_once_stale() {
+    let mut registry = PendingConsentRegistry::default();
+    for index in 0..MAX_PENDING_APPROVALS {
+        let call_id = format!("abandoned-{index}");
+        let (prompt, _waiter) = registry
+            .register(
+                "write",
+                "auth:profile",
+                &call_id,
+                std::time::Duration::from_secs(120),
+            )
+            .unwrap();
+        registry.finish(&prompt.request_id, &call_id, Some(OperationOutcome::Denied));
+    }
+    for (_, decided_at) in registry.outcomes.values_mut() {
+        *decided_at = decided_at.saturating_sub(OUTCOME_TTL_MS);
+    }
+
+    assert!(registry
+        .register(
+            "write",
+            "auth:next",
+            "call:next",
+            std::time::Duration::from_secs(120)
+        )
+        .is_ok());
+    assert!(registry.outcomes.is_empty());
+}
+
+#[tokio::test]
+async fn a_caller_that_goes_away_releases_its_reservation() {
+    let call_id = "caller-goes-away";
+    let waiting = tokio::spawn(request_approval(consent_request(call_id, 60_000)));
+    let reserved = || {
+        pending()
+            .lock()
+            .unwrap()
+            .reserved_call_ids
+            .contains(call_id)
+    };
+    for _ in 0..200 {
+        if reserved() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(reserved(), "the prompt registered");
+
+    waiting.abort();
+    assert!(waiting.await.unwrap_err().is_cancelled());
+    assert!(!reserved());
+    assert_eq!(take_operation_outcome(call_id), None);
+}
+
+#[tokio::test]
+async fn a_test_build_answers_the_credential_stores_prompts() {
+    let mut request = consent_request("credential-store-prompt", 5_000);
+    request.caller.agent = "openhuman.credentials".into();
+    // Unit tests approve unless the lane says otherwise.
+    let expected = match std::env::var("OPENHUMAN_TEST_KEYRING_CONSENT").as_deref() {
+        Ok("deny") => Some(false),
+        Ok("approve") | Err(_) => Some(true),
+        Ok(_) => None,
+    };
+    if expected.is_some() {
+        assert_eq!(request_approval(request).await, expected);
+    }
+}

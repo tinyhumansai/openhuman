@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   decideKeyringConsent,
   fetchKeyringStatus,
+  listPendingKeyringOperations,
   respondToKeyringOperation,
   retryKeyringProbe,
 } from '../keyringApi';
@@ -54,5 +55,17 @@ describe('keyringApi', () => {
       method: 'openhuman.keyring_consent_respond_operation',
       params: { request_id: 'request-1', approved: true },
     });
+  });
+
+  it('lists pending keyring operations and tolerates a non-array result', async () => {
+    const pending = [{ request_id: 'request-1' }];
+    mockRpc.mockResolvedValueOnce({ result: pending });
+    await expect(listPendingKeyringOperations()).resolves.toEqual(pending);
+    expect(mockRpc).toHaveBeenCalledWith({
+      method: 'openhuman.keyring_consent_list_pending_operations',
+    });
+
+    mockRpc.mockResolvedValueOnce({ result: null });
+    await expect(listPendingKeyringOperations()).resolves.toEqual([]);
   });
 });

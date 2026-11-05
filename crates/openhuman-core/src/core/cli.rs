@@ -603,7 +603,18 @@ fn run_namespace_command(
         .map_err(anyhow::Error::msg)?;
 
     println!("{}", serde_json::to_string_pretty(&value)?);
+    if restart_required(&value) {
+        // EX_TEMPFAIL: the profile switch completes in the next process.
+        eprintln!("restart required to finish switching profiles");
+        std::process::exit(75);
+    }
     Ok(())
+}
+
+/// Whether an auth response asks the host to restart the process.
+fn restart_required(value: &Value) -> bool {
+    value.get("restartRequired") == Some(&Value::Bool(true))
+        || value.get("result").is_some_and(restart_required)
 }
 
 /// Parses namespace-style command-line arguments into a JSON map based on a

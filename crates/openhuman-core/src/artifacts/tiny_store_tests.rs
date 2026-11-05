@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use tiny_artifacts::{
     ArtifactAuthor, ArtifactKind, ArtifactRecord, ArtifactStore, ArtifactVersion, Author, Content,
-    FileRef, FileStore, PublishOptions, PublishedLink,
+    PublishOptions, PublishedLink,
 };
 
 use super::*;
@@ -74,8 +74,12 @@ async fn seeded(
     store
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn legacy_path_refs_are_guarded_and_imported_as_opaque_file_keys() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
     let dir = tempfile::tempdir().unwrap();
     let source_root = dir.path().join("Files");
     let blobs_root = dir.path().join("blobs");
@@ -85,7 +89,8 @@ async fn legacy_path_refs_are_guarded_and_imported_as_opaque_file_keys() {
 
     let records = Arc::new(MemoryArtifactStore::default());
     let base: Arc<dyn ArtifactStore> = records.clone();
-    let blobs: Arc<dyn FileStore> = Arc::new(tiny_artifacts::FsFileStore::new(&blobs_root));
+    let blobs: Arc<dyn tiny_artifacts::FileStore> =
+        Arc::new(tiny_artifacts::FsFileStore::new(&blobs_root));
     let importing = LegacyFileImportStore {
         records: base,
         files: blobs.clone(),
@@ -98,7 +103,7 @@ async fn legacy_path_refs_are_guarded_and_imported_as_opaque_file_keys() {
         "agent",
         1,
     );
-    version.file = Some(FileRef {
+    version.file = Some(tiny_artifacts::FileRef {
         key: source.display().to_string(),
         size_bytes: 12,
         media_type: None,
@@ -122,7 +127,7 @@ async fn legacy_path_refs_are_guarded_and_imported_as_opaque_file_keys() {
         "agent",
         1,
     );
-    blocked_version.file = Some(FileRef {
+    blocked_version.file = Some(tiny_artifacts::FileRef {
         key: outside.display().to_string(),
         size_bytes: 17,
         media_type: None,
@@ -133,8 +138,12 @@ async fn legacy_path_refs_are_guarded_and_imported_as_opaque_file_keys() {
     assert!(importing.get("a-outside").await.is_err());
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn explicit_artifact_context_binds_records_and_blobs_to_the_same_profile() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
     use crate::core::runtime::{ContextOverlay, CoreContext, DispatchCtx, DomainSet};
 
     let (workspace, files) = temp_dirs();
@@ -273,12 +282,16 @@ async fn missing_artifact_storage_binding_does_not_fall_back_to_ambient_records(
     .await;
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn legacy_bridge_does_not_overwrite_an_existing_card_file_outside_trusted_roots() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
     let (workspace, files) = temp_dirs();
     let root = files.parent().unwrap();
     let records: Arc<dyn ArtifactStore> = Arc::new(MemoryArtifactStore::default());
-    let file_store: Arc<dyn FileStore> =
+    let file_store: Arc<dyn tiny_artifacts::FileStore> =
         Arc::new(tiny_artifacts::FsFileStore::new(root.join("blobs")));
     let ctx = crate::core::runtime::DispatchCtx::unbound();
     let bridge = Arc::new(LegacyUiBridge::new(
@@ -397,8 +410,12 @@ async fn a_missing_artifact_is_an_error() {
     assert!(err.contains("not found"), "{err}");
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn an_image_filed_through_the_service_gets_a_card_and_a_copy_in_files() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
     let (workspace, files) = temp_dirs();
     let action = workspace.parent().unwrap().join("projects");
     std::fs::create_dir_all(&action).unwrap();
@@ -516,8 +533,12 @@ fn share_artifact_is_offered_only_with_a_publisher() {
     assert!(with.contains(&"share_artifact".to_string()), "{with:?}");
 }
 
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_file_in_an_earlier_files_folder_can_still_be_revised() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
     let (workspace, files) = temp_dirs();
     let earlier = files.parent().unwrap().join("OldFiles");
     std::fs::create_dir_all(&earlier).unwrap();
@@ -579,6 +600,26 @@ async fn a_protected_file_inside_the_working_folder_is_refused() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("protected location"), "{err}");
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_guarded_roots_refuse_to_read_a_protected_file() {
+    let (workspace, _files) = temp_dirs();
+    let home = workspace.parent().unwrap().join("home");
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    std::fs::write(home.join(".ssh/id_ed25519"), b"PRIVATE").unwrap();
+    std::fs::write(home.join("notes.txt"), b"hello").unwrap();
+    let key = home.join(".ssh/id_ed25519").canonicalize().unwrap();
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([key], vec![]),
+    );
+    let roots = guarded_roots(vec![home]);
+
+    let err = roots.read(".ssh/id_ed25519").await.unwrap_err();
+    assert!(err.to_string().contains("protected location"), "{err}");
+    let (_, bytes) = roots.read("notes.txt").await.unwrap();
+    assert_eq!(bytes, b"hello");
 }
 
 #[test]

@@ -8991,6 +8991,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cap-fs-ext",
  "cap-std",
  "serde",
  "serde_json",
@@ -10345,7 +10346,7 @@ dependencies = [
 
 [[package]]
 name = "tinysecurity-bus"
-version = "0.18.4"
+version = "0.19.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -10495,6 +10496,7 @@ dependencies = [
 name = "tinystoragedrivers-fence"
 version = "2.1.2"
 dependencies = [
+ "libc",
  "sysinfo",
 ]
 

@@ -4,12 +4,12 @@ use serde::{de::DeserializeOwned, Serialize};
 use tinysecurity_bus::{
     BudgetDecision2, BudgetRequest2, CheckRequest, CheckResponse, CommandDecision, CommandPolicy,
     CommandPolicyId, CommandRequest, CredentialRootsRequest2, CredentialRootsResponse2, Decision,
-    HostActionClassRequest2, HostActionClassResponse2, KeyringRequest2, KeyringResponse2,
-    PathBatchRequest2, PathBatchResponse2, PathPolicy, PathPolicyId, PathValidationRequest,
-    PathValidationResult, PolicyInfo, PrivacyCheckRequest2, PrivacyCheckResponse2, ProtectedFloor2,
-    ProtectedPathRequest2, ProtectedPathResponse2, RedactMode, RedactRequest, RedactResponse,
-    RedactWithRequest, ScanPromptScoredRequest2, ScanPromptScoredResponse2, ScanResponse,
-    ScanToolDefinitionRequest, Secret,
+    HostActionClassRequest2, HostActionClassResponse2, PathBatchRequest2, PathBatchResponse2,
+    PathPolicy, PathPolicyId, PathValidationRequest, PathValidationResult, PolicyInfo,
+    PrivacyCheckRequest2, PrivacyCheckResponse2, ProtectedFloor2, ProtectedPathRequest2,
+    ProtectedPathResponse2, RedactMode, RedactRequest, RedactResponse, RedactWithRequest,
+    ScanPromptScoredRequest2, ScanPromptScoredResponse2, ScanResponse, ScanToolDefinitionRequest,
+    Secret,
 };
 
 use super::MODULE_ID;
@@ -550,21 +550,6 @@ impl Client {
             .map_err(|error| SecurityError::Unavailable(error.to_string()))
     }
 
-    /// Perform one OS keyring operation through TinySecurity. The module
-    /// obtains fresh, operation-scoped consent before touching the backend.
-    pub async fn keyring_access2(
-        &self,
-        request: KeyringRequest2,
-    ) -> Result<KeyringResponse2, SecurityError> {
-        self.object
-            .call_confidential(
-                tinysecurity_bus::names::methods::KEYRING_ACCESS2,
-                (request,),
-            )
-            .await
-            .map_err(|error| SecurityError::Unavailable(error.to_string()))
-    }
-
     /// Persist intent for one routine config cipher operation.
     pub(crate) async fn evaluate_secret_cipher2(
         &self,
@@ -739,6 +724,9 @@ impl Client {
             .map_err(|error| SecurityError::Unavailable(error.to_string()))
     }
 }
+
+#[path = "client_keyring.rs"]
+mod keyring;
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

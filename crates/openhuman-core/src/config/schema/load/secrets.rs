@@ -19,6 +19,7 @@ async fn decrypt_optional_secret(
 ) -> Result<bool> {
     if let Some(raw) = value.clone() {
         if crate::security::secret_storage::SecretStore::is_encrypted(&raw) {
+            log::debug!("[security][config] opening sealed secret '{field_name}'");
             match store.decrypt_and_migrate_via_security(&raw).await {
                 Ok((plaintext, migrated)) => {
                     if migrated.is_some() {
