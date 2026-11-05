@@ -71,13 +71,43 @@ async fn stored_route(config: &Config) -> Option<SecurityJudgeRoute> {
     }
 }
 
+/// Whether the module takes `key`.
+fn key_accepted(key: &str) -> bool {
+    KEY_LENGTHS.contains(&key.len()) && !key.trim().is_empty()
+}
+
+/// Whether the module's client takes `endpoint`: an absolute URL with no
+/// credentials, query or fragment, over HTTPS or on a literal loopback address.
+fn endpoint_accepted(endpoint: &str) -> bool {
+    if endpoint.len() > MAX_ENDPOINT_BYTES {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(endpoint) else {
+        return false;
+    };
+    let secure = match url.scheme() {
+        "https" => true,
+        "http" => url
+            .host_str()
+            .and_then(|host| {
+                host.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .ok()
+            })
+            .is_some_and(|address| address.is_loopback()),
+        _ => false,
+    };
+    secure
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
 /// The judge on `route`, unless `config` keeps it out or the module would
 /// reject it.
 fn build(config: &Config, route: SecurityJudgeRoute) -> Option<JudgeConfig> {
-    let usable = KEY_LENGTHS.contains(&route.api_key.len())
-        && !route.endpoint.is_empty()
-        && route.endpoint.len() <= MAX_ENDPOINT_BYTES;
-    if !wanted(config) || !usable {
+    if !wanted(config) || !key_accepted(&route.api_key) || !endpoint_accepted(&route.endpoint) {
         return None;
     }
     Some(JudgeConfig {

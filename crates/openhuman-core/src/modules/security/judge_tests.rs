@@ -131,3 +131,39 @@ async fn sage_is_a_decision_model_the_judge_cannot_use() {
 
     assert!(resolve(&config).await.is_none());
 }
+
+fn with_endpoint(endpoint: &str) -> SecurityJudgeRoute {
+    SecurityJudgeRoute {
+        endpoint: endpoint.to_owned(),
+        ..route()
+    }
+}
+
+#[test]
+fn an_endpoint_the_client_refuses_is_left_out_rather_than_failing_the_module() {
+    let config = Config::default();
+
+    for refused in [
+        "not a url",
+        "ftp://api.example.test/v1/systemone",
+        "http://api.example.test/v1/systemone",
+        "https://user:secret@api.example.test/v1/systemone",
+        "https://api.example.test/v1/systemone?key=value",
+        "https://api.example.test/v1/systemone#part",
+    ] {
+        assert!(build(&config, with_endpoint(refused)).is_none(), "{refused}");
+    }
+}
+
+#[test]
+fn plain_http_is_fine_on_a_literal_loopback_address() {
+    let config = Config::default();
+
+    assert!(build(&config, with_endpoint("http://127.0.0.1:8080/systemone")).is_some());
+    assert!(build(&config, with_endpoint("http://[::1]:8080/systemone")).is_some());
+}
+
+#[test]
+fn a_blank_key_is_left_out_rather_than_failing_the_module() {
+    assert!(build(&Config::default(), SecurityJudgeRoute::open_router("     ")).is_none());
+}
