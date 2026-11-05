@@ -266,6 +266,57 @@ async fn apply_autonomy_settings_rejects_zero() {
     );
 }
 
+/// TS-E2E-015: an enabled policy TinySecurity cannot represent is refused at
+/// save time, the file is not written and the settings stay as they were.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_a_policy_tinysecurity_cannot_represent() {
+    let _g = ENV_LOCK.lock().await;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let prior = cfg.autonomy.clone();
+    for (patch, expected) in [
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                forbidden_paths: Some(vec!["relative/forbidden".into()]),
+                ..Default::default()
+            },
+            "forbidden paths must be absolute",
+        ),
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                allowed_commands: Some(vec!["git status".into()]),
+                ..Default::default()
+            },
+            "argument-free command names",
+        ),
+    ] {
+        let err = apply_autonomy_settings(&mut cfg, patch).await.unwrap_err();
+        assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        assert_eq!(
+            toml::to_string(&cfg.autonomy).unwrap(),
+            toml::to_string(&prior).unwrap(),
+            "a rejected patch leaves the settings as they were"
+        );
+        assert!(!cfg.config_path.exists(), "a rejected patch is not saved");
+    }
+
+    apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            enabled: Some(true),
+            forbidden_paths: Some(vec![tmp.path().join("private").display().to_string()]),
+            allowed_commands: Some(vec!["git".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("a representable enabled policy is saved");
+    assert!(cfg.autonomy.enabled);
+}
+
 #[tokio::test]
 async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
     let _g = ENV_LOCK.lock().await;
