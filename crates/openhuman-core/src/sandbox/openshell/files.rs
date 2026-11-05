@@ -64,7 +64,11 @@ const NOT_A_FILE_EXIT: i32 = 66;
 const STALE_PART_MINUTES: u32 = 60;
 
 /// The pattern every part file's name matches (see [`part_path`]).
-const STALE_PART_GLOB: &str = ".openhuman-*.tmp";
+const STALE_PART_GLOB: &str = ".openhuman-transfer-????????????????????????????????.tmp";
+
+/// The file-name prefix reserved for part files: a path naming one is refused,
+/// so the stale sweep only ever meets files a transfer made.
+const PART_PREFIX: &str = ".openhuman-transfer-";
 
 /// The longest box message kept in an error.
 const DETAIL_MAX_CHARS: usize = 200;
@@ -315,7 +319,7 @@ fn read_command(quoted: &str, identity: &str, start: usize, want: u64) -> String
 /// alone (not for the target, so a target name near the filesystem's 255-byte
 /// limit still stages) so no other file or transfer shares it.
 fn part_path(path: &str) -> String {
-    let name = format!(".openhuman-{}.tmp", uuid::Uuid::new_v4().simple());
+    let name = format!("{PART_PREFIX}{}.tmp", uuid::Uuid::new_v4().simple());
     match path.rsplit_once('/') {
         Some((folder, _)) => format!("{folder}/{name}"),
         None => name,
@@ -340,6 +344,12 @@ fn check_path(path: &str) -> Result<(), BoxError> {
         "it must not contain `..`"
     } else if matches!(path.rsplit('/').next(), Some("" | ".")) {
         "it names a folder, not a file"
+    } else if path
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name.starts_with(PART_PREFIX))
+    {
+        "that file name is reserved for transfers"
     } else {
         return Ok(());
     };

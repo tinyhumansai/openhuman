@@ -46,7 +46,7 @@ fn encoded(bytes: &[u8]) -> String {
 /// The part file a write's first command names: the quoted `./...part` word.
 fn part_in(command: &str) -> String {
     // The part file's name carries a UUID; the stale-file sweep names a glob.
-    let marker = ".openhuman-";
+    let marker = ".openhuman-transfer-";
     let name = command
         .match_indices(marker)
         .map(|(at, _)| at)
@@ -151,7 +151,7 @@ async fn a_small_file_is_one_command_that_writes_a_part_file_and_renames_it() {
     );
     let part = part_in(&sent[0]);
     assert!(
-        part.starts_with("./out/.openhuman-") && part.ends_with(".tmp"),
+        part.starts_with("./out/.openhuman-transfer-") && part.ends_with(".tmp"),
         "{part}"
     );
     assert!(
@@ -643,12 +643,12 @@ mod on_a_real_shell {
             .unwrap();
         let dir = driver.box_dir("box-0").unwrap().join("out");
         let (old, fresh) = (
-            dir.join(".openhuman-old.tmp"),
-            dir.join(".openhuman-new.tmp"),
+            dir.join(".openhuman-transfer-00000000000000000000000000000001.tmp"),
+            dir.join(".openhuman-transfer-00000000000000000000000000000002.tmp"),
         );
         std::fs::write(&old, b"half").unwrap();
         std::fs::write(&fresh, b"in flight").unwrap();
-        let (_, _, code) = run_in(&dir, "touch -d '3 hours ago' .openhuman-old.tmp");
+        let (_, _, code) = run_in(&dir, "touch -d '3 hours ago' .openhuman-transfer-00000000000000000000000000000001.tmp");
         assert_eq!(code, 0);
 
         write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/a.txt", b"y")
@@ -658,6 +658,23 @@ mod on_a_real_shell {
         assert!(!old.exists(), "an hour-old part file is removed");
         assert!(fresh.exists(), "a recent one may be an upload in flight");
         assert!(dir.join("a.txt").is_file());
+    }
+
+    #[tokio::test]
+    async fn a_user_file_that_only_looks_like_a_part_file_is_never_swept() {
+        let (_root, driver, boxes) = host_boxes();
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/seed.txt", b"x")
+            .await
+            .unwrap();
+        let dir = driver.box_dir("box-0").unwrap().join("out");
+        std::fs::write(dir.join(".openhuman-report.tmp"), b"mine").unwrap();
+        run_in(&dir, "touch -d '3 hours ago' .openhuman-report.tmp");
+
+        write_file_in(&boxes, Ok(embedded("u1")), &config(), "out/new.txt", b"y")
+            .await
+            .unwrap();
+
+        assert!(dir.join(".openhuman-report.tmp").exists());
     }
 
     #[tokio::test]
