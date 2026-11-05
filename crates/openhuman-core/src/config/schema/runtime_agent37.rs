@@ -11,10 +11,11 @@
 //! CPU and memory are configured here too, rather than borrowed from
 //! `[runtime.docker]`. agent37 offers only fixed instance shapes — `(2, 4)`,
 //! `(4, 8)`, `(4, 16)` and `(4, 32)` vCPU/GB — and snaps a request up to the
-//! smallest shape that covers both bounds; a request above 4 vCPU or 32 GiB
-//! gets the largest shape. These settings are therefore a request, not a hard
-//! ceiling or floor, which is why the sandbox reports them as best effort. The
-//! defaults ask for agent37's smallest shape.
+//! smallest shape that covers both bounds. CPU above 4 vCPU is capped at 4
+//! before a shape is chosen, so it does not raise the memory the box gets;
+//! memory above 32 GiB gets the largest shape. These settings are therefore a
+//! request, not a hard ceiling or floor, which is why the sandbox reports them
+//! as best effort. The defaults ask for agent37's smallest shape.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

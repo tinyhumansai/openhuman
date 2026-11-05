@@ -123,9 +123,10 @@ impl Drop for BoxGuard {
 
 /// The limits a box is created with, from `[runtime.agent37]` rather than
 /// `[runtime.docker]`. The service snaps them up to a fixed instance shape, so
-/// they are a request, not a ceiling, and a request above the largest shape is
-/// capped there (logged, since the box then gets less than was configured). A
-/// memory size too large to express in bytes asks for the service's maximum.
+/// they are a request, not a ceiling. CPU above 4 vCPU is capped before a shape
+/// is chosen, and memory above 32 GiB gets the largest shape (logged, since the
+/// box then gets less than was configured). A memory size too large to express
+/// in bytes asks for the service's maximum.
 #[cfg(feature = "modules")]
 fn box_resources(config: &Config) -> crate::modules::tinybox::contract::ResourceLimits {
     let agent37 = &config.runtime.agent37;
