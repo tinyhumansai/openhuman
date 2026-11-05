@@ -396,6 +396,7 @@ impl SessionHostBuilder {
         // is, so where a process registry does exist nothing about its
         // resolution changes.
         let session_definition = self.session_definition;
+        let security_policy = self.security_policy;
         let definitions = definitions.or_else(|| {
             session_definition.is_some().then(|| {
                 Arc::new(crate::agent_registry::host_definition::AgentDefinitionRegistry::default())
@@ -403,11 +404,13 @@ impl SessionHostBuilder {
         });
         let hosted_base = definitions.map(|definitions| {
             Arc::new(crate::agent::tinyagents::host::OpenHumanHostBase {
-                security_policy: Arc::new(crate::security::SecurityPolicy::from_config(
-                    &hosted_config.autonomy,
-                    &workspace_dir,
-                    &action_dir,
-                )),
+                security_policy: security_policy.clone().unwrap_or_else(|| {
+                    Arc::new(crate::security::SecurityPolicy::from_config(
+                        &hosted_config.autonomy,
+                        &workspace_dir,
+                        &action_dir,
+                    ))
+                }),
                 config: Arc::clone(&hosted_config),
                 definitions,
                 // Usually this path names a registry id, and carries no
