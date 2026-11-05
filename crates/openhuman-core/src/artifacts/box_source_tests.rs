@@ -13,14 +13,16 @@ use tiny_artifacts::Author;
 /// Box files from a registry over a scripted driver, so a test says what the
 /// box holds and sees every command sent to it.
 struct ScriptedBoxes {
-    keeps: bool,
+    /// `None`: the configuration cannot be read.
+    keeps: Option<bool>,
     registry: Arc<BoxRegistry<ScriptedDriver>>,
 }
 
 #[async_trait]
 impl BoxFiles for ScriptedBoxes {
-    async fn keeps_boxes(&self) -> bool {
+    async fn keeps_boxes(&self) -> Result<bool, BoxError> {
         self.keeps
+            .ok_or_else(|| BoxError::Driver("cannot read the configuration: unreadable".into()))
     }
 
     async fn read(
@@ -69,6 +71,14 @@ impl Fixture {
     }
 
     fn tool(&self, keeps: bool, tenant: Result<Tenant, NoTenant>) -> BoxSourcedCreate {
+        self.tool_with(Some(keeps), tenant)
+    }
+
+    fn tool_with(
+        &self,
+        keeps: Option<bool>,
+        tenant: Result<Tenant, NoTenant>,
+    ) -> BoxSourcedCreate {
         let ctx = DispatchCtx::process_default();
         let service = artifacts_service(
             &self.workspace,
@@ -96,7 +106,7 @@ impl Fixture {
     fn the_box_holds(&self, bytes: &[u8]) {
         self.driver.then(ExecStep::Reply(BoxOutput {
             exit_code: 0,
-            stdout: format!("{}\n", bytes.len()).into_bytes(),
+            stdout: format!("{} 1:2:3\n", bytes.len()).into_bytes(),
             stderr: Vec::new(),
         }));
         self.driver.then(ExecStep::Reply(BoxOutput {
@@ -228,6 +238,26 @@ async fn a_path_is_read_from_the_host_when_the_backend_keeps_no_boxes() {
         .await
         .unwrap();
     assert_eq!(stored, b"host bytes");
+    assert!(fixture.driver.calls().is_empty(), "no box was touched");
+}
+
+#[tokio::test]
+async fn an_unreadable_configuration_is_a_tool_error_and_never_reads_the_host() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
+    let fixture = Fixture::new();
+    // A host file of the same name: it must not be imported in the box's place.
+    std::fs::write(fixture.action.join("report.pdf"), b"host bytes").unwrap();
+    let tool = fixture.tool_with(None, user("u1"));
+
+    let result = tool.execute(file_args("report.pdf")).await.unwrap();
+
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result.content.contains("cannot read the configuration"),
+        "{result:?}"
+    );
     assert!(fixture.driver.calls().is_empty(), "no box was touched");
 }
 
