@@ -203,6 +203,12 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
         Some(&json!("msg-round25"))
     );
     assert_eq!(executed.cost_usd, 0.0);
+    // TS-E2E-009 (RD-12): the provider echoes the caller's key in every form;
+    // the RPC op's result carries none of them, as the agent tools' don't.
+    let returned = serde_json::to_string(&executed).expect("serialize result");
+    for form in round25_key_forms() {
+        assert!(!returned.contains(&form), "the result carried the key as {form}");
+    }
 
     let failed_execute = composio_execute(
         &harness.config,
@@ -315,6 +321,18 @@ impl Drop for PrivacyScope {
     fn drop(&mut self) {
         let _ = live_policy::reload_privacy(self.0);
     }
+}
+
+/// The direct-mode key `setup_direct_config` stores, and the encoded forms a
+/// provider might echo it in. The mock's Execute echoes all four.
+fn round25_key_forms() -> [String; 4] {
+    let key = "ck_round25_direct";
+    [
+        key.to_owned(),
+        urlencoding::encode(key).into_owned(),
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key),
+        hex::encode(key),
+    ]
 }
 
 async fn start_loopback(app: Router) -> String {
@@ -441,7 +459,8 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             "data": {
                 "messages": [
                     { "id": "msg-round25", "subject": "Coverage" }
-                ]
+                ],
+                "echo": round25_key_forms(),
             }
         }))
         .into_response(),
