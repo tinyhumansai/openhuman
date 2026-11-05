@@ -397,14 +397,14 @@ impl ComposioActionTool {
         // direct-mode toggle still takes effect immediately (#1710): the route
         // is reconciled from `live_config` on the way through, rather than
         // baked into a client this tool captured at construction.
-        let res = super::module_client::call::<_, super::types::ComposioExecuteResponse>(
+        // Through the shared dispatch, so the local-only egress policy
+        // applies to per-action tools as it does to `composio_execute`.
+        let res = super::execute_dispatch::execute_composio_action(
             &live_config,
-            tinyconnectors_bus::names::methods::EXECUTE,
-            super::types::ComposioExecuteRequest {
-                tool: self.action_name.clone(),
-                arguments: args,
-                connection_id: effective_connection_id.map(str::to_string),
-            },
+            None,
+            &self.action_name,
+            args,
+            effective_connection_id,
         )
         .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;

@@ -3,10 +3,9 @@
 use crate::config::Config;
 use crate::core::Outcome;
 
-use super::super::module_client::{self as connectors};
-use super::super::types::{ComposioExecuteRequest, ComposioExecuteResponse};
+use super::super::execute_dispatch::execute_composio_action;
+use super::super::types::ComposioExecuteResponse;
 use super::error_utils::{report_composio_op_error, OpResult};
-use tinyconnectors_bus::names::methods;
 
 /// The prefix the module puts on an error it has already classified.
 ///
@@ -23,11 +22,8 @@ const CLASSIFIED: &str = "[composio:error:";
 /// the activity feed, the agent's own budget. The module has no bus of the
 /// host's to publish on.
 ///
-/// # What the caller must still do
-///
-/// Apply [`crate::security::egress`] *before* calling this. Local
-/// only mode refusing an outbound tool call is policy about the user's data,
-/// and the module cannot see the reasons behind it.
+/// The call goes through [`execute_composio_action`], so the local-only
+/// egress policy applies here as it does to the agent tool.
 pub async fn composio_execute(
     config: &Config,
     tool: &str,
@@ -36,16 +32,7 @@ pub async fn composio_execute(
 ) -> OpResult<Outcome<ComposioExecuteResponse>> {
     tracing::debug!(tool = %tool, connection_id = ?connection_id, "[composio] rpc execute");
     let started = std::time::Instant::now();
-    let result = connectors::call::<_, ComposioExecuteResponse>(
-        config,
-        methods::EXECUTE,
-        ComposioExecuteRequest {
-            tool: tool.to_string(),
-            arguments,
-            connection_id: connection_id.map(str::to_string),
-        },
-    )
-    .await;
+    let result = execute_composio_action(config, None, tool, arguments, connection_id).await;
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     match result {
