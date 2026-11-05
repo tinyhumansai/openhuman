@@ -446,7 +446,10 @@ async fn file_text_titled(
 async fn a_text_artifact_titled_like_a_csv_keeps_its_csv_name_and_type() {
     let (workspace, files) = temp_dirs();
     let (name, path) = file_text_titled(&workspace, &files, "Quarterly Numbers.csv").await;
-    assert_eq!((name.as_str(), path.as_str()), ("quarterly-numbers.csv", "quarterly-numbers.csv"));
+    assert_eq!(
+        (name.as_str(), path.as_str()),
+        ("quarterly-numbers.csv", "quarterly-numbers.csv")
+    );
 }
 
 #[tokio::test]
@@ -468,10 +471,16 @@ async fn repeating_a_title_keeps_the_extension_on_the_numbered_name() {
     let (workspace, files) = temp_dirs();
     let first = file_text_titled(&workspace, &files, "packing.txt").await.0;
     let second = file_text_titled(&workspace, &files, "packing.txt").await.0;
-    assert_eq!((first.as_str(), second.as_str()), ("packing.txt", "packing (2).txt"));
+    assert_eq!(
+        (first.as_str(), second.as_str()),
+        ("packing.txt", "packing (2).txt")
+    );
     let first = file_text_titled(&workspace, &files, "rows.csv").await.0;
     let second = file_text_titled(&workspace, &files, "rows.csv").await.0;
-    assert_eq!((first.as_str(), second.as_str()), ("rows.csv", "rows (2).csv"));
+    assert_eq!(
+        (first.as_str(), second.as_str()),
+        ("rows.csv", "rows (2).csv")
+    );
 }
 
 #[tokio::test]
@@ -521,7 +530,9 @@ fn only_inert_text_formats_are_recognised_from_a_title() {
     for ext in ["csv", "tsv", "ics", "vcf", "json", "txt", "yaml", "log"] {
         assert_eq!(text_extension_of_title(&format!("f.{ext}")), Some(ext));
     }
-    for title in ["f.html", "f.svg", "f.xml", "f.js", "f.exe", "f.pdf", "f", "f.", "csv"] {
+    for title in [
+        "f.html", "f.svg", "f.xml", "f.js", "f.exe", "f.pdf", "f", "f.", "csv",
+    ] {
         assert_eq!(text_extension_of_title(title), None, "{title}");
     }
 }

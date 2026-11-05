@@ -291,6 +291,15 @@ fn sanitize_filename_stem(title: &str) -> String {
     }
 }
 
+/// `title` without a trailing `.<ext>` (compared case-insensitively), so a title
+/// that already names its extension is not turned into `name-ext.ext`.
+fn strip_extension<'a>(title: &'a str, ext: &str) -> &'a str {
+    match title.rsplit_once('.') {
+        Some((stem, tail)) if tail.eq_ignore_ascii_case(ext) => stem,
+        _ => title,
+    }
+}
+
 /// Allocate a fresh artifact directory and persist a pending
 /// [`ArtifactMeta`] record. Returns the metadata plus the absolute
 /// path where the producer should write the artifact bytes.
@@ -399,7 +408,7 @@ pub async fn create_artifact_regenerating(
         .filter(|target| !target.trim().is_empty());
     let is_regenerate = reused_id.is_some();
     let id = reused_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let stem = sanitize_filename_stem(trimmed_title);
+    let stem = sanitize_filename_stem(strip_extension(trimmed_title, trimmed_ext));
 
     let root = artifacts_root(workspace_dir).await?;
     let artifact_dir = root.join(&id);

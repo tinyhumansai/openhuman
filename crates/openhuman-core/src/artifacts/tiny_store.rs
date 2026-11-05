@@ -42,11 +42,17 @@ use crate::tools::per_call::{context as per_call_context, PerCallTool};
 const VERSIONED_SUBDIR: &str = "versioned";
 
 /// The legacy kind and file extension the UI gets for an artifact's newest
-/// version: text kinds by kind, file kinds by the file's extension.
+/// version: markdown and html by kind, text by the safe extension its title
+/// names (else `txt`), file kinds by the file's extension.
 fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)> {
     let latest = record.latest()?;
     let shape = match record.kind {
-        ArtifactKind::Text => (LegacyArtifactKind::Document, "txt".to_string()),
+        ArtifactKind::Text => (
+            LegacyArtifactKind::Document,
+            text_extension_of_title(&record.title)
+                .unwrap_or("txt")
+                .to_string(),
+        ),
         ArtifactKind::Markdown => (LegacyArtifactKind::Document, "md".to_string()),
         ArtifactKind::Html => (LegacyArtifactKind::Document, "html".to_string()),
         ArtifactKind::Image | ArtifactKind::File => {
@@ -72,8 +78,25 @@ fn legacy_shape(record: &ArtifactRecord) -> Option<(LegacyArtifactKind, String)>
     Some(shape)
 }
 
-pub(crate) fn text_extension_of_title(_title: &str) -> Option<&'static str> {
-    None
+/// Plain-text formats a `text` artifact's title may name. Every one is inert
+/// when opened (no script or markup a viewer would run), so a model-written
+/// title can pick among them without widening what is served as active
+/// content. `html`, `svg`, `xml`, scripts and executables are deliberately not
+/// here: a title naming one stays `txt`.
+const TEXT_TITLE_EXTENSIONS: &[&str] = &[
+    "txt", "csv", "tsv", "ics", "vcf", "json", "jsonl", "ndjson", "log", "yaml", "yml", "toml",
+    "ini", "srt", "vtt",
+];
+
+/// The extension a `text` artifact's title asks for, when it is one of
+/// [`TEXT_TITLE_EXTENSIONS`] (matched case-insensitively and returned in its
+/// canonical lowercase form, never the title's own text).
+pub(crate) fn text_extension_of_title(title: &str) -> Option<&'static str> {
+    let (_, ext) = title.trim().rsplit_once('.')?;
+    TEXT_TITLE_EXTENSIONS
+        .iter()
+        .copied()
+        .find(|known| known.eq_ignore_ascii_case(ext))
 }
 
 pub(crate) fn legacy_kind_for_extension(ext: &str) -> LegacyArtifactKind {
