@@ -221,6 +221,40 @@ impl ApprovalGate {
         Ok(Some(route.pending))
     }
 
+    /// Apply a decision from an authenticated dispatch serving `dispatch`.
+    ///
+    /// A request parked in this session is decided only by its owner: the
+    /// same profile, and the same agent when the dispatch is agent-scoped or
+    /// names one ([`Self::validate_decision_context`]). An id that is not
+    /// parked here goes straight to [`Self::decide`], which reports the miss.
+    pub(crate) fn decide_as(
+        &self,
+        dispatch: &crate::core::runtime::Tenant,
+        agent: Option<&str>,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> anyhow::Result<Option<PendingApproval>> {
+        let parked = self
+            .parked
+            .request_routes
+            .lock()
+            .contains_key(request_id);
+        if parked {
+            if let Err(error) = self.validate_decision_context(request_id, dispatch, agent) {
+                tracing::warn!(
+                    request_id = %request_id,
+                    error = %error,
+                    "[approval::gate] decision refused: the caller does not own the request"
+                );
+                return Err(error);
+            }
+        }
+        match agent {
+            Some(agent) => self.decide_for_agent(agent, request_id, decision),
+            None => self.decide(request_id, decision),
+        }
+    }
+
     /// [`Self::decide`] on behalf of `agent`: refuses with
     /// [`ApprovalError::WrongAgent`] when the request was parked by any other
     /// agent (or by the process itself), so one agent cannot answer another's

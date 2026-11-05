@@ -150,3 +150,60 @@ async fn two_profiles_default_agents_park_on_one_thread_id_apart() {
     );
     assert!(seen_by(bob).await.is_none());
 }
+
+/// AP-26: a parked request is decided only by the profile that parked it, and
+/// an agent-scoped dispatch cannot answer another agent's request. A refusal
+/// leaves the request parked for its owner.
+#[tokio::test]
+async fn a_decision_from_another_tenant_is_refused_and_leaves_the_request_parked() {
+    let (gate, _dir) = test_gate();
+    let gate = Arc::new(gate);
+    let alice = profile_ctx("gate-ap26-alice");
+    let turn = park_as(&gate, Arc::clone(&alice));
+    let owner = tenant(Some("gate-ap26-alice"), None);
+    let request = parked_for(&gate, &owner).await;
+
+    let refused = |error: anyhow::Error| error.downcast::<ApprovalError>().ok();
+    let other_profile = gate
+        .decide_as(
+            &tenant(Some("gate-ap26-mallory"), None),
+            None,
+            &request,
+            ApprovalDecision::ApproveOnce,
+        )
+        .expect_err("another profile must not decide the request");
+    assert!(
+        matches!(
+            refused(other_profile),
+            Some(ApprovalError::WrongTenant { .. })
+        ),
+        "refused as the wrong tenant"
+    );
+    let other_agent = gate
+        .decide_as(
+            &tenant(Some("gate-ap26-alice"), Some("agent-b")),
+            None,
+            &request,
+            ApprovalDecision::ApproveOnce,
+        )
+        .expect_err("an agent-scoped dispatch must not decide the profile's request");
+    assert!(
+        matches!(refused(other_agent), Some(ApprovalError::WrongAgent { .. })),
+        "refused as the wrong agent"
+    );
+    assert_eq!(
+        gate.pending_for_tenant_thread(&owner, "t-test"),
+        Some(request.clone()),
+        "a refused decision leaves the request parked"
+    );
+
+    let decided = gate
+        .decide_as(&owner, None, &request, ApprovalDecision::Deny)
+        .expect("the owner decides");
+    assert!(
+        decided.is_some(),
+        "the owner's decision resolves the request"
+    );
+    let (outcome, _) = turn.await.unwrap();
+    assert!(matches!(outcome, GateOutcome::Deny { .. }), "{outcome:?}");
+}
