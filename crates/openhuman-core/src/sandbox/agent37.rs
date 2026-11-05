@@ -121,6 +121,21 @@ impl Drop for BoxGuard {
     }
 }
 
+/// The limits a box is created with, from `[runtime.agent37]` rather than
+/// `[runtime.docker]`. The service snaps them up to a fixed instance shape, so
+/// they are a request, not a ceiling. A memory size too large to express in
+/// bytes asks for the service's maximum (it snaps to the largest shape
+/// regardless).
+#[cfg(feature = "modules")]
+fn box_resources(config: &Config) -> crate::modules::tinybox::contract::ResourceLimits {
+    let agent37 = &config.runtime.agent37;
+    crate::modules::tinybox::contract::ResourceLimits {
+        cpu_millis: agent37.cpu_millis,
+        memory_bytes: agent37.memory_bytes().unwrap_or(u64::MAX),
+        ..Default::default()
+    }
+}
+
 #[cfg(feature = "modules")]
 async fn run_command(
     config: &Config,
@@ -140,17 +155,6 @@ async fn run_command(
         resource: Some(resource.clone()),
     };
 
-    // CPU and memory come from `[runtime.agent37]`, not `[runtime.docker]`: the
-    // service snaps them up to a fixed instance shape, so they are a request,
-    // not a ceiling. A memory size too large to express in bytes asks for the
-    // service's maximum (it snaps to the largest shape regardless).
-    let agent37 = &config.runtime.agent37;
-    let resources = contract::ResourceLimits {
-        cpu_millis: agent37.cpu_millis,
-        memory_bytes: agent37.memory_bytes().unwrap_or(u64::MAX),
-        ..contract::ResourceLimits::default()
-    };
-
     if let Err(error) = tinybox::create(
         config,
         contract::CreateRequest {
@@ -161,7 +165,7 @@ async fn run_command(
             // image; forwarding the Docker image slot is rejected with HTTP 400.
             workspace: contract::Workspace::Image(config.runtime.agent37.template.clone()),
             network: contract::NetworkPolicy::Denied,
-            resources,
+            resources: box_resources(config),
             ports: Vec::new(),
             env: BTreeMap::new(),
         },
