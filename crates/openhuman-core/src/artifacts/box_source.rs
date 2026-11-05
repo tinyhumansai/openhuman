@@ -1,11 +1,12 @@
-//! `create_artifact` for a sandbox that keeps boxes: a file `path` names a file
-//! in the calling tenant's box, not on the host.
+//! `create_artifact` and `update_artifact` for a sandbox that keeps boxes: a
+//! file `path` names a file in the calling tenant's box, not on the host.
 //!
 //! With a backend that keeps one box per tenant (`openshell`; see
 //! [`SandboxBackendKind::keeps_boxes`](crate::sandbox::types::SandboxBackendKind::keeps_boxes)),
 //! the files an agent makes live in its box, and the host has never seen
-//! them. [`BoxSourcedCreate`] wraps the artifact crate's `create_artifact`
-//! tool: for an `image` or `file` artifact it reads the file out of the
+//! them. [`BoxSourced`] wraps the artifact crate's `create_artifact`
+//! tool (and likewise `update_artifact`, whose artifact kind comes from its
+//! stored record): for an `image` or `file` artifact it reads the file out of the
 //! caller's box ([`crate::sandbox::openshell::read_file`]), stages the bytes in
 //! a folder artifacts may reference, hands the staged path to the crate's tool
 //! unchanged, and removes the staged copy. Everything after that is
@@ -21,7 +22,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tiny_artifacts::{ArtifactKind, CreateArtifactTool};
+use tiny_artifacts::{ArtifactKind, Artifacts};
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use super::tiny_store::version_files_dir;
@@ -102,29 +103,52 @@ fn box_path(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-/// The crate's `create_artifact`, reading a file `path` from the caller's box
-/// when the sandbox keeps one.
-pub(crate) struct BoxSourcedCreate {
-    inner: CreateArtifactTool,
+/// Where the kind of artifact a call writes comes from.
+pub(crate) enum KindSource {
+    /// A new artifact: the call's own `kind`.
+    Args,
+    /// An existing artifact: the kind of the record `artifact_id` names.
+    Record(Arc<Artifacts>),
+}
+
+/// One of the crate's artifact tools (`create_artifact` or `update_artifact`),
+/// reading a file `path` from the caller's box when the sandbox keeps one.
+pub(crate) struct BoxSourced {
+    inner: Box<dyn Tool>,
+    kinds: KindSource,
     boxes: Arc<dyn BoxFiles>,
     tenant: Result<Tenant, NoTenant>,
     staging: PathBuf,
 }
 
-impl BoxSourcedCreate {
+impl BoxSourced {
     /// `tenant` is the calling tenant (its box is read); `staging` is the
     /// folder (see [`staging_dir`]) a box file is copied into for the crate.
     pub(crate) fn new(
-        inner: CreateArtifactTool,
+        inner: impl Tool + 'static,
+        kinds: KindSource,
         boxes: Arc<dyn BoxFiles>,
         tenant: Result<Tenant, NoTenant>,
         staging: PathBuf,
     ) -> Self {
         Self {
-            inner,
+            inner: Box::new(inner),
+            kinds,
             boxes,
             tenant,
             staging,
+        }
+    }
+
+    /// The kind of artifact this call writes, when it can be told.
+    async fn kind(&self, args: &Value) -> Option<ArtifactKind> {
+        match &self.kinds {
+            KindSource::Args => ArtifactKind::parse(args.get("kind")?.as_str()?),
+            KindSource::Record(artifacts) => {
+                let id = args.get("artifact_id")?.as_str()?;
+                // A store failure or an unknown id is the crate's tool to report.
+                artifacts.get(id).await.ok().flatten().map(|record| record.kind)
+            }
         }
     }
 
@@ -136,11 +160,7 @@ impl BoxSourcedCreate {
     ///
     /// When it cannot be told whether the sandbox keeps boxes.
     async fn box_file(&self, args: &Value) -> Result<Option<String>, BoxError> {
-        let Some(kind) = args
-            .get("kind")
-            .and_then(Value::as_str)
-            .and_then(ArtifactKind::parse)
-        else {
+        let Some(kind) = self.kind(args).await else {
             return Ok(None);
         };
         if !kind.holds_file() {
@@ -164,7 +184,7 @@ impl BoxSourcedCreate {
 }
 
 #[async_trait]
-impl Tool for BoxSourcedCreate {
+impl Tool for BoxSourced {
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -209,18 +229,25 @@ impl Tool for BoxSourcedCreate {
             }
         };
         args["path"] = Value::String(staged.file.display().to_string());
-        let created = self.inner.execute(args).await;
-        if let Err(error) = tokio::fs::remove_dir_all(&staged.dir).await {
-            tracing::warn!(%error, "[artifacts] could not remove a staged sandbox file");
-        }
-        created
+        // `staged` removes its folder when dropped, so a call cancelled while
+        // the crate's tool runs leaves nothing behind either.
+        self.inner.execute(args).await
     }
 }
 
-/// A box file copied onto the host for one call.
+/// A box file copied onto the host for one call. Dropping it removes the copy,
+/// whether the call finished or was cancelled.
 struct Staged {
     dir: PathBuf,
     file: PathBuf,
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.dir) {
+            tracing::warn!(%error, "[artifacts] could not remove a staged sandbox file");
+        }
+    }
 }
 
 /// Copy `bytes` into a folder of its own under `staging`, keeping the file's

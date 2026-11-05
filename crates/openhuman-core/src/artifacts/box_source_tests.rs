@@ -70,11 +70,11 @@ impl Fixture {
         }
     }
 
-    fn tool(&self, keeps: bool, tenant: Result<Tenant, NoTenant>) -> BoxSourcedCreate {
+    fn tool(&self, keeps: bool, tenant: Result<Tenant, NoTenant>) -> BoxSourced {
         self.tool_with(Some(keeps), tenant)
     }
 
-    fn tool_with(&self, keeps: Option<bool>, tenant: Result<Tenant, NoTenant>) -> BoxSourcedCreate {
+    fn tool_with(&self, keeps: Option<bool>, tenant: Result<Tenant, NoTenant>) -> BoxSourced {
         let ctx = DispatchCtx::process_default();
         let service = artifacts_service(
             &self.workspace,
@@ -90,7 +90,7 @@ impl Fixture {
                 max_live: 10,
             },
         );
-        BoxSourcedCreate::new(
+        BoxSourced::new(
             CreateArtifactTool::new(Arc::new(service), Author::agent("agent")),
             Arc::new(ScriptedBoxes { keeps, registry }),
             tenant,
@@ -159,7 +159,7 @@ fn file_args(path: &str) -> Value {
     json!({"kind": "file", "title": "Report", "path": path})
 }
 
-async fn created_id(tool: &BoxSourcedCreate, args: Value) -> String {
+async fn created_id(tool: &BoxSourced, args: Value) -> String {
     let result = tool.execute(args).await.unwrap();
     assert!(!result.is_error, "{}", result.output());
     let body: Value = serde_json::from_str(&result.output()).unwrap();
