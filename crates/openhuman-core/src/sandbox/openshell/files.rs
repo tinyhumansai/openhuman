@@ -151,7 +151,7 @@ pub async fn read_file_in<D: BoxDriver>(
     let sized = target
         .run(&format!(
             "test -f {quoted} || exit {NOT_A_FILE_EXIT}; {GUARD} \
-             inside \"$(realpath -- {quoted})\"; stat -L -c '%s %d:%i:%Y' -- {quoted}"
+             inside \"$(realpath -- {quoted})\"; stat -L -c '%s %d:%i:%y:%z' -- {quoted}"
         ))
         .await?;
     if sized.exit_code == NOT_A_FILE_EXIT {
@@ -165,12 +165,14 @@ pub async fn read_file_in<D: BoxDriver>(
         path: path.to_owned(),
         detail: "the sandbox did not report the file's size".to_owned(),
     };
-    let mut fields = sized.stdout.split_whitespace();
-    let size: u64 = fields
-        .next()
-        .and_then(|size| size.parse().ok())
+    // The size, then the identity: the rest of the line (its times hold spaces).
+    let (size, identity) = sized
+        .stdout
+        .trim()
+        .split_once(char::is_whitespace)
         .ok_or_else(unreported)?;
-    let identity = fields.next().ok_or_else(unreported)?;
+    let size: u64 = size.parse().map_err(|_| unreported())?;
+    let identity = identity.trim();
     let limit = max_bytes.min(MAX_FILE_BYTES);
     if size > limit {
         return Err(BoxError::FileTooLarge { size, limit });
@@ -289,7 +291,7 @@ fn write_command(
 /// taken, before or after the read.
 fn read_command(quoted: &str, identity: &str, start: usize, want: u64) -> String {
     let same = format!(
-        "[ \"$(stat -L -c '%d:%i:%Y' -- {quoted})\" = {} ] || \
+        "[ \"$(stat -L -c '%d:%i:%y:%z' -- {quoted})\" = {} ] || \
          {{ echo 'the file changed while it was read' >&2; exit 1; }}; ",
         quote(identity)
     );

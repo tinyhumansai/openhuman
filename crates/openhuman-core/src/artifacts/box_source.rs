@@ -103,12 +103,33 @@ fn box_path(path: &str) -> &str {
         .unwrap_or(path)
 }
 
+/// The kind of an existing artifact, from its stored record.
+#[async_trait]
+pub(crate) trait RecordKinds: Send + Sync {
+    /// The kind of artifact `id` names; `None` when there is no such artifact.
+    ///
+    /// # Errors
+    ///
+    /// The store's message when it cannot be read.
+    async fn kind_of(&self, id: &str) -> Result<Option<ArtifactKind>, String>;
+}
+
+#[async_trait]
+impl RecordKinds for Artifacts {
+    async fn kind_of(&self, id: &str) -> Result<Option<ArtifactKind>, String> {
+        self.get(id)
+            .await
+            .map(|record| record.map(|record| record.kind))
+            .map_err(|error| error.to_string())
+    }
+}
+
 /// Where the kind of artifact a call writes comes from.
 pub(crate) enum KindSource {
     /// A new artifact: the call's own `kind`.
     Args,
     /// An existing artifact: the kind of the record `artifact_id` names.
-    Record(Arc<Artifacts>),
+    Record(Arc<dyn RecordKinds>),
 }
 
 /// One of the crate's artifact tools (`create_artifact` or `update_artifact`),
@@ -141,18 +162,26 @@ impl BoxSourced {
     }
 
     /// The kind of artifact this call writes, when it can be told.
-    async fn kind(&self, args: &Value) -> Option<ArtifactKind> {
+    ///
+    /// # Errors
+    ///
+    /// When the stored record cannot be read: the call must then fail, not
+    /// fall back to the host's disk.
+    async fn kind(&self, args: &Value) -> Result<Option<ArtifactKind>, BoxError> {
         match &self.kinds {
-            KindSource::Args => ArtifactKind::parse(args.get("kind")?.as_str()?),
-            KindSource::Record(artifacts) => {
-                let id = args.get("artifact_id")?.as_str()?;
-                // A store failure or an unknown id is the crate's tool to report.
-                artifacts
-                    .get(id)
+            KindSource::Args => Ok(args
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(ArtifactKind::parse)),
+            KindSource::Record(records) => {
+                // A missing argument or an unknown id is the crate's tool to report.
+                let Some(id) = args.get("artifact_id").and_then(Value::as_str) else {
+                    return Ok(None);
+                };
+                records
+                    .kind_of(id)
                     .await
-                    .ok()
-                    .flatten()
-                    .map(|record| record.kind)
+                    .map_err(|error| BoxError::Driver(format!("cannot read the artifact: {error}")))
             }
         }
     }
@@ -165,7 +194,7 @@ impl BoxSourced {
     ///
     /// When it cannot be told whether the sandbox keeps boxes.
     async fn box_file(&self, args: &Value) -> Result<Option<String>, BoxError> {
-        let Some(kind) = self.kind(args).await else {
+        let Some(kind) = self.kind(args).await? else {
             return Ok(None);
         };
         if !kind.holds_file() {
@@ -224,7 +253,7 @@ impl Tool for BoxSourced {
             Ok(bytes) => bytes,
             Err(error) => return Ok(ToolResult::error(error.to_string())),
         };
-        let staged = match stage(&self.staging, &path, &bytes).await {
+        let staged = match stage(&self.staging, &path, &bytes) {
             Ok(staged) => staged,
             Err(error) => {
                 tracing::warn!(%error, "[artifacts] could not stage a sandbox file");
@@ -249,26 +278,42 @@ struct Staged {
 
 impl Drop for Staged {
     fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_dir_all(&self.dir) {
-            tracing::warn!(%error, "[artifacts] could not remove a staged sandbox file");
+        match std::fs::remove_dir_all(&self.dir) {
+            Ok(()) => {}
+            // Nothing was made yet (a failed or cancelled stage).
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(%error, "[artifacts] could not remove a staged sandbox file")
+            }
         }
     }
 }
 
-/// Copy `bytes` into a folder of its own under `staging`, keeping the file's
-/// name (its extension decides the artifact's media type).
-async fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
-    let name = Path::new(box_path)
-        .file_name()
-        .map_or_else(|| "file".into(), ToOwned::to_owned);
+/// Copy `bytes` into a folder of its own under `staging`, as `file` plus the
+/// box file's extension (which decides the artifact's media type). The name is
+/// generated, so a box name the host's filesystem rejects (`?` on Windows)
+/// still stages.
+///
+/// The folder is owned by the returned [`Staged`] from before it exists, and
+/// nothing here awaits, so a call cancelled at any point leaves no copy behind.
+fn stage(staging: &Path, box_path: &str, bytes: &[u8]) -> std::io::Result<Staged> {
+    let name = match Path::new(box_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| {
+            extension.len() <= 16 && extension.chars().all(|c| c.is_ascii_alphanumeric())
+        }) {
+        Some(extension) => format!("file.{extension}"),
+        None => "file".to_owned(),
+    };
     let dir = staging.join(uuid::Uuid::new_v4().simple().to_string());
-    tokio::fs::create_dir_all(&dir).await?;
-    let file = dir.join(name);
-    if let Err(error) = tokio::fs::write(&file, bytes).await {
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        return Err(error);
-    }
-    Ok(Staged { dir, file })
+    let staged = Staged {
+        file: dir.join(name),
+        dir,
+    };
+    std::fs::create_dir_all(&staged.dir)?;
+    std::fs::write(&staged.file, bytes)?;
+    Ok(staged)
 }
 
 #[cfg(test)]

@@ -419,11 +419,61 @@ async fn an_update_of_a_text_artifact_never_touches_a_box() {
 #[tokio::test]
 async fn a_staged_copy_is_removed_when_its_call_is_dropped_before_it_finishes() {
     let staging = tempfile::tempdir().unwrap();
-    let staged = stage(staging.path(), "out/a.pdf", b"bytes").await.unwrap();
+    let staged = stage(staging.path(), "out/a.pdf", b"bytes").unwrap();
     let dir = staged.dir.clone();
-    assert!(dir.join("a.pdf").is_file());
+    assert!(dir.join("file.pdf").is_file());
 
     drop(staged);
 
     assert!(!dir.exists());
+}
+
+#[tokio::test]
+async fn a_box_name_the_host_cannot_hold_still_stages_with_its_extension() {
+    let staging = tempfile::tempdir().unwrap();
+
+    let odd = stage(staging.path(), "out/re?port*.pdf", b"x").unwrap();
+    let no_extension = stage(staging.path(), "out/Makefile", b"x").unwrap();
+    let hostile = stage(staging.path(), "out/a.p?f", b"x").unwrap();
+
+    assert!(odd.file.ends_with("file.pdf"));
+    assert!(no_extension.file.ends_with("file"));
+    assert!(hostile.file.ends_with("file"));
+}
+
+/// A store that cannot be read.
+struct BrokenRecords;
+
+#[async_trait]
+impl RecordKinds for BrokenRecords {
+    async fn kind_of(&self, _id: &str) -> Result<Option<ArtifactKind>, String> {
+        Err("the store is down".into())
+    }
+}
+
+#[tokio::test]
+async fn an_update_whose_record_cannot_be_read_fails_instead_of_reading_the_host() {
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    );
+    let fixture = Fixture::new();
+    std::fs::write(fixture.action.join("a.pdf"), b"host bytes").unwrap();
+    let tool = fixture.update_tool(true, user("u1"));
+    let tool = BoxSourced {
+        kinds: KindSource::Record(Arc::new(BrokenRecords)),
+        ..tool
+    };
+
+    let result = tool
+        .execute(json!({"artifact_id": "a1", "path": "a.pdf"}))
+        .await
+        .unwrap();
+
+    assert!(result.is_error);
+    assert!(
+        result.output().contains("the store is down"),
+        "{}",
+        result.output()
+    );
+    assert!(fixture.driver.calls().is_empty(), "no box was touched");
 }

@@ -738,13 +738,30 @@ mod on_a_real_shell {
     fn a_file_replaced_between_chunks_fails_the_read() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.bin"), b"abcd").unwrap();
-        let identity = run_in(dir.path(), "stat -L -c '%d:%i:%Y' -- ./a.bin").0;
+        let identity = run_in(dir.path(), "stat -L -c '%d:%i:%y:%z' -- ./a.bin").0;
         let command = read_command("'./a.bin'", identity.trim(), 1, 4);
         assert_eq!(run_in(dir.path(), &command).0.trim(), encoded(b"abcd"));
 
         // Same length, new file: every size check would pass.
         std::fs::write(dir.path().join("new"), b"wxyz").unwrap();
         std::fs::rename(dir.path().join("new"), dir.path().join("a.bin")).unwrap();
+        let (_, stderr, code) = run_in(dir.path(), &command);
+
+        assert_eq!(code, 1);
+        assert!(stderr.contains("changed while it was read"), "{stderr}");
+    }
+
+    #[test]
+    fn a_file_rewritten_in_place_at_the_same_size_fails_the_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.bin"), b"abcd").unwrap();
+        let identity = run_in(dir.path(), "stat -L -c '%d:%i:%y:%z' -- ./a.bin").0;
+        let command = read_command("'./a.bin'", identity.trim(), 1, 4);
+        assert_eq!(run_in(dir.path(), &command).2, 0);
+
+        // The same inode, the same size and the same second.
+        std::thread::sleep(Duration::from_millis(30));
+        std::fs::write(dir.path().join("a.bin"), b"wxyz").unwrap();
         let (_, stderr, code) = run_in(dir.path(), &command);
 
         assert_eq!(code, 1);
