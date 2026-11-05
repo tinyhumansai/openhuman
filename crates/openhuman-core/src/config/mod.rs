@@ -45,9 +45,9 @@ pub(crate) use schema::set_cli_inference_overrides;
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, device_time_zone, normalize_time_zone,
-    output_language_directive, runtime_proxy_config, set_runtime_proxy_config, AgentConfig,
-    AuditConfig, AutonomyConfig, BrowserComputerUseConfig, BrowserConfig, BudgetAction,
-    BudgetPeriod, BudgetPolicy, BudgetScope, CapabilityProviderConfig,
+    output_language_directive, runtime_proxy_config, set_runtime_proxy_config,
+    Agent37RuntimeConfig, AgentConfig, AuditConfig, AutonomyConfig, BrowserComputerUseConfig,
+    BrowserConfig, BudgetAction, BudgetPeriod, BudgetPolicy, BudgetScope, CapabilityProviderConfig,
     CapabilityProviderTrustState, ChannelVoiceConfig, ChannelVoiceOverride, ChannelsConfig,
     CompactionSettings, CompactionStrategy, ComposioConfig, ComposioDirectBaseUrls,
     ComposioHostCredential, ComputerConfig, Config, ContextConfig, ContextSettings, CostConfig,

@@ -7,29 +7,63 @@
 //! agent37 rejects an inline image reference (for example the `alpine:3.20`
 //! Docker default) with an HTTP 400, so forwarding the Docker image could never
 //! create a box.
+//!
+//! CPU and memory are configured here too, rather than borrowed from
+//! `[runtime.docker]`. agent37 offers only fixed instance shapes — `(2, 4)`,
+//! `(4, 8)`, `(4, 16)` and `(4, 32)` vCPU/GB — and snaps a request up to the
+//! smallest shape that covers both bounds. These settings are therefore a
+//! request, not a hard ceiling, which is why the sandbox reports them as best
+//! effort. The defaults ask for agent37's smallest shape.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// One mebibyte, for converting [`Agent37RuntimeConfig::memory_mb`] to bytes.
+const MEBIBYTE: u64 = 1024 * 1024;
 
 /// The agent37 template a box starts from when none is configured. It is a
 /// template name the service already knows, not an OCI image reference.
 pub const DEFAULT_AGENT37_TEMPLATE: &str = "agent37-base";
 
-/// `[runtime.agent37]`: what each agent37 box is created from.
+/// Default CPU a box asks for, in thousandths of a core: 2 cores, the vCPU
+/// count of agent37's smallest instance shape.
+pub const DEFAULT_AGENT37_CPU_MILLIS: u32 = 2_000;
+
+/// Default memory a box asks for, in mebibytes: 4 GiB, the memory of agent37's
+/// smallest instance shape.
+pub const DEFAULT_AGENT37_MEMORY_MB: u64 = 4_096;
+
+/// `[runtime.agent37]`: what each agent37 box is created from and with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Agent37RuntimeConfig {
     /// The registered agent37 template name every box starts from. This names a
-    /// template the service hosts; it is not an OCI image reference, and CPU and
-    /// memory still come from `[runtime.docker]` (best effort — the service snaps
-    /// them to fixed instance shapes).
+    /// template the service hosts; it is not an OCI image reference.
     pub template: String,
+    /// CPU a box asks for, in thousandths of a core. agent37 offers only 2- or
+    /// 4-vCPU shapes and snaps the request up to one, so this is best effort,
+    /// not a hard ceiling.
+    pub cpu_millis: u32,
+    /// Memory a box asks for, in mebibytes. agent37 offers only fixed shapes
+    /// and snaps the request up to the smallest that covers it, so this is best
+    /// effort, not a hard ceiling.
+    pub memory_mb: u64,
+}
+
+impl Agent37RuntimeConfig {
+    /// [`Self::memory_mb`] in bytes, always a whole number of mebibytes, or
+    /// `None` when that many bytes does not fit in a `u64`.
+    pub fn memory_bytes(&self) -> Option<u64> {
+        self.memory_mb.checked_mul(MEBIBYTE)
+    }
 }
 
 impl Default for Agent37RuntimeConfig {
     fn default() -> Self {
         Self {
             template: DEFAULT_AGENT37_TEMPLATE.to_owned(),
+            cpu_millis: DEFAULT_AGENT37_CPU_MILLIS,
+            memory_mb: DEFAULT_AGENT37_MEMORY_MB,
         }
     }
 }

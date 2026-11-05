@@ -10,9 +10,10 @@
 //! OpenHuman only maps policy onto the create request and runs the command.
 //!
 //! Unlike OpenShell, which keeps one long-lived box per tenant, this backend
-//! currently creates a box per command and closes it afterwards. The box image
-//! and limits come from `[runtime.docker]`, which already describes the shell
-//! sandbox; network is always `Denied`, since widening egress is the service's
+//! currently creates a box per command and closes it afterwards. The box
+//! template, CPU and memory come from `[runtime.agent37]` (the service snaps
+//! CPU and memory up to a fixed instance shape, so they are best effort);
+//! network is always `Denied`, since widening egress is the service's
 //! decision, not this host's. The command is wrapped in `timeout` so the box
 //! stops it itself, exactly as the OpenShell backend does.
 
@@ -139,14 +140,14 @@ async fn run_command(
         resource: Some(resource.clone()),
     };
 
-    let docker = &config.runtime.docker;
+    // CPU and memory come from `[runtime.agent37]`, not `[runtime.docker]`: the
+    // service snaps them up to a fixed instance shape, so they are a request,
+    // not a ceiling. A memory size too large to express in bytes asks for the
+    // service's maximum (it snaps to the largest shape regardless).
+    let agent37 = &config.runtime.agent37;
     let resources = contract::ResourceLimits {
-        cpu_millis: docker
-            .cpu_limit
-            .map_or(1000, |cores| (cores * 1000.0).round() as u32),
-        memory_bytes: docker
-            .memory_limit_mb
-            .map_or(512 * 1024 * 1024, |mb| mb.saturating_mul(1024 * 1024)),
+        cpu_millis: agent37.cpu_millis,
+        memory_bytes: agent37.memory_bytes().unwrap_or(u64::MAX),
         ..contract::ResourceLimits::default()
     };
 
