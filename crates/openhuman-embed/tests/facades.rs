@@ -10,6 +10,7 @@ use openhuman_embed::artifacts::{
 use openhuman_embed::chat_surface::{
     publish_web_channel_event, subscribe_web_channel_events, WebChannelEvent, WebEventContext,
 };
+use openhuman_embed::sandbox::{read_file, write_file, BoxError, MAX_FILE_BYTES};
 use openhuman_embed::identity::{peek_credential_user_identity, UserIdentity};
 
 #[tokio::test]
@@ -165,4 +166,15 @@ fn the_bundled_releases_dir_is_set_once() {
     let second = std::path::PathBuf::from("/nonexistent/embed-facade-second");
     assert!(set_bundled_releases_dir(first).is_ok());
     assert_eq!(set_bundled_releases_dir(second.clone()), Err(second));
+}
+
+#[tokio::test]
+async fn sandbox_files_are_refused_without_a_tenant() {
+    let config = openhuman_embed::RuntimeConfig::default();
+
+    let wrote = write_file(Err(openhuman_embed::NoTenant), &config, "a.txt", b"x").await;
+    let read = read_file(Err(openhuman_embed::NoTenant), &config, "a.txt", MAX_FILE_BYTES).await;
+
+    assert_eq!(wrote, Err(BoxError::NoTenant));
+    assert_eq!(read, Err(BoxError::NoTenant));
 }
