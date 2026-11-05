@@ -602,7 +602,6 @@ mod on_a_real_shell {
 
     #[tokio::test]
     async fn each_write_stages_in_a_part_file_of_its_own() {
-        let (_root, _driver, boxes) = host_boxes();
         let driver = ScriptedDriver::new();
         let recorded = registry(&driver);
         for _ in 0..2 {
@@ -612,7 +611,6 @@ mod on_a_real_shell {
         }
         let sent = commands(&driver);
         assert_ne!(part_in(&sent[0]), part_in(&sent[1]));
-        drop(boxes);
     }
 
     #[tokio::test]
