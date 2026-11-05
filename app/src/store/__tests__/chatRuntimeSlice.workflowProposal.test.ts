@@ -7,12 +7,17 @@ import reducer, {
   type WorkflowProposal,
 } from '../chatRuntimeSlice';
 
-const proposal = (name: string, sourceMessageId?: string): WorkflowProposal => ({
+const proposal = (
+  name: string,
+  sourceMessageId?: string,
+  proposalId?: string
+): WorkflowProposal => ({
   name,
   graph: { nodes: [], edges: [] },
   requireApproval: true,
   summary: { trigger: 'manual', steps: [] },
   ...(sourceMessageId ? { sourceMessageId } : {}),
+  ...(proposalId ? { proposalId } : {}),
 });
 
 const withPending = (p: WorkflowProposal) =>
@@ -40,6 +45,19 @@ describe('markWorkflowProposalSaved', () => {
         flowId: 'f1',
         name: 'Digest',
         sourceMessageId: 'm1',
+      })
+    );
+    expect(state.pendingWorkflowProposalsByThread.t1?.savedFlowId).toBeUndefined();
+  });
+
+  it('leaves a same-named newer live proposal untouched', () => {
+    const state = reducer(
+      withPending(proposal('Digest', undefined, 'proposal-2')),
+      markWorkflowProposalSaved({
+        threadId: 't1',
+        flowId: 'f1',
+        name: 'Digest',
+        proposalId: 'proposal-1',
       })
     );
     expect(state.pendingWorkflowProposalsByThread.t1?.savedFlowId).toBeUndefined();
