@@ -182,7 +182,7 @@ async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
         .await
         .unwrap();
     assert_eq!(stored, bytes);
-    assert!(fixture.commands()[0].contains("'out/report.pdf'"));
+    assert!(fixture.commands()[0].contains("'./out/report.pdf'"));
     assert!(!fixture.action.join("out/report.pdf").exists());
     assert_eq!(fixture.staged_files(), 0, "the host copy is not kept");
 }
@@ -198,7 +198,7 @@ async fn a_path_inside_the_boxs_work_folder_is_read_by_its_relative_name() {
 
     created_id(&tool, file_args("/sandbox/out/report.pdf")).await;
 
-    assert!(fixture.commands()[0].contains("'out/report.pdf'"));
+    assert!(fixture.commands()[0].contains("'./out/report.pdf'"));
 }
 
 #[tokio::test]
