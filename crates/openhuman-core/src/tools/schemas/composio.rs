@@ -31,6 +31,10 @@ pub(super) fn handle_composio_execute(
         )
         .await
         .map_err(|e| format!("composio execute failed: {e}"))?;
+        // Strip the Composio keys before the result leaves over RPC, as the
+        // agent tools do with their results.
+        let resp =
+            crate::integrations::composio::tools::redact_composio_response(&config, resp).await?;
         tracing::debug!(
             action = %action,
             successful = resp.successful,

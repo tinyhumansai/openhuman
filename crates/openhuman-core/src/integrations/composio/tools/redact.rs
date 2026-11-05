@@ -3,6 +3,7 @@
 use tinytools::ToolResult;
 
 use crate::config::Config;
+use crate::integrations::composio::types::ComposioExecuteResponse;
 
 const MIN_SECRET_LEN: usize = 8;
 
@@ -87,6 +88,41 @@ async fn redact_known_secrets(config: &Config, rendered: &str) -> String {
     }
 }
 
+/// Withheld in place of anything the redactor could not clean.
+const WITHHELD: &str = "Composio result withheld by security redactor";
+
+/// `value` with every key in `secrets` removed, round-tripped through its JSON
+/// form. `Err` when the module cannot answer or the result no longer parses.
+async fn redact_serialized<T>(config: &Config, value: &T, secrets: &[String]) -> Result<T, ()>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let encoded = serde_json::to_string(value).map_err(|_| ())?;
+    let redacted = redact_exact(config, &encoded, secrets)
+        .await
+        .map_err(|_| ())?;
+    serde_json::from_str(&redacted).map_err(|_| ())
+}
+
+/// Redact an Execute response with the call's Composio keys before it leaves
+/// the host through an RPC or a flow, as the agent tools' results are. A
+/// module failure withholds it. With security disabled it is returned as is.
+pub(crate) async fn redact_composio_response(
+    config: &Config,
+    response: ComposioExecuteResponse,
+) -> Result<ComposioExecuteResponse, String> {
+    if crate::security::switch::disabled_for(Some(config)).is_some() {
+        return Ok(response);
+    }
+    let secrets = composio_secrets(config).await;
+    if secrets.is_empty() {
+        return Ok(response);
+    }
+    redact_serialized(config, &response, &secrets)
+        .await
+        .map_err(|()| WITHHELD.to_owned())
+}
+
 /// Redact a tool result or error with call-specific credentials before it
 /// reaches the model. A malformed result or module failure is withheld. With
 /// security disabled the outcome is returned unredacted.
@@ -102,15 +138,9 @@ pub(crate) async fn redact_composio_outcome(
         return outcome;
     }
     match outcome {
-        Ok(result) => {
-            let encoded = serde_json::to_string(&result)
-                .map_err(|_| anyhow::anyhow!("Composio result withheld by security redactor"))?;
-            let redacted = redact_exact(config, &encoded, &secrets)
-                .await
-                .map_err(|_| anyhow::anyhow!("Composio result withheld by security redactor"))?;
-            serde_json::from_str(&redacted)
-                .map_err(|_| anyhow::anyhow!("Composio result withheld by security redactor"))
-        }
+        Ok(result) => redact_serialized(config, &result, &secrets)
+            .await
+            .map_err(|()| anyhow::anyhow!(WITHHELD)),
         Err(error) => {
             let rendered = format!("{error:#}");
             match redact_exact(config, &rendered, &secrets).await {

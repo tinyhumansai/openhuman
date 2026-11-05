@@ -37,6 +37,9 @@ pub async fn composio_execute(
 
     match result {
         Ok(resp) => {
+            // The RPC result reaches the renderer and the RPC log: strip the
+            // Composio keys from it, as the agent tools do with their results.
+            let resp = super::super::tools::redact_composio_response(config, resp).await?;
             // Note that this is reached for a *refused* action too: the module
             // reports a provider's refusal as a successful reply carrying
             // `successful: false`. The event records what happened, not whether

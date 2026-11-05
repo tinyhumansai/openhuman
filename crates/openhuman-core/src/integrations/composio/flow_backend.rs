@@ -116,20 +116,29 @@ pub(crate) async fn invoke(
             tracing::debug!(target: "flows", %slug, mode = live.composio.mode.as_str(), "[flows] tool_call: no connection_ref — using the ambient signed-in account")
         }
     }
-    let response = execute_for_connection(
+    let executed = execute_for_connection(
         &live,
         slug,
         (!args.is_null()).then_some(args),
         connection_id,
     )
-    .await
-    .and_then(|result| {
-        crate::integrations::composio::flow_gate::reject_unsuccessful_composio_response(
-            slug, result,
-        )
-        .map_err(|error| error.to_string())
-    })
-    .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string()));
+    .await;
+    // The run output is stored and shown to the user: strip the Composio
+    // keys from it, as the agent tools do with their results.
+    let redacted = match executed {
+        Ok(result) => {
+            crate::integrations::composio::tools::redact_composio_response(&live, result).await
+        }
+        Err(error) => Err(error),
+    };
+    let response = redacted
+        .and_then(|result| {
+            crate::integrations::composio::flow_gate::reject_unsuccessful_composio_response(
+                slug, result,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string()));
     if let Some(audit_id) = audit_id {
         ctx.policy.record(&audit_id, &response);
     }
