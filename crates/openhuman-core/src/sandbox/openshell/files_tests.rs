@@ -50,7 +50,7 @@ fn part_in(command: &str) -> String {
     let name = command
         .match_indices(marker)
         .map(|(at, _)| at)
-        .find(|at| !command[at + marker.len()..].starts_with('*'))
+        .find(|at| !command[at + marker.len()..].starts_with('?'))
         .expect("a part file");
     let end = name + command[name..].find(".tmp'").expect("a part file") + ".tmp".len();
     let start = command[..end].rfind("'./").expect("a quoted path") + 1;
