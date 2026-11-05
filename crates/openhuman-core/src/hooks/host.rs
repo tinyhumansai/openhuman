@@ -10,6 +10,7 @@ use crate::core::runtime::DispatchCtx;
 use std::sync::{Arc, LazyLock};
 
 use async_trait::async_trait;
+use tinyagents_hooks::command::config::{HookKind, HookLayer};
 use tinyagents_hooks::command::{config, HookConfig, HookEngine, HookEnvironment, PromptEvaluator};
 
 /// Product name handed to the engine: `ProgramData\OpenHuman`,
@@ -44,6 +45,66 @@ pub fn engine() -> &'static Arc<HookEngine> {
     &ENGINE
 }
 
+/// Drop the command hooks this host will not run, with a warning naming each:
+///
+/// - Every project-layer command hook. `<action_dir>/.openhuman/hooks.json`
+///   is the least trusted layer (a cloned repository controls it), and a hook
+///   process cannot be isolated yet: the engine spawns it synchronously through
+///   [`super::shell::command`], and TinyBox's native jail does not run on Linux
+///   (TS-E2E-020). Until both change, such a hook does not run at all.
+/// - Any other command hook TinySecurity's command check refuses, the same
+///   check a scheduled shell job passes before it runs.
+///
+/// Prompt hooks spawn no process and are kept. A config that cannot be read
+/// drops every command hook rather than running one unchecked.
+async fn admit_command_hooks(ctx: &DispatchCtx, loaded: &mut HookConfig) {
+    let checker = ctx
+        .load_config()
+        .await
+        .map(|config| {
+            let security = crate::security::SecurityPolicy::from_config(
+                &config.autonomy,
+                &config.workspace_dir,
+                &config.action_dir,
+            );
+            (config, security)
+        })
+        .map_err(|error| error.to_string());
+    let mut refused = Vec::new();
+    for definitions in loaded.by_event.values_mut() {
+        let mut admitted = Vec::with_capacity(definitions.len());
+        for definition in std::mem::take(definitions) {
+            let refusal = if definition.kind != HookKind::Command {
+                None
+            } else if definition.layer == Some(HookLayer::Project) {
+                Some("project hooks need isolation, which is not available yet".to_owned())
+            } else {
+                match &checker {
+                    Ok((config, security)) => {
+                        crate::cron::scheduler::shell_job::authorize_shell_command(
+                            config,
+                            security,
+                            &definition.command,
+                        )
+                        .await
+                        .err()
+                    }
+                    Err(error) => Some(format!("cannot read config to check it: {error}")),
+                }
+            };
+            match refusal {
+                None => admitted.push(definition),
+                Some(reason) => refused.push(format!(
+                    "command hook {} disabled: {reason}",
+                    definition.label()
+                )),
+            }
+        }
+        *definitions = admitted;
+    }
+    loaded.warnings.extend(refused);
+}
+
 /// Re-read every `hooks.json` layer and install the result.
 ///
 /// The engine's own [`HookEngine::reload`] reuses the environment it was built
@@ -59,11 +120,12 @@ pub async fn reload(
     // caller is async, so the engine's synchronous shell factory can use it.
     super::shell::resolve(ctx).await;
     let current = environment();
-    let loaded = tokio::task::spawn_blocking(move || {
+    let mut loaded = tokio::task::spawn_blocking(move || {
         config::load(&current, project_dir.as_deref(), workspace_dir.as_deref())
     })
     .await
     .unwrap_or_default();
+    admit_command_hooks(ctx, &mut loaded).await;
     for warning in &loaded.warnings {
         log::warn!("[hooks] {warning}");
     }
