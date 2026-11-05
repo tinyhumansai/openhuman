@@ -34,7 +34,12 @@ use crate::sandbox::MAX_BOX_FILE_BYTES;
 pub(crate) trait BoxFiles: Send + Sync {
     /// Whether this call's sandbox keeps a box per tenant, so a file `path`
     /// names a file in it.
-    async fn keeps_boxes(&self) -> bool;
+    ///
+    /// # Errors
+    ///
+    /// When the configuration cannot be read: the call's source is then
+    /// unknown, and it must not fall back to reading the host's disk.
+    async fn keeps_boxes(&self) -> Result<bool, BoxError>;
 
     /// The file at `path` in `tenant`'s box.
     async fn read(
@@ -58,12 +63,12 @@ impl SandboxBoxFiles {
 
 #[async_trait]
 impl BoxFiles for SandboxBoxFiles {
-    async fn keeps_boxes(&self) -> bool {
-        match self.ctx.load_config().await {
-            Ok(config) => crate::sandbox::ops::sandbox_keeps_boxes(&self.ctx, &config),
-            // Without a configuration there is no sandbox to ask: read the host.
-            Err(_) => false,
-        }
+    async fn keeps_boxes(&self) -> Result<bool, BoxError> {
+        let config =
+            self.ctx.load_config().await.map_err(|error| {
+                BoxError::Driver(format!("cannot read the configuration: {error}"))
+            })?;
+        Ok(crate::sandbox::ops::sandbox_keeps_boxes(&self.ctx, &config))
     }
 
     async fn read(
@@ -126,21 +131,35 @@ impl BoxSourcedCreate {
     /// The file to read from the box, when this call is one that does: an
     /// `image` or `file` artifact, under a sandbox that keeps boxes. (A call
     /// the crate would reject is left to it.)
-    async fn box_file(&self, args: &Value) -> Option<String> {
-        let kind = ArtifactKind::parse(args.get("kind")?.as_str()?)?;
+    ///
+    /// # Errors
+    ///
+    /// When it cannot be told whether the sandbox keeps boxes.
+    async fn box_file(&self, args: &Value) -> Result<Option<String>, BoxError> {
+        let Some(kind) = args
+            .get("kind")
+            .and_then(Value::as_str)
+            .and_then(ArtifactKind::parse)
+        else {
+            return Ok(None);
+        };
         if !kind.holds_file() {
-            return None;
+            return Ok(None);
         }
         // The crate takes `body` as the path too, for callers that predate `path`.
         let path = ["path", "body"]
             .iter()
             .filter_map(|key| args.get(key).and_then(Value::as_str))
             .map(str::trim)
-            .find(|path| !path.is_empty())?;
-        self.boxes
+            .find(|path| !path.is_empty());
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        Ok(self
+            .boxes
             .keeps_boxes()
-            .await
-            .then(|| box_path(path).to_owned())
+            .await?
+            .then(|| box_path(path).to_owned()))
     }
 }
 
@@ -167,8 +186,10 @@ impl Tool for BoxSourcedCreate {
     }
 
     async fn execute(&self, mut args: Value) -> anyhow::Result<ToolResult> {
-        let Some(path) = self.box_file(&args).await else {
-            return self.inner.execute(args).await;
+        let path = match self.box_file(&args).await {
+            Ok(Some(path)) => path,
+            Ok(None) => return self.inner.execute(args).await,
+            Err(error) => return Ok(ToolResult::error(error.to_string())),
         };
         let bytes = match self
             .boxes
