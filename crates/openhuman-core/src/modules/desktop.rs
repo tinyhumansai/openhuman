@@ -92,7 +92,10 @@ pub(crate) async fn proxy(config: &Config) -> Result<Proxy, String> {
         .map_err(|error| format!("TinyComputer module proxy unavailable: {error}"))
 }
 
-fn inject_security_browser_config(
+/// Add the security callbacks to TinyComputer's config. The callback-bound
+/// load and every refresh in [`proxy`] go through here, so both produce the
+/// same bytes and TinyBus accepts the refresh.
+pub(super) fn inject_security_browser_config(
     configuration: &mut serde_json::Value,
     egress: serde_json::Value,
     callback_destination: &str,

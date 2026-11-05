@@ -359,9 +359,24 @@ async fn module_config_with_consequence_callback(
     id: &str,
     binding: &tinybus::module::HostCallbackBinding,
 ) -> serde_json::Value {
+    computer_callback_config(config, id, binding.unique_name().as_str()).await
+}
+
+/// TinyComputer's config at its callback-bound load: exactly what
+/// `desktop::proxy` pushes before each call, since TinyBus refuses a
+/// callback-bound module any config that differs from the one it loaded with.
+#[cfg(feature = "security-module")]
+pub(super) async fn computer_callback_config(
+    config: &Config,
+    id: &str,
+    callback_destination: &str,
+) -> serde_json::Value {
     let mut module_config = module_config(config, id).await;
-    module_config["consequence_host"] =
-        serde_json::json!({ "destination": binding.unique_name().as_str() });
+    super::desktop::inject_security_browser_config(
+        &mut module_config,
+        super::browser_egress_host::browser_dial_alias(),
+        callback_destination,
+    );
     module_config
 }
 

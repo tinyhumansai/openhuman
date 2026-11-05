@@ -192,3 +192,25 @@ fn registry_and_contract_address_agree() {
     assert_eq!(record.bus_name, names::INTERFACE);
     assert_eq!(record.object_path, names::OBJECT_PATH);
 }
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn the_callback_bound_load_config_is_what_every_refresh_pushes() {
+    // TS-E2E-010: TinyBus fixes a callback-bound module's config at load and
+    // refuses a refresh with different bytes ("scoped callback configuration is
+    // immutable"), so the load config must already carry `browser.egress`.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = config_in(dir.path());
+    let loaded = crate::modules::ops::computer_callback_config(&config, MODULE_ID, ":1.42").await;
+
+    let mut refreshed = module_config(&config).await;
+    inject_security_browser_config(
+        &mut refreshed,
+        crate::modules::browser_egress_host::browser_dial_alias(),
+        ":1.42",
+    );
+
+    assert_eq!(loaded, refreshed);
+    assert_eq!(fingerprint(&loaded), fingerprint(&refreshed));
+    assert!(loaded["browser"]["egress"].is_object());
+}
