@@ -28,6 +28,25 @@ pub(super) fn should_fallback_to_encrypted_document(error: &anyhow::Error) -> bo
 }
 
 use super::{AuthProfile, AuthProfilesStore, KeychainSecrets};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+/// Profile secrets this process has already read from or written to the
+/// keyring, by profile store and keyring name. Every keyring read asks the
+/// user, and the auth state is read on every poll, so without this each poll
+/// would prompt again. Held in memory only; a write or delete drops the entry,
+/// and a refused or failed read never fills one.
+// ponytail: another process changing the same keyring entry is not seen until
+// this one restarts; the desktop core is the only writer of its profiles.
+static READ_CACHE: OnceLock<Mutex<HashMap<(PathBuf, String), KeychainSecrets>>> = OnceLock::new();
+
+fn read_cache() -> MutexGuard<'static, HashMap<(PathBuf, String), KeychainSecrets>> {
+    READ_CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 impl AuthProfilesStore {
     /// Build a keychain key for an auth profile's combined secret payload.
@@ -41,21 +60,30 @@ impl AuthProfilesStore {
     /// keychain entry holds all token fields for the profile.
     pub(super) async fn keychain_store_secrets(&self, profile: &AuthProfile) -> anyhow::Result<()> {
         let key = self.keychain_key_for_profile(&profile.id);
-        let secrets = serde_json::json!({
-            "token": profile.token,
-            "access_token": profile.token_set.as_ref().map(|ts| &ts.access_token),
-            "refresh_token": profile.token_set.as_ref().and_then(|ts| ts.refresh_token.as_deref()),
-            "id_token": profile.token_set.as_ref().and_then(|ts| ts.id_token.as_deref()),
-        });
+        let secrets = KeychainSecrets {
+            token: profile.token.clone(),
+            access_token: profile.token_set.as_ref().map(|ts| ts.access_token.clone()),
+            refresh_token: profile
+                .token_set
+                .as_ref()
+                .and_then(|ts| ts.refresh_token.clone()),
+            id_token: profile
+                .token_set
+                .as_ref()
+                .and_then(|ts| ts.id_token.clone()),
+        };
         let payload = serde_json::to_string(&secrets)
             .context("Failed to serialize auth secrets for keychain")?;
         let name = self.keyring_name(&key);
+        let cache_key = self.read_cache_key(&name);
+        read_cache().remove(&cache_key);
         self.keyring_operation(tinysecurity_bus::KeyringOperation2::Set {
             name,
             value: payload.into_bytes(),
         })
         .await
         .with_context(|| format!("TinySecurity keyring set failed for profile {}", profile.id))?;
+        read_cache().insert(cache_key, secrets);
         log::debug!(
             "[auth] keychain_store_secrets stored profile_id={} user_id={}",
             profile.id,
@@ -74,6 +102,14 @@ impl AuthProfilesStore {
     ) -> anyhow::Result<Option<KeychainSecrets>> {
         let key = self.keychain_key_for_profile(profile_id);
         let name = self.keyring_name(&key);
+        let cache_key = self.read_cache_key(&name);
+        if let Some(secrets) = read_cache().get(&cache_key).cloned() {
+            log::debug!(
+                "[auth] keychain_load_secrets cached profile_id={profile_id} user_id={}",
+                self.user_id
+            );
+            return Ok(Some(secrets));
+        }
         let response = self
             .keyring_operation(tinysecurity_bus::KeyringOperation2::Get { name: name.clone() })
             .await
@@ -98,6 +134,7 @@ impl AuthProfilesStore {
             "[auth] keychain_load_secrets hit profile_id={profile_id} user_id={}",
             self.user_id
         );
+        read_cache().insert(cache_key, secrets.clone());
         Ok(Some(secrets))
     }
 
@@ -105,6 +142,7 @@ impl AuthProfilesStore {
     pub(super) async fn keychain_delete_secrets(&self, profile_id: &str) -> anyhow::Result<()> {
         let key = self.keychain_key_for_profile(profile_id);
         let name = self.keyring_name(&key);
+        read_cache().remove(&self.read_cache_key(&name));
         if let Err(e) = self
             .keyring_operation(tinysecurity_bus::KeyringOperation2::Delete { name })
             .await
@@ -121,6 +159,10 @@ impl AuthProfilesStore {
             );
         }
         Ok(())
+    }
+
+    fn read_cache_key(&self, name: &str) -> (PathBuf, String) {
+        (self.path.clone(), name.to_owned())
     }
 
     fn keyring_name(&self, logical_key: &str) -> String {
@@ -189,3 +231,7 @@ impl AuthProfilesStore {
 pub(crate) fn namespaced_keyring_name(user_id: &str, logical_key: &str) -> String {
     format!("{user_id}:{logical_key}")
 }
+
+#[cfg(test)]
+#[path = "keychain_tests.rs"]
+mod tests;
