@@ -200,10 +200,9 @@ fn agent_paths_payload(config: &Config) -> serde_json::Value {
 }
 
 /// Validate a user-chosen files folder (#5505) and create it. Fail-closed:
-/// the path must be absolute, not an existing file, not a protected location
-/// (credential stores, OS directories), and not inside the OpenHuman data
-/// directory — the point of the folder is that the user can see it, and the
-/// data dir holds internal state.
+/// the path must be absolute, not an existing file, and pass
+/// [`refuse_protected_folder`] — the point of the folder is that the user can
+/// see it, and the data dir holds internal state.
 async fn validate_files_dir(raw: &str, config: &Config) -> Result<PathBuf, String> {
     let expanded = expand_tilde(raw);
     let candidate = PathBuf::from(&expanded);
@@ -217,24 +216,44 @@ async fn validate_files_dir(raw: &str, config: &Config) -> Result<PathBuf, Strin
             "files_dir must be a folder, not a file: {expanded}"
         ));
     }
-    if crate::security::SecurityPolicy::is_always_forbidden_async(&candidate).await {
+    refuse_protected_folder("files_dir", &candidate, &expanded, config).await?;
+    tokio::fs::create_dir_all(&candidate)
+        .await
+        .map_err(|e| format!("failed to create files_dir {expanded}: {e}"))?;
+    Ok(candidate)
+}
+
+/// Refuse a user-chosen agent folder (`kind` is `files_dir` or `action_dir`)
+/// that is a protected location (credential stores, OS directories) or sits
+/// inside the OpenHuman data directory. TinySecurity's floor is lexical, so it
+/// is asked about the path as given and about its resolved form: a symlink
+/// into `~/.ssh` is refused like `~/.ssh` itself.
+async fn refuse_protected_folder(
+    kind: &str,
+    candidate: &Path,
+    expanded: &str,
+    config: &Config,
+) -> Result<(), String> {
+    let resolved = canonical_prefix(candidate);
+    if crate::security::SecurityPolicy::is_always_forbidden_async(candidate).await
+        || crate::security::SecurityPolicy::is_always_forbidden_async(&resolved).await
+    {
+        log::debug!("[config][agent_paths] {kind} refused: protected location");
         return Err(format!(
-            "files_dir cannot be a protected system or credential folder: {expanded}"
+            "{kind} cannot be a protected system or credential folder: {expanded}"
         ));
     }
     let mut internal = vec![config.workspace_dir.clone()];
     if let Ok(root) = crate::config::default_root_openhuman_dir() {
         internal.push(root);
     }
-    if internal.iter().any(|dir| path_within(&candidate, dir)) {
+    if internal.iter().any(|dir| path_within(candidate, dir)) {
+        log::debug!("[config][agent_paths] {kind} refused: inside the data folder");
         return Err(format!(
-            "files_dir must not be inside the OpenHuman data folder: {expanded}"
+            "{kind} must not be inside the OpenHuman data folder: {expanded}"
         ));
     }
-    tokio::fs::create_dir_all(&candidate)
-        .await
-        .map_err(|e| format!("failed to create files_dir {expanded}: {e}"))?;
-    Ok(candidate)
+    Ok(())
 }
 
 /// `path` equals or sits under `dir`, comparing canonical forms so a
@@ -265,9 +284,11 @@ pub(crate) fn canonical_prefix(path: &Path) -> PathBuf {
 /// Applies an edit to the agent's `action_dir` sandbox root.
 ///
 /// Validation (fail-closed): the path is trimmed and `~`-expanded; it must be
-/// **absolute**; it must not be an existing *file*; and it must not equal
+/// **absolute**; it must not be an existing *file*; it must not equal
 /// `workspace_dir` (which holds memory DBs / tokens and must never become the
-/// agent-writable root). A missing directory is auto-created (mirroring the
+/// agent-writable root); and it must pass [`refuse_protected_folder`] (no
+/// credential store or OS directory, even through a symlink, and nothing inside
+/// the OpenHuman data folder). A missing directory is auto-created (mirroring the
 /// startup auto-create in `channels/runtime/startup.rs`). An empty input clears
 /// the override and reverts `action_dir` to the default.
 ///
@@ -316,6 +337,8 @@ pub async fn apply_agent_paths_settings(
                     "action_dir must not equal the internal workspace directory".to_string()
                 );
             }
+
+            refuse_protected_folder("action_dir", &candidate, &expanded, config).await?;
 
             if !candidate.exists() {
                 tokio::fs::create_dir_all(&candidate)
