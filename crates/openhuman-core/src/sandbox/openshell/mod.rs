@@ -18,6 +18,10 @@
 //!   variables the request carries. A box that does not answer shortly after
 //!   the deadline is closed and the command reported as timed out.
 //!
+//! - **Files cross over commands too.** [`write_file`] and [`read_file`] move a
+//!   file between the host and a tenant's box with plain `exec`s (base64 in
+//!   chunks), relative to the work folder.
+//!
 //! [`BoxDriver`] is the seam: [`BusBoxDriver`] reaches the TinyBox module
 //! (behind the `modules` feature); tests use a scripted stand-in. The process
 //! holds one registry, built from the config of the first command that needs
