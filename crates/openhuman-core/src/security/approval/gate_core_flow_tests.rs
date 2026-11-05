@@ -226,8 +226,9 @@ async fn durable_tool_trust_skips_prompt() {
 /// "Always allow" on a parked `create_workflow` round-trips: the decided row is
 /// persisted to `autonomy.auto_approve` (what `approval::rpc::approval_decide`
 /// does for `ApproveAlwaysForTool`; the RPC itself reads the process-wide gate,
-/// which tests must not install), and the next `create_workflow` is allowed
-/// without a second prompt.
+/// which tests must not install), the engine imports it as a tool grant, and
+/// the next `create_workflow` is allowed without a second prompt.
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn approve_always_for_create_workflow_persists_and_skips_the_next_prompt() {
     let (gate, dir) = test_gate();

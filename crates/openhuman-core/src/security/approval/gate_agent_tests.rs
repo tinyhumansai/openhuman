@@ -82,6 +82,10 @@ async fn the_gate_off_switch_still_refuses_an_unlabelled_origin() {
     );
 }
 
+/// A legacy `auto_approve` entry is imported once as a module tool grant, as
+/// the native engine does. Once that grant is revoked, the stale list entry
+/// does not bring it back, and another agent never inherits it.
+#[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn legacy_auto_approve_lists_are_not_replayed_as_module_grants() {
     let (gate, _dir) = test_gate();
@@ -96,6 +100,22 @@ async fn legacy_auto_approve_lists_are_not_replayed_as_module_grants() {
         ..SecurityPolicy::default()
     };
 
+    let imported = gated_call(
+        &gate,
+        agent_ctx("listed", Some(listed.clone()), false),
+        web_origin(),
+        "shell",
+    )
+    .await;
+    assert!(
+        matches!(imported, Some(GateOutcome::Allow)),
+        "the first sight of a listed tool imports it as a grant: {imported:?}"
+    );
+    let seen = stub_of(&gate).seen();
+    assert!(seen[0].posture.auto_approve_all == false);
+    assert_eq!(seen[0].legacy_tool_grants, ["shell"]);
+
+    stub_of(&gate).revoke_tool_grant(&seen[0].tenant, seen[0].variant, "shell");
     let configured = gated_call(
         &gate,
         agent_ctx("listed", Some(listed), false),
@@ -107,9 +127,6 @@ async fn legacy_auto_approve_lists_are_not_replayed_as_module_grants() {
         !matches!(configured, Some(GateOutcome::Allow)),
         "legacy config must not resurrect a revoked durable grant: {configured:?}"
     );
-    let seen = stub_of(&gate).seen();
-    assert!(seen[0].posture.auto_approve_all == false);
-    assert_eq!(seen[0].legacy_tool_grants, ["shell"]);
 
     let unconfigured = gated_call(
         &gate,

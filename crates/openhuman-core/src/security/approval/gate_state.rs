@@ -197,8 +197,9 @@ impl ApprovalGate {
             }
         }
         // `ApproveAlwaysForTool` persistence is handled by the `approval_decide`
-        // RPC handler after this call has been released. The module records the
-        // whole-tool grant under the parked request's exact subject.
+        // RPC handler after this call has been released: it saves the tool to
+        // `autonomy.auto_approve`, which the native engine imports as a grant
+        // on the next check.
         if let Some(tx) = self.parked.take_waiter(request_id) {
             let _ = tx.send(decision);
         }

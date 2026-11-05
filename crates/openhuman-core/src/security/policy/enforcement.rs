@@ -244,8 +244,9 @@ impl SecurityPolicy {
         }
 
         // `auto_approve` is the user's "Always allow" allowlist: the
-        // `ApprovalGate` reads it via `live_policy::current()` and skips the
-        // interactive prompt for any tool named in it. Tier + `CommandClass`
+        // `ApprovalGate` hands it (via `live_policy`) to the native engine,
+        // which imports each tool once as a TinySecurity grant that skips the
+        // interactive prompt. Tier + `CommandClass`
         // (and the unconditional read-only / forbidden-path / high-risk denials)
         // still run *before* the gate, so the allowlist can only suppress the
         // human prompt — it can never override a hard policy denial.

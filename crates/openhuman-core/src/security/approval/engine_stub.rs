@@ -5,10 +5,12 @@
 //! It keeps the lifecycle the module defines in memory: a request is pending, a
 //! person approves or denies it, an approval is reserved once and its outcome
 //! recorded, a request past its window expires. It applies the user's posture the
-//! way the module does (auto-approve everything, a tool grant, a flow grant) and
-//! records what the gate asked, so a test can pin what was sent. It is not the
-//! module: what the module itself answers is pinned by the module-backed tests
-//! in `native/engine_tests.rs`.
+//! way the module does (auto-approve everything, a tool grant, a flow grant),
+//! imports the legacy `auto_approve` list once as tool grants as the native
+//! engine does, and records what the gate asked, so a test can pin what was
+//! sent. It is not the module: the module-backed tests in
+//! `native/engine_tests.rs` are not compiled today, so nothing here is checked
+//! against the module's own answers.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -76,6 +78,9 @@ pub(crate) struct StubEngine {
     trust: Mutex<std::collections::BTreeSet<(String, String)>>,
     /// Durable whole-tool trust keyed by the exact tenant and posture variant.
     tool_trust: Mutex<HashSet<(Tenant, Variant, String)>>,
+    /// Legacy `auto_approve` entries already imported, per tenant. The module
+    /// answers a repeat import as already done, so a revoked grant stays revoked.
+    imported: Mutex<HashSet<(Tenant, String)>>,
 }
 
 impl std::fmt::Debug for StubEngine {
@@ -131,6 +136,15 @@ impl StubEngine {
             rows.iter().map(|(id, row)| (id, row.created_ms)).collect();
         ids.sort_by_key(|(_, created)| *created);
         ids.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Revoke a durable tool grant, as a person does in the trust settings. The
+    /// tool stays imported: a later check does not grant it again.
+    pub(crate) fn revoke_tool_grant(&self, tenant: &Tenant, variant: Variant, tool: &str) {
+        self.tool_trust
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(tenant.clone(), variant, tool.to_owned()));
     }
 
     /// Make every later `check` fail, as a module that cannot answer does.
@@ -236,6 +250,22 @@ impl ApprovalEngine for StubEngine {
             });
         if self.refuse.load(Ordering::SeqCst) {
             return Err(EngineError::Unavailable("the stub engine refuses".into()));
+        }
+        // As `NativeEngine::check`: the legacy list becomes durable tool trust
+        // the first time each tool is seen (ImportTrustSource2), outside SaaS
+        // and for the standard posture only.
+        #[cfg(feature = "legacy-import")]
+        if !crate::core::runtime::is_saas() && input.variant == Variant::Standard {
+            let mut imported = self.imported.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut trust = self
+                .tool_trust
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for tool in &input.legacy_tool_grants {
+                if imported.insert((input.tenant.clone(), tool.clone())) {
+                    trust.insert((input.tenant.clone(), Variant::Standard, tool.clone()));
+                }
+            }
         }
         let trusted_tool = self
             .tool_trust
