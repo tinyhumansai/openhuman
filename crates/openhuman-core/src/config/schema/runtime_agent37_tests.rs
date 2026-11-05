@@ -57,3 +57,26 @@ fn memory_bytes_is_none_when_it_overflows_u64() {
     };
     assert_eq!(config.memory_bytes(), None);
 }
+
+#[test]
+fn only_a_request_above_the_largest_shape_exceeds_it() {
+    let at_the_limit = Agent37RuntimeConfig {
+        cpu_millis: MAX_AGENT37_CPU_MILLIS,
+        memory_mb: MAX_AGENT37_MEMORY_MB,
+        ..Agent37RuntimeConfig::default()
+    };
+    assert!(!Agent37RuntimeConfig::default().exceeds_largest_shape());
+    assert!(!at_the_limit.exceeds_largest_shape());
+
+    let too_much_cpu = Agent37RuntimeConfig {
+        cpu_millis: MAX_AGENT37_CPU_MILLIS + 1,
+        ..at_the_limit.clone()
+    };
+    assert!(too_much_cpu.exceeds_largest_shape());
+
+    let too_much_memory = Agent37RuntimeConfig {
+        memory_mb: MAX_AGENT37_MEMORY_MB + 1,
+        ..at_the_limit
+    };
+    assert!(too_much_memory.exceeds_largest_shape());
+}
