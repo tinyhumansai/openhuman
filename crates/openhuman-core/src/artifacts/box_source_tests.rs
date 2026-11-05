@@ -253,10 +253,11 @@ async fn an_unreadable_configuration_is_a_tool_error_and_never_reads_the_host() 
 
     let result = tool.execute(file_args("report.pdf")).await.unwrap();
 
-    assert!(result.is_error, "{result:?}");
+    assert!(result.is_error);
     assert!(
-        result.content.contains("cannot read the configuration"),
-        "{result:?}"
+        result.output().contains("cannot read the configuration"),
+        "{}",
+        result.output()
     );
     assert!(fixture.driver.calls().is_empty(), "no box was touched");
 }
