@@ -411,6 +411,121 @@ async fn a_missing_artifact_is_an_error() {
 }
 
 #[cfg(feature = "security-module")]
+/// Files a `text` artifact titled `title` through the service and returns the
+/// visible file's name and the card's `path`.
+async fn file_text_titled(
+    workspace: &std::path::Path,
+    files: &std::path::Path,
+    title: &str,
+) -> (String, String) {
+    let ctx = crate::core::runtime::DispatchCtx::process_default();
+    let artifacts = artifacts_service(workspace, FileRoots::new(files), None, None, &ctx);
+    let saved = artifacts
+        .create(
+            ArtifactKind::Text,
+            title,
+            Content::Text("a,b\n1,2\n".into()),
+            &Author::agent("agent"),
+            None,
+        )
+        .await
+        .unwrap();
+    let meta = super::super::store::get_artifact(workspace, &saved.record.id)
+        .await
+        .unwrap();
+    let on_disk = std::path::Path::new(meta.file.as_deref().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(files.join(&on_disk).is_file(), "{on_disk} is in Files");
+    (on_disk, meta.path)
+}
+
+#[tokio::test]
+async fn a_text_artifact_titled_like_a_csv_keeps_its_csv_name_and_type() {
+    let (workspace, files) = temp_dirs();
+    let (name, path) = file_text_titled(&workspace, &files, "Quarterly Numbers.csv").await;
+    assert_eq!((name.as_str(), path.as_str()), ("quarterly-numbers.csv", "quarterly-numbers.csv"));
+}
+
+#[tokio::test]
+async fn a_text_artifact_titled_like_a_calendar_invite_keeps_its_ics_name() {
+    let (workspace, files) = temp_dirs();
+    let (name, _) = file_text_titled(&workspace, &files, "Dinner-Friday.ICS").await;
+    assert_eq!(name, "dinner-friday.ics");
+}
+
+#[tokio::test]
+async fn a_title_that_names_its_own_txt_extension_is_not_mangled() {
+    let (workspace, files) = temp_dirs();
+    let (name, _) = file_text_titled(&workspace, &files, "wifi-note.txt").await;
+    assert_eq!(name, "wifi-note.txt");
+}
+
+#[tokio::test]
+async fn repeating_a_title_keeps_the_extension_on_the_numbered_name() {
+    let (workspace, files) = temp_dirs();
+    let first = file_text_titled(&workspace, &files, "packing.txt").await.0;
+    let second = file_text_titled(&workspace, &files, "packing.txt").await.0;
+    assert_eq!((first.as_str(), second.as_str()), ("packing.txt", "packing (2).txt"));
+    let first = file_text_titled(&workspace, &files, "rows.csv").await.0;
+    let second = file_text_titled(&workspace, &files, "rows.csv").await.0;
+    assert_eq!((first.as_str(), second.as_str()), ("rows.csv", "rows (2).csv"));
+}
+
+#[tokio::test]
+async fn a_text_artifact_with_no_extension_in_its_title_stays_txt() {
+    let (workspace, files) = temp_dirs();
+    let (name, _) = file_text_titled(&workspace, &files, "Grocery list").await;
+    assert_eq!(name, "grocery-list.txt");
+    let (name, _) = file_text_titled(&workspace, &files, "v1.2 notes").await;
+    assert_eq!(name, "v1-2-notes.txt");
+}
+
+#[tokio::test]
+async fn a_text_title_cannot_choose_an_active_or_executable_extension() {
+    let (workspace, files) = temp_dirs();
+    for (title, expected) in [
+        ("invoice.exe", "invoice-exe.txt"),
+        ("x.html", "x-html.txt"),
+        ("pic.svg", "pic-svg.txt"),
+        ("run.sh", "run-sh.txt"),
+        ("page.htm", "page-htm.txt"),
+        ("notes.md", "notes-md.txt"),
+        ("a.csv.exe", "a-csv-exe.txt"),
+    ] {
+        let (name, _) = file_text_titled(&workspace, &files, title).await;
+        assert_eq!(name, expected, "title {title:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_text_title_with_path_separators_stays_inside_the_files_folder() {
+    let (workspace, files) = temp_dirs();
+    for (title, expected) in [
+        ("../../etc/passwd.csv", "etc-passwd.csv"),
+        ("..\\..\\evil.ics", "evil.ics"),
+        ("/abs/path.json", "abs-path.json"),
+        (".csv", "artifact.csv"),
+        ("...", "artifact.txt"),
+    ] {
+        let (name, _) = file_text_titled(&workspace, &files, title).await;
+        assert_eq!(name, expected, "title {title:?}");
+        assert!(files.join(&name).parent() == Some(files.as_path()));
+    }
+}
+
+#[test]
+fn only_inert_text_formats_are_recognised_from_a_title() {
+    for ext in ["csv", "tsv", "ics", "vcf", "json", "txt", "yaml", "log"] {
+        assert_eq!(text_extension_of_title(&format!("f.{ext}")), Some(ext));
+    }
+    for title in ["f.html", "f.svg", "f.xml", "f.js", "f.exe", "f.pdf", "f", "f.", "csv"] {
+        assert_eq!(text_extension_of_title(title), None, "{title}");
+    }
+}
+
 #[tokio::test]
 async fn an_image_filed_through_the_service_gets_a_card_and_a_copy_in_files() {
     let _floor = crate::modules::security::gap::install_path_floor_port(
