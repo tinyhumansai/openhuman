@@ -34,6 +34,10 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
+On Windows, the installer adds OpenHuman's install directory to your user
+`PATH`. Open a new PowerShell or Windows Terminal session before running
+`OpenHuman`.
+
 What it installs:
 
 - macOS: the `.dmg` (or the `.app.tar.gz` on Intel).
@@ -56,3 +60,15 @@ A Homebrew cask also exists (`brew install --cask openhuman`). It can lag a rele
 ## Troubleshooting
 
 The AppImage can crash on launch under Wayland, miss host libraries such as `libgbm.so.1`, or fail on Arch-based distros with `sharun: Interpreter not found!`. See [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and workarounds. On Debian and Ubuntu, the `.deb` avoids these problems because apt resolves the dependencies.
+
+If a PowerShell profile does not exist yet, create it and its parent directory
+before opening it in an editor:
+
+```powershell
+$profileDirectory = Split-Path -Parent $PROFILE
+New-Item -ItemType Directory -Force -Path $profileDirectory | Out-Null
+if (-not (Test-Path -LiteralPath $PROFILE)) {
+  New-Item -ItemType File -Force -Path $PROFILE | Out-Null
+}
+notepad $PROFILE
+```
