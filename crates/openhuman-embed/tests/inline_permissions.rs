@@ -3,8 +3,8 @@
 mod common;
 
 use common::{
-    chat_completion, offline_config, route, runtime, scripted_provider, stub_backend,
-    tool_call_completion,
+    chat_completion, chat_requests, offline_config, route, runtime, scripted_provider,
+    stub_backend, tool_call_completion, tool_results,
 };
 use openhuman_embed::seams::{ToolHookContext, ToolHookDecision};
 use openhuman_embed::{
@@ -233,6 +233,54 @@ async fn scenario() {
         repeated_permissions(&runtime),
     )
     .await;
+    within(
+        "the plain-denial scenario",
+        plain_denial_is_answered_to_the_model(&runtime),
+    )
+    .await;
+}
+
+/// A `Deny` without `continue_ = Some(false)` does not end the turn: the tool
+/// never runs, the model is told why, and it answers on its own.
+async fn plain_denial_is_answered_to_the_model(runtime: &Runtime) {
+    let provider = scripted_provider(vec![tool_call_completion("probe", "{}")], "answered").await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let tool_calls = calls.clone();
+    let agent = runtime
+        .agent(
+            AgentSpec::new("plain-denial")
+                .provider(route(&provider, "fixture"))
+                .definition(
+                    AgentDefinitionSpec::new()
+                        .bare_prompt("Use probe then answer")
+                        .tools(ToolScopeSpec::HostOnly),
+                )
+                .tools(move |_| {
+                    let tool_calls = tool_calls.clone();
+                    Box::pin(
+                        async move { HostTurnTools::advertised(vec![Box::new(Probe(tool_calls))]) },
+                    )
+                })
+                .can_use_tool(|_| Box::pin(async { ToolHookDecision::deny("plain refusal") })),
+        )
+        .unwrap();
+    within(
+        "the plain-denial turn to finish",
+        agent.run("perform probe"),
+    )
+    .await
+    .expect("a plain denial is answered to the model, not fatal to the turn");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "a denied tool ran");
+    let requests = chat_requests(&provider).await;
+    assert_eq!(
+        requests.len(),
+        2,
+        "the model was not asked again after the denial"
+    );
+    assert!(
+        tool_results(&requests[1]).contains("plain refusal"),
+        "the model was not told why the tool was refused"
+    );
 }
 
 async fn repeated_permissions(runtime: &Runtime) {
