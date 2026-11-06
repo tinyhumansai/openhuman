@@ -32,6 +32,17 @@ function rpcResponder(responses: Record<string, unknown>): BootCheckTransport['c
   }) as BootCheckTransport['callRpc'];
 }
 
+/**
+ * `openhuman.service_status` as the core sends it: a `ServiceStatus` inside
+ * the `{ result, logs }` envelope (the op always logs).
+ */
+function serviceStatus(state: unknown) {
+  return {
+    result: { state, unit_path: null, label: 'openhuman', details: null },
+    logs: ['service status fetched'],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Local mode tests
 // ---------------------------------------------------------------------------
@@ -43,7 +54,7 @@ describe('runBootCheck — local mode', () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.service_status': serviceStatus('NotInstalled'),
         'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
@@ -52,13 +63,13 @@ describe('runBootCheck — local mode', () => {
     expect(result).toEqual({ kind: 'match' });
   });
 
-  it('returns daemonDetected when service_status shows installed=true', async () => {
+  it('returns daemonDetected when service_status reports an installed, stopped service', async () => {
     const appVersion = (await import('../../utils/config')).APP_VERSION;
 
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: true, running: false },
+        'openhuman.service_status': serviceStatus('Stopped'),
         'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
@@ -67,11 +78,11 @@ describe('runBootCheck — local mode', () => {
     expect(result).toEqual({ kind: 'daemonDetected' });
   });
 
-  it('returns daemonDetected when service_status shows running=true', async () => {
+  it('returns daemonDetected when service_status reports a running service', async () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: true },
+        'openhuman.service_status': serviceStatus('Running'),
         'openhuman.update_version': { result: { version: 'x' } },
       }),
     });
@@ -84,7 +95,7 @@ describe('runBootCheck — local mode', () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.service_status': serviceStatus('NotInstalled'),
         'openhuman.update_version': { result: { version: '0.0.0-different' } },
       }),
     });
@@ -97,7 +108,7 @@ describe('runBootCheck — local mode', () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.service_status': serviceStatus('NotInstalled'),
         'openhuman.update_version': new Error('JSON-RPC error -32601 Method not found'),
       }),
     });
@@ -110,7 +121,7 @@ describe('runBootCheck — local mode', () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.service_status': serviceStatus('NotInstalled'),
         'openhuman.update_version': new Error('method not found'),
       }),
     });
@@ -231,7 +242,7 @@ describe('runBootCheck — port conflict auto-recovery', () => {
     const transport: BootCheckTransport = {
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.service_status': serviceStatus('NotInstalled'),
         'openhuman.update_version': { result: { version: appVersion } },
       }),
       invokeCmd: vi.fn(async (cmd: string) => {
@@ -304,7 +315,7 @@ describe('runBootCheck — port conflict auto-recovery', () => {
           if (pingCallCount <= 12) throw new Error('timeout');
           return {};
         }
-        if (method === 'openhuman.service_status') return { installed: false, running: false };
+        if (method === 'openhuman.service_status') return serviceStatus('NotInstalled');
         if (method === 'openhuman.update_version') return { result: { version: appVersion } };
         throw new Error(`Unexpected RPC: ${method}`);
       }) as BootCheckTransport['callRpc'],
@@ -345,7 +356,7 @@ describe('runBootCheck — error and edge branches', () => {
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.service_status': serviceStatus('NotInstalled'),
         'openhuman.update_version': { result: { version: '' } },
       }),
     });
@@ -377,7 +388,7 @@ describe('runBootCheck — error and edge branches', () => {
           throw new Error('subsequent failure');
         }
         if (method === 'openhuman.service_status') {
-          return { installed: false, running: false };
+          return serviceStatus('NotInstalled');
         }
         if (method === 'openhuman.update_version') {
           // Generic transport error (no -32601), should map to 'unreachable'.
@@ -448,5 +459,32 @@ describe('runBootCheck — gateway mode', () => {
     await runBootCheck({ kind: 'gateway', gatewayId: 'builder' }, transport);
 
     expect(callRpc).not.toHaveBeenCalled();
+  });
+});
+
+describe('runBootCheck — service_status shapes', () => {
+  it('reports no daemon for an unknown service state', async () => {
+    const appVersion = (await import('../../utils/config')).APP_VERSION;
+    const transport = makeTransport({
+      callRpc: rpcResponder({
+        'core.ping': {},
+        'openhuman.service_status': serviceStatus({ Unknown: 'launchctl failed' }),
+        'openhuman.update_version': { result: { version: appVersion } },
+      }),
+    });
+
+    expect(await runBootCheck({ kind: 'local' }, transport)).toEqual({ kind: 'match' });
+  });
+
+  it('reads a bare ServiceStatus without the log envelope', async () => {
+    const transport = makeTransport({
+      callRpc: rpcResponder({
+        'core.ping': {},
+        'openhuman.service_status': serviceStatus('Running').result,
+        'openhuman.update_version': { result: { version: 'x' } },
+      }),
+    });
+
+    expect(await runBootCheck({ kind: 'local' }, transport)).toEqual({ kind: 'daemonDetected' });
   });
 });

@@ -125,17 +125,14 @@ async function waitForCore(
  */
 async function isDaemonRunning(callRpc: BootCheckTransport['callRpc']): Promise<boolean> {
   try {
-    const result = await callRpc<{ installed?: boolean; running?: boolean }>(
-      'openhuman.service_status',
-      {}
-    );
-    const detected = Boolean(result?.installed || result?.running);
-    log(
-      '[boot-check] service_status detected=%s installed=%s running=%s',
-      detected,
-      result?.installed,
-      result?.running
-    );
+    // The core sends a `ServiceStatus` ({ state, unit_path, label, details }),
+    // inside a `{ result, logs }` envelope whenever the op logs (it does today).
+    const response = await callRpc<unknown>('openhuman.service_status', {});
+    const status = (response as { result?: unknown } | null)?.result ?? response;
+    const state = (status as { state?: unknown } | null)?.state;
+    // `Stopped` means installed but not running; `NotInstalled` and `Unknown` are no daemon.
+    const detected = state === 'Running' || state === 'Stopped';
+    log('[boot-check] service_status detected=%s state=%o', detected, state);
     return detected;
   } catch (err) {
     log('[boot-check] service_status error (non-fatal): %o', err);
