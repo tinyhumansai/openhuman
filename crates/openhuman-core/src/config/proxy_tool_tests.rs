@@ -322,6 +322,15 @@ async fn parameters_schema_is_valid() {
 
 #[tokio::test]
 async fn blocks_set_in_readonly_mode() {
+    #[cfg(feature = "security-module")]
+    let _budget = crate::modules::security::gap::install_budget_port(
+        // The read-only tier is TinySecurity's budget answer, not a local
+        // check: script the module's `ReadOnlyMode` reply to pin how the tool
+        // surfaces it.
+        crate::modules::security::gap::ScriptedBudgetPort::replying(
+            tinysecurity_bus::BudgetDecision2::ReadOnlyMode,
+        ),
+    );
     let tmp = TempDir::new().unwrap();
     let readonly = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,
