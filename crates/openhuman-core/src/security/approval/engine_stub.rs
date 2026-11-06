@@ -261,7 +261,12 @@ impl ApprovalEngine for StubEngine {
                 .tool_trust
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            for tool in &input.legacy_tool_grants {
+            // The importer skips names the module would not accept as a tool.
+            for tool in input
+                .legacy_tool_grants
+                .iter()
+                .filter(|tool| tinysecurity_bus::is_host_tool_name2(tool))
+            {
                 if imported.insert((input.tenant.clone(), tool.clone())) {
                     trust.insert((input.tenant.clone(), Variant::Standard, tool.clone()));
                 }

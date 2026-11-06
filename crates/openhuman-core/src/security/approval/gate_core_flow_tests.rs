@@ -234,7 +234,10 @@ async fn approve_always_for_create_workflow_persists_and_skips_the_next_prompt()
     let (gate, dir) = test_gate();
     let gate = Arc::new(gate);
     let _env = EnvVarGuard::workspace_async(dir.path()).await;
-    crate::security::live_policy::install(
+    // Thread-scoped, restored on drop (including on panic): this test's
+    // allowlist never reaches a sibling gate test through the process-global
+    // live policy, which is installed nowhere here.
+    let _policy = crate::security::live_policy::install_scoped(
         Arc::new(crate::security::SecurityPolicy::default()),
         dir.path().to_path_buf(),
         dir.path().to_path_buf(),
@@ -294,6 +297,17 @@ async fn approve_always_for_create_workflow_persists_and_skips_the_next_prompt()
             .any(|tool| tool == "create_workflow"),
         "Always allow must persist create_workflow to autonomy.auto_approve"
     );
+    // What `live_policy::reload_from` does for an installed live policy, on
+    // this thread only.
+    let _reloaded = crate::security::live_policy::install_scoped(
+        Arc::new(crate::security::SecurityPolicy::from_config(
+            &saved.autonomy,
+            dir.path(),
+            dir.path(),
+        )),
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+    );
 
     let second = tokio::time::timeout(Duration::from_secs(5), intercept(gate.clone()))
         .await
@@ -303,13 +317,6 @@ async fn approve_always_for_create_workflow_persists_and_skips_the_next_prompt()
     assert!(
         gate.list_pending().unwrap().is_empty(),
         "the second create_workflow must not re-prompt"
-    );
-
-    // Leave no allowlisted create_workflow behind for sibling gate tests.
-    crate::security::live_policy::install(
-        Arc::new(crate::security::SecurityPolicy::default()),
-        dir.path().to_path_buf(),
-        dir.path().to_path_buf(),
     );
 }
 
