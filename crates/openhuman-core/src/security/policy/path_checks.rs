@@ -36,9 +36,8 @@ impl SecurityPolicy {
         #[cfg(feature = "security-module")]
         {
             match crate::modules::security::gap::protected_paths(&[path.to_path_buf()]).await {
-                Ok(answers) => { eprintln!("DBG answers={answers:?} path={}", path.display()); answers.first().copied().unwrap_or(true) },
+                Ok(answers) => answers.first().copied().unwrap_or(true),
                 Err(error) => {
-                    eprintln!("DBG ERR {error} path={}", path.display());
                     log::debug!(
                         "[security][path] protected-floor query unavailable; refused: {error}"
                     );
