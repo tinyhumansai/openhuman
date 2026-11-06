@@ -113,7 +113,7 @@ required-features = ["security-module"]
 # by exact name after scripts/ci/ts-e2e-stage-modules.sh.
 name = "ts_e2e_callback_owner"
 path = "../../tests/ts_e2e_callback_owner.rs"
-required-features = ["security-module"]
+required-features = ["inbound-queues", "security-module", "web3"]
 
 [[test]]
 # TinySecurity from a pinned release (no local-file source) serves later loads.
