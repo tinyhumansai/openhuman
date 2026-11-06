@@ -20,3 +20,15 @@ fn prompt_screen_refusals_are_not_reported_as_provider_failures() {
         assert!(classified.provider.is_none(), "{raw}");
     }
 }
+
+/// A provider's own error body with the same words is the provider's refusal:
+/// it keeps the provider and is not reported as OpenHuman's screen.
+#[test]
+fn a_provider_error_quoting_the_screen_text_stays_a_provider_error() {
+    let classified = classify_inference_error(
+        "custom_openai API error (400 Bad Request): Prompt blocked by security policy.",
+    );
+    assert_ne!(classified.error_type, "prompt_screened");
+    assert_ne!(classified.source, "security");
+    assert!(classified.provider.is_some(), "{classified:?}");
+}

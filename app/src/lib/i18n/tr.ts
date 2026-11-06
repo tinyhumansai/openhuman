@@ -3781,7 +3781,7 @@ const messages: TranslationMap = {
   'chat_error.disk_full':
     'Diskiniz dolu, bu yüzden bu sohbet kaydedilemedi. Diskte biraz yer açın, ardından mesajınızı bu sohbet dizisinde yeniden gönderin.',
   'chat_error.prompt_screened':
-    "OpenHuman'ın güvenlik denetimi bu mesajı tuttuğu için mesaj modele gönderilmedi. Mesaj bir asistana yönelik talimatlar içeriyorsa (örneğin bir web sayfasından veya e-postadan), bunları kaldırıp yeniden deneyin. Sıradan mesajlar da tutuluyorsa güvenlik modülü kullanılamıyor olabilir: OpenHuman'ı yeniden başlatıp tekrar deneyin.",
+    "OpenHuman'ın güvenlik denetimi bu mesajı tuttuğu için mesaj modele gönderilmedi. Mesaj bir asistana yönelik talimatlardan alıntı içeriyorsa (örneğin bir web sayfasından veya e-postadan), yalnızca bu alıntıyı kaldırıp yeniden deneyin. Sıradan mesajlar da tutuluyorsa güvenlik modülü kullanılamıyor olabilir: OpenHuman'ı yeniden başlatıp tekrar deneyin.",
   'chat_error.empty_response':
     'Model boş bir yanıt döndürdü. Lütfen yeniden deneyin. Sorun devam ederse farklı bir model deneyin veya Bağlantılar → API anahtarları → LLM bölümünden kurulumunu kontrol edin.',
   'chat_error.chat_template_rejected':
