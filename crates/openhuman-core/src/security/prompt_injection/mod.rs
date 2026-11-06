@@ -5,7 +5,9 @@
 
 mod detector;
 
-pub(crate) use detector::{enforce_prompt_input_in, enforce_prompt_input_with_config};
+pub(crate) use detector::{
+    enforce_prompt_input_in, enforce_prompt_input_with_config, screening_config_in,
+};
 
 pub use detector::{
     enforce_prompt_input, scan_tool_definition, PromptEnforcementAction, PromptEnforcementContext,

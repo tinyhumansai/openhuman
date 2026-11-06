@@ -6,7 +6,8 @@ use super::super::types::OpenHumanSessionHost;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::security::prompt_injection::{
-    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_with_config, screening_config_in, PromptEnforcementAction,
+    PromptEnforcementContext,
 };
 use anyhow::Result;
 use tinyagents_harness::agent_error::AgentError;
@@ -72,17 +73,28 @@ impl OpenHumanSessionHost {
             crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref())
                 .turn_origin_or_scoped()
         });
-        let guard = enforce_prompt_input_in(
-            &crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref()),
-            message,
-            PromptEnforcementContext {
-                source: "agent.runtime.run_single",
-                request_id: None,
-                user_id: Some(self.event_channel()),
-                session_id: Some(self.event_session_id()),
-            },
-        )
-        .await;
+        let dispatch = crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref());
+        let owner_config = screening_config_in(&dispatch).await;
+        // A process with no core has no owner to load from; screen with the
+        // config this session was built with. SaaS work that lost its tenant
+        // stays held, as `DispatchCtx::ambient` keeps it.
+        let screen_config = owner_config.as_ref().or_else(|| {
+            (!crate::core::runtime::is_saas())
+                .then_some(self.runtime_config.as_deref())
+                .flatten()
+        });
+        let guard = dispatch
+            .enter(enforce_prompt_input_with_config(
+                message,
+                PromptEnforcementContext {
+                    source: "agent.runtime.run_single",
+                    request_id: None,
+                    user_id: Some(self.event_channel()),
+                    session_id: Some(self.event_session_id()),
+                },
+                screen_config,
+            ))
+            .await;
         // A host-only session reading untrusted data has opted out; see
         // `set_untrusted_input`, which refuses any other session.
         if !self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow) {
