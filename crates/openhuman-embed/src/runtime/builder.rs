@@ -248,9 +248,9 @@ impl RuntimeBuilder {
     ///
     /// The judge is on by default: it may settle a call that needs approval
     /// when it is sure the call is intended, reversible and sends nothing out,
-    /// and anything else still goes to a person. Without a route the core
-    /// looks for the credentials it already has, and with none the judge stays
-    /// out. Turn it off with `judge` on [`Self::security`].
+    /// and anything else still goes to a person. Without a route the judge
+    /// stays off, whatever credentials are stored. Turn it off with `judge` on
+    /// [`Self::security`].
     pub fn security_judge(
         mut self,
         value: openhuman_core::config::schema::SecurityJudgeRoute,

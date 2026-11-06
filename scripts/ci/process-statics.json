@@ -700,6 +700,16 @@
     "verification": "credentials/profiles/keychain_tests.rs: another_profile_store_does_not_see_the_cached_secret; stores_for_the_same_keyring_entry_share_its_invalidation; a_read_overtaken_by_a_write_does_not_cache_what_it_read"
   },
   {
+    "file": "crates/openhuman-core/src/credentials/profiles/keychain.rs",
+    "scope": "",
+    "name": "KEYRING_HELD_BACK",
+    "type": "()",
+    "count": 1,
+    "category": "A",
+    "reason": "A task-local marker with no data: present only while a future given to without_keyring runs on that task, so a profile read during TinySecurity's own load or before the listener is up never asks the keyring. Nothing is shared between tasks, users or workspaces.",
+    "verification": "credentials/profiles/keychain_tests.rs: nothing_reaches_the_keyring_while_it_is_held_back"
+  },
+  {
     "file": "crates/openhuman-core/src/sandbox/openshell/mod.rs",
     "scope": "",
     "name": "REGISTRY",

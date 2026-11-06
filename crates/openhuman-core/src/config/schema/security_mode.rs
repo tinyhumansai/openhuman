@@ -36,13 +36,26 @@ pub enum SecurityMode {
 /// Whether TinySecurity's Jev judge may settle a call that needs approval.
 ///
 /// Serializes as snake_case (`on` / `off`). A missing key is
-/// [`JudgeMode::On`]: the judge then runs whenever a credential for it can be
-/// found. It can only turn "needs approval" into a one-off allow, never
-/// override a deny, and a failed or unsure judgement still goes to a person.
+/// [`JudgeMode::On`]. The judge then runs only when all of these hold:
+/// - the host supplies a [`SecurityJudgeRoute`]. Stored credentials don't
+///   count: they are read through TinySecurity, which takes the judge when it
+///   loads (tinyhumansai/tinysecurity#54);
+/// - security is enforced ([`SecurityMode::Enforce`]);
+/// - `[privacy] mode` isn't `local_only`: the judge sends redacted call
+///   details to its endpoint;
+/// - the route's key is 4 to 4096 bytes and not blank, and its endpoint is at
+///   most 4096 bytes: an absolute HTTPS URL, or HTTP on a literal loopback
+///   address, with no credentials, query or fragment.
+///
+/// Otherwise every approval goes to a person. The judge only covers the
+/// operator, copilot and sub-agent callers; scheduled and remote callers
+/// always go to a person. It can only turn "needs approval" into a one-off
+/// allow, never override a deny, and a failed or unsure judgement still goes
+/// to a person.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeMode {
-    /// Judge approvals whenever a credential is available.
+    /// Judge approvals when the conditions above hold.
     #[default]
     On,
     /// Every approval goes to a person.
@@ -61,7 +74,7 @@ pub enum SecurityJudgeDialect {
 /// Where the Jev judge is reached, and with which credential.
 ///
 /// A host that holds its own Jev credential supplies one through its runtime
-/// builder; otherwise the core looks for the credentials it already has. Never
+/// builder. Without one the judge stays off, whatever credentials are stored. Never
 /// serialized, and its [`Debug`](std::fmt::Debug) hides the key.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecurityJudgeRoute {

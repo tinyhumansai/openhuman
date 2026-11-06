@@ -651,7 +651,7 @@ async fn runtime_module_config(config: &Config, id: &str) -> serde_json::Value {
         let trusted_host = super::runtime::existing_runtime()
             .and_then(|runtime| runtime.connection().unique_name())
             .map(|name| name.to_string());
-        let judge = super::security::judge::resolve(config).await;
+        let judge = super::security::judge::resolve(config);
         let config = super::security::module_config_for_host(config, trusted_host, judge)
             .expect("module runtime must expose its host identity before loading modules");
         return serde_json::to_value(config).expect("TinySecurity module config is serializable");
