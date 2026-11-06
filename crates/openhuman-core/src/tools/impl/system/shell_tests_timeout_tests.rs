@@ -92,7 +92,7 @@ async fn the_tools_own_deadline_says_it_was_timeout_secs() {
 #[tokio::test]
 async fn the_tools_deadline_kills_the_commands_grandchildren_too() {
     let _storage = native_shell_storage();
-    let dir = std::env::temp_dir().join(format!("oh-shell-pgkill-{}", std::process::id()));
+    let dir = test_workdir().join(format!("oh-shell-pgkill-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let pidfile = dir.join("grandchild.pid");
     let tool = ShellTool::new(

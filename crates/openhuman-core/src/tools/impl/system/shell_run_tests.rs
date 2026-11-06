@@ -9,6 +9,15 @@ use tinyagents_harness::ids::CallId;
 use tinyagents_harness::tool::ToolExecutionContext;
 use tinytools::{Tool, ToolCallOptions};
 
+/// A private folder to run jailed commands in: the jail's bwrap backend owns
+/// `/tmp` as a private mount and refuses a grant on `/tmp` itself.
+fn jail_workdir() -> std::path::PathBuf {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| tempfile::tempdir().expect("jailed command working folder"))
+        .path()
+        .to_path_buf()
+}
+
 #[test]
 fn a_call_yields_only_when_the_turn_moved_its_timeout() {
     let none = YieldRequest::from_args(&json!({"command": "ls", "timeout_secs": 60}));
@@ -101,8 +110,8 @@ fn a_backend_that_cannot_yield_takes_no_place() {
 fn unsandboxed_policy() -> crate::sandbox::SandboxPolicy {
     crate::sandbox::policy::route_for_mode(
         tinyagents_definition::SandboxMode::None,
-        &std::env::temp_dir(),
-        &std::env::temp_dir().join("oh-shell-run-state"),
+        &jail_workdir(),
+        &jail_workdir().join("oh-shell-run-state"),
         &crate::config::SandboxConfig::default(),
         &crate::config::RuntimeConfig::default(),
         false,
@@ -127,7 +136,7 @@ async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
             allowed: true,
             requested: Some(1),
         },
-        &std::env::temp_dir(),
+        &jail_workdir(),
         Some(&call),
         None,
         &audit,
@@ -169,7 +178,7 @@ async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
             allowed: true,
             requested: Some(30),
         },
-        &std::env::temp_dir(),
+        &jail_workdir(),
         None,
         None,
         &Mutex::new(None),
