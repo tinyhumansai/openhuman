@@ -532,9 +532,12 @@ const FS_ERROR_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30
 /// unthrottled retry loops from flooding Sentry (TAURI-RUST-QT0: 6,050 events /
 /// 1 user).
 #[cfg(feature = "crash-reporting")]
-static LAST_FS_LIMIT_REPORT: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<(String, String, String), std::time::Instant>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+static LAST_FS_LIMIT_REPORT: std::sync::LazyLock<std::sync::Mutex<FsLimitReports>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Last report time per `(kind, domain, operation)`.
+#[cfg(feature = "crash-reporting")]
+type FsLimitReports = std::collections::HashMap<(String, String, String), std::time::Instant>;
 
 /// Returns `true` when `(kind, domain, operation)` was already reported
 /// within [`FS_ERROR_COOLDOWN`]. `kind` keeps the host-filesystem error
