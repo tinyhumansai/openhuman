@@ -12,6 +12,13 @@ const MIN_SECRET_LEN: usize = 8;
 /// encoded forms are included because the provider may echo a key in a URL or
 /// encoded identifier.
 pub(crate) async fn composio_secrets(config: &Config) -> Vec<String> {
+    collect_secrets(config, false).await.unwrap_or_default()
+}
+
+/// [`composio_secrets`], or `Err` when `fail_closed` and the stored key
+/// cannot be read: a key that dispatch may have sent but redaction cannot
+/// see must not let a result through.
+async fn collect_secrets(config: &Config, fail_closed: bool) -> Result<Vec<String>, String> {
     let composio = &config.composio;
     let mut secrets: Vec<String> = Vec::new();
     if let Some(pinned) = composio.host_credential.as_ref() {
@@ -23,9 +30,16 @@ pub(crate) async fn composio_secrets(config: &Config) -> Vec<String> {
     if composio.host_credential.is_none()
         && composio.mode.trim() == crate::config::schema::COMPOSIO_MODE_DIRECT
     {
-        if let Ok(Some(stored)) = crate::integrations::composio::get_composio_api_key(config).await
-        {
-            secrets.push(stored);
+        match crate::integrations::composio::get_composio_api_key(config).await {
+            Ok(Some(stored)) => secrets.push(stored),
+            Ok(None) => {}
+            Err(error) if fail_closed => {
+                tracing::debug!("[composio][redact] stored key unreadable, failing closed");
+                return Err(format!(
+                    "failed to read the stored composio api key: {error}"
+                ));
+            }
+            Err(_) => {}
         }
     }
     let originals = secrets.clone();
@@ -40,7 +54,7 @@ pub(crate) async fn composio_secrets(config: &Config) -> Vec<String> {
     secrets.retain(|s| s.len() >= MIN_SECRET_LEN);
     secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
     secrets.dedup();
-    secrets
+    Ok(secrets)
 }
 
 async fn redact_exact(config: &Config, text: &str, secrets: &[String]) -> Result<String, String> {
@@ -97,24 +111,47 @@ async fn redact_serialized<T>(config: &Config, value: &T, secrets: &[String]) ->
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
-    let encoded = serde_json::to_string(value).map_err(|_| ())?;
+    let encoded = serde_json::to_string(value).map_err(|_| {
+        tracing::debug!("[composio][redact] withheld: result does not encode");
+    })?;
     let redacted = redact_exact(config, &encoded, secrets)
         .await
-        .map_err(|_| ())?;
-    serde_json::from_str(&redacted).map_err(|_| ())
+        .map_err(|_| tracing::debug!("[composio][redact] withheld: TinySecurity did not redact"))?;
+    serde_json::from_str(&redacted).map_err(|_| {
+        tracing::debug!("[composio][redact] withheld: redacted result does not decode");
+    })
 }
 
-/// Redact an Execute response with the call's Composio keys before it leaves
-/// the host through an RPC or a flow, as the agent tools' results are. A
-/// module failure withholds it. With security disabled it is returned as is.
+/// The Composio keys an Execute on `config` may send, read just before the
+/// call: pass them to [`redact_composio_response`] with its result. `Err`
+/// when the stored key cannot be read, which dispatch would refuse too.
+pub(crate) async fn composio_call_keys(config: &Config) -> Result<Vec<String>, String> {
+    if crate::security::switch::disabled_for(Some(config)).is_some() {
+        return Ok(Vec::new());
+    }
+    collect_secrets(config, true).await
+}
+
+/// Redact an Execute response before it leaves the host through an RPC or a
+/// flow, as the agent tools' results are, with the keys read before the call
+/// (`before`, from [`composio_call_keys`]) and again now. Dispatch reads the
+/// key between the two, so a key rotated during a slow call is still covered.
+/// A module failure or an unreadable stored key withholds it. With security
+/// disabled it is returned as is.
 pub(crate) async fn redact_composio_response(
     config: &Config,
+    before: Vec<String>,
     response: ComposioExecuteResponse,
 ) -> Result<ComposioExecuteResponse, String> {
     if crate::security::switch::disabled_for(Some(config)).is_some() {
         return Ok(response);
     }
-    let secrets = composio_secrets(config).await;
+    let mut secrets = collect_secrets(config, true)
+        .await
+        .map_err(|_| WITHHELD.to_owned())?;
+    secrets.extend(before);
+    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    secrets.dedup();
     if secrets.is_empty() {
         return Ok(response);
     }

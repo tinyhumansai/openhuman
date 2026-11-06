@@ -271,6 +271,40 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
             && request.body["entity_id"] == " entity-round25 "
     }));
 
+    // An Execute whose result cannot be redacted is withheld, but still
+    // recorded as executed: the action ran and may have cost something. A key
+    // that is part of the result's own JSON leaves the redacted result
+    // undecodable.
+    openhuman_core::core::bus::init().await.expect("bus init");
+    let mut events = openhuman_core::core::bus::BUS
+        .get()
+        .expect("bus initialized")
+        .receiver();
+    let mut unredactable = harness.config.clone();
+    unredactable.composio.api_key = Some("\"successful\":true".to_string());
+    let withheld = composio_execute(&unredactable, "GMAIL_FETCH_EMAILS", None, None).await;
+    assert_eq!(
+        withheld.err().as_deref(),
+        Some("Composio result withheld by security redactor")
+    );
+    let recorded = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            match events.recv().await {
+                Some(openhuman_core::core::events::DomainEvent::ComposioActionExecuted {
+                    tool,
+                    success,
+                    error,
+                    ..
+                }) if tool == "GMAIL_FETCH_EMAILS" => return (success, error),
+                Some(_) => continue,
+                None => panic!("the bus closed before the execute was recorded"),
+            }
+        }
+    })
+    .await
+    .expect("the withheld execute was not recorded");
+    assert_eq!(recorded, (true, None));
+
     // TS-E2E-008 (EG-16): the UI's `composio.execute` RPC op is held to the
     // local-only privacy mode like the agent tool, and refused before the
     // connector module dials Composio. Checked in this test because the

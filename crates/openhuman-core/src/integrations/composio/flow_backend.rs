@@ -74,6 +74,9 @@ pub(crate) async fn invoke(
     if live.recovered_from_corruption {
         return Err(policy_refresh_error());
     }
+    // The keys this call may send, read before it (and before any approval is
+    // recorded): redaction covers them even if the stored key changes meanwhile.
+    let keys = crate::integrations::composio::tools::composio_call_keys(&live).await?;
 
     // Keep the privacy-sensitive tier decision before curation so a read-only
     // caller cannot probe which actions are in scope.
@@ -127,7 +130,8 @@ pub(crate) async fn invoke(
     // keys from it, as the agent tools do with their results.
     let redacted = match executed {
         Ok(result) => {
-            crate::integrations::composio::tools::redact_composio_response(&live, result).await
+            crate::integrations::composio::tools::redact_composio_response(&live, keys, result)
+                .await
         }
         Err(error) => Err(error),
     };
