@@ -240,7 +240,7 @@ impl Tool for ComposioActionTool {
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         let (config, outcome) =
-            Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None)).await;
+            Box::pin(self.execute_unredacted(&dispatch_ctx_for_tool(None), args, None, None)).await;
         super::tools::redact_composio_outcome(&config, outcome).await
     }
     async fn execute_with_context(
@@ -249,11 +249,16 @@ impl Tool for ComposioActionTool {
         _options: ToolCallOptions,
         context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
-        let (config, outcome) = Box::pin(self.execute_unredacted(
-            &dispatch_ctx_for_tool(context),
-            args,
-            sandbox_mode_for_tool(context),
-        ))
+        let (config, outcome) = Box::pin(
+            self.execute_unredacted(
+                &dispatch_ctx_for_tool(context),
+                args,
+                sandbox_mode_for_tool(context),
+                crate::agent::tinyagents::host::run_context::approval_for_tool(context)
+                    .chat
+                    .as_ref(),
+            ),
+        )
         .await;
         super::tools::redact_composio_outcome(&config, outcome).await
     }
@@ -269,6 +274,7 @@ impl ComposioActionTool {
         ctx: &DispatchCtx,
         args: Value,
         sandbox_mode: Option<SandboxMode>,
+        chat: Option<&crate::security::approval::ApprovalChatContext>,
     ) -> (Box<Config>, anyhow::Result<ToolResult>) {
         // Boxed from the moment it exists, not just at the return: this
         // local is held across every await point below, and `Config` is a
@@ -398,10 +404,11 @@ impl ComposioActionTool {
         // is reconciled from `live_config` on the way through, rather than
         // baked into a client this tool captured at construction.
         // Through the shared dispatch, so the local-only egress policy
-        // applies to per-action tools as it does to `composio_execute`.
+        // applies to per-action tools as it does to `composio_execute`, and
+        // the transfer is disclosed in the turn's chat.
         let res = super::execute_dispatch::execute_composio_action(
             &live_config,
-            None,
+            chat,
             &self.action_name,
             args,
             effective_connection_id,
