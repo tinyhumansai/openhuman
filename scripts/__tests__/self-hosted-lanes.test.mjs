@@ -1,5 +1,5 @@
 // Self-test for the CI lane flow: scripts/ci/self-hosted/{lanes-plan,lanes}.mjs
-// (run by ci-fast.yml / ci-fast-hosted.yml through ci-lanes.yml).
+// (run by ci-fast-hosted.yml through ci-lanes.yml).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -45,20 +45,6 @@ const ciLanes = fs.readFileSync(
 const ALL = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, true]));
 const NONE = Object.fromEntries(Object.keys(AREA_ENV).map((k) => [k, false]));
 const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
-
-test("EX63 verifies preinstalled tools before validation", () => {
-  const privateJob = ciLanes.slice(
-    ciLanes.indexOf("  ex63:"),
-    ciLanes.indexOf("  plan:"),
-  );
-  const verify = privateJob.indexOf("- name: Verify private runner contract");
-  const detect = privateJob.indexOf("- name: Detect changed areas");
-  const start = privateJob.indexOf("- name: Start lanes");
-  assert.ok(verify >= 0 && detect > verify && start > detect);
-  assert.match(privateJob, /bash scripts\/ci\/self-hosted\/verify-runner\.sh/);
-  assert.doesNotMatch(privateJob, /setup-python|apt-get|JQ_SHA256|sccache/);
-  assert.doesNotMatch(privateJob, /tinymold|TINYMOLD/i);
-});
 
 const plans = () => [
   buildPlan({ profile: "ex63", areas: ALL, env: EX63_ENV }),
