@@ -97,23 +97,12 @@ pub async fn init_stores(cfg: &crate::config::Config, domains: crate::core::runt
     // Reading from the store here means subsequent events carry
     // `user.id` even when no `app_state_snapshot` RPC has run yet.
     // Nothing can answer a keyring prompt yet: the listener is not up. A
-    // profile the keyring keeps is bound later, once one can be.
-    match crate::credentials::profiles::without_keyring(
-        crate::credentials::session_state::build_session_state(cfg),
+    // profile the keyring keeps is bound after the secret preflight.
+    if let Err(e) = crate::credentials::profiles::without_keyring(
+        crate::credentials::session_state::bind_session_user(cfg),
     )
     .await
     {
-        Ok(state) => {
-            if let Some(uid) = state.user_id.as_deref() {
-                crate::core::observability::sentry_scope::bind(uid);
-            }
-            // The host-supplied user payload survives restarts in the profile
-            // store; seed the identity slot from it so prompt composition sees
-            // the signed-in user before any host RPC runs.
-            crate::credentials::identity::set_current_user(state.user);
-        }
-        Err(e) => {
-            log::debug!("[boot] sentry scope user bind skipped — build_session_state failed: {e}")
-        }
+        log::debug!("[boot] session user bind deferred to the secret preflight: {e}");
     }
 }

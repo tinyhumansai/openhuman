@@ -36,13 +36,15 @@ pub enum SecurityMode {
 /// Whether TinySecurity's Jev judge may settle a call that needs approval.
 ///
 /// Serializes as snake_case (`on` / `off`). A missing key is
-/// [`JudgeMode::On`]: the judge then runs whenever a credential for it can be
-/// found. It can only turn "needs approval" into a one-off allow, never
+/// [`JudgeMode::On`]: the judge then runs whenever the host supplies a
+/// [`SecurityJudgeRoute`]. Stored credentials don't turn it on: they are read
+/// through TinySecurity, which takes the judge when it loads
+/// (tinyhumansai/tinysecurity#54). It can only turn "needs approval" into a one-off allow, never
 /// override a deny, and a failed or unsure judgement still goes to a person.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeMode {
-    /// Judge approvals whenever a credential is available.
+    /// Judge approvals whenever the host supplies a route.
     #[default]
     On,
     /// Every approval goes to a person.
@@ -61,7 +63,7 @@ pub enum SecurityJudgeDialect {
 /// Where the Jev judge is reached, and with which credential.
 ///
 /// A host that holds its own Jev credential supplies one through its runtime
-/// builder; otherwise the core looks for the credentials it already has. Never
+/// builder. Without one the judge stays off, whatever credentials are stored. Never
 /// serialized, and its [`Debug`](std::fmt::Debug) hides the key.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecurityJudgeRoute {

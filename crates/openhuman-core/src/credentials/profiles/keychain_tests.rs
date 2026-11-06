@@ -168,6 +168,29 @@ async fn a_held_back_write_is_refused_not_moved_into_the_document() {
 }
 
 #[tokio::test]
+async fn a_held_back_write_or_delete_keeps_the_cached_secret() {
+    let dir = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(dir.path(), false);
+    cache_secret(&store, "app-session:default", "synthetic-session");
+
+    let profile = AuthProfile::new_token("app-session", "default", "replacement".into());
+    let write = without_keyring(store.keychain_store_secrets(&profile))
+        .await
+        .unwrap_err();
+    assert!(held_back(&write), "{write:#}");
+    let delete = without_keyring(store.keychain_delete_secrets("app-session:default"))
+        .await
+        .unwrap_err();
+    assert!(held_back(&delete), "{delete:#}");
+
+    let kept = without_keyring(store.keychain_load_secrets("app-session:default"))
+        .await
+        .expect("the cached secret is still served")
+        .expect("cached entry");
+    assert_eq!(kept.token.as_deref(), Some("synthetic-session"));
+}
+
+#[tokio::test]
 async fn a_held_back_read_takes_a_cached_secret_but_never_waits_for_a_cold_one() {
     let name = "user-held-back:auth-profile:app-session:default";
     read_cache()
