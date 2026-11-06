@@ -510,7 +510,7 @@ pub(super) async fn agent_chat_reply_for_inner(
                 "[inference] agent_chat untrusted input on a host-only agent; guard skipped"
             );
         }
-        _ => enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat")
+        _ => enforce_user_prompt_or_reject(config, message, "local_ai.ops.agent_chat")
             .await
             .map_err(anyhow::Error::msg)?,
     }

@@ -133,14 +133,18 @@ pub fn render_prompt(
 /// `inference.agent_chat` applies to the whole message, so one injected
 /// event is left out instead of failing its batch; the reason is the guard's
 /// verdict and rule codes, never the text.
-async fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
+async fn screen(
+    ctx: &DispatchCtx,
+    items: Vec<ExternalItem>,
+) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
     use crate::security::prompt_injection::{
-        enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+        enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
     };
     let mut kept = Vec::with_capacity(items.len());
     let mut blocked = Vec::new();
     for item in items {
-        let decision = enforce_prompt_input(
+        let decision = enforce_prompt_input_in(
+            ctx,
             &item.text,
             PromptEnforcementContext {
                 source: "inbound.pinned",
@@ -278,7 +282,7 @@ impl Pinned {
         };
         let items: Vec<ExternalItem> = turn.events.iter().filter_map(external_of).collect();
         let event_ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
-        let (items, blocked) = screen(items).await;
+        let (items, blocked) = screen(ctx, items).await;
         let key = turn.events.first().map_or_else(
             || turn.conversation_key.clone(),
             |e| e.conversation_key.clone(),
