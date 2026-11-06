@@ -99,6 +99,16 @@ where
     Ok(secrets)
 }
 
+fn keychain_secrets_of(profile: &AuthProfile) -> KeychainSecrets {
+    let token_set = profile.token_set.as_ref();
+    KeychainSecrets {
+        token: profile.token.clone(),
+        access_token: token_set.map(|ts| ts.access_token.clone()),
+        refresh_token: token_set.and_then(|ts| ts.refresh_token.clone()),
+        id_token: token_set.and_then(|ts| ts.id_token.clone()),
+    }
+}
+
 impl AuthProfilesStore {
     /// Build a keychain key for an auth profile's combined secret payload.
     pub(super) fn keychain_key_for_profile(&self, profile_id: &str) -> String {
@@ -111,18 +121,7 @@ impl AuthProfilesStore {
     /// keychain entry holds all token fields for the profile.
     pub(super) async fn keychain_store_secrets(&self, profile: &AuthProfile) -> anyhow::Result<()> {
         let key = self.keychain_key_for_profile(&profile.id);
-        let secrets = KeychainSecrets {
-            token: profile.token.clone(),
-            access_token: profile.token_set.as_ref().map(|ts| ts.access_token.clone()),
-            refresh_token: profile
-                .token_set
-                .as_ref()
-                .and_then(|ts| ts.refresh_token.clone()),
-            id_token: profile
-                .token_set
-                .as_ref()
-                .and_then(|ts| ts.id_token.clone()),
-        };
+        let secrets = keychain_secrets_of(profile);
         let payload = serde_json::to_string(&secrets)
             .context("Failed to serialize auth secrets for keychain")?;
         let name = self.keyring_name(&key);
@@ -144,6 +143,13 @@ impl AuthProfilesStore {
             self.user_id
         );
         Ok(())
+    }
+
+    /// Whether the keyring holds `profile`'s secrets as this process last read
+    /// or wrote them. Never asks the keyring.
+    pub(super) fn keychain_holds(&self, profile: &AuthProfile) -> bool {
+        let name = self.keyring_name(&self.keychain_key_for_profile(&profile.id));
+        read_cache().secrets.get(&name) == Some(&keychain_secrets_of(profile))
     }
 
     /// Load auth secrets for a profile from the OS keychain.
