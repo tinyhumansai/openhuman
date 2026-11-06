@@ -423,8 +423,5 @@ async fn a_call_is_refused_when_the_autonomy_settings_changed_during_the_session
         matches!(&decision, GateDecision::Deny { reason } if reason.contains("settings changed")),
         "stale session settings must be refused: {decision:?}"
     );
-    assert!(
-        !session.can_act(),
-        "a refused call hands the tools nothing"
-    );
+    assert!(!session.can_act(), "a refused call hands the tools nothing");
 }

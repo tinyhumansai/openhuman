@@ -316,12 +316,18 @@ fn tool_settings_match_only_when_tier_scope_forbidden_paths_and_privacy_agree() 
         forbidden_paths: vec!["/srv/secret".into()],
         ..default_policy()
     };
-    assert!(!session.decides_tools_like(&forbidden), "a newly forbidden path");
+    assert!(
+        !session.decides_tools_like(&forbidden),
+        "a newly forbidden path"
+    );
     let disabled = SecurityPolicy {
         enabled: false,
         ..default_policy()
     };
-    assert!(!session.decides_tools_like(&disabled), "the policy switched off");
+    assert!(
+        !session.decides_tools_like(&disabled),
+        "the policy switched off"
+    );
     let rooted = SecurityPolicy {
         trusted_roots: vec![TrustedRoot {
             path: "/work".into(),
