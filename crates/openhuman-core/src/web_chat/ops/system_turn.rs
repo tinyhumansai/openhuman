@@ -23,6 +23,7 @@ use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
 use super::super::session::{
     checkin_session_agent_if_vacant, checkout_session_agent, CheckedOutSession, CheckoutPolicy,
 };
+use super::super::turn_host::{LateSubagentSink, PROGRESS_DRAIN_TIMEOUT};
 use super::super::{Surface, TurnIds};
 
 /// Client id stamped on host-authored turns. Never a real socket, so it never
@@ -90,20 +91,38 @@ pub async fn run_system_turn_on_thread(
     // session where the checkout knows one.
     let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(128);
     agent.set_on_progress(Some(progress_tx));
-    let client_id = originating_client_id(agent.event_session_id())
-        .unwrap_or_else(|| SYSTEM_CLIENT_ID.to_owned());
+    let client_id = forward_client_id(agent.event_session_id(), thread_id);
     let surface = Surface::new(
         ctx,
         TurnIds {
-            client_id,
+            client_id: client_id.clone(),
             thread_id: thread_id.to_owned(),
             request_id: run_id.to_owned(),
         },
-        config,
+        config.clone(),
     )
     .await;
-    let progress_forward =
-        tokio::spawn(forward_system_turn_subagents(surface.clone(), progress_rx));
+    // The forwarder signals `drained` once it has projected the turn's
+    // terminal event, switched to its late sink, or the stream ends;
+    // `turn_over` tells it the turn is done when no terminal event ever
+    // arrives. It is never aborted: after the drain it keeps the receiver as a late sink for detached children
+    // and exits when the last progress sender drops, like a user turn's tap.
+    let (drained_tx, mut drained_rx) = tokio::sync::watch::channel(false);
+    let turn_over = Arc::new(tokio::sync::Notify::new());
+    let late_sink = LateSubagentSink {
+        client_id,
+        thread_id: thread_id.to_owned(),
+        request_id: run_id.to_owned(),
+        config,
+    };
+    let _progress_forward = tokio::spawn(forward_system_turn_subagents(
+        ctx.clone(),
+        surface,
+        progress_rx,
+        drained_tx,
+        Arc::clone(&turn_over),
+        late_sink,
+    ));
     agent.set_run_queue(Some(Arc::new(RunQueue::new())));
     agent.set_thread_id(Some(thread_id));
 
@@ -112,8 +131,26 @@ pub async fn run_system_turn_on_thread(
         .map_err(|error| format!("{error:#}"));
 
     agent.set_on_progress(None);
-    progress_forward.abort();
-    surface.close().await;
+
+    // The turn surface now belongs to the forwarder: it closes the
+    // projection when it switches to its late sink. Signal the switch first
+    // so a turn that ended without a `TurnCompleted` still gets one, then
+    // wait for the drain: the runner publishes the terminal event as soon
+    // as this returns, so let the forwarder publish everything the turn
+    // queued first — a spawn or completion must not be lost to the surface
+    // close or overtaken by the delivery notice. Bounded (see
+    // `PROGRESS_DRAIN_TIMEOUT`): a detached sub-agent can hold a sender
+    // clone and keep the channel open past the turn, so the drain waits for
+    // the terminal event (or the switch), not for the channel to close.
+    turn_over.notify_one();
+    if tokio::time::timeout(PROGRESS_DRAIN_TIMEOUT, drained_rx.wait_for(|done| *done))
+        .await
+        .is_err()
+    {
+        log::warn!(
+            "[web-channel] system turn progress did not drain within {PROGRESS_DRAIN_TIMEOUT:?}; delivering anyway thread={thread_id} run_id={run_id}"
+        );
+    }
 
     // Same rule as a user turn: a failed harness turn can leave the session
     // partially advanced, so let it drop and cold-boot from the durable
@@ -132,12 +169,24 @@ pub async fn run_system_turn_on_thread(
     result
 }
 
-/// The client a host-authored turn addresses its sub-agent progress to: the
-/// `client_id` stamped into the checked-out agent's event context. A cached
-/// web-chat agent names the web client that built it; a cold-booted agent (or
-/// one built for cron/skill/voice, whose context is a plain id like
-/// `cron:<job>` or `standalone`) names no web client, so the turn keeps the
-/// old `system` addressing — no socket, but no wrong socket either.
+/// The client a host-authored turn addresses its sub-agent progress to.
+///
+/// The checked-out agent's event context names the web client that built
+/// the session. A cold-booted agent (or one built for cron/skill/voice,
+/// whose context is a plain id like `cron:<job>` or `standalone`) names no
+/// web client — and the fallback must not be `system`: every socket
+/// auto-joins the `system` room, so that would publish the thread's
+/// sub-agent activity (child text, tool arguments, results) to every
+/// connected client. Without an originating client, address to the thread
+/// itself instead: no socket joins a bare thread-id room, so the emit lands
+/// only in `thread:<id>`, where the thread's watchers are.
+fn forward_client_id(event_session_id: &str, thread_id: &str) -> String {
+    originating_client_id(event_session_id).unwrap_or_else(|| thread_id.to_owned())
+}
+
+/// The client stamped into the checked-out agent's event context. A cached
+/// web-chat agent names the web client that built it; anything else names
+/// no web client, so the caller falls back to thread-scoped addressing.
 fn originating_client_id(event_session_id: &str) -> Option<String> {
     let client_id = serde_json::from_str::<serde_json::Value>(event_session_id)
         .ok()?
@@ -148,24 +197,85 @@ fn originating_client_id(event_session_id: &str) -> Option<String> {
     (!client_id.is_empty() && client_id != SYSTEM_CLIENT_ID).then_some(client_id)
 }
 
+/// Project one progress event in full mode: the sub-agent events cross to
+/// the thread's web surface, everything else is turn-scoped output the
+/// delivery notice carries instead. Returns true when the turn's terminal
+/// event was projected: everything after it belongs to a detached child.
+async fn project_system_turn_event(surface: &Surface, event: AgentProgress) -> bool {
+    let completed = matches!(event, AgentProgress::TurnCompleted { .. });
+    if let Some(output) = crate::agent::turn_progress::subagent_event(event, 0, None) {
+        surface.output(output).await;
+    }
+    completed
+}
+
 /// Forward the sub-agent events of a host-authored turn to the thread's web
 /// surface, addressed to the turn's originating client.
 ///
 /// This is the turn's progress drain as well: consuming the channel is what
 /// preserves the generated reply, so the forwarder replaces the drop-drain
 /// rather than running beside it. Only sub-agent events cross — the turn's
-/// own narration stays with the delivery notice — and the surface closes
-/// when the turn ends, so a child that settles later goes through the
-/// late-completion path (#8451) instead of this one.
+/// own narration stays with the delivery notice.
+///
+/// Receiving and projecting run on separate stages: the pump recvs from the
+/// turn's bounded channel as fast as it allows and hands events to an
+/// unbounded queue, so a slow projection can never fill the channel and
+/// stall the turn's spawn-path sends (which block on capacity). One pump
+/// and one projector keep the order.
+///
+/// Once the turn's terminal event is projected — or the caller signals the
+/// turn is over — the forwarder switches to a late sink: the turn's surface
+/// closes, and only the terminal sub-agent events of a detached child still
+/// cross, each through a fresh unsequenced surface. It exits when the last
+/// progress sender drops.
 async fn forward_system_turn_subagents(
+    ctx: crate::core::runtime::DispatchCtx,
     surface: Surface,
     mut progress_rx: tokio::sync::mpsc::Receiver<AgentProgress>,
+    drained: tokio::sync::watch::Sender<bool>,
+    turn_over: Arc<tokio::sync::Notify>,
+    late: LateSubagentSink,
 ) {
-    while let Some(event) = progress_rx.recv().await {
-        if let Some(output) = crate::agent::turn_progress::subagent_event(event, 0, None) {
-            surface.output(output).await;
+    let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<AgentProgress>();
+    tokio::spawn(async move {
+        while let Some(event) = progress_rx.recv().await {
+            if queue_tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut late_mode = false;
+    loop {
+        tokio::select! {
+            biased;
+            event = queue_rx.recv() => {
+                let Some(event) = event else { break };
+                if late_mode {
+                    late.publish(&ctx, event).await;
+                } else if project_system_turn_event(&surface, event).await {
+                    let _ = drained.send(true);
+                    surface.close().await;
+                    late_mode = true;
+                }
+            }
+            _ = turn_over.notified(), if !late_mode => {
+                // The turn ended without a terminal event (error path):
+                // publish whatever is already queued in full mode first,
+                // then switch to the late sink.
+                while let Ok(event) = queue_rx.try_recv() {
+                    if project_system_turn_event(&surface, event).await {
+                        break;
+                    }
+                }
+                surface.close().await;
+                late_mode = true;
+                let _ = drained.send(true);
+            }
         }
     }
+    surface.close().await;
+    let _ = drained.send(true);
 }
 
 #[cfg(test)]
