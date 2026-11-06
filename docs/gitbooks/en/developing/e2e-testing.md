@@ -169,7 +169,7 @@ E2E_PORT_BASE=31000 pnpm --filter openhuman-app test:e2e:web
 
 ### Push / PR checks
 
-The default pull-request gate is `.github/workflows/ci-fast.yml`: quality
+The default pull-request gate is `.github/workflows/ci-fast-hosted.yml`: quality
 checks plus the complete unit-test suites for each changed area. No E2E suite
 runs on a pull request to `main`.
 
