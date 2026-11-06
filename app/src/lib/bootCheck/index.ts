@@ -130,8 +130,9 @@ async function isDaemonRunning(callRpc: BootCheckTransport['callRpc']): Promise<
     const response = await callRpc<unknown>('openhuman.service_status', {});
     const status = (response as { result?: unknown } | null)?.result ?? response;
     const state = (status as { state?: unknown } | null)?.state;
-    // `Stopped` means installed but not running; `NotInstalled` and `Unknown` are no daemon.
-    const detected = state === 'Running' || state === 'Stopped';
+    // Only `Running` proves a daemon: macOS and Linux report `Stopped` for a
+    // unit that was never installed (platform/service/{macos,linux}.rs#status).
+    const detected = state === 'Running';
     log('[boot-check] service_status detected=%s state=%o', detected, state);
     return detected;
   } catch (err) {

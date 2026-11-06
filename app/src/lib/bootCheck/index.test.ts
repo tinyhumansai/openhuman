@@ -63,19 +63,29 @@ describe('runBootCheck — local mode', () => {
     expect(result).toEqual({ kind: 'match' });
   });
 
-  it('returns daemonDetected when service_status reports an installed, stopped service', async () => {
+  it('reports no daemon for a stopped service, which a clean macOS or Linux profile also reports', async () => {
     const appVersion = (await import('../../utils/config')).APP_VERSION;
+    // macOS answers this for a profile with no LaunchAgent plist at all.
+    const cleanMacos = {
+      result: {
+        state: 'Stopped',
+        unit_path: '/Users/someone/Library/LaunchAgents/com.openhuman.core.plist',
+        label: 'com.openhuman.core',
+        details: null,
+      },
+      logs: ['service status fetched'],
+    };
 
     const transport = makeTransport({
       callRpc: rpcResponder({
         'core.ping': {},
-        'openhuman.service_status': serviceStatus('Stopped'),
+        'openhuman.service_status': cleanMacos,
         'openhuman.update_version': { result: { version: appVersion } },
       }),
     });
 
     const result = await runBootCheck({ kind: 'local' }, transport);
-    expect(result).toEqual({ kind: 'daemonDetected' });
+    expect(result).toEqual({ kind: 'match' });
   });
 
   it('returns daemonDetected when service_status reports a running service', async () => {
