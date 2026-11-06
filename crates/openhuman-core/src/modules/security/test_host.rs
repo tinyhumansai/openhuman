@@ -106,7 +106,6 @@ pub(super) async fn answer_master_grant(
         client_id: "test-host".into(),
         request_id: None,
     });
-    eprintln!("DBG grant start");
     let asking = Arc::clone(&gate);
     let args = serde_json::json!({"registration_id": registration_id});
     let mut asked = dispatch.spawn(async move {
@@ -117,14 +116,11 @@ pub(super) async fn answer_master_grant(
     let answered = tokio::time::timeout(GRANT_TIMEOUT, async {
         loop {
             tokio::select! {
-                outcome = &mut asked => { eprintln!("DBG asked done {:?}", outcome.as_ref().map(|o| format!("{o:?}"))); break outcome.ok() },
+                outcome = &mut asked => break outcome.ok(),
                 () = tokio::time::sleep(Duration::from_millis(5)) => {
-                    let rows = gate.list_pending().unwrap_or_default();
-                    eprintln!("DBG pending {}", rows.len());
-                    for pending in rows {
+                    for pending in gate.list_pending().unwrap_or_default() {
                         if pending.tool_name == tool {
-                            let d = gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce);
-                            eprintln!("DBG decided {:?}", d.is_ok());
+                            let _ = gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce);
                         }
                     }
                 }
