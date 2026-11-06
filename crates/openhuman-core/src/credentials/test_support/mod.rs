@@ -25,6 +25,7 @@ where
     F::Output: Send + 'static,
 {
     use crate::security::approval::{ApprovalDecision, ApprovalGate};
+    let _explicit = crate::modules::security::test_host::explicit_consent();
     crate::modules::security::ensure_loaded(config)
         .await
         .expect("admit native cipher module");
@@ -46,8 +47,8 @@ where
                 _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
                     for pending in gate.list_pending().expect("pending native approvals") {
                         assert_eq!(pending.tool_name, "native_secret_grant");
-                        // The test host may already have answered this grant.
-                        let _ = gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce);
+                        gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce)
+                            .expect("approve only this cipher master resolution");
                     }
                 }
             }

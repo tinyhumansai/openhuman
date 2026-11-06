@@ -111,7 +111,11 @@ fn claim(id: &str, admitted: &Path, requested: &Path) -> Result<ScopeClaim, Stri
     // configuration it falls back on is a second one. `claim_scope` keeps
     // its own tests; the embed suite pins the refusal against a real module.
     #[cfg(test)]
-    let (owner, transient) = (owner.filter(|owner| *owner == requested), true);
+    let (owner, transient) = if super::test_host::active() {
+        (owner.filter(|owner| *owner == requested), true)
+    } else {
+        (owner, transient)
+    };
     claim_scope(owner, admitted, requested, transient)
 }
 

@@ -30,7 +30,59 @@ static FIXTURE: OnceLock<Option<Config>> = OnceLock::new();
 static FIXTURE_KEY: OnceLock<PathBuf> = OnceLock::new();
 static GATE: OnceLock<Arc<ApprovalGate>> = OnceLock::new();
 
-fn active() -> bool {
+#[cfg(test)]
+thread_local! {
+    static ABSENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps this thread on the production path until dropped.
+#[cfg(test)]
+pub(crate) struct AbsentGuard;
+
+#[cfg(test)]
+impl Drop for AbsentGuard {
+    fn drop(&mut self) {
+        ABSENT.with(|absent| absent.set(false));
+    }
+}
+
+/// For a test that pins what the host does when TinySecurity cannot answer: no
+/// test host on this thread, so the module stays exactly as absent as it is in
+/// a process that never booted one.
+#[cfg(test)]
+pub(crate) fn absent() -> AbsentGuard {
+    ABSENT.with(|absent| absent.set(true));
+    AbsentGuard
+}
+
+/// Fixtures driving the gate themselves, so the test host must not answer too.
+#[cfg(test)]
+static EXPLICIT_CONSENT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Leaves the master grant to the caller's own approval until dropped.
+#[cfg(test)]
+pub(crate) struct ExplicitConsentGuard;
+
+#[cfg(test)]
+impl Drop for ExplicitConsentGuard {
+    fn drop(&mut self) {
+        EXPLICIT_CONSENT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// See [`ExplicitConsentGuard`].
+#[cfg(test)]
+pub(crate) fn explicit_consent() -> ExplicitConsentGuard {
+    EXPLICIT_CONSENT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    ExplicitConsentGuard
+}
+
+/// Whether this process has a test host, and it applies to this thread.
+pub(super) fn active() -> bool {
+    #[cfg(test)]
+    if ABSENT.with(std::cell::Cell::get) {
+        return false;
+    }
     std::env::var("OPENHUMAN_TEST_MODULES_STAGED").as_deref() == Ok("1")
         && crate::security::keyring_consent::test_responder::configured_answer() == Some(true)
 }
@@ -95,6 +147,10 @@ pub(super) async fn answer_master_grant(
     registration_id: &str,
 ) -> Option<GateOutcome> {
     if !active() {
+        return None;
+    }
+    #[cfg(test)]
+    if EXPLICIT_CONSENT.load(std::sync::atomic::Ordering::SeqCst) > 0 {
         return None;
     }
     let config = super::text::armed_config().ok()?;

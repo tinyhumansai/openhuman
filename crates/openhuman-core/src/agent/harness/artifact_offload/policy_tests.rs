@@ -5,6 +5,7 @@ use super::*;
 #[cfg(feature = "security-module")]
 #[test]
 fn redactor_withholds_body_when_tinysecurity_is_unavailable() {
+    let _absent = crate::modules::security::test_host::absent();
     let out = SanitizingRedactor.redact("ordinary prose with no secrets");
     assert!(out.changed);
     assert_ne!(out.text, "ordinary prose with no secrets");

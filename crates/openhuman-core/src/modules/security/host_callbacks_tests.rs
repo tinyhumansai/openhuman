@@ -54,6 +54,7 @@ fn a_durable_scope_is_refused_a_module_whose_owner_was_released() {
 /// The ownership table is process-wide, so its lifecycle is one test.
 #[test]
 fn release_declare_and_claim_follow_the_hosts_lifecycle() {
+    let _absent = crate::modules::security::test_host::absent();
     let id = "tinysecurity-ownership-test";
     let first_dir = Path::new("/tmp/openhuman-scratch-first");
     let second_dir = Path::new("/tmp/openhuman-scratch-second");
