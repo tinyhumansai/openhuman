@@ -15,6 +15,7 @@
 //!   agent had forgotten everything but the delivery notice.
 
 use std::sync::Arc;
+use tinyagents_harness::progress::AgentProgress;
 use tinyagents_harness::run_queue::RunQueue;
 
 use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
@@ -22,6 +23,7 @@ use crate::core::runtime::turn_origin::{with_origin, AgentTurnOrigin};
 use super::super::session::{
     checkin_session_agent_if_vacant, checkout_session_agent, CheckedOutSession, CheckoutPolicy,
 };
+use super::super::{Surface, TurnIds};
 
 /// Client id stamped on host-authored turns. Never a real socket, so it never
 /// collides with a user's cancel/interrupt routing.
@@ -79,9 +81,29 @@ pub async fn run_system_turn_on_thread(
     // turn. A system turn has no UI progress consumer, so drain a local sink
     // solely to preserve the generated reply; otherwise a successful provider
     // response is replaced with the empty-turn fallback.
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(128);
+    //
+    // The drain is also the turn's only progress consumer, so a sub-agent
+    // spawned inside it reported on a channel nobody read (#8458): its
+    // `subagent_spawned` event was addressed to `system`, which has no socket
+    // and no thread room. Forward the sub-agent events to the thread's web
+    // surface instead, addressed to the client that owns the thread's
+    // session where the checkout knows one.
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(128);
     agent.set_on_progress(Some(progress_tx));
-    let progress_drain = tokio::spawn(async move { while progress_rx.recv().await.is_some() {} });
+    let client_id = originating_client_id(agent.event_session_id())
+        .unwrap_or_else(|| SYSTEM_CLIENT_ID.to_owned());
+    let surface = Surface::new(
+        ctx,
+        TurnIds {
+            client_id,
+            thread_id: thread_id.to_owned(),
+            request_id: run_id.to_owned(),
+        },
+        config,
+    )
+    .await;
+    let progress_forward =
+        tokio::spawn(forward_system_turn_subagents(surface.clone(), progress_rx));
     agent.set_run_queue(Some(Arc::new(RunQueue::new())));
     agent.set_thread_id(Some(thread_id));
 
@@ -90,7 +112,8 @@ pub async fn run_system_turn_on_thread(
         .map_err(|error| format!("{error:#}"));
 
     agent.set_on_progress(None);
-    progress_drain.abort();
+    progress_forward.abort();
+    surface.close().await;
 
     // Same rule as a user turn: a failed harness turn can leave the session
     // partially advanced, so let it drop and cold-boot from the durable
@@ -108,3 +131,43 @@ pub async fn run_system_turn_on_thread(
 
     result
 }
+
+/// The client a host-authored turn addresses its sub-agent progress to: the
+/// `client_id` stamped into the checked-out agent's event context. A cached
+/// web-chat agent names the web client that built it; a cold-booted agent (or
+/// one built for cron/skill/voice, whose context is a plain id like
+/// `cron:<job>` or `standalone`) names no web client, so the turn keeps the
+/// old `system` addressing — no socket, but no wrong socket either.
+fn originating_client_id(event_session_id: &str) -> Option<String> {
+    let client_id = serde_json::from_str::<serde_json::Value>(event_session_id)
+        .ok()?
+        .get("client_id")?
+        .as_str()?
+        .trim()
+        .to_owned();
+    (!client_id.is_empty() && client_id != SYSTEM_CLIENT_ID).then_some(client_id)
+}
+
+/// Forward the sub-agent events of a host-authored turn to the thread's web
+/// surface, addressed to the turn's originating client.
+///
+/// This is the turn's progress drain as well: consuming the channel is what
+/// preserves the generated reply, so the forwarder replaces the drop-drain
+/// rather than running beside it. Only sub-agent events cross — the turn's
+/// own narration stays with the delivery notice — and the surface closes
+/// when the turn ends, so a child that settles later goes through the
+/// late-completion path (#8451) instead of this one.
+async fn forward_system_turn_subagents(
+    surface: Surface,
+    mut progress_rx: tokio::sync::mpsc::Receiver<AgentProgress>,
+) {
+    while let Some(event) = progress_rx.recv().await {
+        if let Some(output) = crate::agent::turn_progress::subagent_event(event, 0, None) {
+            surface.output(output).await;
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "system_turn_tests.rs"]
+mod tests;
