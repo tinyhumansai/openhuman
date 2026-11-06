@@ -113,15 +113,16 @@ permanent-failure classification stay in the executor and are not pluggable.
 
 `shell` jobs run through `run_job_command_with_timeout`
 ([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything,
-it checks `can_act`, `is_rate_limited`, the host security policy against command
-facts returned by TinyBox `AnalyzeCommand`, and `record_action` against the
-action budget. Missing module analysis fails closed; no local parser replaces
-it. Any refusal returns a string starting `blocked by security policy:`, which
-the retry loop treats as final. Execution uses TinyBox `StartExec` on a
-module-owned passthrough resource, preserving the action directory and the
-shell's default pipeline exit status. The command has a hard 120 second timeout
-(`SHELL_JOB_TIMEOUT_SECS`); timeout cancellation and output cleanup are
-acknowledged by TinyBox before the resource is closed. With the autonomy policy
+`authorize_shell_command` checks the command with TinySecurity
+(`check_command`, `CommandFlow::Scheduled`), which also reserves it against the
+action budget. A refusal the policy decided (protected path, read-only,
+allowlist, hidden execution, high risk, category, local-only, or a `Block`
+gate) returns a string starting `blocked by security policy:`
+(`POLICY_REFUSAL_PREFIX`), which the retry loop treats as final. An unavailable
+module (fail closed) or an exhausted action budget may recover, so those stay
+retryable. Execution runs on the host (`sandbox::shell_exec::run_host`), in the
+action directory and with the shell's default pipeline exit status, under a
+hard 120 second timeout (`SHELL_JOB_TIMEOUT_SECS`). With the autonomy policy
 disabled (the default), most policy checks are inert; see the project
 `CLAUDE.md`.
 

@@ -321,11 +321,17 @@ async fn security_policy_block_halts_without_spending_the_retry_budget() {
         "a read-only policy must refuse before the command is spawned; the command ran {} times",
         attempt_count(&counter)
     );
-    if !output.starts_with("blocked by security policy:") {
+    if output == crate::security::policy::Refusal::Unavailable.to_string() {
         // A test runner without the TinySecurity module exercises its
-        // fail-closed path. Module startup latency is outside this retry test.
+        // fail-closed path, which stays retryable (the module may come back).
         return;
     }
+    // Any other refusal is the policy's answer: final, whichever text it has
+    // (a read-only refusal used to read "[policy-blocked] …" and be retried).
+    assert!(
+        output.starts_with("blocked by security policy:"),
+        "a policy refusal must be marked final for the retry loop; got {output}"
+    );
     assert!(
         elapsed < std::time::Duration::from_millis(config.reliability.provider_backoff_ms) * 2,
         "the loop slept for {elapsed:?} on a deterministic policy refusal. A security block is \
