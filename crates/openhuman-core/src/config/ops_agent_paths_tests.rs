@@ -336,7 +336,10 @@ async fn action_dir_rejected(cfg: &mut Config, value: &std::path::Path) -> Strin
     )
     .await
     .expect_err("action_dir must be rejected");
-    assert!(cfg.action_dir_override.is_none(), "a rejected value is not stored");
+    assert!(
+        cfg.action_dir_override.is_none(),
+        "a rejected value is not stored"
+    );
     err
 }
 
