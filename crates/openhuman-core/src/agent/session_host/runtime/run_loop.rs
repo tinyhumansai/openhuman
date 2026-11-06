@@ -76,13 +76,15 @@ impl OpenHumanSessionHost {
         let dispatch = crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref());
         let owner_config = screening_config_in(&dispatch).await;
         // A process with no core has no owner to load from; screen with the
-        // config this session was built with. SaaS work that lost its tenant
-        // stays held, as `DispatchCtx::ambient` keeps it.
-        let screen_config = owner_config.as_ref().or_else(|| {
-            (!crate::core::runtime::is_saas())
-                .then_some(self.runtime_config.as_deref())
-                .flatten()
-        });
+        // config this session was built with. An owner whose config fails to
+        // load stays held, and so does SaaS work that lost its tenant, as
+        // `DispatchCtx::ambient` keeps it.
+        let ownerless = dispatch.resolved().is_none() && !crate::core::runtime::is_saas();
+        let screen_config = if ownerless {
+            self.runtime_config.as_deref()
+        } else {
+            owner_config.as_ref()
+        };
         let guard = dispatch
             .enter(enforce_prompt_input_with_config(
                 message,

@@ -147,6 +147,10 @@ async fn screen(
         enforce_prompt_input_with_config, screening_config_in, PromptEnforcementAction,
         PromptEnforcementContext,
     };
+    // With security off nothing is screened, so no config is loaded.
+    if crate::security::switch::disabled().is_some() {
+        return (items, Vec::new());
+    }
     let config = tokio::time::timeout_at(deadline, screening_config_in(ctx)).await;
     let mut kept = Vec::with_capacity(items.len());
     let mut blocked = Vec::new();
