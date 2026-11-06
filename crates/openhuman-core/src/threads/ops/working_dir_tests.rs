@@ -41,26 +41,28 @@ async fn relative_missing_file_and_forbidden_paths_are_rejected() {
         .await
         .is_err());
 
-    assert!(
-        validate_working_dir(
-            Some(&temp.path().join("missing").display().to_string()),
-            &config
-        )
-        .await
-            .is_err()
-    );
+    assert!(validate_working_dir(
+        Some(&temp.path().join("missing").display().to_string()),
+        &config
+    )
+    .await
+    .is_err());
 
     let file = temp.path().join("file.txt");
     std::fs::write(&file, "x").unwrap();
-    assert!(validate_working_dir(Some(&file.display().to_string()), &config)
-        .await
-        .is_err());
+    assert!(
+        validate_working_dir(Some(&file.display().to_string()), &config)
+            .await
+            .is_err()
+    );
 
     let ssh = temp.path().join(".ssh");
     std::fs::create_dir(&ssh).unwrap();
-    assert!(validate_working_dir(Some(&ssh.display().to_string()), &config)
-        .await
-        .is_err());
+    assert!(
+        validate_working_dir(Some(&ssh.display().to_string()), &config)
+            .await
+            .is_err()
+    );
 }
 
 /// TS-E2E-021 on the thread path: a thread's working folder becomes the

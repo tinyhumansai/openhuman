@@ -77,11 +77,11 @@ pub use agent::{
     get_autonomy_settings, load_and_apply_agent_settings, load_and_apply_autonomy_settings,
     AgentSettingsPatch, AutonomySettingsPatch,
 };
+pub(crate) use agent_paths::refuse_data_folder;
 pub use agent_paths::{
     apply_agent_paths_settings, ensure_agent_dirs, ensure_usable_cwd, expand_tilde,
     get_agent_paths, load_and_apply_agent_paths_settings, redact_home, AgentPathsPatch,
 };
-pub(crate) use agent_paths::refuse_data_folder;
 
 pub use loader::{
     agent_server_status, client_config_json, core_rpc_url_from_env, get_config_snapshot,
