@@ -148,10 +148,6 @@ async fn scenario() {
     answer
         .send(ToolHookDecision::deny("human refused"))
         .unwrap();
-    match tokio::time::timeout(std::time::Duration::from_secs(5), received.recv()).await {
-        Ok(Some((c, _a))) => eprintln!("PROBE second approval arrived: {c:?}"),
-        other => eprintln!("PROBE no second approval: {:?}", other.is_ok()),
-    }
     assert!(
         within("the denied first turn to finish", first)
             .await
