@@ -143,12 +143,13 @@ async fn legacy_auto_approve_lists_are_not_replayed_as_module_grants() {
 
 /// The native importer skips an `auto_approve` entry the module would not
 /// accept as a tool name (`is_host_tool_name2`), so such an entry never becomes
-/// a grant, as in production.
+/// a grant, as in production. `path_check` reads like a tool but is one of the
+/// module's effect classes.
 #[cfg(feature = "legacy-import")]
 #[tokio::test]
 async fn a_legacy_entry_that_is_not_a_tool_name_is_not_imported() {
     let (gate, _dir) = test_gate();
-    let invalid = "Not A Tool!";
+    let invalid = "path_check";
     assert!(!tinysecurity_bus::is_host_tool_name2(invalid));
     let listed = SecurityPolicy {
         auto_approve: vec![invalid.into()],
