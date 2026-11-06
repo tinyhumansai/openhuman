@@ -33,15 +33,23 @@ fn windows_policy_leaves_out_drive_less_unix_roots() {
     let defaults = Config::default().autonomy.forbidden_paths;
     assert!(defaults.iter().any(|path| path == "/etc"), "{defaults:?}");
 
-    let windows = forbidden_paths(&defaults, true);
-    assert!(
-        windows.iter().all(|path| !is_drive_less_root(path)),
-        "{windows:?}"
-    );
-    assert!(windows.contains(&crate::config::expand_tilde("~/.ssh")));
+    // Every default is a Unix root or a `~` path; on Windows only the `~`
+    // paths remain (checked on the input: `~` expands to `/home/...` here).
+    let home: Vec<String> = defaults
+        .iter()
+        .filter(|path| path.starts_with('~'))
+        .map(|path| crate::config::expand_tilde(path))
+        .collect();
+    assert!(home.contains(&crate::config::expand_tilde("~/.ssh")));
+    assert_eq!(forbidden_paths(&defaults, true), home);
     assert_eq!(forbidden_paths(&defaults, false).len(), defaults.len());
 
-    let kept = ["C:\\Secrets", "\\\\server\\share", "//server/share", "relative"];
+    let kept = [
+        "C:\\Secrets",
+        "\\\\server\\share",
+        "//server/share",
+        "relative",
+    ];
     let kept: Vec<String> = kept.iter().map(|path| path.to_string()).collect();
     assert_eq!(forbidden_paths(&kept, true), kept);
 }
