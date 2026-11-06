@@ -25,6 +25,39 @@ fn enabled_policy_expands_home_relative_forbidden_paths() {
         .all(|path| std::path::Path::new(path).is_absolute()));
 }
 
+/// TS-E2E-015 / #8575: the shipped defaults include Unix roots (`/etc`, …),
+/// which have no drive on Windows. Enabling autonomy with the defaults must
+/// still give the module a policy it accepts there.
+#[test]
+fn windows_policy_leaves_out_drive_less_unix_roots() {
+    let defaults = Config::default().autonomy.forbidden_paths;
+    assert!(defaults.iter().any(|path| path == "/etc"), "{defaults:?}");
+
+    let windows = forbidden_paths(&defaults, true);
+    assert!(
+        windows.iter().all(|path| !is_drive_less_root(path)),
+        "{windows:?}"
+    );
+    assert!(windows.contains(&crate::config::expand_tilde("~/.ssh")));
+    assert_eq!(forbidden_paths(&defaults, false).len(), defaults.len());
+
+    let kept = ["C:\\Secrets", "\\\\server\\share", "//server/share", "relative"];
+    let kept: Vec<String> = kept.iter().map(|path| path.to_string()).collect();
+    assert_eq!(forbidden_paths(&kept, true), kept);
+}
+
+/// The untouched defaults, enabled, validate on this OS.
+#[test]
+fn enabled_default_policy_validates() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.action_dir = root.path().join("action");
+    config.workspace_dir = root.path().join("workspace");
+    config.autonomy.enabled = true;
+
+    assert_eq!(validate(&config), Ok(()));
+}
+
 #[test]
 fn enabled_policy_still_refuses_relative_forbidden_paths() {
     let mut config = Config::default();
