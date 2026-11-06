@@ -238,8 +238,10 @@ async fn the_channel_host_answers_only_the_tinychannels_module() {
         .call("Probe", ())
         .await;
     assert!(
-        reply.is_err(),
-        "the channel host answered a peer that is not TinyChannels: {reply:?}"
+        reply.as_ref().is_err_and(
+            |error| format!("{error:?}").contains(crate::modules::callback_owner::REFUSAL)
+        ),
+        "the channel host did not refuse a peer that is not TinyChannels: {reply:?}"
     );
     let _ = lease.close().await;
 }

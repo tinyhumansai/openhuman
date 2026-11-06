@@ -87,8 +87,11 @@ async fn wallet_host_callback_is_served_before_the_module_is_loaded() {
     let refused: tinybus::Result<tinywallet_bus::wire::HostResponse> = proxy
         .call(tinywallet_bus::names::host_methods::WALLET_ACCOUNTS, ())
         .await;
+    // The ownership refusal itself, not any error (a missing callback errs too).
     assert!(
-        refused.is_err(),
-        "a caller that is not TinyWallet was answered"
+        refused.as_ref().is_err_and(
+            |error| format!("{error:?}").contains(crate::modules::callback_owner::REFUSAL)
+        ),
+        "a caller that is not TinyWallet was not refused by the owner check: {refused:?}"
     );
 }

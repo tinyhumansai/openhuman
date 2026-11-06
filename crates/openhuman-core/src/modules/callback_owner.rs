@@ -67,8 +67,11 @@ impl<T: Interface> Interface for OwnedBy<T> {
     }
 }
 
+/// The refusal every [`OwnedBy`] answers a caller that is not its module with.
+pub(crate) const REFUSAL: &str = "this host callback answers only its own module";
+
 fn refused() -> tinybus::Error {
-    tinybus::Error::failed("this host callback answers only its own module")
+    tinybus::Error::failed(REFUSAL)
 }
 
 #[cfg(test)]
