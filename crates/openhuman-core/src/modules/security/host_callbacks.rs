@@ -94,6 +94,7 @@ pub(in crate::modules) fn scope_epoch() -> u64 {
 /// Claim module `id` for `requested`, given the scope it was admitted with.
 fn claim(id: &str, admitted: &Path, requested: &Path) -> Result<ScopeClaim, String> {
     let ownership = ownership();
+    eprintln!("DBGCLAIM thread={:?} owner={:?} admitted={} requested={}", std::thread::current().name(), ownership.owners.get(id), admitted.display(), requested.display());
     claim_scope(
         ownership.owners.get(id).map(PathBuf::as_path),
         admitted,
