@@ -23,6 +23,16 @@ pub enum SandboxBackendKind {
     Agent37,
 }
 
+impl SandboxBackendKind {
+    /// Whether the backend keeps a box per tenant between commands, so a file
+    /// an agent makes stays in that tenant's box and is not on the host.
+    /// Today only [`Self::OpenShell`] does; a backend that joins them answers
+    /// `true` here and gets the box-side behavior of every caller that asks.
+    pub fn keeps_boxes(self) -> bool {
+        matches!(self, Self::OpenShell)
+    }
+}
+
 /// Per-session sandbox policy resolved from agent definition, session
 /// origin, and global config.
 #[derive(Debug, Clone, Serialize, Deserialize)]

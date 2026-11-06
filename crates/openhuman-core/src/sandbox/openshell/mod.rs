@@ -18,6 +18,10 @@
 //!   variables the request carries. A box that does not answer shortly after
 //!   the deadline is closed and the command reported as timed out.
 //!
+//! - **Files cross over commands too.** [`write_file`] and [`read_file`] move a
+//!   file between the host and a tenant's box with plain `exec`s (base64 in
+//!   chunks), relative to the work folder.
+//!
 //! [`BoxDriver`] is the seam: [`BusBoxDriver`] reaches the TinyBox module
 //! (behind the `modules` feature); tests use a scripted stand-in. The process
 //! holds one registry, built from the config of the first command that needs
@@ -25,6 +29,7 @@
 
 #[cfg(feature = "modules")]
 mod bus_driver;
+mod files;
 mod registry;
 mod types;
 
@@ -34,7 +39,9 @@ use std::time::Duration;
 
 #[cfg(feature = "modules")]
 pub use bus_driver::BusBoxDriver;
+pub use files::{read_file_in, write_file_in, MAX_FILE_BYTES};
 pub use registry::BoxRegistry;
+pub(crate) use registry::BOX_WORKDIR;
 pub use types::{BoxDriver, BoxError, BoxExec, BoxOutput, BoxRequest, BoxSettings, RegistryLimits};
 
 use super::types::SandboxExecResult;
@@ -147,6 +154,80 @@ pub(crate) async fn execute(
             "TinyBox module support is disabled; OpenShell sandbox execution is unavailable"
         )
     }
+}
+
+/// Write `bytes` to `path` (relative to the box's work folder) in the box of
+/// `tenant`, replacing any file there and creating its folders. The box comes
+/// from the process's registry, built from `config` on first use.
+///
+/// # Errors
+///
+/// Every [`BoxError`] [`write_file_in`] returns, and a refusal when this build
+/// has no module support.
+pub async fn write_file(
+    tenant: Result<Tenant, NoTenant>,
+    config: &Config,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), BoxError> {
+    let tenant = Ok(tenant_for_box(tenant)?);
+    #[cfg(feature = "modules")]
+    {
+        write_file_in(
+            registry(config),
+            tenant,
+            &config.runtime.openshell,
+            path,
+            bytes,
+        )
+        .await
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (tenant, config, path, bytes);
+        Err(modules_disabled())
+    }
+}
+
+/// Read the file at `path` (relative to the box's work folder) from the box of
+/// `tenant`. A file over `max_bytes`, or over [`MAX_FILE_BYTES`], is refused
+/// before any of it is transferred. The box comes from the process's registry,
+/// built from `config` on first use.
+///
+/// # Errors
+///
+/// Every [`BoxError`] [`read_file_in`] returns, and a refusal when this build
+/// has no module support.
+pub async fn read_file(
+    tenant: Result<Tenant, NoTenant>,
+    config: &Config,
+    path: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, BoxError> {
+    let tenant = Ok(tenant_for_box(tenant)?);
+    #[cfg(feature = "modules")]
+    {
+        read_file_in(
+            registry(config),
+            tenant,
+            &config.runtime.openshell,
+            path,
+            max_bytes,
+        )
+        .await
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (tenant, config, path, max_bytes);
+        Err(modules_disabled())
+    }
+}
+
+#[cfg(not(feature = "modules"))]
+fn modules_disabled() -> BoxError {
+    BoxError::Driver(
+        "TinyBox module support is disabled; OpenShell sandbox files are unavailable".to_owned(),
+    )
 }
 
 /// Close `tenant`'s box, if the process has one.

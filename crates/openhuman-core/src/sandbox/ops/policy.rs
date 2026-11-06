@@ -47,6 +47,21 @@ pub(crate) fn sandbox_component_off(ctx: &DispatchCtx) -> bool {
     off
 }
 
+/// Whether a command on this call runs in a box the tenant keeps between
+/// commands ([`SandboxBackendKind::keeps_boxes`]), the way the shell would
+/// route it: not under SaaS (profiles run in containers), and not when the
+/// host or the config turns the sandbox off.
+pub(crate) fn sandbox_keeps_boxes(ctx: &DispatchCtx, config: &crate::config::Config) -> bool {
+    !crate::core::runtime::is_saas() && !sandbox_disabled_by_host(ctx) && config_keeps_boxes(config)
+}
+
+/// [`sandbox_keeps_boxes`] for what the config alone says.
+pub(crate) fn config_keeps_boxes(config: &crate::config::Config) -> bool {
+    !config_disables_sandbox(config)
+        && crate::sandbox::policy::named_backend(&config.sandbox, &config.runtime, false)
+            .keeps_boxes()
+}
+
 /// The saved config says no isolation: the legacy `enabled = false` flag or
 /// `[components] sandbox = false`.
 pub(crate) fn config_disables_sandbox(config: &crate::config::Config) -> bool {
