@@ -37,6 +37,15 @@ export function areasFromEnv(env) {
   return areas;
 }
 
+/**
+ * The parts of the `rust-cov` lane that hosted CI runs as separate jobs, each
+ * a whole section of the suite (see OH_COV_SHARD in scripts/ci/rust-coverage.sh).
+ * One job ran all of them in turn and never finished inside its 100 minutes
+ * (46 hosted runs: 0 passed). The union is the complete suite; the gate
+ * (merge-coverage-shards.mjs) requires every shard to have reported.
+ */
+export const RUST_COV_SHARDS = ["core", "product", "facades", "tui"];
+
 /** Hosted-runner job groups: lanes that share one GitHub-hosted job. */
 export const HOSTED_GROUPS = [
   // Quick checks and the frontend suite fit one 4-core runner side by side.
@@ -53,7 +62,15 @@ export const HOSTED_GROUPS = [
     maxParallel: 1,
     container: true,
   },
-  { group: "rust-cov", lanes: ["rust-cov"], maxParallel: 1, container: true },
+  // Each shard is the same lane with OH_COV_SHARD set from the matrix, so it
+  // has a runner and a Rust cache of its own (`ci-fast-<group>`).
+  ...RUST_COV_SHARDS.map((shard) => ({
+    group: `rust-cov-${shard}`,
+    shard,
+    lanes: ["rust-cov"],
+    maxParallel: 1,
+    container: true,
+  })),
   { group: "tauri", lanes: ["tauri"], maxParallel: 1, container: true },
 
   // pwsh ships on the bare ubuntu-latest image, not in the CI container.
@@ -425,7 +442,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             OUT: "ci-out/lcov/lcov-core.info",
             OH_COV_DOCTESTS: "0",
             OH_COV_TUI: "1",
-            ...(ex63 ? { OH_COV_RUNNER: "nextest" } : {}),
+            // Both profiles run the core's tests one process per test. In a
+            // single libtest process ~15% of the core's unit tests fail on
+            // shared process globals and nothing bounds a hung test.
+            OH_COV_RUNNER: "nextest",
           },
           run: withModules("bash scripts/ci/rust-coverage.sh"),
         },
@@ -741,6 +761,7 @@ export function hostedMatrix(plan) {
     (g) => ({
       group: g.group,
       lanes: g.lanes.join(","),
+      shard: g.shard ?? "",
       "max-parallel": g.maxParallel,
       container: g.container ? "ghcr.io/tinyhumansai/openhuman_ci:latest" : "",
     }),
