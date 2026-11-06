@@ -103,9 +103,11 @@ pub async fn run_system_turn_on_thread(
     )
     .await;
     // The forwarder signals `drained` once it has projected the turn's
-    // terminal event, switched to its late sink, or the stream ends;
-    // `turn_over` tells it the turn is done when no terminal event ever
-    // arrives. It is never aborted: after the drain it keeps the receiver as a late sink for detached children
+    // terminal event, switched to its late sink, or the stream ends.
+    // `turn_over` tells the pump the turn is done when no terminal event
+    // ever arrives; the pump places a FIFO marker behind whatever the turn
+    // queued, so the switch waits for those events. It is never aborted:
+    // after the drain it keeps the receiver as a late sink for detached children
     // and exits when the last progress sender drops, like a user turn's tap.
     let (drained_tx, mut drained_rx) = tokio::sync::watch::channel(false);
     let turn_over = Arc::new(tokio::sync::Notify::new());
@@ -223,11 +225,11 @@ async fn project_system_turn_event(surface: &Surface, event: AgentProgress) -> b
 /// stall the turn's spawn-path sends (which block on capacity). One pump
 /// and one projector keep the order.
 ///
-/// Once the turn's terminal event is projected — or the caller signals the
-/// turn is over — the forwarder switches to a late sink: the turn's surface
-/// closes, and only the terminal sub-agent events of a detached child still
-/// cross, each through a fresh unsequenced surface. It exits when the last
-/// progress sender drops.
+/// Once the turn's terminal event is projected — or the pump places the
+/// FIFO turn-over marker the caller signalled — the forwarder switches to
+/// a late sink: the turn's surface closes, and only the terminal sub-agent
+/// events of a detached child still cross, each through a fresh unsequenced
+/// surface. It exits when the last progress sender drops.
 async fn forward_system_turn_subagents(
     ctx: crate::core::runtime::DispatchCtx,
     surface: Surface,
@@ -236,21 +238,47 @@ async fn forward_system_turn_subagents(
     turn_over: Arc<tokio::sync::Notify>,
     late: LateSubagentSink,
 ) {
-    let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<AgentProgress>();
+    let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<QueuedProgress>();
     tokio::spawn(async move {
-        while let Some(event) = progress_rx.recv().await {
-            if queue_tx.send(event).is_err() {
-                break;
+        // Forward events as fast as the turn publishes them. When the turn
+        // ends, drain whatever it already queued and place the turn-over
+        // marker behind it in FIFO order: the forwarder switches to its
+        // late sink only on the marker, so a spawn still in the bounded
+        // channel when the turn ends cannot be overtaken by the switch and
+        // dropped there (the late sink settles completions only).
+        loop {
+            tokio::select! {
+                event = progress_rx.recv() => {
+                    let Some(event) = event else { break };
+                    if queue_tx.send(QueuedProgress::Event(event)).is_err() {
+                        break;
+                    }
+                }
+                _ = turn_over.notified() => {
+                    while let Ok(event) = progress_rx.try_recv() {
+                        if queue_tx.send(QueuedProgress::Event(event)).is_err() {
+                            break;
+                        }
+                    }
+                    if queue_tx.send(QueuedProgress::TurnOver).is_err() {
+                        break;
+                    }
+                    // Keep pumping post-turn events from detached children.
+                    while let Some(event) = progress_rx.recv().await {
+                        if queue_tx.send(QueuedProgress::Event(event)).is_err() {
+                            break;
+                        }
+                    }
+                    break;
+                }
             }
         }
     });
 
     let mut late_mode = false;
-    loop {
-        tokio::select! {
-            biased;
-            event = queue_rx.recv() => {
-                let Some(event) = event else { break };
+    while let Some(item) = queue_rx.recv().await {
+        match item {
+            QueuedProgress::Event(event) => {
                 if late_mode {
                     late.publish(&ctx, event).await;
                 } else if project_system_turn_event(&surface, event).await {
@@ -259,23 +287,29 @@ async fn forward_system_turn_subagents(
                     late_mode = true;
                 }
             }
-            _ = turn_over.notified(), if !late_mode => {
-                // The turn ended without a terminal event (error path):
-                // publish whatever is already queued in full mode first,
-                // then switch to the late sink.
-                while let Ok(event) = queue_rx.try_recv() {
-                    if project_system_turn_event(&surface, event).await {
-                        break;
-                    }
+            QueuedProgress::TurnOver => {
+                if !late_mode {
+                    // The turn ended without a terminal event (error path).
+                    // The marker is FIFO behind everything the turn queued,
+                    // so that stream is fully projected: close the surface
+                    // and switch to the late sink for detached children.
+                    surface.close().await;
+                    late_mode = true;
+                    let _ = drained.send(true);
                 }
-                surface.close().await;
-                late_mode = true;
-                let _ = drained.send(true);
             }
         }
     }
     surface.close().await;
     let _ = drained.send(true);
+}
+
+/// One item in the forwarder's queue: a progress event, or the marker that
+/// the turn ended. The marker is FIFO behind every event the turn queued,
+/// so the forwarder only switches to its late sink once those are projected.
+enum QueuedProgress {
+    Event(AgentProgress),
+    TurnOver,
 }
 
 #[cfg(test)]

@@ -284,6 +284,73 @@ async fn system_turn_late_sink_settles_a_detached_child() {
     fwd.forward.await.unwrap();
 }
 
+/// Regression test for the CodeRabbit finding on #8565: spawns queued
+/// when the turn ends must reach the socket in full mode, not be dropped
+/// by the late sink. The spawns and the turn-over signal are issued
+/// back-to-back with no await between them, so the pump may not have
+/// moved the spawns yet when the turn ends; the FIFO turn-over marker
+/// guarantees both are projected, in order, before the switch either way.
+#[tokio::test]
+async fn system_turn_spawns_queued_at_turn_over_reach_the_socket() {
+    let mut events = crate::web_chat::subscribe_web_channel_events();
+    let request_id = "bgdeliver-test-turn-over-spawns";
+    let mut fwd = spawn_forwarder(
+        "origin-client",
+        "thread-bgdeliver-turn-over-spawns",
+        request_id,
+    )
+    .await;
+    let detached_tx = fwd.tx.clone();
+    // Two spawns, then the turn ends immediately: neither may be lost to
+    // the switch, and both arrive in order.
+    fwd.tx
+        .send(spawned("sub-bgdeliver-turn-over-a"))
+        .await
+        .unwrap();
+    fwd.tx
+        .send(spawned("sub-bgdeliver-turn-over-b"))
+        .await
+        .unwrap();
+    fwd.turn_over.notify_one();
+
+    for task_id in ["sub-bgdeliver-turn-over-a", "sub-bgdeliver-turn-over-b"] {
+        let event = next_for_request(&mut events, request_id).await;
+        assert_eq!(event.event_name(), "subagent_spawned");
+        assert!(matches!(
+            event.wire_event(),
+            WebChannelEvent::SubagentSpawned {
+                subagent: Some(subagent),
+                ..
+            } if subagent.task_id.as_deref() == Some(task_id)
+        ));
+    }
+
+    // The drain fired once the marker was reached; a detached child
+    // completing after the switch still settles through the late sink.
+    wait_drained(&mut fwd).await;
+    detached_tx
+        .send(AgentProgress::SubagentCompleted {
+            agent_id: "researcher".into(),
+            task_id: "sub-bgdeliver-turn-over-a".into(),
+            elapsed_ms: 10,
+            iterations: 1,
+            output_chars: 4,
+            usage: None,
+            output: "done".into(),
+            worktree_path: None,
+            changed_files: vec![],
+            dirty_status: None,
+            stop: None,
+        })
+        .await
+        .unwrap();
+    let event = next_for_request(&mut events, request_id).await;
+    assert_eq!(event.event_name(), "subagent_completed");
+    drop(detached_tx);
+    drop(fwd.tx);
+    fwd.forward.await.unwrap();
+}
+
 /// A turn that ends without a terminal event (error path) still switches
 /// the forwarder to its late sink once the caller signals it, instead of
 /// leaving the turn surface open with a detached child unheard.
