@@ -31,10 +31,7 @@ fn tiny_oauth_config(config: &OAuthConfig, redirect_uri: &str) -> OAuthConfig {
 }
 
 fn test_config(tmp: &tempfile::TempDir) -> Config {
-    Config {
-        config_path: tmp.path().join("config.toml"),
-        ..Config::default()
-    }
+    crate::credentials::test_support::plaintext_fixture_config(tmp.path())
 }
 
 fn runtime() -> tokio::runtime::Runtime {
