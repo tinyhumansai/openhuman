@@ -81,10 +81,13 @@ fn enabled_policy_still_refuses_relative_forbidden_paths() {
 
 #[test]
 fn policy_translation_copies_effective_host_settings() {
+    // Absolute on every OS: a drive-less `/private` is left out on Windows.
+    let root = tempfile::tempdir().unwrap();
+    let private = root.path().join("private").display().to_string();
     let mut config = Config::default();
     config.autonomy.enabled = true;
     config.autonomy.allowed_commands = vec!["pwd".into()];
-    config.autonomy.forbidden_paths = vec!["/private".into()];
+    config.autonomy.forbidden_paths = vec![private.clone()];
 
     let translated = policy_config(&config);
     assert!(translated.enabled);
@@ -97,7 +100,7 @@ fn policy_translation_copies_effective_host_settings() {
         config.workspace_dir.display().to_string()
     );
     assert_eq!(translated.allowed_commands, ["pwd"]);
-    assert_eq!(translated.forbidden_paths, ["/private"]);
+    assert_eq!(translated.forbidden_paths, [private]);
 }
 
 #[test]
