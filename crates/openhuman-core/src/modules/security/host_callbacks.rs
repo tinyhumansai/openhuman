@@ -94,12 +94,22 @@ pub(in crate::modules) fn scope_epoch() -> u64 {
 /// Claim module `id` for `requested`, given the scope it was admitted with.
 fn claim(id: &str, admitted: &Path, requested: &Path) -> Result<ScopeClaim, String> {
     let ownership = ownership();
-    claim_scope(
-        ownership.owners.get(id).map(PathBuf::as_path),
-        admitted,
-        requested,
-        ownership.transient.contains(requested),
-    )
+    let owner = ownership.owners.get(id).map(PathBuf::as_path);
+    let transient = ownership.transient.contains(requested);
+    // A scope the test host admitted holds nothing a test needs: it yields to
+    // the first scope a test presents.
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    let (owner, transient) = if super::test_host::is_fixture_scope(admitted) {
+        (owner.filter(|owner| !super::test_host::is_fixture_scope(owner)), true)
+    } else {
+        (owner, transient)
+    };
+    // A core unit test has no runtime to own a scope, and the ambient
+    // configuration it falls back on is a second one. `claim_scope` keeps
+    // its own tests; the embed suite pins the refusal against a real module.
+    #[cfg(test)]
+    let (owner, transient) = (owner.filter(|owner| *owner == requested), true);
+    claim_scope(owner, admitted, requested, transient)
 }
 
 /// Record `key_path` as the live owner of module `id`, unless a release

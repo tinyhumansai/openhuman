@@ -5971,6 +5971,7 @@ dependencies = [
  "directories",
  "futures",
  "log",
+ "openhuman",
  "openhuman-embed",
  "parking_lot",
  "reqwest 0.12.28",

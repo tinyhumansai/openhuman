@@ -255,6 +255,12 @@ impl Drop for BudgetPortGuard {
     }
 }
 
+/// Whether this thread answers budget questions from a scripted port.
+#[cfg(test)]
+pub(crate) fn budget_port_installed() -> bool {
+    TEST_BUDGET_PORT.with(|slot| slot.borrow().is_some())
+}
+
 #[cfg(test)]
 pub(crate) fn install_budget_port(port: Arc<dyn BudgetPort>) -> BudgetPortGuard {
     BudgetPortGuard(TEST_BUDGET_PORT.with(|slot| slot.borrow_mut().replace(port)))

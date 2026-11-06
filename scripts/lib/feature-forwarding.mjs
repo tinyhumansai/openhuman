@@ -471,7 +471,7 @@ export const CHAIN_GATES_NOT_FORWARDED = {
   },
   'openhuman-embed': {
     'test-keyring-consent':
-      'Answers keyring prompts in the in-process integration tests only; the CLI enables it on its core dev-dependency, and no host or product build may (see checkTestOnlyGatesIsolation).',
+      'Answers keyring prompts in the in-process integration tests only; the CLI, embed and tinyhumans enable it on their core dev-dependencies, and no host or product build may (see checkTestOnlyGatesIsolation).',
     'rss-bench':
       'Library-side hook for the embedded-RSS benchmark (#5046). Its binaries live in tinyhumansai/openhuman-benchmarks (`profile/`, #6944), which enables the core gate directly; no host in this repository turns it on.',
   },
@@ -544,7 +544,7 @@ export function checkLinkedModulesIsolation({ productFeatures, shellToml, cliFea
 /**
  * Gates for test builds only: `e2e-test-support` (the E2E apps' test RPCs and
  * keyring prompt answers) and `test-keyring-consent` (keyring prompt answers
- * for the in-process integration tests, enabled on the CLI's dev-dependency).
+ * for the in-process integration tests, enabled on dev-dependencies only).
  */
 export const TEST_ONLY_GATES = ['e2e-test-support', 'test-keyring-consent'];
 

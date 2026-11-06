@@ -19,6 +19,8 @@ pub(crate) mod sandbox;
 pub(super) mod secret_backend;
 pub(super) mod secret_cipher;
 pub(crate) mod sync_seam;
+#[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+pub(crate) mod test_host;
 pub(crate) mod text;
 
 #[cfg(test)]

@@ -163,6 +163,12 @@ impl SecretStore {
             .ok_or_else(|| anyhow::anyhow!("TinySecurity configuration is unavailable"))?;
         #[cfg(feature = "security-module")]
         {
+            // Admit the module first: the secret scope and everything below it
+            // exist only once TinySecurity is loaded, and a host may reach its
+            // first cipher call before anything else asked for the module.
+            let client = crate::modules::security::client(config)
+                .await
+                .map_err(anyhow::Error::new)?;
             let scope = crate::modules::ops::security_secret_scope()
                 .await
                 .ok_or_else(|| anyhow::anyhow!("TinySecurity secret scope is unavailable"))?;
@@ -177,9 +183,6 @@ impl SecretStore {
             let binding_identity = crate::modules::ops::security_callback_identity()
                 .await
                 .ok_or_else(|| anyhow::anyhow!("TinySecurity callback identity is unavailable"))?;
-            let client = crate::modules::security::client(config)
-                .await
-                .map_err(anyhow::Error::new)?;
             let generation = client
                 .policy_info()
                 .await

@@ -44,6 +44,18 @@ impl ApprovalGate {
         )
     }
 
+    /// A private gate over the real engine for the test host, which answers
+    /// the master grant in a process that installed no global gate. Leaves
+    /// [`Self::try_global`] as the process had it.
+    #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+    pub(crate) fn for_test_host(config: Config) -> Arc<Self> {
+        Arc::new(Self::new(
+            config,
+            format!("session-{}", uuid::Uuid::new_v4()),
+            None,
+        ))
+    }
+
     /// The engine this build asks: the TinySecurity module, or, in a build
     /// without it, one that refuses every gated call.
     fn engine_for(config: &Config) -> SharedEngine {
