@@ -75,12 +75,20 @@ async fn wallet_host_callback_is_served_before_the_module_is_loaded() {
         )
         .expect("wallet callback contract names are valid");
 
-    let response: tinywallet_bus::wire::HostResponse = proxy
+    assert!(
+        proxy
+            .is_available()
+            .await
+            .expect("ask the bus for the owner"),
+        "the host must serve callbacks before resolving the wallet module"
+    );
+    // Only TinyWallet may call them (TS-E2E-012); the host's own connection is
+    // not TinyWallet.
+    let refused: tinybus::Result<tinywallet_bus::wire::HostResponse> = proxy
         .call(tinywallet_bus::names::host_methods::WALLET_ACCOUNTS, ())
-        .await
-        .expect("the host must serve callbacks before resolving the wallet module");
-    assert!(matches!(
-        response,
-        tinywallet_bus::wire::HostResponse::WalletAccounts(_)
-    ));
+        .await;
+    assert!(
+        refused.is_err(),
+        "a caller that is not TinyWallet was answered"
+    );
 }

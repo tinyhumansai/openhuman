@@ -1,0 +1,76 @@
+//! Host callbacks that one module may call.
+//!
+//! The module runtime's connection is shared: every loaded module can call any
+//! object served on it. A host callback that exists for one module is wrapped
+//! in [`OwnedBy`], which answers only the current owner of that module's own
+//! bus name. TinyBus reserves that name for the admitted module's peer, so no
+//! other peer can hold it while the module is loaded.
+
+use async_trait::async_trait;
+use serde_json::Value;
+use tinybus::{BusName, CallContext, Connection, Interface, InterfaceName, MemberName};
+
+/// `inner`, answering only the peer that owns `owner` on `connection`'s bus.
+pub(crate) struct OwnedBy<T> {
+    inner: T,
+    connection: Connection,
+    owner: &'static str,
+}
+
+impl<T> OwnedBy<T> {
+    pub(crate) fn new(inner: T, connection: &Connection, owner: &'static str) -> Self {
+        Self {
+            inner,
+            connection: connection.clone(),
+            owner,
+        }
+    }
+}
+
+#[async_trait]
+impl<T: Interface> Interface for OwnedBy<T> {
+    fn name(&self) -> InterfaceName {
+        self.inner.name()
+    }
+
+    fn members(&self) -> Vec<MemberName> {
+        self.inner.members()
+    }
+
+    fn requires_confidential(&self, member: &MemberName) -> bool {
+        self.inner.requires_confidential(member)
+    }
+
+    async fn call(&self, _member: &MemberName, _args: Value) -> tinybus::Result<Value> {
+        // A call without the broker's sender proof cannot be attributed.
+        Err(refused())
+    }
+
+    async fn call_with_context(
+        &self,
+        member: &MemberName,
+        args: Value,
+        context: &CallContext,
+    ) -> tinybus::Result<Value> {
+        let owner: Option<BusName> = self.connection.name_owner(self.owner).await?;
+        if owner.is_none() || context.authenticated_sender() != owner.as_ref() {
+            tracing::debug!(
+                interface = %self.inner.name(),
+                member = %member,
+                owner = self.owner,
+                owner_present = owner.is_some(),
+                "[modules] host callback refused a caller that is not its module"
+            );
+            return Err(refused());
+        }
+        self.inner.call(member, args).await
+    }
+}
+
+fn refused() -> tinybus::Error {
+    tinybus::Error::failed("this host callback answers only its own module")
+}
+
+#[cfg(test)]
+#[path = "callback_owner_tests.rs"]
+mod tests;
