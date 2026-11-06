@@ -25,7 +25,7 @@ unused `ex63` profile.
 | `rust-cov`        | test modules from the registry, then `scripts/ci/rust-coverage.sh`                                                                                                                                                                                                        |
 | `rust-lint`       | clippy (product set; embed's clippy covers the core's contributor set), embed and tinyhumans lint, embed gates-off check                                                                                                                                                  |
 | `rust-gates-off`  | gates-off checks and gate-contract tests, kernel floor, dep-sim calibration                                                                                                                                                                                               |
-| `tauri`           | Tauri clippy and coverage                                                                                                                                                                                                |
+| `tauri`           | Tauri clippy and coverage                                                                                                                                                                                                                                                 |
 | `pester`          | `install.ps1` tests                                                                                                                                                                                                                                                       |
 
 How lanes behave:
