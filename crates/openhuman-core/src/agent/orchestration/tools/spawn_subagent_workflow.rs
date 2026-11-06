@@ -220,6 +220,9 @@ pub(crate) struct ThreadWorkflowProposal {
 }
 
 impl ThreadWorkflowProposal {
+    /// Whether this proposal was saved from its card: it carries a
+    /// non-empty `saved_flow_id` of its own. A later revision does not
+    /// inherit an earlier save, so only its own id counts.
     pub(crate) fn is_saved(&self) -> bool {
         self.saved_flow_id
             .as_deref()
