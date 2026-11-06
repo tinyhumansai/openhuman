@@ -88,6 +88,9 @@ fn shell_tool_schema_has_command() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_executes_allowed_command() {
+    let _storage = crate::storage::test_support::install_backend_for_test(
+        crate::storage::test_support::memory_backend(),
+    );
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Supervised),
         test_runtime(),
