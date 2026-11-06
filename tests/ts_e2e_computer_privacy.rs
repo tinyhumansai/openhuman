@@ -32,11 +32,15 @@ fn local_only_keeps_the_tinycomputer_browser_policy_registrable() {
                 serde_json::json!({"load": true}),
             )
             .await;
+        // A failed load or call is reported in the status's own `error`, so
+        // require evidence the call got past policy registration: capabilities,
+        // or the config refresh that follows it (TS-E2E-010, until it lands).
+        let status = Host::result(&envelope);
+        let error = status["error"].as_str().unwrap_or_default();
+        let past_registration =
+            status["capabilities"].is_object() || error.contains("configuration refresh failed");
         assert!(
-            envelope.get("error").is_none()
-                && !envelope
-                    .to_string()
-                    .contains("browser egress policy unavailable"),
+            past_registration && !error.contains("browser egress policy unavailable"),
             "LocalOnly must not make the browser egress policy unavailable: {envelope}"
         );
         host.stop().await;
