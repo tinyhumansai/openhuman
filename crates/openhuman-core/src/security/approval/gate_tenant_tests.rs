@@ -207,3 +207,27 @@ async fn a_decision_from_another_tenant_is_refused_and_leaves_the_request_parked
     let (outcome, _) = turn.await.unwrap();
     assert!(matches!(outcome, GateOutcome::Deny { .. }), "{outcome:?}");
 }
+
+/// AP-26: a second decision for a request already resolved (a double-click,
+/// or an expiry first) is `decide`'s ordinary miss, not an ownership error.
+#[tokio::test]
+async fn a_repeat_decision_after_the_request_resolved_is_the_ordinary_miss() {
+    let (gate, _dir) = test_gate();
+    let gate = Arc::new(gate);
+    let turn = park_as(&gate, profile_ctx("gate-ap26-repeat"));
+    let owner = tenant(Some("gate-ap26-repeat"), None);
+    let request = parked_for(&gate, &owner).await;
+
+    gate.decide_as(&owner, None, &request, ApprovalDecision::Deny)
+        .expect("the owner decides")
+        .expect("the first decision resolves the request");
+    let _ = turn.await.unwrap();
+
+    let again = gate
+        .decide_as(&owner, None, &request, ApprovalDecision::Deny)
+        .expect("a repeat decision is not an error");
+    assert!(
+        again.is_none(),
+        "a repeat decision resolves nothing: {again:?}"
+    );
+}
