@@ -266,6 +266,46 @@ async fn apply_autonomy_settings_rejects_zero() {
     );
 }
 
+/// #8575: a bad level or a zero action budget is refused before any field of
+/// the patch is applied, so a caller that keeps the `Config` can't save half
+/// of a rejected patch.
+#[tokio::test]
+async fn apply_autonomy_settings_rejects_level_or_budget_before_changing_anything() {
+    let _g = ENV_LOCK.lock().await;
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    let prior = toml::to_string(&cfg.autonomy).unwrap();
+    for (patch, expected) in [
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                allowed_commands: Some(vec!["git".into()]),
+                max_actions_per_hour: Some(0),
+                ..Default::default()
+            },
+            "max_actions_per_hour must be at least 1",
+        ),
+        (
+            AutonomySettingsPatch {
+                enabled: Some(true),
+                allowed_commands: Some(vec!["git".into()]),
+                level: Some("sometimes".into()),
+                ..Default::default()
+            },
+            "invalid autonomy level",
+        ),
+    ] {
+        let err = apply_autonomy_settings(&mut cfg, patch).await.unwrap_err();
+        assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        assert_eq!(
+            toml::to_string(&cfg.autonomy).unwrap(),
+            prior,
+            "a rejected patch leaves the settings as they were"
+        );
+        assert!(!cfg.config_path.exists(), "a rejected patch is not saved");
+    }
+}
+
 /// TS-E2E-015: an enabled policy TinySecurity cannot represent is refused at
 /// save time, the file is not written and the settings stay as they were.
 #[cfg(feature = "security-module")]
