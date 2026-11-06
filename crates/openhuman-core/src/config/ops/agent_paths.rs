@@ -224,8 +224,8 @@ async fn validate_files_dir(raw: &str, config: &Config) -> Result<PathBuf, Strin
 }
 
 /// Refuse a user-chosen agent folder (`kind` is `files_dir` or `action_dir`)
-/// that is a protected location (credential stores, OS directories) or sits
-/// inside the OpenHuman data directory. TinySecurity's floor is lexical, so it
+/// that is a protected location (credential stores, OS directories) or fails
+/// [`refuse_data_folder`]. TinySecurity's floor is lexical, so it
 /// is asked about the path as given and about its resolved form: a symlink
 /// into `~/.ssh` is refused like `~/.ssh` itself.
 async fn refuse_protected_folder(
@@ -243,14 +243,39 @@ async fn refuse_protected_folder(
             "{kind} cannot be a protected system or credential folder: {expanded}"
         ));
     }
-    let mut internal = vec![config.workspace_dir.clone()];
-    if let Ok(root) = crate::config::default_root_openhuman_dir() {
-        internal.push(root);
-    }
-    if internal.iter().any(|dir| path_within(candidate, dir)) {
-        log::debug!("[config][agent_paths] {kind} refused: inside the data folder");
+    refuse_data_folder(kind, candidate, expanded, config)
+}
+
+/// Refuse an agent folder that sits inside OpenHuman's state (the workspace
+/// or the data root) or contains it (also the folder holding this config,
+/// whose credential files sit next to it). Fails closed when the data root
+/// can't be resolved.
+pub(crate) fn refuse_data_folder(
+    kind: &str,
+    candidate: &Path,
+    expanded: &str,
+    config: &Config,
+) -> Result<(), String> {
+    let root = crate::config::default_root_openhuman_dir().map_err(|e| {
+        format!("{kind} can't be checked: the OpenHuman data folder is unknown: {e}")
+    })?;
+    let state = [config.workspace_dir.clone(), root];
+    let config_dir = config
+        .config_path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty());
+    let inside = state.iter().any(|dir| path_within(candidate, dir));
+    let contains = state
+        .iter()
+        .map(PathBuf::as_path)
+        .chain(config_dir)
+        .any(|dir| path_within(dir, candidate));
+    if inside || contains {
+        log::debug!(
+            "[config][agent_paths] {kind} refused: inside={inside} contains={contains} the data folder"
+        );
         return Err(format!(
-            "{kind} must not be inside the OpenHuman data folder: {expanded}"
+            "{kind} must not be inside or contain the OpenHuman data folder: {expanded}"
         ));
     }
     Ok(())

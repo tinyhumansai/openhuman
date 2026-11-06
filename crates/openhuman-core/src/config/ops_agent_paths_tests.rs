@@ -386,6 +386,40 @@ async fn apply_agent_paths_rejects_an_action_dir_inside_the_data_folder() {
     assert!(!inside.exists(), "nothing is created for a rejected value");
 }
 
+/// An `OPENHUMAN_WORKSPACE` profile keeps `config.toml` and its credential
+/// files beside the workspace, so the profile folder itself (or any folder
+/// above it) must not become the agent's working folder. A sibling folder in
+/// the profile reaches none of that state and stays allowed.
+#[tokio::test]
+async fn apply_agent_paths_rejects_an_action_dir_that_contains_the_profile() {
+    let _g = ENV_LOCK.lock().await;
+    unsafe {
+        std::env::remove_var("OPENHUMAN_ACTION_DIR");
+    }
+    let tmp = tempdir().unwrap();
+    let profile = tmp.path().join("profile");
+    let mut cfg = Config::default();
+    cfg.workspace_dir = profile.join("workspace");
+    cfg.config_path = profile.join("config.toml");
+    std::fs::create_dir_all(&cfg.workspace_dir).unwrap();
+
+    for root in [profile.as_path(), tmp.path()] {
+        let err = action_dir_rejected(&mut cfg, root).await;
+        assert!(err.contains("OpenHuman data folder"), "{err}");
+    }
+    let beside = profile.join("projects");
+    apply_agent_paths_settings(
+        &mut cfg,
+        AgentPathsPatch {
+            action_dir: Some(beside.to_string_lossy().to_string()),
+            files_dir: None,
+        },
+    )
+    .await
+    .expect("a folder beside the profile's state is allowed");
+    assert_eq!(cfg.action_dir_override.as_deref(), Some(beside.as_path()));
+}
+
 // --- #3353 regression tests -------------------------------------------------
 
 #[test]
