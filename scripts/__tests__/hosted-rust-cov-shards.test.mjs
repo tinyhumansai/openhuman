@@ -255,6 +255,7 @@ test("every rust-cov suite runs in exactly one shard, and the shards add up to t
     list.map((s) => s.replace(/^openhuman \[lib\] \+/, "openhuman +")).sort();
   assert.equal(new Set(seen).size, seen.length, `a suite ran in two shards:\n${seen.join("\n")}`);
   const stripFeatures = (list) => norm(list).map((s) => s.replace(/ \+.*$/, ""));
+  if (process.env.DBG) console.log(JSON.stringify({seen, expected}, null, 1));
   assert.deepEqual(stripFeatures(seen), stripFeatures(expected));
 });
 
