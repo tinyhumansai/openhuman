@@ -482,6 +482,10 @@ fn reusable_follow_up_message(prompt: &str, context: Option<&str>) -> String {
 mod tests;
 
 #[cfg(test)]
+#[path = "spawn_subagent_saved_proposal_tests.rs"]
+mod saved_proposal_tests;
+
+#[cfg(test)]
 #[path = "spawn_subagent_tests.rs"]
 mod surface_tests;
 
