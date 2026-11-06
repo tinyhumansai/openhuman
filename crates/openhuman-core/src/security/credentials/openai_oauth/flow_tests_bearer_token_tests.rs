@@ -2,9 +2,12 @@ use super::*;
 
 #[tokio::test]
 async fn lookup_key_for_slug_uses_legacy_openai_api_key_when_new_style_is_empty() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,

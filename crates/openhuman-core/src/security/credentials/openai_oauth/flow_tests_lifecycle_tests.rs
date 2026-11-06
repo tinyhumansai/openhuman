@@ -354,8 +354,8 @@ async fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata()
     assert_eq!(credentials.access_token, access_token);
     assert_eq!(credentials.account_id.as_deref(), Some("acct_from_file"));
     assert_eq!(
-        lookup_key_for_slug("openai", &config).await.unwrap(),
-        access_token
+        lookup_openai_bearer_token(&config).await.unwrap().as_deref(),
+        Some(access_token.as_str())
     );
 }
 
@@ -537,9 +537,12 @@ async fn openai_oauth_status_reports_token_profile_as_disconnected() {
 
 #[tokio::test]
 async fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
 
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
@@ -567,6 +570,9 @@ async fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
 
 #[tokio::test]
 async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_rotation() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     // #5353: routing keys on *which credential is stored*, not on comparing two
     // independently-resolved OAuth tokens. Near expiry each read refreshes the
     // token and OpenAI mints a new one, so the old `access_token == bearer_key`
@@ -579,7 +585,7 @@ async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_ro
 
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     store
         .upsert_profile(
             AuthProfile::new_oauth(
@@ -671,6 +677,9 @@ async fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
 
 #[tokio::test]
 async fn credits_gate_bypassed_with_oauth_only_credentials() {
+    // `lookup_key_for_slug` reads through `crate::credentials` (the host port's
+    // store), so these fixtures write the profiles that store reads.
+    use crate::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
     // #3767 regression: the per-tier credits-gate bypass chains through
     // route_has_usable_credentials → lookup_key_for_slug, which falls back to
     // the OpenAI OAuth token for the `openai` slug. Pin that OAuth-only
@@ -685,7 +694,7 @@ async fn credits_gate_bypassed_with_oauth_only_credentials() {
     // No credential yet → gate stays on.
     assert!(!role_bypasses_managed_credits("chat", &config).await);
 
-    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), config.secrets.encrypt, &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
