@@ -36,7 +36,7 @@ pub(crate) async fn load_profile_read_only(
 const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Compact secret payload stored as a single keychain entry per auth profile.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct KeychainSecrets {
     #[serde(default)]
     pub token: Option<String>,

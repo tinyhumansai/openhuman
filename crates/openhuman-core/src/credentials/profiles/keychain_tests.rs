@@ -218,3 +218,71 @@ async fn a_held_back_read_takes_a_cached_secret_but_never_waits_for_a_cold_one()
     .unwrap_err();
     assert!(held_back(&cold), "{cold:#}");
 }
+
+#[cfg(feature = "security-module")]
+fn keyring_store(dir: &TempDir) -> AuthProfilesStore {
+    let mut config = crate::credentials::test_support::plaintext_fixture_config(dir.path());
+    config.modules.enabled = false;
+    AuthProfilesStore::new_with_config(dir.path(), true, &config)
+}
+
+#[cfg(feature = "security-module")]
+fn held_in_keyring(id: &str, provider: &str) -> super::super::PersistedAuthProfiles {
+    let row = super::super::PersistedAuthProfile {
+        provider: provider.into(),
+        secret_location: Some(super::super::persistence::SecretLocation::Keyring),
+        ..Default::default()
+    };
+    super::super::PersistedAuthProfiles {
+        schema_version: 2,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        active_profiles: Default::default(),
+        profiles: [(id.to_owned(), row)].into(),
+    }
+}
+
+// The stores below can't reach a keyring: a save that tries to store a secret
+// fails or falls back to the document, so `Keyring` means nothing was stored.
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn a_save_rebuilds_a_row_whose_keyring_secret_is_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let store = keyring_store(&dir);
+    let profile = AuthProfile::new_token("app-session", "default", "synthetic-session".into());
+    cache_secret(&store, &profile.id, "synthetic-session");
+    let mut data = super::super::AuthProfilesData::default();
+    data.profiles.insert(profile.id.clone(), profile.clone());
+
+    // Persisted by an older build, before the provider was normalized.
+    let previous = held_in_keyring(&profile.id, "App-Session");
+    let persisted = store.prepare_persisted(&data, &previous).await.unwrap();
+
+    let row = &persisted.profiles[&profile.id];
+    assert_eq!(
+        row.secret_location,
+        Some(super::super::persistence::SecretLocation::Keyring)
+    );
+    assert_eq!(row.provider, "app-session");
+    assert!(row.token.is_none());
+}
+
+#[cfg(feature = "security-module")]
+#[tokio::test]
+async fn a_save_stores_a_changed_secret_again() {
+    let dir = TempDir::new().unwrap();
+    let store = keyring_store(&dir);
+    let profile = AuthProfile::new_token("app-session", "default", "rotated-session".into());
+    cache_secret(&store, &profile.id, "synthetic-session");
+    let mut data = super::super::AuthProfilesData::default();
+    data.profiles.insert(profile.id.clone(), profile.clone());
+
+    let previous = held_in_keyring(&profile.id, "app-session");
+    let kept = store
+        .prepare_persisted(&data, &previous)
+        .await
+        .is_ok_and(|persisted| {
+            persisted.profiles[&profile.id].secret_location
+                == Some(super::super::persistence::SecretLocation::Keyring)
+        });
+    assert!(!kept, "a rotated secret must be stored, not assumed held");
+}
