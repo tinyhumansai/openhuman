@@ -88,6 +88,13 @@ path = "../../tests/security_native_fixture.rs"
 required-features = ["security-module"]
 
 [[test]]
+# TinyComputer end to end with its staged release (TS-E2E-010); each test runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_tinycomputer"
+path = "../../tests/ts_e2e_tinycomputer.rs"
+required-features = ["security-module"]
+
+[[test]]
 # TinySecurity from a pinned release (no local-file source) serves later loads.
 name = "security_release_reuse_fixture"
 path = "../../tests/security_release_reuse_fixture.rs"

@@ -138,3 +138,49 @@ async fn browser_egress_callback_refuses_unknown_host_registered_scope() {
         .await;
     assert!(result.is_err());
 }
+
+fn authorization(policy_id: &str, generation: u64) -> tinysecurity_bus::BrowserDialAuthorization {
+    tinysecurity_bus::BrowserDialAuthorization {
+        authorization_id: "lease-1".into(),
+        session_id: "browser-session-test".into(),
+        scheme: "https".into(),
+        hostname: "8.8.8.8".into(),
+        port: 443,
+        addresses: vec!["8.8.8.8:443".parse().unwrap()],
+        subject: tinysecurity_bus::SubjectScope {
+            user: "user-1".into(),
+            workspace: "workspace-1".into(),
+            agent: "agent-1".into(),
+        },
+        policy_id: tinysecurity_bus::EgressPolicyId(policy_id.into()),
+        generation,
+        expires_at_ms: 1,
+    }
+}
+
+#[test]
+fn the_config_names_a_stable_alias_not_the_rotating_policy() {
+    // TinyBus fixes TinyComputer's config at load; a policy id in it would
+    // change at the first re-registration and every refresh would be refused.
+    let alias = browser_dial_alias();
+    assert_eq!(alias["policy_id"], BROWSER_POLICY_ALIAS);
+    assert_eq!(alias["generation"], BROWSER_POLICY_ALIAS_GENERATION);
+    assert_eq!(alias, browser_dial_alias());
+}
+
+#[test]
+fn a_consumed_lease_is_checked_against_the_policy_it_was_issued_under() {
+    let mut aliased = target(BROWSER_POLICY_ALIAS);
+    aliased.expected_generation = BROWSER_POLICY_ALIAS_GENERATION;
+    let request = browser_request(aliased, &authorization("policy-real-7", 9)).unwrap();
+    assert_eq!(request.policy_id.0, "policy-real-7");
+    assert_eq!(request.expected_generation, 9);
+}
+
+#[test]
+fn a_target_that_does_not_name_the_alias_is_refused() {
+    assert!(browser_request(target("policy-real-7"), &authorization("policy-real-7", 9)).is_err());
+    let mut stale = target(BROWSER_POLICY_ALIAS);
+    stale.expected_generation = BROWSER_POLICY_ALIAS_GENERATION + 1;
+    assert!(browser_request(stale, &authorization("policy-real-7", 9)).is_err());
+}

@@ -29,9 +29,32 @@ fn registered_scopes() -> &'static parking_lot::Mutex<Vec<BrowserScope>> {
     SCOPES.get_or_init(|| parking_lot::Mutex::new(Vec::new()))
 }
 
-/// Register the browser's destination-only policy from the authenticated host
-/// context and return the immutable id and generation for TinyComputer config.
+/// The policy id and generation TinyComputer's config names. TinyBus fixes a
+/// callback-bound module's config when it loads and refuses any change, while
+/// the TinySecurity policy behind it is re-registered every
+/// [`BROWSER_POLICY_REFRESH_AFTER`]. So the config carries this stable alias,
+/// and each callback maps it to the current policy.
+pub(crate) const BROWSER_POLICY_ALIAS: &str = "openhuman-browser-egress";
+pub(crate) const BROWSER_POLICY_ALIAS_GENERATION: u64 = 1;
+
+/// The `browser.egress` value TinyComputer is loaded and refreshed with.
+pub(crate) fn browser_dial_alias() -> Value {
+    serde_json::json!({
+        "policy_id": BROWSER_POLICY_ALIAS,
+        "generation": BROWSER_POLICY_ALIAS_GENERATION,
+    })
+}
+
+/// Make sure the browser's destination-only policy is registered for this
+/// host context, then return the stable alias for TinyComputer config.
 pub(crate) async fn browser_dial_config(config: &crate::config::Config) -> Result<Value, String> {
+    current_browser_policy(config).await?;
+    Ok(browser_dial_alias())
+}
+
+/// The id and generation of the current browser policy, registering a new one
+/// when the cached registration is stale.
+async fn current_browser_policy(config: &crate::config::Config) -> Result<(String, u64), String> {
     let client = super::security::client(config)
         .await
         .map_err(|error| error.to_string())?;
@@ -63,10 +86,7 @@ pub(crate) async fn browser_dial_config(config: &crate::config::Config) -> Resul
             &privacy_key,
             std::time::Instant::now(),
         ) {
-            return Ok(serde_json::json!({
-                "policy_id": id,
-                "generation": generation,
-            }));
+            return Ok((id.to_owned(), generation));
         }
     }
     let registered_at = std::time::Instant::now();
@@ -105,10 +125,7 @@ pub(crate) async fn browser_dial_config(config: &crate::config::Config) -> Resul
     if scopes.len() > 64 {
         scopes.remove(0);
     }
-    Ok(serde_json::json!({
-        "policy_id": policy_id.0,
-        "generation": info.generation,
-    }))
+    Ok((policy_id.0, info.generation))
 }
 
 fn find_reusable_policy<'a>(
@@ -143,11 +160,8 @@ fn find_reusable_policy<'a>(
         .map(|(id, generation, ..)| (id.as_str(), *generation))
 }
 
-fn is_registered(policy_id: &str, generation: u64) -> bool {
-    registered_scopes()
-        .lock()
-        .iter()
-        .any(|(id, current, ..)| id == policy_id && *current == generation)
+fn is_alias(policy_id: &str, generation: u64) -> bool {
+    policy_id == BROWSER_POLICY_ALIAS && generation == BROWSER_POLICY_ALIAS_GENERATION
 }
 
 #[derive(Clone)]
@@ -193,20 +207,24 @@ impl ConsequenceReviewHost {
 #[tinybus::interface(name = "ai.tinyhumans.tinycomputer.BrowserEgressHost")]
 impl BrowserEgressHost {
     async fn authorize(&self, target: BrowserEgressTarget) -> tinybus::Result<BrowserEgressGrant> {
-        if !is_registered(&target.policy_id, target.expected_generation) {
+        if !is_alias(&target.policy_id, target.expected_generation) {
             return Err(refused());
         }
         let config = crate::core::runtime::DispatchCtx::ambient()
             .load_config()
             .await
             .map_err(|_| refused())?;
+        let (policy_id, generation) = current_browser_policy(&config).await.map_err(|error| {
+            tracing::debug!(%error, "[computer] browser egress policy unavailable for a dial");
+            refused()
+        })?;
         let client = super::security::client(&config)
             .await
             .map_err(|_| refused())?;
         let response = client
             .authorize_browser_dial(tinysecurity_bus::BrowserDialRequest {
-                policy_id: tinysecurity_bus::EgressPolicyId(target.policy_id),
-                expected_generation: target.expected_generation,
+                policy_id: tinysecurity_bus::EgressPolicyId(policy_id),
+                expected_generation: generation,
                 session_id: target.session_id,
                 scheme: target.scheme,
                 hostname: target.hostname,
@@ -214,7 +232,7 @@ impl BrowserEgressHost {
             })
             .await
             .map_err(|_| refused())?;
-        if response.generation != target.expected_generation {
+        if response.generation != generation {
             return Err(refused());
         }
         let authorization = response.authorization.ok_or_else(refused)?;
@@ -227,8 +245,10 @@ impl BrowserEgressHost {
             .map(ToString::to_string)
             .collect();
         let authorization = serde_json::to_string(&authorization).map_err(|_| refused())?;
+        // TinyComputer checks the grant against the generation its config
+        // names, which is the alias's.
         Ok(BrowserEgressGrant {
-            generation: response.generation,
+            generation: BROWSER_POLICY_ALIAS_GENERATION,
             authorization,
             addresses,
         })
@@ -241,9 +261,10 @@ impl BrowserEgressHost {
         let client = security_client().await?;
         let authorization = decode_browser_authorization(&request.authorization)?;
         let address = request.address.parse().map_err(|_| refused())?;
+        let request_target = browser_request(request.target, &authorization)?;
         let allowed = client
             .consume_browser_dial(tinysecurity_bus::ConsumeBrowserDialRequest {
-                request: browser_request(request.target),
+                request: request_target,
                 address,
                 authorization,
             })
@@ -276,15 +297,24 @@ async fn security_client() -> tinybus::Result<super::security::Client> {
         .map_err(|_| refused())
 }
 
-fn browser_request(target: BrowserEgressTarget) -> tinysecurity_bus::BrowserDialRequest {
-    tinysecurity_bus::BrowserDialRequest {
-        policy_id: tinysecurity_bus::EgressPolicyId(target.policy_id),
-        expected_generation: target.expected_generation,
+/// The TinySecurity request for an aliased target: the policy the grant was
+/// issued under, which the authorization records, since the current policy
+/// may have rotated since.
+fn browser_request(
+    target: BrowserEgressTarget,
+    authorization: &tinysecurity_bus::BrowserDialAuthorization,
+) -> tinybus::Result<tinysecurity_bus::BrowserDialRequest> {
+    if !is_alias(&target.policy_id, target.expected_generation) {
+        return Err(refused());
+    }
+    Ok(tinysecurity_bus::BrowserDialRequest {
+        policy_id: authorization.policy_id.clone(),
+        expected_generation: authorization.generation,
         session_id: target.session_id,
         scheme: target.scheme,
         hostname: target.hostname,
         port: target.port,
-    }
+    })
 }
 
 fn decode_browser_authorization(
