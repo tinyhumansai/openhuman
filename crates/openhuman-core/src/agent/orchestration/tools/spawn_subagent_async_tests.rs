@@ -242,6 +242,13 @@ fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
 
 /// A thread holding one delivered proposal (task `sub-propose`), named `name`.
 fn thread_with_delivered_proposal(name: &str) -> tempfile::TempDir {
+    thread_with_delivered_proposal_extra(name, "")
+}
+
+/// Deliver a proposal whose payload carries extra fields (e.g.
+/// `,"draft_id":"draft-old"`), for hand-offs that identify the proposal by
+/// id rather than by name.
+fn thread_with_delivered_proposal_extra(name: &str, extra: &str) -> tempfile::TempDir {
     use crate::threads::store::CreateConversationThread;
     let temp = tempfile::tempdir().expect("tempdir");
     conversations::ensure_thread(
@@ -265,7 +272,7 @@ fn thread_with_delivered_proposal(name: &str) -> tempfile::TempDir {
         "sub-propose",
         "workflow_builder",
         &[TranscriptMessage::tool(format!(
-            r#"{{"type":"workflow_proposal","persisted":false,"name":"{name}","graph":{{"nodes":[],"edges":[]}}}}"#
+            r#"{{"type":"workflow_proposal","persisted":false,"name":"{name}","graph":{{"nodes":[],"edges":[]}}{extra}}}"#
         ))],
         "proposal".to_string(),
     );
@@ -408,14 +415,15 @@ fn mark_proposal_saved_from_card(temp: &tempfile::TempDir, flow_id: &str) {
 fn a_card_saved_proposal_is_found_by_the_lookup() {
     let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
     mark_proposal_saved_from_card(&temp, "flow-1");
-    assert_eq!(
-        already_saved_workflow_proposals(
-            &crate::core::runtime::DispatchCtx::ambient(),
-            temp.path(),
-            "thread-parent"
-        ),
-        vec![("Friday Inbox Wrap-up".to_string(), "flow-1".to_string())]
+    let found = already_saved_workflow_proposals(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        "thread-parent",
     );
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].message_id, "workflow-proposal:sub-propose");
+    assert_eq!(found[0].name, "Friday Inbox Wrap-up");
+    assert_eq!(found[0].saved_flow_id.as_deref(), Some("flow-1"));
 }
 
 #[test]
@@ -437,6 +445,7 @@ fn the_saved_note_names_the_proposal_and_forbids_create_workflow() {
     assert!(note.contains("Do not call `create_workflow`"));
     assert!(note.contains("already saved"));
     assert!(note.contains("save_workflow"));
+    assert!(note.contains("separate variant or copy"));
 }
 
 #[test]
@@ -453,6 +462,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
         temp.path(),
         &thread,
         "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string(),
+        None,
     );
     assert!(save_it.contains("flow-1"));
     assert!(save_it.contains("already saved"));
@@ -462,6 +472,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
         temp.path(),
         &thread,
         "Save the delivered proposal \"Something Else\" as-is.".to_string(),
+        None,
     );
     assert_eq!(
         other,
@@ -473,6 +484,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
         temp.path(),
         &no_thread,
         "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string(),
+        None,
     );
     assert_eq!(
         unthreaded,
@@ -505,6 +517,7 @@ fn carry_saved_flow_finds_the_older_saved_proposal_under_a_newer_unsaved_one() {
         temp.path(),
         &thread,
         "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string(),
+        None,
     );
     assert!(save_first.contains("flow-1"));
     assert!(save_first.contains("already saved"));
@@ -513,11 +526,129 @@ fn carry_saved_flow_finds_the_older_saved_proposal_under_a_newer_unsaved_one() {
         temp.path(),
         &thread,
         "Save the delivered proposal \"Something Else\" as-is.".to_string(),
+        None,
     );
     assert_eq!(
         save_second,
         "Save the delivered proposal \"Something Else\" as-is."
     );
+}
+
+#[test]
+fn carry_saved_flow_matches_by_draft_id_not_name() {
+    // An older saved "Daily" (draft-old, flow-1) and a newer unsaved "Daily"
+    // (draft-new): a hand-off naming only "Daily" is about the newer one, so
+    // it must not borrow the older save; a hand-off carrying a draft id
+    // matches that proposal exactly.
+    let temp = thread_with_delivered_proposal_extra("Daily", r#","draft_id":"draft-old""#);
+    mark_proposal_saved_from_card(&temp, "flow-1");
+    attach_workflow_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        Some("thread-parent"),
+        "sub-propose-2",
+        "workflow_builder",
+        &[TranscriptMessage::tool(
+            r#"{"type":"workflow_proposal","persisted":false,"name":"Daily","graph":{"nodes":[],"edges":[]},"draft_id":"draft-new"}"#,
+        )],
+        "proposal".to_string(),
+    );
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = Some("thread-parent".to_string());
+    let by_name = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Daily\" as-is.".to_string(),
+        None,
+    );
+    assert_eq!(by_name, "Save the delivered proposal \"Daily\" as-is.");
+    let by_new_draft = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save draft-new as-is.".to_string(),
+        None,
+    );
+    assert_eq!(by_new_draft, "Save draft-new as-is.");
+    let by_old_draft = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save draft-old as-is.".to_string(),
+        None,
+    );
+    assert!(by_old_draft.contains("flow-1"));
+    assert!(by_old_draft.contains("already saved"));
+}
+
+#[test]
+fn carry_saved_flow_does_not_match_a_name_substring() {
+    // An older saved "Daily" and a newer unsaved "Daily Report": asking to
+    // save "Daily Report" must not borrow "Daily"'s flow id; asking to save
+    // "Daily" still carries it.
+    let temp = thread_with_delivered_proposal("Daily");
+    mark_proposal_saved_from_card(&temp, "flow-1");
+    attach_workflow_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        Some("thread-parent"),
+        "sub-propose-2",
+        "workflow_builder",
+        &[TranscriptMessage::tool(
+            r#"{"type":"workflow_proposal","persisted":false,"name":"Daily Report","graph":{"nodes":[],"edges":[]}}"#,
+        )],
+        "proposal".to_string(),
+    );
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = Some("thread-parent".to_string());
+    let save_report = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Daily Report\" as-is.".to_string(),
+        None,
+    );
+    assert_eq!(
+        save_report,
+        "Save the delivered proposal \"Daily Report\" as-is."
+    );
+    let save_daily = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Daily\" as-is.".to_string(),
+        None,
+    );
+    assert!(save_daily.contains("flow-1"));
+    assert!(save_daily.contains("already saved"));
+}
+
+#[test]
+fn carry_saved_flow_matches_a_name_only_in_context() {
+    // The proposal name may live only in the hand-off context, not the
+    // prompt: the lookup must search both.
+    let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
+    mark_proposal_saved_from_card(&temp, "flow-1");
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = Some("thread-parent".to_string());
+    let save_it = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal as-is.".to_string(),
+        Some("The proposal is \"Friday Inbox Wrap-up\"."),
+    );
+    assert!(save_it.contains("flow-1"));
+    assert!(save_it.contains("already saved"));
+    let no_match = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal as-is.".to_string(),
+        Some("Nothing relevant here."),
+    );
+    assert_eq!(no_match, "Save the delivered proposal as-is.");
 }
 
 #[test]

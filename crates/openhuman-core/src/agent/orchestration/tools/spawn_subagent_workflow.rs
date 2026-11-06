@@ -204,18 +204,37 @@ fn record_agent_saved_workflow(
     }
 }
 
-/// The workflow proposals the user already saved from their cards, newest
-/// first: the proposal messages whose `extra_metadata` carries a
-/// `saved_flow_id` (#8450). Each entry is the proposal name and the saved
-/// flow id. A later revision does not inherit an earlier save: only messages
-/// with their own `saved_flow_id` are listed. Best-effort: a store read
-/// failure returns an empty list and logs, like `record_agent_saved_workflow`,
-/// so a lookup failure never blocks a spawn.
-pub(crate) fn already_saved_workflow_proposals(
+/// A delivered workflow proposal in the parent thread: the proposal message
+/// id, the proposal name, the `draft_id` / `flow_id` the proposal payload
+/// carries when it derives from an existing draft or flow, and the flow id
+/// the card (or the agent) recorded on it (`saved_flow_id`, #8450) when it
+/// was saved. Listings are newest first; a later revision does not inherit
+/// an earlier save, so only messages with their own `saved_flow_id` count
+/// as saved.
+pub(crate) struct ThreadWorkflowProposal {
+    pub(crate) message_id: String,
+    pub(crate) name: String,
+    pub(crate) draft_id: Option<String>,
+    pub(crate) flow_id: Option<String>,
+    pub(crate) saved_flow_id: Option<String>,
+}
+
+impl ThreadWorkflowProposal {
+    pub(crate) fn is_saved(&self) -> bool {
+        self.saved_flow_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty())
+    }
+}
+
+/// The workflow proposals in the parent thread, newest first. Best-effort:
+/// a store read failure returns an empty list and logs, like
+/// `record_agent_saved_workflow`, so a lookup failure never blocks a spawn.
+pub(crate) fn workflow_proposals_in_thread(
     ctx: &DispatchCtx,
     workspace_dir: &std::path::Path,
     thread_id: &str,
-) -> Vec<(String, String)> {
+) -> Vec<ThreadWorkflowProposal> {
     let messages = match conversations::get_messages(ctx, workspace_dir.to_path_buf(), thread_id) {
         Ok(messages) => messages,
         Err(error) => {
@@ -233,55 +252,167 @@ pub(crate) fn already_saved_workflow_proposals(
             if meta["scope"] != "workflow_proposal" {
                 return None;
             }
-            let saved_flow_id = meta.get("saved_flow_id")?.as_str()?;
-            if saved_flow_id.is_empty() {
-                return None;
-            }
-            let name = meta["proposal"]["name"].as_str()?;
+            let proposal = &meta["proposal"];
+            let name = proposal["name"].as_str()?;
             if name.is_empty() {
                 return None;
             }
-            Some((name.to_string(), saved_flow_id.to_string()))
+            let text_field = |field: &str| {
+                proposal
+                    .get(field)
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            };
+            Some(ThreadWorkflowProposal {
+                message_id: message.id.clone(),
+                name: name.to_string(),
+                draft_id: text_field("draft_id"),
+                flow_id: text_field("flow_id"),
+                saved_flow_id: meta
+                    .get("saved_flow_id")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            })
         })
         .collect()
+}
+
+/// The workflow proposals the user already saved from their cards, newest
+/// first (#8450). See [`workflow_proposals_in_thread`].
+pub(crate) fn already_saved_workflow_proposals(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+) -> Vec<ThreadWorkflowProposal> {
+    workflow_proposals_in_thread(ctx, workspace_dir, thread_id)
+        .into_iter()
+        .filter(ThreadWorkflowProposal::is_saved)
+        .collect()
+}
+
+/// Whether `token` occurs in `text` as a delimited token, not as part of a
+/// longer id: the characters on either side must not be id characters
+/// (`[A-Za-z0-9_-]`). Ids (`draft_id` / `flow_id`) are matched this way so a
+/// short id never matches a longer one that merely contains it.
+fn contains_token(text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let is_id_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    text.match_indices(token).any(|(at, _)| {
+        let before_ok = at == 0 || !text[..at].chars().last().is_some_and(is_id_char);
+        let after_at = at + token.len();
+        let after_ok =
+            after_at == text.len() || !text[after_at..].chars().next().is_some_and(is_id_char);
+        before_ok && after_ok
+    })
+}
+
+/// The proposal a `workflow_builder` hand-off is about, if the hand-off
+/// identifies one. Identity first: a `draft_id` or `flow_id` the hand-off
+/// carries, as the orchestrator is told to pass them. Then by exact name.
+/// Names are not unique, so a name match takes the longest proposal name the
+/// hand-off carries — a hand-off naming "Daily Report" must not match a saved
+/// "Daily" — and among same-length names the newest proposal wins: when the
+/// newest proposal with that name is still unsaved, the hand-off is about the
+/// newer one, not an older saved namesake.
+fn hand_off_proposal<'a>(
+    proposals: &'a [ThreadWorkflowProposal],
+    hand_off: &str,
+) -> Option<&'a ThreadWorkflowProposal> {
+    for proposal in proposals {
+        let identified = [proposal.draft_id.as_deref(), proposal.flow_id.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|id| contains_token(hand_off, id));
+        if identified {
+            return Some(proposal);
+        }
+    }
+    let mut best: Option<&ThreadWorkflowProposal> = None;
+    for proposal in proposals {
+        if !hand_off.contains(proposal.name.as_str()) {
+            continue;
+        }
+        let longer = match best {
+            None => true,
+            Some(current) => proposal.name.len() > current.name.len(),
+        };
+        if longer {
+            best = Some(proposal);
+        }
+    }
+    best
 }
 
 /// Note appended to a `workflow_builder` save hand-off when the proposal it
 /// names was already saved from its card, so the builder reports it as
 /// already saved instead of calling `create_workflow` and duplicating the
 /// flow (#8459). The `save_workflow` escape hatch covers a graph that changed
-/// alongside the save.
+/// alongside the save. Scoped to saving this proposal as-is: an explicit
+/// request for a separate variant or copy still creates a new flow.
 fn already_saved_proposal_note(name: &str, flow_id: &str) -> String {
     format!(
         "Note: the workflow proposal \"{name}\" was already saved from its card as flow `{flow_id}`. \
-         Do not call `create_workflow` for it: report it as already saved as `{flow_id}`. \
+         This applies only to saving this proposal as-is: report it as already saved as `{flow_id}` \
+         and do not call `create_workflow` for it. \
          If its graph changed and needs updating, use `save_workflow` with flow_id `{flow_id}` \
-         instead of creating a new flow."
+         instead of creating a new flow. \
+         If the request instead asks for a separate variant or copy of it, create that as a new flow as requested."
     )
 }
 
 /// Carry a card-saved proposal into a `workflow_builder` hand-off (#8459):
 /// when the parent thread holds a proposal already saved from its card
-/// (`saved_flow_id`, #8450) and the hand-off names that proposal, append a
-/// note so the builder reports it as already saved instead of calling
-/// `create_workflow` and creating a second copy. The newest saved proposal
-/// whose name the hand-off carries wins, so an older saved proposal is still
-/// found when a newer unsaved one sits above it. Returns the prompt
-/// unchanged when there is no parent thread or no saved proposal is named.
+/// (`saved_flow_id`, #8450) and the hand-off — prompt or context — identifies
+/// that proposal (see [`hand_off_proposal`]), append a note so the builder
+/// reports it as already saved instead of calling `create_workflow` and
+/// creating a second copy. The carry decision is logged with the thread and
+/// flow ids, never the prompt or the proposal name. Returns the prompt
+/// unchanged when there is no parent thread, no proposal is identified, or
+/// the identified proposal is still unsaved.
 pub(crate) fn carry_saved_flow(
     ctx: &DispatchCtx,
     workspace_dir: &std::path::Path,
     thread_id: &Option<String>,
     prompt: String,
+    context: Option<&str>,
 ) -> String {
     let Some(thread_id) = thread_id.as_deref() else {
         return prompt;
     };
-    let saved = already_saved_workflow_proposals(ctx, workspace_dir, thread_id);
-    let Some((name, flow_id)) = saved.iter().find(|(name, _)| prompt.contains(name)) else {
+    let proposals = workflow_proposals_in_thread(ctx, workspace_dir, thread_id);
+    let hand_off = match context {
+        Some(context) if !context.trim().is_empty() => format!("{prompt}\n{context}"),
+        _ => prompt.clone(),
+    };
+    let Some(proposal) = hand_off_proposal(&proposals, &hand_off) else {
+        log::debug!(
+            "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} reason=no-matching-proposal"
+        );
         return prompt;
     };
-    format!("{prompt}\n\n{}", already_saved_proposal_note(name, flow_id))
+    let Some(flow_id) = proposal
+        .saved_flow_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    else {
+        log::debug!(
+            "[spawn_subagent] saved-flow carry skipped thread_id={thread_id} proposal_id={} reason=proposal-unsaved",
+            proposal.message_id
+        );
+        return prompt;
+    };
+    log::debug!(
+        "[spawn_subagent] saved-flow carry applied thread_id={thread_id} proposal_id={} flow_id={flow_id}",
+        proposal.message_id
+    );
+    format!(
+        "{prompt}\n\n{}",
+        already_saved_proposal_note(&proposal.name, flow_id)
+    )
 }
 
 /// Durably surface a workflow proposal found in a finished child's history:

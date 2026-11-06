@@ -109,7 +109,13 @@ impl SpawnSubagentTool {
             }
         };
         if definition.id == "workflow_builder" {
-            prompt = carry_saved_flow(&dispatch, &parent.workspace_dir, &parent_thread_id, prompt);
+            prompt = carry_saved_flow(
+                &dispatch,
+                &parent.workspace_dir,
+                &parent_thread_id,
+                prompt,
+                context.as_deref(),
+            );
         }
         if definition.id == "vision_agent" {
             match crate::attachments::has_resolvable_image(
