@@ -50,6 +50,18 @@ async fn next_approval(
     }
 }
 
+/// A refusal that ends the turn. TinyAgents answers a plain `Deny` to the model
+/// and lets the turn continue (so the model may ask for the tool again, and the
+/// host is asked again); only `continue_ = Some(false)` stops the run. These
+/// scenarios script exactly one model call per refused turn, so they refuse
+/// with a stop.
+fn refuse_and_stop(reason: &str) -> ToolHookDecision {
+    ToolHookDecision {
+        continue_: Some(false),
+        ..ToolHookDecision::deny(reason)
+    }
+}
+
 struct Probe(Arc<AtomicUsize>);
 #[async_trait::async_trait]
 impl Tool for Probe {
@@ -118,7 +130,7 @@ async fn scenario() {
                 Box::pin(async move {
                     decision
                         .await
-                        .unwrap_or_else(|_| ToolHookDecision::deny("UI closed"))
+                        .unwrap_or_else(|_| refuse_and_stop("UI closed"))
                 })
             }),
         )
@@ -145,9 +157,7 @@ async fn scenario() {
     .await
     .unwrap();
     assert_eq!(other_calls.load(Ordering::SeqCst), 1);
-    answer
-        .send(ToolHookDecision::deny("human refused"))
-        .unwrap();
+    answer.send(refuse_and_stop("human refused")).unwrap();
     assert!(
         within("the denied first turn to finish", first)
             .await
@@ -159,7 +169,7 @@ async fn scenario() {
     let second = tokio::spawn(
         agent
             .turn("turn-specific refusal")
-            .can_use_tool(|_| Box::pin(async { ToolHookDecision::deny("turn narrowed authority") }))
+            .can_use_tool(|_| Box::pin(async { refuse_and_stop("turn narrowed authority") }))
             .send(),
     );
     let (_, answer) = next_approval(
@@ -244,9 +254,7 @@ async fn repeated_permissions(runtime: &Runtime) {
                         async move { HostTurnTools::advertised(vec![Box::new(Probe(tool_calls))]) },
                     )
                 })
-                .can_use_tool(|_| {
-                    Box::pin(async { ToolHookDecision::deny("first policy refused") })
-                })
+                .can_use_tool(|_| Box::pin(async { refuse_and_stop("first policy refused") }))
                 .can_use_tool(|_| Box::pin(async { ToolHookDecision::default() })),
         )
         .unwrap();
