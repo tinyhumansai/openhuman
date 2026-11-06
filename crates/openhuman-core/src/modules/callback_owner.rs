@@ -8,12 +8,17 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tinybus::{BusName, CallContext, Connection, Interface, InterfaceName, MemberName};
+use tinybus::{
+    BusName, CallContext, Connection, Interface, InterfaceName, MemberName, WeakConnection,
+};
 
 /// `inner`, answering only the peer that owns `owner` on `connection`'s bus.
+///
+/// It holds the connection weakly: that connection serves this object, so a
+/// strong handle would be a cycle and neither would ever be freed.
 pub(crate) struct OwnedBy<T> {
     inner: T,
-    connection: Connection,
+    connection: WeakConnection,
     owner: &'static str,
 }
 
@@ -21,7 +26,7 @@ impl<T> OwnedBy<T> {
     pub(crate) fn new(inner: T, connection: &Connection, owner: &'static str) -> Self {
         Self {
             inner,
-            connection: connection.clone(),
+            connection: connection.downgrade(),
             owner,
         }
     }
@@ -52,7 +57,11 @@ impl<T: Interface> Interface for OwnedBy<T> {
         args: Value,
         context: &CallContext,
     ) -> tinybus::Result<Value> {
-        let owner: Option<BusName> = self.connection.name_owner(self.owner).await?;
+        // A connection already being closed answers nobody.
+        let Some(connection) = self.connection.upgrade() else {
+            return Err(refused());
+        };
+        let owner: Option<BusName> = connection.name_owner(self.owner).await?;
         if owner.is_none() || context.authenticated_sender() != owner.as_ref() {
             tracing::debug!(
                 interface = %self.inner.name(),
