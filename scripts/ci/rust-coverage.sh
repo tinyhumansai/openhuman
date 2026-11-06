@@ -14,17 +14,21 @@ CORE_PRODUCT_FEATURES="$(bash scripts/ci/product-features.sh --core)"
 # below belongs to exactly one section, and each section runs whole:
 #   core     the core crate's own unit tests (lib + bins), product features
 #   product  embed, tinyhumans and the cli integration targets, product features
-#   default  rpc, embed and tinyhumans on default features, and the tui
-# `full` (the default, and what the private EX63 profile runs) is all three in
+#   facades  rpc, and embed and tinyhumans on default features
+#   tui      the terminal frontend
+# Each is its own cold build of the core: cargo resolves the core's features
+# differently for each selected package set (core alone, embed/tinyhumans, the
+# tui, rpc), so sections that share no build run in separate jobs.
+# `full` (the default, and what the private EX63 profile runs) is all four in
 # one job. A shard writes only its own part of the tree to ${OUT}; the hosted
 # gate merges every shard's lcov and runs the whole-tree presence check
 # (scripts/ci/self-hosted/merge-coverage-shards.mjs), so a shard that did not
 # report fails the gate instead of silently dropping its files.
 COV_SHARD="${OH_COV_SHARD:-full}"
 case "${COV_SHARD}" in
-  full | core | product | default) ;;
+  full | core | product | facades | tui) ;;
   *)
-    echo "[ci][rust-cov] unknown OH_COV_SHARD '${COV_SHARD}' (expected full, core, product or default)" >&2
+    echo "[ci][rust-cov] unknown OH_COV_SHARD '${COV_SHARD}' (expected full, core, product, facades or tui)" >&2
     exit 2
     ;;
 esac
@@ -416,7 +420,7 @@ fi
 # Run every root-workspace Rust support crate rather than only crates named by
 # changed paths. Product features are forwarded to the embedding facade; the
 # remaining crates do not expose that feature vocabulary.
-if has_cov_section default; then
+if has_cov_section facades; then
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
 fi
@@ -436,15 +440,18 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   suite "openhuman-tinyhumans (default)" llvm_cov_package --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets \
     --features storage-sqlite
 fi
+fi # facades
+
 # The terminal frontend builds the core a third time (default features, not the
 # product set). It is on by default and on in the PR lane; OH_COV_TUI=0 is an
 # opt-out for local runs.
-if [ "${OH_COV_TUI:-1}" = "1" ]; then
+if ! has_cov_section tui; then
+  :
+elif [ "${OH_COV_TUI:-1}" = "1" ]; then
   suite "openhuman-tui" llvm_cov_package --no-report --no-fail-fast -p openhuman-tui --all-targets
 else
   log "skipping openhuman-tui (OH_COV_TUI=${OH_COV_TUI})"
 fi
-fi # default
 
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   # The nextest runner ran the integration targets with the product suites.
