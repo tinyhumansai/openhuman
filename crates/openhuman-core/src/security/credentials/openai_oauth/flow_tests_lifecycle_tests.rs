@@ -270,7 +270,7 @@ async fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
         .and_then(|set| set.expires_at)
         .is_some());
 
-    let data = AuthProfilesStore::new(tmp.path(), false)
+    let data = AuthProfilesStore::new_with_config(tmp.path(), false, &config)
         .load()
         .await
         .unwrap();
@@ -298,7 +298,7 @@ async fn persist_openai_oauth_token_rejects_blank_access_token() {
         "expected missing access_token error, got: {err}"
     );
 
-    let data = AuthProfilesStore::new(tmp.path(), false)
+    let data = AuthProfilesStore::new_with_config(tmp.path(), false, &config)
         .load()
         .await
         .unwrap();
@@ -516,7 +516,7 @@ async fn inference_import_codex_cli_surfaces_error_when_auth_missing() {
 async fn openai_oauth_status_reports_token_profile_as_disconnected() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
     store
         .upsert_profile(
             AuthProfile::new_token(
@@ -539,7 +539,7 @@ async fn openai_oauth_status_reports_token_profile_as_disconnected() {
 async fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
 
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
@@ -579,7 +579,7 @@ async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_ro
 
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
     store
         .upsert_profile(
             AuthProfile::new_oauth(
@@ -650,7 +650,7 @@ async fn codex_routing_reaches_backend_for_oauth_only_openai_even_after_token_ro
 async fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -685,7 +685,7 @@ async fn credits_gate_bypassed_with_oauth_only_credentials() {
     // No credential yet → gate stays on.
     assert!(!role_bypasses_managed_credits("chat", &config).await);
 
-    let store = AuthProfilesStore::new(tmp.path(), false);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
