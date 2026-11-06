@@ -129,13 +129,21 @@ async fn scenario() {
         0,
         "tool ran before the UI answered"
     );
-    other.run("independent worker").await.unwrap();
+    within(
+        "the independent agent to finish its turn",
+        other.run("independent worker"),
+    )
+    .await
+    .unwrap();
     assert_eq!(other_calls.load(Ordering::SeqCst), 1);
     answer
         .send(ToolHookDecision::deny("human refused"))
         .unwrap();
     assert!(
-        first.await.unwrap().is_err(),
+        within("the denied first turn to finish", first)
+            .await
+            .unwrap()
+            .is_err(),
         "denied call unexpectedly succeeded"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -145,17 +153,27 @@ async fn scenario() {
             .can_use_tool(|_| Box::pin(async { ToolHookDecision::deny("turn narrowed authority") }))
             .send(),
     );
-    let (_, answer) = next_approval(&mut received, "the approval request of the turn-narrowed turn").await;
+    let (_, answer) = next_approval(
+        &mut received,
+        "the approval request of the turn-narrowed turn",
+    )
+    .await;
     answer.send(ToolHookDecision::default()).unwrap();
     assert!(
-        second.await.unwrap().is_err(),
+        within("the turn-narrowed turn to finish", second)
+            .await
+            .unwrap()
+            .is_err(),
         "turn denial unexpectedly succeeded"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0, "turn policy was skipped");
     let third = tokio::spawn(agent.turn("next turn").send());
     let (_, answer) = next_approval(&mut received, "the approval request of the next turn").await;
     answer.send(ToolHookDecision::default()).unwrap();
-    third.await.unwrap().unwrap();
+    within("the approved next turn to finish", third)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
@@ -164,10 +182,13 @@ async fn scenario() {
     let mut pending = agent.turn("cancel while the UI waits");
     let cancellation = pending.cancellation_handle();
     let cancelled = tokio::spawn(pending.send());
-    let (_, answer) = next_approval(&mut received, "the approval request of the cancelled turn").await;
-    cancellation.cancel().await;
+    let (_, answer) =
+        next_approval(&mut received, "the approval request of the cancelled turn").await;
+    within("the cancellation to complete", cancellation.cancel()).await;
     assert!(matches!(
-        cancelled.await.unwrap(),
+        within("the cancelled turn to finish", cancelled)
+            .await
+            .unwrap(),
         Err(openhuman_embed::CoreError::TurnCancelled { .. })
     ));
     assert!(
@@ -176,15 +197,23 @@ async fn scenario() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let closed_ui = tokio::spawn(agent.turn("closed UI refuses").send());
-    let (_, answer) = next_approval(&mut received, "the approval request of the closed-UI turn").await;
+    let (_, answer) =
+        next_approval(&mut received, "the approval request of the closed-UI turn").await;
     drop(answer);
-    assert!(closed_ui.await.unwrap().is_err());
+    assert!(within("the closed-UI turn to finish", closed_ui)
+        .await
+        .unwrap()
+        .is_err());
     assert_eq!(
         calls.load(Ordering::SeqCst),
         1,
         "closing the UI granted permission"
     );
-    repeated_permissions(&runtime).await;
+    within(
+        "the repeated-permissions scenario",
+        repeated_permissions(&runtime),
+    )
+    .await;
 }
 
 async fn repeated_permissions(runtime: &Runtime) {
@@ -212,7 +241,12 @@ async fn repeated_permissions(runtime: &Runtime) {
                 .can_use_tool(|_| Box::pin(async { ToolHookDecision::default() })),
         )
         .unwrap();
-    assert!(agent.run("perform probe").await.is_err());
+    assert!(within(
+        "the repeated-permissions turn to finish",
+        agent.run("perform probe")
+    )
+    .await
+    .is_err());
     assert_eq!(
         calls.load(Ordering::SeqCst),
         0,
