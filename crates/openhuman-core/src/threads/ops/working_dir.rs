@@ -53,6 +53,30 @@ pub(crate) async fn validate_working_dir(
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
 
+/// [`validate_working_dir`], also refusing the workspace the thread store
+/// uses. In single-user mode the store's `workspace_dir()` (the disk config)
+/// can differ from the dispatch context's config.
+pub(crate) async fn validate_working_dir_for_store(
+    raw: Option<&str>,
+    config: &Config,
+    store: &Path,
+) -> Result<Option<String>, String> {
+    let validated = validate_working_dir(raw, config).await?;
+    if let Some(dir) = &validated {
+        if store != config.workspace_dir {
+            let mut store_config = config.clone();
+            store_config.workspace_dir = store.to_path_buf();
+            crate::config::ops::refuse_data_folder(
+                "working folder",
+                Path::new(dir),
+                dir,
+                &store_config,
+            )?;
+        }
+    }
+    Ok(validated)
+}
+
 /// The working folder bound to `thread_id`, if the thread exists and has one.
 ///
 /// An unusable bound folder is an error, rather than a reason to run in the
@@ -63,7 +87,7 @@ pub(crate) async fn thread_working_dir(
     workspace_dir: PathBuf,
     thread_id: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let threads = conversations::blocking::list_threads(ctx.clone(), workspace_dir)
+    let threads = conversations::blocking::list_threads(ctx.clone(), workspace_dir.clone())
         .await
         .map_err(|err| format!("failed to load thread working folder: {err}"))?;
     let bound = threads
@@ -73,7 +97,7 @@ pub(crate) async fn thread_working_dir(
     let Some(bound) = bound else {
         return Ok(None);
     };
-    match validate_working_dir(Some(&bound), config).await {
+    match validate_working_dir_for_store(Some(&bound), config, &workspace_dir).await {
         Ok(Some(dir)) => Ok(Some(PathBuf::from(dir))),
         Ok(None) => Ok(None),
         Err(err) => Err(format!("thread working folder is unusable: {err}")),
@@ -90,7 +114,8 @@ pub async fn thread_update_working_dir(
         .load_config()
         .await
         .map_err(|e| format!("load config: {e}"))?;
-    let working_dir = validate_working_dir(Some(&request.action_dir), &config).await?;
+    let working_dir =
+        validate_working_dir_for_store(Some(&request.action_dir), &config, &dir).await?;
     let Some(thread) = conversations::blocking::list_threads(ctx.clone(), dir.clone())
         .await?
         .into_iter()

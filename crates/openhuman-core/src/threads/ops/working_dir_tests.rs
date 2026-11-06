@@ -95,6 +95,33 @@ async fn a_working_folder_inside_or_around_the_data_folder_is_rejected() {
     );
 }
 
+/// The thread store's workspace can differ from the context config's (single
+/// user: the disk config vs the embedder config). A folder inside the store's
+/// workspace is refused even when the context config doesn't name it.
+#[tokio::test]
+async fn a_working_folder_inside_the_thread_stores_workspace_is_rejected() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = profile_config(temp.path());
+    let store = temp.path().join("store").join("workspace");
+    let inside = store.join("threads");
+    std::fs::create_dir_all(&inside).unwrap();
+    let raw = inside.display().to_string();
+
+    assert!(
+        validate_working_dir(Some(&raw), &config).await.is_ok(),
+        "the context config alone doesn't cover the store's workspace"
+    );
+    let error = validate_working_dir_for_store(Some(&raw), &config, &store)
+        .await
+        .expect_err("a folder inside the thread store's workspace");
+    assert!(error.contains("OpenHuman data folder"), "{error}");
+    assert!(
+        validate_working_dir_for_store(Some(&raw), &config, &config.workspace_dir)
+            .await
+            .is_ok()
+    );
+}
+
 fn thread(id: &str, working_dir: Option<String>) -> conversations::CreateConversationThread {
     conversations::CreateConversationThread {
         id: id.into(),
