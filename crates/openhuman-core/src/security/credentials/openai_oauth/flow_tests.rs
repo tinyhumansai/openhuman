@@ -34,10 +34,6 @@ fn test_config(tmp: &tempfile::TempDir) -> Config {
     crate::credentials::test_support::plaintext_fixture_config(tmp.path())
 }
 
-fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Runtime::new().unwrap()
-}
-
 fn unsigned_jwt(payload: serde_json::Value) -> String {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 

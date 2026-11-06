@@ -212,7 +212,6 @@ async fn disconnect_openai_oauth_clears_profile() {
     store.upsert_profile(profile, true).await.unwrap();
     assert!(openai_oauth_status(&config).await.unwrap().connected);
 
-    disconnect_openai_oauth(&config).await
-        .unwrap();
+    disconnect_openai_oauth(&config).await.unwrap();
     assert!(!openai_oauth_status(&config).await.unwrap().connected);
 }
