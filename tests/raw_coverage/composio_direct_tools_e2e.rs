@@ -16,7 +16,8 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 use tempfile::{Builder, TempDir};
 
-use openhuman_core::config::Config;
+use openhuman_core::config::{Config, PrivacyMode};
+use openhuman_core::security::{live_policy, SecurityPolicy};
 use openhuman_core::integrations::composio::ops::{
     cached_active_integrations, composio_authorize, composio_execute, composio_list_connections,
     composio_list_toolkits, composio_list_tools, fetch_connected_integrations_status,
@@ -263,6 +264,57 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
             && request.body["arguments"]["query"] == "label:INBOX"
             && request.body["entity_id"] == " entity-round25 "
     }));
+
+    // TS-E2E-008 (EG-16): the UI's `composio.execute` RPC op is held to the
+    // local-only privacy mode like the agent tool, and refused before the
+    // connector module dials Composio. Checked in this test because the
+    // security module serves the first workspace that calls it.
+    let _privacy = PrivacyScope::set(PrivacyMode::LocalOnly);
+    state.requests.lock().expect("requests").clear();
+    let refused = composio_execute(
+        &harness.config,
+        "GMAIL_FETCH_EMAILS",
+        Some(json!({ "query": "label:INBOX" })),
+        None,
+    )
+    .await;
+    let error = refused.expect_err("composio_execute ran under local-only privacy");
+    assert!(
+        error.to_lowercase().contains("privacy mode is active"),
+        "unexpected refusal: {error}"
+    );
+    let requests = state.requests.lock().expect("requests").clone();
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.path.contains("/tools/execute/")),
+        "Composio received an execute under local-only privacy: {requests:?}"
+    );
+}
+
+/// Holds the live privacy mode at `mode` for one test and puts the previous
+/// mode back on drop: the aggregated raw-coverage binary shares one process.
+struct PrivacyScope(PrivacyMode);
+
+impl PrivacyScope {
+    fn set(mode: PrivacyMode) -> Self {
+        let previous = live_policy::current_privacy_mode();
+        if live_policy::reload_privacy(mode).is_err() {
+            let workspace = std::env::temp_dir();
+            live_policy::install(
+                Arc::new(SecurityPolicy::default().with_privacy_mode(mode)),
+                workspace.clone(),
+                workspace,
+            );
+        }
+        Self(previous)
+    }
+}
+
+impl Drop for PrivacyScope {
+    fn drop(&mut self) {
+        let _ = live_policy::reload_privacy(self.0);
+    }
 }
 
 async fn start_loopback(app: Router) -> String {

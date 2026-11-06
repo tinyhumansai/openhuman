@@ -17,20 +17,16 @@ pub(crate) async fn execute_for_connection(
     args: Option<Value>,
     connection_id: Option<&str>,
 ) -> Result<crate::integrations::composio::ComposioExecuteResponse, String> {
-    crate::integrations::composio::module_client::call::<
-        _,
-        crate::integrations::composio::ComposioExecuteResponse,
-    >(
+    // Through the shared dispatch, so a flow's tool_call is held to the
+    // local-only egress policy like the agent tool.
+    crate::integrations::composio::execute_dispatch::execute_composio_action(
         config,
-        tinyconnectors_bus::names::methods::EXECUTE,
-        crate::integrations::composio::types::ComposioExecuteRequest {
-            tool: slug.to_string(),
-            arguments: args,
-            connection_id: connection_id.map(str::to_string),
-        },
+        None,
+        slug,
+        args,
+        connection_id,
     )
     .await
-    .map_err(|error| error.to_string())
 }
 
 #[async_trait]
