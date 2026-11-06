@@ -5,26 +5,26 @@ impl ApprovalGate {
     /// allowing an approval decision. A process-scoped UI may project into one
     /// agent's request only by naming that exact agent; an agent-scoped
     /// dispatch cannot decide for another agent or the process.
+    ///
+    /// Reads the route once. `Ok(None)` means it is not parked here (never was,
+    /// or was decided or expired since), which `decide` reports as its miss.
     pub(crate) fn validate_decision_context(
         &self,
         request_id: &str,
         dispatch_tenant: &crate::core::runtime::Tenant,
         requested_agent: Option<&str>,
-    ) -> anyhow::Result<(crate::core::runtime::Tenant, Variant)> {
-        let route = self
-            .parked
-            .request_routes
-            .lock()
-            .get(request_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("approval request is not parked in this host session"))?;
+    ) -> anyhow::Result<Option<(crate::core::runtime::Tenant, Variant)>> {
+        let route = self.parked.request_routes.lock().get(request_id).cloned();
+        let Some(route) = route else {
+            return Ok(None);
+        };
         validate_decision_tenant(
             dispatch_tenant,
             requested_agent,
             &route.tenant,
             request_id,
         )?;
-        Ok((route.tenant, route.variant))
+        Ok(Some((route.tenant, route.variant)))
     }
 
     /// Persist a whole-tool grant under the parked request's exact subject.
@@ -219,6 +219,36 @@ impl ApprovalGate {
             agent_id: route.agent_id.clone(),
         });
         Ok(Some(route.pending))
+    }
+
+    /// Apply a decision from an authenticated dispatch serving `dispatch`.
+    ///
+    /// A request parked in this session is decided only by its owner: the
+    /// same profile, and the same agent when the dispatch is agent-scoped or
+    /// names one ([`Self::validate_decision_context`], one read of the route).
+    /// An id that is not parked here, including one decided or expired since,
+    /// goes straight to [`Self::decide`], which reports the miss.
+    pub(crate) fn decide_as(
+        &self,
+        dispatch: &crate::core::runtime::Tenant,
+        agent: Option<&str>,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> anyhow::Result<Option<PendingApproval>> {
+        // One read of the route. If an expiry or a competing decision removes
+        // it after this, `decide` reports the miss as the benign race it is.
+        if let Err(error) = self.validate_decision_context(request_id, dispatch, agent) {
+            tracing::warn!(
+                request_id = %request_id,
+                error = %error,
+                "[approval::gate] decision refused: the caller does not own the request"
+            );
+            return Err(error);
+        }
+        match agent {
+            Some(agent) => self.decide_for_agent(agent, request_id, decision),
+            None => self.decide(request_id, decision),
+        }
     }
 
     /// [`Self::decide`] on behalf of `agent`: refuses with
