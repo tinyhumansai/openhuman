@@ -204,6 +204,86 @@ fn record_agent_saved_workflow(
     }
 }
 
+/// The workflow proposals the user already saved from their cards, newest
+/// first: the proposal messages whose `extra_metadata` carries a
+/// `saved_flow_id` (#8450). Each entry is the proposal name and the saved
+/// flow id. A later revision does not inherit an earlier save: only messages
+/// with their own `saved_flow_id` are listed. Best-effort: a store read
+/// failure returns an empty list and logs, like `record_agent_saved_workflow`,
+/// so a lookup failure never blocks a spawn.
+pub(crate) fn already_saved_workflow_proposals(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &str,
+) -> Vec<(String, String)> {
+    let messages = match conversations::get_messages(ctx, workspace_dir.to_path_buf(), thread_id) {
+        Ok(messages) => messages,
+        Err(error) => {
+            log::warn!(
+                "[spawn_subagent] saved-proposal lookup failed thread_id={thread_id} error={error}"
+            );
+            return Vec::new();
+        }
+    };
+    messages
+        .iter()
+        .rev()
+        .filter_map(|message| {
+            let meta = &message.extra_metadata;
+            if meta["scope"] != "workflow_proposal" {
+                return None;
+            }
+            let saved_flow_id = meta.get("saved_flow_id")?.as_str()?;
+            if saved_flow_id.is_empty() {
+                return None;
+            }
+            let name = meta["proposal"]["name"].as_str()?;
+            if name.is_empty() {
+                return None;
+            }
+            Some((name.to_string(), saved_flow_id.to_string()))
+        })
+        .collect()
+}
+
+/// Note appended to a `workflow_builder` save hand-off when the proposal it
+/// names was already saved from its card, so the builder reports it as
+/// already saved instead of calling `create_workflow` and duplicating the
+/// flow (#8459). The `save_workflow` escape hatch covers a graph that changed
+/// alongside the save.
+fn already_saved_proposal_note(name: &str, flow_id: &str) -> String {
+    format!(
+        "Note: the workflow proposal \"{name}\" was already saved from its card as flow `{flow_id}`. \
+         Do not call `create_workflow` for it: report it as already saved as `{flow_id}`. \
+         If its graph changed and needs updating, use `save_workflow` with flow_id `{flow_id}` \
+         instead of creating a new flow."
+    )
+}
+
+/// Carry a card-saved proposal into a `workflow_builder` hand-off (#8459):
+/// when the parent thread holds a proposal already saved from its card
+/// (`saved_flow_id`, #8450) and the hand-off names that proposal, append a
+/// note so the builder reports it as already saved instead of calling
+/// `create_workflow` and creating a second copy. The newest saved proposal
+/// whose name the hand-off carries wins, so an older saved proposal is still
+/// found when a newer unsaved one sits above it. Returns the prompt
+/// unchanged when there is no parent thread or no saved proposal is named.
+pub(crate) fn carry_saved_flow(
+    ctx: &DispatchCtx,
+    workspace_dir: &std::path::Path,
+    thread_id: &Option<String>,
+    prompt: String,
+) -> String {
+    let Some(thread_id) = thread_id.as_deref() else {
+        return prompt;
+    };
+    let saved = already_saved_workflow_proposals(ctx, workspace_dir, thread_id);
+    let Some((name, flow_id)) = saved.iter().find(|(name, _)| prompt.contains(name)) else {
+        return prompt;
+    };
+    format!("{prompt}\n\n{}", already_saved_proposal_note(name, flow_id))
+}
+
 /// Durably surface a workflow proposal found in a finished child's history:
 /// persist it as a parent-thread conversation message (metadata carries the
 /// full payload so the UI can rehydrate the proposal card after reload) and

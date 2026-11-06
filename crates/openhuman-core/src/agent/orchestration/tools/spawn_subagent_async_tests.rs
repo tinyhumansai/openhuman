@@ -387,6 +387,139 @@ fn a_reused_session_settles_the_delivered_proposal_without_duplicating_it() {
     );
 }
 
+/// The card's save, as `WorkflowProposalCard` performs it: record
+/// `saved_flow_id` on the delivered proposal message.
+fn mark_proposal_saved_from_card(temp: &tempfile::TempDir, flow_id: &str) {
+    let patch = conversations::ConversationMessagePatch {
+        merge_extra_metadata: Some(json!({ "saved_flow_id": flow_id })),
+        ..Default::default()
+    };
+    conversations::update_message(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path().to_path_buf(),
+        "thread-parent",
+        "workflow-proposal:sub-propose",
+        patch,
+    )
+    .expect("mark saved");
+}
+
+#[test]
+fn a_card_saved_proposal_is_found_by_the_lookup() {
+    let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
+    mark_proposal_saved_from_card(&temp, "flow-1");
+    assert_eq!(
+        already_saved_workflow_proposals(
+            &crate::core::runtime::DispatchCtx::ambient(),
+            temp.path(),
+            "thread-parent"
+        ),
+        vec![("Friday Inbox Wrap-up".to_string(), "flow-1".to_string())]
+    );
+}
+
+#[test]
+fn a_proposal_without_a_saved_flow_is_not_found() {
+    let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
+    assert!(already_saved_workflow_proposals(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        "thread-parent"
+    )
+    .is_empty());
+}
+
+#[test]
+fn the_saved_note_names_the_proposal_and_forbids_create_workflow() {
+    let note = already_saved_proposal_note("Friday Inbox Wrap-up", "flow-1");
+    assert!(note.contains("Friday Inbox Wrap-up"));
+    assert!(note.contains("flow-1"));
+    assert!(note.contains("Do not call `create_workflow`"));
+    assert!(note.contains("already saved"));
+    assert!(note.contains("save_workflow"));
+}
+
+#[test]
+fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
+    // The user saved the proposal from its card, then said "save it" in chat:
+    // the hand-off for that proposal must carry the note, and a hand-off for
+    // a different proposal must not.
+    let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
+    mark_proposal_saved_from_card(&temp, "flow-1");
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = Some("thread-parent".to_string());
+    let save_it = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string(),
+    );
+    assert!(save_it.contains("flow-1"));
+    assert!(save_it.contains("already saved"));
+    assert!(save_it.contains("Do not call `create_workflow`"));
+    let other = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Something Else\" as-is.".to_string(),
+    );
+    assert_eq!(
+        other,
+        "Save the delivered proposal \"Something Else\" as-is."
+    );
+    let no_thread: Option<String> = None;
+    let unthreaded = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &no_thread,
+        "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string(),
+    );
+    assert_eq!(
+        unthreaded,
+        "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is."
+    );
+}
+
+#[test]
+fn carry_saved_flow_finds_the_older_saved_proposal_under_a_newer_unsaved_one() {
+    // The user saved "Friday Inbox Wrap-up" from its card, then asked for a
+    // second proposal that is still unsaved. Asking to save the first must
+    // still carry its note; asking to save the second must not borrow it.
+    let temp = thread_with_delivered_proposal("Friday Inbox Wrap-up");
+    mark_proposal_saved_from_card(&temp, "flow-1");
+    attach_workflow_proposal(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        temp.path(),
+        Some("thread-parent"),
+        "sub-propose-2",
+        "workflow_builder",
+        &[TranscriptMessage::tool(
+            r#"{"type":"workflow_proposal","persisted":false,"name":"Something Else","graph":{"nodes":[],"edges":[]}}"#,
+        )],
+        "proposal".to_string(),
+    );
+    let ctx = crate::core::runtime::DispatchCtx::ambient();
+    let thread = Some("thread-parent".to_string());
+    let save_first = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Friday Inbox Wrap-up\" as-is.".to_string(),
+    );
+    assert!(save_first.contains("flow-1"));
+    assert!(save_first.contains("already saved"));
+    let save_second = carry_saved_flow(
+        &ctx,
+        temp.path(),
+        &thread,
+        "Save the delivered proposal \"Something Else\" as-is.".to_string(),
+    );
+    assert_eq!(
+        save_second,
+        "Save the delivered proposal \"Something Else\" as-is."
+    );
+}
+
 #[test]
 fn a_history_shorter_than_its_seed_is_used_whole() {
     let history = vec![TranscriptMessage::user("compacted")];
