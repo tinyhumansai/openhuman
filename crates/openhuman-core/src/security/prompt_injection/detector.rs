@@ -142,6 +142,12 @@ fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
 /// Screen user or untrusted text through TinySecurity. Missing configuration,
 /// module failure, timeout, and oversized inputs all fail closed as Review,
 /// unless security is disabled or the configuration turns the screen off.
+///
+/// Reads only the boot-time embedder snapshot, which exists for a preloaded
+/// config or a `SecretPreflight` boot. A host booted `Normal` (the CLI's
+/// `serve`) has none, so every call here is held. Screen with the caller's
+/// dispatch ([`enforce_prompt_input_in`]) or config
+/// ([`enforce_prompt_input_with_config`]) instead.
 pub async fn enforce_prompt_input(
     input: &str,
     context: PromptEnforcementContext<'_>,

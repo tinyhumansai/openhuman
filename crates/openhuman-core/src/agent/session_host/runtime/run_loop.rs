@@ -6,7 +6,7 @@ use super::super::types::OpenHumanSessionHost;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
 };
 use anyhow::Result;
 use tinyagents_harness::agent_error::AgentError;
@@ -72,7 +72,8 @@ impl OpenHumanSessionHost {
             crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref())
                 .turn_origin_or_scoped()
         });
-        let guard = enforce_prompt_input(
+        let guard = enforce_prompt_input_in(
+            &crate::core::runtime::DispatchCtx::from_weak(self.host_env.core.as_ref()),
             message,
             PromptEnforcementContext {
                 source: "agent.runtime.run_single",
