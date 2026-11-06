@@ -4,7 +4,7 @@ use super::*;
 async fn lookup_key_for_slug_uses_legacy_openai_api_key_when_new_style_is_empty() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -42,7 +42,7 @@ async fn lookup_openai_bearer_token_returns_session_expired_error_when_refresh_f
     // "session expired" message rather than Ok(Some("expired-access")).
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -76,7 +76,7 @@ async fn lookup_openai_bearer_token_returns_ok_when_nearly_expiring_and_refresh_
     // token truly expires.
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -106,7 +106,7 @@ async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_toke
     let _env_lock = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let original_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -148,7 +148,7 @@ async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_toke
         "a failed refresh on a not-yet-expired token should return the cached token, not error"
     );
 
-    let reloaded = AuthProfilesStore::new_with_config(tmp.path(), false, &config)
+    let reloaded = AuthProfilesStore::new_with_config(tmp.path(), &config)
         .load()
         .await
         .unwrap();
@@ -171,7 +171,7 @@ async fn lookup_openai_bearer_token_returns_none_without_profiles_or_access_toke
     let config = test_config(&tmp);
     assert_eq!(lookup_openai_bearer_token(&config).await.unwrap(), None);
 
-    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let empty_oauth_profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
@@ -196,7 +196,7 @@ async fn lookup_openai_bearer_token_returns_none_without_profiles_or_access_toke
 async fn disconnect_openai_oauth_clears_profile() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let store = AuthProfilesStore::new_with_config(tmp.path(), false, &config);
+    let store = AuthProfilesStore::new_with_config(tmp.path(), &config);
     let profile = AuthProfile::new_oauth(
         OPENAI_PROVIDER_KEY,
         OPENAI_OAUTH_PROFILE_NAME,
