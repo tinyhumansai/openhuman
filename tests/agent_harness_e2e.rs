@@ -745,10 +745,19 @@ async fn wait_for_event(
 ) -> Value {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut seen: Vec<String> = Vec::new();
+    // A terminal event that arrives instead of the awaited one says why the turn
+    // ended; carry its body into the timeout panic so a log-less run explains itself.
+    let mut terminal_bodies: Vec<String> = Vec::new();
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some(v)) => {
+                if matches!(
+                    v.get("event").and_then(Value::as_str),
+                    Some("chat_done" | "chat_error")
+                ) {
+                    terminal_bodies.push(v.to_string().chars().take(1200).collect());
+                }
                 seen.push(
                     v.get("event")
                         .and_then(Value::as_str)
@@ -763,7 +772,7 @@ async fn wait_for_event(
                 panic!("SSE channel closed waiting for {event_name}; seen events so far: {seen:?}")
             }
             Err(_) => panic!(
-                "timed out waiting for SSE event {event_name}; all received events: {seen:?}"
+                "timed out waiting for SSE event {event_name}; all received events: {seen:?}; terminal events: {terminal_bodies:?}"
             ),
         }
     }

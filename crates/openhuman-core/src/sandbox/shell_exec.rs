@@ -208,6 +208,7 @@ async fn run_owned(
         _ = &mut abandoned => anyhow::bail!("TinyBox native shell invocation was abandoned"),
         result = tinybox::run_native_shell(config, request) => result
             .map_err(|error| {
+                eprintln!("DIAG-TINYBOX-ERR: {error}");
                 tracing::warn!(%error, "[sandbox:shell] TinyBox native shell lifecycle failed");
                 anyhow::anyhow!("TinyBox native shell execution failed")
             })?,
