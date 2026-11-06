@@ -113,22 +113,30 @@ pub(super) async fn answer_master_grant(
             .intercept_forced(tool, "Unlock configuration secrets", args)
             .await
     });
-    let answered = tokio::time::timeout(GRANT_TIMEOUT, async {
-        loop {
-            tokio::select! {
-                outcome = &mut asked => break outcome.ok(),
-                () = tokio::time::sleep(Duration::from_millis(5)) => {
-                    for pending in gate.list_pending().unwrap_or_default() {
-                        if pending.tool_name == tool {
-                            let _ = gate.decide(&pending.request_id, ApprovalDecision::ApproveOnce);
-                        }
+    // Wall clock, not Tokio's: a test's paused clock would expire any timer here.
+    let deadline = std::time::Instant::now() + GRANT_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        tokio::select! {
+            outcome = &mut asked => return outcome.ok(),
+            () = tokio::time::sleep(Duration::from_millis(5)) => {
+                for pending in gate.list_pending().unwrap_or_default() {
+                    if pending.tool_name != tool {
+                        continue;
                     }
+                    // `decide` blocks on the engine, whose work may need this
+                    // very thread on a single-threaded test runtime.
+                    let deciding = Arc::clone(&gate);
+                    let _ = dispatch
+                        .spawn_blocking(move || {
+                            deciding.decide(&pending.request_id, ApprovalDecision::ApproveOnce)
+                        })
+                        .await;
                 }
             }
         }
-    })
-    .await;
-    answered.ok().flatten()
+    }
+    asked.abort();
+    None
 }
 
 /// Give a policy the answers the async host gate caches before a tool runs, for
