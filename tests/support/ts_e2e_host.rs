@@ -22,7 +22,9 @@ where
         .stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
         .spawn(move || {
             tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
+                // Four, not two: CF-3's SB-43 stalled with no further logs, and
+                // two blocked workers would also stop the test's own timeouts.
+                .worker_threads(4)
                 .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
                 .enable_all()
                 .build()
@@ -92,6 +94,11 @@ impl Host {
         // The file keyring and module storage grants need a master key, as
         // security-native-fixture.sh gives the callback fixture (CF-2: without
         // it tinymcp failed to initialize and auth_set_credential stalled).
+        // Approve the credential store's keyring prompts, as the renderer would;
+        // unanswered, a credential save waits on consent (CF-3: auth_set_credential).
+        if std::env::var_os("OPENHUMAN_TEST_KEYRING_CONSENT").is_none() {
+            std::env::set_var("OPENHUMAN_TEST_KEYRING_CONSENT", "approve");
+        }
         if std::env::var_os("OPENHUMAN_KEYRING_MASTER_KEY").is_none() {
             std::env::set_var(
                 "OPENHUMAN_KEYRING_MASTER_KEY",

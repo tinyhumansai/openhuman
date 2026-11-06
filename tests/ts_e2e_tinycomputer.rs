@@ -22,12 +22,12 @@ async fn computer_status(host: &Host) -> serde_json::Value {
     .await
 }
 
+/// The status reports a failed load or `Describe` in its own `error` field
+/// inside a successful envelope, so only capabilities prove TinyComputer answered.
 fn assert_computer_answers(envelope: &serde_json::Value, when: &str) {
+    let status = Host::result(envelope);
     assert!(
-        envelope.get("error").is_none()
-            && !envelope
-                .to_string()
-                .contains("configuration refresh failed"),
+        status["error"].is_null() && status["capabilities"].is_object(),
         "TinyComputer must answer {when}: {envelope}"
     );
 }
