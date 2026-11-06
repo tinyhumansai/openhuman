@@ -33,8 +33,8 @@ pub(crate) struct ClassifiedError {
     /// `session_expired`, `budget_exhausted`, `provider_error`,
     /// `context_overflow`, `model_unavailable`, `payload_too_large`,
     /// `provider_request_rejected`, `capability_unsupported`,
-    /// `chat_template_rejected`, `empty_response`, `disk_full`, `network`,
-    /// `inference`.
+    /// `chat_template_rejected`, `empty_response`, `disk_full`,
+    /// `prompt_screened`, `network`, `inference`.
     pub(crate) error_type: &'static str,
     /// User-facing copy (already includes provider detail block and the
     /// retry-after countdown sentence when available).
@@ -47,6 +47,8 @@ pub(crate) struct ClassifiedError {
     /// - `"transport"`        — network / DNS / TLS / timeout
     /// - `"config"`           — auth, model, context, generic
     /// - `"local_storage"`    — the user's own disk is full (#8508)
+    /// - `"security"`         — OpenHuman's prompt-injection screen held the
+    ///   turn before the model was called (`prompt_screened`)
     pub(crate) source: &'static str,
     /// Can the user retry the same prompt in the same thread? `false` for
     /// non-retryable business 429s, auth failures, model_unavailable,
@@ -177,6 +179,17 @@ fn only_local_session_refused(err: &str) -> bool {
     }
 }
 
+/// Whether `lower` is one of the host's prompt-screen refusals: the session
+/// guard's (`session_host/runtime/run_loop.rs`) or the hosted gate's
+/// (`agent/tinyagents/host/security_gate_impl.rs`). The caller only asks for
+/// an error that names no provider: a provider's own error body may carry the
+/// same words, and is the provider's refusal, not the screen's.
+fn is_prompt_screen_refusal(lower: &str) -> bool {
+    lower.contains("prompt flagged for security review")
+        || lower.contains("prompt blocked by security policy")
+        || lower.contains("rejected by the prompt-injection screen")
+}
+
 pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     use FailureClass as C;
     let lower = err.to_lowercase();
@@ -211,7 +224,13 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // "iteration", so they MUST be checked before the generic provider-429
     // branch — otherwise users see a confusing "your AI provider is
     // rate-limiting you" message for limits OpenHuman itself enforced (#2364).
-    let classified = if only_local_session_refused(err) {
+    let classified = if provider.is_none() && is_prompt_screen_refusal(&lower) {
+        // The turn never reached the model: the prompt-injection screen held
+        // the message or a tool output. Saying "something went wrong" with
+        // the provider as the source sent users to their model settings.
+        log::debug!("[chat-error][classify] error_type=prompt_screened source=security");
+        classified_plain(C::PromptScreened, None, None)
+    } else if only_local_session_refused(err) {
         // #6932: `resolve_bearer` refuses the offline local session before the
         // request, so the backend `401 "Invalid token"` that
         // `is_session_expired_message` claims — and that told a locally

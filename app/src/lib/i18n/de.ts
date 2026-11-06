@@ -3994,6 +3994,8 @@ const messages: TranslationMap = {
     'Dieser Durchlauf hat sein Zeitbudget überschritten, ohne fertig zu werden, und wurde gestoppt, damit er nicht hängt. Das bedeutet meist, dass ein Werkzeugaufruf oder ein delegierter Subagent steckengeblieben ist. Du kannst deine Frage in diesem Thread erneut stellen.',
   'chat_error.disk_full':
     'Dein Datenträger ist voll, deshalb konnte diese Unterhaltung nicht gespeichert werden. Gib etwas Speicherplatz frei und sende deine Nachricht dann in diesem Thread erneut.',
+  'chat_error.prompt_screened':
+    'Die Sicherheitsprüfung von OpenHuman hat diese Nachricht zurückgehalten, daher wurde sie nicht an das Modell gesendet. Wenn sie Anweisungen an einen Assistenten zitiert (zum Beispiel aus einer Webseite oder E-Mail), entferne sie und versuche es erneut. Wenn auch normale Nachrichten zurückgehalten werden, ist das Sicherheitsmodul möglicherweise nicht verfügbar: Starte OpenHuman neu und versuche es erneut.',
   'chat_error.empty_response':
     'Das Modell hat eine leere Antwort geliefert. Bitte versuche es erneut. Wenn das weiter passiert, probiere ein anderes Modell aus oder prüfe die Einrichtung unter Verbindungen → API-Schlüssel → LLM.',
   'chat_error.chat_template_rejected':
