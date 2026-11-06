@@ -48,7 +48,8 @@ async fn a_peer_that_is_not_the_module_is_refused() {
     let stranger = Connection::connect(transport.connect().await.unwrap())
         .await
         .unwrap();
-    assert!(echo(&stranger).await.is_err());
+    let refused = echo(&stranger).await.unwrap_err();
+    assert!(format!("{refused:?}").contains(REFUSAL), "{refused:?}");
 }
 
 #[tokio::test]
@@ -64,5 +65,19 @@ async fn the_peer_that_owns_the_module_name_is_answered() {
 #[tokio::test]
 async fn with_no_module_loaded_every_caller_is_refused() {
     let (_transport, host, _broker) = host_bus().await;
-    assert!(echo(&host).await.is_err());
+    let refused = echo(&host).await.unwrap_err();
+    assert!(format!("{refused:?}").contains(REFUSAL), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_served_callback_does_not_keep_its_connection_alive() {
+    let (_transport, host, _broker) = host_bus().await;
+    let weak = host.downgrade();
+    drop(host);
+    // The connection serves `OwnedBy`, so a strong handle inside it would be
+    // a cycle: neither would ever be freed.
+    assert!(
+        weak.upgrade().is_none(),
+        "the served callback still owns the connection that serves it"
+    );
 }
