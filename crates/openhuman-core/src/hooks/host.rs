@@ -62,12 +62,11 @@ async fn admit_command_hooks(ctx: &DispatchCtx, loaded: &mut HookConfig) {
         .load_config()
         .await
         .map(|config| {
-            let security = crate::security::SecurityPolicy::from_config(
+            crate::security::SecurityPolicy::from_config(
                 &config.autonomy,
                 &config.workspace_dir,
                 &config.action_dir,
-            );
-            (config, security)
+            )
         })
         .map_err(|error| error.to_string());
     let mut refused = Vec::new();
@@ -80,15 +79,7 @@ async fn admit_command_hooks(ctx: &DispatchCtx, loaded: &mut HookConfig) {
                 Some("project hooks need isolation, which is not available yet".to_owned())
             } else {
                 match &checker {
-                    Ok((config, security)) => {
-                        crate::cron::scheduler::shell_job::authorize_shell_command(
-                            config,
-                            security,
-                            &definition.command,
-                        )
-                        .await
-                        .err()
-                    }
+                    Ok(security) => check_hook_command(security, &definition.command).await,
                     Err(error) => Some(format!("cannot read config to check it: {error}")),
                 }
             };
@@ -103,6 +94,34 @@ async fn admit_command_hooks(ctx: &DispatchCtx, loaded: &mut HookConfig) {
         *definitions = admitted;
     }
     loaded.warnings.extend(refused);
+}
+
+/// Why TinySecurity refuses `command` as a scheduled shell command, if it does.
+///
+/// The same question cron asks of a shell job, at the `Authorize` stage: it
+/// filters what may load and spends no action budget, so a reload is free.
+/// Each later run is not checked again: the engine spawns hook processes
+/// synchronously, which leaves no async seam for a per-run check.
+async fn check_hook_command(
+    security: &crate::security::SecurityPolicy,
+    command: &str,
+) -> Option<String> {
+    use crate::security::policy::{CommandFlow, CommandQuery, CommandStage, GateDecision};
+    match security
+        .check_command(CommandQuery {
+            command,
+            declared: None,
+            flow: CommandFlow::Scheduled,
+            stage: CommandStage::Authorize,
+        })
+        .await
+    {
+        Ok(verdict) if verdict.gate == GateDecision::Block => {
+            Some("blocked by security policy: command rejected".to_owned())
+        }
+        Ok(_) => None,
+        Err(reason) => Some(reason.to_string()),
+    }
 }
 
 /// Re-read every `hooks.json` layer and install the result.
@@ -125,7 +144,9 @@ pub async fn reload(
     })
     .await
     .unwrap_or_default();
-    admit_command_hooks(ctx, &mut loaded).await;
+    // Under the reload's own context: TinySecurity's command check reloads config
+    // through the ambient context, which SaaS startup does not otherwise bind.
+    ctx.enter(admit_command_hooks(ctx, &mut loaded)).await;
     for warning in &loaded.warnings {
         log::warn!("[hooks] {warning}");
     }
