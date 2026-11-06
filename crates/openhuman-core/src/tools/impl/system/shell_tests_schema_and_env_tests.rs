@@ -88,6 +88,7 @@ fn shell_tool_schema_has_command() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_executes_allowed_command() {
+    let _storage = native_shell_storage();
     let _storage = crate::storage::test_support::install_backend_for_test(
         crate::storage::test_support::memory_backend(),
     );
@@ -136,6 +137,7 @@ async fn shell_destructive_command_is_gated_not_run_inline() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_pwd_returns_action_dir_not_workspace_dir() {
+    let _storage = native_shell_storage();
     let action_tmp = tempfile::tempdir().expect("create action tempdir");
     let workspace_tmp = tempfile::tempdir().expect("create workspace tempdir");
     let security = Arc::new(SecurityPolicy {
@@ -238,6 +240,7 @@ fn shell_timeout_honors_explicit_per_call_value() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_per_call_timeout_kills_slow_command() {
+    let _storage = native_shell_storage();
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Supervised),
         test_runtime(),

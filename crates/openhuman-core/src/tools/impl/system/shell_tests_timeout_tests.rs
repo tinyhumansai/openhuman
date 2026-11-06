@@ -28,6 +28,7 @@ fn process_is_running(pid: i32) -> bool {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn exit_124_is_attributed_to_the_commands_own_timeout() {
+    let _storage = native_shell_storage();
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Full),
         test_runtime(),
@@ -65,6 +66,7 @@ async fn other_failures_carry_no_timeout_attribution() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn the_tools_own_deadline_says_it_was_timeout_secs() {
+    let _storage = native_shell_storage();
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Full),
         test_runtime(),
@@ -89,6 +91,7 @@ async fn the_tools_own_deadline_says_it_was_timeout_secs() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn the_tools_deadline_kills_the_commands_grandchildren_too() {
+    let _storage = native_shell_storage();
     let dir = std::env::temp_dir().join(format!("oh-shell-pgkill-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let pidfile = dir.join("grandchild.pid");
@@ -137,6 +140,7 @@ async fn the_tools_deadline_kills_the_commands_grandchildren_too() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn the_tools_deadline_keeps_what_the_command_printed() {
+    let _storage = native_shell_storage();
     let tool = ShellTool::new(
         test_security(AutonomyLevel::Full),
         test_runtime(),

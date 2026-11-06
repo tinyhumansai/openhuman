@@ -112,6 +112,7 @@ fn unsandboxed_policy() -> crate::sandbox::SandboxPolicy {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
+    let _storage = native_shell_storage();
     let run = test_turn_run();
     let call = ToolExecutionContext::from_run_context(&run, CallId::new("c1"));
     let audit = Mutex::new(None);
@@ -154,6 +155,7 @@ async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
+    let _storage = native_shell_storage();
     let (_, result) = run_in_policy(
         &crate::core::runtime::DispatchCtx::unbound(),
         unsandboxed_policy(),
