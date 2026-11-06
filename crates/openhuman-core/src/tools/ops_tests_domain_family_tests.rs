@@ -1,8 +1,5 @@
 use super::*;
-#[cfg(feature = "modules")]
-use crate::tools::BrowserOpenTool;
-use crate::tools::{filter_tools_by_user_preference, http_request_tool};
-use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
+use crate::tools::filter_tools_by_user_preference;
 
 /// Every acting tool gates on `can_act()` and returns its own read-only refusal
 /// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
@@ -12,9 +9,17 @@ use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
 /// literal to the marker const — drift between them fails here rather than
 /// silently letting the agent grind on a doomed call. Args are the minimum
 /// needed to reach the `can_act()` check in each tool.
+///
+/// Needs the module: a build without it has security disabled, so `can_act()`
+/// is always true and no tool refuses (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn readonly_acting_tools_carry_policy_blocked_marker() {
     use crate::security::AutonomyLevel;
+    use crate::tools::http_request_tool;
+    #[cfg(feature = "modules")]
+    use crate::tools::BrowserOpenTool;
+    use tinyagents_harness_tools::fs::filesystem::{ApplyPatchTool, CsvExportTool};
     use tinytools::status::POLICY_BLOCKED_MARKER;
 
     let tmp = TempDir::new().unwrap();

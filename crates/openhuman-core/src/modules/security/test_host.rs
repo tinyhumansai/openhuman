@@ -144,7 +144,12 @@ pub(super) async fn answer_master_grant(
 pub(crate) fn prime_policy(policy: &crate::security::SecurityPolicy) {
     use crate::security::policy::CommandClass;
 
-    if !active() || policy.budget_snapshot.lock().map_or(true, |seen| seen.is_some()) {
+    if !active()
+        || policy
+            .budget_snapshot
+            .lock()
+            .map_or(true, |seen| seen.is_some())
+    {
         return;
     }
     #[cfg(test)]

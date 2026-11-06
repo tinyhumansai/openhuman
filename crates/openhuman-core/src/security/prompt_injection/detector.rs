@@ -268,7 +268,9 @@ pub(crate) async fn enforce_prompt_input_with_config(
             scan_within_budget(&config, &input).await
         });
         match task {
-            Ok(task) => task.await.unwrap_or_else(|error| Ok(Err(error.to_string()))),
+            Ok(task) => task
+                .await
+                .unwrap_or_else(|error| Ok(Err(error.to_string()))),
             Err(error) => Ok(Err(error.to_string())),
         }
     };

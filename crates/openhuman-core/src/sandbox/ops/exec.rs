@@ -169,8 +169,9 @@ pub(crate) async fn resolve_sandbox(
             // stands for the operator's agent; an unlabelled production call
             // stays untrusted.
             #[cfg(test)]
-            let origin =
-                origin.or(Some(crate::core::runtime::turn_origin::AgentTurnOrigin::Cli));
+            let origin = origin.or(Some(
+                crate::core::runtime::turn_origin::AgentTurnOrigin::Cli,
+            ));
             let source = SpawnSource::from_origin(origin.as_ref());
             let host_run = operator_off && !crate::core::runtime::is_saas();
             crate::sandbox::spawn_plan::plan(SpawnRequest {

@@ -100,7 +100,10 @@ fn claim(id: &str, admitted: &Path, requested: &Path) -> Result<ScopeClaim, Stri
     // the first scope a test presents.
     #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
     let (owner, transient) = if super::test_host::is_fixture_scope(admitted) {
-        (owner.filter(|owner| !super::test_host::is_fixture_scope(owner)), true)
+        (
+            owner.filter(|owner| !super::test_host::is_fixture_scope(owner)),
+            true,
+        )
     } else {
         (owner, transient)
     };
