@@ -120,6 +120,21 @@ impl SecurityPolicy {
         )
     }
 
+    /// Whether `other` sets what the tools' own gates act on (the tier, path
+    /// scope, forbidden paths and privacy) the same way. When it does not, the
+    /// autonomy settings changed after this instance was built, and tools
+    /// holding it would validate against settings no longer in force.
+    ///
+    /// Trusted roots are left out: the session's own policy adds the working
+    /// folder and the projects home as roots, so they differ legitimately.
+    pub(crate) fn decides_tools_like(&self, other: &SecurityPolicy) -> bool {
+        self.enabled == other.enabled
+            && self.autonomy == other.autonomy
+            && self.privacy_mode == other.privacy_mode
+            && self.workspace_only == other.workspace_only
+            && self.forbidden_paths == other.forbidden_paths
+    }
+
     /// Take `governing`'s cached TinySecurity answers (budget and class gates),
     /// so the sync tool gates holding this instance read the decision the host
     /// gate made on `governing`. When `governing` is unchecked it allows

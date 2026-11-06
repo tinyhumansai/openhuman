@@ -244,10 +244,23 @@ impl OpenHumanSecurityGate {
     /// Hand the answers TinySecurity gave for `evaluated` to the constructor
     /// policy, which the session's tools hold, when the two are different
     /// instances. The tools' sync gates read only their own cached answers.
-    fn share_answers(&self, evaluated: &Arc<SecurityPolicy>) {
-        if !Arc::ptr_eq(evaluated, &self.policy) {
-            self.policy.adopt_answers_from(evaluated);
+    ///
+    /// `false` when `evaluated` sets the tools' questions differently (the
+    /// autonomy settings changed during the session): the tools would check
+    /// paths against settings no longer in force, so the caller refuses.
+    fn share_answers(&self, evaluated: &Arc<SecurityPolicy>) -> bool {
+        if Arc::ptr_eq(evaluated, &self.policy) {
+            return true;
         }
+        if !self.policy.decides_tools_like(evaluated) {
+            tracing::warn!(
+                target: "tinyagents",
+                "[tinyagents::host::security] the autonomy settings changed during this session; refusing the call"
+            );
+            return false;
+        }
+        self.policy.adopt_answers_from(evaluated);
+        true
     }
 
     /// The origin of the turn this gate authorizes for: the run's own context

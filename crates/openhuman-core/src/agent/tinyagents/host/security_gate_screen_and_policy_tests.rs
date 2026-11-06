@@ -393,12 +393,13 @@ async fn prompt_screening_uses_the_bound_dispatch_configuration() {
 }
 
 /// TS-E2E-025: the session's tools hold the constructor policy, but the gate
-/// answers against the live one. Whatever the gate allowed, the tools' own
-/// gates must read too, or an enabled tool policy with no cached answer
-/// refuses every write as "autonomy is read-only".
+/// answers against the live one. When the live settings no longer match the
+/// session's (here the policy was switched off after the session was built),
+/// the tools would validate paths against settings no longer in force, so the
+/// call is refused and nothing is handed to the tools.
 #[cfg(feature = "security-module")]
 #[tokio::test]
-async fn the_session_tools_can_act_on_what_the_live_policy_allowed() {
+async fn a_call_is_refused_when_the_autonomy_settings_changed_during_the_session() {
     let session = Arc::new(SecurityPolicy {
         enabled: true,
         ..SecurityPolicy::default()
@@ -412,19 +413,18 @@ async fn the_session_tools_can_act_on_what_the_live_policy_allowed() {
         std::path::PathBuf::new(),
         std::path::PathBuf::new(),
     );
-    assert!(
-        !session.can_act(),
-        "no answer is cached before the gate runs"
-    );
 
     let decision = OpenHumanSecurityGate::new(session.clone(), registry())
         .authorize_tool(&req("write_file", json!({ "path": "notes.md" })))
         .await
         .unwrap();
 
-    assert_eq!(decision, GateDecision::Allow);
     assert!(
-        session.can_act(),
-        "the tools' policy must take the live policy's answer"
+        matches!(&decision, GateDecision::Deny { reason } if reason.contains("settings changed")),
+        "stale session settings must be refused: {decision:?}"
+    );
+    assert!(
+        !session.can_act(),
+        "a refused call hands the tools nothing"
     );
 }

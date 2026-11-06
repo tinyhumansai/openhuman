@@ -304,3 +304,33 @@ fn a_policy_adopts_the_answers_another_instance_was_given() {
     tools.adopt_answers_from(&shared);
     assert!(tools.can_act());
 }
+
+/// TS-E2E-025: the settings the tools act on decide whether a live policy's
+/// answers may be handed to a session's own instance.
+#[test]
+fn tool_settings_match_only_when_tier_scope_forbidden_paths_and_privacy_agree() {
+    let session = default_policy();
+    assert!(session.decides_tools_like(&default_policy()));
+
+    let forbidden = SecurityPolicy {
+        forbidden_paths: vec!["/srv/secret".into()],
+        ..default_policy()
+    };
+    assert!(!session.decides_tools_like(&forbidden), "a newly forbidden path");
+    let disabled = SecurityPolicy {
+        enabled: false,
+        ..default_policy()
+    };
+    assert!(!session.decides_tools_like(&disabled), "the policy switched off");
+    let rooted = SecurityPolicy {
+        trusted_roots: vec![TrustedRoot {
+            path: "/work".into(),
+            access: crate::security::policy::TrustedAccess::ReadWrite,
+        }],
+        ..default_policy()
+    };
+    assert!(
+        session.decides_tools_like(&rooted),
+        "a session's own working-folder root is not a settings change"
+    );
+}
