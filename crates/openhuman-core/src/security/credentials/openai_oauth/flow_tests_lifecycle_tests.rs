@@ -68,11 +68,10 @@ async fn parse_callback_input_rejects_blank_and_missing_state() {
 async fn complete_openai_oauth_rejects_missing_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = runtime()
-        .block_on(complete_openai_oauth(
+    let err = complete_openai_oauth(
             &config,
             "http://127.0.0.1:1455/auth/callback?code=fake&state=state",
-        ))
+        ).await
         .unwrap_err();
     assert!(err.contains("no pending OAuth session"));
 }
@@ -82,7 +81,7 @@ async fn complete_openai_oauth_rejects_expired_pending_session() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let pending = pending::store(&config).unwrap();
-    runtime().block_on(async {
+    (async {
         pending
             .set(
                 "openai-oauth-pending",
@@ -105,19 +104,18 @@ async fn complete_openai_oauth_rejects_expired_pending_session() {
         .unwrap_err();
         assert!(err.contains("no pending OAuth session"));
         assert!(pending.get("openai-oauth-pending").await.unwrap().is_none());
-    });
+    }).await;
 }
 
 #[tokio::test]
 async fn start_openai_oauth_keeps_the_pending_session_in_the_secret_store_not_a_file() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
 
     assert!(!tmp.path().join("openai-oauth-pending.json").exists());
     let pending = pending::store(&config).unwrap();
-    let stored = runtime()
-        .block_on(pending.get("openai-oauth-pending"))
+    let stored = pending.get("openai-oauth-pending").await
         .unwrap()
         .expect("the session is stored");
     let doc: serde_json::Value = serde_json::from_slice(&stored).unwrap();
@@ -144,11 +142,10 @@ async fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_fl
 
     // A wrong state is rejected as a mismatch, which only happens when the
     // legacy session was found.
-    let err = runtime()
-        .block_on(complete_openai_oauth(
+    let err = complete_openai_oauth(
             &config,
             "http://127.0.0.1:1455/auth/callback?code=fake&state=wrong",
-        ))
+        ).await
         .unwrap_err();
     assert!(err.contains("state mismatch"), "{err}");
     assert_eq!(std::fs::read_to_string(&legacy).unwrap(), bytes);
@@ -158,13 +155,12 @@ async fn a_legacy_pending_file_started_before_the_upgrade_still_completes_its_fl
 async fn complete_openai_oauth_rejects_state_mismatch() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
-    let start = runtime().block_on(start_openai_oauth(&config)).unwrap();
+    let start = start_openai_oauth(&config).await.unwrap();
     let callback = format!(
         "http://127.0.0.1:1455/auth/callback?code=fake&state=not-{}",
         start.state
     );
-    let err = runtime()
-        .block_on(complete_openai_oauth(&config, &callback))
+    let err = complete_openai_oauth(&config, &callback).await
         .unwrap_err();
     assert!(err.contains("state mismatch"));
 }
