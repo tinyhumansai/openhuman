@@ -40,6 +40,40 @@ fn scoped_policy_is_thread_local_and_restored() {
 }
 
 #[test]
+fn a_reload_on_a_scoped_thread_leaves_the_process_policy_alone() {
+    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let workspace = std::env::temp_dir().join("openhuman_scoped_reload_test");
+    install(
+        Arc::new(SecurityPolicy::default()),
+        workspace.clone(),
+        workspace.clone(),
+    );
+    let _guard = install_scoped(
+        Arc::new(SecurityPolicy::default()),
+        workspace.clone(),
+        workspace,
+    );
+
+    reload_from(&AutonomyConfig {
+        auto_approve: vec!["create_workflow".into()],
+        ..AutonomyConfig::default()
+    });
+
+    let sibling_list = std::thread::spawn(|| {
+        current()
+            .expect("global policy remains installed")
+            .auto_approve
+            .clone()
+    })
+    .join()
+    .expect("sibling thread joined");
+    assert!(
+        !sibling_list.iter().any(|tool| tool == "create_workflow"),
+        "a scoped test's reload must not reach the process-global policy"
+    );
+}
+
+#[test]
 fn install_then_reload_swaps_policy_and_bumps_generation() {
     // Serialize against other tests that install/reload this process-global
     // (the approval-gate auto_approve test and the autonomy `ops` tests),
