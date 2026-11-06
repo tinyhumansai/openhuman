@@ -101,7 +101,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
     mark_proposal_saved_from_card(&temp, "flow-1");
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let thread = Some("thread-parent".to_string());
-    let save_it = carry_saved_flow(
+    let save_it = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -111,7 +111,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
     assert!(save_it.contains("flow-1"));
     assert!(save_it.contains("already saved"));
     assert!(save_it.contains("Do not call `create_workflow`"));
-    let other = carry_saved_flow(
+    let other = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -123,7 +123,7 @@ fn carry_saved_flow_appends_the_note_only_for_the_named_proposal() {
         "Save the delivered proposal \"Something Else\" as-is."
     );
     let no_thread: Option<String> = None;
-    let unthreaded = carry_saved_flow(
+    let unthreaded = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &no_thread,
@@ -156,7 +156,7 @@ fn carry_saved_flow_finds_the_older_saved_proposal_under_a_newer_unsaved_one() {
     );
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let thread = Some("thread-parent".to_string());
-    let save_first = carry_saved_flow(
+    let save_first = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -165,7 +165,7 @@ fn carry_saved_flow_finds_the_older_saved_proposal_under_a_newer_unsaved_one() {
     );
     assert!(save_first.contains("flow-1"));
     assert!(save_first.contains("already saved"));
-    let save_second = carry_saved_flow(
+    let save_second = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -199,7 +199,7 @@ fn carry_saved_flow_matches_by_draft_id_not_name() {
     );
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let thread = Some("thread-parent".to_string());
-    let by_name = carry_saved_flow(
+    let by_name = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -207,7 +207,7 @@ fn carry_saved_flow_matches_by_draft_id_not_name() {
         None,
     );
     assert_eq!(by_name, "Save the delivered proposal \"Daily\" as-is.");
-    let by_new_draft = carry_saved_flow(
+    let by_new_draft = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -215,7 +215,7 @@ fn carry_saved_flow_matches_by_draft_id_not_name() {
         None,
     );
     assert_eq!(by_new_draft, "Save draft-new as-is.");
-    let by_old_draft = carry_saved_flow(
+    let by_old_draft = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -246,7 +246,7 @@ fn carry_saved_flow_does_not_match_a_name_substring() {
     );
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let thread = Some("thread-parent".to_string());
-    let save_report = carry_saved_flow(
+    let save_report = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -257,7 +257,7 @@ fn carry_saved_flow_does_not_match_a_name_substring() {
         save_report,
         "Save the delivered proposal \"Daily Report\" as-is."
     );
-    let save_daily = carry_saved_flow(
+    let save_daily = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -269,6 +269,49 @@ fn carry_saved_flow_does_not_match_a_name_substring() {
 }
 
 #[test]
+fn a_deleted_flow_drops_the_note_and_any_other_lookup_error_keeps_it() {
+    assert!(flow_get_means_missing("flow 'flow-1' not found"));
+    assert!(!flow_get_means_missing("unknown method: flows.get"));
+    assert!(!flow_get_means_missing(
+        "flow 'flow-1' not found; catalog unavailable"
+    ));
+    assert!(!flow_get_means_missing("Config loading timed out"));
+    assert_eq!(
+        presence_from_flow_get(&Err("flow 'flow-1' not found".to_string())),
+        SavedFlowPresence::Missing
+    );
+    assert_eq!(
+        presence_from_flow_get(&Err("unknown method: flows.get".to_string())),
+        SavedFlowPresence::Unknown
+    );
+    assert_eq!(
+        presence_from_flow_get(&Ok(serde_json::json!({ "id": "flow-1" }))),
+        SavedFlowPresence::Present
+    );
+
+    let prompt = "Save the delivered proposal \"Daily\" as-is.".to_string();
+    let missing = append_saved_flow_note(
+        prompt.clone(),
+        "thread-parent",
+        "workflow-proposal:sub-propose",
+        "Daily",
+        "flow-1",
+        SavedFlowPresence::Missing,
+    );
+    assert_eq!(missing, prompt);
+    let unknown = append_saved_flow_note(
+        prompt.clone(),
+        "thread-parent",
+        "workflow-proposal:sub-propose",
+        "Daily",
+        "flow-1",
+        SavedFlowPresence::Unknown,
+    );
+    assert!(unknown.contains("flow-1"));
+    assert!(unknown.contains("Do not call `create_workflow`"));
+}
+
+#[test]
 fn carry_saved_flow_matches_a_name_only_in_context() {
     // The proposal name may live only in the hand-off context, not the
     // prompt: the lookup must search both.
@@ -276,7 +319,7 @@ fn carry_saved_flow_matches_a_name_only_in_context() {
     mark_proposal_saved_from_card(&temp, "flow-1");
     let ctx = crate::core::runtime::DispatchCtx::ambient();
     let thread = Some("thread-parent".to_string());
-    let save_it = carry_saved_flow(
+    let save_it = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,
@@ -285,7 +328,7 @@ fn carry_saved_flow_matches_a_name_only_in_context() {
     );
     assert!(save_it.contains("flow-1"));
     assert!(save_it.contains("already saved"));
-    let no_match = carry_saved_flow(
+    let no_match = carry_saved_flow_matched(
         &ctx,
         temp.path(),
         &thread,

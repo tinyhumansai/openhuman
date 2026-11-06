@@ -111,7 +111,7 @@ impl SpawnSubagentTool {
         if definition.id == "workflow_builder" {
             let dir = &parent.workspace_dir;
             let tid = &parent_thread_id;
-            prompt = carry_saved_flow(&dispatch, dir, tid, prompt, context.as_deref());
+            prompt = carry_saved_flow(&dispatch, dir, tid, prompt, context.as_deref()).await;
         }
         if definition.id == "vision_agent" {
             match crate::attachments::has_resolvable_image(
