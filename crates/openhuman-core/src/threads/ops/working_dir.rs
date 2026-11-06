@@ -8,6 +8,7 @@
 //! in another.
 
 use super::support::{counts, envelope, thread_to_summary, workspace_dir};
+use crate::config::Config;
 use crate::core::runtime::DispatchCtx;
 use crate::core::Outcome;
 use crate::security::SecurityPolicy;
@@ -23,8 +24,12 @@ use std::path::{Path, PathBuf};
 ///
 /// The folder must be an existing absolute directory outside the paths the
 /// security policy never opens (credential stores, system roots), the same
-/// floor that holds with the autonomy policy disabled.
-pub(crate) async fn validate_working_dir(raw: Option<&str>) -> Result<Option<String>, String> {
+/// floor that holds with the autonomy policy disabled. Like the global
+/// `action_dir`, it must neither sit inside nor contain OpenHuman's own state.
+pub(crate) async fn validate_working_dir(
+    raw: Option<&str>,
+    config: &Config,
+) -> Result<Option<String>, String> {
     let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
         return Ok(None);
     };
@@ -44,6 +49,7 @@ pub(crate) async fn validate_working_dir(raw: Option<&str>) -> Result<Option<Str
     if SecurityPolicy::is_always_forbidden_async(&canonical).await {
         return Err("working folder is in a protected location".to_string());
     }
+    crate::config::ops::refuse_data_folder("working folder", &canonical, raw, config)?;
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
 
@@ -53,6 +59,7 @@ pub(crate) async fn validate_working_dir(raw: Option<&str>) -> Result<Option<Str
 /// global folder. This preserves the conversation's filesystem boundary.
 pub(crate) async fn thread_working_dir(
     ctx: &DispatchCtx,
+    config: &Config,
     workspace_dir: PathBuf,
     thread_id: &str,
 ) -> Result<Option<PathBuf>, String> {
@@ -66,7 +73,7 @@ pub(crate) async fn thread_working_dir(
     let Some(bound) = bound else {
         return Ok(None);
     };
-    match validate_working_dir(Some(&bound)).await {
+    match validate_working_dir(Some(&bound), config).await {
         Ok(Some(dir)) => Ok(Some(PathBuf::from(dir))),
         Ok(None) => Ok(None),
         Err(err) => Err(format!("thread working folder is unusable: {err}")),
@@ -79,7 +86,11 @@ pub async fn thread_update_working_dir(
     request: UpdateConversationThreadWorkingDirRequest,
 ) -> Result<Outcome<ApiEnvelope<ConversationThreadSummary>>, ThreadsError> {
     let dir = workspace_dir().await?;
-    let working_dir = validate_working_dir(Some(&request.action_dir)).await?;
+    let config = ctx
+        .load_config()
+        .await
+        .map_err(|e| format!("load config: {e}"))?;
+    let working_dir = validate_working_dir(Some(&request.action_dir), &config).await?;
     let Some(thread) = conversations::blocking::list_threads(ctx.clone(), dir.clone())
         .await?
         .into_iter()
