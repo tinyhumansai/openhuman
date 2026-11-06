@@ -104,6 +104,7 @@ async fn admit_command_hooks(ctx: &DispatchCtx, loaded: &mut HookConfig) {
 ///
 /// The same question cron asks of a shell job, at the `Authorize` stage: it
 /// filters what may load and spends no action budget, so a reload is free.
+/// Only an `Allow` admits the hook: a `Prompt` cannot be answered by a hook.
 /// Each later run is not checked again: the engine spawns hook processes
 /// synchronously, which leaves no async seam for a per-run check.
 async fn check_hook_command(
@@ -120,10 +121,13 @@ async fn check_hook_command(
         })
         .await
     {
-        Ok(verdict) if verdict.gate == GateDecision::Block => {
-            Some("blocked by security policy: command rejected".to_owned())
-        }
-        Ok(_) => None,
+        Ok(verdict) => match verdict.gate {
+            GateDecision::Allow => None,
+            // A hook runs unattended, so nobody can grant the approval a
+            // `Prompt` asks for; admitting it would run it without one.
+            GateDecision::Prompt => Some("needs approval, which a hook cannot ask for".to_owned()),
+            GateDecision::Block => Some("blocked by security policy: command rejected".to_owned()),
+        },
         Err(reason) => Some(reason.to_string()),
     }
 }
