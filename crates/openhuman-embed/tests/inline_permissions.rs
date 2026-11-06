@@ -26,19 +26,28 @@ type Approval = (
 /// arrived instead of hanging until CI cancels the job.
 const STEP: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Fail the test naming `reason`. The core's panic hook reports only the
+/// location of a panic, so the message goes to stderr first.
+fn fail(reason: String) -> ! {
+    eprintln!("inline_permissions: {reason}");
+    panic!("{reason}");
+}
+
 async fn within<T>(step: &str, wait: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(STEP, wait)
-        .await
-        .unwrap_or_else(|_| panic!("timed out after {STEP:?} waiting for {step}"))
+    match tokio::time::timeout(STEP, wait).await {
+        Ok(value) => value,
+        Err(_) => fail(format!("timed out after {STEP:?} waiting for {step}")),
+    }
 }
 
 async fn next_approval(
     received: &mut tokio::sync::mpsc::UnboundedReceiver<Approval>,
     step: &str,
 ) -> Approval {
-    within(step, received.recv())
-        .await
-        .unwrap_or_else(|| panic!("approval channel closed while waiting for {step}"))
+    match within(step, received.recv()).await {
+        Some(approval) => approval,
+        None => fail(format!("approval channel closed while waiting for {step}")),
+    }
 }
 
 struct Probe(Arc<AtomicUsize>);
