@@ -420,6 +420,15 @@ fn desktop_sign_in_stores_the_token_in_the_os_keyring_after_approval() {
         assert!(saved.get("error").is_none(), "{saved}");
         eprintln!("provider key save keyring prompts: {asked}");
         assert_eq!(asked, 1, "one save asks to store only what it saves");
+        // The restart case runs on this workspace and counts the session's
+        // prompt alone: startup reads every keyring-held profile (TS-E2E-041).
+        let (removed, _) = call_approving_with(
+            port,
+            "openhuman.auth_remove_provider_credentials",
+            json!({"provider": "openai"}),
+        )
+        .await;
+        assert!(removed.get("error").is_none(), "{removed}");
         shutdown.cancel();
         remove_own_workspace(&scratch);
     });
