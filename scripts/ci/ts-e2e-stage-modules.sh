@@ -16,19 +16,19 @@
 # libxdo and libasound) is left out of OPENHUMAN_TS_E2E_MODULES with a message;
 # tests that need it fail with that reason instead of a dlopen error.
 #
-# Staging runs in a subshell with strict options, so sourcing leaves the
-# caller's shell options alone; only the two exports come back. Any failure
-# (an unresolvable module, a download or digest error) exports nothing and
-# makes `source` return nonzero, with the reason on stderr.
+# Staging runs in a subshell, so sourcing leaves the caller's shell options
+# alone; only the two exports come back. Any failure (an unresolvable module,
+# a download, digest or extraction error) exports nothing and makes `source`
+# return nonzero, with the reason on stderr. Each step checks its own result
+# with `fail`: `set -e` is ignored inside the `if` that runs this function.
 
 ts_e2e_stage() (
-  set -euo pipefail
+  set -uo pipefail
+  fail() { echo "ts-e2e: $*" >&2; exit 1; }
   ids="${1:-tinysecurity,tinycomputer,tinyconnectors,tinybox,tinyflows}"
   cache="${OPENHUMAN_TS_E2E_CACHE:-$HOME/.cache/openhuman-ts-e2e}"
   bundled="$cache/bundled"
-  mkdir -p "$cache"
-  chmod 700 "$cache"
-  rm -rf "$bundled"
+  mkdir -p "$cache" && chmod 700 "$cache" && rm -rf "$bundled" || fail "cannot prepare $cache"
 
   host_key="${OH_MODULE_HOST_KEY:-}"
   if [ -z "$host_key" ]; then
@@ -37,24 +37,20 @@ ts_e2e_stage() (
       Linux-aarch64 | Linux-arm64) host_key="ubuntu-24.04-arm64" ;;
       Darwin-arm64) host_key="macos-15-arm64" ;;
       Darwin-*) host_key="macos-15-x86_64" ;;
-      *) echo "ts-e2e: unsupported host $(uname -s) $(uname -m)" >&2; exit 1 ;;
+      *) fail "unsupported host $(uname -s) $(uname -m)" ;;
     esac
   fi
 
-  if ! assets="$(node scripts/ci/self-hosted/test-module-assets.mjs "$host_key" "$ids")"; then
-    echo "ts-e2e: cannot resolve the release assets of $ids for $host_key" >&2
-    exit 1
-  fi
-  if [ -z "$assets" ]; then
-    echo "ts-e2e: no release assets for $ids on $host_key" >&2
-    exit 1
-  fi
+  assets="$(node scripts/ci/self-hosted/test-module-assets.mjs "$host_key" "$ids")" ||
+    fail "cannot resolve the release assets of $ids for $host_key"
+  [ -n "$assets" ] || fail "no release assets for $ids on $host_key"
 
   loadable=""
   while IFS=$'\t' read -r id url archive sha; do
     path="$cache/$archive"
-    curl --fail --location --silent --show-error --retry 4 --retry-delay 2 "$url" --output "$path"
-    node - "$path" "$sha" <<'NODE'
+    curl --fail --location --silent --show-error --retry 4 --retry-delay 2 "$url" --output "$path" ||
+      fail "cannot download $archive"
+    node - "$path" "$sha" <<'NODE' || fail "digest check failed for $archive; not extracting it"
 const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const [file, expected] = process.argv.slice(2);
@@ -67,9 +63,8 @@ NODE
     version="${version#"$id"-}"
     version="${version%%-"$host_key"*}"
     dir="$bundled/$id/$version/$host_key"
-    mkdir -p "$dir"
-    cp "$path" "$dir/$archive"
-    tar --no-same-owner -xzf "$dir/$archive" -C "$dir"
+    mkdir -p "$dir" && cp "$path" "$dir/$archive" || fail "cannot stage $archive"
+    tar --no-same-owner -xzf "$dir/$archive" -C "$dir" || fail "cannot extract $archive"
     if [[ "$(uname -s)" == Linux ]]; then
       if ! deps="$(find "$dir" -name '*.so' -exec ldd {} + 2>&1)"; then
         echo "ts-e2e: $id $version staged but not loadable here; ldd failed: $deps" >&2

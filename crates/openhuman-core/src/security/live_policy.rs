@@ -201,7 +201,14 @@ pub fn generation() -> u64 {
 /// Rebuild the policy from `autonomy_config` against the stored workspace dir
 /// and swap it in, bumping the generation counter. No-op if nothing has been
 /// installed yet (e.g. a CLI invocation that never started a session runtime).
+/// A test thread holding an `install_scoped` policy owns its policy, so its
+/// reloads never reach the process-global one that sibling tests read.
 pub fn reload_from(autonomy_config: &crate::config::AutonomyConfig) {
+    #[cfg(test)]
+    if TEST_POLICY_OVERRIDE.with(|current| current.borrow().is_some()) {
+        tracing::trace!("[security:live_policy] reload skipped for scoped test policy");
+        return;
+    }
     let Some(state) = STATE.get() else {
         return;
     };
