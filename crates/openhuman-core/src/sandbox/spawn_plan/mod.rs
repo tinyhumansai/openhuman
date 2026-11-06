@@ -164,12 +164,14 @@ fn limits(policy: &SandboxPolicy) -> ResourceLimits2 {
     };
     ResourceLimits2 {
         cpu_time_ms: None,
-        // Fractional CPUs become thousandths of a core, rounded up so a bound is
-        // never silently loosened; absent bounds stay absent.
+        // Fractional CPUs become thousandths of a core, rounded down: a CPU bound
+        // is a ceiling, so rounding up would let the container use more than the
+        // operator allowed. Below one millicore this is 0, which the plan refuses
+        // (`ZeroLimit`) rather than widening. Absent bounds stay absent.
         cpu_millicores: overrides
             .cpu_limit
             .filter(|cpus| cpus.is_finite() && *cpus > 0.0)
-            .map(|cpus| (cpus * 1000.0).ceil().min(f64::from(u32::MAX)) as u32),
+            .map(|cpus| (cpus * 1000.0).floor().min(f64::from(u32::MAX)) as u32),
         memory_bytes: overrides
             .memory_limit_mb
             .filter(|mb| *mb > 0)

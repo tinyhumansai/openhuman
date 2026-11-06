@@ -65,19 +65,52 @@ fn an_unbounded_plan_does_not_synthesize_native_resource_limits() {
 }
 
 #[test]
-fn unsupported_planned_bounds_are_refused_instead_of_being_ignored() {
-    let mut planned = artifact(SandboxBackend::Docker);
-    planned.limits = ResourceLimits2 {
-        cpu_time_ms: None,
-        cpu_millicores: Some(500),
-        memory_bytes: Some(64 << 20),
-        pids_max: None,
-        disk_bytes: None,
-    };
-    planned.constraints.push(SandboxConstraint2::Subprocesses);
+fn docker_cpu_and_memory_bounds_are_accepted() {
+    // TS-E2E-002: PlannedSpawn::apply carries both into the Docker overrides and
+    // RunDocker enforces them, so refusing them refused every bounded container.
+    for limits in [
+        ResourceLimits2 {
+            cpu_millicores: Some(1000),
+            memory_bytes: Some(512 << 20),
+            ..ResourceLimits2::default()
+        },
+        ResourceLimits2 {
+            memory_bytes: Some(512 << 20),
+            ..ResourceLimits2::default()
+        },
+        ResourceLimits2 {
+            cpu_millicores: Some(500),
+            ..ResourceLimits2::default()
+        },
+    ] {
+        let mut planned = artifact(SandboxBackend::Docker);
+        planned.limits = limits;
+        planned.constraints.push(SandboxConstraint2::Subprocesses);
+        assert!(
+            BoxPlan::from_artifact(&planned, None).is_ok(),
+            "a Docker plan with {:?} must map",
+            planned.limits
+        );
+    }
+}
+
+#[test]
+fn native_cpu_bounds_are_refused_instead_of_being_ignored() {
+    let mut planned = artifact(SandboxBackend::Jail);
+    planned.limits.cpu_millicores = Some(500);
     assert_eq!(
         BoxPlan::from_artifact(&planned, None),
         Err(PlanMappingError::CpuLimitUnenforceable)
+    );
+}
+
+#[test]
+fn a_zero_docker_bound_is_refused() {
+    let mut planned = artifact(SandboxBackend::Docker);
+    planned.limits.cpu_millicores = Some(0);
+    assert_eq!(
+        BoxPlan::from_artifact(&planned, None),
+        Err(PlanMappingError::ZeroLimit)
     );
 }
 
