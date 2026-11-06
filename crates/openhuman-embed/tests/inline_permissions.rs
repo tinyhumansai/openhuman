@@ -16,6 +16,31 @@ use std::sync::{
     Arc,
 };
 
+type Approval = (
+    ToolHookContext,
+    tokio::sync::oneshot::Sender<ToolHookDecision>,
+);
+
+/// The longest the host waits for any one step of a turn. Every wait in the
+/// scenario goes through here so a regression fails naming the step that never
+/// arrived instead of hanging until CI cancels the job.
+const STEP: std::time::Duration = std::time::Duration::from_secs(30);
+
+async fn within<T>(step: &str, wait: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(STEP, wait)
+        .await
+        .unwrap_or_else(|_| panic!("timed out after {STEP:?} waiting for {step}"))
+}
+
+async fn next_approval(
+    received: &mut tokio::sync::mpsc::UnboundedReceiver<Approval>,
+    step: &str,
+) -> Approval {
+    within(step, received.recv())
+        .await
+        .unwrap_or_else(|| panic!("approval channel closed while waiting for {step}"))
+}
+
 struct Probe(Arc<AtomicUsize>);
 #[async_trait::async_trait]
 impl Tool for Probe {
@@ -75,10 +100,7 @@ async fn scenario() {
                 Box::pin(async move { HostTurnTools::advertised(vec![Box::new(Probe(calls))]) })
             })
     };
-    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel::<(
-        ToolHookContext,
-        tokio::sync::oneshot::Sender<ToolHookDecision>,
-    )>();
+    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel::<Approval>();
     let agent = runtime
         .agent(
             spec("interactive", &provider, calls.clone()).can_use_tool(move |context| {
@@ -99,11 +121,7 @@ async fn scenario() {
         )
         .unwrap();
     let first = tokio::spawn(agent.turn("needs approval").send());
-    let (context, answer) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), received.recv())
-            .await
-            .unwrap()
-            .unwrap();
+    let (context, answer) = next_approval(&mut received, "the first approval request").await;
     assert_eq!(context.agent_id.as_deref(), Some("interactive"));
     assert_eq!(context.tool_name, "probe");
     assert_eq!(
@@ -127,7 +145,7 @@ async fn scenario() {
             .can_use_tool(|_| Box::pin(async { ToolHookDecision::deny("turn narrowed authority") }))
             .send(),
     );
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) = next_approval(&mut received, "the approval request of the turn-narrowed turn").await;
     answer.send(ToolHookDecision::default()).unwrap();
     assert!(
         second.await.unwrap().is_err(),
@@ -135,7 +153,7 @@ async fn scenario() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0, "turn policy was skipped");
     let third = tokio::spawn(agent.turn("next turn").send());
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) = next_approval(&mut received, "the approval request of the next turn").await;
     answer.send(ToolHookDecision::default()).unwrap();
     third.await.unwrap().unwrap();
     assert_eq!(
@@ -146,7 +164,7 @@ async fn scenario() {
     let mut pending = agent.turn("cancel while the UI waits");
     let cancellation = pending.cancellation_handle();
     let cancelled = tokio::spawn(pending.send());
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) = next_approval(&mut received, "the approval request of the cancelled turn").await;
     cancellation.cancel().await;
     assert!(matches!(
         cancelled.await.unwrap(),
@@ -158,7 +176,7 @@ async fn scenario() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let closed_ui = tokio::spawn(agent.turn("closed UI refuses").send());
-    let (_, answer) = received.recv().await.unwrap();
+    let (_, answer) = next_approval(&mut received, "the approval request of the closed-UI turn").await;
     drop(answer);
     assert!(closed_ui.await.unwrap().is_err());
     assert_eq!(
