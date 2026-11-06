@@ -181,7 +181,7 @@ jobs:
       # for the whole run and carries the overall result. `!cancelled()` keeps
       # a red lane from hiding the lanes after it.
       # The embed-consumer bootstrap uses stdlib tomllib (Python >= 3.11).
-      # Both runner profiles must use the same interpreter before spawning lanes.
+      # Pin the interpreter before spawning lanes.
       # It is handed to the lanes explicitly (OPENHUMAN_CI_PYTHON) rather than
       # exported: an exported toolcache PATH/LD_LIBRARY_PATH leaks into the
       # Rust tests, whose agent shell keeps PATH but not LD_LIBRARY_PATH, so a

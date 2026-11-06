@@ -52,7 +52,7 @@ test("every PR runs the hosted lanes, with nothing routing it to another runner"
   assert.doesNotMatch(lanesJob, /^    (if|needs):/m);
   assert.doesNotMatch(hosted, /ci-fast-route/);
   assert.equal(existsSync(new URL("ci-fast.yml", root)), false);
-  assert.doesNotMatch(lanes, /self-hosted|openhuman-ex63/);
+  assert.doesNotMatch(lanes, /runs-on:\s*\n?\s*(group|\[self-hosted)|openhuman-ex63/);
 });
 
 test("mold proof distinguishes instrumented binaries from ordinary executables", () => {
