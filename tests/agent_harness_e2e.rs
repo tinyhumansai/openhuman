@@ -891,6 +891,12 @@ async fn boot_stack_with_options(
     // are installed by the TinyHumans layer, not built into the core; without
     // it every turn fails with `chat_error.inference`.
     tinyhumans_boot::boot();
+    // Signing in stores the session in the OS keyring, which asks the user
+    // first. Let the test build's responder answer for the credential store
+    // however this binary is run (scripts/test-rust-e2e.sh sets the same).
+    if std::env::var_os("OPENHUMAN_TEST_KEYRING_CONSENT").is_none() {
+        std::env::set_var("OPENHUMAN_TEST_KEYRING_CONSENT", "approve");
+    }
 
     let home_is_override = home_override.is_some();
     let tmp = tempdir().expect("tempdir");
