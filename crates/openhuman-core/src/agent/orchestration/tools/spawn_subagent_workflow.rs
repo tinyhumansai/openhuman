@@ -356,8 +356,8 @@ fn hand_off_proposal<'a>(
 fn already_saved_proposal_note(name: &str, flow_id: &str) -> String {
     format!(
         "Note: the workflow proposal \"{name}\" was already saved from its card as flow `{flow_id}`. \
-         This applies only to saving this proposal as-is: report it as already saved as `{flow_id}` \
-         and do not call `create_workflow` for it. \
+         This applies only to saving this proposal as-is. Report it as already saved as `{flow_id}`. \
+         Do not call `create_workflow` for it. \
          If its graph changed and needs updating, use `save_workflow` with flow_id `{flow_id}` \
          instead of creating a new flow. \
          If the request instead asks for a separate variant or copy of it, create that as a new flow as requested."
