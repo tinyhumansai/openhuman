@@ -158,6 +158,14 @@ fn authorization(policy_id: &str, generation: u64) -> tinysecurity_bus::BrowserD
     }
 }
 
+fn owner() -> tinysecurity_bus::SubjectScope {
+    tinysecurity_bus::SubjectScope {
+        user: "user-1".into(),
+        workspace: "workspace-1".into(),
+        agent: "agent-1".into(),
+    }
+}
+
 #[test]
 fn the_config_names_a_stable_alias_not_the_rotating_policy() {
     // TinyBus fixes TinyComputer's config at load; a policy id in it would
@@ -183,4 +191,24 @@ fn a_target_that_does_not_name_the_alias_is_refused() {
     let mut stale = target(BROWSER_POLICY_ALIAS);
     stale.expected_generation = BROWSER_POLICY_ALIAS_GENERATION + 1;
     assert!(browser_request(stale, &authorization("policy-real-7", 9)).is_err());
+}
+
+#[test]
+fn local_only_registers_a_closed_browser_policy() {
+    // TinySecurity rejects an open policy under LocalOnly (InvalidArguments),
+    // which made every TinyComputer call fail (TS-E2E-011).
+    let policy = browser_policy(owner(), tinysecurity_bus::PrivacyMode::LocalOnly);
+    assert!(!policy.open_public);
+    assert!(policy.destinations.is_empty());
+    assert_eq!(policy.privacy, tinysecurity_bus::PrivacyMode::LocalOnly);
+}
+
+#[test]
+fn other_privacy_modes_keep_the_open_browser_policy() {
+    for privacy in [
+        tinysecurity_bus::PrivacyMode::Standard,
+        tinysecurity_bus::PrivacyMode::Sensitive,
+    ] {
+        assert!(browser_policy(owner(), privacy).open_public);
+    }
 }

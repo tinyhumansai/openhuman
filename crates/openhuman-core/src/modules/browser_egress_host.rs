@@ -91,17 +91,7 @@ async fn current_browser_policy(config: &crate::config::Config) -> Result<(Strin
     }
     let registered_at = std::time::Instant::now();
     let policy_id = client
-        .register_egress_policy(tinysecurity_bus::EgressPolicy {
-            owner: owner.clone(),
-            ceiling: tinysecurity_bus::AccessTier::Full,
-            privacy,
-            destinations: Vec::new(),
-            data_categories: vec![tinysecurity_bus::DataCategory::OpaqueBrowserTraffic],
-            local_capabilities: Vec::new(),
-            validity_ms: 30_000,
-            open_public: true,
-            preflight_transports: vec![tinysecurity_bus::EgressTransport::Browser],
-        })
+        .register_egress_policy(browser_policy(owner.clone(), privacy))
         .await
         .map_err(|error| error.to_string())?;
     let info = client
@@ -126,6 +116,28 @@ async fn current_browser_policy(config: &crate::config::Config) -> Result<(Strin
         scopes.remove(0);
     }
     Ok((policy_id.0, info.generation))
+}
+
+/// The browser's destination-only policy. It is open to the public internet
+/// except under LocalOnly, where TinySecurity refuses an open policy outright:
+/// then it names no destination, so TinySecurity refuses each public dial while
+/// TinyComputer's local desktop work keeps its config.
+fn browser_policy(
+    owner: tinysecurity_bus::SubjectScope,
+    privacy: tinysecurity_bus::PrivacyMode,
+) -> tinysecurity_bus::EgressPolicy {
+    let open_public = privacy != tinysecurity_bus::PrivacyMode::LocalOnly;
+    tinysecurity_bus::EgressPolicy {
+        owner,
+        ceiling: tinysecurity_bus::AccessTier::Full,
+        privacy,
+        destinations: Vec::new(),
+        data_categories: vec![tinysecurity_bus::DataCategory::OpaqueBrowserTraffic],
+        local_capabilities: Vec::new(),
+        validity_ms: 30_000,
+        open_public,
+        preflight_transports: vec![tinysecurity_bus::EgressTransport::Browser],
+    }
 }
 
 fn find_reusable_policy<'a>(
