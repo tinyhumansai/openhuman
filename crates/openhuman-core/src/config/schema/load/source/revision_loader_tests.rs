@@ -165,10 +165,17 @@ async fn channel_allowlist_store_loads_a_versioned_document_before_saving() {
         .unwrap();
     document_config.save().await.unwrap();
 
-    crate::channels::host::ConfigAllowlistStore
-        .persist_allowed_identity("telegram", "@operator")
-        .await
-        .unwrap();
+    crate::channels::host::ConfigAllowlistStore {
+        config: Arc::new(Config {
+            config_path: config_path.clone(),
+            workspace_dir: workspace_dir.clone(),
+            action_dir: workspace_dir.clone(),
+            ..Config::default()
+        }),
+    }
+    .persist_allowed_identity("telegram", "@operator")
+    .await
+    .unwrap();
     let saved = Config::load_from_config_path(&config_path, &workspace_dir)
         .await
         .unwrap();
