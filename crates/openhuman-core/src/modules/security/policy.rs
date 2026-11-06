@@ -35,9 +35,10 @@ pub fn policy_config(config: &Config) -> tinysecurity_bus::PolicyConfig {
 
 /// The forbidden paths as the module receives them, `~` expanded. On Windows
 /// a path rooted without a drive (`/etc`, `\usr`, the Unix roots in the
-/// shipped defaults) is not absolute and names no system folder, and the
-/// module would refuse the whole policy for it; it is left out there.
-/// Relative entries are kept, so `validate` still refuses them.
+/// shipped defaults) is not absolute and names no system folder; the module
+/// already ignores such entries there, and `validate` would otherwise refuse
+/// the whole policy for them, so they are left out. Relative entries are
+/// kept, so `validate` still refuses them.
 fn forbidden_paths(paths: &[String], windows: bool) -> Vec<String> {
     paths
         .iter()
