@@ -117,7 +117,7 @@ pub async fn run_system_turn_on_thread(
         request_id: run_id.to_owned(),
         config,
     };
-    let _progress_forward = tokio::spawn(forward_system_turn_subagents(
+    let _progress_forward = ctx.spawn(forward_system_turn_subagents(
         ctx.clone(),
         surface,
         progress_rx,
@@ -239,7 +239,7 @@ async fn forward_system_turn_subagents(
     late: LateSubagentSink,
 ) {
     let (queue_tx, mut queue_rx) = tokio::sync::mpsc::unbounded_channel::<QueuedProgress>();
-    tokio::spawn(async move {
+    ctx.spawn(async move {
         // Forward events as fast as the turn publishes them. When the turn
         // ends, drain whatever it already queued and place the turn-over
         // marker behind it in FIFO order: the forwarder switches to its
