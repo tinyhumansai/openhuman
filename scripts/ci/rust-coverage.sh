@@ -353,11 +353,9 @@ trap 'exit 143' TERM HUP
 # `core` shard owns them) and with them `-p openhuman`, which does not change
 # how the core's features resolve (cargo tree -e features is identical with and
 # without it) but saves compiling the core a second time as a test harness.
-product_args=("${UNIFIED_PRODUCT_ARGS[@]}")
-product_filter="${FILTER_PRODUCT}"
 if [ "${COV_SHARD}" = product ]; then
-  product_args=(-p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets)
-  product_filter="${FILTER_EMBED} | ${FILTER_TINYHUMANS} | (${FILTER_CLI_TESTS})"
+  UNIFIED_PRODUCT_ARGS=(-p openhuman-embed -p openhuman-tinyhumans -p openhuman-cli --all-targets)
+  FILTER_PRODUCT="${FILTER_EMBED} | ${FILTER_TINYHUMANS} | (${FILTER_CLI_TESTS})"
 fi
 
 if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ] && { [ "${COV_SHARD}" = full ] || [ "${COV_SHARD}" = product ]; }; then
@@ -392,14 +390,14 @@ if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ] && { [ "${COV_SHARD}" = full ] || [
     export LLVM_PROFILE_FILE="${inventory_profiles}/list-%p.profraw"
     bash scripts/ci-cancel-aware.sh cargo nextest list --message-format json --features "${CORE_PRODUCT_FEATURES}" \
       --target-dir "${CARGO_LLVM_COV_TARGET_DIR}/llvm-cov-target" \
-      "${product_args[@]}" -E "${product_filter}" >"${expected_inventory}"
+      "${UNIFIED_PRODUCT_ARGS[@]}" -E "${FILTER_PRODUCT}" >"${expected_inventory}"
     rm -rf "${inventory_profiles}"
   )
   suite "openhuman product test inventory" product_inventory
   NEXTEST_EXPECTED_TARGETS="${expected_targets}" \
   NEXTEST_EXPECTED_INVENTORY="${expected_inventory}" \
   suite "openhuman product suites (nextest)" llvm_cov --no-report --no-fail-fast \
-    "${product_args[@]}" -E "${product_filter}"
+    "${UNIFIED_PRODUCT_ARGS[@]}" -E "${FILTER_PRODUCT}"
 elif [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # Shards other than `product`: the core's unit tests, one process per test.
   if has_cov_section core; then
