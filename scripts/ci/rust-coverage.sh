@@ -416,6 +416,7 @@ fi
 # Run every root-workspace Rust support crate rather than only crates named by
 # changed paths. Product features are forwarded to the embedding facade; the
 # remaining crates do not expose that feature vocabulary.
+if has_cov_section default; then
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
 fi
@@ -443,6 +444,7 @@ if [ "${OH_COV_TUI:-1}" = "1" ]; then
 else
   log "skipping openhuman-tui (OH_COV_TUI=${OH_COV_TUI})"
 fi
+fi # default
 
 if [ "${OH_COV_RUNNER:-cargo}" != "nextest" ]; then
   # The nextest runner ran the integration targets with the product suites.
@@ -457,7 +459,9 @@ fi
 # complete Rust test suite and must run whenever the Rust-core area changes.
 # They compile their own uninstrumented core, so a caller that runs them in a
 # parallel lane instead (CI Fast on the EX63) sets OH_COV_DOCTESTS=0.
-if [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
+if ! has_cov_section core; then
+  log "doctests belong to the core shard; not running them in the ${COV_SHARD} shard"
+elif [ "${OH_COV_DOCTESTS:-1}" = "1" ]; then
   suite "openhuman doctests" bash scripts/ci-cancel-aware.sh cargo test -p openhuman \
     --doc --features "${CORE_PRODUCT_FEATURES}"
 else
@@ -474,8 +478,14 @@ COVERAGE_REPORTED=1
 presence_skip=""
 [ "${OH_COV_TUI:-1}" = "1" ] || presence_skip="crates/openhuman-tui/src/"
 [ -z "${presence_skip}" ] || log "coverage presence: not checking ${presence_skip} (suite skipped)"
-suite "coverage presence" env COVERAGE_PRESENCE_SKIP_PREFIXES="${presence_skip}" \
-  bash scripts/ci/assert-coverage-presence.sh "${OUT}" --all
+if [ "${COV_SHARD}" = full ]; then
+  suite "coverage presence" env COVERAGE_PRESENCE_SKIP_PREFIXES="${presence_skip}" \
+    bash scripts/ci/assert-coverage-presence.sh "${OUT}" --all
+else
+  # A shard measures only its own part of the tree. The hosted gate merges all
+  # of the shards' lcov files and runs this same --all check on the union.
+  log "coverage presence: deferred to the hosted gate (shard ${COV_SHARD} measures part of the tree)"
+fi
 
 if [ "${#FAILED_SUITES[@]}" -gt 0 ]; then
   log "${#FAILED_SUITES[@]} suite(s) failed:"
