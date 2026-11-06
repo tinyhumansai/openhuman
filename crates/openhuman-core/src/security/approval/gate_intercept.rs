@@ -118,6 +118,11 @@ impl ApprovalGate {
                     if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
             )
         {
+            tracing::warn!(
+                tool = tool_name,
+                ?origin,
+                "[approval::gate] forced approval denied: no routable WebChat origin on this task"
+            );
             return (
                 GateOutcome::Deny {
                     reason: format!(
