@@ -91,7 +91,10 @@ jobs:
     needs: plan
     if: fromJSON(needs.plan.outputs.matrix).include[0] != null
     runs-on: ubuntu-22.04
-    timeout-minutes: 100
+    # The rust-cov shards each build the core cold on 4 cores (~20 min per
+    # build, CARGO_BUILD_JOBS=1) and run for 30-75 min; the one job that ran
+    # them all never fit in 100. Every other group keeps 100.
+    timeout-minutes: ${{ startsWith(matrix.group, 'rust-cov-') && 120 || 100 }}
     container:
       # Empty for the pester group: pwsh ships on the bare runner image.
       image: ${{ matrix.container }}
@@ -104,6 +107,9 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       NPM_CONFIG_STORE_DIR: .pnpm-store
+      # Which part of the rust-cov lane this job runs (empty for other groups);
+      # read by scripts/ci/rust-coverage.sh.
+      OH_COV_SHARD: ${{ matrix.shard }}
       CI_AREA_FRONTEND: ${{ needs.plan.outputs.frontend }}
       CI_AREA_I18N: ${{ needs.plan.outputs.i18n }}
       CI_AREA_DOCS: ${{ needs.plan.outputs.docs }}
@@ -148,18 +154,18 @@ jobs:
         run: bash scripts/ci/checkout-submodules.sh
 
       - name: Cache Rust build artifacts
-        if: matrix.group == 'rust-lint' || matrix.group == 'rust-cov' || matrix.group == 'tauri' || matrix.group == 'storage'
+        if: matrix.group == 'rust-lint' || startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri' || matrix.group == 'storage'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
             crates/openhuman-app -> target
-          cache-on-failure: ${{ matrix.group != 'rust-cov' }}
+          cache-on-failure: ${{ !startsWith(matrix.group, 'rust-cov-') }}
           shared-key: ci-fast-${{ matrix.group }}
 
       - name: Prune stale coverage test executables
         # Instrumented test binaries in a restored cache can exhaust the disk.
-        if: matrix.group == 'rust-cov'
+        if: startsWith(matrix.group, 'rust-cov-')
         run: find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
 
       - name: Cache pnpm store
@@ -172,8 +178,14 @@ jobs:
             pnpm-store-${{ runner.os }}-
 
       - name: Install cargo-llvm-cov
-        if: matrix.group == 'rust-cov' || matrix.group == 'tauri'
+        if: startsWith(matrix.group, 'rust-cov-') || matrix.group == 'tauri'
         uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        # The coverage shards run every test in its own process, and a hung
+        # test is killed after 5 minutes (.config/nextest.toml).
+        if: startsWith(matrix.group, 'rust-cov-')
+        uses: taiki-e/install-action@cargo-nextest
 
       # One step per lane: `Start lanes` launches every lane in the background
       # (they still run in parallel); each `Lane:` step streams its own lane's
@@ -239,7 +251,7 @@ jobs:
         run: node scripts/ci/self-hosted/lanes.mjs --wait-all
 
       - name: Prune coverage test executables before cache save
-        if: always() && matrix.group == 'rust-cov'
+        if: always() && startsWith(matrix.group, 'rust-cov-')
         run: find target/llvm-cov-target -type f -path '*/debug/deps/*' -perm -111 -delete 2>/dev/null || true
 
       - name: Upload lane logs, timings and coverage
@@ -295,6 +307,18 @@ jobs:
         with:
           path: ci-artifacts
           pattern: ci-out-*
+
+      - name: Require every Rust coverage shard, and the whole tree across them
+        # A shard missing from the matrix, or one that never uploaded an lcov,
+        # fails here rather than reading as "nothing to cover". The presence
+        # check is the one every shard defers (scripts/ci/rust-coverage.sh).
+        if: needs.plan.outputs.coverage == 'true' && (needs.plan.outputs['rust-core'] == 'true' || needs.plan.outputs.storage == 'true')
+        env:
+          PLAN_MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/self-hosted/merge-coverage-shards.mjs ci-artifacts merged-rust-core.info
+          bash scripts/ci/assert-coverage-presence.sh merged-rust-core.info --all
 
       - name: Enforce >= 80% coverage on changed lines
         if: needs.plan.outputs.coverage == 'true'
