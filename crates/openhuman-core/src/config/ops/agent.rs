@@ -85,11 +85,9 @@ pub async fn apply_autonomy_settings(
             root.path
         ));
     }
-    if let Some(enabled) = update.enabled {
-        config.autonomy.enabled = enabled;
-    }
-    if let Some(level) = update.level {
-        config.autonomy.level = match level.trim().to_ascii_lowercase().as_str() {
+    let level = match update.level.map(|level| level.trim().to_ascii_lowercase()) {
+        None => None,
+        Some(level) => Some(match level.as_str() {
             "readonly" | "read_only" | "read-only" => AutonomyLevel::ReadOnly,
             "supervised" => AutonomyLevel::Supervised,
             "full" => AutonomyLevel::Full,
@@ -98,7 +96,16 @@ pub async fn apply_autonomy_settings(
                     "invalid autonomy level '{other}' (expected readonly | supervised | full)"
                 ));
             }
-        };
+        }),
+    };
+    if update.max_actions_per_hour == Some(0) {
+        return Err("max_actions_per_hour must be at least 1 (got 0)".to_string());
+    }
+    if let Some(enabled) = update.enabled {
+        config.autonomy.enabled = enabled;
+    }
+    if let Some(level) = level {
+        config.autonomy.level = level;
     }
     if let Some(workspace_only) = update.workspace_only {
         config.autonomy.workspace_only = workspace_only;
@@ -116,11 +123,6 @@ pub async fn apply_autonomy_settings(
         config.autonomy.allow_tool_install = allow_tool_install;
     }
     if let Some(max_actions_per_hour) = update.max_actions_per_hour {
-        if max_actions_per_hour == 0 {
-            return Err(format!(
-                "max_actions_per_hour must be at least 1 (got {max_actions_per_hour})"
-            ));
-        }
         config.autonomy.max_actions_per_hour = max_actions_per_hour;
     }
     if let Some(auto_approve) = update.auto_approve {
@@ -129,10 +131,11 @@ pub async fn apply_autonomy_settings(
     if let Some(auto_approve_all) = update.auto_approve_all {
         config.autonomy.auto_approve_all = auto_approve_all;
     }
-    // TinySecurity refuses an enabled policy it cannot represent (relative
-    // forbidden paths, commands with arguments). Saved, such a policy would make
-    // every TinySecurity call fail until the file was edited by hand, so refuse
-    // it here and leave the settings as they were.
+    // The host's TinySecurity client refuses an enabled policy the module
+    // contract cannot represent (relative forbidden paths, commands with
+    // arguments): `validate` runs before every call. Saved, such a policy would
+    // make every TinySecurity check fail closed until the file was edited by
+    // hand, so refuse it here and leave the settings as they were.
     #[cfg(feature = "security-module")]
     if let Err(error) = crate::modules::security::validate_policy(config) {
         log::debug!("[config][autonomy] patch rejected: {error}");
