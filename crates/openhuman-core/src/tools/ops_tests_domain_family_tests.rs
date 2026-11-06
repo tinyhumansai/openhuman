@@ -18,8 +18,6 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
     use tinytools::status::POLICY_BLOCKED_MARKER;
 
     let tmp = TempDir::new().unwrap();
-    // `apply_patch` resolves each edit's path before its policy check.
-    std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
     let sec = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,
         workspace_dir: tmp.path().to_path_buf(),
