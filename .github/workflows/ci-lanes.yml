@@ -144,11 +144,13 @@ jobs:
         if: matrix.container != ''
         run: git config --global --add safe.directory '*'
 
-      - name: Install jq for release-script tests
+      - name: Install jq and unzip for release-script tests
+        # stage-modules.mjs unpacks module archives with unzip, which the
+        # image does not carry.
         if: matrix.container != '' && needs.plan.outputs.scripts == 'true'
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends jq python3-tomli
+          apt-get install -y --no-install-recommends jq python3-tomli unzip
 
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
