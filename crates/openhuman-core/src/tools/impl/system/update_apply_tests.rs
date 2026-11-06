@@ -67,15 +67,6 @@ async fn rejects_when_user_confirmed_false() {
 
 #[tokio::test]
 async fn rejects_in_read_only_mode_even_with_consent() {
-    #[cfg(feature = "security-module")]
-    let _budget = crate::modules::security::gap::install_budget_port(
-        // The read-only tier is TinySecurity's budget answer, not a local
-        // check: script the module's `ReadOnlyMode` reply to pin how the tool
-        // surfaces it.
-        crate::modules::security::gap::ScriptedBudgetPort::replying(
-            tinysecurity_bus::BudgetDecision2::ReadOnlyMode,
-        ),
-    );
     let tool = UpdateApplyTool::new(read_only());
     let result = tool
         .execute(json!({ "user_confirmed": true }))

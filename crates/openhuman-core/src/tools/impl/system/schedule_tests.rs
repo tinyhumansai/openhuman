@@ -119,15 +119,6 @@ async fn once_and_pause_resume_aliases_work() {
 
 #[tokio::test]
 async fn readonly_blocks_mutating_actions() {
-    #[cfg(feature = "security-module")]
-    let _budget = crate::modules::security::gap::install_budget_port(
-        // The read-only tier is TinySecurity's budget answer, not a local
-        // check: script the module's `ReadOnlyMode` reply to pin how the tool
-        // surfaces it.
-        crate::modules::security::gap::ScriptedBudgetPort::replying(
-            tinysecurity_bus::BudgetDecision2::ReadOnlyMode,
-        ),
-    );
     let tmp = TempDir::new().unwrap();
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
