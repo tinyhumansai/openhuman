@@ -109,13 +109,9 @@ impl SpawnSubagentTool {
             }
         };
         if definition.id == "workflow_builder" {
-            prompt = carry_saved_flow(
-                &dispatch,
-                &parent.workspace_dir,
-                &parent_thread_id,
-                prompt,
-                context.as_deref(),
-            );
+            let dir = &parent.workspace_dir;
+            let tid = &parent_thread_id;
+            prompt = carry_saved_flow(&dispatch, dir, tid, prompt, context.as_deref());
         }
         if definition.id == "vision_agent" {
             match crate::attachments::has_resolvable_image(
@@ -649,7 +645,6 @@ impl SpawnSubagentTool {
             parent_session,
             background_parent_thread_id.as_deref().unwrap_or("none")
         );
-        let completion_core = dispatch.clone().into_core();
         let completion_origin = detached_parent.data.origin.clone();
         let completion_worker_thread_id = background_worker_thread_id.clone();
         let registration_progress = progress_sink.clone();
@@ -658,7 +653,7 @@ impl SpawnSubagentTool {
         let registration_agent_id = definition.id.clone();
         let registration_task_id = task_id.clone();
         let completion = completion::make_completion(
-            completion_core,
+            dispatch.clone().into_core(),
             completion_origin,
             progress_sink.clone(),
             background_workspace_dir,
