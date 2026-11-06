@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   AREA_ENV,
   HOSTED_GROUPS,
+  RUST_COV_SHARDS,
   areasFromEnv,
   buildPlan,
   hostedMatrix,
@@ -66,8 +67,15 @@ test("every hosted group resolves on its own, and every hosted lane has exactly 
     assert.deepEqual(validatePlan(sub), [], g.group);
     assert.deepEqual(orderProblems(sub), [], g.group);
   }
-  const grouped = HOSTED_GROUPS.flatMap((g) => g.lanes).sort();
+  // rust-cov is the one lane hosted CI shards: one group per shard.
+  const grouped = [
+    ...new Set(HOSTED_GROUPS.flatMap((g) => g.lanes)),
+  ].sort();
   assert.deepEqual(grouped, plan.lanes.map((l) => l.name).sort());
+  const counts = HOSTED_GROUPS.flatMap((g) => g.lanes).filter(
+    (n) => n !== "rust-cov",
+  );
+  assert.equal(new Set(counts).size, counts.length);
 });
 
 test("Rust coverage installs the mock backend dependencies without a frontend area", () => {
@@ -108,15 +116,12 @@ test("commands are static: no suite is ever narrowed to the diff", () => {
   }
 });
 
-test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner", () => {
+test("both profiles run the core's unit tests under nextest", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
       .find((l) => l.name === "rust-cov")
       .checks.find((c) => c.name === "rust-core-coverage");
-    assert.equal(
-      cov.env.OH_COV_RUNNER,
-      plan.profile === "ex63" ? "nextest" : undefined,
-    );
+    assert.equal(cov.env.OH_COV_RUNNER, "nextest", plan.profile);
   }
   assert.match(
     fs.readFileSync(path.join(repoRoot, ".config/nextest.toml"), "utf8"),
@@ -286,7 +291,7 @@ test("the storage area arms the core coverage lane, which covers every storage d
     if (profile === "hosted") {
       assert.deepEqual(
         hostedMatrix(plan).map((g) => g.group),
-        ["checks", "rust-cov"],
+        ["checks", ...RUST_COV_SHARDS.map((s) => `rust-cov-${s}`)],
       );
     }
   }
@@ -324,7 +329,11 @@ test("hosted matrix only spins up groups with active lanes", () => {
   );
   assert.deepEqual(
     core.map((g) => g.group),
-    ["checks", "rust-lint", "rust-cov"],
+    [
+      "checks",
+      "rust-lint",
+      ...RUST_COV_SHARDS.map((s) => `rust-cov-${s}`),
+    ],
   );
   const pester = hostedMatrix(
     buildPlan({ profile: "hosted", areas: { ...NONE, installPs1: true } }),
