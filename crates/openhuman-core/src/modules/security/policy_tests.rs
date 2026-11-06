@@ -25,6 +25,47 @@ fn enabled_policy_expands_home_relative_forbidden_paths() {
         .all(|path| std::path::Path::new(path).is_absolute()));
 }
 
+/// TS-E2E-015 / #8575: the shipped defaults include Unix roots (`/etc`, …),
+/// which have no drive on Windows. Enabling autonomy with the defaults must
+/// still give the module a policy it accepts there.
+#[test]
+fn windows_policy_leaves_out_drive_less_unix_roots() {
+    let defaults = Config::default().autonomy.forbidden_paths;
+    assert!(defaults.iter().any(|path| path == "/etc"), "{defaults:?}");
+
+    // Every default is a Unix root or a `~` path; on Windows only the `~`
+    // paths remain (checked on the input: `~` expands to `/home/...` here).
+    let home: Vec<String> = defaults
+        .iter()
+        .filter(|path| path.starts_with('~'))
+        .map(|path| crate::config::expand_tilde(path))
+        .collect();
+    assert!(home.contains(&crate::config::expand_tilde("~/.ssh")));
+    assert_eq!(forbidden_paths(&defaults, true), home);
+    assert_eq!(forbidden_paths(&defaults, false).len(), defaults.len());
+
+    let kept = [
+        "C:\\Secrets",
+        "\\\\server\\share",
+        "//server/share",
+        "relative",
+    ];
+    let kept: Vec<String> = kept.iter().map(|path| path.to_string()).collect();
+    assert_eq!(forbidden_paths(&kept, true), kept);
+}
+
+/// The untouched defaults, enabled, validate on this OS.
+#[test]
+fn enabled_default_policy_validates() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.action_dir = root.path().join("action");
+    config.workspace_dir = root.path().join("workspace");
+    config.autonomy.enabled = true;
+
+    assert_eq!(validate(&config), Ok(()));
+}
+
 #[test]
 fn enabled_policy_still_refuses_relative_forbidden_paths() {
     let mut config = Config::default();
@@ -40,10 +81,13 @@ fn enabled_policy_still_refuses_relative_forbidden_paths() {
 
 #[test]
 fn policy_translation_copies_effective_host_settings() {
+    // Absolute on every OS: a drive-less `/private` is left out on Windows.
+    let root = tempfile::tempdir().unwrap();
+    let private = root.path().join("private").display().to_string();
     let mut config = Config::default();
     config.autonomy.enabled = true;
     config.autonomy.allowed_commands = vec!["pwd".into()];
-    config.autonomy.forbidden_paths = vec!["/private".into()];
+    config.autonomy.forbidden_paths = vec![private.clone()];
 
     let translated = policy_config(&config);
     assert!(translated.enabled);
@@ -56,7 +100,7 @@ fn policy_translation_copies_effective_host_settings() {
         config.workspace_dir.display().to_string()
     );
     assert_eq!(translated.allowed_commands, ["pwd"]);
-    assert_eq!(translated.forbidden_paths, ["/private"]);
+    assert_eq!(translated.forbidden_paths, [private]);
 }
 
 #[test]
