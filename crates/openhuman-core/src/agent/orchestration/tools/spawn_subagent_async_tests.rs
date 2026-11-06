@@ -394,7 +394,6 @@ fn a_reused_session_settles_the_delivered_proposal_without_duplicating_it() {
     );
 }
 
-
 #[test]
 fn a_history_shorter_than_its_seed_is_used_whole() {
     let history = vec![TranscriptMessage::user("compacted")];
