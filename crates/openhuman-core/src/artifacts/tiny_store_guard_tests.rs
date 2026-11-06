@@ -40,6 +40,9 @@ async fn a_file_in_an_earlier_files_folder_can_still_be_revised() {
     assert_eq!(saved.version, 2);
 }
 
+// The refusal is TinySecurity's protected-path floor: a build without the
+// security module has security disabled and no floor (`security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_protected_file_inside_the_working_folder_is_refused() {
     let (workspace, files) = temp_dirs();
