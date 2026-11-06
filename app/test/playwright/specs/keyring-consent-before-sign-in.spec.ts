@@ -79,6 +79,7 @@ test.describe('keyring consent before sign-in', () => {
     }
 
     await signIn;
+    expect(outcome).toBe('ok');
     expect(allowed).toBeGreaterThan(0);
     const state = await callCoreRpc<{
       isAuthenticated?: boolean;

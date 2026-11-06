@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { listPendingKeyringOperations } from '../services/keyringApi';
 import { socketService } from '../services/socketService';
@@ -53,10 +53,13 @@ export function useKeyringOperationApprovals(): {
   dismiss: (requestId: string) => void;
 } {
   const [requests, setRequests] = useState<KeyringOperationApprovalRequest[]>([]);
+  // A poll that was in flight when the user answered can still list the
+  // answered request; never show a dismissed request again.
+  const dismissed = useRef(new Set<string>());
 
   const handleRequest = useCallback((payload: unknown) => {
     const request = parseRequest(payload);
-    if (!request) return;
+    if (!request || dismissed.current.has(request.request_id)) return;
     setRequests(current =>
       current.some(existing => existing.request_id === request.request_id)
         ? current
@@ -94,6 +97,7 @@ export function useKeyringOperationApprovals(): {
   }, [handleRequest]);
 
   const dismiss = useCallback((requestId: string) => {
+    dismissed.current.add(requestId);
     setRequests(current => current.filter(request => request.request_id !== requestId));
   }, []);
 
