@@ -58,11 +58,14 @@ async fn backend_dispatch_forwards_the_workflow_connection_id() {
         .await
         .expect("store test session token");
 
-    let response = execute_for_connection(
+    let response = crate::integrations::composio::module_client::test_support::scoped(
         &config,
-        "GITHUB_LIST_REPOSITORY_ISSUES",
-        Some(json!({ "owner": "tinyhumansai" })),
-        Some("ca_target_account"),
+        execute_for_connection(
+            &config,
+            "GITHUB_LIST_REPOSITORY_ISSUES",
+            Some(json!({ "owner": "tinyhumansai" })),
+            Some("ca_target_account"),
+        ),
     )
     .await
     .expect("backend dispatch should succeed");
