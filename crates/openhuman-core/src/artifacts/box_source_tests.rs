@@ -10,6 +10,18 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tiny_artifacts::{Author, CreateArtifactTool, UpdateArtifactTool};
 
+/// Answers the protected-path check for the length of a test. A build without
+/// the security module has no such check to answer.
+#[cfg(feature = "security-module")]
+fn path_floor() -> impl Sized {
+    crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
+    )
+}
+
+#[cfg(not(feature = "security-module"))]
+fn path_floor() -> impl Sized {}
+
 /// Box files from a registry over a scripted driver, so a test says what the
 /// box holds and sees every command sent to it.
 struct ScriptedBoxes {
@@ -187,9 +199,7 @@ async fn created_id(tool: &BoxSourced, args: Value) -> String {
 
 #[tokio::test]
 async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     let bytes: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
     fixture.the_box_holds(&bytes);
@@ -208,9 +218,7 @@ async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
 
 #[tokio::test]
 async fn a_path_inside_the_boxs_work_folder_is_read_by_its_relative_name() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     fixture.the_box_holds(b"pdf");
     let tool = fixture.tool(true, user("u1"));
@@ -240,9 +248,7 @@ async fn a_path_elsewhere_in_the_box_is_refused() {
 
 #[tokio::test]
 async fn a_path_is_read_from_the_host_when_the_backend_keeps_no_boxes() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     std::fs::write(fixture.action.join("report.pdf"), b"host bytes").unwrap();
     let tool = fixture.tool(false, user("u1"));
@@ -258,9 +264,7 @@ async fn a_path_is_read_from_the_host_when_the_backend_keeps_no_boxes() {
 
 #[tokio::test]
 async fn an_unreadable_configuration_is_a_tool_error_and_never_reads_the_host() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     // A host file of the same name: it must not be imported in the box's place.
     std::fs::write(fixture.action.join("report.pdf"), b"host bytes").unwrap();
@@ -316,9 +320,7 @@ async fn a_call_with_no_tenant_is_refused_without_touching_a_box_or_the_host() {
 
 #[tokio::test]
 async fn a_text_artifact_never_touches_a_box() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     let tool = fixture.tool(true, user("u1"));
 
@@ -369,9 +371,7 @@ fn a_box_path_is_the_name_relative_to_the_work_folder() {
 
 #[tokio::test]
 async fn an_update_reads_its_new_file_from_the_callers_box() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     fixture.the_box_holds(b"first");
     let id = created_id(&fixture.tool(true, user("u1")), file_args("a.pdf")).await;
@@ -453,9 +453,7 @@ impl RecordKinds for BrokenRecords {
 
 #[tokio::test]
 async fn an_update_whose_record_cannot_be_read_fails_instead_of_reading_the_host() {
-    let _floor = crate::modules::security::gap::install_path_floor_port(
-        crate::modules::security::gap::ScriptedPathFloorPort::new([], vec![]),
-    );
+    let _floor = path_floor();
     let fixture = Fixture::new();
     std::fs::write(fixture.action.join("a.pdf"), b"host bytes").unwrap();
     let tool = fixture.update_tool(true, user("u1"));
