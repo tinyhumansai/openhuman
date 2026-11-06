@@ -203,6 +203,12 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
         Some(&json!("msg-round25"))
     );
     assert_eq!(executed.cost_usd, 0.0);
+    // TS-E2E-009 (RD-12): the provider echoes the caller's key in every form;
+    // the RPC op's result carries none of them, as the agent tools' don't.
+    let returned = serde_json::to_string(&executed).expect("serialize result");
+    for form in round25_key_forms() {
+        assert!(!returned.contains(&form), "the result carried the key as {form}");
+    }
 
     let failed_execute = composio_execute(
         &harness.config,
@@ -265,6 +271,40 @@ async fn round25_direct_mode_ops_use_loopback_factory_for_tools_connections_and_
             && request.body["entity_id"] == " entity-round25 "
     }));
 
+    // An Execute whose result cannot be redacted is withheld, but still
+    // recorded as executed: the action ran and may have cost something. A key
+    // that is part of the result's own JSON leaves the redacted result
+    // undecodable.
+    openhuman_core::core::bus::init().await.expect("bus init");
+    let mut events = openhuman_core::core::bus::BUS
+        .get()
+        .expect("bus initialized")
+        .receiver();
+    let mut unredactable = harness.config.clone();
+    unredactable.composio.api_key = Some("\"successful\":true".to_string());
+    let withheld = composio_execute(&unredactable, "GMAIL_FETCH_EMAILS", None, None).await;
+    assert_eq!(
+        withheld.err().as_deref(),
+        Some("Composio result withheld by security redactor")
+    );
+    let recorded = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            match events.recv().await {
+                Some(openhuman_core::core::events::DomainEvent::ComposioActionExecuted {
+                    tool,
+                    success,
+                    error,
+                    ..
+                }) if tool == "GMAIL_FETCH_EMAILS" => return (success, error),
+                Some(_) => continue,
+                None => panic!("the bus closed before the execute was recorded"),
+            }
+        }
+    })
+    .await
+    .expect("the withheld execute was not recorded");
+    assert_eq!(recorded, (true, None));
+
     // TS-E2E-008 (EG-16): the UI's `composio.execute` RPC op is held to the
     // local-only privacy mode like the agent tool, and refused before the
     // connector module dials Composio. Checked in this test because the
@@ -315,6 +355,18 @@ impl Drop for PrivacyScope {
     fn drop(&mut self) {
         let _ = live_policy::reload_privacy(self.0);
     }
+}
+
+/// The direct-mode key `setup_direct_config` stores, and the encoded forms a
+/// provider might echo it in. The mock's Execute echoes all four.
+fn round25_key_forms() -> [String; 4] {
+    let key = "ck_round25_direct";
+    [
+        key.to_owned(),
+        urlencoding::encode(key).into_owned(),
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key),
+        hex::encode(key),
+    ]
 }
 
 async fn start_loopback(app: Router) -> String {
@@ -441,7 +493,8 @@ async fn composio_direct_handler(State(state): State<MockState>, request: Reques
             "data": {
                 "messages": [
                     { "id": "msg-round25", "subject": "Coverage" }
-                ]
+                ],
+                "echo": round25_key_forms(),
             }
         }))
         .into_response(),

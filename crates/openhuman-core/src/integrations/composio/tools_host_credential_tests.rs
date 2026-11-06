@@ -313,3 +313,32 @@ async fn cache_key_is_stable_for_unpinned_direct_mode_when_nothing_rotates() {
 
     assert_eq!(cache_key(&base).await, cache_key(&base).await);
 }
+
+/// A key rotated while an Execute runs never comes back in its result: the
+/// keys read before the call are redacted along with the current ones.
+#[tokio::test]
+async fn a_key_rotated_during_execute_is_still_redacted_from_its_result() {
+    use crate::integrations::composio::tools::{composio_call_keys, redact_composio_response};
+    use crate::integrations::composio::types::ComposioExecuteResponse;
+    let tmp = tempfile::tempdir().unwrap();
+    let base = shared_runtime_config(&tmp).await;
+    let before = composio_call_keys(&pinned(&base, KEY_A, "tenant-a", None))
+        .await
+        .expect("keys before the call");
+    let rotated = pinned(&base, KEY_B, "tenant-a", None);
+    let response = ComposioExecuteResponse {
+        data: json!({ "echo": KEY_A }),
+        successful: true,
+        error: None,
+        cost_usd: 0.0,
+        markdown_formatted: None,
+    };
+
+    // Redacted, or withheld when the module cannot answer (in a one-process
+    // run it may serve another test's workspace): either way, never key A.
+    let returned = match redact_composio_response(&rotated, before, response).await {
+        Ok(redacted) => serde_json::to_string(&redacted).unwrap(),
+        Err(withheld) => withheld,
+    };
+    assert!(!returned.contains(KEY_A), "{returned}");
+}
