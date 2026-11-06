@@ -24,6 +24,7 @@
 //! carries the chat routing of the turn that made the change, so the card
 //! reaches that chat live.
 
+pub use super::types::SavedVersion;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -736,15 +737,6 @@ pub async fn save_operator_version(
         version: saved.version,
         saved: saved.appended,
     })
-}
-
-/// Result of [`save_operator_version`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub struct SavedVersion {
-    /// The newest version number after the call.
-    pub version: u32,
-    /// Whether a version was appended.
-    pub saved: bool,
 }
 
 #[cfg(test)]

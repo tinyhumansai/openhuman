@@ -165,3 +165,12 @@ pub struct ArtifactMeta {
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;
+
+/// Result of [`save_operator_version`](super::tiny_store::save_operator_version).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct SavedVersion {
+    /// The newest version number after the call.
+    pub version: u32,
+    /// Whether a version was appended.
+    pub saved: bool,
+}
