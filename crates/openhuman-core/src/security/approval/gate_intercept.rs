@@ -664,21 +664,6 @@ fn object_arguments(value: serde_json::Value) -> serde_json::Value {
     object
 }
 
-/// Whether a forced approval for `tool_name` may park without a chat route.
-///
-/// Only the native secret master grant may, and only when nothing remote or
-/// automated asked for it: a Settings RPC (no turn, `Unknown`), the CLI or a
-/// direct local chat. A scheduled job, a background task, a workflow or an
-/// external channel still fails closed, because the person who would see the
-/// prompt did not start the action behind it.
-fn secret_grant_parks_unrouted(tool_name: &str, origin: &AgentTurnOrigin) -> bool {
-    tool_name == super::native::NATIVE_SECRET_GRANT_TOOL
-        && matches!(
-            origin,
-            AgentTurnOrigin::Unknown | AgentTurnOrigin::Cli | AgentTurnOrigin::DirectChat
-        )
-}
-
 /// The origin class the engine is told for a turn. The verdict for each class
 /// (a scheduled job's external effect denied, internal automation and the local
 /// operator approved, an unlabelled call refused without a tool grant) is the
