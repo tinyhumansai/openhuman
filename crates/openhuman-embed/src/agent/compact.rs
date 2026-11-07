@@ -103,10 +103,11 @@ impl Agent {
     ///
     /// Call it when a message arrives and its turn is still some way off. The
     /// session is built as [`Turn::session`](crate::Turn::session) builds a
-    /// turn's, and the block is kept (for up to an hour, taken once) under the
-    /// agent's memory identity. Nothing is read when one already waits, and
-    /// an agent without a memory block does nothing
-    /// ([`MemoryBlockPrewarm::Unavailable`]). A failed read is
+    /// turn's, with the agent's provider route and model, and the block is
+    /// kept (for up to an hour, taken once) under the agent's memory
+    /// identity. Nothing is read when one already waits, and an agent without
+    /// a memory block does nothing ([`MemoryBlockPrewarm::Unavailable`]). A
+    /// failed read is
     /// [`MemoryBlockPrewarm::Failed`], never an error: the turn renders for
     /// itself.
     ///
@@ -126,6 +127,12 @@ impl Agent {
             }
             .into());
         }
+        // The provider route and model a turn on this agent runs with.
+        let turn = self.turn(String::new());
+        let request = turn.request();
+        let route = crate::turn::inference_route(request);
+        let model_override = request.model_override.clone();
+        let temperature = request.temperature;
         let ctx = inner.ctx.clone();
         let runtime = inner.runtime.clone();
         let thread_id = thread_id.to_owned();
@@ -149,6 +156,9 @@ impl Agent {
                 &mut config,
                 target,
                 &thread_id,
+                model_override,
+                temperature,
+                route,
             )
             .await
             .map_err(|error| CoreError::Rpc {
