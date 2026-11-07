@@ -53,7 +53,6 @@ async fn resolve_user_master_inner(
     if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
         crate::security::approval::native::forget_secret_grant(registration_id);
         tracing::warn!(
-            registration = "redacted",
             reason = %reason,
             "[security::secret_cipher] secret master grant refused"
         );
