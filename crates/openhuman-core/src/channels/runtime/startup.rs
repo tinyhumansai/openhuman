@@ -64,6 +64,10 @@ pub(crate) struct TestChannel {
     /// Fail the next N sends with `send_error` (or a transient error when
     /// it is unset), then succeed. Lets tests prove retry-then-deliver.
     pub(crate) send_failures_remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Set once a countdown failure has run: the countdown's error text is
+    /// transient, so once the countdown is spent later sends succeed
+    /// instead of failing on that text again.
+    countdown_consumed: std::sync::atomic::AtomicBool,
     pub(crate) begin_typing_refresh: Option<BeginTypingRefresh>,
     pub(crate) end_typing_refresh: Option<EndTypingRefresh>,
 }
@@ -222,6 +226,7 @@ impl TestChannel {
             stop_typing_calls: Default::default(),
             send_error: None,
             send_failures_remaining: Default::default(),
+            countdown_consumed: Default::default(),
             begin_typing_refresh: None,
             end_typing_refresh: None,
         }
@@ -241,13 +246,23 @@ impl TestChannel {
         {
             self.send_failures_remaining
                 .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            self.countdown_consumed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             anyhow::bail!(self
                 .send_error
                 .clone()
                 .unwrap_or_else(|| "error sending request".to_owned()));
         }
-        if let Some(error) = &self.send_error {
-            anyhow::bail!(error.clone());
+        // A spent countdown's error text was transient: the send after it
+        // succeeds. A set error with no countdown behind it is persistent
+        // and still fails every send.
+        if !self
+            .countdown_consumed
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            if let Some(error) = &self.send_error {
+                anyhow::bail!(error.clone());
+            }
         }
         self.sent
             .lock()

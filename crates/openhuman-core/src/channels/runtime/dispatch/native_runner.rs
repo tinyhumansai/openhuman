@@ -361,7 +361,19 @@ impl EventSink<QueuedPayload> for NativeEvents {
         }
         match reply.feed(vec![event]).await {
             Ok(result) if super::processor::progressive::delivery_succeeded(&result) => {}
-            Ok(_) | Err(_) => {
+            Ok(_) => {
+                // The feed error is the only record of why this reply was
+                // lost (#8590): the turn ends with `delivered = false` but
+                // nothing names the cause unless it is logged here.
+                tracing::error!("[dispatch] native progressive delivery incomplete; reply lost");
+                self.shared
+                    .with(&request.request_id, |slot| slot.progress_failed = true);
+                if let Err(error) = reply.close().await {
+                    tracing::warn!("[dispatch] native progressive close failed: {error}");
+                }
+            }
+            Err(error) => {
+                tracing::error!("[dispatch] native progressive delivery failed: {error}");
                 self.shared
                     .with(&request.request_id, |slot| slot.progress_failed = true);
                 if let Err(error) = reply.close().await {

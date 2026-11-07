@@ -428,7 +428,7 @@ pub(crate) async fn run_admitted_turn(
                 // the adapter honours it (#5231).
                 let reply = SendMessage::new(&response_text, &msg.reply_target)
                     .in_thread(msg.thread_ts.clone())
-                    .with_idempotency_key(format!("reply:{}:{}", msg.channel, msg.id));
+                    .with_idempotency_key(reply_idempotency_key(&msg));
                 match send_reply_with_retry(channel, &reply).await {
                     Ok(()) => true,
                     Err(e) => {
@@ -571,8 +571,48 @@ pub(crate) async fn run_admitted_turn(
     });
 }
 
+/// Stable idempotency key for one outbound reply (#8590): scoped to the
+/// conversation as well as the channel and inbound id, because provider
+/// message ids are only unique within a chat — without the reply target,
+/// message `1` from two different chats would share one key.
+fn reply_idempotency_key(msg: &tinychannels_bus::ChannelMessage) -> String {
+    format!("reply:{}:{}:{}", msg.channel, msg.reply_target, msg.id)
+}
+
+/// Delivery-specific retryability for outbound replies (#8590 follow-up).
+/// The shared `is_transient_message_failure` deliberately excludes HTTP
+/// 500 (the crash filter pins it as non-transient) and sanitized
+/// module-call errors carry no transport phrase, but for a reply send both
+/// are transient server/transport failures worth a retry window:
+/// a provider 5xx means its servers errored, and a `transport failed`
+/// module call means the bus/transport failed, not the send itself.
+/// `Unavailable` / `ModuleFault` / `IncompatibleContract` stay
+/// non-retryable: the module itself refused or is gone.
+fn is_retryable_reply_failure(error: &str) -> bool {
+    if crate::core::observability::is_transient_message_failure(error) {
+        return true;
+    }
+    let lower = error.to_ascii_lowercase();
+    // Any HTTP 5xx status in the "(5xx " token shape the shared classifier
+    // uses, so bare numbers ("process 502 exited") do not match.
+    let bytes = lower.as_bytes();
+    if bytes.windows(5).any(|window| {
+        window[0] == b'('
+            && window[1] == b'5'
+            && window[2].is_ascii_digit()
+            && window[3].is_ascii_digit()
+            && window[4] == b' '
+    }) {
+        return true;
+    }
+    // `ModuleCallError::TransportFailed` renders as
+    // "MODULE_CALL_REPORTED: module transport failed".
+    lower.contains("module transport failed")
+}
+
 /// Outbound reply retries (#8590): a failed reply is retried while the
-/// error looks transient (network / 5xx / 429), then the loss is logged.
+/// error looks transient (network / 5xx / 429 / module transport failure),
+/// then the loss is logged.
 /// Three attempts with 500ms base backoff add at most ~1.5s to a turn.
 const REPLY_RETRY_ATTEMPTS: u32 = 3;
 const REPLY_RETRY_BASE_MS: u64 = 500;
@@ -599,7 +639,7 @@ async fn send_reply_with_retry(
                 return Ok(());
             }
             Err(e) => {
-                if !crate::core::observability::is_transient_message_failure(&e.to_string())
+                if !is_retryable_reply_failure(&e.to_string())
                     || attempt + 1 == REPLY_RETRY_ATTEMPTS
                 {
                     last_err = Some(e);
