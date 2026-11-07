@@ -50,11 +50,14 @@ async fn resolve_user_master_inner(
             serde_json::json!({"registration_id": registration_id}),
         )
         .await;
-    if !matches!(outcome, crate::security::approval::GateOutcome::Allow) {
+    if let crate::security::approval::GateOutcome::Deny { reason } = outcome {
         crate::security::approval::native::forget_secret_grant(registration_id);
-        return Err(SecurityError::Unavailable(
-            "secret master approval denied".into(),
-        ));
+        tracing::warn!(
+            registration = "redacted",
+            reason = %reason,
+            "[security::secret_cipher] secret master grant refused"
+        );
+        return Err(master_grant_refusal(&reason));
     }
     let (request, request_id) =
         crate::security::approval::native::take_secret_grant(registration_id).ok_or_else(|| {
@@ -88,6 +91,26 @@ async fn resolve_user_master_inner(
             "secret master resolution refused".into(),
         )),
     }
+}
+
+/// Why the secret master was not unlocked, from the gate's denial reason: a
+/// person's refusal, an unanswered prompt, or the gate's own reason (its
+/// agent-facing marker removed) when it never asked.
+fn master_grant_refusal(reason: &str) -> SecurityError {
+    const WHAT: &str = "the approval to unlock configuration secrets";
+    let message = if crate::security::approval::is_unanswered_approval_reason(reason) {
+        format!("{WHAT} was not answered in time")
+    } else if reason.contains("User denied") {
+        format!("{WHAT} was denied")
+    } else {
+        let reason = reason
+            .trim_start()
+            .strip_prefix(tinytools::status::POLICY_DENIED_MARKER)
+            .unwrap_or(reason)
+            .trim();
+        format!("{WHAT} was refused: {reason}")
+    };
+    SecurityError::ApprovalRefused(message)
 }
 
 /// Successful result of the native routine config cipher.
@@ -197,3 +220,7 @@ pub(crate) async fn run(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "secret_cipher_tests.rs"]
+mod tests;

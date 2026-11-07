@@ -20,12 +20,16 @@ use crate::config::Config;
 pub enum SecurityError {
     /// The module is absent, disabled, faulted, or failed to answer.
     Unavailable(String),
+    /// A person's approval the operation needs was denied or went unanswered;
+    /// the message says which, in words the Settings UI can show as is.
+    ApprovalRefused(String),
 }
 
 impl std::fmt::Display for SecurityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable(reason) => write!(f, "security module unavailable: {reason}"),
+            Self::ApprovalRefused(reason) => f.write_str(reason),
         }
     }
 }

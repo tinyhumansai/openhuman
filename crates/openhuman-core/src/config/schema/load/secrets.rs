@@ -77,7 +77,12 @@ async fn encrypt_optional_secret(
                 store
                     .encrypt_via_security(&raw)
                     .await
-                    .with_context(|| format!("Failed to encrypt {field_name}"))?,
+                    // The save RPC prints only the outermost context, so the
+                    // context itself carries the cause (never the value).
+                    .map_err(|error| {
+                        let cause = format!("{error:#}");
+                        error.context(format!("Failed to encrypt {field_name}: {cause}"))
+                    })?,
             );
         }
     }
