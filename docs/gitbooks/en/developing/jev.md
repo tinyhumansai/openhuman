@@ -84,6 +84,11 @@ ranker = "jev"   # "jev" (default) | "auto" | "bm25" | "compare"
 jev_route = "auto"   # "auto" (default) | "tinyhumans" | "typesafe" | "openrouter"
 # jev_base_url = "http://127.0.0.1:18080"   # typesafe/openrouter origin override
 top_k = 3
+max_limit = 20                    # most matches one search may return
+promote_found_tools = true        # found tools join the request's `tools` list
+compact_search_results = false    # print a result's JSON on one line
+collapse_search_results = false   # after the run, keep only the schemas it called
+repair_tool_call_wrapper = true   # retarget a call buried in a `tool_call` wrapper
 ```
 
 - `ranker = "jev"`: use the installed decision-model ranker. It falls back to BM25 only when Jev fails or the process has no TinyHumans credential.
@@ -93,6 +98,11 @@ top_k = 3
 - `jev_route`: where Jev calls go. `"auto"` uses the TinyHumans credential if the process has one, else `TYPESAFE_API_KEY` (direct to TypeSafe), else an OpenRouter key (`OPENROUTER_API_KEY`, or the stored `openrouter` key). `"tinyhumans"`, `"typesafe"` and `"openrouter"` pin one route and never fall through to another credential. Override per launch with `OPENHUMAN_JEV_ROUTE`.
 - `jev_base_url`: replaces the API origin of the `typesafe` and `openrouter` routes, for example a metering proxy or a mirror. Remote origins must be HTTPS. HTTP is accepted only for literal loopback IPs. Override per launch with `OPENHUMAN_JEV_BASE_URL`.
 - `top_k`: how many matches a search returns when the model does not ask for a number. The default is three, enough to choose from without returning so many schemas that deferring them loses its point.
+
+- `max_limit`: the most matches a single search returns, however many the model asks for. `top_k` is clamped to it. Override per launch with `OPENHUMAN_TOOL_SEARCH_MAX_LIMIT`.
+- `promote_found_tools`, `compact_search_results`, `collapse_search_results`, `repair_tool_call_wrapper`: how found tools reach the prompt and how their results are stored. The defaults are today's behaviour. Override per launch with `OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS`, `OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS`, `OPENHUMAN_TOOL_SEARCH_COLLAPSE_SEARCH_RESULTS` and `OPENHUMAN_TOOL_SEARCH_REPAIR_TOOL_CALL_WRAPPER` (`1/0`, `true/false`, `yes/no`, `on/off`).
+
+These four change the bytes of a thread's prompt (the provider's cached prefix), so a session does not apply them to a thread that is already running. The session that creates a thread takes the values in force then and, when they differ from today's behaviour, records them on the thread's first transcript row (`tool_discovery` in the row's `extra_metadata`). Every later turn reads the record back; a thread with no record keeps today's behaviour. Changing the config, or an embedder's options, therefore reaches new threads only. An embedder sets the options per agent with `AgentSpec::tool_discovery(ToolDiscoveryOptions)` and for the thread one turn creates with `Turn::tool_discovery(ToolDiscoveryOptions)`.
 
 Without an embedding provider, or without a credential for the selected route, tool search falls back to BM25 automatically. `auto` and `jev` therefore cost nothing extra when no credential is set. A setup with no TinyHumans account needs an embedding provider that does not depend on one (for example `memory.embedding_provider = "custom:<OpenAI-compatible endpoint>"`) and a TypeSafe or OpenRouter key.
 

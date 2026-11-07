@@ -108,7 +108,14 @@ pub(crate) fn discovery_policy() -> ToolDiscoveryPolicy {
     // prompt's Connected Integrations / MCP sections already name what can be
     // searched for; the description keeps only the count.
     policy.manifest_token_budget = 0;
+    policy.max_limit = settings.max_limit.max(1);
     policy.default_limit = settings.top_k.clamp(1, policy.max_limit);
+    // The process-wide defaults for a run that has no session behind it. A
+    // session turn overrides all four per run with what its thread recorded.
+    policy.promote_found_tools = settings.promote_found_tools;
+    policy.compact_search_results = settings.compact_search_results;
+    policy.collapse_search_results = settings.collapse_search_results;
+    policy.repair_tool_call_wrapper = settings.repair_tool_call_wrapper;
     let mode = match settings.ranker.trim().to_ascii_lowercase().as_str() {
         "auto" | "jev" | "ranker" => DiscoveryRankMode::Ranker,
         "bm25" | "lexical" => DiscoveryRankMode::Bm25,
@@ -234,6 +241,9 @@ impl ToolRanker for OverlapRanker {
 }
 
 mod embedding_ranker;
+mod pin;
+
+pub use pin::{resolve, DiscoveryOptions, ResolvedDiscovery, DISCOVERY_METADATA_KEY};
 
 pub use embedding_ranker::{
     embedding_provider_is_usable, embedding_tool_ranker, embedding_tool_ranker_in,

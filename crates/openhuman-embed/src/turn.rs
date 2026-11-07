@@ -105,6 +105,7 @@ pub struct Turn {
     >,
     tools: Option<openhuman_core::agent::HostTools>,
     tool_env: Option<Arc<std::collections::BTreeMap<String, String>>>,
+    tool_discovery: Option<crate::ToolDiscoveryOptions>,
 }
 
 impl Turn {
@@ -138,6 +139,7 @@ impl Turn {
             observer: None,
             trace_content: crate::observe::TraceContent::MetadataOnly,
             hooks: Default::default(),
+            tool_discovery: None,
             tools: None,
             tool_env: None,
         }
@@ -422,6 +424,21 @@ impl Turn {
         self
     }
 
+    /// The `tool_search` options for the thread this turn creates.
+    ///
+    /// They take the place of the agent's own
+    /// ([`AgentSpec::tool_discovery`](crate::AgentSpec::tool_discovery)) and
+    /// the config's `[agent.tool_search]` for a **new** session id, and are
+    /// recorded on the thread with its first prompt. A turn on an existing
+    /// session id ignores them: the thread keeps the options it started with,
+    /// and a thread created before any were recorded keeps today's behaviour.
+    /// That is how a host rolls a change out to new threads only.
+    #[must_use]
+    pub fn tool_discovery(mut self, options: crate::ToolDiscoveryOptions) -> Self {
+        self.tool_discovery = Some(options);
+        self
+    }
+
     /// Pin this turn to a model id.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.request.model_override = Some(model.into());
@@ -563,6 +580,9 @@ struct AgentTurnOptions {
         Option<std::sync::Arc<tinyagents_harness::observability::turn_observer::ObserverScope>>,
     untrusted_input: bool,
     attachments: Vec<openhuman_core::agent::HostAttachment>,
+    /// The `tool_search` options a new thread starts with; see
+    /// [`Turn::tool_discovery`].
+    tool_discovery: Option<crate::ToolDiscoveryOptions>,
     /// The explicit per-turn values the core honours: live progress and the
     /// host environment (budget, depth, cancellation, hooks, tool-belt authority).
     chat_env: openhuman_core::agent_runs::agent_chat::AgentChatEnv,
@@ -621,6 +641,7 @@ async fn dispatch(
             }
             let ctx = std::sync::Arc::clone(rt.context());
             let chat_env = options.chat_env;
+            let tool_discovery = options.tool_discovery;
             let dispatch =
                 openhuman_core::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&ctx));
             let turn: futures_box::BoxFuture<'_, Result<AgentReply, CoreError>> =
@@ -632,6 +653,9 @@ async fn dispatch(
                         .load_config()
                         .await
                         .map_err(|raw| CoreError::from_rpc_string(AGENT_CHAT, raw))?;
+                    if let Some(discovery) = tool_discovery {
+                        discovery.apply_to(&mut config.agent.tool_search);
+                    }
                     let target = match request.agent_id.as_deref().map(str::trim) {
                         Some(id) if !id.is_empty() => AgentChatTarget::AgentId(id),
                         _ => AgentChatTarget::Orchestrator,
@@ -682,6 +706,9 @@ async fn dispatch(
                         agent_chat_reply_for_controlled, AgentChatTarget,
                     };
                     let mut config = inner.config.clone();
+                    if let Some(discovery) = options.tool_discovery {
+                        discovery.apply_to(&mut config.agent.tool_search);
+                    }
                     let route = inference_route(&request);
                     let host = options.tools.or_else(|| inner.composed_host_tools());
                     let target = AgentChatTarget::Definition {

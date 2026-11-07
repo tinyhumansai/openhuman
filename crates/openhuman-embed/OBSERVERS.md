@@ -5,6 +5,9 @@ and a terminal `TurnTrace`. Callbacks run synchronously: enqueue export work in
 the host and return promptly. Model observations contain the answering model,
 finish reason, duration, and provider-reported usage/cost. Tool observations
 pair starts and completions by call ID and report failure without an error body.
+A completed tool observation also carries `input_bytes` (the serialized
+arguments) and `output_bytes` (the result text the model is shown) whatever the
+capture mode, so tool cost can be attributed without capturing content.
 The terminal trace reports dispatch success, latency and final metadata.
 
 `TraceContent::MetadataOnly` is the default. It excludes model messages, replies,

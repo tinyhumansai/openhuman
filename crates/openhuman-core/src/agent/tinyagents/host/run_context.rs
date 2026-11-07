@@ -148,6 +148,11 @@ pub(crate) struct SessionTurnSidecar {
     pub stop: Option<tinyagents_harness::turn_stop::TurnStop>,
     /// Deferred native terminal finalized after transcript durability.
     pub deferred_terminal: Option<crate::agent::tinyagents::turn_outcome::DeferredTurnTerminal>,
+    /// The discovery options this turn starts its thread with, to be recorded
+    /// on the first row the commit writes. Set by the turn that prepares the
+    /// thread's first prompt and only when they differ from today's
+    /// behaviour; see `tinyagents::discovery::DiscoveryOptions`.
+    pub discovery_record: Option<crate::agent::tinyagents::discovery::DiscoveryOptions>,
 }
 
 #[path = "dispatch_control.rs"]

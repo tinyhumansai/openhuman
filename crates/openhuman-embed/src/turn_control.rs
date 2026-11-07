@@ -409,6 +409,7 @@ impl Turn {
             untrusted_input: self.untrusted_input,
             tools: self.tools.take(),
             attachments: std::mem::take(&mut self.attachments),
+            tool_discovery: self.tool_discovery.take(),
         };
         let dispatch = dispatch(self.target, self.request, self.seed.take(), usage, options);
 

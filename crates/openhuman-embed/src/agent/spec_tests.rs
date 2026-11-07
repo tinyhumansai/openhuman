@@ -81,3 +81,15 @@ fn a_memory_binding_bounds_the_memory_block_only_when_asked() {
         Some(std::time::Duration::from_millis(300))
     );
 }
+
+#[test]
+fn an_agent_spec_carries_tool_discovery_options_only_when_set() {
+    assert_eq!(AgentSpec::new("alpha").into_parts().tool_discovery, None);
+    let wanted = crate::ToolDiscoveryOptions {
+        promote_found_tools: false,
+        collapse_search_results: true,
+        ..crate::ToolDiscoveryOptions::TODAY
+    };
+    let parts = AgentSpec::new("alpha").tool_discovery(wanted).into_parts();
+    assert_eq!(parts.tool_discovery, Some(wanted));
+}

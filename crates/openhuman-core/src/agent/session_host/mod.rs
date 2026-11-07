@@ -62,6 +62,8 @@ pub use types::{OpenHumanSessionHost, SessionHostBuilder, TurnOverrides};
 // (`session::runtime`, `subagent_host`) so all provider call sites
 // share one tested implementation.
 
+#[cfg(all(test, feature = "legacy-import"))]
+mod discovery_pin_tests;
 #[cfg(test)]
 #[path = "imported_history_tests.rs"]
 mod imported_history_tests;

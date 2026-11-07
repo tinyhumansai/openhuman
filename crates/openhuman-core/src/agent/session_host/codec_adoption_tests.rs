@@ -193,3 +193,39 @@ fn failed_tool_outcome_does_not_mark_an_earlier_turns_result_with_the_same_call_
     );
     assert!(rows[3].tool_failure.as_ref().is_some_and(|f| f.failed));
 }
+
+/// The turn that starts a thread records its discovery options on the first
+/// row it writes; the turns after it neither add nor move the record.
+#[test]
+fn the_codec_records_discovery_options_on_the_first_new_row_only_once() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = DiscoveryOptions {
+        promote_found_tools: false,
+        ..DiscoveryOptions::TODAY
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().discovery_record = Some(wanted);
+    let first = vec![Message::system("prompt"), Message::user("one")];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &first, &options(context))
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&prior), Some(wanted));
+    assert!(prior[1].extra_metadata.is_none());
+
+    // A later turn records nothing and leaves the stored row as it was.
+    let mut next = first.clone();
+    next.push(Message::assistant("done"));
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &first, &next, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    assert_eq!(rows[0], prior[0]);
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(wanted));
+}
