@@ -220,6 +220,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'एजेंट और स्वायत्तता',
   'settings.devGroups.automationIntegrations': 'स्वचालन और एकीकरण',
   'settings.tokenUsage.title': 'टोकन बचत',
+  'settings.secretGrant.title': 'क्या OpenHuman को आपके सहेजे गए रहस्य अनलॉक करने दें?',
+  'settings.secretGrant.subtitle': 'इस सेटिंग को सहेजने के लिए इसे एन्क्रिप्ट करने हेतु आपकी एक बार की स्वीकृति चाहिए। सहेजना रद्द करने के लिए अस्वीकार करें।',
   'settings.tokenUsage.menuDesc': 'संपीड़न सेटिंग्स और उन्होंने कितने टोकन और डॉलर बचाए हैं',
   'settings.tokenUsage.saving': 'सहेजा जा रहा है…',
   'settings.tokenUsage.saved': 'सहेजा गया',

@@ -220,6 +220,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Агенты и автономия',
   'settings.devGroups.automationIntegrations': 'Автоматизация и интеграции',
   'settings.tokenUsage.title': 'Экономия токенов',
+  'settings.secretGrant.title': 'Разрешить OpenHuman разблокировать сохранённые секреты?',
+  'settings.secretGrant.subtitle': 'Чтобы сохранить этот параметр, нужно ваше однократное одобрение на его шифрование. Отклоните, чтобы отменить сохранение.',
   'settings.tokenUsage.menuDesc': 'Настройки сжатия и сколько токенов и долларов они сэкономили',
   'settings.tokenUsage.saving': 'Сохранение…',
   'settings.tokenUsage.saved': 'Сохранено',

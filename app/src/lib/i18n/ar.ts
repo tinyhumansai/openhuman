@@ -211,6 +211,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'الوكلاء والاستقلالية',
   'settings.devGroups.automationIntegrations': 'الأتمتة والتكاملات',
   'settings.tokenUsage.title': 'توفير الرموز',
+  'settings.secretGrant.title': 'هل تسمح لـ OpenHuman بفتح أسرارك المحفوظة؟',
+  'settings.secretGrant.subtitle': 'يحتاج حفظ هذا الإعداد إلى موافقتك لمرة واحدة لتشفيره. ارفض لإلغاء الحفظ.',
   'settings.tokenUsage.menuDesc': 'إعدادات الضغط ومقدار ما وفّرته من رموز ودولارات',
   'settings.tokenUsage.saving': 'جارٍ الحفظ…',
   'settings.tokenUsage.saved': 'تم الحفظ',

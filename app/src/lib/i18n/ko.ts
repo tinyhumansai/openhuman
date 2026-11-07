@@ -216,6 +216,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': '에이전트 및 자율성',
   'settings.devGroups.automationIntegrations': '자동화 및 통합',
   'settings.tokenUsage.title': '토큰 절감',
+  'settings.secretGrant.title': 'OpenHuman이 저장된 비밀 정보를 잠금 해제하도록 허용할까요?',
+  'settings.secretGrant.subtitle': '이 설정을 저장하려면 암호화를 위한 일회성 승인이 필요합니다. 저장을 취소하려면 거부하세요.',
   'settings.tokenUsage.menuDesc': '압축 설정과 그것이 절약한 토큰 및 달러의 양',
   'settings.tokenUsage.saving': '저장 중…',
   'settings.tokenUsage.saved': '저장됨',

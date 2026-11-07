@@ -225,6 +225,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agentes y autonomía',
   'settings.devGroups.automationIntegrations': 'Automatización e integraciones',
   'settings.tokenUsage.title': 'Ahorro de tokens',
+  'settings.secretGrant.title': '¿Permitir que OpenHuman desbloquee tus secretos guardados?',
+  'settings.secretGrant.subtitle': 'Guardar este ajuste requiere tu aprobación única para cifrarlo. Deniega para cancelar el guardado.',
   'settings.tokenUsage.menuDesc': 'Ajustes de compresión y cuántos tokens y dólares han ahorrado',
   'settings.tokenUsage.saving': 'Guardando…',
   'settings.tokenUsage.saved': 'Guardado',

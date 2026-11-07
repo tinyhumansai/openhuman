@@ -136,6 +136,8 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'エージェントと自律性',
   'settings.devGroups.automationIntegrations': '自動化と接続',
   'settings.tokenUsage.title': 'トークン節約',
+  'settings.secretGrant.title': 'OpenHuman に保存済みのシークレットのロック解除を許可しますか？',
+  'settings.secretGrant.subtitle': 'この設定を保存するには、暗号化のために一度だけ承認が必要です。保存を取り消すには拒否してください。',
   'settings.tokenUsage.menuDesc': '圧縮設定と、それによって節約されたトークン数およびコスト',
   'settings.tokenUsage.saving': '保存中…',
   'settings.tokenUsage.saved': '保存済み',
