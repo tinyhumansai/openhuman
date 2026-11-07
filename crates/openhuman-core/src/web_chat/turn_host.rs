@@ -156,6 +156,7 @@ impl WebHost {
         // tools are all built on the thread's folder.
         let thread_dir = crate::threads::ops::thread_working_dir(
             &ctx,
+            &config,
             config.workspace_dir.clone(),
             &request.thread_id,
         )
