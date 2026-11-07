@@ -615,6 +615,7 @@ async fn an_all_injection_batch_completes_without_calling_the_model() {
 
 #[tokio::test]
 async fn a_pinned_prompt_is_held_when_the_security_module_is_unavailable() {
+    #[cfg(feature = "security-module")]
     let _absent = crate::modules::security::test_host::absent();
     use crate::security::prompt_injection::{
         enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,

@@ -18,7 +18,7 @@ function sessionJwt(userId: string): string {
 }
 
 test.describe('keyring consent before sign-in', () => {
-  test.skip(
+  test.skip( // https://github.com/tinyhumansai/openhuman/issues/8598
     process.env.OPENHUMAN_TEST_KEYRING_CONSENT !== 'off',
     'TS-E2E S-06 needs the core test keyring responder off'
   );

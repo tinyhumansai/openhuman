@@ -532,6 +532,7 @@ fn classify_inference_error_max_iterations_gets_dedicated_branch() {
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_chat_uses_its_bound_dispatch_before_entering_the_runner() {
+    #[cfg(feature = "security-module")]
     let _absent = crate::modules::security::test_host::absent();
     use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
     let _serial = FORCED_ERROR_TEST_LOCK.lock().await;

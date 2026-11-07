@@ -191,6 +191,7 @@ async fn allow_and_deny_channel_verdicts_are_unchanged() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
+    #[cfg(feature = "security-module")]
     let _absent = crate::modules::security::test_host::absent();
     let gate = gate(AutonomyLevel::Full);
     let secret: String = [
@@ -218,6 +219,7 @@ async fn screen_input_fails_closed_when_tinysecurity_is_unavailable() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn screening_holds_the_new_user_row_when_tinysecurity_is_unavailable() {
+    #[cfg(feature = "security-module")]
     let _absent = crate::modules::security::test_host::absent();
     let gate = gate(AutonomyLevel::Full);
     let secret: String = [
@@ -348,6 +350,7 @@ async fn a_plain_call_is_unaffected_by_the_nested_refusal() {
 #[cfg(feature = "security-module")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prompt_screening_uses_the_bound_dispatch_configuration() {
+    #[cfg(feature = "security-module")]
     let _absent = crate::modules::security::test_host::absent();
     use crate::core::runtime::{CoreContext, DispatchCtx, DomainSet};
     let temp = tempfile::tempdir().unwrap();
@@ -403,6 +406,7 @@ async fn prompt_screening_uses_the_bound_dispatch_configuration() {
 #[cfg(feature = "security-module")]
 #[tokio::test]
 async fn a_call_is_refused_when_the_autonomy_settings_changed_during_the_session() {
+    #[cfg(feature = "security-module")]
     let _absent = crate::modules::security::test_host::absent();
     let session = Arc::new(SecurityPolicy {
         enabled: true,
