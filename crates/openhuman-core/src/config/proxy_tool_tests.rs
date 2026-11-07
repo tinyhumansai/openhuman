@@ -320,20 +320,71 @@ async fn parameters_schema_is_valid() {
 
 // ── require_write_access ─────────────────────────────────────────
 
+/// The tool does not police its own tier. The host authorization stage does,
+/// from the permission level the call declares, so every mutating action has to
+/// declare a write or a read-only session would reach it as a read.
+#[test]
+fn only_the_read_actions_declare_read_only() {
+    let tmp = TempDir::new().unwrap();
+    let tool = ProxyConfigTool::new(
+        Arc::new(Config {
+            workspace_dir: tmp.path().to_path_buf(),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        }),
+        test_security(),
+    );
+    for action in ["get", "list_services", "GET"] {
+        assert_eq!(
+            tool.permission_level_with_args(&json!({ "action": action })),
+            PermissionLevel::ReadOnly,
+            "{action} only reads"
+        );
+    }
+    assert_eq!(
+        tool.permission_level_with_args(&json!({})),
+        PermissionLevel::ReadOnly,
+        "a call with no action is a `get`"
+    );
+    for action in ["set", "disable", "apply_env", "clear_env", "Set", "explode"] {
+        assert_eq!(
+            tool.permission_level_with_args(&json!({ "action": action })),
+            PermissionLevel::Write,
+            "{action} must declare a write (unknown actions fail closed)"
+        );
+    }
+}
+
 #[tokio::test]
-async fn blocks_set_in_readonly_mode() {
+async fn the_host_stage_blocks_mutating_actions_in_readonly_mode() {
+    use crate::agent::tinyagents::host::security_gate_test_support::{authorize_one, is_denied};
     let tmp = TempDir::new().unwrap();
     let readonly = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,
         ..SecurityPolicy::default()
     });
-    let tool = ProxyConfigTool::new(test_config(&tmp).await, readonly);
-    let result = tool
-        .execute(json!({"action": "set", "enabled": true}))
-        .await
-        .unwrap();
-    assert!(result.is_error);
-    assert!(result.output().contains("read-only"));
+    let config = test_config(&tmp).await;
+    for args in [
+        json!({"action": "set", "enabled": true}),
+        json!({"action": "disable"}),
+        json!({"action": "apply_env"}),
+        json!({"action": "clear_env"}),
+    ] {
+        let tool = Box::new(ProxyConfigTool::new(config.clone(), readonly.clone()));
+        let decision = authorize_one(readonly.clone(), tool, args.clone()).await;
+        assert!(
+            is_denied(&decision),
+            "a read-only session must not run {args}; got {decision:?}"
+        );
+    }
+    for args in [json!({"action": "get"}), json!({"action": "list_services"})] {
+        let tool = Box::new(ProxyConfigTool::new(config.clone(), readonly.clone()));
+        let decision = authorize_one(readonly.clone(), tool, args.clone()).await;
+        assert!(
+            !is_denied(&decision),
+            "a read-only session may still run {args}; got {decision:?}"
+        );
+    }
 }
 
 #[tokio::test]
