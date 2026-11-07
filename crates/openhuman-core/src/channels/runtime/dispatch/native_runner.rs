@@ -361,11 +361,21 @@ impl EventSink<QueuedPayload> for NativeEvents {
         }
         match reply.feed(vec![event]).await {
             Ok(result) if super::processor::progressive::delivery_succeeded(&result) => {}
-            Ok(_) => {
-                // The feed error is the only record of why this reply was
-                // lost (#8590): the turn ends with `delivered = false` but
-                // nothing names the cause unless it is logged here.
-                tracing::error!("[dispatch] native progressive delivery incomplete; reply lost");
+            Ok(result) => {
+                // The incomplete result is the only record of why this reply
+                // was lost (#8590): the turn ends with `delivered = false`
+                // but nothing names the cause unless it is logged here. Log
+                // only content-free failure kinds and counts plus the
+                // request id; unsupported parts can carry message content
+                // and must never be logged.
+                tracing::error!(
+                    request_id = %request.request_id,
+                    failure_kinds = ?super::processor::progressive::delivery_failure_kinds(&result),
+                    outcomes = super::processor::progressive::delivery_outcome_count(&result),
+                    unsupported_parts =
+                        super::processor::progressive::delivery_unsupported_count(&result),
+                    "[dispatch] native progressive delivery incomplete; reply lost"
+                );
                 self.shared
                     .with(&request.request_id, |slot| slot.progress_failed = true);
                 if let Err(error) = reply.close().await {
@@ -373,7 +383,10 @@ impl EventSink<QueuedPayload> for NativeEvents {
                 }
             }
             Err(error) => {
-                tracing::error!("[dispatch] native progressive delivery failed: {error}");
+                tracing::error!(
+                    request_id = %request.request_id,
+                    "[dispatch] native progressive delivery failed: {error}"
+                );
                 self.shared
                     .with(&request.request_id, |slot| slot.progress_failed = true);
                 if let Err(error) = reply.close().await {
