@@ -98,6 +98,8 @@ async fn tool_group_classifies_gate_and_harness_families() {
         "brave_news_search",
         "querit_search",
         "seltz_search",
+        "keenable_search",
+        "keenable_fetch",
         "searxng_search",
     ] {
         assert_eq!(tool_group(name), DomainGroup::Integrations);
