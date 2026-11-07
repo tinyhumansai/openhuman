@@ -206,3 +206,90 @@ fn ordinary_text_console_preview_remains_readable() {
 
     assert_eq!(inbound_console_preview(&envelope, "hello"), "hello");
 }
+
+fn transient_reply_channel(
+    failures: usize,
+) -> (
+    std::sync::Arc<crate::channels::runtime::TestChannel>,
+    crate::channels::runtime::ChannelHandle,
+) {
+    let mut channel = crate::channels::runtime::TestChannel::new("telegram");
+    channel.send_error = Some("error sending request".to_owned());
+    channel
+        .send_failures_remaining
+        .store(failures, std::sync::atomic::Ordering::SeqCst);
+    let channel = std::sync::Arc::new(channel);
+    let handle = crate::channels::runtime::ChannelHandle::Test(std::sync::Arc::clone(&channel));
+    (channel, handle)
+}
+
+fn reply_message() -> SendMessage {
+    SendMessage::new("hello", "chat-1").with_idempotency_key("reply:telegram:msg-1")
+}
+
+/// #8590: a transient send failure is retried and the reply lands.
+#[tokio::test]
+async fn failed_reply_retries_transient_errors_then_succeeds() {
+    let (channel, handle) = transient_reply_channel(2);
+
+    send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect("reply must land after transient failures");
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two failed attempts plus the delivering one"
+    );
+    let sent = channel.sent.lock().expect("test send lock");
+    assert_eq!(sent.len(), 1, "exactly one reply is recorded");
+    assert_eq!(
+        sent[0].idempotency_key.as_deref(),
+        Some("reply:telegram:msg-1"),
+        "retries re-send the same message and key"
+    );
+}
+
+/// #8590: a persistently transient failure exhausts the retries.
+#[tokio::test]
+async fn failed_reply_gives_up_after_retries() {
+    let (channel, handle) = transient_reply_channel(usize::MAX);
+
+    let err = send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect_err("reply must fail once retries are exhausted");
+    assert!(
+        err.to_string().contains("error sending request"),
+        "last send error surfaces: {err}"
+    );
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "no more than the bounded attempts are made"
+    );
+    assert!(
+        channel.sent.lock().expect("test send lock").is_empty(),
+        "no reply is recorded"
+    );
+}
+
+/// #8590: a permanent failure (provider 4xx) fails fast without retrying.
+#[tokio::test]
+async fn failed_reply_does_not_retry_permanent_errors() {
+    let mut test_channel = crate::channels::runtime::TestChannel::new("telegram");
+    test_channel.send_error =
+        Some("Telegram API error (400 Bad Request): chat not found".to_owned());
+    let channel = std::sync::Arc::new(test_channel);
+    let handle = crate::channels::runtime::ChannelHandle::Test(std::sync::Arc::clone(&channel));
+
+    send_reply_with_retry(&handle, &reply_message())
+        .await
+        .expect_err("permanent failure must surface");
+
+    assert_eq!(
+        channel.send_count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "permanent errors are not retried"
+    );
+}

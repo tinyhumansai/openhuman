@@ -5,6 +5,7 @@ use crate::channels::context::{is_context_window_overflow_error, ChannelRuntimeC
 #[cfg(test)]
 use crate::channels::routes::get_or_create_turn_model_source;
 use crate::channels::routes::get_route_selection;
+use crate::channels::runtime::ChannelHandle;
 use crate::channels::SendMessage;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
@@ -422,16 +423,20 @@ pub(crate) async fn run_admitted_turn(
             let delivered = if native_target.is_some() {
                 native_delivery_succeeded
             } else if let Some(channel) = target_channel.as_ref() {
-                match channel
-                    .send_with_outbound_intent(
-                        &SendMessage::new(&response_text, &msg.reply_target)
-                            .in_thread(msg.thread_ts.clone()),
-                    )
-                    .await
-                {
+                // One stable idempotency key per inbound message: retries
+                // re-send the same key so the reply cannot duplicate once
+                // the adapter honours it (#5231).
+                let reply = SendMessage::new(&response_text, &msg.reply_target)
+                    .in_thread(msg.thread_ts.clone())
+                    .with_idempotency_key(format!("reply:{}:{}", msg.channel, msg.id));
+                match send_reply_with_retry(channel, &reply).await {
                     Ok(()) => true,
                     Err(e) => {
-                        eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
+                        tracing::warn!(
+                            channel = channel.name(),
+                            error = %e,
+                            "Failed to reply on channel; reply lost"
+                        );
                         false
                     }
                 }
@@ -564,6 +569,56 @@ pub(crate) async fn run_admitted_turn(
         success,
         workspace_dir: ctx.workspace_dir.as_ref().clone(),
     });
+}
+
+/// Outbound reply retries (#8590): a failed reply is retried while the
+/// error looks transient (network / 5xx / 429), then the loss is logged.
+/// Three attempts with 500ms base backoff add at most ~1.5s to a turn.
+const REPLY_RETRY_ATTEMPTS: u32 = 3;
+const REPLY_RETRY_BASE_MS: u64 = 500;
+
+/// Send one outbound reply, retrying transient failures with exponential
+/// backoff. The same `SendMessage` (including its idempotency key) is
+/// re-sent on every attempt. Permanent failures (e.g. provider 4xx) fail
+/// fast without retrying.
+async fn send_reply_with_retry(
+    channel: &ChannelHandle,
+    message: &SendMessage,
+) -> anyhow::Result<()> {
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..REPLY_RETRY_ATTEMPTS {
+        match channel.send_with_outbound_intent(message).await {
+            Ok(()) => {
+                if attempt > 0 {
+                    tracing::info!(
+                        channel = channel.name(),
+                        retries = attempt,
+                        "Channel reply delivered after retry"
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                if !crate::core::observability::is_transient_message_failure(&e.to_string())
+                    || attempt + 1 == REPLY_RETRY_ATTEMPTS
+                {
+                    last_err = Some(e);
+                    break;
+                }
+                let sleep_ms = REPLY_RETRY_BASE_MS.saturating_mul(2u64.pow(attempt));
+                tracing::warn!(
+                    channel = channel.name(),
+                    attempt = attempt + 1,
+                    max_attempts = REPLY_RETRY_ATTEMPTS,
+                    error = %e,
+                    retry_in_ms = sleep_ms,
+                    "Channel reply failed with a transient error; retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+            }
+        }
+    }
+    Err(last_err.expect("attempts > 0"))
 }
 
 #[cfg(test)]

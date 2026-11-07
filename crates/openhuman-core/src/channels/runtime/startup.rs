@@ -61,6 +61,9 @@ pub(crate) struct TestChannel {
     pub(crate) start_typing_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) stop_typing_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) send_error: Option<String>,
+    /// Fail the next N sends with `send_error` (or a transient error when
+    /// it is unset), then succeed. Lets tests prove retry-then-deliver.
+    pub(crate) send_failures_remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) begin_typing_refresh: Option<BeginTypingRefresh>,
     pub(crate) end_typing_refresh: Option<EndTypingRefresh>,
 }
@@ -218,6 +221,7 @@ impl TestChannel {
             start_typing_calls: Default::default(),
             stop_typing_calls: Default::default(),
             send_error: None,
+            send_failures_remaining: Default::default(),
             begin_typing_refresh: None,
             end_typing_refresh: None,
         }
@@ -230,6 +234,18 @@ impl TestChannel {
     async fn send(&self, message: &tinychannels_bus::SendMessage) -> anyhow::Result<()> {
         self.send_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .send_failures_remaining
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+        {
+            self.send_failures_remaining
+                .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            anyhow::bail!(self
+                .send_error
+                .clone()
+                .unwrap_or_else(|| "error sending request".to_owned()));
+        }
         if let Some(error) = &self.send_error {
             anyhow::bail!(error.clone());
         }
