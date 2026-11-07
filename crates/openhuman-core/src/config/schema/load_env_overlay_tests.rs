@@ -662,3 +662,44 @@ fn env_overlay_inbound_debounce_applies_and_ignores_garbage() {
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_INBOUND_DEBOUNCE_ENABLED", "on"));
     assert!(cfg.inbound_debounce.enabled);
 }
+
+#[test]
+fn search_compact_results_and_contents_cap_default_to_today_and_read_from_the_table() {
+    let defaults = Config::default().search;
+    assert!(!defaults.compact_results);
+    assert_eq!(defaults.contents_max_chars, None);
+
+    let cfg: Config =
+        toml::from_str("[search]\ncompact_results = true\ncontents_max_chars = 1200\n").unwrap();
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_env_set_clear_and_ignore_garbage() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "yes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", " 1200 "),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "sometimes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "lots"),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    // `0` removes the cap and `off` restores the default rendering.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "off")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "0"),
+    );
+    assert!(!cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, None);
+}
