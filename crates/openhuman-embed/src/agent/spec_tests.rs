@@ -70,3 +70,14 @@ fn a_memory_binding_recalls_each_turn_only_when_asked() {
     );
     assert_eq!(binding.root_namespace(), Some("team:acme"));
 }
+
+#[test]
+fn a_memory_binding_bounds_the_memory_block_only_when_asked() {
+    let binding = MemoryBinding::new("writer");
+    assert_eq!(binding.memory_block_deadline_timeout(), None);
+    let binding = binding.memory_block_deadline(std::time::Duration::from_millis(300));
+    assert_eq!(
+        binding.memory_block_deadline_timeout(),
+        Some(std::time::Duration::from_millis(300))
+    );
+}

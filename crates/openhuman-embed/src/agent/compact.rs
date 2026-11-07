@@ -6,10 +6,13 @@ use std::sync::Arc;
 use super::{Agent, AgentError};
 use crate::CoreError;
 
-pub use openhuman_core::agent::{CompactOptions, CompactOutcome};
+pub use openhuman_core::agent::{CompactOptions, CompactOutcome, MemoryBlockPrewarm};
 
 /// The method name a compaction's errors carry.
 const COMPACT_THREAD: &str = "agent.compact_thread";
+
+/// The method name a prewarm's errors carry.
+const PREWARM_MEMORY_BLOCK: &str = "agent.prewarm_memory_block";
 
 impl Agent {
     /// Compact `thread_id`'s stored conversation now, with no model turn.
@@ -90,6 +93,76 @@ impl Agent {
         inner
             .lifecycle
             .admit(&inner.id, COMPACT_THREAD, runtime.run_in(ctx, compaction))
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Render `thread_id`'s memory block now, with no model turn, for the
+    /// thread's next generation start to use instead of reading memory on the
+    /// turn's own path.
+    ///
+    /// Call it when a message arrives and its turn is still some way off. The
+    /// session is built as [`Turn::session`](crate::Turn::session) builds a
+    /// turn's, and the block is kept (for up to an hour, taken once) under the
+    /// agent's memory identity. Nothing is read when one already waits, and
+    /// an agent without a memory block does nothing
+    /// ([`MemoryBlockPrewarm::Unavailable`]). A failed read is
+    /// [`MemoryBlockPrewarm::Failed`], never an error: the turn renders for
+    /// itself.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Call`] when the agent was removed, inference is not in
+    /// this runtime's domains, the thread id is blank, or the session cannot
+    /// be built.
+    pub async fn prewarm_memory_block(
+        &self,
+        thread_id: &str,
+    ) -> Result<MemoryBlockPrewarm, AgentError> {
+        let inner = Arc::clone(&self.inner);
+        if !inner.ctx.domains().inference {
+            return Err(CoreError::Unavailable {
+                method: PREWARM_MEMORY_BLOCK,
+            }
+            .into());
+        }
+        let ctx = inner.ctx.clone();
+        let runtime = inner.runtime.clone();
+        let thread_id = thread_id.to_owned();
+        let agent = Arc::clone(&inner);
+        let prewarm = Box::pin(async move {
+            use openhuman_core::inference::host_runtime::ops::AgentChatTarget;
+            let host = agent.composed_host_tools();
+            let target = AgentChatTarget::Definition {
+                definition: &agent.definition,
+                host: host.as_ref(),
+                seed: None,
+                usage: None,
+                host_only: agent.host_only,
+                untrusted_input: false,
+                shape: None,
+                observer: None,
+                attachments: &[],
+            };
+            let mut config = agent.config.clone();
+            openhuman_core::agent_runs::agent_chat::prewarm_memory_block_for(
+                &mut config,
+                target,
+                &thread_id,
+            )
+            .await
+            .map_err(|error| CoreError::Rpc {
+                method: PREWARM_MEMORY_BLOCK,
+                message: error.to_string(),
+            })
+        });
+        inner
+            .lifecycle
+            .admit(
+                &inner.id,
+                PREWARM_MEMORY_BLOCK,
+                runtime.run_in(ctx, prewarm),
+            )
             .await
             .map_err(Into::into)
     }

@@ -8,7 +8,7 @@ pub(crate) mod guards;
 pub(crate) mod params;
 mod session_turn;
 
-pub use compact::compact_thread_for;
+pub use compact::{compact_thread_for, prewarm_memory_block_for};
 pub use envelope::AgentChatReply;
 pub use session_turn::{
     agent_chat, agent_chat_for, agent_chat_reply_for, agent_chat_reply_for_controlled,
