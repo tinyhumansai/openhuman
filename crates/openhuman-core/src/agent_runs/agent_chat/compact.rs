@@ -51,7 +51,11 @@ pub fn compact_thread_for<'a>(
 }
 
 /// Render `thread_id`'s memory block now, on `target`'s session built as a
-/// turn's is, for that thread's next generation start to take. See
+/// turn's is, for that thread's next generation start to take.
+///
+/// `model_override`, `temperature` and `route` are applied to `config` as
+/// [`compact_thread_for`] applies them: an embedder on a hosted route has no
+/// managed provider, so a session built without its route cannot be built. See
 /// [`OpenHumanSessionHost::prewarm_memory_block`]
 /// (crate::agent::OpenHumanSessionHost::prewarm_memory_block).
 ///
@@ -63,8 +67,12 @@ pub fn prewarm_memory_block_for<'a>(
     config: &'a mut Config,
     target: AgentChatTarget<'a>,
     thread_id: &'a str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+    route: Option<crate::config::schema::EphemeralRoute>,
 ) -> futures::future::BoxFuture<'a, anyhow::Result<MemoryBlockPrewarm>> {
     Box::pin(async move {
+        apply_turn_overrides(config, model_override, temperature, route);
         let thread_id = thread_id.trim();
         if thread_id.is_empty() {
             anyhow::bail!("prewarm_memory_block needs a thread id");
@@ -77,3 +85,7 @@ pub fn prewarm_memory_block_for<'a>(
         Ok(session.prewarm_memory_block().await)
     })
 }
+
+#[cfg(test)]
+#[path = "compact_tests.rs"]
+mod tests;
