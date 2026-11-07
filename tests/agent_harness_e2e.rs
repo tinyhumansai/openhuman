@@ -889,7 +889,6 @@ async fn boot_stack_with_options(
     // This suite boots the core in-process, so install the hosted backend
     // transport before any RPC can reach backend-backed providers.
     tinyhumans_boot::boot();
-    let _ = tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::new(std::env::var("DBG_LOG").unwrap_or_else(|_| "warn".into()))).with_writer(std::io::stderr).try_init();
 
     // Ensure the global AgentDefinitionRegistry is populated with built-in
     // archetypes (orchestrator, vision_agent, task_manager_agent, etc.) before
@@ -2197,6 +2196,12 @@ enabled = true
     let gate_workspace =
         GATE_WORKSPACE.get_or_init(|| tempfile::TempDir::new().expect("GATE_WORKSPACE tempdir"));
     cfg.workspace_dir = gate_workspace.path().to_path_buf();
+    // `action_dir` is `#[serde(skip)]` too. With `[autonomy] enabled = true` the
+    // gate asks TinySecurity to redact the approval arguments, and the module
+    // client refuses a policy whose roots are not absolute, so a gate built
+    // without one denies every external-effect call (fail closed) and never
+    // raises `approval_request`.
+    cfg.action_dir = gate_workspace.path().join("action");
 
     // GLOBAL_GATE is a OnceLock — first call installs, subsequent calls return the
     // same gate. The session_id must start with "session-" (debug_assert in gate.rs).
