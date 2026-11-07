@@ -79,6 +79,7 @@ pub struct MemoryBinding {
     agent_id: String,
     root: Option<String>,
     recall_each_turn: Option<std::time::Duration>,
+    memory_block_deadline: Option<std::time::Duration>,
 }
 
 impl MemoryBinding {
@@ -88,6 +89,7 @@ impl MemoryBinding {
             agent_id: agent_id.into(),
             root: None,
             recall_each_turn: None,
+            memory_block_deadline: None,
         }
     }
 
@@ -115,6 +117,21 @@ impl MemoryBinding {
         self
     }
 
+    /// Wait at most `deadline` for the memory block
+    /// ([`AgentDefinitionSpec::memory_block`]) a new transcript generation
+    /// renders before the turn's first model call.
+    ///
+    /// When it lapses, the turn goes on with the block its thread recorded (a
+    /// new thread with none), and the render finishes in the background for
+    /// the next generation start. Without this, a generation start waits for
+    /// the render however long the memory engine takes.
+    /// [`Agent::prewarm_memory_block`] renders it ahead of a turn instead.
+    #[must_use]
+    pub fn memory_block_deadline(mut self, deadline: std::time::Duration) -> Self {
+        self.memory_block_deadline = Some(deadline);
+        self
+    }
+
     /// The memory agent id.
     pub fn agent_id(&self) -> &str {
         &self.agent_id
@@ -123,6 +140,12 @@ impl MemoryBinding {
     /// The layout root, when one is set.
     pub fn root_namespace(&self) -> Option<&str> {
         self.root.as_deref()
+    }
+
+    /// How long a generation start waits for its memory block, when
+    /// [`memory_block_deadline`](Self::memory_block_deadline) is set.
+    pub fn memory_block_deadline_timeout(&self) -> Option<std::time::Duration> {
+        self.memory_block_deadline
     }
 
     /// How long a turn waits for its own recall, when
