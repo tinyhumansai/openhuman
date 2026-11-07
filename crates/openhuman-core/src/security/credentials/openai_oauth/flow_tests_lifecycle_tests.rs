@@ -354,7 +354,10 @@ async fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata()
     assert_eq!(credentials.access_token, access_token);
     assert_eq!(credentials.account_id.as_deref(), Some("acct_from_file"));
     assert_eq!(
-        lookup_openai_bearer_token(&config).await.unwrap().as_deref(),
+        lookup_openai_bearer_token(&config)
+            .await
+            .unwrap()
+            .as_deref(),
         Some(access_token.as_str())
     );
 }
