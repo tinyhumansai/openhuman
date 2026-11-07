@@ -230,8 +230,10 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Agenten & Autonomie',
   'settings.devGroups.automationIntegrations': 'Automatisierung & Integrationen',
   'settings.tokenUsage.title': 'Token-Einsparungen',
-  'settings.secretGrant.title': 'OpenHuman erlauben, deine gespeicherten Geheimnisse zu entsperren?',
-  'settings.secretGrant.subtitle': 'Zum Speichern dieser Einstellung ist deine einmalige Zustimmung zur Verschlüsselung nötig. Lehne ab, um das Speichern abzubrechen.',
+  'settings.secretGrant.title':
+    'OpenHuman erlauben, deine gespeicherten Geheimnisse zu entsperren?',
+  'settings.secretGrant.subtitle':
+    'Zum Speichern dieser Einstellung ist deine einmalige Zustimmung zur Verschlüsselung nötig. Lehne ab, um das Speichern abzubrechen.',
   'settings.tokenUsage.menuDesc':
     'Komprimierungseinstellungen und wie viele Tokens und Dollar sie eingespart haben',
   'settings.tokenUsage.saving': 'Wird gespeichert…',

@@ -116,8 +116,10 @@ const messages: TranslationMap = {
   'settings.devGroups.agentsAutonomy': 'Ajanlar ve özerklik',
   'settings.devGroups.automationIntegrations': 'Otomasyon ve entegrasyonlar',
   'settings.tokenUsage.title': 'Token tasarrufu',
-  'settings.secretGrant.title': 'OpenHuman\'ın kayıtlı gizli bilgilerinizin kilidini açmasına izin verilsin mi?',
-  'settings.secretGrant.subtitle': 'Bu ayarı kaydetmek için şifrelenmesine tek seferlik onayınız gerekiyor. Kaydetmeyi iptal etmek için reddedin.',
+  'settings.secretGrant.title':
+    "OpenHuman'ın kayıtlı gizli bilgilerinizin kilidini açmasına izin verilsin mi?",
+  'settings.secretGrant.subtitle':
+    'Bu ayarı kaydetmek için şifrelenmesine tek seferlik onayınız gerekiyor. Kaydetmeyi iptal etmek için reddedin.',
   'settings.tokenUsage.menuDesc':
     'Sıkıştırma ayarları ve bunların ne kadar token ve dolar tasarruf sağladığı',
   'settings.tokenUsage.saving': 'Kaydediliyor…',

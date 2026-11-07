@@ -134,7 +134,8 @@ const en: TranslationMap = {
   'settings.devGroups.automationIntegrations': 'Automation & Integrations',
   'settings.tokenUsage.title': 'Token savings',
   'settings.secretGrant.title': 'Allow OpenHuman to unlock your saved secrets?',
-  'settings.secretGrant.subtitle': 'Saving this setting needs your one-time approval to encrypt it. Deny to cancel the save.',
+  'settings.secretGrant.subtitle':
+    'Saving this setting needs your one-time approval to encrypt it. Deny to cancel the save.',
   'settings.tokenUsage.menuDesc':
     'Compression settings and how many tokens and dollars they have saved',
   'settings.tokenUsage.saving': 'Saving…',

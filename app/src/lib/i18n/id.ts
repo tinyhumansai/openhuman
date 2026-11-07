@@ -221,7 +221,8 @@ const messages: TranslationMap = {
   'settings.devGroups.automationIntegrations': 'Otomasi & Integrasi',
   'settings.tokenUsage.title': 'Penghematan token',
   'settings.secretGrant.title': 'Izinkan OpenHuman membuka rahasia tersimpan Anda?',
-  'settings.secretGrant.subtitle': 'Menyimpan pengaturan ini memerlukan persetujuan satu kali dari Anda untuk mengenkripsinya. Tolak untuk membatalkan penyimpanan.',
+  'settings.secretGrant.subtitle':
+    'Menyimpan pengaturan ini memerlukan persetujuan satu kali dari Anda untuk mengenkripsinya. Tolak untuk membatalkan penyimpanan.',
   'settings.tokenUsage.menuDesc':
     'Pengaturan kompresi dan berapa banyak token dan dolar yang telah dihemat',
   'settings.tokenUsage.saving': 'Menyimpan…',

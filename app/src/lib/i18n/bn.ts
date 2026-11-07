@@ -218,7 +218,8 @@ const messages: TranslationMap = {
   'settings.devGroups.automationIntegrations': 'অটোমেশন ও ইন্টিগ্রেশন',
   'settings.tokenUsage.title': 'টোকেন সাশ্রয়',
   'settings.secretGrant.title': 'OpenHuman-কে আপনার সংরক্ষিত গোপন তথ্য আনলক করতে দেবেন?',
-  'settings.secretGrant.subtitle': 'এই সেটিং সংরক্ষণ করতে এটি এনক্রিপ্ট করার জন্য আপনার এককালীন অনুমোদন প্রয়োজন। সংরক্ষণ বাতিল করতে প্রত্যাখ্যান করুন।',
+  'settings.secretGrant.subtitle':
+    'এই সেটিং সংরক্ষণ করতে এটি এনক্রিপ্ট করার জন্য আপনার এককালীন অনুমোদন প্রয়োজন। সংরক্ষণ বাতিল করতে প্রত্যাখ্যান করুন।',
   'settings.tokenUsage.menuDesc': 'সংকোচন সেটিংস এবং সেগুলি কত টোকেন ও ডলার সাশ্রয় করেছে',
   'settings.tokenUsage.saving': 'সংরক্ষণ করা হচ্ছে…',
   'settings.tokenUsage.saved': 'সংরক্ষিত হয়েছে',

@@ -222,7 +222,8 @@ const messages: TranslationMap = {
   'settings.devGroups.automationIntegrations': 'Automação e integrações',
   'settings.tokenUsage.title': 'Economia de tokens',
   'settings.secretGrant.title': 'Permitir que o OpenHuman desbloqueie seus segredos salvos?',
-  'settings.secretGrant.subtitle': 'Salvar esta configuração requer sua aprovação única para criptografá-la. Negue para cancelar o salvamento.',
+  'settings.secretGrant.subtitle':
+    'Salvar esta configuração requer sua aprovação única para criptografá-la. Negue para cancelar o salvamento.',
   'settings.tokenUsage.menuDesc':
     'Configurações de compressão e quantos tokens e dólares elas economizaram',
   'settings.tokenUsage.saving': 'Salvando…',

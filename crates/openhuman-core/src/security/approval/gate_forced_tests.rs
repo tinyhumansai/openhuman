@@ -267,12 +267,19 @@ async fn forced_secret_grant_without_a_chat_route_parks_unrouted_and_allows_on_a
         let pending = wait_parked(&gate).await;
         assert_eq!(pending.tool_name, "native_secret_grant", "{origin:?}");
         assert_eq!(pending.action_summary, "Unlock configuration secrets");
-        assert!(!handle.is_finished(), "{origin:?}: must wait for the person");
+        assert!(
+            !handle.is_finished(),
+            "{origin:?}: must wait for the person"
+        );
         let seen = stub_of(&gate).seen();
         let call = seen.last().expect("the engine was asked");
         assert_eq!(call.variant, Variant::Forced, "{origin:?}: one-time grant");
         assert_eq!(call.thread, None, "{origin:?}: no chat thread to route to");
-        assert_eq!(call.origin, CallOrigin::Operator, "{origin:?}: a person decides");
+        assert_eq!(
+            call.origin,
+            CallOrigin::Operator,
+            "{origin:?}: a person decides"
+        );
         decide_parked(&gate, &pending.request_id, ApprovalDecision::ApproveOnce);
         assert!(
             matches!(handle.await.unwrap(), GateOutcome::Allow),
