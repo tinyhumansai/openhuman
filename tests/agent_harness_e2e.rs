@@ -889,6 +889,7 @@ async fn boot_stack_with_options(
     // This suite boots the core in-process, so install the hosted backend
     // transport before any RPC can reach backend-backed providers.
     tinyhumans_boot::boot();
+    let _ = tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::new("warn")).with_writer(std::io::stderr).try_init(); // TEMP-DBG
 
     // Ensure the global AgentDefinitionRegistry is populated with built-in
     // archetypes (orchestrator, vision_agent, task_manager_agent, etc.) before
