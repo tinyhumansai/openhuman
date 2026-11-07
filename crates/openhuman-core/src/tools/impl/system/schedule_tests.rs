@@ -166,7 +166,10 @@ async fn the_host_stage_blocks_mutating_actions_in_readonly_mode() {
             "a read-only session must not run {args}; got {decision:?}"
         );
     }
-    for args in [json!({"action": "list"}), json!({"action": "get", "id": "job-1"})] {
+    for args in [
+        json!({"action": "list"}),
+        json!({"action": "get", "id": "job-1"}),
+    ] {
         let tool = Box::new(ScheduleTool::new(security.clone(), config.clone()));
         let decision = authorize_one(security.clone(), tool, args.clone()).await;
         assert!(
