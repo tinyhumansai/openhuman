@@ -221,9 +221,13 @@ impl ApprovalGate {
         // from bypassing the per-user decision.
         let (variant, approval_forced) =
             one_time_approval_mode(variant, forced, saas_human_approval);
-        // A forced call that got this far is a one-time decision whatever its
-        // origin (the unrouted secret grant is the only non-WebChat one).
-        let variant = if forced { Variant::Forced } else { variant };
+        // The unrouted secret grant has no chat surface to scope a durable
+        // answer to: it is always a one-time decision.
+        let variant = if unrouted_secret_grant {
+            Variant::Forced
+        } else {
+            variant
+        };
 
         // Chat context (thread/client id) for routing the yes/no reply — handed
         // to the turn by the web channel; absent for non-chat callers.
