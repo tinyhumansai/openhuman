@@ -111,13 +111,30 @@ impl ApprovalGate {
             Some(denied) => return (denied, None),
             None => {}
         }
-        if forced
-            && !matches!(
-                &origin,
-                AgentTurnOrigin::WebChat { thread_id, client_id, .. }
-                    if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
-            )
-        {
+        let routable_web_chat = matches!(
+            &origin,
+            AgentTurnOrigin::WebChat { thread_id, client_id, .. }
+                if !thread_id.trim().is_empty() && !client_id.trim().is_empty()
+        );
+        // The native secret master grant a Settings save (or a CLI call) needs
+        // has no chat to ask in; it parks unrouted for the desktop's pending
+        // queue instead of failing before anyone is asked.
+        let unrouted_secret_grant =
+            forced && !routable_web_chat && secret_grant_parks_unrouted(tool_name, &origin);
+        if unrouted_secret_grant {
+            tracing::info!(
+                tool = tool_name,
+                ?origin,
+                "[approval::gate] forced secret grant without a chat route — parking unrouted \
+                 for the desktop's pending-approval queue"
+            );
+        }
+        if forced && !routable_web_chat && !unrouted_secret_grant {
+            tracing::warn!(
+                tool = tool_name,
+                ?origin,
+                "[approval::gate] forced approval denied: no routable WebChat origin on this task"
+            );
             return (
                 GateOutcome::Deny {
                     reason: format!(
@@ -204,6 +221,9 @@ impl ApprovalGate {
         // from bypassing the per-user decision.
         let (variant, approval_forced) =
             one_time_approval_mode(variant, forced, saas_human_approval);
+        // A forced call that got this far is a one-time decision whatever its
+        // origin (the unrouted secret grant is the only non-WebChat one).
+        let variant = if forced { Variant::Forced } else { variant };
 
         // Chat context (thread/client id) for routing the yes/no reply — handed
         // to the turn by the web channel; absent for non-chat callers.
@@ -354,7 +374,11 @@ impl ApprovalGate {
             summary: action_summary.to_string(),
             thread: chat_thread_id,
             flow: flow_id,
-            origin: if copilot_stream {
+            origin: if unrouted_secret_grant {
+                // A person decides it, exactly as on the WebChat route; never a
+                // class the engine may approve on its own.
+                CallOrigin::Operator
+            } else if copilot_stream {
                 CallOrigin::Copilot
             } else if subagent_park {
                 CallOrigin::SubAgent
@@ -638,6 +662,21 @@ fn object_arguments(value: serde_json::Value) -> serde_json::Value {
         return serde_json::json!({ "truncated": true, "bytes": bytes });
     }
     object
+}
+
+/// Whether a forced approval for `tool_name` may park without a chat route.
+///
+/// Only the native secret master grant may, and only when nothing remote or
+/// automated asked for it: a Settings RPC (no turn, `Unknown`), the CLI or a
+/// direct local chat. A scheduled job, a background task, a workflow or an
+/// external channel still fails closed, because the person who would see the
+/// prompt did not start the action behind it.
+fn secret_grant_parks_unrouted(tool_name: &str, origin: &AgentTurnOrigin) -> bool {
+    tool_name == super::native::NATIVE_SECRET_GRANT_TOOL
+        && matches!(
+            origin,
+            AgentTurnOrigin::Unknown | AgentTurnOrigin::Cli | AgentTurnOrigin::DirectChat
+        )
 }
 
 /// The origin class the engine is told for a turn. The verdict for each class
