@@ -153,6 +153,9 @@ pub(crate) struct SessionTurnSidecar {
     /// thread's first prompt and only when they differ from today's
     /// behaviour; see `tinyagents::discovery::DiscoveryOptions`.
     pub discovery_record: Option<crate::agent::tinyagents::discovery::DiscoveryOptions>,
+    /// The history-replay options this turn starts its thread with, recorded
+    /// like `discovery_record`; see `tinyagents::replay_pin::ReplayOptions`.
+    pub replay_record: Option<crate::agent::tinyagents::replay_pin::ReplayOptions>,
 }
 
 #[path = "dispatch_control.rs"]

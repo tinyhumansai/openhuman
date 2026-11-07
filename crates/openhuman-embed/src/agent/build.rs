@@ -186,6 +186,7 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
     if let Some(options) = parts.tool_discovery {
         options.apply_to(&mut config.agent.tool_search);
     }
+    parts.context.apply_to(&mut config.context);
 
     if let Some(f) = parts.config_fn {
         f(&mut config);

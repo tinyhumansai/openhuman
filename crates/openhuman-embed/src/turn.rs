@@ -106,6 +106,7 @@ pub struct Turn {
     tools: Option<openhuman_core::agent::HostTools>,
     tool_env: Option<Arc<std::collections::BTreeMap<String, String>>>,
     tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    context: crate::ContextOverrides,
 }
 
 impl Turn {
@@ -140,6 +141,7 @@ impl Turn {
             trace_content: crate::observe::TraceContent::MetadataOnly,
             hooks: Default::default(),
             tool_discovery: None,
+            context: Default::default(),
             tools: None,
             tool_env: None,
         }
@@ -439,6 +441,55 @@ impl Turn {
         self
     }
 
+    /// `[context] keep_recent_tokens` for the thread this turn creates: the verbatim tail, in
+    /// tokens, an in-turn compaction keeps after its summary. Unset keeps the
+    /// config's value, which defaults to 20,000.
+    #[must_use]
+    pub fn keep_recent_tokens(mut self, tokens: u32) -> Self {
+        self.context.keep_recent_tokens = Some(tokens);
+        self
+    }
+
+    /// `[context] tool_result_max_age_turns` for the thread this turn creates: a tool result with
+    /// more than `turns` user turns after it is replaced by a one-line note.
+    /// Off unless set. A turn on an existing session id ignores the pinned options (expiry and reasoning replay): the thread keeps what it started with.
+    #[must_use]
+    pub fn tool_result_max_age_turns(mut self, turns: u32) -> Self {
+        self.context.tool_result_max_age_turns = Some(turns);
+        self
+    }
+
+    /// `[context] tool_result_exempt_tools` for the thread this turn creates: tools whose results
+    /// never expire. Only read while a result age is set.
+    #[must_use]
+    pub fn tool_result_exempt_tools<I, S>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.context.tool_result_exempt_tools = Some(tools.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// `[context] replay_reasoning` for the thread this turn creates: whether requests replay every
+    /// turn's reasoning ([`ReasoningReplay::All`](crate::ReasoningReplay::All),
+    /// today's behaviour) or only the current turn's. The stored transcript
+    /// keeps every block either way.
+    #[must_use]
+    pub fn replay_reasoning(mut self, replay: crate::ReasoningReplay) -> Self {
+        self.context.replay_reasoning = Some(replay);
+        self
+    }
+
+    /// `[context] prune_retired_tools` for the thread this turn creates: drop a recorded tool
+    /// declaration the host no longer offers, live or deferred, instead of
+    /// carrying it forward for the life of the thread.
+    #[must_use]
+    pub fn prune_retired_tools(mut self, prune: bool) -> Self {
+        self.context.prune_retired_tools = Some(prune);
+        self
+    }
+
     /// Pin this turn to a model id.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.request.model_override = Some(model.into());
@@ -583,6 +634,9 @@ struct AgentTurnOptions {
     /// The `tool_search` options a new thread starts with; see
     /// [`Turn::tool_discovery`].
     tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    /// The `[context]` overrides for the session this turn runs; see
+    /// [`Turn::keep_recent_tokens`] and its siblings.
+    context: crate::ContextOverrides,
     /// The explicit per-turn values the core honours: live progress and the
     /// host environment (budget, depth, cancellation, hooks, tool-belt authority).
     chat_env: openhuman_core::agent_runs::agent_chat::AgentChatEnv,
@@ -642,6 +696,7 @@ async fn dispatch(
             let ctx = std::sync::Arc::clone(rt.context());
             let chat_env = options.chat_env;
             let tool_discovery = options.tool_discovery;
+            let context = options.context;
             let dispatch =
                 openhuman_core::core::runtime::DispatchCtx::new(std::sync::Arc::clone(&ctx));
             let turn: futures_box::BoxFuture<'_, Result<AgentReply, CoreError>> =
@@ -656,6 +711,7 @@ async fn dispatch(
                     if let Some(discovery) = tool_discovery {
                         discovery.apply_to(&mut config.agent.tool_search);
                     }
+                    context.apply_to(&mut config.context);
                     let target = match request.agent_id.as_deref().map(str::trim) {
                         Some(id) if !id.is_empty() => AgentChatTarget::AgentId(id),
                         _ => AgentChatTarget::Orchestrator,
@@ -709,6 +765,7 @@ async fn dispatch(
                     if let Some(discovery) = options.tool_discovery {
                         discovery.apply_to(&mut config.agent.tool_search);
                     }
+                    options.context.apply_to(&mut config.context);
                     let route = inference_route(&request);
                     let host = options.tools.or_else(|| inner.composed_host_tools());
                     let target = AgentChatTarget::Definition {

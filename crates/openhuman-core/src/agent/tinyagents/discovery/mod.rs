@@ -243,6 +243,7 @@ impl ToolRanker for OverlapRanker {
 mod embedding_ranker;
 mod pin;
 
+pub(crate) use pin::{record_metadata, recorded_metadata};
 pub use pin::{resolve, DiscoveryOptions, ResolvedDiscovery, DISCOVERY_METADATA_KEY};
 
 pub use embedding_ranker::{

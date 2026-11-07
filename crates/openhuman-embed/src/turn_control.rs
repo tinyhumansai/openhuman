@@ -410,6 +410,7 @@ impl Turn {
             tools: self.tools.take(),
             attachments: std::mem::take(&mut self.attachments),
             tool_discovery: self.tool_discovery.take(),
+            context: std::mem::take(&mut self.context),
         };
         let dispatch = dispatch(self.target, self.request, self.seed.take(), usage, options);
 
