@@ -76,6 +76,11 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
                 });
             }
         }
+        // The turn that starts a thread writes down the discovery options it
+        // runs with, so every later turn reads them back instead of the config.
+        if let Some(options) = sidecar.discovery_record {
+            options.record_on(&mut reconciled.rows, &reconciled.fresh);
+        }
         attach_text_dialect_rounds(
             &mut reconciled.rows,
             &reconciled.fresh,

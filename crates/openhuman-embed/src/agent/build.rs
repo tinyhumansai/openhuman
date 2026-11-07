@@ -183,6 +183,10 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
             .map(|deadline| u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX));
     }
 
+    if let Some(options) = parts.tool_discovery {
+        options.apply_to(&mut config.agent.tool_search);
+    }
+
     if let Some(f) = parts.config_fn {
         f(&mut config);
         // Every agent shares the runtime's credential store and keyring; a

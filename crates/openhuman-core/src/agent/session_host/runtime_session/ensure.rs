@@ -150,6 +150,31 @@ impl OpenHumanSessionHost {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .context_window = context_window;
+                        // The thread's discovery options: chosen from the config
+                        // by the turn that prepares its first prompt and recorded
+                        // with it, read back from the transcript on every other.
+                        let discovery = crate::agent::tinyagents::discovery::resolve(
+                            &prelude.config.tool_search,
+                            view.raw_history,
+                            super::turn::prepare_prefix_for_turn(
+                                new_session,
+                                view.prefix_is_frozen,
+                            ),
+                        );
+                        tracing::debug!(
+                            thread_id = ?prelude.thread_id,
+                            options = ?discovery.effective,
+                            recorded_now = discovery.record.is_some(),
+                            "[tool-search] discovery options for this turn"
+                        );
+                        options.run_context.config.discovery = discovery.effective.overrides();
+                        options
+                            .run_context
+                            .data
+                            .session_sidecar
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .discovery_record = discovery.record;
                         let original_input = request.input.clone();
                         let original_user_message = user_text_with_markers(&original_input);
                         prelude.begin_user_effects(request, &options.run_context.data);

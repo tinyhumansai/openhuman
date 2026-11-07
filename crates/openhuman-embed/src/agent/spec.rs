@@ -63,6 +63,7 @@ pub struct AgentSpec {
         tinyagents_harness::cost::TurnCost,
     >,
     memory: Option<MemoryBinding>,
+    tool_discovery: Option<crate::ToolDiscoveryOptions>,
     subagents: Vec<(String, AgentDefinitionSpec)>,
 }
 
@@ -192,6 +193,7 @@ impl AgentSpec {
             host_tools: None,
             hooks: Default::default(),
             memory: None,
+            tool_discovery: None,
             subagents: Vec::new(),
         }
     }
@@ -353,6 +355,23 @@ impl AgentSpec {
     #[must_use]
     pub fn composio(mut self, credential: ComposioHostCredential) -> Self {
         self.composio = Some(credential);
+        self
+    }
+
+    /// The `tool_search` options this agent's **new** threads start with:
+    /// whether found tools join the request's `tools` list, whether results
+    /// print on one line, whether a used result is collapsed afterwards, and
+    /// whether a `tool_call` wrapper is repaired.
+    ///
+    /// Without this the options come from the config's `[agent.tool_search]`,
+    /// which defaults to today's behaviour. They are recorded on each thread
+    /// with its first prompt and read back when it resumes, so changing them
+    /// here (or in the config) never alters a thread that already exists.
+    /// [`Turn::tool_discovery`](crate::Turn::tool_discovery) overrides them
+    /// for the thread one turn creates.
+    #[must_use]
+    pub fn tool_discovery(mut self, options: crate::ToolDiscoveryOptions) -> Self {
+        self.tool_discovery = Some(options);
         self
     }
 
@@ -532,6 +551,7 @@ impl AgentSpec {
             host_tools: self.host_tools,
             hooks: self.hooks,
             memory: self.memory,
+            tool_discovery: self.tool_discovery,
             subagents: self.subagents,
         }
     }
@@ -564,6 +584,7 @@ pub(crate) struct AgentSpecParts {
     pub(crate) trusted: Vec<(String, TrustedAccess)>,
     pub(crate) composio: Option<ComposioHostCredential>,
     pub(crate) config_fn: Option<ConfigEdit>,
+    pub(crate) tool_discovery: Option<crate::ToolDiscoveryOptions>,
     pub(crate) host_tools: Option<openhuman_core::agent::HostTools>,
     pub(crate) hooks: tinyagents_hooks::scope::HookScope<
         openhuman_core::agent::tinyagents::host::OpenHumanRunContext,
