@@ -355,6 +355,9 @@ fn only_the_read_actions_declare_read_only() {
     }
 }
 
+// Fails closed only while security is enforced: a build without the
+// security module has security disabled (`crate::security::switch`).
+#[cfg(feature = "security-module")]
 #[tokio::test]
 async fn the_host_stage_blocks_mutating_actions_in_readonly_mode() {
     use crate::agent::tinyagents::host::security_gate_test_support::{authorize_one, is_denied};
