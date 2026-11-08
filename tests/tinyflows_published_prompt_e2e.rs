@@ -274,6 +274,21 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
         for path in [&config_path, &local_config_path] {
             std::fs::write(path, &disabled_text).expect("disable module in active CLI config");
         }
+        // The ordinary agent still renders when only TinyFlows is off and the
+        // security module that holds the credential keeps running.
+        let tinyflows_off = "api_url = \"http://127.0.0.1:1\"\n\n[components]\ntinyflows = false\n\n[modules]\nenabled = true\n";
+        for path in [&config_path, &local_config_path] {
+            std::fs::write(path, tinyflows_off).expect("disable TinyFlows in active CLI config");
+        }
+        let ordinary_prompt =
+            dump_published_prompt("orchestrator", temp.path(), &workspace, module_search_path);
+        let ordinary_text = ordinary_prompt["system_prompt"]
+            .as_str()
+            .expect("ordinary prompt text");
+        assert!(ordinary_text.contains("## Workspace"));
+        for path in [&config_path, &local_config_path] {
+            std::fs::write(path, &disabled_text).expect("disable module in active CLI config");
+        }
         // With every module disabled TinySecurity is not loaded either, so the
         // stored credential cannot be decrypted: the session agent fails
         // closed instead of running without its credential, and the CLI
@@ -290,18 +305,6 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
             "the CLI error names the cause: {modules_off_stderr}"
         );
 
-        // The ordinary agent still renders when only TinyFlows is off and the
-        // security module that holds the credential keeps running.
-        let tinyflows_off = "api_url = \"http://127.0.0.1:1\"\n\n[components]\ntinyflows = false\n\n[modules]\nenabled = true\n";
-        for path in [&config_path, &local_config_path] {
-            std::fs::write(path, tinyflows_off).expect("disable TinyFlows in active CLI config");
-        }
-        let ordinary_prompt =
-            dump_published_prompt("orchestrator", temp.path(), &workspace, module_search_path);
-        let ordinary_text = ordinary_prompt["system_prompt"]
-            .as_str()
-            .expect("ordinary prompt text");
-        assert!(ordinary_text.contains("## Workspace"));
 
         // Re-enable the same profile after the disabled view and ensure the
         // async host preflight restores the module-backed catalogue.
