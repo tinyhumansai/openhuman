@@ -20,6 +20,8 @@ pub(crate) trait PromptScanPort: std::fmt::Debug + Send + Sync {
     async fn scan(&self, input: String) -> Result<ScanPromptScoredResponse2, String>;
 }
 
+// Test-only, like the module itself (`mod.rs` declares it `cfg(test)`).
+#[cfg(test)]
 thread_local! {
     static TEST_PROMPT_SCAN_PORT: RefCell<Option<Arc<dyn PromptScanPort>>> =
         const { RefCell::new(None) };
