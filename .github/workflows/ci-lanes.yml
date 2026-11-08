@@ -152,10 +152,19 @@ jobs:
         # user's home has. Not /root: that is an always-forbidden system root,
         # so anything defaulting under ~ (e.g. ~/OpenHuman) would be refused.
         # This runs first so later steps (git config, caches) use it too.
+        # The runner also creates the workspace (/__w/<repo>/<repo>) and its
+        # parents as uid 1001, and tests keep scratch state under the
+        # checkout's target/, so root-own those ancestors for the same reason.
         if: matrix.container != ''
         run: |
           install -d -o root -g root -m 0700 /home/ci
           echo "HOME=/home/ci" >> "$GITHUB_ENV"
+          dir="$GITHUB_WORKSPACE"
+          while [ "$dir" != / ]; do
+            chown root:root "$dir"
+            chmod go-w "$dir"
+            dir="$(dirname "$dir")"
+          done
 
       - name: Trust the workspace for git
         # The checkout is owned by the runner uid; the container runs as root.
