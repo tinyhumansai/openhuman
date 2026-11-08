@@ -91,7 +91,9 @@ pub(super) fn tighten_owned_directory(dir: &Path) {
     if !metadata.is_dir() || metadata.uid() != euid || mode & 0o022 == 0 {
         return;
     }
-    match file.set_permissions(std::fs::Permissions::from_mode(mode & !0o022)) {
+    let r = file.set_permissions(std::fs::Permissions::from_mode(mode & !0o022));
+    eprintln!("TEMP-DIAG-TIGHTEN set -> {r:?}; now mode={:o}", std::fs::metadata(dir).map(|m| m.mode() & 0o7777).unwrap_or(0));
+    match r {
         Ok(()) => tracing::debug!(
             path = %dir.display(),
             from_mode = format!("{mode:o}"),
