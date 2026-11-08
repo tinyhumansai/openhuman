@@ -3,7 +3,7 @@
 //! TinySecurity module once a runtime has admitted it under its own secret
 //! scope, as `openhuman.auth_store_session` does.
 //!
-//! TinySecurity serves one secret scope at a time. The test host used to screen
+//! TinySecurity used to serve one secret scope at a time. The test host used to screen
 //! such a caller through its own private fixture scope, which the live scope
 //! refused ("security secret scope changed after module admission"), so every
 //! benign prompt was held as `screen.unavailable` and rejected with a
