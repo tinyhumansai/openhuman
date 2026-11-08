@@ -271,9 +271,6 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
         );
         let disabled_text =
             std::fs::read_to_string(&disabled_config_path).expect("read disabled module config");
-        for path in [&config_path, &local_config_path] {
-            std::fs::write(path, &disabled_text).expect("disable module in active CLI config");
-        }
         // The ordinary agent still renders when only TinyFlows is off and the
         // security module that holds the credential keeps running.
         let tinyflows_off = "api_url = \"http://127.0.0.1:1\"\n\n[components]\ntinyflows = false\n\n[modules]\nenabled = true\n";
@@ -304,7 +301,6 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
             modules_off_stderr.contains("SESSION_EXPIRED"),
             "the CLI error names the cause: {modules_off_stderr}"
         );
-
 
         // Re-enable the same profile after the disabled view and ensure the
         // async host preflight restores the module-backed catalogue.
