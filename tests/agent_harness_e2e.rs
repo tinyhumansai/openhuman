@@ -3810,6 +3810,7 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
     // Not `wait_for_event`: if the turn ends without asking, the failure has to
     // show what the agent did instead, which only the captured requests hold.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+    let mut answered_handoffs = std::collections::HashSet::new();
     let approval = loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let event = match tokio::time::timeout(remaining, events.recv()).await {
@@ -3829,6 +3830,10 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
                     .and_then(Value::as_str)
                     .unwrap_or_else(|| panic!("approval_request missing request_id: {event}"))
                     .to_string();
+                // The same card can arrive on more than one surface.
+                if !answered_handoffs.insert(handoff_id.clone()) {
+                    continue;
+                }
                 let handoff = post_json_rpc(
                     &stack.rpc_base,
                     699,
