@@ -57,3 +57,48 @@ pub(super) fn tighten_owned_file(path: &Path) {
 
 #[cfg(not(all(unix, feature = "secret-file")))]
 pub(super) fn tighten_owned_file(_path: &Path) {}
+
+/// Remove group and other write from the directory that holds a secrets file,
+/// when this user owns it.
+///
+/// The driver refuses a secrets namespace another user could mutate. A directory
+/// the core created itself under a permissive umask (`0002` is the default on
+/// many Linux distributions, which makes it `0775`) is ours to repair; leaving it
+/// would make every secret read and write fail. Only the leaf is touched: an
+/// ancestor that is foreign-writable is not ours, and the driver still refuses it.
+#[cfg(all(unix, feature = "secret-file"))]
+pub(super) fn tighten_owned_directory(dir: &Path) {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open(dir)
+    else {
+        return;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return;
+    };
+    // SAFETY: `geteuid` takes no arguments and mutates no process state.
+    let euid = unsafe { libc::geteuid() };
+    let mode = metadata.mode() & 0o7777;
+    if !metadata.is_dir() || metadata.uid() != euid || mode & 0o022 == 0 {
+        return;
+    }
+    match file.set_permissions(std::fs::Permissions::from_mode(mode & !0o022)) {
+        Ok(()) => tracing::debug!(
+            path = %dir.display(),
+            from_mode = format!("{mode:o}"),
+            "[secret_storage] removed group/other write from an owned secrets directory"
+        ),
+        Err(error) => tracing::warn!(
+            path = %dir.display(),
+            %error,
+            "[secret_storage] could not tighten an owned secrets directory"
+        ),
+    }
+}
+
+#[cfg(not(all(unix, feature = "secret-file")))]
+pub(super) fn tighten_owned_directory(_dir: &Path) {}

@@ -80,6 +80,9 @@ pub fn lock_for_write(path: &Path) -> Result<WriteLock, SecretStorageError> {
     {
         // Old lock files may have inherited wider modes; the driver admits only
         // `0600`, so tighten an owned one first (as the non-driver path does).
+        if let Some(parent) = lock_path.parent() {
+            super::file_store_repair::tighten_owned_directory(parent);
+        }
         super::file_store_repair::tighten_owned_file(&lock_path);
         tinystoragedrivers::secrets::lock_file(&lock_path)
             .map(|lock| WriteLock {
@@ -229,6 +232,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), SecretStorageError>
         // A file an older build left wider than `0600` would be refused by the
         // driver's admission of the file it replaces; the rewrite is what puts
         // it right, so tighten the owned file first.
+        super::file_store_repair::tighten_owned_directory(parent_dir(path));
         super::file_store_repair::tighten_owned_file(path);
         tinystoragedrivers::secrets::write_atomic_private(path, bytes).map_err(|error| {
             SecretStorageError::Backend(format!(

@@ -364,11 +364,13 @@ impl EncryptedFileBackend {
     }
 
     fn store(&self, key: &[u8; KEY_LEN]) -> EncryptedFileSecrets {
+        self.tighten_namespace();
         EncryptedFileSecrets::at_path(self.path.clone(), Zeroizing::new(*key))
             .with_corrupt_file_policy(CorruptFilePolicy::QuarantineAndContinue)
     }
 
     fn read_only_store(&self, key: &[u8; KEY_LEN]) -> EncryptedFileSecrets {
+        self.tighten_namespace();
         EncryptedFileSecrets::at_path(self.path.clone(), Zeroizing::new(*key))
     }
 
