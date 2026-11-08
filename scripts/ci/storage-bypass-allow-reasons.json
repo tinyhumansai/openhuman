@@ -91,13 +91,6 @@
     "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
   },
   {
-    "path": "crates/openhuman-core/src/artifacts/box_source.rs",
-    "rule": "json-write",
-    "site": "std::fs::write(&staged.file, bytes)?;",
-    "reason": "stages a file read out of a tenant's sandbox box for the moment `create_artifact` reads it; the staged copy is removed when the call ends, and the versioned record itself goes through the artifact store",
-    "issue": "https://github.com/tinyhumansai/openhuman/issues/7425"
-  },
-  {
     "path": "crates/openhuman-core/src/artifacts/tiny_store.rs",
     "rule": "json-write",
     "site": "tokio::fs::write(&dest, latest.body.as_bytes()).await?;",
