@@ -375,3 +375,35 @@ fn a_group_writable_secrets_directory_the_core_made_is_tightened_not_refused() {
         "only group/other write is removed from the owned leaf directory"
     );
 }
+
+/// A secrets file others could write may hold content the core never wrote, so
+/// it is never tightened into trust: it keeps its mode and the driver refuses
+/// it. Only a file others could merely read (a leaked read, not a forged
+/// write) is repaired.
+#[cfg(all(unix, feature = "secret-file"))]
+#[test]
+fn a_secrets_file_others_could_write_is_never_tightened_into_trust() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    for mode in [0o666, 0o662, 0o620] {
+        let path = dir.path().join(format!("writable-{mode:o}.enc"));
+        std::fs::write(&path, b"possibly forged").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        super::super::file_store_repair::tighten_owned_file(&path);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            mode,
+            "a file writable by others ({mode:o}) must not be repaired"
+        );
+    }
+    let readable = dir.path().join("readable.enc");
+    std::fs::write(&readable, b"ours").unwrap();
+    std::fs::set_permissions(&readable, std::fs::Permissions::from_mode(0o644)).unwrap();
+    super::super::file_store_repair::tighten_owned_file(&readable);
+    assert_eq!(
+        std::fs::metadata(&readable).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
