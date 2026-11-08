@@ -828,5 +828,8 @@ fn a_staged_import_keeps_plaintext_that_differs_from_its_staged_backup() {
 
     assert!(backend.import_legacy_dev_keychain(&key).is_err());
     assert_eq!(std::fs::read(&legacy_path).unwrap(), edited);
-    assert_eq!(backend.get_with_key(&key, LEGACY_IMPORT_COMPLETE).unwrap(), None);
+    assert_eq!(
+        backend.get_with_key(&key, LEGACY_IMPORT_COMPLETE).unwrap(),
+        None
+    );
 }

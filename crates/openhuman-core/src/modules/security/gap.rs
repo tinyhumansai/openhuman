@@ -7,11 +7,11 @@
 #[cfg(test)]
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 #[cfg(any(test, feature = "test-keyring-consent"))]
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use tinysecurity_bus::{

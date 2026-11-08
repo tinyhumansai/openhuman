@@ -28,9 +28,9 @@ pub(crate) mod text;
 mod tests;
 
 pub use client::{Client, SecurityError};
+pub(crate) use client::{SecurityProxy, MODULE_REFUSED};
 #[cfg(feature = "test-keyring-consent")]
 pub use gap::{install_unavailable_path_floor_port, PathFloorPortGuard};
-pub(crate) use client::{SecurityProxy, MODULE_REFUSED};
 pub use policy::policy_config;
 pub(crate) use policy::validate as validate_policy;
 pub(super) use policy::{module_config, module_config_for_host, module_config_for_secret_scope};
