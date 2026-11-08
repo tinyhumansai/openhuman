@@ -133,6 +133,11 @@ impl OpenHumanTurnPrelude {
             // A memory change while it read voids it: no block rather than
             // one read before the erase.
             return if ticket.is_live() {
+                // Taken straight by this generation start: an older render
+                // finishing later must not store its block over it.
+                if matches!(rendered, RenderedBlock::Block(_) | RenderedBlock::Empty) {
+                    delivered_to_generation(key, ticket);
+                }
                 rendered
             } else {
                 tracing::info!(
@@ -150,6 +155,7 @@ impl OpenHumanTurnPrelude {
         let scope_owned = scope.clone();
         let thread_id = self.thread_id.clone().unwrap_or_default();
         let agent_id = self.agent_definition_id.clone();
+        let watch = ticket.watch();
         self.spawn_memory_work(async move {
             let mut render = Box::pin(prelude.render_in(&scope_owned, max_tokens, &reason_owned));
             // The turn waits for the render up to its deadline.
@@ -232,6 +238,17 @@ impl OpenHumanTurnPrelude {
                 receiver.close();
                 if let Ok(rendered) = receiver.try_recv() {
                     return rendered;
+                }
+                // Voided while it was pending: the block recorded before the
+                // change must not stand in for it, as it may for a deferral.
+                if !watch.is_live() {
+                    tracing::info!(
+                        thread_id = self.thread_id.as_deref().unwrap_or(""),
+                        agent_id = self.agent_definition_id.as_str(),
+                        reason,
+                        "[memory_block] render voided by a memory change while deferred"
+                    );
+                    return RenderedBlock::Voided;
                 }
                 tracing::info!(
                     thread_id = self.thread_id.as_deref().unwrap_or(""),
@@ -351,6 +368,30 @@ pub(super) struct Ticket {
 
 impl Ticket {
     /// Whether no invalidation has voided this render since it started.
+    pub(super) fn is_live(&self) -> bool {
+        lock(&self.state).in_flight.contains_key(&self.seq)
+    }
+}
+
+impl Ticket {
+    /// A view of this ticket that can be asked whether it is live after the
+    /// ticket itself has moved to the render's task.
+    pub(super) fn watch(&self) -> TicketWatch {
+        TicketWatch {
+            state: Arc::clone(&self.state),
+            seq: self.seq,
+        }
+    }
+}
+
+/// Asks whether a [`Ticket`] is still live; holding it keeps nothing.
+pub(super) struct TicketWatch {
+    state: Arc<Mutex<State>>,
+    seq: u64,
+}
+
+impl TicketWatch {
+    /// Whether no invalidation has voided the ticket since it was taken.
     pub(super) fn is_live(&self) -> bool {
         lock(&self.state).in_flight.contains_key(&self.seq)
     }

@@ -293,3 +293,15 @@ fn storing_reports_whether_the_block_was_kept() {
     let fresh = ready.ticket(Path::new("/workspace"));
     assert!(ready.put_ticketed_at(key("a", 500), None, fresh, now));
 }
+
+#[test]
+fn a_ticket_watch_follows_the_ticket_it_was_taken_from() {
+    let ready = ReadyBlocks::default();
+    let ticket = ready.ticket(Path::new("/workspace"));
+    let watch = ticket.watch();
+    assert!(watch.is_live());
+    ready.invalidate(None);
+    assert!(!watch.is_live());
+    drop(ticket);
+    assert!(!watch.is_live(), "and stays void once the ticket is gone");
+}
