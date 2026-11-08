@@ -585,7 +585,6 @@ pub fn ensure_loaded_within<'a>(
                     if let Some(component) = disabled_component(config, id) {
                         Err(LoadError::Disabled(component))
                     } else {
-                        eprintln!("DIAGWW sec\n{}", std::backtrace::Backtrace::force_capture());
                         let load = ensure_loaded_with_security_callback(&resolver, config, id);
                         match within {
                             Some(within) => tokio::time::timeout(within, load)

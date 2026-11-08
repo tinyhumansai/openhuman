@@ -162,7 +162,6 @@ fn workspace_backend(workspace_dir: &Path) -> WorkspaceBackend {
 }
 
 async fn open_default_backend(_workspace_dir: PathBuf) -> Result<Arc<dyn StorageBackend>> {
-    eprintln!("DIAGXX open_default_backend {}\n{}", _workspace_dir.display(), std::backtrace::Backtrace::force_capture());
     #[cfg(test)]
     await_test_backend_open_gate().await;
 
@@ -244,7 +243,6 @@ fn workspace_default(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
     if let Some(backend) = cell.get() {
         return Ok(Arc::clone(backend));
     }
-    eprintln!("DIAGYY workspace_default\n{}", std::backtrace::Backtrace::force_capture());
     #[cfg(test)]
     signal_test_sync_backend_entry(workspace_dir);
     let workspace_dir = workspace_dir.to_path_buf();
@@ -261,7 +259,6 @@ fn workspace_default(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
 /// the same initializer, including from a current-thread runtime, without
 /// preventing it from making progress.
 pub async fn backend_for_async(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
-    eprintln!("DIAGZZ backend_for_async\n{}", std::backtrace::Backtrace::force_capture());
     if let Some(backend) = installed() {
         return Ok(backend);
     }
