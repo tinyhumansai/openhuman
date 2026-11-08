@@ -143,6 +143,18 @@ jobs:
           submodules: false
           persist-credentials: false
 
+      - name: Give the job a private home
+        # The runner mounts /github/home owned by its own uid (1001), but the
+        # container runs as root, so to the secrets driver every file under the
+        # default home sits in a namespace another user can mutate, and it
+        # refuses them ("secret namespace permits foreign mutation"). Use the
+        # image's root-owned 0700 /root instead, the shape a real user's home
+        # has. This runs first so later steps (git config, caches) use it too.
+        if: matrix.container != ''
+        run: |
+          chmod 0700 /root
+          echo "HOME=/root" >> "$GITHUB_ENV"
+
       - name: Trust the workspace for git
         # The checkout is owned by the runner uid; the container runs as root.
         if: matrix.container != ''
