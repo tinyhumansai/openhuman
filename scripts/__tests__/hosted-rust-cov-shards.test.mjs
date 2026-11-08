@@ -123,6 +123,21 @@ test("container lanes run with a private root-owned home before any step uses it
   assert.doesNotMatch(step[2], /HOME=\/root/);
 });
 
+test("container lanes root-own every ancestor of the workspace before checkout", () => {
+  // The runner creates /__w/<repo>/<repo> on the host as its own uid. Tests
+  // keep scratch state under the checkout's target/, and the secrets driver
+  // refuses a directory whose ancestors another user owns.
+  const step = workflow.match(
+    /- name: Give the job a private home\n(?:\s+#.*\n)*\s+if: (.+)\n\s+run: \|\n((?:\s{10}.+\n)+)/,
+  );
+  assert.ok(step, "the private-home step has an if and a run block");
+  assert.match(step[2], /dir="\$GITHUB_WORKSPACE"/);
+  assert.match(step[2], /while \[ "\$dir" != \/ \]; do/);
+  assert.match(step[2], /chown root:root "\$dir"/);
+  assert.match(step[2], /chmod go-w "\$dir"/);
+  assert.match(step[2], /dir="\$\(dirname "\$dir"\)"/);
+});
+
 test("the gate refuses a shard that failed, was cancelled or never reported", () => {
   // Matrix results fold into needs.lanes.result: any failed shard makes it
   // "failure", any cancelled one "cancelled". Only success/skipped pass.
