@@ -104,8 +104,11 @@ pub fn default_url(workspace_dir: &Path) -> String {
 /// of opening (and so creating) it.
 pub fn default_store_exists(workspace_dir: &Path) -> bool {
     match ProfileLayout::of_workspace(workspace_dir) {
-        Some(layout) if layout.version == LayoutVersion::V2 => layout.storage_db.exists(),
-        _ => workspace_dir.join(DEFAULT_DIR).exists(),
+        Some(layout) => match layout.version {
+            LayoutVersion::V2 => layout.storage_db.exists(),
+            LayoutVersion::V1 => layout.workspace_dir.join(DEFAULT_DIR).exists(),
+        },
+        None => workspace_dir.join(DEFAULT_DIR).exists(),
     }
 }
 

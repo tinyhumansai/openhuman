@@ -143,7 +143,11 @@ fn file_tree(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     fn visit(root: &std::path::Path, at: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(at).expect("read fixture tree") {
             let path = entry.expect("read fixture entry").path();
-            out.push(path.strip_prefix(root).expect("relative path").to_path_buf());
+            out.push(
+                path.strip_prefix(root)
+                    .expect("relative path")
+                    .to_path_buf(),
+            );
             if path.is_dir() {
                 visit(root, &path, out);
             }
@@ -197,5 +201,9 @@ async fn read_only_lookup_of_a_plaintext_session_creates_no_storage() {
         !config.workspace_dir.join("storage").exists(),
         "a read-only profile lookup must not create the workspace store"
     );
-    assert_eq!(file_tree(tmp.path()), before, "a read-only lookup must not write");
+    assert_eq!(
+        file_tree(tmp.path()),
+        before,
+        "a read-only lookup must not write"
+    );
 }

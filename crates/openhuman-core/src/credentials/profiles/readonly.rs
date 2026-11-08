@@ -112,9 +112,12 @@ async fn load_profile_with_keyring(
     // closed below when its secret is absent.
     let keyring_store_exists = crate::storage::local::store_exists(&config.workspace_dir);
     if !keyring_store_exists {
-        log::debug!("[auth] read-only profile lookup: no workspace store; keyring treated as absent");
+        log::debug!(
+            "[auth] read-only profile lookup: no workspace store; keyring treated as absent"
+        );
     }
-    let keychain_secrets = if profile_store.use_keychain && !document_owned && keyring_store_exists {
+    let keychain_secrets = if profile_store.use_keychain && !document_owned && keyring_store_exists
+    {
         match read_keyring(&profile_store, &id).await {
             Ok(Some(secrets)) => Some(secrets),
             Ok(None) => None,
