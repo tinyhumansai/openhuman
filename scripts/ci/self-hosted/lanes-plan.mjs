@@ -603,16 +603,27 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings",
         },
         {
+          // The shell's artifact commands ask TinySecurity whether a file is in
+          // a protected location, and the module fails closed when it cannot
+          // answer. The lane has to stage the module as rust-cov and rust-lint
+          // do; without it the tests are refused as "protected location".
+          name: "install-test-modules",
+          when: areas.rustTauri,
+          run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
+        },
+        {
           // Hosted keeps ci-lite's wrapper-free RUSTFLAGS instrumentation.
           // The private plan below uses the Cargo target linker and nextest.
           name: "tauri-coverage",
           when: areas.rustTauri,
+          needs: ["install-test-modules"],
           env: { ...covEnv },
-          run:
+          run: withModules(
             "unset RUSTFLAGS RUSTC_WRAPPER" +
-            " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
-            " && cargo llvm-cov --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
-            " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+              " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
+              " && cargo llvm-cov --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
+              " --lcov --output-path ci-out/lcov/lcov-tauri.info",
+          ),
         },
       ],
     },
@@ -713,12 +724,13 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       ...covEnv,
       CARGO_BUILD_TARGET_DIR: "target/ci-private-coverage",
     };
-    tauri.run =
+    tauri.run = withModules(
       "unset RUSTFLAGS; " +
-      coverageSuite(
-        "--manifest-path crates/openhuman-app/Cargo.toml",
-        "tauri", // the nextest report name this suite always had
-      );
+        coverageSuite(
+          "--manifest-path crates/openhuman-app/Cargo.toml",
+          "tauri", // the nextest report name this suite always had
+        ),
+    );
     // The app is a separate workspace, so its report is a second merge.
     tauriLane.checks.push(
       coverageReport(
