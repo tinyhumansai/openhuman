@@ -72,6 +72,8 @@ mod imported_history_tests;
 mod orphaned_head_resume_tests;
 #[cfg(test)]
 mod response_shape_turn_tests;
+#[cfg(all(test, feature = "legacy-import"))]
+mod result_expiry_wire_tests;
 #[cfg(test)]
 mod runtime_adapter_session_state_tests;
 #[cfg(test)]
