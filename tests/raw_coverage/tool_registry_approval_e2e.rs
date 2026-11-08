@@ -967,10 +967,14 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         )
         .await;
     assert!(matches!(live_policy_auto_approved.0, GateOutcome::Allow));
-    assert_eq!(live_policy_auto_approved.1, None);
     assert!(gate
         .pending_for_thread("approval-live-policy-thread")
         .is_none());
+    let live_audit_id = live_policy_auto_approved
+        .1
+        .as_deref()
+        .expect("an automatic approval is audited and its row id returned");
+    gate.record_execution(live_audit_id, ExecutionOutcome::Success, None);
 
     let gate_for_deny_task = gate.clone();
     let deny_task = tokio::spawn(async move {
