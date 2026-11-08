@@ -202,3 +202,53 @@ fn background_renders_run_at_most_eight_at_once_for_at_most_a_minute() {
     assert_eq!(MAX_BACKGROUND_RENDERS, 8);
     assert_eq!(BACKGROUND_RENDER_DEADLINE, Duration::from_secs(60));
 }
+
+#[test]
+fn a_render_older_than_a_block_already_taken_does_not_store_its_own() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    let older = ready.ticket(Path::new("/workspace"));
+    let newer = ready.ticket(Path::new("/workspace"));
+    ready.put_ticketed_at(key("a", 500), Some("new".into()), newer, now);
+    assert_eq!(ready.take_at(&key("a", 500), now), Some(Some("new".into())));
+    ready.put_ticketed_at(key("a", 500), Some("old".into()), older, now);
+    assert!(!ready.contains_at(&key("a", 500), now));
+}
+
+#[test]
+fn invalidating_idle_workspaces_leaves_nothing_behind() {
+    let ready = ReadyBlocks::default();
+    for n in 0..100 {
+        ready.invalidate(Some(Path::new(&format!("/workspace-{n}"))));
+    }
+    ready.invalidate(None);
+    let state = ready.lock();
+    assert!(state.entries.is_empty());
+    assert!(state.in_flight.is_empty());
+}
+
+#[test]
+fn a_render_that_ends_without_a_block_is_forgotten() {
+    let ready = ReadyBlocks::default();
+    drop(ready.ticket(Path::new("/workspace")));
+    assert!(ready.lock().in_flight.is_empty());
+}
+
+#[test]
+fn a_render_that_stored_its_block_is_forgotten() {
+    let ready = ReadyBlocks::default();
+    let ticket = ready.ticket(Path::new("/workspace"));
+    ready.put_ticketed_at(key("a", 500), None, ticket, Instant::now());
+    assert!(ready.lock().in_flight.is_empty());
+}
+
+#[test]
+fn a_voided_render_that_ends_is_forgotten_without_harm() {
+    let ready = ReadyBlocks::default();
+    let voided = ready.ticket(Path::new("/workspace"));
+    let live = ready.ticket(Path::new("/workspace"));
+    ready.invalidate(Some(Path::new("/workspace")));
+    drop(voided);
+    assert!(ready.lock().in_flight.is_empty());
+    drop(live);
+}
