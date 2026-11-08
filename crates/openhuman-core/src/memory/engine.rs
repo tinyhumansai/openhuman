@@ -144,6 +144,13 @@ pub fn install_host_engine(engine: Arc<dyn MemoryEngine>) {
     super::lifecycle::prefetch::invalidate_all();
 }
 
+/// Whether the process-wide host engine is serving every workspace: one is
+/// installed and this process admits it (never in SaaS).
+pub(crate) fn host_engine_is_shared() -> bool {
+    ENGINE_BINDER.host_engine().is_some()
+        && admits_host_engine_with(crate::core::runtime::is_saas())
+}
+
 /// Removes a host-installed engine; the configured engine applies again.
 /// Returns whether one was installed.
 pub fn clear_host_engine() -> bool {

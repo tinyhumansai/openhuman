@@ -1,6 +1,7 @@
 //! A memory block read before memory changed does not reach a later prompt.
 
 use super::*;
+use crate::agent::session_host::runtime_session::memory_block_ready::MAX_BACKGROUND_RENDERS;
 
 /// The text of the memory block a new session's first turn is sent, if any.
 async fn first_turn_block(config: &Config) -> Option<String> {
@@ -324,5 +325,167 @@ async fn clearing_the_host_engine_drops_the_waiting_block() {
 
     crate::memory::engine::clear_host_engine();
 
+    assert!(!a_block_waits(&config).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn prewarms_beyond_the_render_limit_are_not_started() {
+    let _stable = undisturbed();
+    let tmps = (0..=MAX_BACKGROUND_RENDERS)
+        .map(|_| tempfile::tempdir().unwrap())
+        .collect::<Vec<_>>();
+    let configs = tmps.iter().map(config_in).collect::<Vec<_>>();
+    for config in &configs {
+        SlowEngine::bind(&SlowEngine::new(SLOW), config);
+    }
+    let hosts = configs
+        .iter()
+        .map(|config| host(config, PROMPT, false))
+        .collect::<Vec<_>>();
+
+    let results = futures::future::join_all(hosts.iter().map(|h| h.prewarm_memory_block())).await;
+
+    let ready = results
+        .iter()
+        .filter(|r| **r == MemoryBlockPrewarm::Ready)
+        .count();
+    assert_eq!(ready, MAX_BACKGROUND_RENDERS, "{results:?}");
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| **r == MemoryBlockPrewarm::Failed)
+            .count(),
+        1,
+        "{results:?}"
+    );
+
+    // A finished prewarm freed its slot.
+    let last = host(&configs[MAX_BACKGROUND_RENDERS], PROMPT, false);
+    let again = last.prewarm_memory_block().await;
+    assert!(
+        matches!(
+            again,
+            MemoryBlockPrewarm::Ready | MemoryBlockPrewarm::AlreadyReady
+        ),
+        "{again:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_prewarm_is_abandoned_at_the_background_deadline() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = SlowEngine::new(std::time::Duration::from_secs(70));
+    SlowEngine::bind(&engine, &config);
+
+    assert_eq!(
+        host(&config, PROMPT, false).prewarm_memory_block().await,
+        MemoryBlockPrewarm::Failed
+    );
+    assert!(!a_block_waits(&config).await, "nothing was stored");
+}
+
+#[tokio::test(start_paused = true)]
+async fn generation_starts_beyond_the_render_limit_keep_no_background_render() {
+    let _stable = undisturbed();
+    let tmps = (0..=MAX_BACKGROUND_RENDERS)
+        .map(|_| tempfile::tempdir().unwrap())
+        .collect::<Vec<_>>();
+    let configs = tmps
+        .iter()
+        .map(|tmp| with_deadline(config_in(tmp), 300))
+        .collect::<Vec<_>>();
+    for config in &configs {
+        SlowEngine::bind(&SlowEngine::new(SLOW), config);
+    }
+    let preludes = configs
+        .iter()
+        .map(|config| prelude(config, "You are blocky, v2.", true))
+        .collect::<Vec<_>>();
+    let (recorded, history) = generation_start();
+
+    // Every start lapses its deadline and its render goes on in the
+    // background, but only eight are admitted there.
+    let (recorded, history) = (&recorded, &history);
+    futures::future::join_all(preludes.iter().map(|p| async move {
+        prepare(p, false, &view(recorded, history, None)).await;
+    }))
+    .await;
+    tokio::time::sleep(SLOW * 2).await;
+
+    let mut waiting = 0;
+    for config in &configs {
+        waiting += usize::from(a_block_waits(config).await);
+    }
+    assert_eq!(waiting, MAX_BACKGROUND_RENDERS);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_host_engine_is_shared_so_a_write_drops_every_workspaces_block() {
+    let _stable = undisturbed();
+    let one = tempfile::tempdir().unwrap();
+    let two = tempfile::tempdir().unwrap();
+    let (config_one, config_two) = (config_in(&one), config_in(&two));
+    prewarmed(&config_one).await;
+    prewarmed(&config_two).await;
+
+    let _clear = ClearHostEngine;
+    crate::memory::engine::install_host_engine(Arc::new(
+        tinymemory_api::conformance::ReferenceEngine::new(),
+    ));
+    host(&config_one, PROMPT, false)
+        .prewarm_memory_block()
+        .await;
+    host(&config_two, PROMPT, false)
+        .prewarm_memory_block()
+        .await;
+    assert!(a_block_waits(&config_two).await);
+
+    crate::memory::lifecycle::prefetch::invalidate(&config_one);
+
+    assert!(!a_block_waits(&config_two).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn another_workspaces_write_keeps_a_block_when_engines_are_not_shared() {
+    let _stable = undisturbed();
+    let one = tempfile::tempdir().unwrap();
+    let two = tempfile::tempdir().unwrap();
+    let (config_one, config_two) = (config_in(&one), config_in(&two));
+    prewarmed(&config_one).await;
+    prewarmed(&config_two).await;
+
+    crate::memory::lifecycle::prefetch::invalidate(&config_one);
+
+    assert!(!a_block_waits(&config_one).await);
+    assert!(a_block_waits(&config_two).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_background_memory_job_run_drops_the_waiting_block() {
+    use crate::memory::lifecycle::jobs;
+    use tinymemory_api::{ConsolidateRequest, ItemKind, Namespace, Reach};
+    use tinymemory_tools::queue::Selection;
+    use tinymemory_tools::BackgroundJob;
+
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_in(&tmp);
+    config.memory.recall.build_delay_secs = 0;
+    prewarmed(&config).await;
+    jobs::enqueue(
+        &config,
+        &Namespace::ROOT,
+        vec![BackgroundJob::BuildBeliefs {
+            request: ConsolidateRequest::new(Reach::exact(Namespace::agent("a")))
+                .kinds([ItemKind::Conversation]),
+        }],
+    )
+    .await;
+
+    let runs = jobs::run(&config, Selection::Due).await.expect("ran");
+
+    assert!(!runs.is_empty());
     assert!(!a_block_waits(&config).await);
 }

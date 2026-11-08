@@ -127,7 +127,12 @@ pub(crate) fn invalidate(config: &Config) {
     CACHES.invalidate_where(|key| key.workspace == config.workspace_dir);
     // A memory block rendered ahead of a generation holds what was just
     // written over or erased; it must not reach a later prompt.
-    crate::agent::session_host::invalidate_ready_memory_blocks(Some(&config.workspace_dir));
+    // The host engine is one store for every workspace in the process, so a
+    // change through one workspace reaches the blocks of all of them.
+    let shared = crate::memory::engine::host_engine_is_shared();
+    crate::agent::session_host::invalidate_ready_memory_blocks(
+        (!shared).then_some(config.workspace_dir.as_path()),
+    );
 }
 
 /// Clears all automatic packs after engine or credential invalidation. Old

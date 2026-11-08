@@ -252,3 +252,16 @@ fn a_voided_render_that_ends_is_forgotten_without_harm() {
     assert!(ready.lock().in_flight.is_empty());
     drop(live);
 }
+
+#[test]
+fn a_ticket_is_live_until_an_invalidation_voids_it() {
+    let ready = ReadyBlocks::default();
+    let one = ready.ticket(Path::new("/one"));
+    let two = ready.ticket(Path::new("/two"));
+    assert!(one.is_live() && two.is_live());
+    ready.invalidate(Some(Path::new("/one")));
+    assert!(!one.is_live(), "voided by an invalidation of its workspace");
+    assert!(two.is_live(), "another workspace's render is untouched");
+    ready.invalidate(None);
+    assert!(!two.is_live());
+}

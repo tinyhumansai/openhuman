@@ -54,15 +54,36 @@ impl OpenHumanSessionHost {
         let Some(max_tokens) = prelude.memory_block_budget() else {
             return MemoryBlockPrewarm::Unavailable;
         };
-        let Some(scope) = prelude.memory_scope("prewarm").await else {
+        let Some((scope, ticket)) = prelude.scope_and_ticket("prewarm").await else {
             return MemoryBlockPrewarm::Unavailable;
         };
         let key = ready_key(&scope, max_tokens);
         if contains(&key) {
             return MemoryBlockPrewarm::AlreadyReady;
         }
-        let ticket = ticket(&key.workspace);
-        match prelude.render_in(&scope, max_tokens, "prewarm").await {
+        // A prewarm is background work like a render past its deadline: a
+        // slow engine must not pile up callers' renders, so it takes a slot
+        // and is bounded by the same deadline.
+        let Some(_slot) = BACKGROUND_RENDERS.acquire() else {
+            tracing::warn!(
+                thread_id = prelude.thread_id.as_deref().unwrap_or(""),
+                agent_id = prelude.agent_definition_id.as_str(),
+                limit = MAX_BACKGROUND_RENDERS,
+                "[memory_block] too many renders in the background, skipping this prewarm"
+            );
+            return MemoryBlockPrewarm::Failed;
+        };
+        let render = prelude.render_in(&scope, max_tokens, "prewarm");
+        let Ok(rendered) = tokio::time::timeout(BACKGROUND_RENDER_DEADLINE, render).await else {
+            tracing::warn!(
+                thread_id = prelude.thread_id.as_deref().unwrap_or(""),
+                agent_id = prelude.agent_definition_id.as_str(),
+                limit_secs = BACKGROUND_RENDER_DEADLINE.as_secs(),
+                "[memory_block] prewarm abandoned at its deadline"
+            );
+            return MemoryBlockPrewarm::Failed;
+        };
+        match rendered {
             RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
             RenderedBlock::Empty => put(key, None, ticket),
             _ => return MemoryBlockPrewarm::Failed,
@@ -81,7 +102,7 @@ impl OpenHumanTurnPrelude {
         max_tokens: u32,
         reason: &str,
     ) -> RenderedBlock {
-        let Some(scope) = self.memory_scope(reason).await else {
+        let Some((scope, ticket)) = self.scope_and_ticket(reason).await else {
             return RenderedBlock::Empty;
         };
         let key = ready_key(&scope, max_tokens);
@@ -109,7 +130,6 @@ impl OpenHumanTurnPrelude {
         let prelude = self.clone();
         let reason_owned = reason.to_string();
         let scope_owned = scope.clone();
-        let ticket = ticket(&key.workspace);
         let thread_id = self.thread_id.clone().unwrap_or_default();
         let agent_id = self.agent_definition_id.clone();
         self.spawn_memory_work(async move {
@@ -149,6 +169,19 @@ impl OpenHumanTurnPrelude {
                     rendered
                 }
             };
+            // A change of memory while it read voided it: the waiting
+            // generation gets no block rather than the one read before.
+            let rendered = if ticket.is_live() {
+                rendered
+            } else {
+                tracing::info!(
+                    thread_id = thread_id.as_str(),
+                    agent_id = agent_id.as_str(),
+                    reason = reason_owned.as_str(),
+                    "[memory_block] render voided by a memory change, dropping it"
+                );
+                RenderedBlock::Failed
+            };
             // Nobody waiting any more: the render is for the next start.
             if let Err(rendered) = sender.send(rendered) {
                 match rendered {
@@ -179,6 +212,24 @@ impl OpenHumanTurnPrelude {
                 RenderedBlock::Deferred
             }
         }
+    }
+}
+
+impl OpenHumanTurnPrelude {
+    /// The scope a read is made in, with the ticket for it. The ticket is
+    /// taken before the (possibly slow) config load, so a change of memory
+    /// while the scope resolves voids the render instead of slipping between
+    /// the two.
+    async fn scope_and_ticket(&self, reason: &str) -> Option<(MemoryScope, Ticket)> {
+        let early = ticket(&self.workspace_dir);
+        let scope = self.memory_scope(reason).await?;
+        if scope.config.workspace_dir == self.workspace_dir {
+            return Some((scope, early));
+        }
+        // The config names another workspace: that is the one to watch.
+        drop(early);
+        let ticket = ticket(&scope.config.workspace_dir);
+        Some((scope, ticket))
     }
 }
 
@@ -265,6 +316,13 @@ pub(super) struct Ticket {
     seq: u64,
     /// Whether the store still tracks this ticket.
     tracked: bool,
+}
+
+impl Ticket {
+    /// Whether no invalidation has voided this render since it started.
+    pub(super) fn is_live(&self) -> bool {
+        lock(&self.state).in_flight.contains_key(&self.seq)
+    }
 }
 
 impl Drop for Ticket {
