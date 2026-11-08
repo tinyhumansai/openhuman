@@ -142,7 +142,7 @@ fn approval_init_config() -> tinysecurity_bus::ApprovalConfig2 {
 /// The subject and stream of TinySecurity's init audit client: the one stream
 /// the module appends every audited permission (path, command, egress) to,
 /// whichever tenant asked. The host correlates those calls on this stream
-/// ([`crate::security::approval::native::authority_audit_scope`]), never on a
+/// ([`crate::security::approval::native::permission_audit`]), never on a
 /// tenant's own approval stream, or the module's batch names a stream the
 /// sink does not know and every audited permission is denied.
 pub(crate) fn init_audit_identity() -> (tinysecurity_bus::SubjectScope, String) {

@@ -232,13 +232,10 @@ impl PermissionAudit {
 #[derive(Default)]
 struct PermissionLedgers {
     /// By the tenant's approval scope id; dropped when the tenant retires.
-    tenants: std::sync::Mutex<
-        std::collections::HashMap<String, std::sync::Arc<scopes::ScopeEntry>>,
-    >,
+    tenants:
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<scopes::ScopeEntry>>>,
     /// By the event id of a correlation handed out and not yet settled.
-    events: std::sync::Mutex<
-        std::collections::HashMap<String, std::sync::Arc<scopes::ScopeEntry>>,
-    >,
+    events: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<scopes::ScopeEntry>>>,
 }
 
 fn permission_ledgers() -> &'static PermissionLedgers {
