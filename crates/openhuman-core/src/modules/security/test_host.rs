@@ -129,7 +129,16 @@ pub(crate) fn boot() -> Option<Config> {
             })
             .ok()?;
             match rx.recv_timeout(BOOT_TIMEOUT) {
-                Ok(Ok(())) => Some(config),
+                Ok(Ok(())) => {
+                    // A host's boot arms the synchronous bridge too. Without it every
+                    // sync seam (log and output redaction, privacy and provider-host
+                    // checks) answers "runtime unavailable" and fails closed, so a test
+                    // asking the real module for a redaction got `[REDACTED]` back.
+                    if !super::sync_seam::arm_current() {
+                        log::warn!("[security][test-host] sync bridge did not arm");
+                    }
+                    Some(config)
+                }
                 outcome => {
                     log::warn!("[security][test-host] boot failed: {outcome:?}");
                     None
