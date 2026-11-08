@@ -1567,14 +1567,20 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    let missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
-        .load().await
-        .expect("oauth profile missing access token should be dropped");
+    // Only a keyring-backed store can tell that the keyring holds no access
+    // token for this row; a keyring-less view must keep a possibly
+    // keyring-held OAuth row instead of dropping it.
+    let missing_secret_config = profile_store_config(&missing_oauth_secret_dir);
+    let missing_secret =
+        AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
+            .load().await
+            .expect("oauth profile missing access token should be dropped");
     assert!(missing_secret.profiles.is_empty());
     assert!(missing_secret.active_profiles.is_empty());
     assert!(!missing_oauth_secret_dir.join("auth-profiles.json").exists());
-    let reread_missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
-        .load().await
+    let reread_missing_secret =
+        AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
+            .load().await
         .expect("re-read the persisted missing oauth secret store");
     assert!(
         !reread_missing_secret
