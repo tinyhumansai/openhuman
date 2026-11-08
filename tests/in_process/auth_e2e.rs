@@ -1672,6 +1672,7 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_deterministic() {
+    let _ = env_logger::builder().is_test(true).try_init(); // DIAG-TEMP
     let _lock = env_lock_async().await;
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let tmp = tempdir().expect("tempdir");
