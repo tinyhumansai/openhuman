@@ -35,7 +35,7 @@ async fn boot_skips_disabled_components() {
         // switch controls it (see `registry::COMPONENT_OF`), so a config with
         // every component off still boots it.
         if crate::modules::registry::component_for(record.id).is_none() {
-            assert_eq!(record.id, crate::modules::security::MODULE_ID);
+            assert_eq!(record.id, "tinysecurity");
             continue;
         }
         assert!(
