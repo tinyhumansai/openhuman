@@ -271,7 +271,7 @@ pub(crate) fn permission_audit(
 
 /// The tenant ledger a batch on the init audit stream belongs to: the one every
 /// event's correlation was handed out for. Anything else is refused.
-pub(super) fn route_permission_batch(
+fn route_permission_batch(
     request: &tinysecurity_bus::AuditSinkRequest2,
 ) -> Option<std::sync::Arc<scopes::ScopeEntry>> {
     let events = permission_ledgers()
