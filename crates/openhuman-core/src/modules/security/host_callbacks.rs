@@ -448,7 +448,14 @@ pub(in crate::modules) async fn ensure_loaded(
                     registration_id.clone(),
                 )
                 .await
-                .map_err(|_| "device pairing persistence unavailable".to_owned())?;
+                .map_err(|error| {
+                    tracing::warn!(
+                        %error,
+                        workspace = %config.workspace_dir.display(),
+                        "[security] device pairing store could not open"
+                    );
+                    "device pairing persistence unavailable".to_owned()
+                })?;
                 let state = std::sync::Arc::new(SecurityCallbackState {
                     binding: std::sync::Arc::clone(&binding),
                     consumer,
