@@ -23,3 +23,16 @@ mod keychain_error_tests;
 mod persistence_migration_tests;
 #[path = "profiles_storage_tests.rs"]
 mod storage_tests;
+
+/// A SaaS core cannot answer a keyring consent prompt, so its profile stores
+/// never ask the keyring: a profile write there waited out the consent
+/// deadline and every tenant RPC timed out.
+#[test]
+fn a_saas_process_keeps_profile_secrets_out_of_the_keyring() {
+    assert!(!super::store_core::keychain_enabled(true, true));
+    assert!(!super::store_core::keychain_enabled(false, false));
+    assert_eq!(
+        super::store_core::keychain_enabled(true, false),
+        cfg!(feature = "security-module")
+    );
+}
