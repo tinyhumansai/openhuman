@@ -185,6 +185,18 @@ fn secret_authority_boots_without_any_tenants_secret_scope() {
     );
 }
 
+/// Audited permissions are appended on the init audit stream, so the identity
+/// the host correlates them on must be exactly the one TinySecurity was given.
+#[test]
+fn audited_permissions_are_correlated_on_the_init_audit_stream() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None).unwrap();
+    let audit = module.audit.expect("audit is enabled");
+    let (subject, stream_id) = init_audit_identity();
+    assert_eq!(audit.scope, subject);
+    assert_eq!(audit.stream_id, stream_id);
+}
+
 #[tokio::test]
 async fn a_tenants_secret_registration_owns_its_cipher_on_its_own_audit_stream() {
     let temp = tempfile::tempdir().unwrap();
