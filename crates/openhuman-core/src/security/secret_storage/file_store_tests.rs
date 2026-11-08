@@ -366,7 +366,11 @@ fn a_group_writable_secrets_directory_the_core_made_is_tightened_not_refused() {
 
     assert_eq!(std::fs::read(&path).unwrap(), b"sealed");
     assert_eq!(
-        std::fs::metadata(&secrets_dir).unwrap().permissions().mode() & 0o777,
+        std::fs::metadata(&secrets_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o755,
         "only group/other write is removed from the owned leaf directory"
     );
