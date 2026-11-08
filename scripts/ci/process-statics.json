@@ -748,5 +748,15 @@
     "category": "A",
     "reason": "cfg(test) only: a per-thread stand-in for CONFIGURED_OFF so a test that turns security off cannot reach a test on another thread. Holds one flag, no tenant data, and is not compiled into any shipped build.",
     "verification": "security/switch_tests.rs: the_test_guard_does_not_reach_another_thread"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_host/runtime_session/memory_block_ready.rs",
+    "scope": "",
+    "name": "READY",
+    "type": "LazyLock<ReadyBlocks>",
+    "count": 1,
+    "category": "B",
+    "reason": "Rendered memory blocks wait here for the next generation start. Every key combines the session's workspace directory, its resolved memory identity (profile and agent) and the token budget, so a block is only ever taken by the identity it was read for; the store holds at most READY_CAPACITY entries, each dropped after READY_MAX_AGE.",
+    "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: a_block_is_not_taken_for_another_identity_or_budget"
   }
 ]

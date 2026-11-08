@@ -11,8 +11,33 @@
 use serde::{Deserialize, Serialize};
 
 pub use tinyagents_harness::config::{CompactionSettings, CompactionStrategy, ContextConfig};
-pub use tinyagents_harness::reasoning_replay::ReasoningReplay;
 use tinyagents_harness::summarization::ToolRendering;
+
+/// Which turns' reasoning a request replays (`[context] replay_reasoning`).
+///
+/// The config's own copy of the runtime policy, so the schema does not
+/// re-export a TinyAgents type. It serializes with the same names
+/// (`all` | `current_turn`), and the runtime reads it through
+/// `From<ReasoningReplay>` where a run is configured.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningReplay {
+    /// Every assistant message keeps its reasoning blocks (today's behaviour).
+    #[default]
+    All,
+    /// Only the current turn's reasoning is sent; reasoning from completed
+    /// user turns is omitted from the request.
+    CurrentTurn,
+}
+
+impl From<ReasoningReplay> for tinyagents_harness::reasoning_replay::ReasoningReplay {
+    fn from(replay: ReasoningReplay) -> Self {
+        match replay {
+            ReasoningReplay::All => Self::All,
+            ReasoningReplay::CurrentTurn => Self::CurrentTurn,
+        }
+    }
+}
 
 /// The whole `[context]` table: TinyAgents' [`ContextConfig`] and the
 /// compaction summarizer's OpenHuman-side settings.

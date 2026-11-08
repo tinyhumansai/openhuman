@@ -1,7 +1,8 @@
-use tinyagents_harness::reasoning_replay::ReasoningReplay;
+use tinyagents_harness::reasoning_replay::ReasoningReplay as HarnessReplay;
 use tinyagents_harness::result_expiry::{ExpiryOverrides, ToolResultExpiryPolicy};
 
 use super::*;
+use crate::config::ReasoningReplay;
 
 fn settings(age: Option<u32>, exempt: &[&str], replay: ReasoningReplay) -> ContextSettings {
     let mut settings = ContextSettings::default();
@@ -19,7 +20,7 @@ fn today_is_the_harness_default_and_the_config_default() {
     assert_eq!(overrides.exempt_tools, Some(policy.exempt_tools));
     assert_eq!(
         ReplayOptions::TODAY.replay_reasoning,
-        ReasoningReplay::default()
+        HarnessReplay::default()
     );
     assert_eq!(
         ReplayOptions::from_config(&ContextSettings::default()),
@@ -42,7 +43,7 @@ fn config_options_map_onto_the_harness_expiry_and_replay_options() {
             exempt_tools: Some(vec!["tool_search".into()]),
         }
     );
-    assert_eq!(options.replay_reasoning, ReasoningReplay::CurrentTurn);
+    assert_eq!(options.replay_reasoning, HarnessReplay::CurrentTurn);
 
     let policy = ToolResultExpiryPolicy::default().with_overrides(&options.expiry_overrides());
     assert!(policy.enabled);

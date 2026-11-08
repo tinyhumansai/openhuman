@@ -326,7 +326,7 @@ fn keep_recent_tokens_env_sets_clears_and_ignores_garbage() {
 
 #[test]
 fn prompt_replay_options_default_to_todays_behaviour_and_read_from_the_context_table() {
-    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+    use crate::config::ReasoningReplay;
     let defaults = Config::default().context;
     assert_eq!(defaults.tool_result_max_age_turns, None);
     assert!(defaults.tool_result_exempt_tools.is_empty());
@@ -349,7 +349,7 @@ fn prompt_replay_options_default_to_todays_behaviour_and_read_from_the_context_t
 
 #[test]
 fn prompt_replay_options_env_overlay_sets_clears_and_ignores_garbage() {
-    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+    use crate::config::ReasoningReplay;
     let mut cfg = Config::default();
     cfg.apply_env_overlay_with(
         &HashMapEnv::new()
@@ -395,7 +395,7 @@ fn prompt_replay_options_env_overlay_sets_clears_and_ignores_garbage() {
 #[test]
 fn context_overrides_change_only_the_keys_they_set() {
     use crate::config::ContextOverrides;
-    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+    use crate::config::ReasoningReplay;
 
     let mut settings = Config::default().context;
     settings.keep_recent_tokens = Some(9_000);
@@ -422,4 +422,26 @@ fn context_overrides_change_only_the_keys_they_set() {
     assert_eq!(settings.tool_result_exempt_tools, ["tool_search"]);
     assert_eq!(settings.replay_reasoning, ReasoningReplay::CurrentTurn);
     assert!(settings.prune_retired_tools);
+}
+
+#[test]
+fn reasoning_replay_converts_to_the_harness_policy_with_the_same_wire_names() {
+    use crate::config::ReasoningReplay;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay as HarnessReplay;
+    for (config, harness, name) in [
+        (ReasoningReplay::All, HarnessReplay::All, "all"),
+        (
+            ReasoningReplay::CurrentTurn,
+            HarnessReplay::CurrentTurn,
+            "current_turn",
+        ),
+    ] {
+        assert_eq!(HarnessReplay::from(config), harness);
+        assert_eq!(serde_json::to_value(config).unwrap(), name);
+        assert_eq!(serde_json::to_value(harness).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<ReasoningReplay>(name.into()).unwrap(),
+            config
+        );
+    }
 }
