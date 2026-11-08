@@ -161,7 +161,8 @@ impl OpenHumanSessionHost {
                         // thread that has history but no frozen prefix (imported
                         // rows) is not new: it predates the pin and keeps
                         // today's behaviour, however its prefix gets prepared.
-                        let generation_start = new_session;
+                        let generation_start =
+                            super::turn::starts_thread(new_session, view.raw_history);
                         let discovery = crate::agent::tinyagents::discovery::resolve(
                             &prelude.config.tool_search,
                             view.raw_history,

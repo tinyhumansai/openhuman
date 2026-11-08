@@ -530,3 +530,38 @@ fn a_forced_discovery_pin_beats_an_older_pin_on_a_row_the_compaction_retained() 
     assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(forced));
     assert_eq!(rows[2], prior[3], "the retained row is not rewritten");
 }
+
+/// A retry of an interrupted message can reach the codec before the model has
+/// answered, so the turn has no fresh row. Forcing options then has nowhere to
+/// be recorded, and the codec must not rewrite a stored row to make room: the
+/// commit would stop extending the thread and open a new generation.
+#[test]
+fn a_forced_discovery_pin_never_rewrites_a_stored_row_when_the_turn_has_no_fresh_row() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let started = DiscoveryOptions {
+        collapse_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let forced = DiscoveryOptions {
+        compact_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let first = OpenHumanRunContext::new();
+    first.session_sidecar.lock().unwrap().discovery_record = Some(started);
+    let history = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+    ];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &turn_options(first))
+        .unwrap();
+
+    let forcing = OpenHumanRunContext::new();
+    forcing.session_sidecar.lock().unwrap().discovery_record = Some(forced);
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &history, &history, &turn_options(forcing))
+        .unwrap();
+    assert_eq!(rows, prior, "no stored row is touched");
+}

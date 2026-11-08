@@ -163,11 +163,18 @@ pub(crate) fn record_metadata(
 /// onto the last row, after every retained one, so the older record cannot win
 /// again. `forced`, the options this turn records on its first fresh row, takes
 /// precedence over `prior`, since a fresh row can precede a retained one.
+/// `rows` that merely extend `prior` are left alone.
 pub fn carry_forward(
     prior: &[TranscriptMessage],
     rows: &mut [TranscriptMessage],
     forced: Option<&DiscoveryOptions>,
 ) -> bool {
+    // A turn that extends the stored rows appends; it never needs a record
+    // carried, and writing one onto a stored row would rewrite it, so the
+    // commit would open a new generation instead of extending the thread.
+    if rows.len() >= prior.len() && rows[..prior.len()] == *prior {
+        return false;
+    }
     let Some(latest) = forced
         .copied()
         .or_else(|| DiscoveryOptions::recorded_in(prior))
