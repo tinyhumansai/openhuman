@@ -38,7 +38,7 @@ pub fn sanitize_text(value: &str) -> Sanitized<String> {
     let result = if value.len() > MAX_SYNC_BYTES {
         None
     } else {
-        redact(value, tinysecurity_bus::RedactMode::Text)
+        redact_free_text(value)
     };
     let cleaned = result.unwrap_or_else(|| REDACTED.to_owned());
     Sanitized {
