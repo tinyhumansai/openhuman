@@ -9,17 +9,6 @@ use crate::security::secret_storage::SecretStore;
 
 use super::LOCK_FILENAME;
 
-/// Whether a profile store keeps its secrets in the OS keyring (through
-/// TinySecurity) rather than in its encrypted document.
-///
-/// Never in a SaaS process: every keyring access needs a person's consent,
-/// which no one can give to a headless multi-tenant core (the call would wait
-/// out the consent deadline), and tenants' secrets must not land in the
-/// operator machine's keyring. Their profile document holds them instead.
-pub(crate) fn keychain_enabled(has_security_config: bool, saas: bool) -> bool {
-    has_security_config && !saas && cfg!(feature = "security-module")
-}
-
 impl AuthProfilesStore {
     pub fn new(state_dir: &Path, encrypt_secrets: bool) -> Self {
         Self::construct(state_dir, encrypt_secrets, None)
@@ -49,10 +38,7 @@ impl AuthProfilesStore {
         security_config: Option<crate::config::Config>,
     ) -> Self {
         let user_id = super::user_id_from_state_dir(state_dir);
-        let use_keychain = keychain_enabled(
-            security_config.is_some(),
-            crate::core::runtime::mode::is_saas(),
-        );
+        let use_keychain = security_config.is_some() && cfg!(feature = "security-module");
         log::debug!(
             "[auth] AuthProfilesStore::new state_dir={} user_id={user_id} use_keychain={use_keychain}",
             state_dir.display()
