@@ -350,6 +350,16 @@ pub struct ToolSearchConfig {
     /// Retarget a call a model buries inside a pseudo `tool_call` / `call_tool`
     /// wrapper at the real tool it names. Defaults to `true`.
     pub repair_tool_call_wrapper: bool,
+    /// Apply the four options above to a thread that already exists, not only
+    /// to the thread this session creates. The session then runs the turn with
+    /// them and records them on the thread, where every later turn reads them
+    /// back; a thread that already runs with exactly these options records
+    /// nothing. An embedding host sets it per turn with
+    /// `Turn::tool_discovery_force`, which is why it is neither read from the
+    /// config file nor written to it.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub force_pin: bool,
 }
 
 impl Default for ToolSearchConfig {
@@ -364,6 +374,7 @@ impl Default for ToolSearchConfig {
             compact_search_results: false,
             collapse_search_results: false,
             repair_tool_call_wrapper: true,
+            force_pin: false,
         }
     }
 }
