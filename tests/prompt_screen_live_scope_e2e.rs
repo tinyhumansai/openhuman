@@ -67,6 +67,20 @@ async fn the_prompt_screen_follows_the_scope_a_runtime_admitted_the_module_with(
         benign.reasons
     );
 
+    // A fixture's own configuration (a gate over a bare `Config`) names another
+    // scope; the module serves it the live one rather than refusing it, so the
+    // gate's redaction and audit calls are not denied.
+    let elsewhere = tempfile::tempdir().expect("fixture config directory");
+    let fixture_config = Config {
+        config_path: elsewhere.path().join("config.toml"),
+        workspace_dir: elsewhere.path().join("workspace"),
+        action_dir: elsewhere.path().join("workspace"),
+        ..Config::default()
+    };
+    openhuman_core::modules::security::client(&fixture_config)
+        .await
+        .expect("a fixture configuration is served the live secret scope");
+
     let injected = enforce_prompt_input(INJECTION, context()).await;
     assert_eq!(
         injected.action,

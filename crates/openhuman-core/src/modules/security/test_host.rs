@@ -127,6 +127,32 @@ pub(crate) fn screening_config() -> Option<Config> {
     super::text::armed().or_else(boot)
 }
 
+/// The configuration the module is live under, for a caller whose own
+/// configuration names a different secret scope.
+///
+/// A production caller always presents the host's own configuration. A fixture
+/// that builds one of its own (a gate over a bare `Config`) would be refused
+/// the module while the runtime's scope is live, and its fail-closed paths
+/// (argument redaction, the audit write) would deny every call for a reason
+/// unrelated to the test. `None` leaves the request as it is: no test host, no
+/// scope admitted yet, or the same scope already.
+#[cfg(not(test))]
+pub(crate) fn live_scope_config(requested: &Config) -> Option<Config> {
+    if !active() {
+        return None;
+    }
+    let armed = super::text::armed()?;
+    let key_path = |config: &Config| {
+        config
+            .config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(".secret_key")
+    };
+    (key_path(&armed) != key_path(requested) && !is_fixture_scope(&key_path(&armed)))
+        .then_some(armed)
+}
+
 /// Load TinySecurity once for this process, as a host's boot does, and return
 /// the configuration it was admitted with. Blocks on the module bus, which is
 /// never the caller's runtime, so a single-threaded test runtime is safe.
