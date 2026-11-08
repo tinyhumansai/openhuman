@@ -73,6 +73,7 @@ async fn signed_in_with_key() -> Config {
     )
     .await
     .unwrap();
+    eprintln!("TMPDBG ws={:?} pre? key={:?} pre_key={:?}", user_scoped.workspace_dir, api_key::get_api_key(&user_scoped).await, api_key::get_api_key(&crate::config::load_config_with_timeout().await.unwrap()).await);
     assert_eq!(
         api_key::get_api_key(&user_scoped).await.unwrap().as_deref(),
         Some("sk-keep"),
