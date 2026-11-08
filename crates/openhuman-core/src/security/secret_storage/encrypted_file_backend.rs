@@ -433,7 +433,7 @@ impl EncryptedFileBackend {
                     .map(FileImportSource::open)
                     .transpose()?
             };
-            let (bytes, receipt) = match (staged, source.as_ref()) {
+            let (bytes, pending_source) = match (staged, source.as_ref()) {
                 (Some(staged), _) => {
                     let recovered = store
                         .recover_file_import_source(
@@ -458,15 +458,7 @@ impl EncryptedFileBackend {
                                 ))
                             })?;
                     }
-                    let verified = store
-                        .prepare_file_import(
-                            LEGACY_IMPORT_OPERATION,
-                            LEGACY_IMPORT_PAYLOAD,
-                            bytes,
-                            source,
-                        )
-                        .await?;
-                    (Zeroizing::new(bytes.to_vec()), Some(verified))
+                    (Zeroizing::new(bytes.to_vec()), Some(source))
                 }
                 (None, None) => match store
                     .recover_file_import_source(
@@ -517,6 +509,29 @@ impl EncryptedFileBackend {
                     None => store.set(name, value.as_bytes()).await?,
                 }
             }
+
+            // Stage the source only after the replay. Every `set` republishes
+            // `secrets.enc` as a new object, and the receipt pins the destination
+            // object `prepare_file_import` verified, so a write between prepare
+            // and cleanup makes cleanup refuse ("imported destination object
+            // changed") and the plaintext would never be removed.
+            let receipt = match pending_source {
+                Some(source) => Some(
+                    store
+                        .prepare_file_import(
+                            LEGACY_IMPORT_OPERATION,
+                            LEGACY_IMPORT_PAYLOAD,
+                            &bytes,
+                            source,
+                        )
+                        .await?,
+                ),
+                None => None,
+            };
+            log::debug!(
+                "[keyring:encrypted_file] legacy import replayed; cleanup receipt={}",
+                receipt.is_some()
+            );
 
             // All imported values are durable and verified before the driver is
             // allowed to remove the plaintext source.
