@@ -187,11 +187,21 @@ pub(crate) async fn authority_audit_scope(
     stream_id: &str,
 ) -> Result<SecretScope, String> {
     static AUTHORITY: tokio::sync::OnceCell<SecretScope> = tokio::sync::OnceCell::const_new();
+    if let Some(scope) = AUTHORITY.get() {
+        return Ok(scope.clone());
+    }
+    // Boxed so the storage boot behind `Rows::current` is not inlined into
+    // every security client future (it overflows auto-trait evaluation).
+    let opening: std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<rows::Rows, String>> + Send + '_>,
+    > = Box::pin(async move {
+        rows::Rows::current(config)
+            .await
+            .map_err(|error| error.to_string())
+    });
     AUTHORITY
         .get_or_try_init(|| async {
-            let rows = rows::Rows::current(config)
-                .await
-                .map_err(|error| error.to_string())?;
+            let rows = opening.await?;
             Ok::<_, String>(authority_scope_over(rows, subject, stream_id).await)
         })
         .await
