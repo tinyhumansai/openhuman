@@ -537,11 +537,9 @@ pub async fn ensure_loaded(config: &Config) -> Result<(), SecurityError> {
         let frames: Vec<&str> = bt
             .lines()
             .filter(|l| {
-                l.contains("openhuman::")
-                    && !l.contains("ensure_loaded")
-                    && !l.contains("{{closure}}")
+                l.contains("openhuman::") && !l.contains("security::ensure_loaded")
             })
-            .take(6)
+            .take(10)
             .collect();
         eprintln!(
             "DIAGX ensure_loaded now={:?} frames={:?}",
