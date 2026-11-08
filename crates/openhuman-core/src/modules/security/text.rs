@@ -89,11 +89,16 @@ pub(crate) fn classify_provider_host_blocking(
     })
 }
 
-pub(super) fn armed_config() -> Result<Config, String> {
-    let armed = CONFIG
+/// The configuration the module was last admitted with, if any.
+pub(super) fn armed() -> Option<Config> {
+    CONFIG
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+        .clone()
+}
+
+pub(super) fn armed_config() -> Result<Config, String> {
+    let armed = armed();
     #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
     let armed = armed.or_else(super::test_host::boot);
     armed.ok_or_else(|| "TinySecurity text adapter is not armed".to_owned())

@@ -112,6 +112,21 @@ fn fixture_config() -> Option<Config> {
     })
 }
 
+/// The configuration a caller with none of its own screens through.
+///
+/// TinySecurity serves one secret scope at a time, so once a runtime has
+/// admitted the module (an `auth_store_session`, an embedder's boot) the
+/// caller must present that scope: the module refuses the test host's private
+/// fixture scope while another is live, and every screen would be held as
+/// `screen.unavailable`. The fixture is for a process nothing else admitted
+/// the module in.
+pub(crate) fn screening_config() -> Option<Config> {
+    if !active() {
+        return None;
+    }
+    super::text::armed().or_else(boot)
+}
+
 /// Load TinySecurity once for this process, as a host's boot does, and return
 /// the configuration it was admitted with. Blocks on the module bus, which is
 /// never the caller's runtime, so a single-threaded test runtime is safe.

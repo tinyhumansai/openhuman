@@ -237,7 +237,7 @@ pub(crate) async fn enforce_prompt_input_with_config(
     ))]
     let test_host_config = config
         .is_none_or(|config| !config.modules.enabled)
-        .then(crate::modules::security::test_host::boot)
+        .then(crate::modules::security::test_host::screening_config)
         .flatten();
     #[cfg(all(
         feature = "security-module",
