@@ -59,15 +59,15 @@ async fn managed_scope_resolves_signin_stored_app_session_token() {
         &crate::credentials::state_dir_from_config(&config),
         config.secrets.encrypt,
     )
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            "default",
-            "sess-tok-5356",
-            HashMap::new(),
-            true,
-        )
-        .await
-        .unwrap();
+    .store_provider_token(
+        APP_SESSION_PROVIDER,
+        "default",
+        "sess-tok-5356",
+        HashMap::new(),
+        true,
+    )
+    .await
+    .unwrap();
 
     // The exact scope the managed branch uses must recover it.
     let dir = Some(crate::credentials::state_dir_from_config(&config));
