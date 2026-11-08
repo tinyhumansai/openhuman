@@ -545,6 +545,8 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
         vec![
             "list_pending",
             "list_recent_decisions",
+            "list_tool_trust",
+            "revoke_tool_trust",
             "decide",
             "get_gate_state",
             "preauthorize_flow"
