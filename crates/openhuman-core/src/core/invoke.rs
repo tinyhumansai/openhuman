@@ -92,7 +92,12 @@ pub async fn invoke_method(
                     );
                     result = Err(message);
                 }
-                SessionFailureOutcome::PassThrough => {}
+                SessionFailureOutcome::PassThrough => {
+                    log::info!(
+                        "[jsonrpc] signed-out pre-flight refusal for method='{}' — no credential stored, returning original error",
+                        method
+                    );
+                }
                 SessionFailureOutcome::PublishExpiry => {
                     log::warn!(
                         "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
