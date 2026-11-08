@@ -118,7 +118,15 @@ async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready(
     .await
     .unwrap();
 
-    assert_eq!(loaded.api_key.as_deref(), Some(sealed.as_str()));
+    assert_eq!(
+        loaded.api_key.as_deref(),
+        Some(sealed.as_str()),
+        "loaded from {}; file api_key line: {:?}",
+        loaded.config_path.display(),
+        std::fs::read_to_string(&loaded.config_path)
+            .ok()
+            .and_then(|t| t.lines().find(|l| l.starts_with("api_key")).map(str::to_owned))
+    );
 }
 
 // ── non-UTF-8 (binary) config recovery (#5167) ──────────────────────────
