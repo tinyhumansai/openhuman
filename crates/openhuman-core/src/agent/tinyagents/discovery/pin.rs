@@ -13,7 +13,8 @@
 //! A host can force new options onto a thread that exists
 //! (`ToolSearchConfig::force_pin`): the turn records them on a later row and
 //! the latest record wins. A compaction carries the record onto the first row
-//! of the generation it opens ([`carry_forward`]).
+//! of the generation it opens ([`carry_forward`]), or onto its last row when a
+//! retained row holds an older record.
 //!
 //! A thread that records nothing (every thread written before this existed,
 //! and any thread created with today's behaviour) resolves to
@@ -144,8 +145,9 @@ pub(crate) fn record_metadata(
     }
 }
 
-/// Carries the options recorded on `prior` onto the first of `rows`, a
-/// transcript about to open a compacted generation, when `rows` lost them.
+/// Carries the latest options recorded on `prior`, or the `forced` ones this
+/// turn records, onto `rows`, a transcript about to open a compacted
+/// generation, when `rows` does not end up with them as its latest record.
 /// Returns whether it recorded them.
 ///
 /// A compaction writes the retained rows into a fresh generation. The record
@@ -154,14 +156,35 @@ pub(crate) fn record_metadata(
 /// drops it, and the thread would fall back to today's behaviour. Writing it
 /// onto the first row is free here: the generation is new, so no stored row
 /// is rewritten.
-pub fn carry_forward(prior: &[TranscriptMessage], rows: &mut [TranscriptMessage]) -> bool {
-    if DiscoveryOptions::recorded_in(rows).is_some() {
-        return false;
-    }
-    let Some(options) = DiscoveryOptions::recorded_in(prior) else {
+///
+/// A retained row can also hold an *older* record while a later row, folded
+/// away, held the latest: a host that forced new options recorded them on a
+/// later row, and the latest record wins. The latest options are then written
+/// onto the last row, after every retained one, so the older record cannot win
+/// again. `forced`, the options this turn records on its first fresh row, takes
+/// precedence over `prior`, since a fresh row can precede a retained one.
+pub fn carry_forward(
+    prior: &[TranscriptMessage],
+    rows: &mut [TranscriptMessage],
+    forced: Option<&DiscoveryOptions>,
+) -> bool {
+    let Some(latest) = forced
+        .copied()
+        .or_else(|| DiscoveryOptions::recorded_in(prior))
+    else {
         return false;
     };
-    options.record_on(rows, &[true])
+    match DiscoveryOptions::recorded_in(rows) {
+        Some(held) if held == latest => false,
+        Some(_) => {
+            let mut last = vec![false; rows.len()];
+            if let Some(slot) = last.last_mut() {
+                *slot = true;
+            }
+            latest.record_on(rows, &last)
+        }
+        None => latest.record_on(rows, &[true]),
+    }
 }
 
 impl Default for DiscoveryOptions {

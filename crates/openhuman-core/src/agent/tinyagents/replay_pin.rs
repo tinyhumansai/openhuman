@@ -7,6 +7,10 @@
 //! options (`discovery/pin.rs` is the model). A resumed thread reads them back;
 //! the config and the embedder's options only choose them for the next thread.
 //!
+//! The compaction tail (`[context] keep_recent_tokens`) is pinned with them,
+//! but only when the thread started with one: a thread that pinned none follows
+//! the config, as every thread did before.
+//!
 //! A compaction carries the record onto the first row of the generation it
 //! opens ([`carry_forward`]), so a thread keeps its options after the row that
 //! held them is folded away.
@@ -42,6 +46,11 @@ pub struct ReplayOptions {
     pub tool_result_exempt_tools: Vec<String>,
     /// Which turns' reasoning a request carries.
     pub replay_reasoning: ReasoningReplay,
+    /// The verbatim tail, in tokens, an in-turn compaction keeps after its
+    /// summary. `None` is not pinned: the config's value applies, as it does
+    /// for a thread that recorded nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_recent_tokens: Option<u32>,
 }
 
 impl ReplayOptions {
@@ -51,6 +60,7 @@ impl ReplayOptions {
         tool_result_max_age_turns: None,
         tool_result_exempt_tools: Vec::new(),
         replay_reasoning: ReasoningReplay::All,
+        keep_recent_tokens: None,
     };
 
     /// The options `[context]` asks new threads to start with. An age of `0`
@@ -66,7 +76,14 @@ impl ReplayOptions {
                 Vec::new()
             },
             replay_reasoning: config.replay_reasoning.into(),
+            keep_recent_tokens: config.keep_recent_tokens,
         }
+    }
+
+    /// The compaction tail a turn on this thread keeps: the pinned one, or
+    /// `configured` while the thread pinned none.
+    pub fn keep_recent_tokens_or(&self, configured: Option<u64>) -> Option<u64> {
+        self.keep_recent_tokens.map(u64::from).or(configured)
     }
 
     /// The per-run overrides that make the harness expire results exactly as
