@@ -103,6 +103,14 @@ pub fn module_config(config: &Config) -> tinysecurity_bus::ModuleConfig {
     }
 }
 
+/// TinySecurity's keyring store for the host's keyring backend selection.
+pub(crate) fn module_keyring_backend(
+    _selection: Option<&str>,
+    _workspace_dir: &std::path::Path,
+) -> Option<tinysecurity_bus::KeyringBackend2> {
+    Some(tinysecurity_bus::KeyringBackend2::Os)
+}
+
 /// TinySecurity's deadline for the host's answer to one keyring prompt. It
 /// outlasts the host's own wait, so an unanswered prompt comes back as
 /// pending from the host rather than racing the module's timer.
