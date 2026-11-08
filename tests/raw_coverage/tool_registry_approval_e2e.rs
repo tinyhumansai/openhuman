@@ -1083,7 +1083,18 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         json!({}),
     )
     .await;
-    eprintln!("PROBE list_failure={list_failure}");
+    // Pending requests live in the gate's own memory, not the store, so
+    // listing them survives a blocked store (nothing is parked here).
+    assert!(
+        list_failure.get("error").is_none(),
+        "listing pending approvals does not touch the store: {list_failure}"
+    );
+    assert_eq!(
+        payload(&list_failure, "approval_list_pending blocked store")
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
 
     let recent_failure = rpc(
         &harness.rpc_base,
@@ -1092,7 +1103,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         json!({}),
     )
     .await;
-    eprintln!("PROBE recent_failure={recent_failure}");
+    assert!(recent_failure.get("error").is_some());
 
     let decide_failure = rpc(
         &harness.rpc_base,
@@ -1101,7 +1112,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         json!({ "request_id": "blocked-store", "decision": "deny" }),
     )
     .await;
-    eprintln!("PROBE decide_failure={decide_failure}");
+    assert!(decide_failure.get("error").is_some());
 
     let persist_failure = turn_origin::with_origin(
         AgentTurnOrigin::WebChat {
@@ -1124,16 +1135,26 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     )
     .await;
     match persist_failure.0 {
-        other => eprintln!("PROBE persist_failure={other:?} id={:?}", persist_failure.1),
+        // The blocked store refused the terminal write above, which latches
+        // the gate closed: the next external-effect admission is denied
+        // before the engine is asked (`gate_intercept.rs` audit latch).
+        GateOutcome::Deny { reason } => {
+            assert!(
+                reason.contains("approval audit is unavailable"),
+                "a refused terminal audit write must fail the next admission closed: {reason}"
+            );
+        }
+        other => panic!("expected the audit latch to deny, got {other:?}"),
     }
+    assert_eq!(persist_failure.1, None);
     assert!(gate
         .pending_for_thread("approval-persist-failure-thread")
         .is_none());
 
-    // A terminal write for a row the gate never reserved is refused, and a
-    // refused terminal audit write latches the gate closed: every later
-    // external-effect admission is denied. Last, because it ends the gate's
-    // useful life in this process.
+    // A terminal write for a row the gate never reserved is refused too, and
+    // the latch the blocked store set above holds: every later external-effect
+    // admission stays denied. Last, because it ends the gate's useful life in
+    // this process.
     gate.record_execution(
         "missing-gate-row",
         ExecutionOutcome::Failure,
