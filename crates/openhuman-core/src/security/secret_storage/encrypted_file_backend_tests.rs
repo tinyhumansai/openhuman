@@ -165,7 +165,7 @@ fn profile_read_only_secret_lookup_does_not_create_a_missing_key() {
         .get_profile_read_only("account:session")
         .unwrap_err();
 
-    assert!(error.to_string().contains("master key unavailable"));
+    assert!(error.to_string().contains("master key unavailable"), "{error}");
     assert!(!workspace.path().join("keyring/master.key").exists());
 }
 
@@ -242,7 +242,7 @@ fn legacy_plaintext_is_removed_only_after_verified_encrypted_migration() {
             .as_deref(),
         Some("second-value")
     );
-    assert!(!legacy_path.exists());
+    assert!(!legacy_path.exists(), "{:?}", std::fs::read_dir(dir.path()).map(|d| d.flatten().map(|e| e.file_name()).collect::<Vec<_>>()));
     assert!(backend.path.exists());
     assert!(!legacy_path.with_extension("json.migrated").exists());
     assert_eq!(
