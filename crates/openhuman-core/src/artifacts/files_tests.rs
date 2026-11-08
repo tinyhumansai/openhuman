@@ -251,8 +251,20 @@ async fn tampered(workspace: &Path, file: &Path, file_root: &Path) -> String {
         .unwrap_err()
 }
 
+/// TinySecurity's protected floor answers no path as protected, so a case
+/// exercises the guard's own checks: with no module to ask, the floor fails
+/// closed and refuses every path before the guard under test runs.
+#[cfg(feature = "security-module")]
+fn open_floor() -> crate::modules::security::gap::PathFloorPortGuard {
+    use crate::modules::security::gap::{install_path_floor_port, ScriptedPathFloorPort};
+    install_path_floor_port(ScriptedPathFloorPort::new([], Vec::new()))
+}
+
+
 #[tokio::test]
 async fn the_escape_guard_rejects_a_file_outside_its_folder() {
+    #[cfg(feature = "security-module")]
+    let _floor = open_floor();
     let tmp = TempDir::new().unwrap();
     let files_dir = tmp.path().join("Files");
     std::fs::create_dir_all(&files_dir).unwrap();
@@ -269,6 +281,8 @@ async fn the_escape_guard_rejects_a_file_outside_its_folder() {
 
 #[tokio::test]
 async fn the_escape_guard_keeps_the_credential_store_floor() {
+    #[cfg(feature = "security-module")]
+    let _floor = open_floor();
     let tmp = TempDir::new().unwrap();
     let ssh = tmp.path().join(".ssh");
     std::fs::create_dir_all(&ssh).unwrap();
@@ -315,6 +329,8 @@ async fn a_legacy_record_still_resolves_under_the_workspace() {
 /// guard must reject `..` components rather than rely on `starts_with`.
 #[tokio::test]
 async fn a_legacy_path_with_parent_components_is_rejected() {
+    #[cfg(feature = "security-module")]
+    let _floor = open_floor();
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::write(tmp.path().join("secret.txt"), b"private").unwrap();
