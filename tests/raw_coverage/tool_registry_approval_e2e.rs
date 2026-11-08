@@ -930,10 +930,18 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         auto_approved.0,
         openhuman_core::security::approval::GateOutcome::Allow
     ));
-    assert_eq!(
-        auto_approved.1, None,
-        "always-allowed tools should bypass persisted approvals"
+    // No prompt was parked for it. The engine still audits the automatic
+    // approval and hands back that row's id so the caller can close it with the
+    // terminal result.
+    assert!(
+        gate.pending_for_thread("approval-auto-thread").is_none(),
+        "always-allowed tools should bypass approval prompts"
     );
+    let auto_audit_id = auto_approved
+        .1
+        .as_deref()
+        .expect("an automatic approval is audited and its row id returned");
+    gate.record_execution(auto_audit_id, ExecutionOutcome::Success, None);
 
     live_policy::install(
         Arc::new(SecurityPolicy {
