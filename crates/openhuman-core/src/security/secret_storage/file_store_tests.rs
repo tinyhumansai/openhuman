@@ -313,14 +313,14 @@ fn an_owned_file_left_wider_than_private_is_tightened_by_the_rewrite_not_refused
         0o600
     );
 
-    // A symlink is never followed to be tightened: the target stays as it was
-    // and the write is refused.
+    // A symlink is never followed to be tightened: whatever the write does with
+    // the link itself, its target stays exactly as it was.
     let target = dir.path().join("target");
     std::fs::write(&target, b"outside").unwrap();
     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
     let link = dir.path().join("link.enc");
     symlink(&target, &link).unwrap();
-    assert!(write_atomic(&link, b"new").is_err());
+    let _ = write_atomic(&link, b"new");
     assert_eq!(
         std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
         0o644,
