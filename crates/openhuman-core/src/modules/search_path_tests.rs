@@ -56,7 +56,7 @@ fn defers_tinysecurity_artifacts_until_host_callback_admission() {
 /// failures, which all reach `tinychannels`).
 #[test]
 fn defers_every_callback_bound_module_artifact_to_the_callback_load() {
-    for id in super::super::ops::CALLBACK_BOUND_MODULES {
+    for id in crate::modules::ops::CALLBACK_BOUND_MODULES {
         for artifact in [
             format!("/modules/lib{id}.so"),
             format!("/modules/lib{id}_module.so"),
