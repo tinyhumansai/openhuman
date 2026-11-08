@@ -47,6 +47,15 @@ including raw provider errors. Unknown per-model charges stay `None`. Terminal
 `LastTurnUsage` retains the core cost-source classification, which can distinguish
 provider charges from catalogue estimates.
 
+`TurnObservation::Setup` reports a step the turn ran before its first model
+request, in the order the steps ran: `SetupPhase::AgentOpen`,
+`TranscriptResume`, `PromptRefresh` and `MemoryBlock`, each with its duration
+in milliseconds and whether it failed or was skipped (a memory block that
+missed its `memory_block_deadline_ms`). A step the turn did not need (no
+resume on a new thread, no refresh on a prompt that stays) reports nothing.
+Setup events carry no text or identifiers, and `run_id` is usually `None`
+because the run has not started; correlate by order within the observed turn.
+
 The terminal callback runs after the supplied dispatch future completes,
 including its cleanup, and handles failures that have no `TurnOutcome`. Dropping
 the entire future cannot promise a terminal callback; use the turn cancellation

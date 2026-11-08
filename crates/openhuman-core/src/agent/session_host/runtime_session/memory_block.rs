@@ -53,12 +53,14 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use tinyagents_harness::observability::turn_observer::{SetupOutcome, SetupPhase};
 use tinyagents_runtime::{PrefixSnapshot, SessionStateView, TranscriptCodec, TurnPreparation};
 use tinyinference_llm::message::Message;
 use tinymemory_tools::layout::identity::ResolvedIdentity;
 
 use super::super::types::OpenHumanSessionHost;
 use super::OpenHumanTurnPrelude;
+use crate::agent::session_host::setup_report::reported;
 use crate::memory::lifecycle::memory_block as render;
 pub(crate) use crate::memory::lifecycle::memory_block::MEMORY_BLOCK_MARKER;
 
@@ -237,7 +239,17 @@ impl OpenHumanTurnPrelude {
             None
         };
         let block = match reason {
-            Some(reason) => match self.block_for_generation(max_tokens, reason).await {
+            Some(reason) => match reported(
+                SetupPhase::MemoryBlock,
+                self.block_for_generation(max_tokens, reason),
+                |rendered| match rendered {
+                    RenderedBlock::Failed => SetupOutcome::Failed,
+                    RenderedBlock::Deferred => SetupOutcome::Skipped,
+                    _ => SetupOutcome::Completed,
+                },
+            )
+            .await
+            {
                 RenderedBlock::Block(block) => Some(block),
                 RenderedBlock::Ready(block) => block,
                 RenderedBlock::Empty => None,
