@@ -104,7 +104,17 @@ async fn load_profile_with_keyring(
     let mut keyring_unavailable = false;
     let document_owned =
         profile.secret_location == Some(super::persistence::SecretLocation::EncryptedDocument);
-    let keychain_secrets = if profile_store.use_keychain && !document_owned {
+    // The TinySecurity keyring lives behind the security module, whose
+    // admission opens (and so creates) the workspace store. Every keyring
+    // write went through that admission, so a workspace with no store has
+    // never held a keyring secret: treat it as absent rather than creating
+    // the store from a read-only lookup. A keyring-owned record still fails
+    // closed below when its secret is absent.
+    let keyring_store_exists = crate::storage::local::store_exists(&config.workspace_dir);
+    if !keyring_store_exists {
+        log::debug!("[auth] read-only profile lookup: no workspace store; keyring treated as absent");
+    }
+    let keychain_secrets = if profile_store.use_keychain && !document_owned && keyring_store_exists {
         match read_keyring(&profile_store, &id).await {
             Ok(Some(secrets)) => Some(secrets),
             Ok(None) => None,
