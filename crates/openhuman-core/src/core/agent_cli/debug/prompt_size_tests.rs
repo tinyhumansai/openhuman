@@ -107,6 +107,7 @@ async fn session_report_measures_the_visible_belt_not_the_registry() {
         &definition,
     )
     .await
+    .map_err(|e| { eprintln!("DIAG build error: {e:#}"); e })
     .expect("test-owned prompt-size session build");
 
     let dumped =

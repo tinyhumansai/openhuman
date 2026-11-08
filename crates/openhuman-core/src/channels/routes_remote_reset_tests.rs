@@ -262,6 +262,7 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         },
     )
     .await
+    .map_err(|e| { eprintln!("DIAG reset error: {e:?}"); e })
     .expect("captured tenant reset succeeds");
     assert!(matches!(cleared, RemoteHostResult::Completed));
     let alice_after = session_messages(&alice_core, workspace, &alice_store_agent, &alice_session);

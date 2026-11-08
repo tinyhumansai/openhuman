@@ -85,6 +85,7 @@ async fn config(tmp: &tempfile::TempDir, agent_id: Option<&str>) -> Config {
     crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
         .await
         .expect("store channel test credential");
+    eprintln!("DIAG readback={:?}", crate::security::credentials::api_key::get_api_key(&config).await.map(|k| k.is_some()).map_err(|e| format!("{e:#}")));
     if let Some(agent_id) = agent_id {
         config
             .agent

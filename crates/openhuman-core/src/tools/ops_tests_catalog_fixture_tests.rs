@@ -259,6 +259,7 @@ async fn tool_catalog_matches_frontend_fixture() {
         Vec::new()
     };
     if !added.is_empty() || !removed.is_empty() {
+        eprintln!("DIAG catalog added={added:?} removed={removed:?} full={full_product}");
         panic!(
             "core tool catalog drifted from the frontend fixture at {} (product features compiled: {full_product}).\n\
              added:   {added:?}\n\

@@ -1070,41 +1070,6 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     }
     std::fs::write(&storage_dir, "not a directory").expect("replace storage dir with file");
 
-    let persist_failure = turn_origin::with_origin(
-        AgentTurnOrigin::WebChat {
-            thread_id: "approval-persist-failure-thread".to_string(),
-            client_id: "approval-persist-failure-client".to_string(),
-            request_id: None,
-        },
-        gate.intercept_audited(
-            &ApprovalTurnContext::chat(ApprovalChatContext {
-                thread_id: "approval-persist-failure-thread".to_string(),
-                client_id: "approval-persist-failure-client".to_string(),
-                // No turn in scope in this fixture; the field is documented as
-                // carried only when the caller has one (`gate.rs:91-95`).
-                request_id: None,
-            }),
-            "tools.persistence_failure",
-            "tools.persistence_failure(action=coverage)",
-            json!({ "action": "coverage" }),
-        ),
-    )
-    .await;
-    // Admission against the blocked store is refused before any terminal write
-    // has latched the gate: the engine cannot record the request, so the call
-    // is denied and nothing is parked or audited.
-    match persist_failure.0 {
-        GateOutcome::Deny { reason } => {
-            eprintln!("PROBE persist reason={reason}");
-        }
-        other => panic!("expected a persistence-failure deny, got {other:?}"),
-    }
-    assert_eq!(persist_failure.1, None);
-    assert!(gate
-        .pending_for_thread("approval-persist-failure-thread")
-        .is_none());
-
-    // A terminal write the blocked store refuses latches the gate closed.
     gate.record_execution(
         &request_id,
         ExecutionOutcome::Success,
@@ -1149,23 +1114,42 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     .await;
     assert!(decide_failure.get("error").is_some());
 
-    // The refused terminal write above latched the gate closed: the next
-    // external-effect admission is denied before the engine is asked.
-    match gate
-        .intercept(
-            &Default::default(),
-            "tools.web_search",
-            "tools.web_search(query=after-blocked-store)",
-            json!({ "query": "after-blocked-store" }),
-        )
-        .await
-    {
-        GateOutcome::Deny { reason } => assert!(
-            reason.contains("approval audit is unavailable"),
-            "a refused terminal audit write must fail the next admission closed: {reason}"
+    let persist_failure = turn_origin::with_origin(
+        AgentTurnOrigin::WebChat {
+            thread_id: "approval-persist-failure-thread".to_string(),
+            client_id: "approval-persist-failure-client".to_string(),
+            request_id: None,
+        },
+        gate.intercept_audited(
+            &ApprovalTurnContext::chat(ApprovalChatContext {
+                thread_id: "approval-persist-failure-thread".to_string(),
+                client_id: "approval-persist-failure-client".to_string(),
+                // No turn in scope in this fixture; the field is documented as
+                // carried only when the caller has one (`gate.rs:91-95`).
+                request_id: None,
+            }),
+            "tools.persistence_failure",
+            "tools.persistence_failure(action=coverage)",
+            json!({ "action": "coverage" }),
         ),
+    )
+    .await;
+    match persist_failure.0 {
+        // The blocked store refused the terminal write above, which latches
+        // the gate closed: the next external-effect admission is denied
+        // before the engine is asked (`gate_intercept.rs` audit latch).
+        GateOutcome::Deny { reason } => {
+            assert!(
+                reason.contains("approval audit is unavailable"),
+                "a refused terminal audit write must fail the next admission closed: {reason}"
+            );
+        }
         other => panic!("expected the audit latch to deny, got {other:?}"),
     }
+    assert_eq!(persist_failure.1, None);
+    assert!(gate
+        .pending_for_thread("approval-persist-failure-thread")
+        .is_none());
 
     // A terminal write for a row the gate never reserved is refused too, and
     // the latch the blocked store set above holds: every later external-effect
