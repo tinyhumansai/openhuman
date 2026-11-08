@@ -390,6 +390,7 @@ impl EncryptedFileBackend {
         Fut: std::future::Future<Output = tinystoragedrivers::Result<T>> + Send + 'static,
     {
         if let Err(error) = self.import_legacy_dev_keychain(key) {
+            eprintln!("DIAGTMP legacy import error: {error:?}");
             if self.path.exists() {
                 log::warn!(
                     "[keyring:encrypted_file] legacy plaintext import was not completed: {error}"
