@@ -268,3 +268,72 @@ fn the_codec_records_replay_options_on_the_first_new_row_only_once() {
     assert_eq!(rows[0], prior[0]);
     assert_eq!(ReplayOptions::recorded_in(&rows), Some(wanted));
 }
+
+/// A compaction writes the retained rows into a new generation. Its first row
+/// is the refreshed system prompt, so the stored row that carried the
+/// discovery record is gone; the codec records it again.
+#[test]
+fn discovery_pin_survives_compaction() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = DiscoveryOptions {
+        collapse_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().discovery_record = Some(wanted);
+    let history = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+        Message::user("two"),
+        Message::assistant("second answer"),
+    ];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &options(context))
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&prior), Some(wanted));
+
+    // The compacted generation: a prompt with a freshly rendered memory block,
+    // a summary for the folded turn, and the verbatim tail.
+    let compacted = vec![
+        Message::system("prompt with a fresh memory block"),
+        Message::user("summary of the first turn"),
+        history[3].clone(),
+        history[4].clone(),
+    ];
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &prior,
+            &history,
+            &compacted,
+            &options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(wanted));
+    assert!(
+        rows[1..].iter().all(|row| row.extra_metadata.is_none()),
+        "only the first row carries it"
+    );
+
+    // A thread that recorded nothing still records nothing.
+    let bare = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &bare,
+            &history,
+            &compacted,
+            &options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), None);
+}
