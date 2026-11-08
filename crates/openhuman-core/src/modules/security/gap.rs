@@ -151,7 +151,7 @@ pub(crate) trait BudgetPort: std::fmt::Debug + Send + Sync {
 }
 
 /// Scriptable TinySecurity path-floor operations for jail and path adapters.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 #[async_trait]
 pub(crate) trait PathFloorPort: std::fmt::Debug + Send + Sync {
     async fn protected_paths(&self, paths: &[PathBuf]) -> Result<Vec<bool>, String>;
@@ -178,25 +178,68 @@ pub(crate) trait PathValidationPort: std::fmt::Debug + Send + Sync {
     ) -> Result<tinysecurity_bus::PathValidationResult, String>;
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 thread_local! {
     static TEST_PATH_FLOOR_PORT: std::cell::RefCell<Option<Arc<dyn PathFloorPort>>> = const { std::cell::RefCell::new(None) };
-    static TEST_PATH_VALIDATION_PORT: std::cell::RefCell<Option<Arc<dyn PathValidationPort>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
-pub(crate) struct PathFloorPortGuard(Option<Arc<dyn PathFloorPort>>);
+thread_local! {
+    static TEST_PATH_VALIDATION_PORT: std::cell::RefCell<Option<Arc<dyn PathValidationPort>>> = const { std::cell::RefCell::new(None) };
+}
 
-#[cfg(test)]
+/// Restores the previously installed path-floor port when dropped.
+#[cfg(any(test, feature = "test-keyring-consent"))]
+pub struct PathFloorPortGuard(Option<Arc<dyn PathFloorPort>>);
+
+#[cfg(any(test, feature = "test-keyring-consent"))]
 impl Drop for PathFloorPortGuard {
     fn drop(&mut self) {
         TEST_PATH_FLOOR_PORT.with(|slot| *slot.borrow_mut() = self.0.take());
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-keyring-consent"))]
 pub(crate) fn install_path_floor_port(port: Arc<dyn PathFloorPort>) -> PathFloorPortGuard {
     PathFloorPortGuard(TEST_PATH_FLOOR_PORT.with(|slot| slot.borrow_mut().replace(port)))
+}
+
+/// A path floor whose every query fails, as when TinySecurity cannot answer.
+#[cfg(any(test, feature = "test-keyring-consent"))]
+#[derive(Debug)]
+struct UnavailablePathFloorPort;
+
+#[cfg(any(test, feature = "test-keyring-consent"))]
+#[async_trait]
+impl PathFloorPort for UnavailablePathFloorPort {
+    async fn protected_paths(&self, _paths: &[PathBuf]) -> Result<Vec<bool>, String> {
+        Err("scripted TinySecurity path floor is unavailable".into())
+    }
+
+    async fn check_paths(
+        &self,
+        _kind: tinysecurity_bus::PathCheckKind,
+        _paths: &[PathBuf],
+    ) -> Result<Vec<bool>, String> {
+        Err("scripted TinySecurity path floor is unavailable".into())
+    }
+
+    async fn protected_floor(&self) -> Result<tinysecurity_bus::ProtectedFloor2, String> {
+        Err("scripted TinySecurity path floor is unavailable".into())
+    }
+
+    async fn credential_roots(&self, _home: Option<PathBuf>) -> Result<Vec<PathBuf>, String> {
+        Err("scripted TinySecurity path floor is unavailable".into())
+    }
+}
+
+/// Test support for downstream crates: make this thread's TinySecurity path
+/// floor answer every query with an error, so a caller's fail-closed branch
+/// can be exercised even when the real module is staged. Not built into the
+/// product (`test-keyring-consent` is a test-only feature).
+#[cfg(any(test, feature = "test-keyring-consent"))]
+pub fn install_unavailable_path_floor_port() -> PathFloorPortGuard {
+    install_path_floor_port(Arc::new(UnavailablePathFloorPort))
 }
 
 #[cfg(test)]
@@ -476,7 +519,7 @@ static PATH_SCOPES: OnceLock<tokio::sync::Mutex<Vec<(PathPolicy, PathPolicyId)>>
 
 /// `ProtectedPath2`: one answer per path, in request order.
 pub(crate) async fn protected_paths(paths: &[PathBuf]) -> Result<Vec<bool>, String> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-keyring-consent"))]
     if let Some(port) = TEST_PATH_FLOOR_PORT.with(|slot| slot.borrow().clone()) {
         let answers = port.protected_paths(paths).await?;
         if answers.len() != paths.len() {
