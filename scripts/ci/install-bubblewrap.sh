@@ -33,7 +33,7 @@ apt-get install -y -qq --no-install-recommends \
   ca-certificates curl xz-utils gcc libc6-dev pkg-config libcap-dev meson ninja-build >/dev/null
 
 echo "[ci][bwrap] fetching bubblewrap ${VERSION}"
-curl -fsSL --retry 3 -o "$work/bubblewrap.tar.xz" "$URL"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 -o "$work/bubblewrap.tar.xz" "$URL"
 echo "${SHA256}  $work/bubblewrap.tar.xz" | sha256sum -c -
 
 tar -xJf "$work/bubblewrap.tar.xz" -C "$work"
