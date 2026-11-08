@@ -281,17 +281,21 @@ async fn the_escape_guard_rejects_a_file_outside_its_folder() {
 
 #[tokio::test]
 async fn the_escape_guard_keeps_the_credential_store_floor() {
-    #[cfg(feature = "security-module")]
-    let _floor = open_floor();
     let tmp = TempDir::new().unwrap();
     let ssh = tmp.path().join(".ssh");
     std::fs::create_dir_all(&ssh).unwrap();
     let key = ssh.join("id_ed25519");
     std::fs::write(&key, b"-----BEGIN").unwrap();
+    // TinySecurity's floor answers that the key is a credential store.
+    #[cfg(feature = "security-module")]
+    let _floor = crate::modules::security::gap::install_path_floor_port(
+        crate::modules::security::gap::ScriptedPathFloorPort::new([key.clone()], Vec::new()),
+    );
 
-    // Even a record whose root claims the key's parent is refused.
+    // Even a record whose root claims the key's parent is refused, by the floor
+    // (its own message), before the containment check runs.
     let err = tampered(tmp.path(), &key, tmp.path()).await;
-    assert!(err.contains("escape guard"), "{err}");
+    assert!(err.contains("protected location"), "{err}");
 }
 
 #[cfg(unix)]
