@@ -741,10 +741,12 @@ fn zz_diag_set_inode() {
     use tinystoragedrivers::secrets::SecretStore as _;
     let dir = secrets_tempdir();
     let backend = EncryptedFileBackend::new(dir.path());
-    let store = backend.store(&[0x42; KEY_LEN]);
-    crate::storage::block_on(store.set("a", b"1")).unwrap();
+    let store = std::sync::Arc::new(backend.store(&[0x42; KEY_LEN]));
+    let s1 = store.clone();
+    crate::storage::block_on(async move { s1.set("a", b"1").await }).unwrap();
     let before = std::fs::metadata(dir.path().join("secrets.enc")).unwrap();
-    crate::storage::block_on(store.set("b", b"2")).unwrap();
+    let s2 = store.clone();
+    crate::storage::block_on(async move { s2.set("b", b"2").await }).unwrap();
     let after = std::fs::metadata(dir.path().join("secrets.enc")).unwrap();
     eprintln!("DIAG before dev={} ino={} after dev={} ino={}", before.dev(), before.ino(), after.dev(), after.ino());
 }
