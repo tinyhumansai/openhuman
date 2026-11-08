@@ -225,10 +225,7 @@ async fn digest_rendering_scrubs_persisted_outputs() {
     assert!(!entry.contains("synthetic-credential-value"));
     // TinySecurity's redaction marker is `[REDACTED]` (tinysecurity-redact
     // README); the string step's token is replaced by exactly that marker.
-    assert!(
-        entry.contains("- n2 [success]: \"[REDACTED]\""),
-        "{entry}"
-    );
+    assert!(entry.contains("- n2 [success]: \"[REDACTED]\""), "{entry}");
     assert!(!entry.contains(&token_output));
     assert!(entry.contains("n2"));
     assert!(entry.chars().count() <= DIGEST_MAX_CHARS);
