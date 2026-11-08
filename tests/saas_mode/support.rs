@@ -224,6 +224,7 @@ pub fn start(d: &Deployment) -> (Server, String, reqwest::blocking::Client) {
     let (server, base) = spawn_core(|port| {
         let mut cmd = core_command(d, &["--port", &port.to_string()]);
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        if let Ok(path) = std::env::var("TMPDBG_CORE_LOG") { cmd.stderr(std::fs::File::create(format!("{path}.{port}")).unwrap()); cmd.env("RUST_LOG", "debug"); }
         cmd
     });
     let client = reqwest::blocking::Client::builder()
