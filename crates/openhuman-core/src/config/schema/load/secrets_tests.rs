@@ -2,6 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn config_secret_encryption_fails_closed_without_tinysecurity() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let dir = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.config_path = dir.path().join("config.toml");

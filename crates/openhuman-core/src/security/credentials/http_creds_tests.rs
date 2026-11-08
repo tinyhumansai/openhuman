@@ -61,6 +61,8 @@ fn header_scheme_without_header_name_errors() {
 
 #[tokio::test]
 async fn encrypted_http_credentials_fail_closed_without_tinysecurity() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let (dir, store) = temp_store();
     let secret = "sk_live_super_secret_value";
     let error = store

@@ -93,6 +93,8 @@ async fn load_or_init_for_workspace(root: &std::path::Path) -> Config {
 
 #[tokio::test]
 async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let root = tempfile::tempdir().unwrap();
     let config_path = root.path().join("config.toml");
     let sealed = format!("enc2:{}", "00".repeat(32));
