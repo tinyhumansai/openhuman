@@ -288,7 +288,20 @@ fn module_proxy(
 
 /// Retire whatever was released, then return `config`'s live registration or
 /// register a new one. The caller holds the loads lock.
-async fn ensure_tenant(config: &Config, state: &SecurityCallbackState) -> Result<(), String> {
+///
+/// Boxed as a `Send` future: it nests the whole registration, and leaving
+/// it inline overflows the auto-trait evaluation of the callers' futures.
+fn ensure_tenant<'a>(
+    config: &'a Config,
+    state: &'a SecurityCallbackState,
+) -> futures::future::BoxFuture<'a, Result<(), String>> {
+    Box::pin(ensure_tenant_inner(config, state))
+}
+
+async fn ensure_tenant_inner(
+    config: &Config,
+    state: &SecurityCallbackState,
+) -> Result<(), String> {
     let proxy = module_proxy(state)?;
     let key_path = config_key_path(config);
     for tenant in super::secret_tenants::take_retiring() {
