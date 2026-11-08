@@ -105,6 +105,7 @@ fn policy_translation_copies_effective_host_settings() {
 
 #[test]
 fn first_load_and_reinit_share_one_policy_translator() {
+    let _env = crate::config::test_env::EnvVarGuard::locked_unset("OPENHUMAN_KEYRING_BACKEND");
     let config = Config::default();
     let module = module_config(&config);
     assert_eq!(module.policy, policy_config(&config));
@@ -309,4 +310,95 @@ fn the_host_config_carries_the_judge_it_is_given() {
     .unwrap();
 
     assert_eq!(translated.judge, Some(judge));
+}
+
+fn keyring_workspace() -> std::path::PathBuf {
+    std::env::temp_dir().join("oh-policy-keyring").join("workspace")
+}
+
+fn encrypted_store_beside_host_keyring(workspace: &std::path::Path) -> tinysecurity_bus::KeyringBackend2 {
+    tinysecurity_bus::KeyringBackend2::EncryptedFile {
+        directory: workspace
+            .join("keyring")
+            .join("tinysecurity")
+            .display()
+            .to_string(),
+    }
+}
+
+/// On a machine with no usable OS keyring the host's own secret storage runs
+/// on its file backends; TinySecurity's keyring must follow it there or every
+/// keyring call is denied.
+#[test]
+fn file_keyring_selections_use_an_encrypted_store_beside_the_host_keyring() {
+    let workspace = keyring_workspace();
+    for selection in ["file", "encrypted_file", " Encrypted_File "] {
+        assert_eq!(
+            module_keyring_backend(Some(selection), &workspace),
+            Some(encrypted_store_beside_host_keyring(&workspace)),
+            "{selection:?}"
+        );
+    }
+}
+
+#[test]
+fn os_unset_and_unknown_keyring_selections_stay_on_the_os_store() {
+    let workspace = keyring_workspace();
+    for selection in [None, Some("os"), Some(" OS "), Some("bogus")] {
+        assert_eq!(
+            module_keyring_backend(selection, &workspace),
+            Some(tinysecurity_bus::KeyringBackend2::Os),
+            "{selection:?}"
+        );
+    }
+}
+
+/// `memory` keeps the host's secrets out of every durable store, so the module
+/// gets no keyring at all and refuses each keyring call, rather than writing
+/// them into the OS keyring the operator opted out of.
+#[test]
+fn memory_keyring_selection_configures_no_module_keyring() {
+    assert_eq!(
+        module_keyring_backend(Some("memory"), &keyring_workspace()),
+        None
+    );
+}
+
+/// The module rejects a relative store directory at load, which would take
+/// the whole security module down; refuse only the keyring instead.
+#[test]
+fn file_keyring_selection_with_a_relative_workspace_configures_no_module_keyring() {
+    assert_eq!(
+        module_keyring_backend(Some("file"), std::path::Path::new("relative/workspace")),
+        None
+    );
+}
+
+#[test]
+fn module_bootstrap_keyring_follows_the_host_keyring_backend_setting() {
+    let _env = crate::config::test_env::EnvVarGuard::locked_set("OPENHUMAN_KEYRING_BACKEND", "file");
+    let mut config = Config::default();
+    config.workspace_dir = keyring_workspace();
+
+    let keyring = module_config(&config)
+        .crypto
+        .expect("TinySecurity crypto is configured")
+        .keyring
+        .expect("file selection configures the module keyring");
+
+    assert_eq!(
+        keyring.backend,
+        encrypted_store_beside_host_keyring(&config.workspace_dir)
+    );
+    assert_eq!(keyring.service, "openhuman");
+    assert_eq!(keyring.consent_timeout_ms, KEYRING_CONSENT_TIMEOUT_MS);
+}
+
+#[test]
+fn module_bootstrap_has_no_keyring_under_the_memory_setting() {
+    let _env = crate::config::test_env::EnvVarGuard::locked_set("OPENHUMAN_KEYRING_BACKEND", "memory");
+    let crypto = module_config(&Config::default())
+        .crypto
+        .expect("TinySecurity crypto stays configured");
+    assert!(crypto.keyring.is_none());
 }
