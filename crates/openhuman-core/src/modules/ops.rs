@@ -272,6 +272,7 @@ async fn ensure_loaded_with_storage_callback(
     config: &Config,
     id: &str,
 ) -> Result<(), String> {
+    eprintln!("DIAGWW ensure_loaded_with_security_callback {id}\n{}", std::backtrace::Backtrace::force_capture());
     let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
     callback_load::detached(resolver, async move {
         callback_load::load_with_storage_callback(&task_resolver, &config, &id).await
