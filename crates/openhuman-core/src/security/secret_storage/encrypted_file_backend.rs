@@ -682,3 +682,7 @@ mod tests;
 #[cfg(test)]
 #[path = "encrypted_file_backend_fixture_tests.rs"]
 mod fixture_tests;
+
+#[cfg(test)]
+#[path = "encrypted_file_backend_key_tests.rs"]
+mod key_tests;
