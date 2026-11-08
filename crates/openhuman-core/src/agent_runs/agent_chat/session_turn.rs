@@ -1,9 +1,11 @@
 //! Agent chat turns with the full tool-using harness.
 
 use super::envelope::AgentChatReply;
+use crate::agent::session_host::setup_report::{reported, result_outcome};
 use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyagents_harness::observability::turn_observer::SetupPhase;
 
 use super::guards::{
     effective_agent_chat_origin, enforce_user_prompt_or_reject, grant_turn_cwd,
@@ -544,13 +546,17 @@ pub(super) async fn agent_chat_reply_for_inner(
                 "[inference] agent_chat rooting turn tools at cwd={}",
                 root.display()
             );
-            let mut agent = build_turn_agent(
-                &turn_ctx,
-                &scoped,
-                &target,
-                turn_session_id,
-                temperature,
-                turn_model_source.clone(),
+            let mut agent = reported(
+                SetupPhase::AgentOpen,
+                build_turn_agent(
+                    &turn_ctx,
+                    &scoped,
+                    &target,
+                    turn_session_id,
+                    temperature,
+                    turn_model_source.clone(),
+                ),
+                result_outcome,
             )
             .await
             .map_err(anyhow::Error::msg)?;
@@ -560,13 +566,17 @@ pub(super) async fn agent_chat_reply_for_inner(
             agent.set_workspace_descriptor(Some(tinytools::WorkspaceDescriptor::new(root.clone())));
             agent
         }
-        None => build_turn_agent(
-            &turn_ctx,
-            config,
-            &target,
-            turn_session_id,
-            temperature,
-            turn_model_source,
+        None => reported(
+            SetupPhase::AgentOpen,
+            build_turn_agent(
+                &turn_ctx,
+                config,
+                &target,
+                turn_session_id,
+                temperature,
+                turn_model_source,
+            ),
+            result_outcome,
         )
         .await
         .map_err(anyhow::Error::msg)?,

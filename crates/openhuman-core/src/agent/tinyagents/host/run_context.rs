@@ -148,6 +148,54 @@ pub(crate) struct SessionTurnSidecar {
     pub stop: Option<tinyagents_harness::turn_stop::TurnStop>,
     /// Deferred native terminal finalized after transcript durability.
     pub deferred_terminal: Option<crate::agent::tinyagents::turn_outcome::DeferredTurnTerminal>,
+    /// The discovery options this turn starts its thread with, to be recorded
+    /// on the first row the commit writes. Set by the turn that prepares the
+    /// thread's first prompt and only when they differ from today's
+    /// behaviour; see `tinyagents::discovery::DiscoveryOptions`.
+    pub discovery_record: Option<crate::agent::tinyagents::discovery::DiscoveryOptions>,
+    /// The history-replay options this turn starts its thread with, recorded
+    /// like `discovery_record`; see `tinyagents::replay_pin::ReplayOptions`.
+    pub replay_record: Option<crate::agent::tinyagents::replay_pin::ReplayOptions>,
+}
+
+/// The per-run harness options a session sets on the `RunConfig` it hands its
+/// driver. The driver builds its own run config, so it copies these across, or
+/// the harness reads them empty and falls back to the process-wide policy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SessionRunOptions {
+    pub discovery: tinyagents_harness::tool::discover::DiscoveryOverrides,
+    pub result_expiry: tinyagents_harness::result_expiry::ExpiryOverrides,
+    pub replay_reasoning: Option<tinyagents_harness::reasoning_replay::ReasoningReplay>,
+}
+
+impl SessionRunOptions {
+    /// The options `config` carries.
+    pub(crate) fn of(config: &tinyagents_harness::context::RunConfig) -> Self {
+        Self {
+            discovery: config.discovery,
+            result_expiry: config.result_expiry.clone(),
+            replay_reasoning: config.replay_reasoning,
+        }
+    }
+
+    /// Whether no option is set.
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `config` with these options set. A config is left as it is when none are
+    /// set, so a run that carries its own (a sub-agent) keeps them.
+    pub(crate) fn apply_to(
+        &self,
+        mut config: tinyagents_harness::context::RunConfig,
+    ) -> tinyagents_harness::context::RunConfig {
+        if !self.is_empty() {
+            config.discovery = self.discovery;
+            config.result_expiry = self.result_expiry.clone();
+            config.replay_reasoning = self.replay_reasoning;
+        }
+        config
+    }
 }
 
 #[path = "dispatch_control.rs"]
@@ -303,6 +351,10 @@ pub struct OpenHumanRunContext {
     pub(crate) context_middleware: Option<TurnContextMiddleware>,
     /// Model/harness sidecars consumed only after a durable commit.
     pub(crate) session_sidecar: Arc<Mutex<SessionTurnSidecar>>,
+    /// The per-run harness options the owning session prepared on its
+    /// `RunConfig` (discovery, result expiry, reasoning replay), carried to the
+    /// `RunConfig` the turn driver builds. Empty for any turn without a session.
+    pub(crate) session_run_options: SessionRunOptions,
     /// Required structured-output contract for this exact host turn. The
     /// driver repairs it before returning a candidate to runtime validation.
     pub(crate) required_output: Option<tinyagents_harness::config::RequiredOutput>,
@@ -351,3 +403,7 @@ mod behavior;
 #[cfg(test)]
 #[path = "run_context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "run_context_carried_state_tests.rs"]
+mod carried_state_tests;

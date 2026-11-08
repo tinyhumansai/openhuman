@@ -14,6 +14,9 @@
 //! known renders no block at all, and memory switched off reads as nothing
 //! known; an engine failure is an error the caller logs and survives.
 
+use std::future::Future;
+use std::time::Instant;
+
 use tinymemory_api::{BeliefsRequest, Error, Hit, ListRequest, Reach, Result, BELIEF_TAG};
 use tinymemory_tools::layout::identity::ResolvedIdentity;
 use tinymemory_tools::recall::estimate_tokens;
@@ -80,6 +83,7 @@ pub(crate) async fn read(
     identity: &ResolvedIdentity,
     max_tokens: u32,
 ) -> Result<Option<String>> {
+    let started = Instant::now();
     let memory = match super::agent_memory(config, identity).await {
         Ok(memory) => memory,
         Err(Error::Off(reason)) => {
@@ -88,21 +92,41 @@ pub(crate) async fn read(
         }
         Err(error) => return Err(error),
     };
+    let resolve_ms = elapsed_ms(started);
     let engine = memory.engine();
-    let beliefs = engine
-        .beliefs(BeliefsRequest::new(
+    // Two independent round trips: overlapped, a hosted engine's latency is
+    // paid once.
+    let (beliefs, facts) = futures::try_join!(
+        timed(engine.beliefs(BeliefsRequest::new(
             Reach::subtree(identity.root().clone()),
             BELIEFS_LIMIT,
-        ))
-        .await?;
-    let facts = engine
-        .list(ListRequest::new(
+        ))),
+        timed(engine.list(ListRequest::new(
             identity.layout.learnings_filter(),
             FACTS_LIMIT,
-        ))
-        .await?
-        .items;
-    Ok(render(&beliefs, &facts, max_tokens))
+        ))),
+    )?;
+    tracing::debug!(
+        resolve_ms,
+        beliefs_ms = beliefs.1,
+        list_ms = facts.1,
+        beliefs = beliefs.0.len(),
+        facts = facts.0.items.len(),
+        "[memory_block] read"
+    );
+    Ok(render(&beliefs.0, &facts.0.items, max_tokens))
+}
+
+/// Whole milliseconds since `started`.
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// `read`'s answer with the milliseconds it took.
+async fn timed<T>(read: impl Future<Output = Result<T>>) -> Result<(T, u64)> {
+    let started = Instant::now();
+    let answer = read.await?;
+    Ok((answer, elapsed_ms(started)))
 }
 
 #[cfg(test)]

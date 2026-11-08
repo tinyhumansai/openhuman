@@ -37,14 +37,30 @@
 //! [`with_memory_block`]. Doing nothing is also correct: the next turn finds
 //! the inherited block and renders a fresh one.
 //!
-//! Logs: `[memory_block] rendered|kept|empty|error` with the thread and agent
-//! ids and the block's token count; never its content.
+//! **Off the critical path.** With `[memory] memory_block_deadline_ms` a
+//! generation start waits that long for its render: when the deadline lapses
+//! the turn keeps the recorded block (a cold thread sends none), logs
+//! `[memory_block] deferred`, and the render finishes in the background into
+//! `memory_block_ready.rs`, where the next generation start takes it. A host
+//! can fill the same store ahead of a turn with
+//! [`OpenHumanSessionHost::prewarm_memory_block`].
+//!
+//! Logs: `[memory_block] rendered|ready|kept|empty|deferred|error` with the
+//! thread and agent ids, the block's token count and, for a render, its
+//! `elapsed_ms` (the per-step breakdown is `[memory_block] read` at debug);
+//! never its content.
 
+use std::sync::Arc;
+use std::time::Instant;
+
+use tinyagents_harness::observability::turn_observer::{SetupOutcome, SetupPhase};
 use tinyagents_runtime::{PrefixSnapshot, SessionStateView, TranscriptCodec, TurnPreparation};
 use tinyinference_llm::message::Message;
+use tinymemory_tools::layout::identity::ResolvedIdentity;
 
 use super::super::types::OpenHumanSessionHost;
 use super::OpenHumanTurnPrelude;
+use crate::agent::session_host::setup_report::reported;
 use crate::memory::lifecycle::memory_block as render;
 pub(crate) use crate::memory::lifecycle::memory_block::MEMORY_BLOCK_MARKER;
 
@@ -82,6 +98,20 @@ pub(super) enum RenderedBlock {
     Empty,
     /// The read failed.
     Failed,
+    /// The deadline lapsed before the render finished (see
+    /// `memory_block_ready.rs`): the render goes on in the background.
+    Deferred,
+    /// A block rendered ahead of this generation start; `None` when that
+    /// render found nothing known.
+    Ready(Option<Message>),
+}
+
+/// What a read of memory is made as: the session's config and acting
+/// identity.
+#[derive(Clone)]
+pub(super) struct MemoryScope {
+    pub(super) config: Arc<crate::config::Config>,
+    pub(super) identity: ResolvedIdentity,
 }
 
 impl OpenHumanTurnPrelude {
@@ -93,31 +123,55 @@ impl OpenHumanTurnPrelude {
             .map(|block| block.max_tokens)
     }
 
-    /// Reads memory as this session's identity and renders the block.
-    pub(super) async fn render_memory_block(&self, max_tokens: u32, reason: &str) -> RenderedBlock {
-        let thread_id = self.thread_id.as_deref().unwrap_or("");
-        let agent_id = self.agent_definition_id.as_str();
+    /// The config and identity this session reads memory as; `None` when it
+    /// cannot read memory at all.
+    pub(super) async fn memory_scope(&self, reason: &str) -> Option<MemoryScope> {
         let config = match self.memory_config().await {
             Some(config) if self.memory_readable() => config,
             _ => {
                 tracing::debug!(
-                    thread_id,
-                    agent_id,
+                    thread_id = self.thread_id.as_deref().unwrap_or(""),
+                    agent_id = self.agent_definition_id.as_str(),
                     reason,
                     tokens = 0,
                     "[memory_block] empty: memory unavailable to this session"
                 );
-                return RenderedBlock::Empty;
+                return None;
             }
         };
         let identity = self.memory_identity(&config);
-        match render::read(&config, &identity, max_tokens).await {
+        Some(MemoryScope { config, identity })
+    }
+
+    /// Reads memory as this session's identity and renders the block.
+    pub(super) async fn render_memory_block(&self, max_tokens: u32, reason: &str) -> RenderedBlock {
+        match self.memory_scope(reason).await {
+            Some(scope) => self.render_in(&scope, max_tokens, reason).await,
+            None => RenderedBlock::Empty,
+        }
+    }
+
+    /// Reads memory within `scope` and renders the block, logging how long it
+    /// took.
+    pub(super) async fn render_in(
+        &self,
+        scope: &MemoryScope,
+        max_tokens: u32,
+        reason: &str,
+    ) -> RenderedBlock {
+        let thread_id = self.thread_id.as_deref().unwrap_or("");
+        let agent_id = self.agent_definition_id.as_str();
+        let started = Instant::now();
+        let read = render::read(&scope.config, &scope.identity, max_tokens).await;
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match read {
             Ok(Some(text)) => {
                 tracing::info!(
                     thread_id,
                     agent_id,
                     reason,
                     tokens = tinymemory_tools::recall::estimate_tokens(&text),
+                    elapsed_ms,
                     "[memory_block] rendered"
                 );
                 RenderedBlock::Block(Message::system(text))
@@ -128,6 +182,7 @@ impl OpenHumanTurnPrelude {
                     agent_id,
                     reason,
                     tokens = 0,
+                    elapsed_ms,
                     "[memory_block] empty"
                 );
                 RenderedBlock::Empty
@@ -138,6 +193,7 @@ impl OpenHumanTurnPrelude {
                     agent_id,
                     reason,
                     %error,
+                    elapsed_ms,
                     "[memory_block] error: keeping the recorded block"
                 );
                 RenderedBlock::Failed
@@ -183,10 +239,21 @@ impl OpenHumanTurnPrelude {
             None
         };
         let block = match reason {
-            Some(reason) => match self.render_memory_block(max_tokens, reason).await {
+            Some(reason) => match reported(
+                SetupPhase::MemoryBlock,
+                self.block_for_generation(max_tokens, reason),
+                |rendered| match rendered {
+                    RenderedBlock::Failed => SetupOutcome::Failed,
+                    RenderedBlock::Deferred => SetupOutcome::Skipped,
+                    _ => SetupOutcome::Completed,
+                },
+            )
+            .await
+            {
                 RenderedBlock::Block(block) => Some(block),
+                RenderedBlock::Ready(block) => block,
                 RenderedBlock::Empty => None,
-                RenderedBlock::Failed => recorded.clone(),
+                RenderedBlock::Failed | RenderedBlock::Deferred => recorded.clone(),
             },
             None => {
                 tracing::debug!(
@@ -262,7 +329,10 @@ impl OpenHumanSessionHost {
             .await
         {
             RenderedBlock::Block(block) => Some(block),
-            RenderedBlock::Empty | RenderedBlock::Failed => None,
+            RenderedBlock::Empty
+            | RenderedBlock::Failed
+            | RenderedBlock::Deferred
+            | RenderedBlock::Ready(_) => None,
         }
     }
 }

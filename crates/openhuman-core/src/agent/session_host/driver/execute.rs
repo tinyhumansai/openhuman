@@ -124,9 +124,16 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             &request.run_context.data.recorded_tool_names,
         )?;
         // Text dialects need the positional registry to recover P-Format and code-style calls.
-        let run_context = request.run_context.data.clone().with_tool_dialect(
+        let mut run_context = request.run_context.data.clone().with_tool_dialect(
             tinyagents_harness::dialect::dispatcher_for_format(self.dispatcher.tool_call_format()),
         );
+        // The turn builds its own `RunConfig`, so the options the session set on
+        // this request's config (result expiry, reasoning replay, discovery)
+        // have to be handed over here.
+        run_context.session_run_options =
+            crate::agent::tinyagents::host::run_context::SessionRunOptions::of(
+                &request.run_context.config,
+            );
         let cancellation = request.run_context.cancellation.clone();
         // Boxing avoids worker-stack overflow in debug builds.
         let turn = Box::pin(async move {

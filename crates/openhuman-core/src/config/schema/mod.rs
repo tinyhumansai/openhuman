@@ -123,7 +123,8 @@ pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrust
 pub use channel_voice::{ChannelVoiceConfig, ChannelVoiceOverride, VoiceReplyMode};
 pub(crate) use cli_overrides::set_cli_inference_overrides;
 pub use context::{
-    CompactionSettings, CompactionStrategy, ContextConfig, ContextSettings, SummarizerSettings,
+    CompactionSettings, CompactionStrategy, ContextConfig, ContextOverrides, ContextSettings,
+    ReasoningReplay, SummarizerSettings,
 };
 pub use cron::CronConfig;
 pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
