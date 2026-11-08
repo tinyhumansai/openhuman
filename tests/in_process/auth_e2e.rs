@@ -1104,14 +1104,39 @@ async fn auth_remote_backend_bearer_only_paths_round_trip_with_a_handed_over_ses
 }
 
 
+/// A config that admits TinySecurity for a profile store rooted in `dir`.
+fn profile_store_config(dir: &Path) -> openhuman_core::config::Config {
+    openhuman_core::config::Config {
+        config_path: dir.join("config.toml"),
+        workspace_dir: dir.join("workspace"),
+        ..Default::default()
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_files() {
     let _lock = env_lock_async().await;
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let tmp = tempdir().expect("tempdir");
     let state_dir = tmp.path().join("profiles");
-    let store = AuthProfilesStore::new(&state_dir, true);
+    let config = profile_store_config(tmp.path());
 
+    // Encrypting secrets needs the admitted TinySecurity cipher: a store built
+    // without a config fails closed rather than writing a secret it could not
+    // encrypt.
+    let refused = AuthProfilesStore::new(&tmp.path().join("no-config"), true)
+        .upsert_profile(
+            AuthProfile::new_token("openai", "refused", "sk-never-written".to_string()),
+            true,
+        )
+        .await
+        .expect_err("a config-less encrypting store must refuse to write secrets");
+    assert!(
+        format!("{refused:#}").contains("TinySecurity configuration is unavailable"),
+        "unexpected config-less refusal: {refused:#}"
+    );
+
+    let store = AuthProfilesStore::new_with_config(&state_dir, true, &config);
     assert_eq!(store.path(), state_dir.join("auth-profiles/secrets.enc"));
     let empty = store.load().await.expect("empty store load");
     assert!(empty.profiles.is_empty());
@@ -1230,7 +1255,7 @@ async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_
     std::fs::create_dir_all(&corrupt_dir).expect("create corrupt profile dir");
     let corrupt_path = corrupt_dir.join("auth-profiles.json");
     std::fs::write(&corrupt_path, "{ not valid json").expect("write corrupt profile store");
-    let corrupt_store = AuthProfilesStore::new(&corrupt_dir, true);
+    let corrupt_store = AuthProfilesStore::new_with_config(&corrupt_dir, true, &config);
     let recovered = corrupt_store
         .load().await
         .expect("corrupt profile store recovers");
@@ -1260,10 +1285,14 @@ async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_
         .to_string(),
     )
     .expect("write legacy profile store");
-    let legacy = AuthProfilesStore::new(&legacy_dir, true)
+    let legacy = AuthProfilesStore::new_with_config(&legacy_dir, true, &config)
         .load().await
         .expect("legacy schema 0 should normalize");
-    assert_eq!(legacy.schema_version, 1);
+    assert_eq!(legacy.schema_version, 2);
+    assert!(
+        !legacy_dir.join("auth-profiles.json").exists(),
+        "the legacy document is imported once and removed"
+    );
 
     let future_dir = tmp.path().join("future");
     std::fs::create_dir_all(&future_dir).expect("create future profile dir");
@@ -1278,7 +1307,7 @@ async fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_
         .to_string(),
     )
     .expect("write future profile store");
-    let future_err = AuthProfilesStore::new(&future_dir, true)
+    let future_err = AuthProfilesStore::new_with_config(&future_dir, true, &config)
         .load().await
         .expect_err("future schema should fail");
     assert!(
@@ -1389,11 +1418,14 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
 
     let default_profiles =
         openhuman_core::credentials::profiles::AuthProfilesData::default();
-    assert_eq!(default_profiles.schema_version, 1);
+    assert_eq!(default_profiles.schema_version, 2);
     assert!(default_profiles.profiles.is_empty());
 
     let empty_path_store = AuthProfilesStore::new(Path::new(""), false);
-    assert_eq!(empty_path_store.path(), Path::new("auth-profiles.json"));
+    assert_eq!(
+        empty_path_store.path(),
+        Path::new("auth-profiles").join("secrets.enc")
+    );
 
     let empty_dir = tmp.path().join("empty-file");
     std::fs::create_dir_all(&empty_dir).expect("create empty profile dir");
@@ -1457,14 +1489,24 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
         mixed.active_profiles.get("gitlab").map(String::as_str),
         Some("gitlab:main")
     );
-    let rewritten: Value = serde_json::from_str(
-        &std::fs::read_to_string(mixed_dir.join("auth-profiles.json"))
-            .expect("read rewritten mixed profile store"),
-    )
-    .expect("rewritten mixed store should be json");
+    // The legacy document was imported into the encrypted store; a fresh
+    // store reading it back sees only the surviving entries.
+    assert!(!mixed_dir.join("auth-profiles.json").exists());
+    assert!(mixed_store.path().exists());
+    let reread = AuthProfilesStore::new(&mixed_dir, false)
+        .load().await
+        .expect("re-read the persisted mixed store");
     assert!(
-        rewritten.pointer("/profiles/legacy:bad-kind").is_none(),
-        "dropped profile should be purged from persisted store: {rewritten}"
+        !reread.profiles.contains_key("legacy:bad-kind"),
+        "dropped profile should be purged from persisted store"
+    );
+    assert!(!reread.active_profiles.contains_key("legacy"));
+    assert_eq!(
+        reread
+            .profiles
+            .get("gitlab:main")
+            .and_then(|profile| profile.token.as_deref()),
+        Some("plain-gitlab-token")
     );
 
     let invalid_datetime_dir = tmp.path().join("invalid-datetime");
@@ -1530,22 +1572,19 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
         .expect("oauth profile missing access token should be dropped");
     assert!(missing_secret.profiles.is_empty());
     assert!(missing_secret.active_profiles.is_empty());
-    let rewritten_missing_secret: Value = serde_json::from_str(
-        &std::fs::read_to_string(missing_oauth_secret_dir.join("auth-profiles.json"))
-            .expect("read rewritten missing oauth secret profile store"),
-    )
-    .expect("rewritten missing oauth secret store should be json");
+    assert!(!missing_oauth_secret_dir.join("auth-profiles.json").exists());
+    let reread_missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+        .load().await
+        .expect("re-read the persisted missing oauth secret store");
     assert!(
-        rewritten_missing_secret
-            .pointer("/profiles/github:missing-access")
-            .is_none(),
-        "missing oauth secret profile should be purged from persisted store: {rewritten_missing_secret}"
+        !reread_missing_secret
+            .profiles
+            .contains_key("github:missing-access"),
+        "missing oauth secret profile should be purged from persisted store"
     );
     assert!(
-        rewritten_missing_secret
-            .pointer("/active_profiles/github")
-            .is_none(),
-        "active pointer to missing oauth secret profile should be purged: {rewritten_missing_secret}"
+        !reread_missing_secret.active_profiles.contains_key("github"),
+        "active pointer to missing oauth secret profile should be purged"
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");
@@ -1569,7 +1608,8 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
     let tmp = tempdir().expect("tempdir");
     let state_dir = tmp.path().join("json-fallback");
-    let store = AuthProfilesStore::new(&state_dir, false);
+    let store =
+        AuthProfilesStore::new_with_config(&state_dir, true, &profile_store_config(tmp.path()));
     let profile = AuthProfile::new_oauth(
         "github",
         "json-fallback",
@@ -1587,20 +1627,23 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
     store
         .upsert_profile(profile, true).await
         .expect("upsert oauth profile after backend selection");
-    let raw: Value = serde_json::from_str(
-        &std::fs::read_to_string(state_dir.join("auth-profiles.json"))
-            .expect("read persisted auth profiles"),
-    )
-    .expect("persisted auth profiles json");
-    let persisted_access_token = raw.pointer(&format!("/profiles/{profile_id}/access_token"));
+    assert!(store.path().exists(), "the encrypted profile document is written");
+    // A keyring-less, non-decrypting view shows what the document itself
+    // holds: a keyring-owned profile is withheld, a document-held one carries
+    // only ciphertext.
+    let document_view = AuthProfilesStore::new(&state_dir, false)
+        .load().await
+        .expect("read the persisted document without the keyring");
+    let persisted_access_token = document_view
+        .profiles
+        .get(&profile_id)
+        .and_then(|profile| profile.token_set.as_ref())
+        .map(|tokens| tokens.access_token.clone());
     assert!(
-        persisted_access_token.is_some_and(|value| {
-            value.is_null()
-                || value
-                    .as_str()
-                    .is_some_and(|secret| secret.starts_with("enc2:"))
-        }),
-        "persisted profile should either keychain-strip or encrypt access token: {raw}"
+        persisted_access_token
+            .as_deref()
+            .is_none_or(|secret| secret.starts_with("enc2:")),
+        "persisted profile should either keychain-strip or encrypt access token: {persisted_access_token:?}"
     );
 
     let loaded = store.load().await.expect("reload json fallback profile");
@@ -1616,7 +1659,7 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
     let root_path_store = AuthProfilesStore::new(Path::new("/"), false);
     assert_eq!(
         root_path_store.path(),
-        Path::new("/").join("auth-profiles.json")
+        Path::new("/").join("auth-profiles").join("secrets.enc")
     );
 }
 
