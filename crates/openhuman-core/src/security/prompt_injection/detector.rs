@@ -139,6 +139,25 @@ fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
     }
 }
 
+/// A unit test's scripted scan answer ([`super::scan_port`]); test-support
+/// builds outside unit tests always scan through TinySecurity.
+#[cfg(all(
+    feature = "security-module",
+    any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+))]
+async fn scripted_scan(
+    _input: &str,
+) -> Option<Result<tinysecurity_bus::ScanPromptScoredResponse2, String>> {
+    #[cfg(test)]
+    {
+        super::scan_port::scripted_scan(_input).await
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
 /// One bounded `ScanPrompt2`; the outer error is the budget running out.
 #[cfg(feature = "security-module")]
 async fn scan_within_budget(
@@ -261,7 +280,9 @@ pub(crate) async fn enforce_prompt_input_with_config(
         feature = "security-module",
         any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
     ))]
-    let scanned = {
+    let scanned = if let Some(answer) = scripted_scan(input).await {
+        Ok(answer)
+    } else {
         let (config, input) = (config.clone(), input.to_owned());
         let task = crate::modules::runtime::spawn_on_bus(async move {
             let _ = crate::modules::security::ensure_loaded(&config).await;
