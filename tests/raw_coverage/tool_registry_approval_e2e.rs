@@ -712,7 +712,6 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
-    openhuman_core::core::logging::init_for_cli_run(true, openhuman_core::core::logging::CliLogDefault::Global); // TEMP-DIAG
     let _lock = env_lock_async().await;
     let harness = setup("").await;
     let config = Config::load_or_init()
@@ -822,11 +821,6 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         &request_id,
         ExecutionOutcome::Aborted,
         Some("aborted after approval"),
-    );
-    gate.record_execution(
-        "missing-gate-row",
-        ExecutionOutcome::Failure,
-        Some("missing row"),
     );
     assert!(gate.pending_for_thread("approval-raw-thread").is_none());
 
@@ -1127,6 +1121,31 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     assert!(gate
         .pending_for_thread("approval-persist-failure-thread")
         .is_none());
+
+    // A terminal write for a row the gate never reserved is refused, and a
+    // refused terminal audit write latches the gate closed: every later
+    // external-effect admission is denied. Last, because it ends the gate's
+    // useful life in this process.
+    gate.record_execution(
+        "missing-gate-row",
+        ExecutionOutcome::Failure,
+        Some("missing row"),
+    );
+    match gate
+        .intercept(
+            &Default::default(),
+            "tools.web_search",
+            "tools.web_search(query=after-missing-row)",
+            json!({ "query": "after-missing-row" }),
+        )
+        .await
+    {
+        GateOutcome::Deny { reason } => assert!(
+            reason.contains("approval audit is unavailable"),
+            "a failed terminal audit write must latch the gate closed: {reason}"
+        ),
+        other => panic!("expected the audit latch to deny, got {other:?}"),
+    }
 
     harness.rpc_join.abort();
 }

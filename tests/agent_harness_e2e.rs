@@ -886,7 +886,6 @@ async fn boot_stack_with_options(
     api_origin_override: Option<String>,
     home_override: Option<PathBuf>,
 ) -> Stack {
-    openhuman_core::core::logging::init_for_cli_run(true, openhuman_core::core::logging::CliLogDefault::Global); // TEMP-DIAG
     // This suite boots the core in-process, so install the hosted backend
     // transport before any RPC can reach backend-backed providers.
     tinyhumans_boot::boot();
