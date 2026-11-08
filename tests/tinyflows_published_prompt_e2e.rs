@@ -100,9 +100,22 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
     let (library, _) = published_tinyflows::staged_v0_9_5_module();
-    let module_search_path = library
+    let tinyflows_dir = library
         .parent()
         .expect("staged module artifact has a search directory");
+    // Search the pinned TinyFlows directory first, then keep the runner's
+    // staged modules: every host boots TinySecurity, and a search path holding
+    // only TinyFlows leaves the child without it (cf. `STAGED_MODULE_KEYS` in
+    // `doctor_e2e.rs`).
+    let joined_search_path = std::env::join_paths(
+        std::iter::once(tinyflows_dir.to_path_buf()).chain(
+            std::env::var_os("OPENHUMAN_MODULE_PATH")
+                .map(|staged| std::env::split_paths(&staged).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        ),
+    )
+    .expect("module search path entries contain no separator");
+    let module_search_path = Path::new(&joined_search_path);
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace directory");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
