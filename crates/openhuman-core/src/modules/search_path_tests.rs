@@ -57,10 +57,16 @@ fn defers_tinysecurity_artifacts_until_host_callback_admission() {
 #[test]
 fn defers_every_callback_bound_module_artifact_to_the_callback_load() {
     for id in crate::modules::ops::CALLBACK_BOUND_MODULES {
+        // Released artifacts are named after the record's library name
+        // (`libtinysecurity_module.so`, `libtinyeventqueues.so`), not its id.
+        let lib = crate::modules::registry::find(id)
+            .expect("every callback-bound module has a registry record")
+            .source
+            .lib_name;
         for artifact in [
-            format!("/modules/lib{id}.so"),
-            format!("/modules/lib{id}_module.so"),
-            format!("/modules/{id}_module.dll"),
+            format!("/modules/lib{lib}.so"),
+            format!("/modules/lib{lib}.dylib"),
+            format!("/modules/{lib}.dll"),
         ] {
             let path = PathBuf::from(&artifact);
             assert!(
