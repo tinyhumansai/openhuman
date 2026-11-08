@@ -131,8 +131,13 @@ impl SecretScope {
         .map(|_| ())
     }
 
-    /// Register through the callback-bound TinySecurity client used for this
-    /// module instance.
+    /// Forget the module's registration of this scope once it was retired.
+    pub(crate) async fn forget_registration(&self) {
+        self.entry.forget_registration().await;
+    }
+
+    /// Register this runtime scope (with its audit stream) through the
+    /// callback-bound TinySecurity client used for this module instance.
     pub(crate) async fn ensure_registered_with_callback(
         &self,
         config: &crate::config::Config,
@@ -140,7 +145,7 @@ impl SecretScope {
         generation: u64,
     ) -> Result<(), String> {
         let proxy = crate::modules::security::SecurityProxy::callback(proxy.clone());
-        let entry = scopes::ensure_preconfigured(
+        let entry = scopes::ensure(
             config,
             &proxy,
             self.entry.subject.clone(),

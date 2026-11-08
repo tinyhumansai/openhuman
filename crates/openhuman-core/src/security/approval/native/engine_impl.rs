@@ -26,8 +26,8 @@ impl NativeEngine {
             .await
             .map_err(unavailable)?;
         let generation = Self::generation(&proxy).await?;
-        let scope = crate::modules::ops::security_secret_scope()
-            .await
+        let scope = crate::modules::ops::security_tenant_by_registration(&registration_id)
+            .map(|tenant| tenant.scope.clone())
             .ok_or_else(|| unavailable("native secret scope unavailable"))?;
         let request = SecretRequest2 {
             registration_id: registration_id.clone(),

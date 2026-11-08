@@ -192,6 +192,12 @@ impl ScopeEntry {
         Ok(())
     }
 
+    /// Forget the module's registration of this subject after it was retired,
+    /// so the next registration starts from `RegisterApprovalScope2`.
+    pub(super) async fn forget_registration(&self) {
+        *self.registered.lock().await = None;
+    }
+
     /// Register through the exact callback binding used to initialize the
     /// module, keeping API calls and host callbacks on one authenticated peer.
     pub(super) async fn register_with_callback(

@@ -128,8 +128,8 @@ impl Client {
             )
             .map_err(|_| "pinned security module proxy unavailable".to_owned())?;
         let object = SecurityProxy::callback(proxy);
-        let audit_scope = super::super::ops::security_secret_scope()
-            .await
+        let audit_scope = super::super::ops::security_tenant(config)
+            .map(|tenant| tenant.scope.clone())
             .ok_or_else(|| "security audit scope unavailable".to_owned())?;
         Ok(Self {
             object,

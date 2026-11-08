@@ -300,27 +300,41 @@ pub(crate) async fn security_cipher_consumer(
     super::security::host_callbacks::cipher_consumer().await
 }
 
+/// `config`'s live runtime secret registration on the admitted TinySecurity.
 #[cfg(feature = "security-module")]
-pub(crate) async fn security_secret_backend(
-) -> Option<std::sync::Arc<super::security::secret_backend::SecretBackend>> {
-    super::security::host_callbacks::secret_backend().await
+pub(crate) fn security_tenant(
+    config: &Config,
+) -> Option<std::sync::Arc<super::security::host_callbacks::Tenant>> {
+    if let Some(tenant) = super::security::host_callbacks::tenant(config) {
+        return Some(tenant);
+    }
+    // The test host serves a fixture's own bare configuration under the
+    // live runtime's scope (see `ensure_loaded_within`); look it up the same way.
+    #[cfg(all(
+        not(test),
+        any(feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    if let Some(live) = super::security::test_host::live_scope_config(config) {
+        return super::security::host_callbacks::tenant(&live);
+    }
+    None
 }
 
+/// The live tenant owning secret registration `registration_id`.
 #[cfg(feature = "security-module")]
-pub(crate) async fn security_secret_scope() -> Option<crate::security::approval::native::SecretScope>
-{
-    super::security::host_callbacks::secret_scope().await
+pub(crate) fn security_tenant_by_registration(
+    registration_id: &str,
+) -> Option<std::sync::Arc<super::security::host_callbacks::Tenant>> {
+    super::security::host_callbacks::tenant_by_registration(registration_id)
 }
 
-#[cfg(feature = "security-module")]
-pub(crate) async fn security_secret_registration_id() -> Option<String> {
-    super::security::host_callbacks::secret_registration_id().await
-}
-
-/// The secret key path the admitted TinySecurity serves, if it is admitted.
+/// A secret key path this process's TinySecurity cannot serve, which a
+/// profile switch would have to restart for. There is none: the module
+/// boots neutral and every secret scope registers its own runtime
+/// registration on it, so every profile is served in place.
 #[cfg(feature = "security-module")]
 pub(crate) async fn security_admitted_key_path() -> Option<PathBuf> {
-    super::security::host_callbacks::admitted_key_path().await
+    None
 }
 
 #[cfg(feature = "security-module")]
@@ -340,12 +354,8 @@ async fn ensure_loaded_with_security_callback(
     id: &str,
 ) -> Result<(), String> {
     let (task_resolver, config, id) = (resolver.clone(), config.clone(), id.to_owned());
-    // Captured before the load is scheduled: if the caller's runtime is
-    // released while the detached load runs, the load must not record that
-    // runtime's scope as the module's owner.
-    let epoch = super::security::host_callbacks::scope_epoch();
     callback_load::detached(resolver, async move {
-        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id, epoch).await
+        super::security::host_callbacks::ensure_loaded(&task_resolver, &config, &id).await
     })
     .await
 }
