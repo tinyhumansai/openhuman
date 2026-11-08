@@ -147,13 +147,15 @@ jobs:
         # The runner mounts /github/home owned by its own uid (1001), but the
         # container runs as root, so to the secrets driver every file under the
         # default home sits in a namespace another user can mutate, and it
-        # refuses them ("secret namespace permits foreign mutation"). Use the
-        # image's root-owned 0700 /root instead, the shape a real user's home
-        # has. This runs first so later steps (git config, caches) use it too.
+        # refuses them ("secret namespace permits foreign mutation"). Use a
+        # fresh root-owned 0700 /home/ci instead, the shape and place a real
+        # user's home has. Not /root: that is an always-forbidden system root,
+        # so anything defaulting under ~ (e.g. ~/OpenHuman) would be refused.
+        # This runs first so later steps (git config, caches) use it too.
         if: matrix.container != ''
         run: |
-          chmod 0700 /root
-          echo "HOME=/root" >> "$GITHUB_ENV"
+          install -d -o root -g root -m 0700 /home/ci
+          echo "HOME=/home/ci" >> "$GITHUB_ENV"
 
       - name: Trust the workspace for git
         # The checkout is owned by the runner uid; the container runs as root.
