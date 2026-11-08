@@ -734,19 +734,3 @@ fn init_once_caches_a_loaded_key_and_a_keychain_outage_as_ok() {
         Ok(())
     );
 }
-
-#[test]
-fn zz_diag_set_inode() {
-    use std::os::unix::fs::MetadataExt;
-    use tinystoragedrivers::secrets::SecretStore as _;
-    let dir = secrets_tempdir();
-    let backend = EncryptedFileBackend::new(dir.path());
-    let store = std::sync::Arc::new(backend.store(&[0x42; KEY_LEN]));
-    let s1 = store.clone();
-    crate::storage::block_on(async move { s1.set("a", b"1").await }).unwrap();
-    let before = std::fs::metadata(dir.path().join("secrets.enc")).unwrap();
-    let s2 = store.clone();
-    crate::storage::block_on(async move { s2.set("b", b"2").await }).unwrap();
-    let after = std::fs::metadata(dir.path().join("secrets.enc")).unwrap();
-    eprintln!("DIAG before dev={} ino={} after dev={} ino={}", before.dev(), before.ino(), after.dev(), after.ino());
-}
