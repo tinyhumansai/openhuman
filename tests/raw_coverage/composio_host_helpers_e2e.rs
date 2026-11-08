@@ -182,8 +182,17 @@ async fn composio_action_tool_execute_reports_missing_route_without_network() {
     register_composio_route_builder(ROUTELESS_MODE, |_config| {
         Box::pin(async { Ok(ComposioRoute::Backend) })
     });
+    // The tool reloads its config from `config_path`, so the mode is on disk.
+    let routeless_dir = tmp.path().join("routeless");
+    std::fs::create_dir_all(&routeless_dir).expect("routeless config dir");
+    std::fs::write(
+        routeless_dir.join("config.toml"),
+        format!("[composio]\nmode = \"{ROUTELESS_MODE}\"\n"),
+    )
+    .expect("write routeless config");
     let mut routeless = Config {
-        config_path: tmp.path().join("config.toml"),
+        config_path: routeless_dir.join("config.toml"),
+        workspace_dir: routeless_dir.join("workspace"),
         ..Default::default()
     };
     routeless.composio.mode = ROUTELESS_MODE.into();
