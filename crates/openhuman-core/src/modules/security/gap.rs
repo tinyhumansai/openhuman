@@ -40,6 +40,26 @@ impl Drop for PrivacyPortGuard {
     }
 }
 
+/// A privacy module that never answers, for a test of what the host does when
+/// TinySecurity cannot be asked.
+#[cfg(test)]
+#[derive(Debug)]
+struct UnavailablePrivacyPort;
+
+#[cfg(test)]
+#[async_trait]
+impl PrivacyPort for UnavailablePrivacyPort {
+    async fn privacy(&self, _request: PrivacyCheckRequest2) -> Result<Decision, String> {
+        Err("module unavailable".to_owned())
+    }
+}
+
+/// See [`UnavailablePrivacyPort`].
+#[cfg(test)]
+pub(crate) fn install_unavailable_privacy_port() -> PrivacyPortGuard {
+    install_privacy_port(Arc::new(UnavailablePrivacyPort))
+}
+
 #[cfg(test)]
 pub(crate) fn install_privacy_port(port: Arc<dyn PrivacyPort>) -> PrivacyPortGuard {
     PrivacyPortGuard(TEST_PRIVACY_PORT.with(|slot| slot.borrow_mut().replace(port)))
@@ -48,6 +68,12 @@ pub(crate) fn install_privacy_port(port: Arc<dyn PrivacyPort>) -> PrivacyPortGua
 /// `PrivacyCheck2` for a single host-derived egress descriptor. Module errors
 /// remain errors so callers can refuse the transfer.
 pub(crate) async fn privacy_check(request: PrivacyCheckRequest2) -> Result<Decision, String> {
+    // A test's installed port answers before any configuration is read, so a
+    // synchronous caller driving this on a bare executor never needs a runtime.
+    #[cfg(test)]
+    if let Some(port) = TEST_PRIVACY_PORT.with(|slot| slot.borrow().clone()) {
+        return port.privacy(request).await;
+    }
     let config = crate::core::runtime::DispatchCtx::ambient()
         .load_config()
         .await?;

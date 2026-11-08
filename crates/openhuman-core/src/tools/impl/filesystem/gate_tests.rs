@@ -70,14 +70,31 @@ fn adapter_reports_the_autonomy_tier() {
 }
 
 #[test]
-fn adapter_counts_the_action_budget() {
+fn adapter_reads_the_action_budget_the_host_gate_cached() {
+    // The hourly budget is TinySecurity's ledger. The host gate reserves each
+    // action there and caches the answer; the sync adapter keeps no counter of
+    // its own and only reports that answer.
+    use tinysecurity_bus::BudgetDecision2;
+
     let dir = tempfile::tempdir().unwrap();
     let gate = policy(dir.path(), AutonomyLevel::Supervised, 2);
+    *gate.budget_snapshot.lock().unwrap() = Some(BudgetDecision2::Allow);
     assert!(!FsGate::is_rate_limited(gate.as_ref()));
     assert!(FsGate::record_action(gate.as_ref()));
-    assert!(FsGate::record_action(gate.as_ref()));
+    assert!(
+        FsGate::record_action(gate.as_ref()),
+        "recording is a read, so it never spends the budget itself"
+    );
+    assert!(!FsGate::is_rate_limited(gate.as_ref()));
+
+    *gate.budget_snapshot.lock().unwrap() =
+        Some(BudgetDecision2::RateLimited { max_per_hour: 2 });
     assert!(FsGate::is_rate_limited(gate.as_ref()));
     assert!(!FsGate::record_action(gate.as_ref()));
+    assert!(
+        FsGate::can_act(gate.as_ref()),
+        "a spent budget still leaves the tier able to act"
+    );
 }
 
 #[test]
@@ -109,12 +126,17 @@ async fn scoped_gate_is_rooted_at_the_granted_workspace() {
 async fn file_read_blocks_traversal_and_absolute_paths() {
     let dir = tempfile::tempdir().unwrap();
     let tool = FileReadTool::new(supervised(dir.path()));
-    for path in ["../../../etc/passwd", "/etc/passwd"] {
+    // Traversal is refused on the path's own shape, before TinySecurity is asked;
+    // an absolute path outside every root is the module's refusal.
+    for (path, refusal) in [
+        ("../../../etc/passwd", "Invalid path"),
+        ("/etc/passwd", "not allowed"),
+    ] {
         let result = tool.execute(json!({"path": path})).await.unwrap();
         assert!(result.is_error);
         assert!(
-            result.output().contains("not allowed"),
-            "{}",
+            result.output().contains(refusal),
+            "{path}: {}",
             result.output()
         );
         assert!(result.output().contains(POLICY_BLOCKED_MARKER));

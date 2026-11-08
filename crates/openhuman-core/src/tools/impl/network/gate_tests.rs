@@ -13,8 +13,12 @@ fn policy(autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPol
         max_actions_per_hour,
         ..SecurityPolicy::default()
     };
+    // The hourly budget is TinySecurity's, and the sync gate only reads the answer
+    // the host gate cached; a zero budget is the answer "rate limited".
     *policy.budget_snapshot.lock().unwrap() = Some(if autonomy == AutonomyLevel::ReadOnly {
         tinysecurity_bus::BudgetDecision2::ReadOnlyMode
+    } else if max_actions_per_hour == 0 {
+        tinysecurity_bus::BudgetDecision2::RateLimited { max_per_hour: 0 }
     } else {
         tinysecurity_bus::BudgetDecision2::Allow
     });
@@ -77,6 +81,7 @@ fn supervised_network_asks_for_approval_and_read_only_does_not() {
 #[test]
 fn network_gate_refuses_when_the_privacy_module_cannot_answer() {
     let _mode = super::super::local_only_scope();
+    let _port = crate::modules::security::gap::install_unavailable_privacy_port();
     let msg = NetGate::local_only_block(&SecurityPolicy::default(), "example.com")
         .expect("an unavailable privacy module fails closed");
     assert!(msg.contains("[policy-blocked]"), "got: {msg}");
@@ -87,6 +92,7 @@ fn network_gate_refuses_when_the_privacy_module_cannot_answer() {
 fn standard_privacy_mode_refuses_when_the_privacy_module_cannot_answer() {
     let _mode =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::Standard);
+    let _port = crate::modules::security::gap::install_unavailable_privacy_port();
     assert!(NetGate::local_only_block(&SecurityPolicy::default(), "example.com").is_some());
 }
 
