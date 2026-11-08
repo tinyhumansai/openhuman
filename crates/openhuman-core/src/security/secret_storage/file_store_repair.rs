@@ -12,17 +12,37 @@
 
 use std::path::Path;
 
+/// Open `path` read-only without following a final symlink, for `fchmod` and
+/// `fstat` only. No write handle is ever taken: the repair changes the mode,
+/// never the bytes.
+#[cfg(all(unix, feature = "secret-file"))]
+fn open_no_follow(path: &Path, extra: libc::c_int) -> std::io::Result<std::fs::File> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    // SAFETY: `c_path` is a valid NUL-terminated string that outlives the call.
+    let fd = unsafe {
+        libc::open(
+            c_path.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | extra,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` was just returned by `open` and is owned by nothing else.
+    Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
+}
+
 /// Tighten `path` to `0600` when it is a regular file this user owns with a
 /// wider mode. A missing file, or one that is not ours to repair, is left alone.
 #[cfg(all(unix, feature = "secret-file"))]
 pub(super) fn tighten_owned_file(path: &Path) {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    let file = match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)
-    {
+    let file = match open_no_follow(path, libc::O_NONBLOCK) {
         Ok(file) => file,
         Err(error) => {
             tracing::trace!(
@@ -80,13 +100,9 @@ pub(super) fn tighten_owned_file(_path: &Path) {}
 /// ancestor that is foreign-writable is not ours, and the driver still refuses it.
 #[cfg(all(unix, feature = "secret-file"))]
 pub(super) fn tighten_owned_directory(dir: &Path) {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    let Ok(file) = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
-        .open(dir)
-    else {
+    let Ok(file) = open_no_follow(dir, libc::O_DIRECTORY) else {
         return;
     };
     let Ok(metadata) = file.metadata() else {
