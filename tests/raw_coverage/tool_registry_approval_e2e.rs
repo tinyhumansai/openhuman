@@ -1135,8 +1135,12 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     )
     .await;
     match persist_failure.0 {
-        // The blocked store refused the terminal write above, which latches
-        // the gate closed: the next external-effect admission is denied
+        // The former "Approval gate could not persist the request" deny came
+        // from a document-store engine whose admission wrote the workspace
+        // storage dir. The TinySecurity engine keeps admission in the module
+        // (an admitted request in a blocked workspace parks, it does not
+        // fail), so the persistence failure that remains observable here is
+        // the terminal audit write above. It latches the gate closed: the next external-effect admission is denied
         // before the engine is asked (`gate_intercept.rs` audit latch).
         GateOutcome::Deny { reason } => {
             assert!(
