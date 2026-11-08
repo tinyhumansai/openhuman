@@ -118,14 +118,13 @@ impl Fixture {
         );
         let service = Arc::new(service);
         let boxes = Arc::new(ScriptedBoxes { keeps, registry });
-        let staging = staging_dir(&self.workspace);
         let author = Author::agent("agent");
         if update {
             let tool = UpdateArtifactTool::new(Arc::clone(&service), author);
-            BoxSourced::new(tool, KindSource::Record(service), boxes, tenant, staging)
+            BoxSourced::new(tool, KindSource::Record(service), boxes, tenant)
         } else {
             let tool = CreateArtifactTool::new(service, author);
-            BoxSourced::new(tool, KindSource::Args, boxes, tenant, staging)
+            BoxSourced::new(tool, KindSource::Args, boxes, tenant)
         }
     }
 
