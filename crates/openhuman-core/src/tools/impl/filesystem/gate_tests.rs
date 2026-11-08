@@ -87,8 +87,7 @@ fn adapter_reads_the_action_budget_the_host_gate_cached() {
     );
     assert!(!FsGate::is_rate_limited(gate.as_ref()));
 
-    *gate.budget_snapshot.lock().unwrap() =
-        Some(BudgetDecision2::RateLimited { max_per_hour: 2 });
+    *gate.budget_snapshot.lock().unwrap() = Some(BudgetDecision2::RateLimited { max_per_hour: 2 });
     assert!(FsGate::is_rate_limited(gate.as_ref()));
     assert!(!FsGate::record_action(gate.as_ref()));
     assert!(

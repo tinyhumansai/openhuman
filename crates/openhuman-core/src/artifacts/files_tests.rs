@@ -260,7 +260,6 @@ fn open_floor() -> crate::modules::security::gap::PathFloorPortGuard {
     install_path_floor_port(ScriptedPathFloorPort::new([], Vec::new()))
 }
 
-
 #[tokio::test]
 async fn the_escape_guard_rejects_a_file_outside_its_folder() {
     #[cfg(feature = "security-module")]

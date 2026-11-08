@@ -336,8 +336,7 @@ fn repairing_and_retrying_purge_on_the_original_runtime_releases_the_directory()
             ));
             drop(agent);
             assert!(openhuman_core::mcp::host::agent_close_pending(
-                &workspace,
-                "worker"
+                &workspace, "worker"
             ));
             std::fs::remove_file(&home).unwrap();
             std::fs::create_dir_all(&home).unwrap();
@@ -345,8 +344,7 @@ fn repairing_and_retrying_purge_on_the_original_runtime_releases_the_directory()
             runtime.remove_agent("worker").purge().await.unwrap();
             assert!(!home.exists());
             assert!(!openhuman_core::mcp::host::agent_close_pending(
-                &workspace,
-                "worker"
+                &workspace, "worker"
             ));
             let successor = runtime
                 .agent(spec())
