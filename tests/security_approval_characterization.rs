@@ -385,13 +385,17 @@ async fn auto_approve_all_allows_without_parking_or_writing_audit_history() {
         .unwrap()
         .iter()
         .all(|p| p.tool_name != "char_auto_all"));
+    // TinySecurity audits the automatic host-policy approval: the bypass skips
+    // the human prompt, not the audit trail (docs/gitbooks/en/features/
+    // approval-gate.md, "auto_approve_all"). Recording it is the intended,
+    // more auditable behaviour, so the characterization now pins the row.
     assert!(
         fx.gate
             .list_recent_decisions(500)
             .unwrap()
             .iter()
-            .all(|entry| entry.tool_name != "char_auto_all"),
-        "the host auto-approval bypass is not written to approval history"
+            .any(|entry| entry.tool_name == "char_auto_all"),
+        "the host auto-approval bypass is written to approval history"
     );
     // The unknown-origin exclusion still holds with the bypass on.
     let ws = fx.config.workspace_dir.clone();
