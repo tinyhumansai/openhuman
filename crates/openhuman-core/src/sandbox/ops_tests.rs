@@ -282,6 +282,8 @@ async fn execute_unsandboxed_applies_environment_overrides() {
 /// so both Unix and Windows CI catch a shell-selection regression.
 #[tokio::test]
 async fn execute_in_sandbox_none_backend_runs_on_every_os() {
+    let _ = env_logger::Builder::new().filter_level(log::LevelFilter::Trace).is_test(false).try_init();
+    let _ = tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).try_init();
     let tempdir = tempfile::tempdir().unwrap();
     let policy = crate::sandbox::policy::route_for_mode(
         SandboxMode::None,
