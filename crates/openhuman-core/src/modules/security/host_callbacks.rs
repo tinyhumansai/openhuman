@@ -183,7 +183,7 @@ fn callback_endpoints() -> Result<Vec<HostCallbackEndpoint>, String> {
     ])
 }
 
-fn opaque_id(label: &str, path: &Path, suffix: &str) -> String {
+pub(super) fn opaque_id(label: &str, path: &Path, suffix: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(label.as_bytes());
