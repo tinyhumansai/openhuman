@@ -16,7 +16,14 @@ set -euo pipefail
 
 VERSION=0.11.0
 SHA256=988fd6b232dafa04b8b8198723efeaccdb3c6aa9c1c7936219d5791a8b7a8646
-URL="https://github.com/containers/bubblewrap/releases/download/v${VERSION}/bubblewrap-${VERSION}.tar.xz"
+# Ubuntu's archive carries the upstream release tarball byte-for-byte as the
+# package's orig tarball, so the one pinned checksum verifies either source.
+# It is tried first because GitHub's release CDN times out (504) under load;
+# GitHub stays as the fallback.
+URLS=(
+  "http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_${VERSION}.orig.tar.xz"
+  "https://github.com/containers/bubblewrap/releases/download/v${VERSION}/bubblewrap-${VERSION}.tar.xz"
+)
 
 if command -v bwrap >/dev/null 2>&1 && bwrap --help 2>&1 | grep -q -- '--disable-userns'; then
   echo "[ci][bwrap] $(bwrap --version) already supports --disable-userns"
@@ -33,8 +40,23 @@ apt-get install -y -qq --no-install-recommends \
   ca-certificates curl xz-utils gcc libc6-dev pkg-config libcap-dev meson ninja-build >/dev/null
 
 echo "[ci][bwrap] fetching bubblewrap ${VERSION}"
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 -o "$work/bubblewrap.tar.xz" "$URL"
-echo "${SHA256}  $work/bubblewrap.tar.xz" | sha256sum -c -
+fetched=""
+for url in "${URLS[@]}"; do
+  echo "[ci][bwrap] trying ${url}"
+  if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 300 \
+    -o "$work/bubblewrap.tar.xz" "$url" &&
+    echo "${SHA256}  $work/bubblewrap.tar.xz" | sha256sum -c - >/dev/null; then
+    fetched="$url"
+    break
+  fi
+  echo "[ci][bwrap] ${url} failed or did not match the pinned checksum" >&2
+  rm -f "$work/bubblewrap.tar.xz"
+done
+if [ -z "$fetched" ]; then
+  echo "[ci][bwrap] no source served bubblewrap ${VERSION} with the pinned checksum" >&2
+  exit 1
+fi
+echo "[ci][bwrap] fetched and verified from ${fetched}"
 
 tar -xJf "$work/bubblewrap.tar.xz" -C "$work"
 src="$work/bubblewrap-${VERSION}"
