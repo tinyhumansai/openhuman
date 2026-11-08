@@ -127,7 +127,7 @@ async fn upload_body(
             .await
             .map_err(|e| anyhow::anyhow!("cannot read the artifact's file: {e}"))?;
         if SecurityPolicy::is_always_forbidden_async(&resolved).await {
-            anyhow::bail!("[policy-blocked] cannot share this artifact: path is protected");
+            anyhow::bail!("[policy-blocked] cannot share this artifact: it is in a protected location");
         }
         let bytes = tokio::fs::read(&resolved)
             .await
