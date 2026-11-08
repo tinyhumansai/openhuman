@@ -3972,6 +3972,8 @@ const messages: TranslationMap = {
     "Ce tour a dépassé son budget de temps sans se terminer et a été arrêté pour ne pas se bloquer. Cela signifie généralement qu'un appel d'outil ou un sous-agent délégué est resté bloqué. Vous pouvez reposer votre question dans ce fil.",
   'chat_error.disk_full':
     "Votre disque est plein, cette conversation n'a donc pas pu être enregistrée. Libérez de l'espace disque, puis renvoyez votre message dans ce fil.",
+  'chat_error.prompt_screened':
+    "Le filtre de sécurité d'OpenHuman a retenu ce message, il n'a donc pas été envoyé au modèle. S'il cite des instructions destinées à un assistant (par exemple tirées d'une page web ou d'un e-mail), retirez-les et réessayez. Si des messages ordinaires sont retenus, le module de sécurité est peut-être indisponible : redémarrez OpenHuman et réessayez.",
   'chat_error.empty_response':
     'Le modèle a renvoyé une réponse vide. Veuillez réessayer. Si cela persiste, essayez un autre modèle ou vérifiez sa configuration dans Connexions → Clés API → LLM.',
   'chat_error.chat_template_rejected':

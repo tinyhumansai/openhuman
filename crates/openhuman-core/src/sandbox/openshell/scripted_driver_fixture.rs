@@ -1,7 +1,13 @@
 //! Test-only [`BoxDriver`] stand-in: records every call and answers execs from
 //! a script, so the registry's lifecycle is testable without a TinyBox module.
+//!
+//! A driver can also keep real boxes on the test host ([`ScriptedDriver::keep_boxes_in`]):
+//! each box is a directory, and an exec past the end of the script runs its
+//! program there with the system shell, so file transfer is tested against
+//! the commands a real box would run.
 
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -43,6 +49,7 @@ pub(crate) struct ScriptedDriver {
     create_delay: Mutex<Duration>,
     create_failures: AtomicUsize,
     close_fails: AtomicBool,
+    box_root: Mutex<Option<PathBuf>>,
 }
 
 impl ScriptedDriver {
@@ -60,6 +67,21 @@ impl ScriptedDriver {
 
     pub(crate) fn fail_next_creates(&self, count: usize) {
         self.create_failures.store(count, Ordering::SeqCst);
+    }
+
+    /// Back every box with a directory under `root`, and run execs the script
+    /// does not answer in it.
+    pub(crate) fn keep_boxes_in(&self, root: &Path) {
+        *self.box_root.lock().unwrap() = Some(root.to_path_buf());
+    }
+
+    /// Where `resource`'s files are, when boxes are kept on the host.
+    pub(crate) fn box_dir(&self, resource: &str) -> Option<PathBuf> {
+        self.box_root
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|root| root.join(resource))
     }
 
     pub(crate) fn fail_closes(&self) {
@@ -128,10 +150,11 @@ impl BoxDriver for ScriptedDriver {
             self.create_failures.store(failures - 1, Ordering::SeqCst);
             return Err(BoxError::Driver("create refused".into()));
         }
-        Ok(format!(
-            "box-{}",
-            self.next_id.fetch_add(1, Ordering::SeqCst)
-        ))
+        let resource = format!("box-{}", self.next_id.fetch_add(1, Ordering::SeqCst));
+        if let Some(dir) = self.box_dir(&resource) {
+            std::fs::create_dir_all(dir).expect("create a box directory");
+        }
+        Ok(resource)
     }
 
     async fn exec(&self, resource: &str, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
@@ -141,7 +164,10 @@ impl BoxDriver for ScriptedDriver {
         });
         let step = self.script.lock().unwrap().pop_front();
         match step {
-            None => Ok(ok_output()),
+            None => match self.box_dir(resource) {
+                Some(dir) => run_on_host(&dir, exec).await,
+                None => Ok(ok_output()),
+            },
             Some(ExecStep::Reply(output)) => Ok(output),
             Some(ExecStep::Fail(error)) => Err(error),
             Some(ExecStep::Hang) => std::future::pending().await,
@@ -163,4 +189,21 @@ impl BoxDriver for ScriptedDriver {
         }
         Ok(())
     }
+}
+
+/// Run `exec` in `dir`, standing in for the box's work folder.
+async fn run_on_host(dir: &Path, exec: &BoxExec) -> Result<BoxOutput, BoxError> {
+    let (program, args) = exec.argv.split_first().expect("an exec names a program");
+    let output = tokio::process::Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .envs(&exec.env)
+        .output()
+        .await
+        .map_err(|error| BoxError::Driver(error.to_string()))?;
+    Ok(BoxOutput {
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
 }

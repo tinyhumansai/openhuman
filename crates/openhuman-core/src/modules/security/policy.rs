@@ -26,16 +26,30 @@ pub fn policy_config(config: &Config) -> tinysecurity_bus::PolicyConfig {
             Vec::new()
         },
         forbidden_paths: if config.autonomy.enabled {
-            config
-                .autonomy
-                .forbidden_paths
-                .iter()
-                .map(|path| crate::config::expand_tilde(path))
-                .collect()
+            forbidden_paths(&config.autonomy.forbidden_paths, cfg!(windows))
         } else {
             Vec::new()
         },
     }
+}
+
+/// The forbidden paths as the module receives them, `~` expanded. On Windows
+/// a path rooted without a drive (`/etc`, `\usr`, the Unix roots in the
+/// shipped defaults) is not absolute and names no system folder; the module
+/// already ignores such entries there, and `validate` would otherwise refuse
+/// the whole policy for them, so they are left out. Relative entries are
+/// kept, so `validate` still refuses them.
+fn forbidden_paths(paths: &[String], windows: bool) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|path| !(windows && is_drive_less_root(path)))
+        .map(|path| crate::config::expand_tilde(path))
+        .collect()
+}
+
+/// `/x` or `\x`, but not a UNC path (`\\server`, `//server`).
+fn is_drive_less_root(path: &str) -> bool {
+    path.starts_with(['/', '\\']) && !path.starts_with("\\\\") && !path.starts_with("//")
 }
 
 /// Reject enabled host policy that the published module contract cannot

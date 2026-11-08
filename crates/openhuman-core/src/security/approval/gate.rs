@@ -5,10 +5,15 @@
 //! 1. Agent harness calls [`ApprovalGate::intercept`] with the tool
 //!    name, a redacted JSON of the arguments, and a short summary.
 //! 2. Gate registers the call's posture with TinySecurity. Durable whole-tool
-//!    trust is resolved by the module under the exact approval scope;
-//!    `autonomy.auto_approve` is not replayed, so revocations cannot be
-//!    resurrected from legacy config. `ApproveAlwaysForTool` records a grant
-//!    through `GrantTool2` after resolving the current call.
+//!    trust is resolved by the module under the exact approval scope.
+//!    `ApproveAlwaysForTool` resolves the current call once. For a process
+//!    request, `approval_decide` then saves the tool to `autonomy.auto_approve`
+//!    (best-effort: a failed save only means the next call prompts again), and
+//!    the native engine imports each entry as a module grant the first time it
+//!    sees it (`legacy-import`, outside SaaS, standard posture). An entry is
+//!    imported only once, so a revoked grant is not resurrected from the list.
+//!    An agent's request is approved once and nothing is saved: an agent's
+//!    "Always allow" comes from its own access.
 //! 3. Otherwise: persist a row in `pending_approvals`, publish a
 //!    [`DomainEvent::ApprovalRequested`] event so the UI can pop a
 //!    toast, and park the call on a `oneshot::Sender` keyed by

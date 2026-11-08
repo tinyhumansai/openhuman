@@ -3,10 +3,9 @@
 use crate::config::Config;
 use crate::core::Outcome;
 
-use super::super::module_client::{self as connectors};
-use super::super::types::{ComposioExecuteRequest, ComposioExecuteResponse};
+use super::super::execute_dispatch::execute_composio_action;
+use super::super::types::ComposioExecuteResponse;
 use super::error_utils::{report_composio_op_error, OpResult};
-use tinyconnectors_bus::names::methods;
 
 /// The prefix the module puts on an error it has already classified.
 ///
@@ -23,11 +22,8 @@ const CLASSIFIED: &str = "[composio:error:";
 /// the activity feed, the agent's own budget. The module has no bus of the
 /// host's to publish on.
 ///
-/// # What the caller must still do
-///
-/// Apply [`crate::security::egress`] *before* calling this. Local
-/// only mode refusing an outbound tool call is policy about the user's data,
-/// and the module cannot see the reasons behind it.
+/// The call goes through [`execute_composio_action`], so the local-only
+/// egress policy applies here as it does to the agent tool.
 pub async fn composio_execute(
     config: &Config,
     tool: &str,
@@ -35,21 +31,38 @@ pub async fn composio_execute(
     connection_id: Option<&str>,
 ) -> OpResult<Outcome<ComposioExecuteResponse>> {
     tracing::debug!(tool = %tool, connection_id = ?connection_id, "[composio] rpc execute");
+    // The keys this call may send, read before it: redaction covers them even
+    // if the stored key changes while it runs.
+    let keys = super::super::tools::composio_call_keys(config).await?;
     let started = std::time::Instant::now();
-    let result = connectors::call::<_, ComposioExecuteResponse>(
-        config,
-        methods::EXECUTE,
-        ComposioExecuteRequest {
-            tool: tool.to_string(),
-            arguments,
-            connection_id: connection_id.map(str::to_string),
-        },
-    )
-    .await;
+    let result = execute_composio_action(config, None, tool, arguments, connection_id).await;
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     match result {
         Ok(resp) => {
+            // The RPC result reaches the renderer and the RPC log: strip the
+            // Composio keys from it, as the agent tools do with their results.
+            let (successful, failed_with_text, cost_usd) =
+                (resp.successful, resp.error.is_some(), resp.cost_usd);
+            let resp = match super::super::tools::redact_composio_response(config, keys, resp).await
+            {
+                Ok(resp) => resp,
+                Err(withheld) => {
+                    // The action ran and may have cost something: record it,
+                    // without the provider's error text that could not be
+                    // cleaned.
+                    crate::core::bus::BUS.publish(
+                        crate::core::events::DomainEvent::ComposioActionExecuted {
+                            tool: tool.to_string(),
+                            success: successful,
+                            error: failed_with_text.then(|| withheld.clone()),
+                            cost_usd,
+                            elapsed_ms,
+                        },
+                    );
+                    return Err(withheld);
+                }
+            };
             // Note that this is reached for a *refused* action too: the module
             // reports a provider's refusal as a successful reply carrying
             // `successful: false`. The event records what happened, not whether

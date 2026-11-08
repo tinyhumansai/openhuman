@@ -126,4 +126,13 @@ describe('useKeyringOperationApprovals', () => {
 
     expect(listPending).not.toHaveBeenCalled();
   });
+
+  it('does not show a dismissed request again when a stale poll lists it', () => {
+    const { result } = renderHook(() => useKeyringOperationApprovals());
+    emit(REQUEST);
+    act(() => result.current.dismiss(REQUEST.request_id));
+    emit(REQUEST);
+
+    expect(result.current.requests).toEqual([]);
+  });
 });

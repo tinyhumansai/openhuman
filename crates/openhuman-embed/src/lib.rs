@@ -153,6 +153,7 @@ pub mod profiles;
 /// Explicit ordered fallback and truncation policies.
 pub mod routing;
 mod runtime;
+pub mod sandbox;
 pub mod secret_storage;
 mod security;
 mod turn;

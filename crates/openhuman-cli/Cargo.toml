@@ -88,6 +88,34 @@ path = "../../tests/security_native_fixture.rs"
 required-features = ["security-module"]
 
 [[test]]
+# TinyComputer end to end with its staged release (TS-E2E-010); each test runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_tinycomputer"
+path = "../../tests/ts_e2e_tinycomputer.rs"
+required-features = ["security-module"]
+
+[[test]]
+# TinyComputer under LocalOnly with its staged release (TS-E2E-011); runs by
+# exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_computer_privacy"
+path = "../../tests/ts_e2e_computer_privacy.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Which command hooks the host runs, with the staged TinySecurity release
+# (TS-E2E-019); runs by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_hooks"
+path = "../../tests/ts_e2e_hooks.rs"
+required-features = ["security-module"]
+
+[[test]]
+# Host callbacks called by a peer that is not their module (TS-E2E-012); runs
+# by exact name after scripts/ci/ts-e2e-stage-modules.sh.
+name = "ts_e2e_callback_owner"
+path = "../../tests/ts_e2e_callback_owner.rs"
+required-features = ["inbound-queues", "security-module", "web3"]
+
+[[test]]
 # TinySecurity from a pinned release (no local-file source) serves later loads.
 name = "security_release_reuse_fixture"
 path = "../../tests/security_release_reuse_fixture.rs"

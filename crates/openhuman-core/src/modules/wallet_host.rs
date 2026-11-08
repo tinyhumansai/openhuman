@@ -496,7 +496,11 @@ pub(super) async fn install(connection: &tinybus::Connection) -> tinybus::Result
     connection
         .serve_at(
             ObjectPath::new(tinywallet_bus::HOST_OBJECT_PATH)?,
-            WalletHost,
+            super::callback_owner::OwnedBy::new(
+                WalletHost,
+                connection,
+                tinywallet_bus::names::BUS_NAME,
+            ),
         )
         .await?;
     connection

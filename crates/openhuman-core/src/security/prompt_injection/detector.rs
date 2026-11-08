@@ -142,6 +142,13 @@ fn unscreened_decision(input: &str) -> PromptEnforcementDecision {
 /// Screen user or untrusted text through TinySecurity. Missing configuration,
 /// module failure, timeout, and oversized inputs all fail closed as Review,
 /// unless security is disabled or the configuration turns the screen off.
+///
+/// Reads only the boot-time embedder snapshot, which exists for a preloaded
+/// config or a `SecretPreflight` boot. A host booted `Normal` (the CLI's
+/// `serve`) without a preloaded config has none, so with security enabled
+/// every call here is held. Screen with the caller's
+/// dispatch ([`enforce_prompt_input_in`]) or config
+/// ([`enforce_prompt_input_with_config`]) instead.
 pub async fn enforce_prompt_input(
     input: &str,
     context: PromptEnforcementContext<'_>,
@@ -157,14 +164,29 @@ pub(crate) async fn enforce_prompt_input_in(
     input: &str,
     context: PromptEnforcementContext<'_>,
 ) -> PromptEnforcementDecision {
+    let config = screening_config_in(dispatch).await;
+    dispatch
+        .enter(enforce_prompt_input_with_config(
+            input,
+            context,
+            config.as_ref(),
+        ))
+        .await
+}
+
+/// The configuration [`enforce_prompt_input_in`] screens `dispatch`'s input
+/// with: its owner's, or none (a held decision) for an unbound dispatch. Load
+/// it once to screen many inputs.
+pub(crate) async fn screening_config_in(
+    dispatch: &crate::core::runtime::DispatchCtx,
+) -> Option<crate::config::Config> {
     dispatch
         .enter(async {
-            let config = if dispatch.resolved().is_some() {
+            if dispatch.resolved().is_some() {
                 dispatch.load_config().await.ok()
             } else {
                 None
-            };
-            enforce_prompt_input_with_config(input, context, config.as_ref()).await
+            }
         })
         .await
 }

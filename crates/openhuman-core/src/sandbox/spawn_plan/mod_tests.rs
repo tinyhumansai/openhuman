@@ -37,10 +37,16 @@ fn bounds_come_from_the_docker_overrides_and_never_loosen() {
     assert_eq!(bounded.cpu_millicores, Some(1500));
     assert_eq!(bounded.memory_bytes, Some(512 * 1024 * 1024));
     assert_eq!(bounded.cpu_time_ms, None);
-    // A fraction rounds up to the next millicore rather than down to a looser bound.
+    // A fraction rounds down: a CPU bound is a ceiling, so rounding up would
+    // widen it (0.1004 cores must not run as 0.101).
+    assert_eq!(
+        limits(&with_overrides(Some(0.1004), None)).cpu_millicores,
+        Some(100)
+    );
+    // Below one millicore the bound is 0, which the plan refuses, not widens.
     assert_eq!(
         limits(&with_overrides(Some(0.0004), None)).cpu_millicores,
-        Some(1)
+        Some(0)
     );
     // Absent, zero and non-finite bounds are not bounds.
     for cpu in [

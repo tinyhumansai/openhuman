@@ -234,6 +234,35 @@ async fn set_credential_installs_a_session_without_touching_the_backend() {
 }
 
 #[tokio::test]
+async fn a_tinyflows_that_cannot_load_does_not_undo_a_sign_in() {
+    let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+    let _home = EnvVarGuard::set("HOME", tmp.path());
+    // The per-user config is reloaded on activation; the env reaches it too.
+    let _tinyflows = EnvVarGuard::set("OPENHUMAN_COMPONENT_TINYFLOWS", "0");
+    crate::credentials::test_support::seed_plain_profile_configs(tmp.path(), &["user-42"]);
+    let mut config = test_config(&tmp);
+    config.components.tinyflows = false;
+    config.api_url = Some(spawn_auth_me_status(StatusCode::UNAUTHORIZED).await);
+    let exp = chrono::Utc::now() + chrono::Duration::hours(1);
+    let token = jwt_with_payload(json!({ "sub": "user-42", "exp": exp.timestamp() }));
+
+    let result = store_session(&DispatchCtx::process_default(), &config, &token, None, None)
+        .await
+        .expect("sign-in should survive the skipped cron prune");
+
+    // A failed rebind rolls the credential back and returns an error; this
+    // line is logged only after the rebind succeeded.
+    assert!(result.value.is_authenticated);
+    let logs = result.logs.join(" ");
+    assert!(
+        logs.contains("process globals rebound after credential install"),
+        "{logs}"
+    );
+}
+
+#[tokio::test]
 async fn set_credential_derives_the_user_id_from_the_jwt_subject() {
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();

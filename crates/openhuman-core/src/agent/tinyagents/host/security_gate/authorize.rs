@@ -1,5 +1,9 @@
 use super::*;
 
+/// Why a call is refused when the session's tools hold settings no longer in
+/// force. A new conversation builds its tools from the current settings.
+const STALE_SESSION_SETTINGS: &str = "[policy-blocked] The autonomy settings changed during this conversation. Start a new conversation to use the new settings.";
+
 impl OpenHumanSecurityGate {
     pub(super) async fn authorize_tool_with_facts(
         &self,
@@ -203,6 +207,9 @@ impl OpenHumanSecurityGate {
         // (`crate::security::switch`) skips the same stages: there is no
         // module to classify the action or keep the budget.
         if policy.unchecked() {
+            if !self.share_answers(&policy) {
+                return Ok(GateDecision::deny(STALE_SESSION_SETTINGS));
+            }
             return Ok(self.settled(channel_approved));
         }
 
@@ -267,6 +274,9 @@ impl OpenHumanSecurityGate {
         };
         if let Err(reason) = budget {
             return Ok(GateDecision::deny(reason));
+        }
+        if !self.share_answers(&policy) {
+            return Ok(GateDecision::deny(STALE_SESSION_SETTINGS));
         }
         channel_approved = approved;
 

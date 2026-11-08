@@ -85,7 +85,13 @@ inferred. API-key precedence and local-session behavior are unchanged.
 
 `AuthProfilesStore` (`profiles.rs`) writes the schema document to `auth-profiles/secrets.enc` in the config state directory (parent of `config.config_path`, user-scoped after activation). The document contains `schema_version` (current = 1), `updated_at`, `active_profiles` (provider → profile-id), and [`profiles`](./profiles) (id → profile). The old root-level `auth-profiles.json` is read only for one-time import. The `app-session` profile's metadata carries `user_id`, `user_json` (the host-supplied payload) and `session_expires_at` (the JWT `exp`, for the local expiry precheck). Secret handling:
 
-- Config-backed profile secrets use TinySecurity `KeyringAccess2` over TSD `KeyringSecrets`, with fresh approval for each read, write, and delete. No-Config bootstrap APIs keep secrets only in the encrypted profile document.
+- Config-backed profile secrets use TinySecurity `KeyringAccess2` over TSD `KeyringSecrets`, with fresh approval for each keyring read, write, and delete. No-Config bootstrap APIs keep secrets only in the encrypted profile document.
+- Each process keeps the profile secrets it has read or written in memory (`profiles/keychain.rs`, `READ_CACHE`), by keyring entry name, so later reads of that entry in the same process don't reach the keyring and ask again. The cache lives for the process only and is never persisted.
+  - A write or delete drops the entry first, and also bumps its generation, so a read that was already in flight doesn't cache the old value.
+  - A denied, timed-out or failed read never fills it.
+  - Concurrent cold reads of one entry wait for a single keyring read.
+  - Another process writing the same entry isn't seen until restart; the desktop core is the only writer of its profiles.
+  - TinySecurity's session-scoped read grant (tinyhumansai/tinysecurity#55) is meant to replace it.
 - The whole local document is encrypted by `EncryptedFileSecrets`. Legacy `enc:` fields are unsupported and unrecoverable profiles are dropped; malformed legacy JSON is quarantined during import.
 - Reads and mutations coordinate through `tinystoragedrivers-fence::LocalLeases`; doctor reads open the encrypted document read-only.
 

@@ -382,3 +382,52 @@ fn proactive_message_is_scoped_to_originating_saas_profile() {
         "isolated proactive subscriber boot test failed:\n{stdout}\n{stderr}"
     );
 }
+
+/// Boot holds back keyring reads, so a restored session's user is bound only
+/// once the secret preflight has loaded the startup credentials.
+#[tokio::test]
+async fn the_secret_preflight_binds_the_restored_session_user() {
+    let _env = EnvVarGuard::locked_unset_many_async(&[
+        crate::credentials::BACKEND_API_KEY_ENV,
+        crate::credentials::BACKEND_SESSION_TOKEN_ENV,
+    ])
+    .await;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..crate::config::Config::default()
+    };
+    config.secrets.encrypt = false;
+    let mut meta = std::collections::HashMap::new();
+    meta.insert("user_id".to_string(), "restored-user".to_string());
+    meta.insert(
+        "user_json".to_string(),
+        r#"{"id":"restored-user"}"#.to_string(),
+    );
+    crate::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            crate::credentials::APP_SESSION_PROVIDER,
+            crate::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "raw-session-token",
+            meta,
+            true,
+        )
+        .await
+        .expect("store session token");
+    crate::credentials::identity::clear_current_user();
+
+    super::finish_secret_preflight_credentials(
+        &crate::core::runtime::DispatchCtx::ambient(),
+        &config,
+    )
+    .await;
+
+    assert_eq!(
+        crate::credentials::identity::peek_credential_user_identity()
+            .and_then(|identity| identity.id)
+            .as_deref(),
+        Some("restored-user")
+    );
+}

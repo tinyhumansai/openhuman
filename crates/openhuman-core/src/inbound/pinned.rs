@@ -133,23 +133,55 @@ pub fn render_prompt(
 /// `inference.agent_chat` applies to the whole message, so one injected
 /// event is left out instead of failing its batch; the reason is the guard's
 /// verdict and rule codes, never the text.
-async fn screen(items: Vec<ExternalItem>) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
+///
+/// The batch loads its configuration once, and screening counts against the
+/// delivery budget: an event not screened by `deadline` is held as
+/// `screen.timeout`, as is every event when the configuration is not loaded
+/// by then (`screen.unavailable` when it fails to load).
+async fn screen(
+    ctx: &DispatchCtx,
+    items: Vec<ExternalItem>,
+    deadline: tokio::time::Instant,
+) -> (Vec<ExternalItem>, Vec<BlockedEvent>) {
     use crate::security::prompt_injection::{
-        enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+        enforce_prompt_input_with_config, screening_config_in, PromptEnforcementAction,
+        PromptEnforcementContext,
     };
+    // With security off nothing is screened, so no config is loaded.
+    if crate::security::switch::disabled().is_some() {
+        return (items, Vec::new());
+    }
+    let config = tokio::time::timeout_at(deadline, screening_config_in(ctx)).await;
     let mut kept = Vec::with_capacity(items.len());
     let mut blocked = Vec::new();
     for item in items {
-        let decision = enforce_prompt_input(
-            &item.text,
-            PromptEnforcementContext {
-                source: "inbound.pinned",
-                request_id: Some(&item.id),
-                user_id: None,
-                session_id: Some("inbound"),
-            },
-        )
-        .await;
+        let screened = match &config {
+            Ok(config) => tokio::time::timeout_at(
+                deadline,
+                ctx.enter(enforce_prompt_input_with_config(
+                    &item.text,
+                    PromptEnforcementContext {
+                        source: "inbound.pinned",
+                        request_id: Some(&item.id),
+                        user_id: None,
+                        session_id: Some("inbound"),
+                    },
+                    config.as_ref(),
+                )),
+            )
+            .await
+            .ok(),
+            Err(_) => None,
+        };
+        let Some(decision) = screened else {
+            let reason = "flagged for review: screen.timeout".to_owned();
+            tracing::info!(event_id = %item.id, reason = %reason, "[inbound] event kept out of the pinned prompt");
+            blocked.push(BlockedEvent {
+                event_id: item.id,
+                reason,
+            });
+            continue;
+        };
         let verdict = match decision.action {
             PromptEnforcementAction::Allow => {
                 kept.push(item);
@@ -254,8 +286,8 @@ impl Pinned {
         }
     }
 
-    /// Deliver `turn` of source `name` (configured as `source`), waiting for
-    /// its run at most `within`.
+    /// Deliver `turn` of source `name` (configured as `source`), screening its
+    /// events and waiting for its run within `within` in all.
     pub async fn deliver(
         &self,
         ctx: &DispatchCtx,
@@ -264,6 +296,7 @@ impl Pinned {
         source: &InboundSourceConfig,
         within: Duration,
     ) -> Delivered {
+        let deadline = tokio::time::Instant::now() + within;
         match self.results.get(&turn.turn_id) {
             Ok(Some(stored)) if stored.result.status != ResultStatus::Running => {
                 tracing::info!(turn = %turn.turn_id, source = %name, "[inbound] pinned turn already finished; not running it again");
@@ -278,7 +311,7 @@ impl Pinned {
         };
         let items: Vec<ExternalItem> = turn.events.iter().filter_map(external_of).collect();
         let event_ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
-        let (items, blocked) = screen(items).await;
+        let (items, blocked) = screen(ctx, items, deadline).await;
         let key = turn.events.first().map_or_else(
             || turn.conversation_key.clone(),
             |e| e.conversation_key.clone(),
@@ -312,7 +345,7 @@ impl Pinned {
             "[inbound] running the pinned agent"
         );
         let mut task = self.spawn_run(ctx, stored, claim);
-        match tokio::time::timeout(within, &mut task).await {
+        match tokio::time::timeout_at(deadline, &mut task).await {
             Ok(Ok(Ok(()))) => Delivered::Done,
             Ok(Ok(Err(error))) => Delivered::Failed(error),
             Ok(Err(join)) => Delivered::Failed(format!("pinned run ended: {join}")),

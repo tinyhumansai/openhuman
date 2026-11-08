@@ -640,12 +640,21 @@ pub fn registered_tools(
     let mut tools: Vec<Box<dyn tinytools::Tool>> = Vec::new();
     {
         let (service, author) = (service.clone(), author.clone());
+        let staging = super::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
-                tiny_artifacts::CreateArtifactTool::new(
+                let create = tiny_artifacts::CreateArtifactTool::new(
                     service(context.chat.as_ref()),
                     author.clone(),
+                );
+                let tenant = context.dispatch.tenant();
+                super::box_source::BoxSourced::new(
+                    create,
+                    super::box_source::KindSource::Args,
+                    Arc::new(super::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    tenant,
+                    staging.clone(),
                 )
             },
         )));
@@ -655,12 +664,20 @@ pub fn registered_tools(
     ))));
     {
         let (service, author) = (service.clone(), author.clone());
+        let staging = super::box_source::staging_dir(workspace_dir);
         tools.push(Box::new(PerCallTool::new(
             per_call_context,
             move |context| {
-                tiny_artifacts::UpdateArtifactTool::new(
-                    service(context.chat.as_ref()),
-                    author.clone(),
+                let artifacts = service(context.chat.as_ref());
+                let update =
+                    tiny_artifacts::UpdateArtifactTool::new(Arc::clone(&artifacts), author.clone());
+                let tenant = context.dispatch.tenant();
+                super::box_source::BoxSourced::new(
+                    update,
+                    super::box_source::KindSource::Record(artifacts),
+                    Arc::new(super::box_source::SandboxBoxFiles::new(context.dispatch)),
+                    tenant,
+                    staging.clone(),
                 )
             },
         )));

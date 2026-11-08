@@ -11,6 +11,7 @@ use std::time::Duration;
 mod keychain;
 #[cfg(test)]
 pub(crate) use keychain::namespaced_keyring_name;
+pub(crate) use keychain::without_keyring;
 mod lock;
 mod migration;
 mod persistence;
@@ -35,7 +36,7 @@ pub(crate) async fn load_profile_read_only(
 const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Compact secret payload stored as a single keychain entry per auth profile.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct KeychainSecrets {
     #[serde(default)]
     pub token: Option<String>,

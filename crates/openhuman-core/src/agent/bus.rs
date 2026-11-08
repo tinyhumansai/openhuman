@@ -25,7 +25,7 @@ use crate::core::bus::BUS;
 use crate::core::runtime::turn_origin::{self, AgentTurnOrigin};
 use crate::progress::AgentProgress;
 use crate::security::prompt_injection::{
-    enforce_prompt_input, PromptEnforcementAction, PromptEnforcementContext,
+    enforce_prompt_input_in, PromptEnforcementAction, PromptEnforcementContext,
 };
 use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
@@ -230,7 +230,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
         .find(|msg| msg.role.eq_ignore_ascii_case("user"))
         .map(|msg| msg.content.as_str())
     {
-        let decision = enforce_prompt_input(
+        let decision = enforce_prompt_input_in(
+            &crate::core::runtime::DispatchCtx::ambient(),
             user_prompt,
             PromptEnforcementContext {
                 source: "agent.bus.run_turn",
