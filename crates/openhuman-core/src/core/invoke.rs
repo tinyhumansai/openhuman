@@ -179,6 +179,13 @@ fn session_failure_outcome(
             message,
         };
     }
+    if current_token.is_none() {
+        // Nothing was stored or sendable (no session, no API key): this is a
+        // local signed-out pre-flight refusal, not a downstream 401 against a
+        // credential. There is no provenance to verify and no session to
+        // sign out, so keep the original error and its sign-in hint.
+        return SessionFailureOutcome::PassThrough;
+    }
     if request_session_failure_is_actionable(msg, local, request_fingerprint, current_token) {
         return SessionFailureOutcome::PublishExpiry;
     }
