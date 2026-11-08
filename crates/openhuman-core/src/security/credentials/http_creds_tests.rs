@@ -69,7 +69,11 @@ async fn encrypted_http_credentials_fail_closed_without_tinysecurity() {
         .upsert(&HttpCredential::bearer("stripe", secret))
         .await
         .expect_err("encrypted writes must use the admitted TinySecurity cipher");
-    assert!(error.to_string().contains("TinySecurity"), "{error:#}");
+    // `to_string` is the outermost context only; the cause is in the chain.
+    assert!(
+        format!("{error:#}").contains("security module unavailable"),
+        "{error:#}"
+    );
 
     assert!(!dir.path().join(STORE_FILENAME).exists());
 }

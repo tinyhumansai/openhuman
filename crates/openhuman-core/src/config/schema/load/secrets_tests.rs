@@ -15,7 +15,11 @@ async fn config_secret_encryption_fails_closed_without_tinysecurity() {
         .await
         .expect_err("config save must require TinySecurity cipher operations");
 
-    assert!(error.to_string().contains("unavailable"), "{error:#}");
+    // `to_string` is the outermost context only; the cause is in the chain.
+    assert!(
+        format!("{error:#}").contains("security module unavailable"),
+        "{error:#}"
+    );
     assert!(!dir.path().join(".secret_key").exists());
     assert_eq!(
         config.api_key.as_deref(),
