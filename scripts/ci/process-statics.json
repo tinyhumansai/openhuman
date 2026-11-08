@@ -750,7 +750,6 @@
     "verification": "security/switch_tests.rs: the_test_guard_does_not_reach_another_thread"
   },
   {
-<<<<<<< HEAD
     "file": "crates/openhuman-core/src/modules/security/test_host.rs",
     "scope": "",
     "name": "FIXTURE",
@@ -809,7 +808,8 @@
     "category": "A",
     "reason": "This cfg(test) thread-local port substitutes a scripted ScanPrompt2 answer for one test thread so start_paused tests whose subject is not the input screen do not wait on the module-bus runtime; it is test instrumentation and is not compiled into production builds.",
     "verification": "agent/agent_turn_loop_tests.rs: turn_recovers_from_tool_failure_and_tool_error; channels/bus/subscriber_tests.rs: backend_channel_wait_does_not_cut_off_a_live_turn_after_180_seconds"
-=======
+  },
+  {
     "file": "crates/openhuman-core/src/agent/session_host/runtime_session/memory_block_ready.rs",
     "scope": "",
     "name": "READY",
@@ -818,6 +818,5 @@
     "category": "B",
     "reason": "Rendered memory blocks wait here for the next generation start. Every key combines the session's workspace directory, its resolved memory identity (profile and agent) and the token budget, so a block is only ever taken by the identity it was read for; the store holds at most READY_CAPACITY entries, each dropped after READY_MAX_AGE.",
     "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: a_block_is_not_taken_for_another_identity_or_budget"
->>>>>>> origin/main
   }
 ]
