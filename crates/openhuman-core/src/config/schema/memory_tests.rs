@@ -415,3 +415,19 @@ fn recall_each_turn_is_an_optional_host_binding_in_milliseconds() {
     let written = toml::to_string(&config).expect("serializes");
     assert!(written.contains("recall_each_turn_ms = 1500"), "{written}");
 }
+
+#[test]
+fn memory_block_deadline_is_an_optional_host_binding_in_milliseconds() {
+    assert_eq!(MemoryConfig::default().memory_block_deadline_ms, None);
+    let unset = toml::to_string(&MemoryConfig::default()).expect("serializes");
+    assert!(!unset.contains("memory_block_deadline_ms"), "{unset}");
+
+    let config: MemoryConfig =
+        toml::from_str("memory_block_deadline_ms = 300").expect("the binding parses");
+    assert_eq!(config.memory_block_deadline_ms, Some(300));
+    let written = toml::to_string(&config).expect("serializes");
+    assert!(
+        written.contains("memory_block_deadline_ms = 300"),
+        "{written}"
+    );
+}

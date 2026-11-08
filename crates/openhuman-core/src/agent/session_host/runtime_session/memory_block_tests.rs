@@ -2,11 +2,12 @@ use super::*;
 use std::sync::Arc;
 
 use super::super::prompt_refresh::PROMPT_UPDATE_NOTE;
+use super::super::MemoryBlockPrewarm;
 use crate::agent::prompts::SystemPromptBuilder;
 use crate::agent::tinyagents::middleware::turn_context::TranscriptSnapshotSink;
 use crate::agent_registry::host_definition::{AgentDefinitionRegistry, MemoryBlock};
 use crate::config::Config;
-use crate::memory::test_fixtures::{bind_reference, config_in, RefusingEngine};
+use crate::memory::test_fixtures::{bind_reference, config_in, RefusingEngine, SlowEngine};
 use crate::storage::sessions::splice_fixture_tests::memory_locator;
 use tinyagents_definition::PromptSource;
 use tinyagents_runtime::{SessionTurnRequest, TranscriptTarget};
@@ -424,4 +425,214 @@ async fn a_generation_opened_outside_a_turn_can_take_a_fresh_block() {
     definition.extensions.memory_block = None;
     without.definition = Some(Arc::new(definition));
     assert_eq!(without.memory_block_for_new_generation().await, None);
+}
+
+/// `config` with the memory-block deadline set to `ms`.
+fn with_deadline(mut config: Config, ms: u64) -> Config {
+    config.memory.memory_block_deadline_ms = Some(ms);
+    config
+}
+
+const SLOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A resumed thread whose recorded prefix carries a block and whose prompt is
+/// replaced: its turn opens a generation and so renders a fresh block.
+fn generation_start() -> (PrefixSnapshot, Vec<Message>) {
+    (
+        PrefixSnapshot::new(vec![Message::system(PROMPT), block("- teal")]),
+        vec![
+            Message::system(PROMPT),
+            block("- teal"),
+            Message::user("hello"),
+        ],
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn memory_block_render_respects_deadline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = with_deadline(config_in(&tmp), 300);
+    let engine = SlowEngine::new(SLOW);
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+    let prelude = prelude(&config, "You are blocky, v2.", true);
+    let (recorded, history) = generation_start();
+
+    let started = tokio::time::Instant::now();
+    let (prepared, _) = prepare(&prelude, false, &view(&recorded, &history, None)).await;
+
+    assert!(
+        started.elapsed() <= std::time::Duration::from_millis(400),
+        "{:?}",
+        started.elapsed()
+    );
+    let offered = prepared.prefix.expect("a refreshed prefix");
+    assert_eq!(offered.messages()[0].text(), "You are blocky, v2.");
+    assert_eq!(offered.messages().last(), Some(&block("- teal")));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cold_thread_sends_no_block_when_the_render_lapses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = with_deadline(config_in(&tmp), 300);
+    let engine = SlowEngine::new(SLOW);
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+    let prelude = prelude(&config, PROMPT, false);
+    let empty = PrefixSnapshot::default();
+
+    let started = tokio::time::Instant::now();
+    let (prepared, _) = prepare(&prelude, true, &view(&empty, &[], None)).await;
+
+    assert!(started.elapsed() <= std::time::Duration::from_millis(400));
+    let messages = sent(&prepared, &empty);
+    assert!(!messages.iter().any(is_memory_block), "{messages:?}");
+    assert_eq!(messages.first().map(Message::text).as_deref(), Some(PROMPT));
+}
+
+#[tokio::test(start_paused = true)]
+async fn deferred_memory_block_is_used_next_generation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = with_deadline(config_in(&tmp), 300);
+    let engine = SlowEngine::new(SLOW);
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+    let prelude = prelude(&config, "You are blocky, v2.", true);
+    let (recorded, history) = generation_start();
+
+    let (current, _) = prepare(&prelude, false, &view(&recorded, &history, None)).await;
+    let current = current.prefix.expect("a refreshed prefix");
+    assert_eq!(current.messages().last(), Some(&block("- teal")));
+    assert!(
+        !current
+            .messages()
+            .iter()
+            .any(|m| m.text().contains("Lisbon")),
+        "the render that lapsed never reaches the generation in flight"
+    );
+
+    // The render finishes in the background; the next generation start takes it.
+    tokio::time::sleep(SLOW).await;
+    let reads = engine.reads();
+    let started = tokio::time::Instant::now();
+    let (next, _) = prepare(&prelude, false, &view(&recorded, &history, None)).await;
+    let next = next.prefix.expect("a refreshed prefix");
+    assert!(
+        next.messages()
+            .last()
+            .expect("a block")
+            .text()
+            .contains("Lisbon"),
+        "{next:?}"
+    );
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    assert_eq!(engine.reads(), reads, "taken, not read again");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_render_inside_the_deadline_is_used_and_not_kept_for_later() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = with_deadline(config_in(&tmp), 300);
+    let engine = SlowEngine::new(std::time::Duration::from_millis(100));
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+    let prelude = prelude(&config, PROMPT, false);
+    let empty = PrefixSnapshot::default();
+
+    let (prepared, _) = prepare(&prelude, true, &view(&empty, &[], None)).await;
+    let messages = sent(&prepared, &empty);
+    assert!(messages.last().expect("a block").text().contains("Lisbon"));
+    assert_eq!(engine.reads(), 2);
+
+    // Nothing was left over, so the next generation start reads again.
+    prepare(&prelude, true, &view(&empty, &[], None)).await;
+    assert_eq!(engine.reads(), 4);
+}
+
+#[tokio::test(start_paused = true)]
+async fn prewarmed_memory_block_skips_render_on_turn() {
+    let tmp = tempfile::tempdir().unwrap();
+    // No deadline: the turn must not render at all.
+    let config = config_in(&tmp);
+    let engine = SlowEngine::new(SLOW);
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+
+    let host = host(&config, PROMPT, false);
+    assert_eq!(host.prewarm_memory_block().await, MemoryBlockPrewarm::Ready);
+    assert_eq!(engine.reads(), 2);
+    assert_eq!(
+        host.prewarm_memory_block().await,
+        MemoryBlockPrewarm::AlreadyReady
+    );
+    assert_eq!(
+        engine.reads(),
+        2,
+        "a block already waiting is not read again"
+    );
+
+    let prelude = prelude(&config, PROMPT, false);
+    let empty = PrefixSnapshot::default();
+    let started = tokio::time::Instant::now();
+    let (prepared, _) = prepare(&prelude, true, &view(&empty, &[], None)).await;
+
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    assert_eq!(engine.reads(), 2, "the turn read nothing");
+    let messages = sent(&prepared, &empty);
+    assert!(messages.last().expect("a block").text().contains("Lisbon"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_prewarm_is_taken_by_one_generation_start_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = SlowEngine::new(std::time::Duration::from_millis(10));
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+    host(&config, PROMPT, false).prewarm_memory_block().await;
+    let prelude = prelude(&config, PROMPT, false);
+    let empty = PrefixSnapshot::default();
+
+    prepare(&prelude, true, &view(&empty, &[], None)).await;
+    assert_eq!(engine.reads(), 2);
+    prepare(&prelude, true, &view(&empty, &[], None)).await;
+    assert_eq!(engine.reads(), 4, "the second start renders for itself");
+}
+
+#[tokio::test]
+async fn a_failed_prewarm_leaves_the_turn_to_render() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    RefusingEngine::out_of_credits().bind(&config);
+    assert_eq!(
+        host(&config, PROMPT, false).prewarm_memory_block().await,
+        MemoryBlockPrewarm::Failed
+    );
+
+    learn(
+        &bind_reference(&config),
+        &config,
+        "The user lives in Lisbon",
+    )
+    .await;
+    let prelude = prelude(&config, PROMPT, false);
+    let empty = PrefixSnapshot::default();
+    let (prepared, _) = prepare(&prelude, true, &view(&empty, &[], None)).await;
+    let messages = sent(&prepared, &empty);
+    assert!(messages.last().expect("a block").text().contains("Lisbon"));
+}
+
+#[tokio::test]
+async fn an_agent_without_a_memory_block_has_nothing_to_prewarm() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let mut without = host(&config, PROMPT, false);
+    let mut definition = (**without.definition.as_ref().expect("a definition")).clone();
+    definition.extensions.memory_block = None;
+    without.definition = Some(Arc::new(definition));
+    assert_eq!(
+        without.prewarm_memory_block().await,
+        MemoryBlockPrewarm::Unavailable
+    );
 }

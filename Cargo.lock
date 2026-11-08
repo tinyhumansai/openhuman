@@ -10337,7 +10337,7 @@ dependencies = [
 
 [[package]]
 name = "tinysearch"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -10351,7 +10351,7 @@ dependencies = [
 
 [[package]]
 name = "tinysearch-bus"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "schemars",
  "serde",

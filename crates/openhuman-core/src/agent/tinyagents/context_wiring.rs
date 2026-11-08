@@ -28,6 +28,13 @@ use tinyagents_harness::turn_outcome::ToolOutcomeSink;
 const BUDGET_NOTICE_THRESHOLDS: [f64; 2] = [0.5, 0.8];
 /// Longest verbatim tail of a task-state compaction (tokens).
 const TASK_STATE_KEEP_RECENT_TOKENS: u64 = 20_000;
+/// The verbatim tail of a task-state compaction: `requested` (the `[context]
+/// keep_recent_tokens` budget; unset keeps [`TASK_STATE_KEEP_RECENT_TOKENS`]),
+/// held to a fifth of a known context window.
+fn task_state_keep_recent_tokens(window: Option<u64>, requested: Option<u64>) -> u64 {
+    let budget = requested.unwrap_or(TASK_STATE_KEEP_RECENT_TOKENS);
+    window.map_or(budget, |w| (w / 5).min(budget))
+}
 /// Store the artifact index is registered under on the run context.
 const ARTIFACT_INDEX_STORE: &str =
     crate::agent::harness::tool_result_artifacts::TINYAGENTS_TOOL_RESULT_ARTIFACT_STORE;
@@ -112,6 +119,7 @@ pub(super) fn install_context_ladder(
     autocompact_enabled: bool,
     compaction_trigger_tokens: Option<u64>,
     compaction_strategy: crate::config::CompactionStrategy,
+    keep_recent_tokens: Option<u64>,
     microcompact_keep_recent: usize,
     summarizer: CompactionSummarizer,
     wrap_up_at_cap: bool,
@@ -131,6 +139,7 @@ pub(super) fn install_context_ladder(
                 policy,
                 compaction_strategy,
                 context_window,
+                keep_recent_tokens,
                 summarizer,
                 model,
                 memory_turn,
@@ -181,11 +190,14 @@ pub(super) fn install_context_ladder(
 /// The compression middleware for `strategy`: `TaskState` writes a typed
 /// checkpoint over a token-budgeted tail, `Summary` is the free-form summarizer,
 /// rendering tool activity and capping its output as `summarizer.settings`
-/// say. `model` is the turn's.
+/// say. `model` is the turn's. `keep_recent_tokens` is the `[context]` tail
+/// budget: unset, a task-state compaction keeps 20k tokens and a free-form one
+/// keeps its count-based tail.
 pub(crate) fn compression_middleware(
     policy: SummarizationPolicy,
     strategy: crate::config::CompactionStrategy,
     context_window: Option<u64>,
+    keep_recent_tokens: Option<u64>,
     summarizer: CompactionSummarizer,
     model: &str,
     memory_turn: Option<Arc<crate::memory::lifecycle::hooks::MemoryTurn>>,
@@ -194,9 +206,7 @@ pub(crate) fn compression_middleware(
     let window = context_window.filter(|w| *w > 0);
     match strategy {
         crate::config::CompactionStrategy::TaskState => {
-            let keep_recent = window.map_or(TASK_STATE_KEEP_RECENT_TOKENS, |w| {
-                (w / 5).min(TASK_STATE_KEEP_RECENT_TOKENS)
-            });
+            let keep_recent = task_state_keep_recent_tokens(window, keep_recent_tokens);
             let chunk = window.map_or(DEFAULT_TASK_STATE_CHUNK_TOKENS, |w| {
                 (w * 2 / 5).clamp(4_000, DEFAULT_TASK_STATE_CHUNK_TOKENS)
             });
@@ -234,10 +244,14 @@ pub(crate) fn compression_middleware(
                 announced(Box::new(model_summarizer), compaction_notice),
                 &policy,
             );
-            ContextCompressionMiddleware::with_summarizer(
+            let middleware = ContextCompressionMiddleware::with_summarizer(
                 policy,
                 MemoryRecallSummarizer::wrap(Box::new(summarizer), memory_turn),
-            )
+            );
+            match keep_recent_tokens {
+                Some(tokens) => middleware.with_keep_recent_tokens(tokens),
+                None => middleware,
+            }
         }
     }
 }
@@ -290,6 +304,7 @@ pub(crate) async fn compact_history(
         policy,
         fold.strategy,
         fold.context_window,
+        None,
         summarizer,
         fold.model,
         None,

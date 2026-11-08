@@ -193,3 +193,218 @@ fn failed_tool_outcome_does_not_mark_an_earlier_turns_result_with_the_same_call_
     );
     assert!(rows[3].tool_failure.as_ref().is_some_and(|f| f.failed));
 }
+
+/// The turn that starts a thread records its discovery options on the first
+/// row it writes; the turns after it neither add nor move the record.
+#[test]
+fn the_codec_records_discovery_options_on_the_first_new_row_only_once() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = DiscoveryOptions {
+        promote_found_tools: false,
+        ..DiscoveryOptions::TODAY
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().discovery_record = Some(wanted);
+    let first = vec![Message::system("prompt"), Message::user("one")];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &first, &options(context))
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&prior), Some(wanted));
+    assert!(prior[1].extra_metadata.is_none());
+
+    // A later turn records nothing and leaves the stored row as it was.
+    let mut next = first.clone();
+    next.push(Message::assistant("done"));
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &first, &next, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    assert_eq!(rows[0], prior[0]);
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(wanted));
+}
+
+/// The turn that starts a thread records its history-replay options on the
+/// first row it writes, beside any discovery record; later turns neither add
+/// nor move it.
+#[test]
+fn the_codec_records_replay_options_on_the_first_new_row_only_once() {
+    use crate::agent::tinyagents::replay_pin::ReplayOptions;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = ReplayOptions {
+        tool_result_max_age_turns: Some(6),
+        tool_result_exempt_tools: vec!["tool_search".into()],
+        replay_reasoning: ReasoningReplay::CurrentTurn,
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().replay_record = Some(wanted.clone());
+    let first = vec![Message::system("prompt"), Message::user("one")];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &first, &options(context))
+        .unwrap();
+    assert_eq!(ReplayOptions::recorded_in(&prior), Some(wanted.clone()));
+    assert!(prior[1].extra_metadata.is_none());
+
+    // A later turn records nothing and leaves the stored row as it was.
+    let mut next = first.clone();
+    next.push(Message::assistant("done"));
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &first, &next, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    assert_eq!(rows[0], prior[0]);
+    assert_eq!(ReplayOptions::recorded_in(&rows), Some(wanted));
+}
+
+/// A compaction writes the retained rows into a new generation. Its first row
+/// is the refreshed system prompt, so the stored row that carried the
+/// discovery record is gone; the codec records it again.
+#[test]
+fn discovery_pin_survives_compaction() {
+    use crate::agent::tinyagents::discovery::DiscoveryOptions;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = DiscoveryOptions {
+        collapse_search_results: true,
+        ..DiscoveryOptions::TODAY
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().discovery_record = Some(wanted);
+    let history = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+        Message::user("two"),
+        Message::assistant("second answer"),
+    ];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &options(context))
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&prior), Some(wanted));
+
+    // The compacted generation: a prompt with a freshly rendered memory block,
+    // a summary for the folded turn, and the verbatim tail.
+    let compacted = vec![
+        Message::system("prompt with a fresh memory block"),
+        Message::user("summary of the first turn"),
+        history[3].clone(),
+        history[4].clone(),
+    ];
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &prior,
+            &history,
+            &compacted,
+            &options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(wanted));
+    assert!(
+        rows[1..].iter().all(|row| row.extra_metadata.is_none()),
+        "only the first row carries it"
+    );
+
+    // A thread that recorded nothing still records nothing.
+    let bare = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &bare,
+            &history,
+            &compacted,
+            &options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(DiscoveryOptions::recorded_in(&rows), None);
+}
+
+/// The history-replay pin rides the same compaction path as the discovery pin:
+/// a thread created with expiry off but reasoning limited to the current turn
+/// keeps both after a compacted generation drops the row that recorded them,
+/// instead of falling back to whatever `[context]` says now.
+#[test]
+fn replay_pin_survives_compaction() {
+    use crate::agent::tinyagents::replay_pin::ReplayOptions;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = ReplayOptions {
+        replay_reasoning: ReasoningReplay::CurrentTurn,
+        ..ReplayOptions::TODAY
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().replay_record = Some(wanted.clone());
+    let history = vec![
+        Message::system("prompt"),
+        Message::user("one"),
+        Message::assistant("first answer"),
+        Message::user("two"),
+        Message::assistant("second answer"),
+    ];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &options(context))
+        .unwrap();
+    assert_eq!(ReplayOptions::recorded_in(&prior), Some(wanted.clone()));
+
+    // The compacted generation: a prompt with a freshly rendered memory block,
+    // a summary for the folded turn, and the verbatim tail.
+    let compacted = vec![
+        Message::system("prompt with a fresh memory block"),
+        Message::user("summary of the first turn"),
+        history[3].clone(),
+        history[4].clone(),
+    ];
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &prior,
+            &history,
+            &compacted,
+            &options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(ReplayOptions::recorded_in(&rows), Some(wanted));
+    assert!(
+        rows[1..].iter().all(|row| row.extra_metadata.is_none()),
+        "only the first row carries it"
+    );
+
+    // A thread that recorded nothing still records nothing.
+    let bare = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &history, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(
+            &bare,
+            &history,
+            &compacted,
+            &options(OpenHumanRunContext::new()),
+        )
+        .unwrap();
+    assert_eq!(ReplayOptions::recorded_in(&rows), None);
+}

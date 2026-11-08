@@ -147,6 +147,23 @@ impl OpenHumanTurnPrelude {
         )
     }
 
+    /// Spawns `work` under the context this session's memory work runs in, so
+    /// it can outlive the turn that started it. Work of a retired profile is
+    /// dropped, like a deferred commit.
+    pub(super) fn spawn_memory_work(
+        &self,
+        work: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        let profile_context = capture_profile_context(
+            &self.dispatch_ctx(),
+            crate::profiles::host::host().as_deref(),
+        );
+        drop(
+            self.dispatch_ctx()
+                .spawn(deferred_memory_work(profile_context, work)),
+        );
+    }
+
     /// Takes completed memory and queues a user-authored turn's log and recall.
     /// Remembers the turn so the reply is logged under the same identity and
     /// index, and returns its memory for the run context without engine I/O.

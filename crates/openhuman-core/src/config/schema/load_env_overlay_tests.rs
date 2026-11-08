@@ -481,6 +481,39 @@ fn env_overlay_jev_route_and_base_url_override_tool_search_when_non_blank() {
     );
 }
 
+#[test]
+fn env_overlay_sets_the_tool_search_discovery_options() {
+    let mut cfg = Config::default();
+    let today = cfg.agent.tool_search.clone();
+    assert!(today.promote_found_tools && today.repair_tool_call_wrapper);
+    assert!(!today.compact_search_results && !today.collapse_search_results);
+    assert_eq!(today.max_limit, 20);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS", "off")
+            .with("OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS", " TRUE ")
+            .with("OPENHUMAN_TOOL_SEARCH_COLLAPSE_SEARCH_RESULTS", "1")
+            .with("OPENHUMAN_TOOL_SEARCH_REPAIR_TOOL_CALL_WRAPPER", "no")
+            .with("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT", "5"),
+    );
+    let set = &cfg.agent.tool_search;
+    assert!(!set.promote_found_tools && !set.repair_tool_call_wrapper);
+    assert!(set.compact_search_results && set.collapse_search_results);
+    assert_eq!(set.max_limit, 5);
+
+    // Blank or unusable values leave the configured choice alone.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_TOOL_SEARCH_PROMOTE_FOUND_TOOLS", "  ")
+            .with("OPENHUMAN_TOOL_SEARCH_COMPACT_SEARCH_RESULTS", "maybe")
+            .with("OPENHUMAN_TOOL_SEARCH_MAX_LIMIT", "0"),
+    );
+    assert!(!cfg.agent.tool_search.promote_found_tools);
+    assert!(cfg.agent.tool_search.compact_search_results);
+    assert_eq!(cfg.agent.tool_search.max_limit, 5);
+}
+
 /// Local model tier presets were removed: OpenHuman no longer picks models by
 /// RAM tier. A stale `OPENHUMAN_LOCAL_AI_TIER` in the environment must be
 /// ignored rather than rewriting the user's configured local models.
@@ -628,4 +661,45 @@ fn env_overlay_inbound_debounce_applies_and_ignores_garbage() {
 
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_INBOUND_DEBOUNCE_ENABLED", "on"));
     assert!(cfg.inbound_debounce.enabled);
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_default_to_today_and_read_from_the_table() {
+    let defaults = Config::default().search;
+    assert!(!defaults.compact_results);
+    assert_eq!(defaults.contents_max_chars, None);
+
+    let cfg: Config =
+        toml::from_str("[search]\ncompact_results = true\ncontents_max_chars = 1200\n").unwrap();
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+}
+
+#[test]
+fn search_compact_results_and_contents_cap_env_set_clear_and_ignore_garbage() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "yes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", " 1200 "),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "sometimes")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "lots"),
+    );
+    assert!(cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, Some(1_200));
+
+    // `0` removes the cap and `off` restores the default rendering.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_SEARCH_COMPACT_RESULTS", "off")
+            .with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "0"),
+    );
+    assert!(!cfg.search.compact_results);
+    assert_eq!(cfg.search.contents_max_chars, None);
 }

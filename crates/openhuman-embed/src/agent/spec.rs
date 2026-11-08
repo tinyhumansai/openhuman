@@ -63,6 +63,8 @@ pub struct AgentSpec {
         tinyagents_harness::cost::TurnCost,
     >,
     memory: Option<MemoryBinding>,
+    tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    context: crate::ContextOverrides,
     subagents: Vec<(String, AgentDefinitionSpec)>,
 }
 
@@ -79,6 +81,7 @@ pub struct MemoryBinding {
     agent_id: String,
     root: Option<String>,
     recall_each_turn: Option<std::time::Duration>,
+    memory_block_deadline: Option<std::time::Duration>,
 }
 
 impl MemoryBinding {
@@ -88,6 +91,7 @@ impl MemoryBinding {
             agent_id: agent_id.into(),
             root: None,
             recall_each_turn: None,
+            memory_block_deadline: None,
         }
     }
 
@@ -115,6 +119,22 @@ impl MemoryBinding {
         self
     }
 
+    /// Wait at most `deadline` for the memory block
+    /// ([`AgentDefinitionSpec::memory_block`]) a new transcript generation
+    /// renders before the turn's first model call.
+    ///
+    /// When it lapses, the turn goes on with the block its thread recorded (a
+    /// new thread with none), and the render finishes in the background for
+    /// the next generation start. Without this, a generation start waits for
+    /// the render however long the memory engine takes.
+    /// [`Agent::prewarm_memory_block`](super::Agent::prewarm_memory_block)
+    /// renders it ahead of a turn instead.
+    #[must_use]
+    pub fn memory_block_deadline(mut self, deadline: std::time::Duration) -> Self {
+        self.memory_block_deadline = Some(deadline);
+        self
+    }
+
     /// The memory agent id.
     pub fn agent_id(&self) -> &str {
         &self.agent_id
@@ -123,6 +143,12 @@ impl MemoryBinding {
     /// The layout root, when one is set.
     pub fn root_namespace(&self) -> Option<&str> {
         self.root.as_deref()
+    }
+
+    /// How long a generation start waits for its memory block, when
+    /// [`memory_block_deadline`](Self::memory_block_deadline) is set.
+    pub fn memory_block_deadline_timeout(&self) -> Option<std::time::Duration> {
+        self.memory_block_deadline
     }
 
     /// How long a turn waits for its own recall, when
@@ -169,6 +195,8 @@ impl AgentSpec {
             host_tools: None,
             hooks: Default::default(),
             memory: None,
+            tool_discovery: None,
+            context: Default::default(),
             subagents: Vec::new(),
         }
     }
@@ -330,6 +358,72 @@ impl AgentSpec {
     #[must_use]
     pub fn composio(mut self, credential: ComposioHostCredential) -> Self {
         self.composio = Some(credential);
+        self
+    }
+
+    /// The `tool_search` options this agent's **new** threads start with:
+    /// whether found tools join the request's `tools` list, whether results
+    /// print on one line, whether a used result is collapsed afterwards, and
+    /// whether a `tool_call` wrapper is repaired.
+    ///
+    /// Without this the options come from the config's `[agent.tool_search]`,
+    /// which defaults to today's behaviour. They are recorded on each thread
+    /// with its first prompt and read back when it resumes, so changing them
+    /// here (or in the config) never alters a thread that already exists.
+    /// [`Turn::tool_discovery`](crate::Turn::tool_discovery) overrides them
+    /// for the thread one turn creates.
+    #[must_use]
+    pub fn tool_discovery(mut self, options: crate::ToolDiscoveryOptions) -> Self {
+        self.tool_discovery = Some(options);
+        self
+    }
+
+    /// `[context] keep_recent_tokens` for this agent's sessions: the verbatim tail, in
+    /// tokens, an in-turn compaction keeps after its summary. Unset keeps the
+    /// config's value, which defaults to 20,000.
+    #[must_use]
+    pub fn keep_recent_tokens(mut self, tokens: u32) -> Self {
+        self.context.keep_recent_tokens = Some(tokens);
+        self
+    }
+
+    /// `[context] tool_result_max_age_turns` for this agent's sessions: a tool result with
+    /// more than `turns` user turns after it is replaced by a one-line note.
+    /// Off unless set. Expiry and reasoning replay are recorded on each thread when it is created, so changing them never alters a thread that already exists.
+    #[must_use]
+    pub fn tool_result_max_age_turns(mut self, turns: u32) -> Self {
+        self.context.tool_result_max_age_turns = Some(turns);
+        self
+    }
+
+    /// `[context] tool_result_exempt_tools` for this agent's sessions: tools whose results
+    /// never expire. Only read while a result age is set.
+    #[must_use]
+    pub fn tool_result_exempt_tools<I, S>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.context.tool_result_exempt_tools = Some(tools.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// `[context] replay_reasoning` for this agent's sessions: whether requests replay every
+    /// turn's reasoning ([`ReasoningReplay::All`](crate::ReasoningReplay::All),
+    /// today's behaviour) or only the current turn's. The stored transcript
+    /// keeps every block either way.
+    #[must_use]
+    pub fn replay_reasoning(mut self, replay: crate::ReasoningReplay) -> Self {
+        self.context.replay_reasoning = Some(replay);
+        self
+    }
+
+    /// `[context] prune_retired_tools` for this agent's sessions: drop a recorded tool
+    /// declaration the host no longer offers, live or deferred, instead of
+    /// carrying it forward for the life of the thread.
+    #[must_use]
+    pub fn prune_retired_tools(mut self, prune: bool) -> Self {
+        self.context.prune_retired_tools = Some(prune);
         self
     }
 
@@ -509,6 +603,8 @@ impl AgentSpec {
             host_tools: self.host_tools,
             hooks: self.hooks,
             memory: self.memory,
+            tool_discovery: self.tool_discovery,
+            context: self.context,
             subagents: self.subagents,
         }
     }
@@ -541,6 +637,8 @@ pub(crate) struct AgentSpecParts {
     pub(crate) trusted: Vec<(String, TrustedAccess)>,
     pub(crate) composio: Option<ComposioHostCredential>,
     pub(crate) config_fn: Option<ConfigEdit>,
+    pub(crate) tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    pub(crate) context: crate::ContextOverrides,
     pub(crate) host_tools: Option<openhuman_core::agent::HostTools>,
     pub(crate) hooks: tinyagents_hooks::scope::HookScope<
         openhuman_core::agent::tinyagents::host::OpenHumanRunContext,

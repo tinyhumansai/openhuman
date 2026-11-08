@@ -71,7 +71,7 @@ pub use schema::{
 // Kept as a separate re-export (issue #4117) so the large alphabetized group
 // above stays byte-identical and rustfmt-stable.
 pub use schema::RequiredOutputContract;
-pub use schema::SummarizerSettings;
+pub use schema::{ContextOverrides, ReasoningReplay, SummarizerSettings};
 pub use schema::{InboundDebounceConfig, InboundDebounceOverride};
 pub use schema::{SecurityMode, SecurityModeConfig};
 pub use schemas::{

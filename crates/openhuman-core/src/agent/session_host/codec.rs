@@ -76,6 +76,23 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
                 });
             }
         }
+        // The turn that starts a thread writes down the discovery options it
+        // runs with, so every later turn reads them back instead of the config.
+        if let Some(options) = sidecar.discovery_record {
+            options.record_on(&mut reconciled.rows, &reconciled.fresh);
+        }
+        // A compaction writes the retained rows into a new generation, and the
+        // stored row that carried the record may not be among them (a
+        // refreshed system prompt, a summary). Carry the thread's options onto
+        // the new generation's first row. An ordinary turn keeps the row that
+        // holds them, so this does nothing there. Out-of-band compaction
+        // (`compact_bound_history`) and an in-turn one both come through here.
+        crate::agent::tinyagents::discovery::carry_forward(&prior, &mut reconciled.rows);
+        // Likewise the history-replay options (result expiry, reasoning replay).
+        if let Some(options) = &sidecar.replay_record {
+            options.record_on(&mut reconciled.rows, &reconciled.fresh);
+        }
+        crate::agent::tinyagents::replay_pin::carry_forward(&prior, &mut reconciled.rows);
         attach_text_dialect_rounds(
             &mut reconciled.rows,
             &reconciled.fresh,

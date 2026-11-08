@@ -174,3 +174,124 @@ fn sub_agent_ids_are_checked_like_agent_ids() {
     );
     assert!(matches!(itself, Err(AgentError::DuplicateId(_))));
 }
+
+/// A built agent's `[agent.tool_search]` discovery keys, for an agent built
+/// from `spec` on a bare runtime.
+fn built_discovery_keys(
+    spec: crate::AgentSpec,
+) -> openhuman_core::config::schema::ToolSearchConfig {
+    let tokio = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .enable_all()
+        .build()
+        .unwrap();
+    let test = tokio.spawn(async move {
+        let dir = tempfile::tempdir().unwrap();
+        let config = openhuman_core::config::Config {
+            config_path: dir.path().join("config.toml"),
+            workspace_dir: dir.path().join("workspace"),
+            action_dir: dir.path().join("action"),
+            ..openhuman_core::config::Config::default()
+        };
+        config.save().await.unwrap();
+        let runtime = crate::runtime::RuntimeBuilder::new()
+            .config(config)
+            .services(openhuman_core::core::runtime::ServiceSet::none())
+            .build()
+            .await
+            .expect("runtime");
+        let agent = runtime.agent(spec).expect("agent builds");
+        let keys = agent.inner.config.agent.tool_search.clone();
+        drop(agent);
+        drop(runtime);
+        keys
+    });
+    tokio.block_on(test).unwrap()
+}
+
+#[test]
+fn an_agent_with_promotion_off_and_collapse_on_hands_both_to_the_session_config() {
+    let keys = built_discovery_keys(crate::AgentSpec::new("discovery-set").tool_discovery(
+        crate::ToolDiscoveryOptions {
+            promote_found_tools: false,
+            collapse_search_results: true,
+            ..crate::ToolDiscoveryOptions::TODAY
+        },
+    ));
+    assert!(!keys.promote_found_tools);
+    assert!(keys.collapse_search_results);
+    assert!(!keys.compact_search_results);
+    assert!(keys.repair_tool_call_wrapper);
+}
+
+#[test]
+fn an_agent_with_no_discovery_options_behaves_as_before() {
+    let keys = built_discovery_keys(crate::AgentSpec::new("discovery-unset"));
+    assert!(keys.promote_found_tools);
+    assert!(!keys.compact_search_results);
+    assert!(!keys.collapse_search_results);
+    assert!(keys.repair_tool_call_wrapper);
+    assert_eq!(keys.max_limit, 20);
+}
+
+fn built_context(spec: crate::AgentSpec) -> openhuman_core::config::ContextSettings {
+    let tokio = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .enable_all()
+        .build()
+        .unwrap();
+    let test = tokio.spawn(async move {
+        let dir = tempfile::tempdir().unwrap();
+        let config = openhuman_core::config::Config {
+            config_path: dir.path().join("config.toml"),
+            workspace_dir: dir.path().join("workspace"),
+            action_dir: dir.path().join("action"),
+            ..openhuman_core::config::Config::default()
+        };
+        config.save().await.unwrap();
+        let runtime = crate::runtime::RuntimeBuilder::new()
+            .config(config)
+            .services(openhuman_core::core::runtime::ServiceSet::none())
+            .build()
+            .await
+            .expect("runtime");
+        let agent = runtime.agent(spec).expect("agent builds");
+        let context = agent.inner.config.context.clone();
+        drop(agent);
+        drop(runtime);
+        context
+    });
+    tokio.block_on(test).unwrap()
+}
+
+#[test]
+fn an_agent_with_context_overrides_hands_them_to_the_session_config() {
+    let context = built_context(
+        crate::AgentSpec::new("context-set")
+            .keep_recent_tokens(12_000)
+            .tool_result_max_age_turns(6)
+            .tool_result_exempt_tools(["tool_search"])
+            .replay_reasoning(crate::ReasoningReplay::CurrentTurn)
+            .prune_retired_tools(true),
+    );
+    assert_eq!(context.keep_recent_tokens, Some(12_000));
+    assert_eq!(context.tool_result_max_age_turns, Some(6));
+    assert_eq!(context.tool_result_exempt_tools, ["tool_search"]);
+    assert_eq!(
+        context.replay_reasoning,
+        crate::ReasoningReplay::CurrentTurn
+    );
+    assert!(context.prune_retired_tools);
+}
+
+#[test]
+fn an_agent_with_no_context_overrides_behaves_as_before() {
+    let context = built_context(crate::AgentSpec::new("context-unset"));
+    assert_eq!(context.keep_recent_tokens, None);
+    assert_eq!(context.tool_result_max_age_turns, None);
+    assert!(context.tool_result_exempt_tools.is_empty());
+    assert_eq!(context.replay_reasoning, crate::ReasoningReplay::All);
+    assert!(!context.prune_retired_tools);
+}
