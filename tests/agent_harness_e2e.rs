@@ -9,6 +9,9 @@
 //! points on purpose: `HOME` / backend-URL / approval-TTL env vars are global,
 //! so tests must run one at a time. That makes `clippy::await_holding_lock`
 //! a false positive here — the lock IS the serialization mechanism.
+// Its turn futures nest as deep as the core crate's own (which raises the
+// limit to 256 for the same reason).
+#![recursion_limit = "256"]
 #![allow(clippy::await_holding_lock)]
 
 #[path = "support/env_guard.rs"]
