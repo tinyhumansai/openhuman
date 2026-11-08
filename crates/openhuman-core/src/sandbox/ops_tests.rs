@@ -220,10 +220,13 @@ async fn execute_in_sandbox_none_backend() {
     // A private folder: the jail's bwrap backend owns `/tmp` as a private mount
     // and refuses a grant on `/tmp` itself.
     let workdir = tempfile::tempdir().unwrap();
+    // The module canonicalizes the state folder before it runs a command, so it
+    // must exist, as the core's `workspace_dir` does in a booted host.
+    let state = tempfile::tempdir().unwrap();
     let policy = crate::sandbox::policy::route_for_mode(
         SandboxMode::None,
         workdir.path(),
-        Path::new("/tmp/state"),
+        state.path(),
         &SandboxConfig::default(),
         &RuntimeConfig::default(),
         false,
@@ -298,10 +301,11 @@ async fn execute_unsandboxed_applies_environment_overrides() {
 async fn execute_in_sandbox_none_backend_runs_on_every_os() {
     let _storage = native_shell_storage();
     let tempdir = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
     let policy = crate::sandbox::policy::route_for_mode(
         SandboxMode::None,
         tempdir.path(),
-        Path::new("/tmp/state"),
+        state.path(),
         &SandboxConfig::default(),
         &RuntimeConfig::default(),
         false,

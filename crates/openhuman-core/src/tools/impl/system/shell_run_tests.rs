@@ -108,10 +108,14 @@ fn a_backend_that_cannot_yield_takes_no_place() {
 }
 
 fn unsandboxed_policy() -> crate::sandbox::SandboxPolicy {
+    // The module canonicalizes the state folder before it runs a command, so it
+    // must exist, as the core's `workspace_dir` does in a booted host.
+    let state = jail_workdir().join("oh-shell-run-state");
+    std::fs::create_dir_all(&state).expect("shell run state folder");
     crate::sandbox::policy::route_for_mode(
         tinyagents_definition::SandboxMode::None,
         &jail_workdir(),
-        &jail_workdir().join("oh-shell-run-state"),
+        &state,
         &crate::config::SandboxConfig::default(),
         &crate::config::RuntimeConfig::default(),
         false,
@@ -166,7 +170,6 @@ async fn a_sandboxed_command_yields_and_is_followed_to_its_end() {
 #[cfg(not(windows))]
 #[tokio::test]
 async fn without_a_turn_a_sandboxed_command_runs_to_its_end() {
-    let _ = tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).try_init();
     let _storage = crate::storage::test_support::install_backend_for_test(
         crate::storage::test_support::memory_backend(),
     );
