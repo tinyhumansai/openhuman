@@ -1111,6 +1111,30 @@ test("offline embed examples install staged modules in their own rust-lint job",
   }
 });
 
+test("the tauri lane stages the test modules its coverage run loads", () => {
+  // The shell's artifact commands ask TinySecurity whether a file is in a
+  // protected location and the module fails closed when absent, so
+  // `resolve_source_*` and `save_as_*` are refused unless the lane stages it.
+  for (const plan of plans()) {
+    const tauri = plan.lanes.find((lane) => lane.name === "tauri");
+    const install = tauri.checks.find((c) => c.name === "install-test-modules");
+    const coverage = tauri.checks.find((c) => c.name === "tauri-coverage");
+    assert.ok(install, `${plan.profile} tauri must provision its module artifacts`);
+    assert.match(install.run, /install-test-modules\.sh/);
+    assert.equal(install.when, coverage.when, plan.profile);
+    assert.deepEqual(coverage.needs, ["install-test-modules"], plan.profile);
+    assert.match(
+      coverage.run,
+      /^set -a && \. ci-out\/test-modules\.env && set \+a && /,
+      `${plan.profile} tauri-coverage sources the staged module env`,
+    );
+    assert.ok(
+      tauri.checks.indexOf(install) < tauri.checks.indexOf(coverage),
+      plan.profile,
+    );
+  }
+});
+
 test("private ordinary Rust builds keep line tables while coverage and hosted profiles remain unchanged", () => {
   for (const plan of plans()) {
     for (const lane of plan.lanes.filter((lane) => lane.heavy != null)) {
