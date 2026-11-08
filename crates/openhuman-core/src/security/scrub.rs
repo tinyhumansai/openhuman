@@ -105,7 +105,7 @@ fn redact(text: &str, mode: tinysecurity_bus::RedactMode) -> Option<String> {
             text,
             std::time::Duration::from_secs(2),
         )
-        .map_err(|e| eprintln!("DIAGX redact {e}"))
+        .map_err(|e| eprintln!("DIAGX redact {e} mode={mode:?} len={} text={:?}", text.len(), &text.chars().take(200).collect::<String>()))
         .ok()
     }
     #[cfg(not(feature = "security-module"))]
