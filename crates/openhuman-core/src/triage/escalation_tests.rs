@@ -10,8 +10,11 @@ use tokio::time::{sleep, timeout, Duration};
 #[tokio::test]
 async fn build_triage_parent_scopes_allowed_subagents_to_target() {
     let dir = tempfile::tempdir().expect("tempdir");
+    // The credential store lives beside `config_path`; leaving it at the
+    // default would write the fixture key into the real `$HOME/.openhuman`.
     let mut config = Config {
         workspace_dir: dir.path().to_path_buf(),
+        config_path: dir.path().join("config.toml"),
         ..Config::default()
     };
     config.default_model = Some("test/session-fixture".to_string());
