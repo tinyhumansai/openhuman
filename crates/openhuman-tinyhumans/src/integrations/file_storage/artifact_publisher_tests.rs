@@ -177,6 +177,9 @@ async fn file_upload_fails_closed_when_tinysecurity_cannot_check_the_path() {
     let mut record = ArtifactRecord::pending("private-1", "Private", ArtifactKind::Image, 1);
     record.versions.push(version.clone());
 
+    // The lane stages TinySecurity, so take this thread off the test host: the
+    // module is then exactly as absent as in a process that never booted one.
+    let _absent = openhuman_core::modules::security::test_host_absent();
     let error = upload_body(&record, &version, None, None)
         .await
         .expect_err("an unavailable TinySecurity path floor must block uploads");

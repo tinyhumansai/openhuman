@@ -30,16 +30,17 @@ static FIXTURE: OnceLock<Option<Config>> = OnceLock::new();
 static FIXTURE_KEY: OnceLock<PathBuf> = OnceLock::new();
 static GATE: OnceLock<Arc<ApprovalGate>> = OnceLock::new();
 
-#[cfg(test)]
+// Compiled with the rest of this module (unit-test, `e2e-test-support` and
+// `test-keyring-consent` builds only), so a downstream test suite can pin the
+// host's fail-closed path too.
 thread_local! {
     static ABSENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Keeps this thread on the production path until dropped.
-#[cfg(test)]
-pub(crate) struct AbsentGuard;
+#[must_use = "the test host is absent only while the guard is held"]
+pub struct AbsentGuard;
 
-#[cfg(test)]
 impl Drop for AbsentGuard {
     fn drop(&mut self) {
         ABSENT.with(|absent| absent.set(false));
@@ -49,8 +50,8 @@ impl Drop for AbsentGuard {
 /// For a test that pins what the host does when TinySecurity cannot answer: no
 /// test host on this thread, so the module stays exactly as absent as it is in
 /// a process that never booted one.
-#[cfg(test)]
-pub(crate) fn absent() -> AbsentGuard {
+pub fn absent() -> AbsentGuard {
+    log::debug!("[security][test_host] test host absent on this thread");
     ABSENT.with(|absent| absent.set(true));
     AbsentGuard
 }
@@ -79,7 +80,6 @@ pub(crate) fn explicit_consent() -> ExplicitConsentGuard {
 
 /// Whether this process has a test host, and it applies to this thread.
 pub(super) fn active() -> bool {
-    #[cfg(test)]
     if ABSENT.with(std::cell::Cell::get) {
         return false;
     }

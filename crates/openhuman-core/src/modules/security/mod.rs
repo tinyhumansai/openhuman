@@ -21,6 +21,8 @@ pub(super) mod secret_cipher;
 pub(crate) mod sync_seam;
 #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
 pub(crate) mod test_host;
+#[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
+pub use test_host::{absent as test_host_absent, AbsentGuard as TestHostAbsentGuard};
 pub(crate) mod text;
 
 #[cfg(test)]
