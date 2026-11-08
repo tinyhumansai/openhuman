@@ -18,7 +18,7 @@ pub(crate) mod policy_translation;
 pub(crate) mod sandbox;
 pub(super) mod secret_backend;
 pub(super) mod secret_cipher;
-mod secret_tenants;
+pub(super) mod secret_tenants;
 pub(crate) mod sync_seam;
 #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
 pub(crate) mod test_host;
@@ -36,7 +36,7 @@ pub use policy::policy_config;
 pub(crate) use policy::validate as validate_policy;
 pub(super) use policy::{
     module_config, module_config_for_host, module_config_for_secret_authority,
-    secret_scope_request, SecretRegistrationIds,
+    secret_scope_request,
 };
 pub(crate) use secret_cipher::Output as SecretCipherOutput;
 

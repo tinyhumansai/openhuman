@@ -21,7 +21,7 @@ type SecurityCallbackLoads =
 static SECURITY_CALLBACK_LOADS: std::sync::LazyLock<SecurityCallbackLoads> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-pub(super) use super::secret_tenants::Tenant;
+pub(in crate::modules) use super::secret_tenants::Tenant;
 
 fn secret_key_path(config_dir: &Path) -> PathBuf {
     config_dir.join(".secret_key")
