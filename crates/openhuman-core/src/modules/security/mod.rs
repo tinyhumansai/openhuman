@@ -27,7 +27,7 @@ pub(crate) mod text;
 #[path = "security_tests.rs"]
 mod tests;
 
-pub(crate) use client::SecurityProxy;
+pub(crate) use client::{SecurityProxy, MODULE_REFUSED};
 pub use client::{Client, SecurityError};
 pub use policy::policy_config;
 pub(crate) use policy::validate as validate_policy;

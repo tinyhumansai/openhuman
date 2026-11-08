@@ -159,7 +159,14 @@ impl ApprovalEngine for NativeEngine {
                 )
                 .await;
             evaluated.map_err(|error| {
-                tracing::warn!(error = %error, "{LOG} the module refused to evaluate the call");
+                if error == crate::modules::security::MODULE_REFUSED {
+                    // The module answered no (a scheduled job's external effect,
+                    // an unlabelled call no grant covers, a floor): nothing was
+                    // parked, and the gate explains it by origin.
+                    tracing::debug!("{LOG} the module refused the call");
+                    return EngineError::Refused;
+                }
+                tracing::warn!(error = %error, "{LOG} the module could not evaluate the call");
                 unavailable(format!("TinySecurity EvaluateApproval2 failed: {error}"))
             })?
         };

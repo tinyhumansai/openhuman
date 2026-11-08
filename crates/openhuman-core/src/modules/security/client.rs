@@ -88,12 +88,27 @@ impl SecurityProxy {
     }
 }
 
+/// What a caller sees when the module *answered no* (its `approval denied`
+/// failure: a policy denial no person can override), as opposed to failing to
+/// answer. Both fail closed; the approval engine keeps them apart so a refused
+/// scheduled job or unlabelled call is explained as such.
+pub(crate) const MODULE_REFUSED: &str = "security module refused the call";
+
+/// The module's own text for a refusal (`tinysecurity-module` `adapter.rs`).
+const MODULE_REFUSAL_MESSAGE: &str = "approval denied";
+
 /// Callers see one generic refusal; the log keeps the module's redacted reason.
+/// The one distinction kept is a policy denial ([`MODULE_REFUSED`]) from any
+/// other failure.
 fn call_failed<E: std::fmt::Display>(error: E) -> String {
+    let text = error.to_string();
     tracing::debug!(
         "[security] module call failed: {}",
-        tinybus::error::redact_values(&error.to_string())
+        tinybus::error::redact_values(&text)
     );
+    if text == tinybus::Error::failed(MODULE_REFUSAL_MESSAGE).to_string() {
+        return MODULE_REFUSED.to_owned();
+    }
     "security module call failed".to_owned()
 }
 

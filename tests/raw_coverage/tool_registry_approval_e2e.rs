@@ -712,7 +712,6 @@ async fn approval_schema_handlers_validate_params_and_surface_empty_gate_state()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
-    openhuman_core::core::logging::init_for_cli_run(true, openhuman_core::core::logging::CliLogDefault::Global); // TEMP-DIAG
     let _lock = env_lock_async().await;
     let harness = setup("").await;
     let config = Config::load_or_init()
