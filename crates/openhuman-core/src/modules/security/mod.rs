@@ -566,10 +566,18 @@ pub async fn ensure_loaded(config: &Config) -> Result<(), SecurityError> {
 /// # Errors
 /// Missing, incompatible, and faulted modules are errors and never imply allow.
 pub async fn client(config: &Config) -> Result<Client, SecurityError> {
-    ensure_loaded(config).await?;
-    Client::connect(config)
-        .await
-        .map_err(SecurityError::Unavailable)
+    // Boxed so the module load and callback binding behind every security
+    // call are not inlined into each caller's future: a turn future spawned
+    // with all of them nested overflows auto-trait evaluation (E0275).
+    let connecting: std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Client, SecurityError>> + Send + '_>,
+    > = Box::pin(async move {
+        ensure_loaded(config).await?;
+        Client::connect(config)
+            .await
+            .map_err(SecurityError::Unavailable)
+    });
+    connecting.await
 }
 
 /// Construct the admitted TinySecurity object used by approval lifecycle calls.
