@@ -140,6 +140,7 @@ pub(crate) fn boot() -> Option<Config> {
                     Some(config)
                 }
                 outcome => {
+                    eprintln!("DIAG test-host boot failed: {outcome:?}");
                     log::warn!("[security][test-host] boot failed: {outcome:?}");
                     None
                 }
