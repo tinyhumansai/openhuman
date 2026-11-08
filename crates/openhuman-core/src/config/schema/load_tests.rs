@@ -108,7 +108,9 @@ async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready(
     tokio::fs::write(&config_path, toml::to_string(&config).unwrap())
         .await
         .unwrap();
-    let env = MapEnv::default();
+    // Pin the config to this workspace: without it the loader resolves the
+    // active user's `users/local` directory and finds no file here.
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.path().to_str().unwrap());
 
     let loaded = Config::load_or_init_unsealed_with_env_lookup(
         root.path(),
@@ -118,15 +120,7 @@ async fn preflight_config_load_preserves_sealed_secrets_until_security_is_ready(
     .await
     .unwrap();
 
-    assert_eq!(
-        loaded.api_key.as_deref(),
-        Some(sealed.as_str()),
-        "loaded from {}; file api_key line: {:?}",
-        loaded.config_path.display(),
-        std::fs::read_to_string(&loaded.config_path)
-            .ok()
-            .and_then(|t| t.lines().find(|l| l.starts_with("api_key")).map(str::to_owned))
-    );
+    assert_eq!(loaded.api_key.as_deref(), Some(sealed.as_str()));
 }
 
 // ── non-UTF-8 (binary) config recovery (#5167) ──────────────────────────

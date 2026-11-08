@@ -354,6 +354,8 @@ fn a_group_writable_secrets_directory_the_core_made_is_tightened_not_refused() {
 
     // What a `0002` umask leaves behind for a directory the core created.
     let dir = tempfile::TempDir::new().unwrap();
+    // An ancestor is not the core's to repair, so the fixture's own root is private.
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let secrets_dir = dir.path().join("workspace");
     std::fs::create_dir(&secrets_dir).unwrap();
     std::fs::set_permissions(&secrets_dir, std::fs::Permissions::from_mode(0o775)).unwrap();

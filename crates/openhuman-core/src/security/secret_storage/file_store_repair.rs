@@ -70,16 +70,12 @@ pub(super) fn tighten_owned_file(_path: &Path) {}
 pub(super) fn tighten_owned_directory(dir: &Path) {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
-    let file = match std::fs::OpenOptions::new()
+    let Ok(file) = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
         .open(dir)
-    {
-        Ok(file) => file,
-        Err(error) => {
-            eprintln!("TEMP-DIAG-TIGHTEN open failed {}: {error}", dir.display());
-            return;
-        }
+    else {
+        return;
     };
     let Ok(metadata) = file.metadata() else {
         return;
@@ -87,13 +83,10 @@ pub(super) fn tighten_owned_directory(dir: &Path) {
     // SAFETY: `geteuid` takes no arguments and mutates no process state.
     let euid = unsafe { libc::geteuid() };
     let mode = metadata.mode() & 0o7777;
-    eprintln!("TEMP-DIAG-TIGHTEN dir={} mode={mode:o} uid={} euid={euid}", dir.display(), metadata.uid());
     if !metadata.is_dir() || metadata.uid() != euid || mode & 0o022 == 0 {
         return;
     }
-    let r = file.set_permissions(std::fs::Permissions::from_mode(mode & !0o022));
-    eprintln!("TEMP-DIAG-TIGHTEN set -> {r:?}; now mode={:o}", std::fs::metadata(dir).map(|m| m.mode() & 0o7777).unwrap_or(0));
-    match r {
+    match file.set_permissions(std::fs::Permissions::from_mode(mode & !0o022)) {
         Ok(()) => tracing::debug!(
             path = %dir.display(),
             from_mode = format!("{mode:o}"),
