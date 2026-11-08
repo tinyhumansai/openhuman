@@ -56,13 +56,15 @@ fn defers_tinysecurity_artifacts_until_host_callback_admission() {
 /// failures, which all reach `tinychannels`).
 #[test]
 fn defers_every_callback_bound_module_artifact_to_the_callback_load() {
-    for id in crate::modules::ops::CALLBACK_BOUND_MODULES {
-        // Released artifacts are named after the record's library name
-        // (`libtinysecurity_module.so`, `libtinyeventqueues.so`), not its id.
-        let lib = crate::modules::registry::find(id)
-            .expect("every callback-bound module has a registry record")
-            .source
-            .lib_name;
+    // The released library names (each module's `modules.toml` / archive).
+    // Named here rather than derived from `CALLBACK_BOUND_MODULES`, so a
+    // module dropped from that list fails this test.
+    for lib in [
+        "tinysecurity_module",
+        "tinymcp",
+        "tinyeventqueues",
+        "tinychannels_module",
+    ] {
         for artifact in [
             format!("/modules/lib{lib}.so"),
             format!("/modules/lib{lib}.dylib"),
