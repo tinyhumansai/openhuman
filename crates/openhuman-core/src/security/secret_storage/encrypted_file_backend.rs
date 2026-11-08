@@ -548,7 +548,7 @@ impl EncryptedFileBackend {
             // Fail closed: every legacy entry must read back equal from the
             // encrypted store before any plaintext may be staged for removal.
             for (name, value) in &map {
-                if store.get(name).await?.as_deref() != Some(value.as_bytes()) {
+                if store.get(name).await?.as_deref().map(Vec::as_slice) != Some(value.as_bytes()) {
                     return Err(tinystoragedrivers::StorageError::conflict(
                         "legacy secret did not verify in the encrypted store; source retained for recovery",
                     ));
