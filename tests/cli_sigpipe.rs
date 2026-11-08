@@ -125,8 +125,8 @@ fn headless_default_keyring_stores_provider_secrets_encrypted() {
             "provider secret stored in plaintext at {}",
             path.display()
         );
-        saw_encrypted_record |= path.file_name().is_some_and(|name| name == "secrets.enc")
-            && !bytes.is_empty();
+        saw_encrypted_record |=
+            path.file_name().is_some_and(|name| name == "secrets.enc") && !bytes.is_empty();
     }
     assert!(
         saw_encrypted_record,
