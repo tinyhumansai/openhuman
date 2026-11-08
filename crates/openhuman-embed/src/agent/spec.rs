@@ -127,7 +127,8 @@ impl MemoryBinding {
     /// new thread with none), and the render finishes in the background for
     /// the next generation start. Without this, a generation start waits for
     /// the render however long the memory engine takes.
-    /// [`Agent::prewarm_memory_block`] renders it ahead of a turn instead.
+    /// [`Agent::prewarm_memory_block`](super::Agent::prewarm_memory_block)
+    /// renders it ahead of a turn instead.
     #[must_use]
     pub fn memory_block_deadline(mut self, deadline: std::time::Duration) -> Self {
         self.memory_block_deadline = Some(deadline);
