@@ -21,7 +21,7 @@ impl SecurityPolicy {
     /// Registration deduplicates the complete immutable value, so changed roots
     /// or policy settings cannot reuse a stale scope from a cloned policy.
     pub(crate) fn native_path_policy(&self) -> PathPolicy {
-        let mut trusted_roots: Vec<_> = self
+        let trusted_roots: Vec<_> = self
             .trusted_roots
             .iter()
             .map(|root| PathTrustedRoot {
@@ -33,26 +33,13 @@ impl SecurityPolicy {
                 },
             })
             .collect();
-        let media_paths = self
+        let media_exceptions = self
             .media_artifact_paths
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        let artifacts_dir = self.workspace_dir.join(ARTIFACTS_DIR);
-        // TinySecurity admits a reservation exception only when it resolves to
-        // a strict descendant of the reservation, and refuses the whole policy
-        // otherwise. A ready media artifact filed in the Files folder lives
-        // outside `<workspace>/artifacts`, so it is granted as a read-only
-        // trusted root of that exact file instead.
-        let (media_exceptions, media_outside): (Vec<_>, Vec<_>) = media_paths
-            .into_iter()
-            .partition(|path| is_strict_descendant(path, &artifacts_dir));
-        trusted_roots.extend(media_outside.into_iter().map(|path| PathTrustedRoot {
-            path,
-            access: PathAccess::ReadOnly,
-        }));
         let mut reserved_paths: Vec<_> = WORKSPACE_INTERNAL_DIRS
             .iter()
             .chain(WORKSPACE_INTERNAL_FILES.iter())
@@ -69,9 +56,12 @@ impl SecurityPolicy {
                 children_only: false,
             });
         }
-        let tool_results = artifacts_dir.join(ARTIFACT_TOOL_RESULTS_DIR);
+        let tool_results = self
+            .workspace_dir
+            .join(ARTIFACTS_DIR)
+            .join(ARTIFACT_TOOL_RESULTS_DIR);
         reserved_paths.push(PathReservation {
-            path: artifacts_dir,
+            path: self.workspace_dir.join(ARTIFACTS_DIR),
             exceptions: std::iter::once(tool_results.clone())
                 .chain(media_exceptions)
                 .collect(),
@@ -166,14 +156,6 @@ impl SecurityPolicy {
         }
         Err(unresolved())
     }
-}
-
-/// Whether `path` sits strictly inside `root`, compared both lexically and
-/// through the root's canonical form (media paths are recorded canonical, a
-/// configured workspace may not be, e.g. macOS `/var` -> `/private/var`).
-fn is_strict_descendant(path: &std::path::Path, root: &std::path::Path) -> bool {
-    let inside = |root: &std::path::Path| path != root && path.starts_with(root);
-    inside(root) || std::fs::canonicalize(root).is_ok_and(|canonical| inside(&canonical))
 }
 
 /// Project stable native categories into the existing host tool error contract.
