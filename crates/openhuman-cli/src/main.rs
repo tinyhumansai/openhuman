@@ -38,7 +38,7 @@ fn main() -> std::process::ExitCode {
     match openhuman_rpc::host::cli(&args) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("{err}");
+            eprintln!("{err:#}");
             std::process::ExitCode::from(1)
         }
     }
