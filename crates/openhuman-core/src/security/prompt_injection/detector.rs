@@ -351,6 +351,16 @@ pub async fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinit
     }
     #[cfg(not(feature = "security-module"))]
     let _ = config;
+    // A test process has no booted host, so no embedder scope names a
+    // configuration to scan under. The test host supplies the one the real
+    // TinySecurity module is admitted with, as `mcp::registry::tools_safe_for_agent`
+    // does; a process without the staged module still has none and fails
+    // closed below.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let config = config.or_else(crate::modules::security::test_host::screening_config);
     #[cfg(feature = "security-module")]
     let Some(config) = config
     else {
