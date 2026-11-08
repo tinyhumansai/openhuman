@@ -41,6 +41,18 @@ pub(super) fn tighten_owned_file(path: &Path) {
     if !metadata.is_file() || metadata.uid() != euid || metadata.mode() & 0o777 == 0o600 {
         return;
     }
+    // A file others could write may hold content the core never wrote:
+    // tightening it would turn a possible forgery into a trusted secret. Leave
+    // it for the driver to refuse. Only a leaked *read* (group/other read
+    // bits) is repaired.
+    if metadata.mode() & 0o022 != 0 {
+        tracing::warn!(
+            path = %path.display(),
+            mode = format!("{:o}", metadata.mode() & 0o777),
+            "[secret_storage] an owned secrets file is writable by others; not repairing it"
+        );
+        return;
+    }
     match file.set_permissions(std::fs::Permissions::from_mode(0o600)) {
         Ok(()) => tracing::debug!(
             path = %path.display(),
