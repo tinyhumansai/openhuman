@@ -117,7 +117,7 @@ async fn tenant_runtime(
     // Store a standing credential in the tenant's own scope so a storage-backed
     // secret store records it where the host agent later reads it.
     CoreContext::scope(Arc::clone(&core), async {
-        crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+        crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
             .await
     })
     .await
@@ -262,7 +262,6 @@ async fn remote_clear_resets_only_the_captured_tenant_session() {
         },
     )
     .await
-    .map_err(|e| { eprintln!("DIAG reset error: {e:?}"); e })
     .expect("captured tenant reset succeeds");
     assert!(matches!(cleared, RemoteHostResult::Completed));
     let alice_after = session_messages(&alice_core, workspace, &alice_store_agent, &alice_session);

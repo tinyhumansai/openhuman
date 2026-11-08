@@ -82,10 +82,9 @@ async fn config(tmp: &tempfile::TempDir, agent_id: Option<&str>) -> Config {
     config.memory.conversations.enabled = false;
     config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;
-    crate::security::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
+    crate::credentials::api_key::store_api_key(&config, "test-session-fixture-key")
         .await
         .expect("store channel test credential");
-    eprintln!("DIAG readback={:?}", crate::security::credentials::api_key::get_api_key(&config).await.map(|k| k.is_some()).map_err(|e| format!("{e:#}")));
     if let Some(agent_id) = agent_id {
         config
             .agent
