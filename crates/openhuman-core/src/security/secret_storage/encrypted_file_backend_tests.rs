@@ -739,3 +739,94 @@ fn init_once_caches_a_loaded_key_and_a_keychain_outage_as_ok() {
         Ok(())
     );
 }
+
+/// Reproduces an install that ran the earlier import order: the source was
+/// staged, every entry was replayed into `secrets.enc`, and cleanup refused
+/// because the destination object changed after the receipt was issued. The
+/// staged payload, the replayed entries and the plaintext are all on disk, but
+/// the receipt died with that process.
+fn stage_an_import_whose_cleanup_was_refused(
+    backend: &EncryptedFileBackend,
+    key: &[u8; KEY_LEN],
+    legacy_path: &Path,
+    entries: &HashMap<String, String>,
+) -> Vec<u8> {
+    use tinystoragedrivers::secrets::{FileImportSource, SecretStore as _};
+    // Seed before the plaintext exists: a backend call with the source
+    // present would run the import instead of setting up the stuck state.
+    for (name, value) in entries {
+        backend.set_with_key(key, name, value).unwrap();
+    }
+    let bytes = serde_json::to_vec(entries).unwrap();
+    write_private_file(legacy_path, &bytes);
+    let store = std::sync::Arc::new(backend.store(key));
+    let source = FileImportSource::open(legacy_path).unwrap();
+    let staged = bytes.clone();
+    crate::storage::block_on(async move {
+        store
+            .prepare_file_import(
+                LEGACY_IMPORT_OPERATION,
+                LEGACY_IMPORT_PAYLOAD,
+                &staged,
+                &source,
+            )
+            .await
+            .map(drop)
+    })
+    .unwrap();
+    bytes
+}
+
+#[test]
+fn a_staged_import_left_by_a_refused_cleanup_removes_the_verified_plaintext() {
+    let dir = secrets_tempdir();
+    let backend = EncryptedFileBackend::new(dir.path());
+    let key = [0x42; KEY_LEN];
+    let legacy_path = dir.path().join(LEGACY_DEV_KEYCHAIN);
+    let entries = HashMap::from([
+        ("user:token".to_string(), "secret-value".to_string()),
+        ("user:second".to_string(), "second-value".to_string()),
+    ]);
+    stage_an_import_whose_cleanup_was_refused(&backend, &key, &legacy_path, &entries);
+
+    backend.import_legacy_dev_keychain(&key).unwrap();
+
+    assert!(
+        !legacy_path.exists(),
+        "a later start must remove plaintext every entry of which is verified encrypted"
+    );
+    for (name, value) in &entries {
+        assert_eq!(
+            backend.get_with_key(&key, name).unwrap().as_deref(),
+            Some(value.as_str())
+        );
+    }
+    assert_eq!(
+        backend
+            .get_with_key(&key, LEGACY_IMPORT_COMPLETE)
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+}
+
+#[test]
+fn a_staged_import_keeps_plaintext_that_differs_from_its_staged_backup() {
+    let dir = secrets_tempdir();
+    let backend = EncryptedFileBackend::new(dir.path());
+    let key = [0x42; KEY_LEN];
+    let legacy_path = dir.path().join(LEGACY_DEV_KEYCHAIN);
+    let entries = HashMap::from([("user:token".to_string(), "secret-value".to_string())]);
+    stage_an_import_whose_cleanup_was_refused(&backend, &key, &legacy_path, &entries);
+    // The plaintext gained an entry the encrypted store never received.
+    let edited = serde_json::to_vec(&HashMap::from([
+        ("user:token".to_string(), "secret-value".to_string()),
+        ("user:new".to_string(), "unimported".to_string()),
+    ]))
+    .unwrap();
+    write_private_file(&legacy_path, &edited);
+
+    assert!(backend.import_legacy_dev_keychain(&key).is_err());
+    assert_eq!(std::fs::read(&legacy_path).unwrap(), edited);
+    assert_eq!(backend.get_with_key(&key, LEGACY_IMPORT_COMPLETE).unwrap(), None);
+}
