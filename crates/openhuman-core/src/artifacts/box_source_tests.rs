@@ -154,28 +154,6 @@ impl Fixture {
             })
             .collect()
     }
-
-    fn staged_files(&self) -> usize {
-        let root = staging_dir(&self.workspace);
-        walk(&root)
-    }
-}
-
-fn walk(dir: &Path) -> usize {
-    std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| {
-                    if entry.path().is_dir() {
-                        walk(&entry.path())
-                    } else {
-                        1
-                    }
-                })
-                .sum()
-        })
-        .unwrap_or(0)
 }
 
 fn user(id: &str) -> Result<Tenant, NoTenant> {
@@ -257,7 +235,6 @@ async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
     assert_eq!(stored, bytes);
     assert!(fixture.commands()[0].contains("'./out/report.pdf'"));
     assert!(!fixture.action.join("out/report.pdf").exists());
-    assert_eq!(fixture.staged_files(), 0, "the host copy is not kept");
 }
 
 #[tokio::test]
@@ -342,7 +319,6 @@ async fn a_file_the_box_does_not_have_is_a_tool_error_naming_it() {
         result.output(),
         "there is no file `missing.pdf` in the sandbox"
     );
-    assert_eq!(fixture.staged_files(), 0);
 }
 
 #[tokio::test]
@@ -400,12 +376,6 @@ async fn the_tool_keeps_the_artifact_tools_name_and_schema() {
 }
 
 #[test]
-fn staged_files_live_under_a_folder_artifacts_may_reference() {
-    let workspace = Path::new("/state");
-    assert!(staging_dir(workspace).starts_with(version_files_dir(workspace)));
-}
-
-#[test]
 fn a_box_path_is_the_name_relative_to_the_work_folder() {
     assert_eq!(box_path("report.pdf"), "report.pdf");
     assert_eq!(box_path("/sandbox/out/report.pdf"), "out/report.pdf");
@@ -434,7 +404,6 @@ async fn an_update_reads_its_new_file_from_the_callers_box() {
         .await
         .unwrap();
     assert_eq!(stored, b"second");
-    assert_eq!(fixture.staged_files(), 0, "the host copy is not kept");
 }
 
 #[tokio::test]
@@ -461,28 +430,29 @@ async fn an_update_of_a_text_artifact_never_touches_a_box() {
 }
 
 #[tokio::test]
-async fn a_staged_copy_is_removed_when_its_call_is_dropped_before_it_finishes() {
-    let staging = tempfile::tempdir().unwrap();
-    let staged = stage(staging.path(), "out/a.pdf", b"bytes").unwrap();
-    let dir = staged.dir.clone();
-    assert!(dir.join("file.pdf").is_file());
-
-    drop(staged);
-
-    assert!(!dir.exists());
-}
-
-#[tokio::test]
-async fn a_box_name_the_host_cannot_hold_still_stages_with_its_extension() {
-    let staging = tempfile::tempdir().unwrap();
-
-    let odd = stage(staging.path(), "out/re?port*.pdf", b"x").unwrap();
-    let no_extension = stage(staging.path(), "out/Makefile", b"x").unwrap();
-    let hostile = stage(staging.path(), "out/a.p?f", b"x").unwrap();
-
-    assert!(odd.file.ends_with("file.pdf"));
-    assert!(no_extension.file.ends_with("file"));
-    assert!(hostile.file.ends_with("file"));
+async fn a_box_name_the_host_cannot_hold_still_files_with_its_media_type() {
+    let _floor = path_floor();
+    let fixture = Fixture::new();
+    let service = artifacts_service(
+        &fixture.workspace,
+        FileRoots::new(&fixture.files),
+        Some(&fixture.action),
+        None,
+        &DispatchCtx::process_default(),
+    );
+    for (name, media_type) in [
+        ("out/re?port*.pdf", Some("application/pdf")),
+        ("out/Makefile", None),
+        ("out/a.p?f", None),
+    ] {
+        fixture.the_box_holds(b"x");
+        let id = created_id(&fixture.tool(true, user("u1")), file_args(name)).await;
+        let file = service.get(&id).await.unwrap().unwrap().versions[0]
+            .file
+            .clone()
+            .unwrap();
+        assert_eq!(file.media_type.as_deref(), media_type, "{name}");
+    }
 }
 
 /// A store that cannot be read.
