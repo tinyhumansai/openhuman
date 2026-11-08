@@ -92,6 +92,7 @@ pub async fn invoke_method(
                     );
                     result = Err(message);
                 }
+                SessionFailureOutcome::PassThrough => {}
                 SessionFailureOutcome::PublishExpiry => {
                     log::warn!(
                         "[jsonrpc] confirmed session expiry for method='{}' — publishing SessionExpired: {}",
@@ -151,6 +152,8 @@ enum SessionFailureOutcome {
     },
     /// The request-time credential is still current: publish `SessionExpired`.
     PublishExpiry,
+    /// Return the original error unchanged.
+    PassThrough,
 }
 
 /// Decide how [`invoke_method`] answers a session-expiry-classified error,
