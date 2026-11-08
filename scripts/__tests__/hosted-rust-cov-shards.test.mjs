@@ -102,6 +102,24 @@ test("rust-cov shards get a real sandbox jail; other groups keep the default con
   assert.match(installer, /sha256sum -c -/);
 });
 
+test("container lanes run with a private root-owned home before any step uses it", () => {
+  // The runner's /github/home is owned by its uid while the container runs as
+  // root, and the secrets driver refuses a namespace another user can mutate.
+  const names = [...workflow.matchAll(/^\s+- name: (.+)$/gm)].map((m) => m[1]);
+  const home = names.indexOf("Give the job a private home");
+  assert.notEqual(home, -1, "the private-home step exists");
+  for (const later of ["Trust the workspace for git", "Install bubblewrap for the sandbox jail", "Check out submodules"]) {
+    assert.ok(names.indexOf(later) > home, `${later} runs after HOME is set`);
+  }
+  const step = workflow.match(
+    /- name: Give the job a private home\n(?:\s+#.*\n)*\s+if: (.+)\n\s+run: \|\n((?:\s{10}.+\n)+)/,
+  );
+  assert.ok(step, "the private-home step has an if and a run block");
+  assert.equal(step[1].trim(), "matrix.container != ''");
+  assert.match(step[2], /chmod 0700 \/root/);
+  assert.match(step[2], /echo "HOME=\/root" >> "\$GITHUB_ENV"/);
+});
+
 test("the gate refuses a shard that failed, was cancelled or never reported", () => {
   // Matrix results fold into needs.lanes.result: any failed shard makes it
   // "failure", any cancelled one "cancelled". Only success/skipped pass.
