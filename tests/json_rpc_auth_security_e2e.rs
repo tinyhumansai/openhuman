@@ -1679,8 +1679,8 @@ async fn auth_store_provider_credentials_writes_an_owner_only_store_file() {
     .await;
     assert_no_jsonrpc_error(&stored, "auth_store_provider_credentials");
 
-    let store_path =
-        find_auth_profiles_store(home).expect("the save must have produced auth-profiles/secrets.enc");
+    let store_path = find_auth_profiles_store(home)
+        .expect("the save must have produced auth-profiles/secrets.enc");
     let mode = std::fs::metadata(&store_path)
         .expect("store metadata")
         .permissions()
