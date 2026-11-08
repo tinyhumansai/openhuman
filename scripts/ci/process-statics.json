@@ -786,7 +786,7 @@
     "type": "std::cell::Cell<bool>",
     "count": 1,
     "category": "B",
-    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. A thread-local flag a test (in this crate, or a downstream suite through `modules::security::test_host_absent`) sets through `absent()` to see the production fail-closed path on its own thread only; it is reset by the guard's drop.",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. A thread-local (`#[cfg(test)]`) flag a test sets through `absent()` to see the production fail-closed path on its own thread only; it is reset by the guard's drop.",
     "verification": "modules/security/test_host.rs: absent"
   },
   {
