@@ -45,6 +45,7 @@ mod live_tools;
 mod runtime;
 mod runtime_session;
 mod session_key;
+pub(crate) mod setup_report;
 pub(crate) mod stop_policy;
 mod types;
 
