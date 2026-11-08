@@ -204,12 +204,14 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
         // This is the actual published module path: the host must materialize the
         // bus-owned skill, then the normal TinySkills discovery and resource reader
         // must expose that Builtin under the separate dynamic root.
+        // The prompt-dump children resolve the active local user's config, so
+        // the parent loads that same file: its secret scope (derived from the
+        // config's directory) is then the one the children decrypt with, and
+        // the credential it stores stays readable by the later dumps.
         let config =
-            openhuman_core::config::Config::load_from_config_path(&config_path, &workspace)
+            openhuman_core::config::Config::load_from_config_path(&local_config_path, &workspace)
                 .await
                 .expect("load the same scoped Config used by the prompt dump");
-        // The in-process host session resolves its credential from this config's
-        // own state directory, not the one the child processes used.
         openhuman_core::credentials::api_key::store_api_key(&config, "th_test_local_only")
             .await
             .expect("store a local test credential for the in-process host session");
