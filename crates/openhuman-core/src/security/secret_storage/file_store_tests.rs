@@ -320,7 +320,25 @@ fn an_owned_file_left_wider_than_private_is_tightened_by_the_rewrite_not_refused
     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
     let link = dir.path().join("link.enc");
     symlink(&target, &link).unwrap();
-    let _ = write_atomic(&link, b"new");
+    use std::os::unix::fs::MetadataExt;
+    match write_atomic(&link, b"new") {
+        // Refused: the link is still the link it was.
+        Err(_) => assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "a refused write must leave the link alone"
+        ),
+        // Or the link itself was replaced by a regular, private file.
+        Ok(()) => {
+            let replaced = std::fs::symlink_metadata(&link).unwrap();
+            assert!(!replaced.file_type().is_symlink());
+            assert!(replaced.file_type().is_file());
+            assert_eq!(replaced.mode() & 0o777, 0o600);
+            assert_eq!(std::fs::read(&link).unwrap(), b"new");
+        }
+    }
     assert_eq!(
         std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
         0o644,
