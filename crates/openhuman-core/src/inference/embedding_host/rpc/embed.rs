@@ -210,6 +210,16 @@ pub(crate) async fn probe_dimensions_for_inspection(
             })?;
         vectors.first().map_or(0, Vec::len)
     } else {
+        // A cloud model checks egress through a synchronous guard, which can
+        // consult TinySecurity only once the module is loaded and armed. A
+        // fresh doctor process has loaded nothing yet, so the guard would
+        // refuse every probe as "module unavailable". Load it here, on the
+        // async path, exactly as an async egress check would; a load failure
+        // leaves the guard failing closed.
+        #[cfg(feature = "security-module")]
+        if let Err(error) = crate::modules::security::ensure_loaded(config).await {
+            log::debug!("[embedding-inspect] security module not loaded: {error}");
+        }
         let embedder = create_embedding_provider_for_inspection(
             config,
             provider_slug,
