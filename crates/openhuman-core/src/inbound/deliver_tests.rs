@@ -401,6 +401,10 @@ async fn a_pinned_source_runs_its_agent_without_triage_and_keeps_the_text() {
 
 #[tokio::test]
 async fn a_slow_pinned_run_is_acknowledged_at_the_budget_and_stored_when_it_ends() {
+    // These pin the delivery budget, so the budget must be spent on the agent run
+    // alone: screening an event asks TinySecurity, a module call that counts
+    // against the same budget and would otherwise decide these tests.
+    let _security = crate::security::switch::off_for_this_thread();
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::Slow(Duration::from_millis(300), "late")]);
     let results = memory_results();
@@ -424,6 +428,10 @@ async fn a_slow_pinned_run_is_acknowledged_at_the_budget_and_stored_when_it_ends
 
 #[tokio::test]
 async fn a_slow_pinned_run_that_fails_after_the_budget_is_stored_as_failed() {
+    // These pin the delivery budget, so the budget must be spent on the agent run
+    // alone: screening an event asks TinySecurity, a module call that counts
+    // against the same budget and would otherwise decide these tests.
+    let _security = crate::security::switch::off_for_this_thread();
     let triage = ScriptedTriage::new(Vec::<Step>::new());
     let agent = ScriptedAgent::new([Reply::SlowFail(Duration::from_millis(200), "late boom")]);
     let results = memory_results();
@@ -720,6 +728,10 @@ async fn a_mixed_digest_runs_each_conversation_key_oldest_first() {
 
 #[tokio::test]
 async fn the_rest_of_a_mixed_digest_waits_when_the_pinned_parts_spent_the_budget() {
+    // These pin the delivery budget, so the budget must be spent on the agent run
+    // alone: screening an event asks TinySecurity, a module call that counts
+    // against the same budget and would otherwise decide these tests.
+    let _security = crate::security::switch::off_for_this_thread();
     let triage = ScriptedTriage::new([decision(TriageAction::Acknowledge)]);
     let agent = ScriptedAgent::new([Reply::Text("draft"), Reply::Text("late")]);
     let results = memory_results();
