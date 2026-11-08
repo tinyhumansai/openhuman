@@ -437,6 +437,11 @@ impl Config {
                 },
             };
             if let Some(cap) = cap {
+                if cap.is_none() {
+                    tracing::debug!(
+                        "[config] OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS clears the search contents cap"
+                    );
+                }
                 self.search.contents_max_chars = cap;
                 self.record_env_override(
                     env,

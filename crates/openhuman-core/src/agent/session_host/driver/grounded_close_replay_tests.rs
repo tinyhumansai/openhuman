@@ -41,6 +41,16 @@ fn history() -> Vec<Message> {
         Message::user("and now?"),
         Message::assistant("nothing else"),
         Message::user("summarize"),
+        Message::Assistant(AssistantMessage {
+            id: Some("assistant-2".into()),
+            content: vec![
+                ContentBlock::thinking("current reasoning"),
+                ContentBlock::Text("looking again".into()),
+            ],
+            tool_calls: Vec::new(),
+            usage: None,
+            origin: None,
+        }),
     ]
 }
 
@@ -56,8 +66,8 @@ fn pinned() -> SessionRunOptions {
     }
 }
 
-/// The close request's messages, as text, with whether any block is reasoning.
-async fn close_request_under(replay: &SessionRunOptions) -> (Vec<String>, bool) {
+/// The close request's messages, as text, and every reasoning block it carries.
+async fn close_request_under(replay: &SessionRunOptions) -> (Vec<String>, Vec<String>) {
     let scripted = Arc::new(ScriptedModel::new(vec![
         tinyinference_llm::model::ModelResponse::assistant("The workspace holds three crates."),
         tinyinference_llm::model::ModelResponse::assistant("ACCEPT"),
@@ -79,13 +89,19 @@ async fn close_request_under(replay: &SessionRunOptions) -> (Vec<String>, bool) 
     .await
     .expect("a blank terminal reply needs a close");
     let request = scripted.requests().remove(0);
-    let reasoning = request.messages.iter().any(|message| match message {
-        Message::Assistant(assistant) => assistant
-            .content
-            .iter()
-            .any(|block| matches!(block, ContentBlock::Thinking { .. })),
-        _ => false,
-    });
+    let reasoning = request
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::Assistant(assistant) => Some(&assistant.content),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|block| match block {
+            ContentBlock::Thinking { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
     (
         request.messages.iter().map(Message::text).collect(),
         reasoning,
@@ -105,9 +121,10 @@ async fn the_close_request_applies_the_pinned_expiry_and_reasoning_replay() {
             .any(|text| text.starts_with("[used list_directory:")),
         "the expired result stands as a note, got {texts:?}"
     );
-    assert!(
-        !reasoning,
-        "a past turn's reasoning must not reach the close"
+    assert_eq!(
+        reasoning,
+        ["current reasoning"],
+        "a past turn's reasoning is left out and the current turn's kept"
     );
 }
 
@@ -115,5 +132,5 @@ async fn the_close_request_applies_the_pinned_expiry_and_reasoning_replay() {
 async fn the_close_request_of_a_thread_with_no_pinned_options_is_unchanged() {
     let (texts, reasoning) = close_request_under(&SessionRunOptions::default()).await;
     assert!(texts.iter().any(|text| text == OLD_RESULT));
-    assert!(reasoning);
+    assert_eq!(reasoning, ["old reasoning", "current reasoning"]);
 }

@@ -717,4 +717,10 @@ fn search_contents_cap_env_treats_every_zero_spelling_as_unset() {
             "{zero:?} must clear the cap, not become a one-character cap"
         );
     }
+    // A leading zero on a positive value is still that value.
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", "01"),
+    );
+    assert_eq!(cfg.search.contents_max_chars, Some(1));
 }

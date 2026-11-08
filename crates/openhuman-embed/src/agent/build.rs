@@ -180,9 +180,16 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
             .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX));
         // Only a deadline the binding sets replaces the runtime's own: an
         // identity-only binding keeps the inherited bound on a slow render.
-        if let Some(deadline) = binding.memory_block_deadline_timeout() {
-            config.memory.memory_block_deadline_ms =
-                Some(u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX));
+        match binding.memory_block_deadline_timeout() {
+            Some(deadline) => {
+                let ms = u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX);
+                log::debug!("[embed][agent] id={id} binding sets memory_block_deadline_ms={ms}");
+                config.memory.memory_block_deadline_ms = Some(ms);
+            }
+            None => log::debug!(
+                "[embed][agent] id={id} binding inherits memory_block_deadline_ms={:?}",
+                config.memory.memory_block_deadline_ms
+            ),
         }
     }
 
