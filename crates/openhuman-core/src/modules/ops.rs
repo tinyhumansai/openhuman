@@ -308,8 +308,7 @@ pub(crate) fn security_tenant(
     if let Some(tenant) = super::security::host_callbacks::tenant(config) {
         return Some(tenant);
     }
-    // The test host serves a fixture's own bare configuration under the
-    // live runtime's scope (see `ensure_loaded_within`); look it up the same way.
+    // The test host serves a fixture's bare config under the live scope.
     #[cfg(all(
         not(test),
         any(feature = "e2e-test-support", feature = "test-keyring-consent")
@@ -328,10 +327,8 @@ pub(crate) fn security_tenant_by_registration(
     super::security::host_callbacks::tenant_by_registration(registration_id)
 }
 
-/// A secret key path this process's TinySecurity cannot serve, which a
-/// profile switch would have to restart for. There is none: the module
-/// boots neutral and every secret scope registers its own runtime
-/// registration on it, so every profile is served in place.
+/// A secret key path TinySecurity cannot serve without a restart: none, since
+/// every secret scope registers its own runtime registration on it.
 #[cfg(feature = "security-module")]
 pub(crate) async fn security_admitted_key_path() -> Option<PathBuf> {
     None
