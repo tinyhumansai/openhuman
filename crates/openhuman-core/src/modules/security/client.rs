@@ -621,7 +621,7 @@ impl Client {
                 (&*request,),
             )
             .await
-            .map_err(|_| SecurityError::Unavailable("secret approval unavailable".into()));
+            .map_err(|e| { eprintln!("TMPDBG B evaluate_secret2: {e}"); SecurityError::Unavailable("secret approval unavailable".into()) });
         result
     }
 
