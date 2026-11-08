@@ -42,7 +42,6 @@ async fn the_prompt_screen_follows_the_scope_a_runtime_admitted_the_module_with(
          (scripts/ci/self-hosted/install-test-modules.sh writes it)"
     );
     std::env::set_var("OPENHUMAN_TEST_KEYRING_CONSENT", "approve");
-    let _ = tracing_subscriber::fmt().with_env_filter("warn").try_init(); // TEMP-DIAG
     let storage = storage_case::Case::open();
     storage.install();
 
