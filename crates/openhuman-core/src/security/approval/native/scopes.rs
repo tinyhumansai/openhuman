@@ -280,19 +280,6 @@ pub(super) async fn ensure(
     ensure_with_registration(config, proxy, subject, posture, generation, false).await
 }
 
-/// Register a scope that TinySecurity already created from module init config.
-/// Its init-time scope has no audit stream, so attach the persisted stream with
-/// `ReplaceApprovalScope2` on first use.
-pub(super) async fn ensure_preconfigured(
-    config: &Config,
-    proxy: &SecurityProxy,
-    subject: SubjectScope,
-    posture: &Posture,
-    generation: u64,
-) -> Result<Arc<ScopeEntry>, String> {
-    ensure_with_registration(config, proxy, subject, posture, generation, true).await
-}
-
 async fn ensure_with_registration(
     config: &Config,
     proxy: &SecurityProxy,
