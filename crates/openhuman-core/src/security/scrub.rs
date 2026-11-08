@@ -100,13 +100,11 @@ fn unavailable_shape(value: &Value) -> String {
 fn redact(text: &str, mode: tinysecurity_bus::RedactMode) -> Option<String> {
     #[cfg(feature = "security-module")]
     {
-        let label = format!("{mode:?}");
         crate::modules::security::text::redact_blocking(
             mode,
             text,
             std::time::Duration::from_secs(2),
         )
-        .map_err(|e| eprintln!("DIAGX redact {e} mode={label} len={} text={:?}", text.len(), &text.chars().take(200).collect::<String>()))
         .ok()
     }
     #[cfg(not(feature = "security-module"))]
