@@ -109,11 +109,11 @@ fn headless_default_keyring_stores_provider_secrets_encrypted() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Since the storage ports (#7686) a configured backend (the CLI default is
-    // `sqlite:<workspace>/storage`) holds user secrets as encrypted `enc2:`
-    // documents (`storage/secrets.rs`) instead of `secrets.enc`. Assert the
-    // property, not the file name: the plaintext is nowhere under the
-    // workspace, and an encrypted record is.
+    // Credential slots live in TinySecurity's sealed `secrets.enc` store by
+    // default (docs/gitbooks/en/features/os-keyring-and-secret-storage.md),
+    // not as `enc2:` documents in the storage backend. Assert the property:
+    // the plaintext is nowhere under the workspace, and a non-empty sealed
+    // secret store is.
     let files = files_under(&workspace_path);
     let mut saw_encrypted_record = false;
     for path in &files {
@@ -125,7 +125,8 @@ fn headless_default_keyring_stores_provider_secrets_encrypted() {
             "provider secret stored in plaintext at {}",
             path.display()
         );
-        saw_encrypted_record |= bytes.windows(5).any(|window| window == b"enc2:");
+        saw_encrypted_record |= path.file_name().is_some_and(|name| name == "secrets.enc")
+            && !bytes.is_empty();
     }
     assert!(
         saw_encrypted_record,
