@@ -50,8 +50,15 @@ async fn managed_scope_resolves_signin_stored_app_session_token() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
-    // Sign-in writes the app-session token here.
-    AuthService::from_config(&config)
+    // Sign-in writes the app-session token under the config's state dir and
+    // encryption setting. `AuthService::from_config` would park it in the
+    // keychain, which a scope-only reader (the managed embedder's, built from
+    // just `(state_dir, encrypt)`) cannot see, so write it the way that reader
+    // reads it.
+    AuthService::new(
+        &crate::credentials::state_dir_from_config(&config),
+        config.secrets.encrypt,
+    )
         .store_provider_token(
             APP_SESSION_PROVIDER,
             "default",
