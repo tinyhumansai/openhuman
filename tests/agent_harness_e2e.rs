@@ -3791,7 +3791,7 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
         text_completion("The skill is installed."),
     ]);
     serialize_children_after_parent(2, 3);
-    let stack = boot_stack().await;
+    let stack = boot_stack_with_config(SUPERVISED_AUTONOMY_CONFIG).await;
 
     let mut events = spawn_sse_collector(format!(
         "{}/events?client_id=harness-skill-registry",
@@ -4233,7 +4233,7 @@ async fn orchestrator_raw_skill_install_through_use_skill_needs_approval_inner()
         ),
         text_completion("The install was not approved."),
     ]);
-    let stack = boot_stack().await;
+    let stack = boot_stack_with_config(SUPERVISED_AUTONOMY_CONFIG).await;
     let mut events = spawn_sse_collector(format!(
         "{}/events?client_id=harness-raw-skill-install",
         stack.rpc_base
