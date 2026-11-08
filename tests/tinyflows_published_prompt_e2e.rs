@@ -8,6 +8,7 @@ mod published_tinyflows;
 mod tinyhumans_boot;
 
 use env_guard::EnvVarGuard;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
 #[cfg(feature = "skills")]
@@ -17,7 +18,7 @@ fn dump_published_prompt(
     agent_id: &str,
     home: &Path,
     workspace: &Path,
-    module_search_path: &Path,
+    module_search_path: &OsStr,
 ) -> serde_json::Value {
     let output = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
         .args([
@@ -87,6 +88,17 @@ async fn prewarm_flow_authoring_in_parent(
     .expect("the normal host prewarm should expose the published builtin");
 }
 
+/// The staged TinyFlows directory first, then every other directory the
+/// runner staged on `OPENHUMAN_MODULE_PATH`. The child processes load
+/// TinySecurity as well; with TinyFlows' directory alone they cannot find the
+/// staged release and would fetch one from GitHub.
+fn module_search_path_with(tinyflows_dir: &Path) -> OsString {
+    let inherited = std::env::var_os("OPENHUMAN_MODULE_PATH").unwrap_or_default();
+    let staged = std::env::split_paths(&inherited).filter(|dir| dir != tinyflows_dir);
+    std::env::join_paths(std::iter::once(tinyflows_dir.to_path_buf()).chain(staged))
+        .expect("staged module directories form a valid search path")
+}
+
 #[tokio::test]
 async fn published_module_prompts_render_through_the_normal_host_path() {
     let _env_lock = env_guard::env_lock_async().await;
@@ -101,13 +113,15 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
     let _source_dir_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_DIR");
     let _tinyflows_source_guard = EnvVarGuard::unset("OPENHUMAN_MODULE_SOURCE_TINYFLOWS");
     let (library, _) = published_tinyflows::staged_v0_9_5_module();
-    let module_search_path = library
+    let tinyflows_dir = library
         .parent()
         .expect("staged module artifact has a search directory");
+    let module_search_path = module_search_path_with(tinyflows_dir);
+    let module_search_path = module_search_path.as_os_str();
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).expect("workspace directory");
     let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
-    let _module_path_guard = EnvVarGuard::set_to_path("OPENHUMAN_MODULE_PATH", module_search_path);
+    let _module_path_guard = EnvVarGuard::set("OPENHUMAN_MODULE_PATH", module_search_path);
     let openhuman_home = temp.path().join(".openhuman");
     let local_config_dir = openhuman_home.join("users/local");
     std::fs::create_dir_all(&local_config_dir).expect("create isolated local config directory");
