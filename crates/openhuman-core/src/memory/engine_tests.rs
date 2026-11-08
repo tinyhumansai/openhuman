@@ -295,13 +295,15 @@ async fn cortexdb_key_does_not_report_a_tinyhumans_credential() {
 
 #[tokio::test]
 async fn switching_observed_actor_rebuilds_the_cortexdb_engine() {
-    let _stable = CACHE_STABLE
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
     let mut config = config_in(&tmp);
     config.memory.engine = CORTEXDB_ENGINE.to_string();
+    // Storing the key drops memory's reads, which takes the cache guard's read
+    // side: it is stored before the write side is held.
     store_cortexdb_key(&config, "cdb-key-actor").await.unwrap();
+    let _stable = CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let off = resolve(&config).await.engine().expect("bound");
     assert!(
         Arc::ptr_eq(
@@ -358,15 +360,17 @@ fn user_config(tmp: &tempfile::TempDir, user: &str) -> Config {
 
 #[tokio::test]
 async fn layout_v3_binds_its_own_engine_beside_legacy() {
-    let _stable = CACHE_STABLE
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
     // A user id of its own: the credential store is shared by id, so another
     // test storing a key for the same id would change the fingerprint.
     let mut config = user_config(&tmp, "6512ab0f6512ab0f6512ab0f");
     config.memory.engine = CORTEXDB_ENGINE.to_string();
+    // Stored before the write side of the cache guard is held: storing the key
+    // takes its read side.
     store_cortexdb_key(&config, "cdb-key-layout").await.unwrap();
+    let _stable = CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let legacy = resolve(&config).await.engine().expect("legacy bound");
     config.memory.layout = crate::config::MemoryLayoutMode::V3;

@@ -655,6 +655,11 @@ async fn erase_waits_for_current_automatic_work_before_returning_its_barrier() {
 
 #[tokio::test]
 async fn a_shared_engine_invalidates_every_workspaces_packs_but_a_private_one_only_its_own() {
+    // The shared case clears every workspace's ready blocks: no test that pins
+    // the cache may be running.
+    let _stable = crate::memory::engine::CACHE_STABLE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = TEST_LOCK.lock().await;
     let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let (config_one, config_two) = (config_in(&one), config_in(&two));

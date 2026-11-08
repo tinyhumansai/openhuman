@@ -268,7 +268,7 @@ impl OpenHumanTurnPrelude {
     /// taken before the (possibly slow) config load, so a change of memory
     /// while the scope resolves voids the render instead of slipping between
     /// the two.
-    async fn scope_and_ticket(&self, reason: &str) -> Option<(MemoryScope, Ticket)> {
+    pub(super) async fn scope_and_ticket(&self, reason: &str) -> Option<(MemoryScope, Ticket)> {
         let early = ticket(&self.workspace_dir);
         let scope = self.memory_scope(reason).await?;
         if scope.config.workspace_dir == self.workspace_dir {
@@ -400,18 +400,17 @@ impl TicketWatch {
 impl Drop for Ticket {
     fn drop(&mut self) {
         if self.tracked {
-            lock(&self.state).in_flight.remove(&self.seq);
+            let mut state = lock(&self.state);
+            state.in_flight.remove(&self.seq);
+            state.prune_marks();
         }
     }
 }
 
-/// A stored block: `None` once taken, its sequence staying behind so an older
-/// render cannot store its own afterwards; then the block, which is itself
-/// `None` for a render that found nothing known.
+/// A stored block, itself `None` for a render that found nothing known.
 struct Entry {
-    block: Option<Option<String>>,
+    block: Option<String>,
     at: Instant,
-    seq: u64,
 }
 
 #[derive(Default)]
@@ -421,6 +420,21 @@ struct State {
     in_flight: HashMap<u64, PathBuf>,
     /// Counts renders started.
     seq: u64,
+    /// For each key, the sequence of the newest render that stored or was
+    /// taken for it: an older render finishing later must not store its own.
+    /// Kept while a render older than the mark is still in flight, however
+    /// many other blocks come and go, and no longer.
+    marks: HashMap<ReadyKey, u64>,
+}
+
+impl State {
+    /// Forgets the marks no render in flight is older than.
+    fn prune_marks(&mut self) {
+        match self.in_flight.keys().min().copied() {
+            Some(oldest) => self.marks.retain(|_, mark| *mark > oldest),
+            None => self.marks.clear(),
+        }
+    }
 }
 
 fn lock(state: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
@@ -465,6 +479,7 @@ impl ReadyBlocks {
                 state.in_flight.clear();
             }
         }
+        state.prune_marks();
     }
 
     /// Holds `block` for `key`, replacing an earlier one, unless `ticket` is
@@ -486,6 +501,9 @@ impl ReadyBlocks {
         self.store(key, None, ticket, now);
     }
 
+    /// `block` is what to hold for `key`; `None` records only that the
+    /// render went straight to a generation start, dropping an older block
+    /// that waited.
     fn store(
         &self,
         key: ReadyKey,
@@ -495,41 +513,50 @@ impl ReadyBlocks {
     ) -> bool {
         let mut state = self.lock();
         ticket.tracked = false;
-        if state.in_flight.remove(&ticket.seq).is_none() {
+        let live = state.in_flight.remove(&ticket.seq).is_some();
+        let newer = state
+            .marks
+            .get(&key)
+            .copied()
+            .filter(|mark| *mark > ticket.seq);
+        let stored = if !live {
             tracing::debug!(
                 seq = ticket.seq,
                 "[memory_block] render not stored: voided by a memory change"
             );
-            return false;
-        }
-        let entries = &mut state.entries;
-        entries.retain(|_, entry| fresh(entry.at, now));
-        if let Some(held) = entries.get(&key).filter(|held| held.seq > ticket.seq) {
+            false
+        } else if let Some(newer) = newer {
             tracing::debug!(
                 seq = ticket.seq,
-                newer_seq = held.seq,
+                newer_seq = newer,
                 "[memory_block] render not stored: a newer render came first"
             );
-            return false;
-        }
-        if entries.len() >= READY_CAPACITY && !entries.contains_key(&key) {
-            let oldest = entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.at)
-                .map(|(key, _)| key.clone());
-            if let Some(oldest) = oldest {
-                entries.remove(&oldest);
+            false
+        } else {
+            state.marks.insert(key.clone(), ticket.seq);
+            let entries = &mut state.entries;
+            entries.retain(|_, entry| fresh(entry.at, now));
+            match block {
+                Some(block) => {
+                    if entries.len() >= READY_CAPACITY && !entries.contains_key(&key) {
+                        let oldest = entries
+                            .iter()
+                            .min_by_key(|(_, entry)| entry.at)
+                            .map(|(key, _)| key.clone());
+                        if let Some(oldest) = oldest {
+                            entries.remove(&oldest);
+                        }
+                    }
+                    entries.insert(key, Entry { block, at: now });
+                }
+                None => {
+                    entries.remove(&key);
+                }
             }
-        }
-        entries.insert(
-            key,
-            Entry {
-                block,
-                at: now,
-                seq: ticket.seq,
-            },
-        );
-        true
+            true
+        };
+        state.prune_marks();
+        stored
     }
 
     /// Holds `block` for `key`, replacing an earlier one.
@@ -543,12 +570,8 @@ impl ReadyBlocks {
     /// stale. `Some(None)` is a ready render that found nothing known.
     pub(super) fn take_at(&self, key: &ReadyKey, now: Instant) -> Option<Option<String>> {
         let mut state = self.lock();
-        let entry = state.entries.get_mut(key)?;
-        if !fresh(entry.at, now) {
-            state.entries.remove(key);
-            return None;
-        }
-        entry.block.take()
+        let entry = state.entries.remove(key)?;
+        fresh(entry.at, now).then_some(entry.block)
     }
 
     /// Whether a fresh block is ready for `key`.
@@ -556,7 +579,7 @@ impl ReadyBlocks {
         self.lock()
             .entries
             .get(key)
-            .is_some_and(|entry| entry.block.is_some() && fresh(entry.at, now))
+            .is_some_and(|entry| fresh(entry.at, now))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {

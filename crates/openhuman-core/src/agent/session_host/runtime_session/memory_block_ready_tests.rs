@@ -305,3 +305,31 @@ fn a_ticket_watch_follows_the_ticket_it_was_taken_from() {
     drop(ticket);
     assert!(!watch.is_live(), "and stays void once the ticket is gone");
 }
+
+#[test]
+fn a_delivery_watermark_outlives_the_eviction_of_blocks_for_other_keys() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    let older = ready.ticket(Path::new("/workspace"));
+    let newer = ready.ticket(Path::new("/workspace"));
+    ready.delivered_at(key("a", 500), newer, now);
+    // Enough other keys to evict every block the store can hold.
+    for tokens in 0..(READY_CAPACITY as u32 + 8) {
+        ready.put_at(key("b", 1_000 + tokens), Some("other".into()), now);
+    }
+    assert!(
+        !ready.put_ticketed_at(key("a", 500), Some("old".into()), older, now),
+        "the older render stored its superseded block"
+    );
+    assert!(ready.lock().marks.len() <= 1, "and the marks stay bounded");
+}
+
+#[test]
+fn watermarks_are_forgotten_once_no_older_render_is_in_flight() {
+    let ready = ReadyBlocks::default();
+    let now = Instant::now();
+    for tokens in 0..32 {
+        ready.put_at(key("a", tokens), Some("b".into()), now);
+    }
+    assert!(ready.lock().marks.is_empty());
+}

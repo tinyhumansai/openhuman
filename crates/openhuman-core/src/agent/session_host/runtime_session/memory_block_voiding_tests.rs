@@ -4,6 +4,7 @@
 
 use super::invalidation::{a_block_waits, credential_config, first_turn_block, prewarmed};
 use super::*;
+use crate::agent::session_host::runtime_session::memory_block::NewGenerationBlock;
 
 /// A first turn's refresh of a recorded block, with `forget` run `after` into
 /// the render; the memory block the next prefix holds, if any.
@@ -250,4 +251,80 @@ async fn an_older_prewarm_does_not_store_over_a_render_taken_without_a_deadline(
         !a_block_waits(&config).await,
         "the older prewarm stored its block over the newer render's"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_compaction_render_voided_by_an_erase_drops_the_inherited_block() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    SlowEngine::bind(&SlowEngine::new(SLOW), &config);
+    let session = host(&config, PROMPT, false);
+    let change = async {
+        tokio::time::sleep(SLOW / 2).await;
+        crate::memory::lifecycle::prefetch::invalidate(&config);
+    };
+
+    let (block, ()) = tokio::join!(session.new_generation_block(), change);
+
+    assert!(
+        matches!(block, NewGenerationBlock::Drop),
+        "the inherited block may hold what was erased"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_compaction_render_nothing_changed_under_is_taken() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = SlowEngine::new(std::time::Duration::from_millis(10));
+    SlowEngine::bind(&engine, &config);
+    learn(engine.inner(), &config, "The user lives in Lisbon").await;
+
+    let block = host(&config, PROMPT, false).new_generation_block().await;
+
+    assert!(matches!(block, NewGenerationBlock::Fresh(_)));
+}
+
+#[tokio::test]
+async fn replacing_the_memory_key_through_the_auth_service_drops_the_waiting_block() {
+    let (_serial, config) = credential_config().await;
+    prewarmed(&config).await;
+
+    crate::credentials::AuthService::from_config(&config)
+        .store_provider_token(
+            crate::config::schema::MEMORY_CORTEXDB_KEY_NAME,
+            "default",
+            "cdb-replaced",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .await
+        .expect("stored");
+
+    assert!(!a_block_waits(&config).await);
+}
+
+#[tokio::test]
+async fn removing_the_memory_key_through_the_auth_service_drops_the_waiting_block() {
+    let (_serial, config) = credential_config().await;
+    let auth = crate::credentials::AuthService::from_config(&config);
+    auth.store_provider_token(
+        crate::config::schema::MEMORY_CORTEXDB_KEY_NAME,
+        "default",
+        "cdb-key",
+        std::collections::HashMap::new(),
+        true,
+    )
+    .await
+    .expect("stored");
+    prewarmed(&config).await;
+
+    assert!(auth
+        .remove_profile(crate::config::schema::MEMORY_CORTEXDB_KEY_NAME, "default")
+        .await
+        .expect("removed"));
+
+    assert!(!a_block_waits(&config).await);
 }
