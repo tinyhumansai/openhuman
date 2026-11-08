@@ -33,7 +33,10 @@ pub(crate) use client::{SecurityProxy, MODULE_REFUSED};
 pub use gap::{install_unavailable_path_floor_port, PathFloorPortGuard};
 pub use policy::policy_config;
 pub(crate) use policy::validate as validate_policy;
-pub(super) use policy::{module_config, module_config_for_host, module_config_for_secret_scope};
+pub(super) use policy::{
+    module_config, module_config_for_host, module_config_for_secret_authority,
+    secret_scope_request, SecretRegistrationIds,
+};
 pub(crate) use secret_cipher::Output as SecretCipherOutput;
 
 static UNLOCKED_PAIRING_SCOPES: std::sync::LazyLock<

@@ -139,8 +139,52 @@ fn module_bootstrap_configures_the_host_served_audit_stream_from_config() {
     assert_eq!(audit.journal_max_events, 10_000);
 }
 
+#[test]
+fn secret_authority_bootstrap_enables_bounded_pairing_and_legacy_source_bindings() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None)
+            .unwrap();
+
+    let device = module.device.expect("DeviceConfig2 is enabled");
+    assert_eq!(device.max_handles, 512);
+    assert_eq!(device.max_bootstrap_nonces, 4096);
+    let pairing = module
+        .device_pairing
+        .expect("DevicePairingConfig2 is enabled");
+    assert_eq!(pairing.max_pairings, 256);
+    let runtime = pairing.runtime_scope.unwrap();
+    assert_eq!(runtime.persistence_backend_id, super::policy::pairing_backend_id());
+    assert_eq!(
+        runtime.legacy_device_backend_id,
+        Some(super::policy::pairing_legacy_backend_id())
+    );
+}
+
+/// A second tenant in one process must not meet a secret scope the first one
+/// configured at init: the authority boots neutral and every tenant
+/// registers its own scope at runtime.
+#[test]
+fn secret_authority_boots_without_any_tenants_secret_scope() {
+    let module =
+        module_config_for_secret_authority(&Config::default(), Some(":1.42".into()), None)
+            .unwrap();
+
+    let secret = module.secret.expect("the secret authority is enabled");
+    assert!(secret.registrations.is_empty(), "no static registration");
+    assert!(module.secret_cipher.is_none(), "no init-owned cipher");
+    let approvals = module.approvals.expect("approvals are enabled");
+    assert_eq!(approvals.scopes.len(), 1, "only the bootstrap approval scope");
+    assert_eq!(approvals.scopes[0].subject.workspace, "bootstrap");
+    let audit = module.audit.expect("audit is enabled");
+    assert_eq!(audit.scope.workspace, "bootstrap");
+    assert!(
+        audit.required,
+        "TinySecurity binds a runtime cipher only to a required audit client"
+    );
+}
+
 #[tokio::test]
-async fn secret_scope_bootstrap_enables_bounded_pairing_and_legacy_source_bindings() {
+async fn a_tenants_secret_registration_owns_its_cipher_on_its_own_audit_stream() {
     let temp = tempfile::tempdir().unwrap();
     let mut config = Config::default();
     config.workspace_dir = temp.path().to_path_buf();
@@ -152,30 +196,24 @@ async fn secret_scope_bootstrap_enables_bounded_pairing_and_legacy_source_bindin
     let scope = crate::security::approval::native::prepare_secret_scope(&config, subject)
         .await
         .unwrap();
+    let ids = SecretRegistrationIds {
+        registration_id: "1".repeat(32),
+        consumer_id: "2".repeat(32),
+        target_backend_id: "3".repeat(32),
+        legacy_backend_id: "4".repeat(32),
+    };
 
-    let module = module_config_for_secret_scope(
-        &config,
-        Some(":1.42".into()),
-        None,
-        &scope,
-        "1".repeat(32),
-        "2".repeat(32),
-        "3".repeat(32),
-        "4".repeat(32),
-        "5".repeat(32),
-    )
-    .unwrap();
+    let request = secret_scope_request(&scope, &ids);
 
-    let device = module.device.expect("DeviceConfig2 is enabled");
-    assert_eq!(device.max_handles, 512);
-    assert_eq!(device.max_bootstrap_nonces, 4096);
-    let pairing = module
-        .device_pairing
-        .expect("DevicePairingConfig2 is enabled");
-    assert_eq!(pairing.max_pairings, 256);
-    let runtime = pairing.runtime_scope.unwrap();
-    assert_eq!(runtime.persistence_backend_id, "5".repeat(32));
-    assert!(runtime.legacy_device_backend_id.is_some());
+    assert_eq!(request.registration.registration_id, ids.registration_id);
+    assert_eq!(request.registration.approval_scope_id, scope.scope_id());
+    assert_eq!(request.registration.target.backend_id, ids.target_backend_id);
+    assert_eq!(request.registration.legacy[0].backend_id, ids.legacy_backend_id);
+    let cipher = request.cipher.expect("a registration-owned cipher");
+    assert_eq!(cipher.consumer_id, ids.consumer_id);
+    assert_eq!(cipher.audit_stream_id, scope.stream_id());
+    assert!(cipher.enabled);
+    assert!((1..=128).contains(&cipher.slots));
 }
 
 #[test]
