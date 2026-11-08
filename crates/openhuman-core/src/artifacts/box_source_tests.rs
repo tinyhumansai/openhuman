@@ -7,6 +7,7 @@ use crate::sandbox::openshell::scripted_driver::{Call, ExecStep, ScriptedDriver}
 use crate::sandbox::openshell::{read_file_in, BoxOutput, BoxRegistry, RegistryLimits};
 use base64::Engine as _;
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::time::Duration;
 use tiny_artifacts::{Author, CreateArtifactTool, UpdateArtifactTool};
 
