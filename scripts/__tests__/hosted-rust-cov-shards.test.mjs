@@ -116,8 +116,11 @@ test("container lanes run with a private root-owned home before any step uses it
   );
   assert.ok(step, "the private-home step has an if and a run block");
   assert.equal(step[1].trim(), "matrix.container != ''");
-  assert.match(step[2], /chmod 0700 \/root/);
-  assert.match(step[2], /echo "HOME=\/root" >> "\$GITHUB_ENV"/);
+  assert.match(step[2], /install -d -o root -g root -m 0700 \/home\/ci/);
+  assert.match(step[2], /echo "HOME=\/home\/ci" >> "\$GITHUB_ENV"/);
+  // /root is an always-forbidden system root: a home there makes every
+  // ~-relative default (e.g. ~/OpenHuman) a protected location.
+  assert.doesNotMatch(step[2], /HOME=\/root/);
 });
 
 test("the gate refuses a shard that failed, was cancelled or never reported", () => {
