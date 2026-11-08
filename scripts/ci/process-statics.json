@@ -603,7 +603,7 @@
     "file": "crates/openhuman-core/src/core/observability_reporting.rs",
     "scope": "",
     "name": "LAST_FS_LIMIT_REPORT",
-    "type": "std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String,String,String),std::time::Instant>>, >",
+    "type": "std::sync::LazyLock<std::sync::Mutex<FsLimitReports>>",
     "count": 1,
     "category": "A",
     "reason": "A process-wide rate limiter keyed by the content-free error kind, domain and operation names prevents repeated filesystem-limit reports from flooding observability. Entries older than the five-minute cooldown are pruned on every access, and the map stores no tenant or user data.",
@@ -748,5 +748,55 @@
     "category": "A",
     "reason": "cfg(test) only: a per-thread stand-in for CONFIGURED_OFF so a test that turns security off cannot reach a test on another thread. Holds one flag, no tenant data, and is not compiled into any shipped build.",
     "verification": "security/switch_tests.rs: the_test_guard_does_not_reach_another_thread"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "FIXTURE",
+    "type": "OnceLock<Option<Config>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The one test-process fixture config the booted TinySecurity module is loaded against, so every test in the process shares the module the single process-wide registration admits; it holds a throwaway workspace path and no tenant or user data.",
+    "verification": "modules/security/test_host.rs: boot"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "FIXTURE_KEY",
+    "type": "OnceLock<PathBuf>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The path of the fixture master-key file created once per test process; a path only, never key material.",
+    "verification": "modules/security/test_host.rs: boot"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "GATE",
+    "type": "OnceLock<Arc<ApprovalGate>>",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The approval gate installed once per test process, matching the one gate a booted host installs; it carries no tenant data.",
+    "verification": "modules/security/test_host.rs: gate"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "ABSENT",
+    "type": "std::cell::Cell<bool>",
+    "count": 1,
+    "category": "B",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. A thread-local (`#[cfg(test)]`) flag a test sets through `absent()` to see the production fail-closed path on its own thread only; it is reset by the guard's drop.",
+    "verification": "modules/security/test_host.rs: absent"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/test_host.rs",
+    "scope": "",
+    "name": "EXPLICIT_CONSENT",
+    "type": "std::sync::atomic::AtomicUsize",
+    "count": 1,
+    "category": "A",
+    "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. A counter of live guards that leave the master grant to the caller's own approval; it holds a count only and returns to zero when every guard drops.",
+    "verification": "modules/security/test_host.rs: explicit_consent"
   }
 ]
