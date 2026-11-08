@@ -52,12 +52,12 @@ impl OpenHumanTurnPrelude {
             // the deferred tools beside the advertised ones. The harness
             // still advertises only the `Direct` registrations and reaches
             // the rest through its `tool_search` bridge.
-            ToolSnapshot::new(granted_tool_specs(
+            granted_tool_snapshot(
                 &surface.visible_tool_specs,
                 &surface.tool_specs,
                 &surface.deferred_tool_names,
                 self.thread_id.is_some(),
-            ))
+            )
             .map_err(|error| anyhow::anyhow!(error.to_string()))?
         };
         let prefix = if cold {
@@ -413,6 +413,23 @@ fn granted_tool_specs(
         .into_iter()
         .map(|spec| spec.as_ref().clone())
         .collect()
+}
+
+/// The snapshot of [`granted_tool_specs`], naming every deferred tool as
+/// offered. A deferred tool whose declaration the host has not rebuilt has
+/// nothing to grant, yet the model can still discover it, so a session that
+/// prunes retired tools (`[context] prune_retired_tools`) must not drop its
+/// recorded declaration.
+fn granted_tool_snapshot(
+    visible: &[Arc<tinytools::ToolSpec>],
+    registered: &[Arc<tinytools::ToolSpec>],
+    deferred: &std::collections::HashSet<String>,
+    has_thread: bool,
+) -> Result<ToolSnapshot, tinyagents_harness::tool::ToolSnapshotError> {
+    Ok(ToolSnapshot::new(granted_tool_specs(
+        visible, registered, deferred, has_thread,
+    ))?
+    .with_offered_names(deferred.iter().cloned()))
 }
 
 #[cfg(test)]

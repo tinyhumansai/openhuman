@@ -85,10 +85,7 @@ impl DiscoveryOptions {
 
     /// The options a thread recorded on its transcript `rows`, if any.
     pub fn recorded_in(rows: &[TranscriptMessage]) -> Option<Self> {
-        rows.iter()
-            .filter_map(|row| row.extra_metadata.as_ref())
-            .find_map(|metadata| metadata.get(DISCOVERY_METADATA_KEY))
-            .and_then(|value| serde_json::from_value(value.clone()).ok())
+        recorded_metadata(rows, DISCOVERY_METADATA_KEY)
     }
 
     /// Records these options on the first fresh row of a transcript being
@@ -96,23 +93,46 @@ impl DiscoveryOptions {
     /// transcript is never touched: rewriting it would make the commit open a
     /// new generation instead of extending the thread.
     pub fn record_on(&self, rows: &mut [TranscriptMessage], fresh: &[bool]) -> bool {
-        let Some(index) = fresh.iter().position(|is_fresh| *is_fresh) else {
-            return false;
-        };
-        let Some(row) = rows.get_mut(index) else {
-            return false;
-        };
         let value = serde_json::to_value(self).expect("plain booleans serialize");
-        match row
-            .extra_metadata
-            .get_or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
-        {
-            serde_json::Value::Object(map) => {
-                map.insert(DISCOVERY_METADATA_KEY.to_string(), value);
-                true
-            }
-            _ => false,
+        record_metadata(rows, fresh, DISCOVERY_METADATA_KEY, value)
+    }
+}
+
+/// The value a thread recorded under `key` on its transcript `rows`, if any.
+pub(crate) fn recorded_metadata<T: serde::de::DeserializeOwned>(
+    rows: &[TranscriptMessage],
+    key: &str,
+) -> Option<T> {
+    rows.iter()
+        .filter_map(|row| row.extra_metadata.as_ref())
+        .find_map(|metadata| metadata.get(key))
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+}
+
+/// Writes `value` under `key` in the `extra_metadata` of the first fresh row,
+/// returning whether one was found. Other keys on the row are kept, so
+/// several pins share the thread's first row.
+pub(crate) fn record_metadata(
+    rows: &mut [TranscriptMessage],
+    fresh: &[bool],
+    key: &str,
+    value: serde_json::Value,
+) -> bool {
+    let Some(index) = fresh.iter().position(|is_fresh| *is_fresh) else {
+        return false;
+    };
+    let Some(row) = rows.get_mut(index) else {
+        return false;
+    };
+    match row
+        .extra_metadata
+        .get_or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+    {
+        serde_json::Value::Object(map) => {
+            map.insert(key.to_string(), value);
+            true
         }
+        _ => false,
     }
 }
 

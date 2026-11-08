@@ -79,6 +79,7 @@ pub fn current_turn_origin() -> Option<AgentTurnOrigin> {
 pub use openhuman_core::agent::tinyagents::discovery::DiscoveryOptions as ToolDiscoveryOptions;
 pub use openhuman_core::config::ComposioHostCredential;
 pub use openhuman_core::config::Config as RuntimeConfig;
+pub use openhuman_core::config::{ContextOverrides, ReasoningReplay};
 pub use openhuman_core::config::{SearchHostCredential, UnknownKeyedSearchProvider};
 /// The exact ambient tenant, inherited across profile turns and their scoped tasks.
 pub use openhuman_core::core::runtime::{current_tenant, NoTenant, Tenant};

@@ -236,5 +236,106 @@ impl Config {
                 );
             }
         }
+        // `0` or an empty value clears a budget set in `config.toml`.
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS") {
+            let budget = match val.trim() {
+                "" | "0" => Some(None),
+                raw => match raw.parse::<u32>() {
+                    Ok(tokens) => Some(Some(tokens)),
+                    Err(_) => {
+                        tracing::warn!(
+                            value = raw,
+                            "[config] ignoring unparseable OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(budget) = budget {
+                self.context.keep_recent_tokens = budget;
+                self.record_env_override(
+                    env,
+                    "context.keep_recent_tokens",
+                    &["OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS"],
+                );
+            }
+        }
+        // `0` or an empty value switches expiry off again.
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS") {
+            let age = match val.trim() {
+                "" | "0" => Some(None),
+                raw => match raw.parse::<u32>() {
+                    Ok(turns) => Some(Some(turns)),
+                    Err(_) => {
+                        tracing::warn!(
+                            value = raw,
+                            "[config] ignoring unparseable OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS"
+                        );
+                        None
+                    }
+                },
+            };
+            if let Some(age) = age {
+                self.context.tool_result_max_age_turns = age;
+                self.record_env_override(
+                    env,
+                    "context.tool_result_max_age_turns",
+                    &["OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS"],
+                );
+            }
+        }
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_TOOL_RESULT_EXEMPT_TOOLS") {
+            self.context.tool_result_exempt_tools = val
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect();
+            self.record_env_override(
+                env,
+                "context.tool_result_exempt_tools",
+                &["OPENHUMAN_CONTEXT_TOOL_RESULT_EXEMPT_TOOLS"],
+            );
+        }
+        if let Some(val) = env.get("OPENHUMAN_CONTEXT_REPLAY_REASONING") {
+            let replay = match val.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+                "" => None,
+                "all" => Some(crate::config::ReasoningReplay::All),
+                "current_turn" => Some(crate::config::ReasoningReplay::CurrentTurn),
+                _ => {
+                    tracing::warn!(
+                        value = %val.trim(),
+                        "[config] ignoring unknown OPENHUMAN_CONTEXT_REPLAY_REASONING (all | current_turn)"
+                    );
+                    None
+                }
+            };
+            if let Some(replay) = replay {
+                self.context.replay_reasoning = replay;
+                self.record_env_override(
+                    env,
+                    "context.replay_reasoning",
+                    &["OPENHUMAN_CONTEXT_REPLAY_REASONING"],
+                );
+            }
+        }
+        if let Some(raw) = env.get("OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS") {
+            match super::classify_shell_hide_window(&raw) {
+                super::ShellHideWindowParse::Set(value) => {
+                    self.context.prune_retired_tools = value;
+                    self.record_env_override(
+                        env,
+                        "context.prune_retired_tools",
+                        &["OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS"],
+                    );
+                }
+                super::ShellHideWindowParse::Unset => {}
+                super::ShellHideWindowParse::Unrecognized => {
+                    tracing::warn!(
+                        "[config] ignoring a non-boolean OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS"
+                    );
+                }
+            }
+        }
     }
 }

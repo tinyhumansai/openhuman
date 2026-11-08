@@ -235,3 +235,17 @@ async fn a_stored_key_keeps_the_public_endpoint() {
     assert_eq!(brave.credential.as_deref(), Some("stored-brave"));
     assert_eq!(brave.base_url, None);
 }
+
+#[tokio::test]
+async fn the_contents_cap_reaches_every_provider_and_is_unset_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    select(&mut config, &[("tavily", SearchProviderSettings::direct())]);
+    config.search.tavily.api_key = Some("test-secret".into());
+    let payload = module_config(&config).await;
+    assert_eq!(payload.providers["tavily"].contents_max_chars, None);
+
+    config.search.contents_max_chars = Some(1_200);
+    let payload = module_config(&config).await;
+    assert_eq!(payload.providers["tavily"].contents_max_chars, Some(1_200));
+}

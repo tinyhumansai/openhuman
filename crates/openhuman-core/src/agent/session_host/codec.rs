@@ -81,6 +81,10 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
         if let Some(options) = sidecar.discovery_record {
             options.record_on(&mut reconciled.rows, &reconciled.fresh);
         }
+        // Likewise the history-replay options (result expiry, reasoning replay).
+        if let Some(options) = &sidecar.replay_record {
+            options.record_on(&mut reconciled.rows, &reconciled.fresh);
+        }
         attach_text_dialect_rounds(
             &mut reconciled.rows,
             &reconciled.fresh,

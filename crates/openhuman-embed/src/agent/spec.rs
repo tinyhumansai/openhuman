@@ -64,6 +64,7 @@ pub struct AgentSpec {
     >,
     memory: Option<MemoryBinding>,
     tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    context: crate::ContextOverrides,
     subagents: Vec<(String, AgentDefinitionSpec)>,
 }
 
@@ -194,6 +195,7 @@ impl AgentSpec {
             hooks: Default::default(),
             memory: None,
             tool_discovery: None,
+            context: Default::default(),
             subagents: Vec::new(),
         }
     }
@@ -375,6 +377,55 @@ impl AgentSpec {
         self
     }
 
+    /// `[context] keep_recent_tokens` for this agent's sessions: the verbatim tail, in
+    /// tokens, an in-turn compaction keeps after its summary. Unset keeps the
+    /// config's value, which defaults to 20,000.
+    #[must_use]
+    pub fn keep_recent_tokens(mut self, tokens: u32) -> Self {
+        self.context.keep_recent_tokens = Some(tokens);
+        self
+    }
+
+    /// `[context] tool_result_max_age_turns` for this agent's sessions: a tool result with
+    /// more than `turns` user turns after it is replaced by a one-line note.
+    /// Off unless set. Expiry and reasoning replay are recorded on each thread when it is created, so changing them never alters a thread that already exists.
+    #[must_use]
+    pub fn tool_result_max_age_turns(mut self, turns: u32) -> Self {
+        self.context.tool_result_max_age_turns = Some(turns);
+        self
+    }
+
+    /// `[context] tool_result_exempt_tools` for this agent's sessions: tools whose results
+    /// never expire. Only read while a result age is set.
+    #[must_use]
+    pub fn tool_result_exempt_tools<I, S>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.context.tool_result_exempt_tools = Some(tools.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// `[context] replay_reasoning` for this agent's sessions: whether requests replay every
+    /// turn's reasoning ([`ReasoningReplay::All`](crate::ReasoningReplay::All),
+    /// today's behaviour) or only the current turn's. The stored transcript
+    /// keeps every block either way.
+    #[must_use]
+    pub fn replay_reasoning(mut self, replay: crate::ReasoningReplay) -> Self {
+        self.context.replay_reasoning = Some(replay);
+        self
+    }
+
+    /// `[context] prune_retired_tools` for this agent's sessions: drop a recorded tool
+    /// declaration the host no longer offers, live or deferred, instead of
+    /// carrying it forward for the life of the thread.
+    #[must_use]
+    pub fn prune_retired_tools(mut self, prune: bool) -> Self {
+        self.context.prune_retired_tools = Some(prune);
+        self
+    }
+
     /// Binds the agent's memory: the memory agent id its turns are logged
     /// under and, optionally, its layout root. See [`MemoryBinding`].
     #[must_use]
@@ -552,6 +603,7 @@ impl AgentSpec {
             hooks: self.hooks,
             memory: self.memory,
             tool_discovery: self.tool_discovery,
+            context: self.context,
             subagents: self.subagents,
         }
     }
@@ -585,6 +637,7 @@ pub(crate) struct AgentSpecParts {
     pub(crate) composio: Option<ComposioHostCredential>,
     pub(crate) config_fn: Option<ConfigEdit>,
     pub(crate) tool_discovery: Option<crate::ToolDiscoveryOptions>,
+    pub(crate) context: crate::ContextOverrides,
     pub(crate) host_tools: Option<openhuman_core::agent::HostTools>,
     pub(crate) hooks: tinyagents_hooks::scope::HookScope<
         openhuman_core::agent::tinyagents::host::OpenHumanRunContext,

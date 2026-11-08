@@ -293,3 +293,133 @@ fn summarizer_settings_read_from_the_context_table_beside_the_harness_settings()
         "{written}"
     );
 }
+
+#[test]
+fn keep_recent_tokens_defaults_to_unset_and_reads_from_the_context_table() {
+    assert_eq!(Config::default().context.keep_recent_tokens, None);
+
+    let cfg: Config = toml::from_str("[context]\nkeep_recent_tokens = 12000\n").unwrap();
+    assert_eq!(cfg.context.keep_recent_tokens, Some(12_000));
+    let written = toml::to_string(&cfg.context).unwrap();
+    assert!(written.contains("keep_recent_tokens = 12000"), "{written}");
+}
+
+#[test]
+fn keep_recent_tokens_env_sets_clears_and_ignores_garbage() {
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS", " 12000 "),
+    );
+    assert_eq!(cfg.context.keep_recent_tokens, Some(12_000));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS", "plenty"),
+    );
+    assert_eq!(cfg.context.keep_recent_tokens, Some(12_000));
+
+    // `0` or an empty value clears a budget set in `config.toml`.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_CONTEXT_KEEP_RECENT_TOKENS", "0"),
+    );
+    assert_eq!(cfg.context.keep_recent_tokens, None);
+}
+
+#[test]
+fn prompt_replay_options_default_to_todays_behaviour_and_read_from_the_context_table() {
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+    let defaults = Config::default().context;
+    assert_eq!(defaults.tool_result_max_age_turns, None);
+    assert!(defaults.tool_result_exempt_tools.is_empty());
+    assert_eq!(defaults.replay_reasoning, ReasoningReplay::All);
+    assert!(!defaults.prune_retired_tools);
+
+    let cfg: Config = toml::from_str(
+        "[context]\n\
+         tool_result_max_age_turns = 6\n\
+         tool_result_exempt_tools = [\"tool_search\"]\n\
+         replay_reasoning = \"current_turn\"\n\
+         prune_retired_tools = true\n",
+    )
+    .unwrap();
+    assert_eq!(cfg.context.tool_result_max_age_turns, Some(6));
+    assert_eq!(cfg.context.tool_result_exempt_tools, ["tool_search"]);
+    assert_eq!(cfg.context.replay_reasoning, ReasoningReplay::CurrentTurn);
+    assert!(cfg.context.prune_retired_tools);
+}
+
+#[test]
+fn prompt_replay_options_env_overlay_sets_clears_and_ignores_garbage() {
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+    let mut cfg = Config::default();
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS", " 8 ")
+            .with(
+                "OPENHUMAN_CONTEXT_TOOL_RESULT_EXEMPT_TOOLS",
+                "tool_search, memory_recall ,",
+            )
+            .with("OPENHUMAN_CONTEXT_REPLAY_REASONING", "Current-Turn")
+            .with("OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS", "on"),
+    );
+    assert_eq!(cfg.context.tool_result_max_age_turns, Some(8));
+    assert_eq!(
+        cfg.context.tool_result_exempt_tools,
+        ["tool_search", "memory_recall"]
+    );
+    assert_eq!(cfg.context.replay_reasoning, ReasoningReplay::CurrentTurn);
+    assert!(cfg.context.prune_retired_tools);
+
+    // Garbage leaves the earlier value alone.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS", "many")
+            .with("OPENHUMAN_CONTEXT_REPLAY_REASONING", "sometimes")
+            .with("OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS", "maybe"),
+    );
+    assert_eq!(cfg.context.tool_result_max_age_turns, Some(8));
+    assert_eq!(cfg.context.replay_reasoning, ReasoningReplay::CurrentTurn);
+    assert!(cfg.context.prune_retired_tools);
+
+    // `0` switches expiry off again and `all` restores full replay.
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("OPENHUMAN_CONTEXT_TOOL_RESULT_MAX_AGE_TURNS", "0")
+            .with("OPENHUMAN_CONTEXT_REPLAY_REASONING", "all")
+            .with("OPENHUMAN_CONTEXT_PRUNE_RETIRED_TOOLS", "off"),
+    );
+    assert_eq!(cfg.context.tool_result_max_age_turns, None);
+    assert_eq!(cfg.context.replay_reasoning, ReasoningReplay::All);
+    assert!(!cfg.context.prune_retired_tools);
+}
+
+#[test]
+fn context_overrides_change_only_the_keys_they_set() {
+    use crate::config::ContextOverrides;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+
+    let mut settings = Config::default().context;
+    settings.keep_recent_tokens = Some(9_000);
+    settings.tool_result_exempt_tools = vec!["kept".into()];
+    let untouched = settings.clone();
+
+    ContextOverrides::default().apply_to(&mut settings);
+    assert_eq!(
+        toml::to_string(&settings).unwrap(),
+        toml::to_string(&untouched).unwrap(),
+        "no override set changes nothing"
+    );
+
+    ContextOverrides {
+        keep_recent_tokens: Some(12_000),
+        tool_result_max_age_turns: Some(5),
+        tool_result_exempt_tools: Some(vec!["tool_search".into()]),
+        replay_reasoning: Some(ReasoningReplay::CurrentTurn),
+        prune_retired_tools: Some(true),
+    }
+    .apply_to(&mut settings);
+    assert_eq!(settings.keep_recent_tokens, Some(12_000));
+    assert_eq!(settings.tool_result_max_age_turns, Some(5));
+    assert_eq!(settings.tool_result_exempt_tools, ["tool_search"]);
+    assert_eq!(settings.replay_reasoning, ReasoningReplay::CurrentTurn);
+    assert!(settings.prune_retired_tools);
+}

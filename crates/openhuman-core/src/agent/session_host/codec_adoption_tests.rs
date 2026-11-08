@@ -229,3 +229,42 @@ fn the_codec_records_discovery_options_on_the_first_new_row_only_once() {
     assert_eq!(rows[0], prior[0]);
     assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(wanted));
 }
+
+/// The turn that starts a thread records its history-replay options on the
+/// first row it writes, beside any discovery record; later turns neither add
+/// nor move it.
+#[test]
+fn the_codec_records_replay_options_on_the_first_new_row_only_once() {
+    use crate::agent::tinyagents::replay_pin::ReplayOptions;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+
+    let options = |context| TranscriptTurnOptions {
+        request_id: Some("turn".into()),
+        thread_id: None,
+        stream: false,
+        resume: ResumeMode::Never,
+        context,
+    };
+    let wanted = ReplayOptions {
+        tool_result_max_age_turns: Some(6),
+        tool_result_exempt_tools: vec!["tool_search".into()],
+        replay_reasoning: ReasoningReplay::CurrentTurn,
+    };
+    let context = OpenHumanRunContext::new();
+    context.session_sidecar.lock().unwrap().replay_record = Some(wanted.clone());
+    let first = vec![Message::system("prompt"), Message::user("one")];
+    let prior = OpenHumanTranscriptCodec
+        .reconcile(&[], &[], &first, &options(context))
+        .unwrap();
+    assert_eq!(ReplayOptions::recorded_in(&prior), Some(wanted.clone()));
+    assert!(prior[1].extra_metadata.is_none());
+
+    // A later turn records nothing and leaves the stored row as it was.
+    let mut next = first.clone();
+    next.push(Message::assistant("done"));
+    let rows = OpenHumanTranscriptCodec
+        .reconcile(&prior, &first, &next, &options(OpenHumanRunContext::new()))
+        .unwrap();
+    assert_eq!(rows[0], prior[0]);
+    assert_eq!(ReplayOptions::recorded_in(&rows), Some(wanted));
+}
