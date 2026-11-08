@@ -37,6 +37,13 @@ const LEGACY_DEV_KEYCHAIN: &str = "dev-keychain.json";
 const LEGACY_IMPORT_OPERATION: &str = "openhuman.legacy-dev-keychain.v1";
 const LEGACY_IMPORT_PAYLOAD: &str = "openhuman:internal:legacy-dev-keychain:payload";
 const LEGACY_IMPORT_COMPLETE: &str = "openhuman:internal:legacy-dev-keychain:complete";
+/// The intent a later start uses to remove plaintext whose first import was
+/// staged by an earlier release but never cleaned up. The driver binds an
+/// intent to the live source instance it was opened from, so the original
+/// receipt cannot be rebuilt after a restart; a fresh, byte-identical source
+/// is staged under this separate intent instead.
+const LEGACY_RECOVERY_OPERATION: &str = "openhuman.legacy-dev-keychain.cleanup-recovery.v1";
+const LEGACY_RECOVERY_PAYLOAD: &str = "openhuman:internal:legacy-dev-keychain:cleanup-recovery";
 const KEY_LEN: usize = crypto::KEY_LEN;
 
 /// Outcome of the one-time master-key initialization: the key (`None` when
@@ -414,6 +421,7 @@ impl EncryptedFileBackend {
             let completed = store.get(LEGACY_IMPORT_COMPLETE).await?;
             if completed.is_some() {
                 store.delete(LEGACY_IMPORT_PAYLOAD).await?;
+                store.delete(LEGACY_RECOVERY_PAYLOAD).await?;
                 return Ok(());
             }
 
@@ -427,14 +435,25 @@ impl EncryptedFileBackend {
 
             let staged = store.get(LEGACY_IMPORT_PAYLOAD).await?;
             let source = if staged.is_some() {
-                None
+                // A staged import may still have its plaintext on disk: earlier
+                // releases staged before replaying, so cleanup refused and the
+                // receipt died with that process. An unopenable source is kept.
+                source_path.and_then(|path| {
+                    FileImportSource::open(path)
+                        .map_err(|error| {
+                            log::warn!(
+                                "[keyring:encrypted_file] staged legacy source cannot be admitted for cleanup; retaining it: {error}"
+                            );
+                        })
+                        .ok()
+                })
             } else {
                 source_path
                     .map(FileImportSource::open)
                     .transpose()?
             };
             let (bytes, pending_source) = match (staged, source.as_ref()) {
-                (Some(staged), _) => {
+                (Some(staged), source) => {
                     let recovered = store
                         .recover_file_import_source(
                             LEGACY_IMPORT_OPERATION,
@@ -446,7 +465,20 @@ impl EncryptedFileBackend {
                             "staged legacy import differs from its authenticated source backup",
                         ));
                     }
-                    (recovered, None)
+                    let retry = match source {
+                        Some(source) if source.bytes() == recovered.as_slice() => Some((
+                            source,
+                            LEGACY_RECOVERY_OPERATION,
+                            LEGACY_RECOVERY_PAYLOAD,
+                        )),
+                        Some(_) => {
+                            return Err(tinystoragedrivers::StorageError::conflict(
+                                "legacy plaintext differs from its staged import; source retained for recovery",
+                            ));
+                        }
+                        None => None,
+                    };
+                    (recovered, retry)
                 }
                 (None, Some(source)) => {
                     let bytes = source.bytes();
@@ -458,7 +490,10 @@ impl EncryptedFileBackend {
                                 ))
                             })?;
                     }
-                    (Zeroizing::new(bytes.to_vec()), Some(source))
+                    (
+                        Zeroizing::new(bytes.to_vec()),
+                        Some((source, LEGACY_IMPORT_OPERATION, LEGACY_IMPORT_PAYLOAD)),
+                    )
                 }
                 (None, None) => match store
                     .recover_file_import_source(
@@ -510,20 +545,25 @@ impl EncryptedFileBackend {
                 }
             }
 
+            // Fail closed: every legacy entry must read back equal from the
+            // encrypted store before any plaintext may be staged for removal.
+            for (name, value) in &map {
+                if store.get(name).await?.as_deref() != Some(value.as_bytes()) {
+                    return Err(tinystoragedrivers::StorageError::conflict(
+                        "legacy secret did not verify in the encrypted store; source retained for recovery",
+                    ));
+                }
+            }
+
             // Stage the source only after the replay. Every `set` republishes
             // `secrets.enc` as a new object, and the receipt pins the destination
             // object `prepare_file_import` verified, so a write between prepare
             // and cleanup makes cleanup refuse ("imported destination object
             // changed") and the plaintext would never be removed.
             let receipt = match pending_source {
-                Some(source) => Some(
+                Some((source, operation, payload)) => Some(
                     store
-                        .prepare_file_import(
-                            LEGACY_IMPORT_OPERATION,
-                            LEGACY_IMPORT_PAYLOAD,
-                            &bytes,
-                            source,
-                        )
+                        .prepare_file_import(operation, payload, &bytes, source)
                         .await?,
                 ),
                 None => None,
@@ -554,6 +594,7 @@ impl EncryptedFileBackend {
 
             store.set(LEGACY_IMPORT_COMPLETE, b"1").await?;
             store.delete(LEGACY_IMPORT_PAYLOAD).await?;
+            store.delete(LEGACY_RECOVERY_PAYLOAD).await?;
             log::info!(
                 "[keyring:encrypted_file] imported {} legacy dev-keychain entries",
                 map.len()
