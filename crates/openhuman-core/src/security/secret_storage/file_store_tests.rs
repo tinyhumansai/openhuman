@@ -294,3 +294,37 @@ fn quarantine_never_replaces_a_name_another_process_reserved() {
         assert_eq!(std::fs::read(t).unwrap(), b"theirs");
     }
 }
+
+#[cfg(all(unix, feature = "secret-file"))]
+#[test]
+fn an_owned_file_left_wider_than_private_is_tightened_by_the_rewrite_not_refused() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = dir.path().join("secrets.enc");
+    std::fs::write(&path, b"old").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    write_atomic(&path, b"new").expect("a loose owned file is repaired, not a reason to fail");
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // A symlink is never followed to be tightened: the target stays as it was
+    // and the write is refused.
+    let target = dir.path().join("target");
+    std::fs::write(&target, b"outside").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let link = dir.path().join("link.enc");
+    symlink(&target, &link).unwrap();
+    assert!(write_atomic(&link, b"new").is_err());
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o644,
+        "a symlink target must not be chmodded"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), b"outside");
+}
