@@ -126,6 +126,10 @@ fn url_corpus_pins_all_public_url_redactors() {
 fn required_sinks(kind: &str) -> &'static [&'static str] {
     match kind {
         "secret" => &["log", "denials"],
+        // PII scrubbing is TinySecurity's `Redact`, which this suite does not call.
+        // `native_redactor_covers_the_shared_security_fixture` (modules/security)
+        // asserts it removes every PII needle, the email case included, so the old
+        // ("email", "security_scrub") gap is no longer in the gap record.
         "pii" => &[],
         _ => &[],
     }
