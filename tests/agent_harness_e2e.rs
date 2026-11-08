@@ -3820,6 +3820,24 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
             ),
         };
         match event.get("event").and_then(Value::as_str) {
+            // Under supervised autonomy the hand-off itself asks first: answer
+            // it, then the child's install is the request this test is about.
+            Some("approval_request") if event.to_string().contains("spawn_subagent") => {
+                let handoff_id = event
+                    .pointer("/data/request_id")
+                    .or_else(|| event.get("request_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| panic!("approval_request missing request_id: {event}"))
+                    .to_string();
+                let handoff = post_json_rpc(
+                    &stack.rpc_base,
+                    699,
+                    "openhuman.approval_decide",
+                    json!({ "request_id": handoff_id, "decision": "approve_once" }),
+                )
+                .await;
+                assert_no_jsonrpc_error(&handoff, "approval_decide for spawn_subagent");
+            }
             Some("approval_request") => break event,
             // The acknowledgement turn ends before the detached child asks.
             Some("chat_done") => {}
