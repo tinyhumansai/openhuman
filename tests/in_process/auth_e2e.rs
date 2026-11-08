@@ -1567,20 +1567,14 @@ async fn credentials_profile_store_recovers_dropped_entries_empty_files_and_date
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    // Only a keyring-backed store can tell that the keyring holds no access
-    // token for this row; a keyring-less view must keep a possibly
-    // keyring-held OAuth row instead of dropping it.
-    let missing_secret_config = profile_store_config(&missing_oauth_secret_dir);
-    let missing_secret =
-        AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
-            .load().await
-            .expect("oauth profile missing access token should be dropped");
+    let missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+        .load().await
+        .expect("oauth profile missing access token should be dropped");
     assert!(missing_secret.profiles.is_empty());
     assert!(missing_secret.active_profiles.is_empty());
     assert!(!missing_oauth_secret_dir.join("auth-profiles.json").exists());
-    let reread_missing_secret =
-        AuthProfilesStore::new_with_config(&missing_oauth_secret_dir, false, &missing_secret_config)
-            .load().await
+    let reread_missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+        .load().await
         .expect("re-read the persisted missing oauth secret store");
     assert!(
         !reread_missing_secret
@@ -1672,7 +1666,6 @@ async fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn credentials_profile_store_keychain_migration_and_fallback_paths_are_deterministic() {
-    let _ = env_logger::builder().is_test(true).try_init(); // DIAG-TEMP
     let _lock = env_lock_async().await;
     let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let tmp = tempdir().expect("tempdir");
