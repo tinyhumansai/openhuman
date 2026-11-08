@@ -340,7 +340,9 @@ async fn a_bounded_wait_with_nothing_cached_and_downloads_off_fails_rather_than_
 #[cfg(feature = "crash-reporting")]
 #[test]
 fn terminal_resolution_cached_failure_is_reported_when_a_client_becomes_available() {
-    const MODULE: &str = "tinycomputer";
+    // The generic resolver path reads the resolution table. TinyComputer loads
+    // through its own callback-bound path, which never consults it.
+    const MODULE: &str = "tinysearch";
     let table = tinybus::module::resolution::global();
     table.forget(MODULE);
 

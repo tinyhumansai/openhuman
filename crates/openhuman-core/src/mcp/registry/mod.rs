@@ -459,6 +459,17 @@ pub(crate) async fn tools_safe_for_agent(
     if crate::security::switch::disabled_for(embedder_config.as_ref()).is_some() {
         return tools;
     }
+    // A test process has no booted host, so no embedder scope names a
+    // configuration to scan under. The test host supplies the one the real
+    // TinySecurity module is admitted with, as the prompt screen does
+    // (`enforce_prompt_input_with_config`); a process without the staged
+    // module still has none and fails closed below.
+    #[cfg(all(
+        feature = "security-module",
+        any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let embedder_config =
+        embedder_config.or_else(crate::modules::security::test_host::screening_config);
     let mut safe = Vec::with_capacity(tools.len());
     for tool in tools {
         #[cfg(feature = "security-module")]
