@@ -295,10 +295,15 @@ fn a_partial_legacy_replay_failure_keeps_the_source_and_retries_idempotently() {
         ("z:conflict".to_string(), "legacy".to_string()),
     ]);
     let source_bytes = serde_json::to_vec(&expected).unwrap();
-    write_private_file(&legacy_path, &source_bytes);
+    // Seed the store before the plaintext exists: any backend call runs the
+    // import first, so writing through it with the source present would
+    // complete the migration instead of setting up the interrupted state. An
+    // earlier attempt replayed "a:import"; a different "z:conflict" landed since.
+    backend.set_with_key(&key, "a:import", "imported").unwrap();
     backend
         .set_with_key(&key, "z:conflict", "different")
         .unwrap();
+    write_private_file(&legacy_path, &source_bytes);
 
     assert!(backend.import_legacy_dev_keychain(&key).is_err());
     assert_eq!(std::fs::read(&legacy_path).unwrap(), source_bytes);
