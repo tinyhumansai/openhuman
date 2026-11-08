@@ -158,6 +158,7 @@ pub(crate) fn live_scope_config(requested: &Config) -> Option<Config> {
 /// never the caller's runtime, so a single-threaded test runtime is safe.
 pub(crate) fn boot() -> Option<Config> {
     if !active() {
+        eprintln!("DIAG test-host inactive");
         return None;
     }
     FIXTURE
@@ -181,6 +182,7 @@ pub(crate) fn boot() -> Option<Config> {
                     Some(config)
                 }
                 outcome => {
+                    eprintln!("DIAG test-host boot failed: {outcome:?}");
                     log::warn!("[security][test-host] boot failed: {outcome:?}");
                     None
                 }
