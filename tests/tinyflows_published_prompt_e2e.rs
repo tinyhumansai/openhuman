@@ -14,13 +14,13 @@ use std::process::Command;
 #[cfg(feature = "skills")]
 use std::time::Duration;
 
-fn dump_published_prompt(
+fn run_prompt_dump(
     agent_id: &str,
     home: &Path,
     workspace: &Path,
     module_search_path: &OsStr,
-) -> serde_json::Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_openhuman-core"))
         .args([
             "agent",
             "dump-prompt",
@@ -43,7 +43,16 @@ fn dump_published_prompt(
         .env_remove("OPENHUMAN_MODULE_SOURCE_DIR")
         .env_remove("OPENHUMAN_MODULE_SOURCE_TINYFLOWS")
         .output()
-        .expect("run the public prompt-dump command");
+        .expect("run the public prompt-dump command")
+}
+
+fn dump_published_prompt(
+    agent_id: &str,
+    home: &Path,
+    workspace: &Path,
+    module_search_path: &OsStr,
+) -> serde_json::Value {
+    let output = run_prompt_dump(agent_id, home, workspace, module_search_path);
     assert!(
         output.status.success(),
         "prompt dump for {agent_id} failed ({}):\nstdout:\n{}\nstderr:\n{}",
@@ -265,12 +274,34 @@ async fn published_module_prompts_render_through_the_normal_host_path() {
         for path in [&config_path, &local_config_path] {
             std::fs::write(path, &disabled_text).expect("disable module in active CLI config");
         }
+        // With every module disabled TinySecurity is not loaded either, so the
+        // stored credential cannot be decrypted: the session agent fails
+        // closed instead of running without its credential, and the CLI
+        // reports the cause rather than only the outermost context.
+        let modules_off =
+            run_prompt_dump("orchestrator", temp.path(), &workspace, module_search_path);
+        let modules_off_stderr = String::from_utf8_lossy(&modules_off.stderr);
+        assert!(
+            !modules_off.status.success(),
+            "a modules-disabled profile cannot read its TinySecurity credential"
+        );
+        assert!(
+            modules_off_stderr.contains("SESSION_EXPIRED"),
+            "the CLI error names the cause: {modules_off_stderr}"
+        );
+
+        // The ordinary agent still renders when only TinyFlows is off and the
+        // security module that holds the credential keeps running.
+        let tinyflows_off = "api_url = \"http://127.0.0.1:1\"\n\n[components]\ntinyflows = false\n\n[modules]\nenabled = true\n";
+        for path in [&config_path, &local_config_path] {
+            std::fs::write(path, tinyflows_off).expect("disable TinyFlows in active CLI config");
+        }
         let ordinary_prompt =
             dump_published_prompt("orchestrator", temp.path(), &workspace, module_search_path);
-        assert!(ordinary_prompt["system_prompt"]
+        let ordinary_text = ordinary_prompt["system_prompt"]
             .as_str()
-            .expect("ordinary prompt text")
-            .contains("## Workspace"));
+            .expect("ordinary prompt text");
+        assert!(ordinary_text.contains("## Workspace"));
 
         // Re-enable the same profile after the disabled view and ensure the
         // async host preflight restores the module-backed catalogue.
