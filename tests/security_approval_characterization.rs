@@ -374,7 +374,7 @@ async fn bypass_outcome_with_auto_approve_all(tool: &str) -> GateOutcome {
 }
 
 #[tokio::test]
-async fn auto_approve_all_allows_without_parking_or_writing_audit_history() {
+async fn auto_approve_all_allows_without_parking_and_writes_audit_history() {
     let _lock = env_guard::env_lock_async().await;
     let fx = fixture();
     let outcome = bypass_outcome_with_auto_approve_all("char_auto_all").await;
