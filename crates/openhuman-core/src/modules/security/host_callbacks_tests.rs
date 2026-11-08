@@ -29,6 +29,12 @@ fn a_scopes_first_runtime_registration_keeps_the_single_scope_ids() {
         ids.consumer_id,
         opaque_id("secret-cipher-consumer", key, "config-user-master")
     );
-    assert_eq!(ids.target_backend_id, opaque_id("secret-backend", key, "Keyring"));
-    assert_eq!(ids.legacy_backend_id, opaque_id("secret-legacy", key, "file"));
+    assert_eq!(
+        ids.target_backend_id,
+        opaque_id("secret-backend", key, "Keyring")
+    );
+    assert_eq!(
+        ids.legacy_backend_id,
+        opaque_id("secret-legacy", key, "file")
+    );
 }

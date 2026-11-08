@@ -73,8 +73,15 @@ impl Consumer {
 
     /// Route `registration_id`'s outputs, staged under `consumer_id`.
     /// A registration keeps the one consumer it was routed with.
-    pub(crate) fn add(&self, registration_id: String, consumer_id: String) -> Result<(), &'static str> {
-        let mut routes = self.routes.lock().map_err(|_| "cipher output unavailable")?;
+    pub(crate) fn add(
+        &self,
+        registration_id: String,
+        consumer_id: String,
+    ) -> Result<(), &'static str> {
+        let mut routes = self
+            .routes
+            .lock()
+            .map_err(|_| "cipher output unavailable")?;
         match routes.get(&registration_id) {
             Some(route) if route.consumer_id == consumer_id => Ok(()),
             Some(_) => Err("cipher consumer already routed"),
@@ -115,7 +122,10 @@ impl Consumer {
         &self,
         identity: &SecretCipherDeliveryIdentity2,
     ) -> Result<(Zeroizing<String>, Option<Zeroizing<String>>), &'static str> {
-        let mut routes = self.routes.lock().map_err(|_| "cipher output unavailable")?;
+        let mut routes = self
+            .routes
+            .lock()
+            .map_err(|_| "cipher output unavailable")?;
         let route = routes
             .get_mut(&identity.registration_id)
             .filter(|route| route.consumer_id == identity.consumer_id)

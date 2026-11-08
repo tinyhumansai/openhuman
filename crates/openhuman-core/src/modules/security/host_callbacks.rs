@@ -236,8 +236,7 @@ pub(in crate::modules) async fn ensure_loaded(
                         .map_err(|_| "security callback binding unavailable".to_owned())?,
                 );
                 let consumer = std::sync::Arc::new(super::cipher_consumer::Consumer::empty());
-                let backends =
-                    std::sync::Arc::new(super::secret_backend::SecretBackends::empty());
+                let backends = std::sync::Arc::new(super::secret_backend::SecretBackends::empty());
                 super::serve_secret_callbacks(
                     &binding,
                     std::sync::Arc::clone(&consumer),
@@ -298,17 +297,12 @@ fn ensure_tenant<'a>(
     Box::pin(ensure_tenant_inner(config, state))
 }
 
-async fn ensure_tenant_inner(
-    config: &Config,
-    state: &SecurityCallbackState,
-) -> Result<(), String> {
+async fn ensure_tenant_inner(config: &Config, state: &SecurityCallbackState) -> Result<(), String> {
     let proxy = module_proxy(state)?;
     let key_path = config_key_path(config);
     for tenant in super::secret_tenants::take_retiring() {
         if let Err(error) = retire_tenant(&proxy, state, &tenant).await {
-            log::warn!(
-                "[security] secret registration retirement failed; kept for retry: {error}"
-            );
+            log::warn!("[security] secret registration retirement failed; kept for retry: {error}");
             let blocks_this_scope = tenant.key_path == key_path;
             super::secret_tenants::requeue(tenant);
             if blocks_this_scope {
