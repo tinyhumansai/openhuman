@@ -244,6 +244,7 @@ fn workspace_default(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
     if let Some(backend) = cell.get() {
         return Ok(Arc::clone(backend));
     }
+    eprintln!("DIAGYY workspace_default\n{}", std::backtrace::Backtrace::force_capture());
     #[cfg(test)]
     signal_test_sync_backend_entry(workspace_dir);
     let workspace_dir = workspace_dir.to_path_buf();
