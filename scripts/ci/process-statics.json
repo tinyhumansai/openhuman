@@ -818,5 +818,25 @@
     "category": "B",
     "reason": "Rendered memory blocks wait here for the next generation start. Every key combines the session's workspace directory, its resolved memory identity (profile and agent) and the token budget, so a block is only ever taken by the identity it was read for; the store holds at most READY_CAPACITY entries, each dropped after READY_MAX_AGE.",
     "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: a_block_is_not_taken_for_another_identity_or_budget"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/security/secret_tenants.rs",
+    "scope": "",
+    "name": "TABLE",
+    "type": "LazyLock<Mutex<Table>>",
+    "count": 1,
+    "category": "D",
+    "reason": "TinySecurity is one module per process, so its live secret registrations are recorded process-wide; every entry is keyed by the tenant's secret key path and its own registration id, each tenant gets its own registration, consumer and delivery slots, and a retired registration's ids are never handed out again.",
+    "verification": "modules/security/secret_tenants_tests.rs: every_scope_gets_its_own_registration_and_consumer"
+  },
+  {
+    "file": "crates/openhuman-core/src/security/approval/native/mod.rs",
+    "scope": "",
+    "name": "LEDGERS",
+    "type": "std::sync::OnceLock<PermissionLedgers>",
+    "count": 1,
+    "category": "D",
+    "reason": "TinySecurity appends every audited permission on its single init audit stream; the host keeps a ledger of it per tenant, keyed by the tenant's approval scope id and backed by that tenant's own store, and routes each batch by the correlation event id it handed out, refusing any batch it did not correlate or that spans tenants.",
+    "verification": "security/approval/native/secret_scope_tests.rs: two_tenants_permission_audits_never_land_in_each_others_store"
   }
 ]
