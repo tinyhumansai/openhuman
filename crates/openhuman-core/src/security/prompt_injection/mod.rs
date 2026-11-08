@@ -8,7 +8,9 @@ mod detector;
 mod scan_port;
 
 #[cfg(test)]
-pub(crate) use scan_port::{install_allowing_prompt_scan, install_prompt_scan_port, PromptScanPort};
+pub(crate) use scan_port::{
+    install_allowing_prompt_scan, install_prompt_scan_port, PromptScanPort,
+};
 
 pub(crate) use detector::{
     enforce_prompt_input_in, enforce_prompt_input_with_config, screening_config_in,

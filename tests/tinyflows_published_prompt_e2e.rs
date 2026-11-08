@@ -44,7 +44,6 @@ fn dump_published_prompt(
         .env_remove("OPENHUMAN_MODULE_SOURCE_TINYFLOWS")
         .output()
         .expect("run the public prompt-dump command");
-    eprintln!("DIAG-CHILD-STDERR {agent_id}:\n{}", String::from_utf8_lossy(&output.stderr));
     assert!(
         output.status.success(),
         "prompt dump for {agent_id} failed ({}):\nstdout:\n{}\nstderr:\n{}",

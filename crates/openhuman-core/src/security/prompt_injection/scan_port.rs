@@ -60,7 +60,9 @@ pub(crate) fn install_allowing_prompt_scan() -> PromptScanPortGuard {
 }
 
 /// The installed port's answer, or `None` to scan through TinySecurity.
-pub(super) async fn scripted_scan(input: &str) -> Option<Result<ScanPromptScoredResponse2, String>> {
+pub(super) async fn scripted_scan(
+    input: &str,
+) -> Option<Result<ScanPromptScoredResponse2, String>> {
     let port = TEST_PROMPT_SCAN_PORT.with(|slot| slot.borrow().clone())?;
     Some(port.scan(input.to_owned()).await)
 }
