@@ -12,7 +12,10 @@ use tempfile::tempdir;
 use openhuman_core::agent::prompts::ConnectedIntegration;
 use openhuman_core::config::Config;
 use openhuman_core::core::all::RegisteredController;
-use openhuman_core::integrations::composio::client::{resolve_composio_route, ComposioRoute};
+use openhuman_core::integrations::composio::client::{
+    register_composio_route_builder, resolve_composio_route, unregister_composio_route_builder,
+    ComposioRoute,
+};
 use openhuman_core::integrations::composio::{
     all_composio_controller_schemas, all_composio_registered_controllers,
     cached_active_integrations, connected_set_hash, connection_identity,
@@ -163,10 +166,38 @@ async fn composio_action_tool_execute_reports_missing_route_without_network() {
         None,
     );
 
+    // Booted and signed out: the host's backend route builder answers with
+    // the actionable sign-in error before anything reaches the module (#6176).
+    let signed_out = tool
+        .execute(json!({ "to": "recipient@example.test", "subject": "signed out" }))
+        .await
+        .expect("local validation returns a tool result");
+    assert!(signed_out.is_error);
+    let rendered = serde_json::to_string(&signed_out).unwrap();
+    assert!(rendered.contains("no backend session token"), "{rendered}");
+
+    // A mode whose host route resolves but which names no module route: the
+    // module is reconfigured with `{"route": "none"}` and says so.
+    const ROUTELESS_MODE: &str = "raw-coverage-routeless";
+    register_composio_route_builder(ROUTELESS_MODE, |_config| {
+        Box::pin(async { Ok(ComposioRoute::Backend) })
+    });
+    let mut routeless = Config {
+        config_path: tmp.path().join("config.toml"),
+        ..Default::default()
+    };
+    routeless.composio.mode = ROUTELESS_MODE.into();
+    let tool = ComposioActionTool::new(
+        Arc::new(routeless),
+        "GMAIL_SEND_EMAIL".into(),
+        "Send an email".into(),
+        None,
+    );
     let result = tool
         .execute(json!({ "to": "recipient@example.test", "subject": "no route" }))
         .await
         .expect("local validation returns a tool result");
+    unregister_composio_route_builder(ROUTELESS_MODE);
     assert!(result.is_error);
     let rendered = serde_json::to_string(&result).unwrap();
     assert!(rendered.contains("without a connector route"), "{rendered}");
