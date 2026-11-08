@@ -530,19 +530,6 @@ pub const MODULE_ID: &str = "tinysecurity";
 /// # Errors
 /// Returns an error if the component is disabled or its pinned module cannot load.
 pub async fn ensure_loaded(config: &Config) -> Result<(), SecurityError> {
-    // A fixture that built its own configuration (an approval gate over a bare
-    // config) names a secret scope the live runtime does not hold; the test
-    // host serves it the scope the module is admitted with.
-    #[cfg(all(
-        not(test),
-        any(feature = "e2e-test-support", feature = "test-keyring-consent")
-    ))]
-    let live = test_host::live_scope_config(config);
-    #[cfg(all(
-        not(test),
-        any(feature = "e2e-test-support", feature = "test-keyring-consent")
-    ))]
-    let config = live.as_ref().unwrap_or(config);
     policy::validate(config).map_err(|error| SecurityError::Unavailable(error.into()))?;
     if !config.modules.enabled {
         return Err(SecurityError::Unavailable("modules are disabled".into()));

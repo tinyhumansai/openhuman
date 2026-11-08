@@ -545,6 +545,25 @@ pub fn ensure_loaded_within<'a>(
     within: Option<Duration>,
 ) -> futures::future::BoxFuture<'a, Result<(), LoadError>> {
     Box::pin(async move {
+        // A fixture that built its own configuration (an approval gate over a
+        // bare `Config`) names a secret scope the live runtime does not hold.
+        // The test host serves it the scope the module is admitted with; this
+        // is the one place every route to the module passes, and it arms the
+        // synchronous adapters with the configuration used.
+        #[cfg(all(
+            not(test),
+            feature = "security-module",
+            any(feature = "e2e-test-support", feature = "test-keyring-consent")
+        ))]
+        let live = (id == super::security::MODULE_ID)
+            .then(|| super::security::test_host::live_scope_config(config))
+            .flatten();
+        #[cfg(all(
+            not(test),
+            feature = "security-module",
+            any(feature = "e2e-test-support", feature = "test-keyring-consent")
+        ))]
+        let config = live.as_ref().unwrap_or(config);
         let resolver = resolver(config);
         let result = if needs_storage_callback(id) {
             if let Some(component) = disabled_component(config, id) {

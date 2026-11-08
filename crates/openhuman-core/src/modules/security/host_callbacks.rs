@@ -338,18 +338,6 @@ pub(in crate::modules) async fn ensure_loaded(
     id: &str,
     epoch: u64,
 ) -> Result<(), String> {
-    // See `test_host::live_scope_config`: every path to the module ends here,
-    // including a client connecting with a fixture's own configuration.
-    #[cfg(all(
-        not(test),
-        any(feature = "e2e-test-support", feature = "test-keyring-consent")
-    ))]
-    let live = super::test_host::live_scope_config(config);
-    #[cfg(all(
-        not(test),
-        any(feature = "e2e-test-support", feature = "test-keyring-consent")
-    ))]
-    let config = live.as_ref().unwrap_or(config);
     let mut loads = SECURITY_CALLBACK_LOADS.lock().await;
     if let Some(state) = loads.get(id) {
         let key_path = secret_key_path(
