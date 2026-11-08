@@ -75,6 +75,33 @@ test("the workflow gives every shard its own runner, cache and artifact, and han
   assert.match(workflow, /taiki-e\/install-action@cargo-nextest/);
 });
 
+test("rust-cov shards get a real sandbox jail; other groups keep the default container", () => {
+  // Sandbox and shell tests plan onto TinyBox's jail, which needs bubblewrap
+  // >= 0.8 and unprivileged user namespaces inside the container.
+  const options = workflow.match(/^\s+options: (.+)$/m)?.[1] ?? "";
+  for (const opt of [
+    "seccomp=unconfined",
+    "apparmor=unconfined",
+    "systempaths=unconfined",
+  ]) {
+    assert.match(options, new RegExp(`startsWith\\(matrix\\.group, 'rust-cov-'\\) && '[^']*--security-opt ${opt}`));
+  }
+  assert.match(options, /\|\| '--init' \}\}$/, "non-rust-cov groups keep only --init");
+  assert.doesNotMatch(options, /--privileged|--cap-add/);
+  const step = workflow.match(
+    /- name: Install bubblewrap for the sandbox jail\n(?:\s+#.*\n)*\s+if: (.+)\n\s+run: (.+)\n/,
+  );
+  assert.ok(step, "the bubblewrap install step exists");
+  assert.match(step[1], /startsWith\(matrix\.group, 'rust-cov-'\)/);
+  assert.equal(step[2].trim(), "bash scripts/ci/install-bubblewrap.sh");
+  const installer = fs.readFileSync(
+    path.join(repoRoot, "scripts", "ci", "install-bubblewrap.sh"),
+    "utf8",
+  );
+  assert.match(installer, /^SHA256=[0-9a-f]{64}$/m, "the bubblewrap release is pinned by checksum");
+  assert.match(installer, /sha256sum -c -/);
+});
+
 test("the gate refuses a shard that failed, was cancelled or never reported", () => {
   // Matrix results fold into needs.lanes.result: any failed shard makes it
   // "failure", any cancelled one "cancelled". Only success/skipped pass.
