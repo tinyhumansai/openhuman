@@ -18,6 +18,7 @@ fn modules_with_host_callbacks_use_the_verified_local_release_path() {
     assert!(ops::requires_verified_local_callbacks("tinysecurity"));
     assert!(ops::requires_verified_local_callbacks("tinymcp"));
     assert!(ops::requires_verified_local_callbacks("tinyeventqueues"));
+    assert!(ops::requires_verified_local_callbacks("tinychannels"));
     assert!(!ops::requires_verified_local_callbacks("tinybox"));
 }
 

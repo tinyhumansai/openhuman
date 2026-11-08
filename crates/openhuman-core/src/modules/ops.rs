@@ -211,8 +211,18 @@ pub fn resolver(config: &Config) -> Resolver {
     })
 }
 
+/// The modules whose first admission must carry a host callback binding: the
+/// security module's, and the storage callback of the modules that persist
+/// through the host. Loading one without it (the generic search-path loader
+/// initializes with no binding) leaves it serving, but unreachable through the
+/// callback-bound `ensure_loaded` path: TinyBus refuses it as "already loaded
+/// without a callback binding" and every call answers `module unavailable`.
+/// Every list that names these modules derives from this one.
+pub(super) const CALLBACK_BOUND_MODULES: [&str; 4] =
+    ["tinysecurity", "tinymcp", "tinyeventqueues", "tinychannels"];
+
 fn requires_verified_local_callbacks(id: &str) -> bool {
-    matches!(id, "tinysecurity" | "tinymcp" | "tinyeventqueues")
+    CALLBACK_BOUND_MODULES.contains(&id)
 }
 
 /// The staged artifact the callback-bound module fixture loads in isolation.
