@@ -92,6 +92,7 @@ pub(crate) fn proxy_failure(
     record: &'static super::types::ModuleRecord,
     error: &tinybus::Error,
 ) -> ModuleCallError {
+    eprintln!("DBGTMP2 {error:?}");
     let (outcome, reason) = classify(error);
     if reason == Reason::ModuleUnavailable {
         reporter().report(record.id, record.version, reason);
