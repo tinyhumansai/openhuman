@@ -198,8 +198,7 @@ fn session_failure_outcome(
     // out a token this request may not have used.
     SessionFailureOutcome::Replace {
         reason: "credential_provenance_unavailable",
-        message: "Backend request failed; credential provenance could not be verified"
-            .to_string(),
+        message: "Backend request failed; credential provenance could not be verified".to_string(),
     }
 }
 

@@ -288,7 +288,13 @@ fn stored_credentials_keep_session_failure_rewrites() {
     let fingerprint =
         crate::credentials::backend_credential::credential_fingerprint("request-token");
     assert_eq!(
-        session_failure_outcome(error, false, false, Some(&fingerprint), Some("request-token")),
+        session_failure_outcome(
+            error,
+            false,
+            false,
+            Some(&fingerprint),
+            Some("request-token")
+        ),
         SessionFailureOutcome::PublishExpiry
     );
 }
