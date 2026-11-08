@@ -146,8 +146,14 @@ pub(crate) const SEARCH_SCHEMA_PROVIDERS: u32 = 2;
 pub const SEARCH_ROLE_SEARCH: &str = "search";
 pub const SEARCH_ROLE_ANSWER: &str = "answer";
 pub const SEARCH_ROLE_CONTENTS: &str = "contents";
-/// Capability roles, in display order.
-pub const SEARCH_ROLES: &[&str] = &[SEARCH_ROLE_SEARCH, SEARCH_ROLE_ANSWER, SEARCH_ROLE_CONTENTS];
+pub const SEARCH_ROLE_IMAGES: &str = "images";
+/// Capability roles, in display order: every `tinysearch_bus::Role`, by its key.
+pub const SEARCH_ROLES: &[&str] = &[
+    SEARCH_ROLE_SEARCH,
+    SEARCH_ROLE_ANSWER,
+    SEARCH_ROLE_CONTENTS,
+    SEARCH_ROLE_IMAGES,
+];
 
 /// Providers the host can configure — the TinySearch catalog.
 pub const SEARCH_PROVIDERS: &[&str] = tinysearch_bus::PROVIDERS;
