@@ -65,7 +65,7 @@ impl ReplayOptions {
             } else {
                 Vec::new()
             },
-            replay_reasoning: config.replay_reasoning,
+            replay_reasoning: config.replay_reasoning.into(),
         }
     }
 
