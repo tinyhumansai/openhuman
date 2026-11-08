@@ -5,7 +5,7 @@ use super::*;
 fn tinysecurity_registry_matches_the_verified_v0190_release_manifest() {
     let security = find("tinysecurity").expect("compiled TinySecurity module");
     assert_eq!(security.version, "0.19.0");
-    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (2, 0));
+    assert_eq!(tinysecurity_bus::CONTRACT_VERSION, (2, 1));
     assert_eq!(
         security.release_url,
         "https://github.com/tinyhumansai/tinysecurity/releases/tag/v0.19.0"
