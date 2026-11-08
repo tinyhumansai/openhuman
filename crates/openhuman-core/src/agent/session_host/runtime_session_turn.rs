@@ -1,9 +1,14 @@
 use anyhow::Result;
+use tinyagents_harness::observability::turn_observer::SetupPhase;
 use tinyagents_runtime::{ResumeMode, SessionTurnRequest, TurnOptions};
 use tinyinference_llm::message::Message;
 
 use crate::agent::{
-    message_convert::user_message_from_text, session_host::types::OpenHumanSessionHost,
+    message_convert::user_message_from_text,
+    session_host::{
+        setup_report::{reported, result_outcome},
+        types::OpenHumanSessionHost,
+    },
     tinyagents::host::OpenHumanRunContext,
 };
 
@@ -179,10 +184,13 @@ impl OpenHumanSessionHost {
                 .runtime_session
                 .as_mut()
                 .expect("runtime session initialized");
-            let resumed = runtime
-                .resume(&options)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let resumed = reported(
+                SetupPhase::TranscriptResume,
+                runtime.resume(&options),
+                result_outcome,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             if resumed.loaded {
                 let recorded_tools = runtime.recorded_tools().cloned();
                 if let Some(prelude) = self

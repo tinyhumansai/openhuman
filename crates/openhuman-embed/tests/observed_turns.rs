@@ -175,6 +175,8 @@ fn model_and_tool_observations_capture_payloads_only_with_consent() {
                 TurnObservation::Model {run_id,..} => Some(run_id) == terminal[0].1.as_ref(),
                 TurnObservation::ModelDispatch {run_id,..} => Some(run_id) == terminal[0].1.as_ref(),
                 TurnObservation::Tool {run_id,..} => run_id == &terminal[0].1,
+                // Setup precedes the run, so it has no run id to correlate.
+                TurnObservation::Setup {..} => true,
             }));
             assert_eq!(models[1].0.as_deref(),Some("actual-model"));
             assert_eq!(models[1].1.as_deref(),Some("stop"));

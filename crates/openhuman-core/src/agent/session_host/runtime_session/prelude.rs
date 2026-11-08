@@ -1,6 +1,8 @@
 //! Host-specific model/tool/prompt preparation for one runtime turn.
 
 use super::*;
+use crate::agent::session_host::setup_report::{reported, result_outcome};
+use tinyagents_harness::observability::turn_observer::SetupPhase;
 
 impl OpenHumanTurnPrelude {
     #[allow(clippy::type_complexity)]
@@ -77,6 +79,15 @@ impl OpenHumanTurnPrelude {
     /// (`prompt_refresh.rs`) renders it here too, so an unchanged prompt
     /// compares equal to the one its transcript recorded.
     pub(super) async fn cold_prompt_prefix(&self) -> Result<tinyagents_runtime::PrefixSnapshot> {
+        reported(
+            SetupPhase::PromptRefresh,
+            self.render_prompt_prefix(),
+            result_outcome,
+        )
+        .await
+    }
+
+    async fn render_prompt_prefix(&self) -> Result<tinyagents_runtime::PrefixSnapshot> {
         let flow_archetype_text = super::prompt::flow_archetype_text(self, true).await?;
         let connected_identities_md =
             crate::integrations::render_connected_identities_async(&self.dispatch_ctx()).await;
