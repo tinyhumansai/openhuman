@@ -81,6 +81,7 @@ fn supervised_network_asks_for_approval_and_read_only_does_not() {
 #[test]
 fn network_gate_refuses_when_the_privacy_module_cannot_answer() {
     let _mode = super::super::local_only_scope();
+    #[cfg(feature = "security-module")]
     let _port = crate::modules::security::gap::install_unavailable_privacy_port();
     let msg = NetGate::local_only_block(&SecurityPolicy::default(), "example.com")
         .expect("an unavailable privacy module fails closed");
@@ -92,6 +93,7 @@ fn network_gate_refuses_when_the_privacy_module_cannot_answer() {
 fn standard_privacy_mode_refuses_when_the_privacy_module_cannot_answer() {
     let _mode =
         crate::security::live_policy::test_privacy_scope(crate::config::PrivacyMode::Standard);
+    #[cfg(feature = "security-module")]
     let _port = crate::modules::security::gap::install_unavailable_privacy_port();
     assert!(NetGate::local_only_block(&SecurityPolicy::default(), "example.com").is_some());
 }
