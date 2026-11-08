@@ -537,6 +537,18 @@ pub async fn ensure_loaded(config: &Config) -> Result<(), SecurityError> {
     super::ops::ensure_loaded(config, MODULE_ID)
         .await
         .map_err(SecurityError::Unavailable)?;
+    // The load above armed the adapters with the configuration it served; a
+    // fixture's own one must not replace it (see `test_host::live_scope_config`).
+    #[cfg(all(
+        not(test),
+        any(feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let live = test_host::live_scope_config(config);
+    #[cfg(all(
+        not(test),
+        any(feature = "e2e-test-support", feature = "test-keyring-consent")
+    ))]
+    let config = live.as_ref().unwrap_or(config);
     text::arm(config);
     Ok(())
 }
