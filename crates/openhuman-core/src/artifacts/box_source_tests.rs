@@ -198,6 +198,51 @@ async fn created_id(tool: &BoxSourced, args: Value) -> String {
 }
 
 #[tokio::test]
+async fn a_box_file_reaches_the_service_without_being_written_to_the_host_first() {
+    let _floor = path_floor();
+    let fixture = Fixture::new();
+    // Where a host copy used to be staged is blocked by a regular file: any
+    // attempt to stage there fails, so only bytes handed over in memory file.
+    let blocked = version_files_dir(&fixture.workspace).join(".box-incoming");
+    std::fs::create_dir_all(blocked.parent().unwrap()).unwrap();
+    std::fs::write(&blocked, b"not a folder").unwrap();
+    let bytes: Vec<u8> = (0..=255u8).cycle().take(3000).collect();
+    fixture.the_box_holds(&bytes);
+    let tool = fixture.tool(true, user("u1"));
+
+    let id = created_id(&tool, file_args("out/report.pdf")).await;
+
+    let service = artifacts_service(
+        &fixture.workspace,
+        FileRoots::new(&fixture.files),
+        Some(&fixture.action),
+        None,
+        &DispatchCtx::process_default(),
+    );
+    let file = service
+        .get(&id)
+        .await
+        .unwrap()
+        .unwrap()
+        .latest()
+        .unwrap()
+        .file
+        .clone()
+        .unwrap();
+    assert_eq!(file.media_type.as_deref(), Some("application/pdf"));
+    assert_eq!(file.size_bytes, 3000);
+    let stored = read_artifact_bytes(&fixture.workspace, FileRoots::new(&fixture.files), &id)
+        .await
+        .unwrap();
+    assert_eq!(stored, bytes);
+    assert_eq!(
+        std::fs::read(&blocked).unwrap(),
+        b"not a folder",
+        "nothing was written where host copies were staged"
+    );
+}
+
+#[tokio::test]
 async fn a_path_is_read_from_the_callers_box_when_the_backend_keeps_boxes() {
     let _floor = path_floor();
     let fixture = Fixture::new();
