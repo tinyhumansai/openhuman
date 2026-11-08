@@ -244,6 +244,7 @@ pub(crate) async fn enforce_prompt_input_with_config(
         any(test, feature = "e2e-test-support", feature = "test-keyring-consent")
     ))]
     let config = test_host_config.as_ref().or(config);
+    eprintln!("DIAG detector config_present={} test_host_cfg={}", config.is_some(), test_host_config.is_some());
     let Some(config) = config else {
         return held_decision(input, context, "screen.unavailable");
     };
@@ -279,6 +280,7 @@ pub(crate) async fn enforce_prompt_input_with_config(
     let response = match scanned {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => {
+            eprintln!("DIAG scan error: {error}");
             tracing::warn!(error = %error, "[prompt_injection] TinySecurity scan unavailable; holding input");
             return held_decision(input, context, "screen.unavailable");
         }
