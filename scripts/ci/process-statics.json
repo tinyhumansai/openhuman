@@ -767,7 +767,7 @@
     "count": 1,
     "category": "A",
     "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The path of the fixture master-key file created once per test process; a path only, never key material.",
-    "verification": "modules/security/test_host.rs: boot"
+    "verification": "modules/security/test_host.rs: fixture_config, is_fixture_scope"
   },
   {
     "file": "crates/openhuman-core/src/modules/security/test_host.rs",
@@ -777,7 +777,7 @@
     "count": 1,
     "category": "A",
     "reason": "Test-only: `modules/security/test_host.rs` compiles only under `cfg(any(test, feature = \"e2e-test-support\", feature = \"test-keyring-consent\"))`, never into a product build. The approval gate installed once per test process, matching the one gate a booted host installs; it carries no tenant data.",
-    "verification": "modules/security/test_host.rs: gate"
+    "verification": "modules/security/test_host.rs: answer_master_grant"
   },
   {
     "file": "crates/openhuman-core/src/modules/security/test_host.rs",
