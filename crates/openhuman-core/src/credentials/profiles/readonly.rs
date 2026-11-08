@@ -31,8 +31,29 @@ pub(super) async fn load_profile(
     provider: &str,
     profile_override: Option<&str>,
 ) -> Result<Option<AuthProfile>, ReadOnlyAuthProfileError> {
-    load_profile_with_keyring(config, provider, profile_override, |store, id| {
-        Box::pin(store.keychain_load_secrets(id))
+    // The TinySecurity keyring sits behind the security module, and admitting
+    // that module opens (and so creates) the workspace store. A read-only
+    // lookup must never create it, so with no store yet the keyring is
+    // reported *unavailable* -- not empty. That reuses the fail-closed
+    // unavailable-keyring handling in `load_profile_with_keyring`: a
+    // keyring-owned record, or one with no document secret to fall back on,
+    // is `Unavailable`; it is never read as a profile without secrets.
+    let keyring_reachable = crate::storage::local::store_exists(&config.workspace_dir);
+    if !keyring_reachable {
+        log::debug!(
+            "[auth] read-only profile lookup: no workspace store; keyring reported unavailable"
+        );
+    }
+    load_profile_with_keyring(config, provider, profile_override, move |store, id| {
+        if keyring_reachable {
+            Box::pin(store.keychain_load_secrets(id))
+        } else {
+            Box::pin(async {
+                Err(anyhow::anyhow!(
+                    "TinySecurity keyring unavailable: no workspace store for a read-only lookup"
+                ))
+            })
+        }
     })
     .await
 }
@@ -104,20 +125,7 @@ async fn load_profile_with_keyring(
     let mut keyring_unavailable = false;
     let document_owned =
         profile.secret_location == Some(super::persistence::SecretLocation::EncryptedDocument);
-    // The TinySecurity keyring lives behind the security module, whose
-    // admission opens (and so creates) the workspace store. Every keyring
-    // write went through that admission, so a workspace with no store has
-    // never held a keyring secret: treat it as absent rather than creating
-    // the store from a read-only lookup. A keyring-owned record still fails
-    // closed below when its secret is absent.
-    let keyring_store_exists = crate::storage::local::store_exists(&config.workspace_dir);
-    if !keyring_store_exists {
-        log::debug!(
-            "[auth] read-only profile lookup: no workspace store; keyring treated as absent"
-        );
-    }
-    let keychain_secrets = if profile_store.use_keychain && !document_owned && keyring_store_exists
-    {
+    let keychain_secrets = if profile_store.use_keychain && !document_owned {
         match read_keyring(&profile_store, &id).await {
             Ok(Some(secrets)) => Some(secrets),
             Ok(None) => None,
