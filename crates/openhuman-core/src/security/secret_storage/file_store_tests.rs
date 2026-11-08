@@ -328,3 +328,26 @@ fn an_owned_file_left_wider_than_private_is_tightened_by_the_rewrite_not_refused
     );
     assert_eq!(std::fs::read(&target).unwrap(), b"outside");
 }
+
+#[cfg(all(unix, feature = "secret-file"))]
+#[test]
+fn a_group_writable_secrets_directory_the_core_made_is_tightened_not_refused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // What a `0002` umask leaves behind for a directory the core created.
+    let dir = tempfile::TempDir::new().unwrap();
+    let secrets_dir = dir.path().join("workspace");
+    std::fs::create_dir(&secrets_dir).unwrap();
+    std::fs::set_permissions(&secrets_dir, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let path = secrets_dir.join("secrets.enc");
+
+    drop(lock_for_write(&path).expect("the lock admits a repaired directory"));
+    write_atomic(&path, b"sealed").expect("the write admits a repaired directory");
+
+    assert_eq!(std::fs::read(&path).unwrap(), b"sealed");
+    assert_eq!(
+        std::fs::metadata(&secrets_dir).unwrap().permissions().mode() & 0o777,
+        0o755,
+        "only group/other write is removed from the owned leaf directory"
+    );
+}

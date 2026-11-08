@@ -363,6 +363,14 @@ impl EncryptedFileBackend {
         }
     }
 
+    /// The driver admits only a directory no other user can write to; one the
+    /// core created under a group-writable umask is repaired first.
+    fn tighten_namespace(&self) {
+        if let Some(parent) = self.path.parent() {
+            super::file_store_repair::tighten_owned_directory(parent);
+        }
+    }
+
     fn store(&self, key: &[u8; KEY_LEN]) -> EncryptedFileSecrets {
         self.tighten_namespace();
         EncryptedFileSecrets::at_path(self.path.clone(), Zeroizing::new(*key))

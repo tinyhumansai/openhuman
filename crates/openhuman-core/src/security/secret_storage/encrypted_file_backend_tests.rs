@@ -154,6 +154,8 @@ fn profile_read_only_secret_lookup_uses_only_the_selected_store() {
 
 #[test]
 fn profile_read_only_secret_lookup_does_not_create_a_missing_key() {
+    #[cfg(feature = "security-module")]
+    let _absent = crate::modules::security::test_host::absent();
     let _env = crate::config::test_env::EnvVarGuard::locked_unset_many(&[
         MASTER_KEY_ENV,
         MASTER_KEY_FILE_ENV,
