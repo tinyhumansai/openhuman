@@ -246,3 +246,7 @@ fn has_encrypted_json_fields(profile: &PersistedAuthProfile) -> bool {
     .flatten()
     .any(|value| value.starts_with("enc:") || value.starts_with("enc2:"))
 }
+
+#[cfg(test)]
+#[path = "readonly_tests.rs"]
+mod tests;
