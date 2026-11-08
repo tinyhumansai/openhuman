@@ -678,3 +678,21 @@ async fn readonly_health_refuses_to_send_an_api_key_to_a_foreign_endpoint() {
         "an API key must not be sent to a non-managed endpoint: {health:?}"
     );
 }
+
+#[tokio::test]
+async fn zz_bisect_storage_creation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_with_endpoint(&tmp, "http://127.0.0.1:9");
+    config.resolved_endpoints.control_plane_url = Some("https://selected-backend.example.test".into());
+    store_session_with_metadata(&config, "expired-session", std::collections::HashMap::new());
+    let ws = config.workspace_dir.join("storage");
+    eprintln!("BISECT start {}", ws.exists());
+    let _ = openhuman_embed::__host::credentials::api_key::get_api_key_read_only(&config).await;
+    eprintln!("BISECT after api_key {}", ws.exists());
+    let p = openhuman_embed::__host::credentials::session_state::load_app_session_profile_read_only(&config).await;
+    eprintln!("BISECT after load_app_session {} ok={}", ws.exists(), p.is_ok());
+    let _ = openhuman_embed::__host::credentials::session_state::check_session_backend(&config, p.ok().flatten().as_ref());
+    eprintln!("BISECT after check_backend {}", ws.exists());
+    let _ = crate::backend::headers::attribution_headers();
+    eprintln!("BISECT after headers {}", ws.exists());
+}
