@@ -97,6 +97,38 @@ fn unavailable_shape(value: &Value) -> String {
     format!("<redacted: {shape}; arguments unavailable>")
 }
 
+/// Text-mode redaction of free text that may open with a bracketed label.
+///
+/// TinySecurity's Text mode parses input that opens with `{`, `[` or `"` as
+/// JSON and refuses it when it is not, so host refusals (`[policy-blocked] …`)
+/// and harness artifact pointers (`[artifact] kind=…`) would be withheld whole.
+/// A leading `[label]` (an ASCII letter, then letters, digits, `-` or `_`, then
+/// `]`) cannot open a JSON document, so only that opening bracket is held back:
+/// everything after it, the label included, is still redacted by the module,
+/// and any failure still withholds the text. Valid JSON and every other input
+/// go to the module unchanged.
+fn redact_free_text(value: &str) -> Option<String> {
+    let body = value.trim_start();
+    let lead = &value[..value.len() - body.len()];
+    let labelled = body.strip_prefix('[').filter(|rest| {
+        let label_len = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(rest.len());
+        rest.starts_with(|c: char| c.is_ascii_alphabetic()) && rest[label_len..].starts_with(']')
+    });
+    match labelled {
+        Some(rest) if serde_json::from_str::<serde::de::IgnoredAny>(value).is_err() => {
+            log::trace!("[security][scrub] redacting bracket-labelled free text");
+            redact(&format!("{lead}{rest}"), tinysecurity_bus::RedactMode::Text).map(|cleaned| {
+                let cleaned_body = cleaned.trim_start();
+                let cleaned_lead = &cleaned[..cleaned.len() - cleaned_body.len()];
+                format!("{cleaned_lead}[{cleaned_body}")
+            })
+        }
+        _ => redact(value, tinysecurity_bus::RedactMode::Text),
+    }
+}
+
 fn redact(text: &str, mode: tinysecurity_bus::RedactMode) -> Option<String> {
     #[cfg(feature = "security-module")]
     {
