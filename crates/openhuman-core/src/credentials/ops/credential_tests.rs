@@ -1,9 +1,7 @@
 use super::*;
-use crate::security::credentials::api_key;
-use crate::security::credentials::ops::clear_credential_with;
-use crate::security::credentials::ops::restore_api_key;
 use crate::credentials::api_key as current_api_key;
-use crate::security::credentials::session_support::CredentialKind;
+use crate::security::credentials::api_key;
+use crate::security::credentials::ops::restore_api_key;
 use serde_json::json;
 
 #[test]

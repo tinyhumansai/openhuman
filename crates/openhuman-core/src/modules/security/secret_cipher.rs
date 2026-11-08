@@ -49,7 +49,7 @@ async fn resolve_user_master_inner(
         Some(outcome) => outcome,
         None => {
             let gate = crate::security::approval::ApprovalGate::try_global()
-                .ok_or_else(|| { eprintln!("TMPDBG A no global gate; test_host active={}", super::test_host::active()); SecurityError::Unavailable("secret approval unavailable".into()) })?;
+                .ok_or_else(|| SecurityError::Unavailable("secret approval unavailable".into()))?;
             gate.intercept_forced(
                 MASTER_GRANT_TOOL,
                 "Unlock configuration secrets",
