@@ -153,10 +153,10 @@ fn secret_authority_bootstrap_enables_bounded_pairing_and_legacy_source_bindings
         .expect("DevicePairingConfig2 is enabled");
     assert_eq!(pairing.max_pairings, 256);
     let runtime = pairing.runtime_scope.unwrap();
-    assert_eq!(runtime.persistence_backend_id, super::policy::pairing_backend_id());
+    assert_eq!(runtime.persistence_backend_id, pairing_backend_id());
     assert_eq!(
         runtime.legacy_device_backend_id,
-        Some(super::policy::pairing_legacy_backend_id())
+        Some(pairing_legacy_backend_id())
     );
 }
 
