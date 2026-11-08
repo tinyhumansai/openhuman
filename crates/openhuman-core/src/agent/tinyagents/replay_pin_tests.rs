@@ -153,3 +153,70 @@ fn replay_and_discovery_records_share_a_row_without_clobbering_each_other() {
     assert_eq!(DiscoveryOptions::recorded_in(&rows), Some(discovery));
     assert_eq!(ReplayOptions::recorded_in(&rows), Some(replay));
 }
+
+fn with_keep_recent(tokens: Option<u32>) -> ContextSettings {
+    let mut settings = ContextSettings::default();
+    settings.keep_recent_tokens = tokens;
+    settings
+}
+
+#[test]
+fn a_new_thread_pins_the_compaction_tail_it_starts_with() {
+    let created = resolve(&with_keep_recent(Some(12_000)), &[], true);
+    assert_eq!(created.effective.keep_recent_tokens, Some(12_000));
+    assert_eq!(
+        created
+            .record
+            .as_ref()
+            .map(|options| options.keep_recent_tokens),
+        Some(Some(12_000)),
+        "a tail that differs from the default is written down"
+    );
+
+    // Not asking for one records nothing, as before.
+    let plain = resolve(&with_keep_recent(None), &[], true);
+    assert_eq!(plain.effective, ReplayOptions::TODAY);
+    assert_eq!(plain.record, None);
+}
+
+#[test]
+fn a_resumed_thread_keeps_its_pinned_compaction_tail_whatever_the_config_says_now() {
+    let started_with = ReplayOptions::from_config(&with_keep_recent(Some(12_000)));
+    let mut rows = vec![
+        TranscriptMessage::system("prompt"),
+        TranscriptMessage::new("user", "hi"),
+    ];
+    assert!(started_with.record_on(&mut rows, &[true, true]));
+
+    for now in [None, Some(3_000)] {
+        let resumed = resolve(&with_keep_recent(now), &rows, false);
+        assert_eq!(resumed.effective.keep_recent_tokens, Some(12_000));
+        assert_eq!(resumed.record, None, "a turn override never re-pins it");
+    }
+}
+
+#[test]
+fn a_pinned_compaction_tail_beats_the_configured_one_and_an_unpinned_thread_follows_it() {
+    let pinned = ReplayOptions::from_config(&with_keep_recent(Some(12_000)));
+    assert_eq!(pinned.keep_recent_tokens_or(Some(3_000)), Some(12_000));
+    assert_eq!(pinned.keep_recent_tokens_or(None), Some(12_000));
+
+    assert_eq!(
+        ReplayOptions::TODAY.keep_recent_tokens_or(Some(3_000)),
+        Some(3_000)
+    );
+    assert_eq!(ReplayOptions::TODAY.keep_recent_tokens_or(None), None);
+}
+
+#[test]
+fn a_record_without_a_compaction_tail_reads_back_and_writes_the_same_bytes() {
+    // Written before the tail was pinned: no `keep_recent_tokens` key.
+    let stored = serde_json::json!({
+        "tool_result_max_age_turns": 6,
+        "tool_result_exempt_tools": ["tool_search"],
+        "replay_reasoning": "current_turn",
+    });
+    let read: ReplayOptions = serde_json::from_value(stored.clone()).unwrap();
+    assert_eq!(read.keep_recent_tokens, None);
+    assert_eq!(serde_json::to_value(&read).unwrap(), stored);
+}

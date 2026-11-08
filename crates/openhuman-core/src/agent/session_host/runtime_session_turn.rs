@@ -12,6 +12,18 @@ use crate::agent::{
     tinyagents::host::OpenHumanRunContext,
 };
 
+/// Whether a turn creates its thread, so it chooses the thread's pinned options
+/// from the config. A thread with durable rows (imported history) is not new
+/// even before its prefix is frozen: it predates the pin. A session that was
+/// resumed from a store but holds no rows yet is new, though `new_session`
+/// (which also asks that nothing was loaded) says otherwise.
+pub(super) fn starts_thread(
+    new_session: bool,
+    stored_rows: &[tinyagents_session::transcript::TranscriptMessage],
+) -> bool {
+    new_session || stored_rows.is_empty()
+}
+
 pub(super) fn prepare_prefix_for_turn(new_session: bool, prefix_is_frozen: bool) -> bool {
     new_session || !prefix_is_frozen
 }

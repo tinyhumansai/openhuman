@@ -178,6 +178,30 @@ impl SessionRunOptions {
         }
     }
 
+    /// `history` as a model request under these options carries it: expired
+    /// tool results as notes, past turns' reasoning left out. For the requests
+    /// a driver builds after the run loop (a grounded close, a required-output
+    /// repair), which the harness's own request builder does not reach.
+    pub(crate) fn replayed(
+        &self,
+        history: &[tinyinference_llm::message::Message],
+    ) -> Vec<tinyinference_llm::message::Message> {
+        let mut messages = history.to_vec();
+        // Every field is set by a session that pinned options, so the
+        // harness-wide defaults only fill in for a run that pinned none.
+        let expiry = tinyagents_harness::result_expiry::ToolResultExpiryPolicy::default()
+            .with_overrides(&self.result_expiry);
+        if expiry.enabled {
+            tinyagents_harness::result_expiry::expire_tool_results(&mut messages, &expiry);
+        }
+        if self.replay_reasoning
+            == Some(tinyagents_harness::reasoning_replay::ReasoningReplay::CurrentTurn)
+        {
+            tinyagents_harness::reasoning_replay::drop_past_turn_reasoning(&mut messages);
+        }
+        messages
+    }
+
     /// Whether no option is set.
     pub(crate) fn is_empty(&self) -> bool {
         *self == Self::default()
