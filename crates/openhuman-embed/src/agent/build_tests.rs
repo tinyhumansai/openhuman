@@ -295,3 +295,63 @@ fn an_agent_with_no_context_overrides_behaves_as_before() {
     assert_eq!(context.replay_reasoning, crate::ReasoningReplay::All);
     assert!(!context.prune_retired_tools);
 }
+
+/// A built agent's `[memory]` table, for an agent built from `spec` on a
+/// runtime whose own config sets `memory_block_deadline_ms = 250`.
+fn built_memory_on_a_runtime_with_a_deadline(
+    spec: crate::AgentSpec,
+) -> openhuman_core::config::MemoryConfig {
+    let tokio = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .enable_all()
+        .build()
+        .unwrap();
+    let test = tokio.spawn(async move {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = openhuman_core::config::Config {
+            config_path: dir.path().join("config.toml"),
+            workspace_dir: dir.path().join("workspace"),
+            action_dir: dir.path().join("action"),
+            ..openhuman_core::config::Config::default()
+        };
+        config.memory.memory_block_deadline_ms = Some(250);
+        config.save().await.unwrap();
+        let runtime = crate::runtime::RuntimeBuilder::new()
+            .config(config)
+            .services(openhuman_core::core::runtime::ServiceSet::none())
+            .build()
+            .await
+            .expect("runtime");
+        let agent = runtime.agent(spec).expect("agent builds");
+        let memory = agent.inner.config.memory.clone();
+        drop(agent);
+        drop(runtime);
+        memory
+    });
+    tokio.block_on(test).unwrap()
+}
+
+#[test]
+fn a_memory_binding_without_a_deadline_keeps_the_runtimes_memory_block_deadline() {
+    let memory = built_memory_on_a_runtime_with_a_deadline(
+        crate::AgentSpec::new("memory-identity-only").memory(crate::MemoryBinding::new("emp-1")),
+    );
+    assert_eq!(memory.agent_id.as_deref(), Some("emp-1"));
+    assert_eq!(
+        memory.memory_block_deadline_ms,
+        Some(250),
+        "binding only an identity must not clear the inherited deadline"
+    );
+}
+
+#[test]
+fn a_memory_binding_with_a_deadline_replaces_the_runtimes_memory_block_deadline() {
+    let memory = built_memory_on_a_runtime_with_a_deadline(
+        crate::AgentSpec::new("memory-with-deadline").memory(
+            crate::MemoryBinding::new("emp-2")
+                .memory_block_deadline(std::time::Duration::from_millis(900)),
+        ),
+    );
+    assert_eq!(memory.memory_block_deadline_ms, Some(900));
+}
