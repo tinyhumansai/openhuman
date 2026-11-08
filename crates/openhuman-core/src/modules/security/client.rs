@@ -128,9 +128,16 @@ impl Client {
             )
             .map_err(|_| "pinned security module proxy unavailable".to_owned())?;
         let object = SecurityProxy::callback(proxy);
-        let audit_scope = super::super::ops::security_tenant(config)
-            .map(|tenant| tenant.scope.clone())
-            .ok_or_else(|| "security audit scope unavailable".to_owned())?;
+        // Audited permissions land on the module's init audit stream, not on
+        // the tenant's approval stream, so they are correlated there.
+        let (subject, stream_id) = super::policy::init_audit_identity();
+        let audit_scope =
+            crate::security::approval::native::authority_audit_scope(config, subject, &stream_id)
+                .await
+                .map_err(|error| {
+                    tracing::debug!("[security] authority audit scope unavailable: {error}");
+                    "security audit scope unavailable".to_owned()
+                })?;
         Ok(Self {
             object,
             audit_scope: Some(audit_scope),

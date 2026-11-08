@@ -174,6 +174,42 @@ pub(crate) async fn prepare_secret_scope(
     Ok(SecretScope { entry })
 }
 
+/// The process's authority audit scope: TinySecurity's init audit stream.
+///
+/// The module appends every audited permission to its one init audit client,
+/// so the host serves that stream from a single entry, opened over the store
+/// of the configuration that first needs it (as the single tenant's stream was
+/// before tenants registered at runtime). Fails closed: without the store no
+/// correlation is handed out and the audited call is refused.
+pub(crate) async fn authority_audit_scope(
+    config: &crate::config::Config,
+    subject: tinysecurity_bus::SubjectScope,
+    stream_id: &str,
+) -> Result<SecretScope, String> {
+    static AUTHORITY: tokio::sync::OnceCell<SecretScope> = tokio::sync::OnceCell::const_new();
+    AUTHORITY
+        .get_or_try_init(|| async {
+            let rows = rows::Rows::current(config)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(authority_scope_over(rows, subject, stream_id).await)
+        })
+        .await
+        .cloned()
+}
+
+/// The authority scope over `rows`, its stream resolvable by the audit sink.
+async fn authority_scope_over(
+    rows: rows::Rows,
+    subject: tinysecurity_bus::SubjectScope,
+    stream_id: &str,
+) -> SecretScope {
+    let entry = std::sync::Arc::new(scopes::ScopeEntry::new(subject, stream_id.to_owned(), rows));
+    entry.bind_stream().await;
+    tracing::debug!("[security][audit] authority audit stream bound");
+    SecretScope { entry }
+}
+
 /// Take the exact native master operation after the shared approval gate returns.
 pub(crate) fn take_secret_grant(
     registration_id: &str,
