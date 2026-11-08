@@ -36,7 +36,7 @@ impl std::error::Error for SecurityError {}
 #[derive(Clone)]
 pub struct Client {
     object: SecurityProxy,
-    audit_scope: Option<crate::security::approval::native::SecretScope>,
+    audit_scope: Option<crate::security::approval::native::PermissionAudit>,
 }
 
 /// One admitted security API connection. Production calls travel through the
@@ -128,16 +128,14 @@ impl Client {
             )
             .map_err(|_| "pinned security module proxy unavailable".to_owned())?;
         let object = SecurityProxy::callback(proxy);
-        // Audited permissions land on the module's init audit stream, not on
-        // the tenant's approval stream, so they are correlated there.
+        // Audited permissions land on the module's init audit stream; the
+        // host keeps the calling tenant's share of it in the tenant's store.
+        let tenant = super::super::ops::security_tenant(config)
+            .map(|tenant| tenant.scope.clone())
+            .ok_or_else(|| "security audit scope unavailable".to_owned())?;
         let (subject, stream_id) = super::policy::init_audit_identity();
         let audit_scope =
-            crate::security::approval::native::authority_audit_scope(config, subject, &stream_id)
-                .await
-                .map_err(|error| {
-                    tracing::debug!("[security] authority audit scope unavailable: {error}");
-                    "security audit scope unavailable".to_owned()
-                })?;
+            crate::security::approval::native::permission_audit(&tenant, subject, &stream_id);
         Ok(Self {
             object,
             audit_scope: Some(audit_scope),
@@ -180,14 +178,16 @@ impl Client {
             .correlation(generation)
             .await
             .map_err(SecurityError::Unavailable)?;
-        let response: tinysecurity_bus::AuditedResponse2<D> = self
+        let event_id = audit.event_id.clone();
+        let response: Result<tinysecurity_bus::AuditedResponse2<D>, String> = self
             .object
             .call_confidential(
                 member,
                 (tinysecurity_bus::AuditedRequest2 { request, audit },),
             )
-            .await
-            .map_err(SecurityError::Unavailable)?;
+            .await;
+        scope.settle(&event_id);
+        let response = response.map_err(SecurityError::Unavailable)?;
         if !response.audit.permitted || !response.audit.committed {
             return Err(SecurityError::Unavailable(
                 "native permission audit was not committed".into(),
