@@ -101,7 +101,11 @@ jobs:
       # The runner's PID 1 (`tail -f /dev/null`) never reaps orphans, so a
       # killed grandchild stays a zombie that `kill(pid, 0)` still finds and the
       # process-group timeout tests fail. `--init` puts a reaping init at PID 1.
-      options: --init
+      # The rust-cov shards run sandbox and shell tests against TinyBox's real
+      # jail, which needs unprivileged user namespaces and an unmasked /proc:
+      # Docker's default seccomp/AppArmor profiles and masked paths refuse both.
+      # No --privileged and no added capabilities.
+      options: ${{ startsWith(matrix.group, 'rust-cov-') && '--init --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined' || '--init' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -151,6 +155,12 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends jq python3-tomli unzip
+
+      - name: Install bubblewrap for the sandbox jail
+        # The image's bubblewrap 0.6.1 lacks --disable-userns, so TinyBox finds
+        # no jail and every sandboxed test is refused as Unsupported.
+        if: startsWith(matrix.group, 'rust-cov-') && matrix.container != ''
+        run: bash scripts/ci/install-bubblewrap.sh
 
       - name: Check out submodules
         run: bash scripts/ci/checkout-submodules.sh
