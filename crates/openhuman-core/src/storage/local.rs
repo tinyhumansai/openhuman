@@ -261,6 +261,7 @@ fn workspace_default(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
 /// the same initializer, including from a current-thread runtime, without
 /// preventing it from making progress.
 pub async fn backend_for_async(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
+    eprintln!("DIAGZZ backend_for_async\n{}", std::backtrace::Backtrace::force_capture());
     if let Some(backend) = installed() {
         return Ok(backend);
     }
