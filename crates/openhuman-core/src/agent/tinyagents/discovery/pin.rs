@@ -10,6 +10,11 @@
 //! the thread's first transcript row. A resumed thread reads them back; the
 //! config and the embedder's options only choose them for the next thread.
 //!
+//! A host can force new options onto a thread that exists
+//! (`ToolSearchConfig::force_pin`): the turn records them on a later row and
+//! the latest record wins. A compaction carries the record onto the first row
+//! of the generation it opens ([`carry_forward`]).
+//!
 //! A thread that records nothing (every thread written before this existed,
 //! and any thread created with today's behaviour) resolves to
 //! [`DiscoveryOptions::TODAY`], the harness defaults, whatever the config says
@@ -99,11 +104,14 @@ impl DiscoveryOptions {
 }
 
 /// The value a thread recorded under `key` on its transcript `rows`, if any.
+/// The latest record wins: a host that forces new options onto a thread
+/// records them on a later row, since a stored row is never rewritten.
 pub(crate) fn recorded_metadata<T: serde::de::DeserializeOwned>(
     rows: &[TranscriptMessage],
     key: &str,
 ) -> Option<T> {
     rows.iter()
+        .rev()
         .filter_map(|row| row.extra_metadata.as_ref())
         .find_map(|metadata| metadata.get(key))
         .and_then(|value| serde_json::from_value(value.clone()).ok())
@@ -136,6 +144,26 @@ pub(crate) fn record_metadata(
     }
 }
 
+/// Carries the options recorded on `prior` onto the first of `rows`, a
+/// transcript about to open a compacted generation, when `rows` lost them.
+/// Returns whether it recorded them.
+///
+/// A compaction writes the retained rows into a fresh generation. The record
+/// lives on a row, so it survives only if that row is retained unchanged; a
+/// refreshed system prompt, or a summary standing in for the folded rows,
+/// drops it, and the thread would fall back to today's behaviour. Writing it
+/// onto the first row is free here: the generation is new, so no stored row
+/// is rewritten.
+pub fn carry_forward(prior: &[TranscriptMessage], rows: &mut [TranscriptMessage]) -> bool {
+    if DiscoveryOptions::recorded_in(rows).is_some() {
+        return false;
+    }
+    let Some(options) = DiscoveryOptions::recorded_in(prior) else {
+        return false;
+    };
+    options.record_on(rows, &[true])
+}
+
 impl Default for DiscoveryOptions {
     fn default() -> Self {
         Self::TODAY
@@ -156,22 +184,38 @@ pub struct ResolvedDiscovery {
 /// Decides a session turn's options.
 ///
 /// `generation_start` is true for the turn that prepares the thread's first
-/// prompt: it takes the options `config` asks for and records them. Every
-/// other turn reads what `rows` recorded, or [`DiscoveryOptions::TODAY`].
+/// prompt: it takes the options `config` asks for and records them, unless
+/// `rows` already record some (a compacted head whose prefix is prepared
+/// again keeps its pin). Every other turn reads what `rows` recorded, or
+/// [`DiscoveryOptions::TODAY`].
+///
+/// With `config.force_pin` a turn on an existing thread takes the options
+/// `config` asks for instead, and records them when they differ from what the
+/// thread runs with. A change back to [`DiscoveryOptions::TODAY`] is recorded
+/// too: a thread with no record means today's behaviour only until it has one.
 pub fn resolve(
     config: &ToolSearchConfig,
     rows: &[TranscriptMessage],
     generation_start: bool,
 ) -> ResolvedDiscovery {
-    if generation_start {
+    let recorded = DiscoveryOptions::recorded_in(rows);
+    if generation_start && recorded.is_none() {
         let effective = DiscoveryOptions::from_config(config);
         return ResolvedDiscovery {
             effective,
             record: (effective != DiscoveryOptions::TODAY).then_some(effective),
         };
     }
+    let current = recorded.unwrap_or(DiscoveryOptions::TODAY);
+    if config.force_pin {
+        let effective = DiscoveryOptions::from_config(config);
+        return ResolvedDiscovery {
+            effective,
+            record: (effective != current).then_some(effective),
+        };
+    }
     ResolvedDiscovery {
-        effective: DiscoveryOptions::recorded_in(rows).unwrap_or(DiscoveryOptions::TODAY),
+        effective: current,
         record: None,
     }
 }

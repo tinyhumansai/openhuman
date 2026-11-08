@@ -355,3 +355,29 @@ async fn runtime_tool_events_preserve_order_and_discard_tool_payloads() {
         assert!(!serde_json::to_string(&event).unwrap().contains(private));
     }
 }
+
+/// A turn's `tool_search` options reach the session's config, and only a
+/// forced turn asks for them to apply to a thread that already exists.
+#[test]
+fn a_forced_discovery_turn_asks_for_the_options_on_existing_threads() {
+    use openhuman_core::config::schema::ToolSearchConfig;
+
+    let wanted = crate::ToolDiscoveryOptions {
+        collapse_search_results: true,
+        ..crate::ToolDiscoveryOptions::TODAY
+    };
+
+    let mut untouched = ToolSearchConfig::default();
+    apply_tool_discovery(&mut untouched, None, true);
+    assert_eq!(untouched, ToolSearchConfig::default());
+
+    let mut new_threads = ToolSearchConfig::default();
+    apply_tool_discovery(&mut new_threads, Some(wanted), false);
+    assert!(new_threads.collapse_search_results);
+    assert!(!new_threads.force_pin);
+
+    let mut every_thread = ToolSearchConfig::default();
+    apply_tool_discovery(&mut every_thread, Some(wanted), true);
+    assert!(every_thread.collapse_search_results);
+    assert!(every_thread.force_pin);
+}
