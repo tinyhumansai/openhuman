@@ -313,10 +313,14 @@ fn the_host_config_carries_the_judge_it_is_given() {
 }
 
 fn keyring_workspace() -> std::path::PathBuf {
-    std::env::temp_dir().join("oh-policy-keyring").join("workspace")
+    std::env::temp_dir()
+        .join("oh-policy-keyring")
+        .join("workspace")
 }
 
-fn encrypted_store_beside_host_keyring(workspace: &std::path::Path) -> tinysecurity_bus::KeyringBackend2 {
+fn encrypted_store_beside_host_keyring(
+    workspace: &std::path::Path,
+) -> tinysecurity_bus::KeyringBackend2 {
     tinysecurity_bus::KeyringBackend2::EncryptedFile {
         directory: workspace
             .join("keyring")
@@ -376,7 +380,8 @@ fn file_keyring_selection_with_a_relative_workspace_configures_no_module_keyring
 
 #[test]
 fn module_bootstrap_keyring_follows_the_host_keyring_backend_setting() {
-    let _env = crate::config::test_env::EnvVarGuard::locked_set("OPENHUMAN_KEYRING_BACKEND", "file");
+    let _env =
+        crate::config::test_env::EnvVarGuard::locked_set("OPENHUMAN_KEYRING_BACKEND", "file");
     let mut config = Config::default();
     config.workspace_dir = keyring_workspace();
 
@@ -396,7 +401,8 @@ fn module_bootstrap_keyring_follows_the_host_keyring_backend_setting() {
 
 #[test]
 fn module_bootstrap_has_no_keyring_under_the_memory_setting() {
-    let _env = crate::config::test_env::EnvVarGuard::locked_set("OPENHUMAN_KEYRING_BACKEND", "memory");
+    let _env =
+        crate::config::test_env::EnvVarGuard::locked_set("OPENHUMAN_KEYRING_BACKEND", "memory");
     let crypto = module_config(&Config::default())
         .crypto
         .expect("TinySecurity crypto stays configured");
