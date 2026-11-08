@@ -198,6 +198,18 @@ pub(super) fn profile_master_key_read_only(
     use tinystoragedrivers::secrets::{HexKeyFileSource as _, ProtectedHexKeyFile};
 
     let path = workspace.join("keyring/master.key");
+    // The driver refuses a missing parent directory instead of reporting the
+    // key absent, and never creates it. A profile with no `keyring/` at all has
+    // no key; say so (still an error for the caller) rather than a backend fault.
+    // Anything present at that name, symlinks included, goes through the
+    // driver's admission below.
+    if let Some(keyring) = path.parent() {
+        if matches!(std::fs::symlink_metadata(keyring), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        {
+            log::debug!("[keyring:storage] profile keyring directory absent; no read-only key");
+            return Ok(None);
+        }
+    }
     let source = ProtectedHexKeyFile::new(path).map_err(|error| {
         SecretStorageError::Backend(format!("invalid profile master key source: {error}"))
     })?;
