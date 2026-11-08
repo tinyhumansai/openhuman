@@ -162,6 +162,7 @@ fn workspace_backend(workspace_dir: &Path) -> WorkspaceBackend {
 }
 
 async fn open_default_backend(_workspace_dir: PathBuf) -> Result<Arc<dyn StorageBackend>> {
+    eprintln!("DIAGXX open_default_backend {}\n{}", _workspace_dir.display(), std::backtrace::Backtrace::force_capture());
     #[cfg(test)]
     await_test_backend_open_gate().await;
 

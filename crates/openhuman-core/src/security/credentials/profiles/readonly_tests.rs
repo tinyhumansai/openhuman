@@ -54,6 +54,9 @@ fn tree(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 async fn plaintext_app_session_lookup_creates_no_storage() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = config(&tmp);
+    // Production opens a real on-disk default store; the unit-test default is
+    // in-memory and would hide a store being created.
+    crate::storage::local::use_persistent_default_for_test(&config.workspace_dir);
     write_app_session_profile(&config, "plaintext-session");
     let before = tree(tmp.path());
 
