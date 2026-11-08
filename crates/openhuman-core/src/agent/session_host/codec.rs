@@ -92,6 +92,7 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
         if let Some(options) = &sidecar.replay_record {
             options.record_on(&mut reconciled.rows, &reconciled.fresh);
         }
+        crate::agent::tinyagents::replay_pin::carry_forward(&prior, &mut reconciled.rows);
         attach_text_dialect_rounds(
             &mut reconciled.rows,
             &reconciled.fresh,

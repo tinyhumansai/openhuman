@@ -7,6 +7,10 @@
 //! options (`discovery/pin.rs` is the model). A resumed thread reads them back;
 //! the config and the embedder's options only choose them for the next thread.
 //!
+//! A compaction carries the record onto the first row of the generation it
+//! opens ([`carry_forward`]), so a thread keeps its options after the row that
+//! held them is folded away.
+//!
 //! A thread that records nothing (every thread written before this existed,
 //! and any thread created with today's behaviour) resolves to
 //! [`ReplayOptions::TODAY`] whatever the config says now.
@@ -90,6 +94,22 @@ impl ReplayOptions {
         let value = serde_json::to_value(self).expect("plain options serialize");
         record_metadata(rows, fresh, REPLAY_METADATA_KEY, value)
     }
+}
+
+/// Carries the options recorded on `prior` onto the first of `rows`, a
+/// transcript about to open a compacted generation, when `rows` lost them.
+/// Returns whether it recorded them. See `discovery::carry_forward`: the
+/// record lives on a row, and a refreshed system prompt or a summary standing
+/// in for the folded rows drops it. The generation is new, so writing onto its
+/// first row rewrites no stored row.
+pub fn carry_forward(prior: &[TranscriptMessage], rows: &mut [TranscriptMessage]) -> bool {
+    if ReplayOptions::recorded_in(rows).is_some() {
+        return false;
+    }
+    let Some(options) = ReplayOptions::recorded_in(prior) else {
+        return false;
+    };
+    options.record_on(rows, &[true])
 }
 
 impl Default for ReplayOptions {
