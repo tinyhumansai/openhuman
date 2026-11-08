@@ -131,20 +131,23 @@ pub struct ResolvedReplay {
 /// Decides a session turn's options.
 ///
 /// `generation_start` is true for the turn that prepares the thread's first
-/// prompt: it takes the options `config` asks for and records them. Every
-/// other turn reads what `rows` recorded, or [`ReplayOptions::TODAY`].
+/// prompt: it takes the options `config` asks for and records them, unless
+/// `rows` already record some (a compacted head whose prefix is prepared
+/// again keeps its pin). Every other turn reads what `rows` recorded, or
+/// [`ReplayOptions::TODAY`].
 pub fn resolve(
     config: &ContextSettings,
     rows: &[TranscriptMessage],
     generation_start: bool,
 ) -> ResolvedReplay {
-    if generation_start {
+    let recorded = ReplayOptions::recorded_in(rows);
+    if generation_start && recorded.is_none() {
         let effective = ReplayOptions::from_config(config);
         let record = (effective != ReplayOptions::TODAY).then(|| effective.clone());
         return ResolvedReplay { effective, record };
     }
     ResolvedReplay {
-        effective: ReplayOptions::recorded_in(rows).unwrap_or(ReplayOptions::TODAY),
+        effective: recorded.unwrap_or(ReplayOptions::TODAY),
         record: None,
     }
 }

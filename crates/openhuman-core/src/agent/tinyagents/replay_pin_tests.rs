@@ -89,6 +89,24 @@ fn a_resumed_thread_keeps_what_it_recorded_whatever_the_config_says_now() {
 }
 
 #[test]
+fn a_generation_start_over_recorded_rows_keeps_the_recorded_pin() {
+    // A compacted head whose prefix is prepared again is a generation-start
+    // turn, but its rows still record the thread's options.
+    let started_with =
+        ReplayOptions::from_config(&settings(None, &[], ReasoningReplay::CurrentTurn));
+    let mut rows = vec![
+        TranscriptMessage::system("prompt"),
+        TranscriptMessage::new("user", "hi"),
+    ];
+    assert!(started_with.record_on(&mut rows, &[true, true]));
+
+    let now = settings(Some(6), &["a"], ReasoningReplay::All);
+    let resolved = resolve(&now, &rows, true);
+    assert_eq!(resolved.effective, started_with);
+    assert_eq!(resolved.record, None);
+}
+
+#[test]
 fn a_thread_that_recorded_nothing_keeps_todays_behaviour_whatever_the_config_says() {
     let rows = vec![TranscriptMessage::system("prompt")];
     let resumed = resolve(
