@@ -746,3 +746,44 @@ fn the_turns_still_in_the_prompt_reach_the_runs_tools() {
     assert_eq!(memory_in_prompt_for_tool(Some(&call)), None);
     assert_eq!(memory_in_prompt_for_tool(None), None);
 }
+
+#[test]
+fn session_run_options_carry_expiry_reasoning_and_discovery_onto_a_fresh_config() {
+    use tinyagents_harness::context::RunConfig;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+    use tinyagents_harness::result_expiry::ExpiryOverrides;
+    use tinyagents_harness::tool::discover::DiscoveryOverrides;
+
+    let session = RunConfig::new("session")
+        .with_result_expiry_overrides(ExpiryOverrides {
+            enabled: Some(true),
+            max_age_turns: Some(2),
+            exempt_tools: Some(vec!["tool_search".into()]),
+        })
+        .with_replay_reasoning(ReasoningReplay::CurrentTurn)
+        .with_discovery_overrides(DiscoveryOverrides {
+            collapse_search_results: Some(true),
+            ..DiscoveryOverrides::default()
+        });
+    let options = SessionRunOptions::of(&session);
+
+    let carried = options.apply_to(RunConfig::new("turn"));
+    assert_eq!(carried.result_expiry, session.result_expiry);
+    assert_eq!(carried.replay_reasoning, Some(ReasoningReplay::CurrentTurn));
+    assert_eq!(carried.discovery, session.discovery);
+    assert_eq!(carried.run_id.as_str(), "turn");
+}
+
+#[test]
+fn empty_session_run_options_leave_a_config_that_carries_its_own_untouched() {
+    use tinyagents_harness::context::RunConfig;
+    use tinyagents_harness::reasoning_replay::ReasoningReplay;
+
+    let own = RunConfig::new("child").with_replay_reasoning(ReasoningReplay::CurrentTurn);
+    let kept = SessionRunOptions::default().apply_to(own);
+    assert_eq!(kept.replay_reasoning, Some(ReasoningReplay::CurrentTurn));
+    assert!(OpenHumanRunContext::new()
+        .child()
+        .session_run_options
+        .is_empty());
+}

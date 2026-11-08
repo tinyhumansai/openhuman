@@ -60,6 +60,7 @@ impl OpenHumanRunContext {
             tool_rules: None,
             context_middleware: None,
             session_sidecar: Arc::new(Mutex::new(SessionTurnSidecar::default())),
+            session_run_options: SessionRunOptions::default(),
             required_output: None,
             tool_dialect: tinyagents_harness::config::ToolDispatcher::Auto,
             memory_turn: None,
@@ -230,6 +231,8 @@ impl OpenHumanRunContext {
         child.subagent_usage = Arc::new(Mutex::new(Vec::new()));
         child.resolved_route = Arc::new(Mutex::new(None));
         child.memory_turn = None;
+        // The options belong to the session's thread; a child runs its own.
+        child.session_run_options = SessionRunOptions::default();
         child.native_staged_parts.clear();
         child.native_staged_lease = None;
         child.native_message_id = None;
