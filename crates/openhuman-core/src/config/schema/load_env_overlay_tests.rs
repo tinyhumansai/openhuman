@@ -703,3 +703,18 @@ fn search_compact_results_and_contents_cap_env_set_clear_and_ignore_garbage() {
     assert!(!cfg.search.compact_results);
     assert_eq!(cfg.search.contents_max_chars, None);
 }
+
+#[test]
+fn search_contents_cap_env_treats_every_zero_spelling_as_unset() {
+    for zero in ["0", "00", " 000 "] {
+        let mut cfg = Config::default();
+        cfg.search.contents_max_chars = Some(1_200);
+        cfg.apply_env_overlay_with(
+            &HashMapEnv::new().with("OPENHUMAN_SEARCH_CONTENTS_MAX_CHARS", zero),
+        );
+        assert_eq!(
+            cfg.search.contents_max_chars, None,
+            "{zero:?} must clear the cap, not become a one-character cap"
+        );
+    }
+}
