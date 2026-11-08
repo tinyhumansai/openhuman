@@ -92,9 +92,13 @@ pub fn module_config(config: &Config) -> tinysecurity_bus::ModuleConfig {
         crypto: Some(tinysecurity_bus::CryptoConfig2 {
             max_payload_bytes: tinysecurity_bus::MAX_CRYPTO_PAYLOAD_BYTES,
             operations_per_minute: 120,
-            keyring: Some(tinysecurity_bus::KeyringConfig2 {
+            keyring: module_keyring_backend(
+                std::env::var("OPENHUMAN_KEYRING_BACKEND").ok().as_deref(),
+                &config.workspace_dir,
+            )
+            .map(|backend| tinysecurity_bus::KeyringConfig2 {
                 service: "openhuman".into(),
-                backend: tinysecurity_bus::KeyringBackend2::Os,
+                backend,
                 consent_timeout_ms: KEYRING_CONSENT_TIMEOUT_MS,
             }),
             pairing: None,
@@ -103,12 +107,54 @@ pub fn module_config(config: &Config) -> tinysecurity_bus::ModuleConfig {
     }
 }
 
-/// TinySecurity's keyring store for the host's keyring backend selection.
+/// TinySecurity's keyring store for the host's `OPENHUMAN_KEYRING_BACKEND`
+/// selection, parsed exactly as the host's own secret storage parses it.
+///
+/// - `file` / `encrypted_file`: the host keeps its secrets in files under the
+///   workspace (`secrets.enc`, `keyring/master.key`), typically because the
+///   machine has no usable OS keyring. The module's store goes beside them in
+///   `keyring/tinysecurity`, encrypted under its own key file.
+/// - `os`, unset or unrecognised: the OS keyring, as before.
+/// - `memory`: no module keyring at all, so every keyring call is refused.
+///   The operator asked for secrets to stay out of durable storage; writing
+///   them to the OS keyring instead would quietly persist them.
+///
+/// A relative workspace also gets no keyring: the module refuses a relative
+/// store directory at load, which would deny the whole security module rather
+/// than only its keyring.
+///
+/// TinySecurity's crypto settings are immutable once loaded, so a selection
+/// that changes after the first load makes a reinitialization fail closed.
 pub(crate) fn module_keyring_backend(
-    _selection: Option<&str>,
-    _workspace_dir: &std::path::Path,
+    selection: Option<&str>,
+    workspace_dir: &std::path::Path,
 ) -> Option<tinysecurity_bus::KeyringBackend2> {
-    Some(tinysecurity_bus::KeyringBackend2::Os)
+    use crate::security::secret_storage::store::{backend_kind_from_env_value, BackendKind};
+    use tinysecurity_bus::KeyringBackend2;
+
+    match selection.and_then(backend_kind_from_env_value) {
+        Some(BackendKind::File | BackendKind::EncryptedFile) => {
+            if !workspace_dir.is_absolute() {
+                log::warn!(
+                    "[security] module keyring refused: file keyring needs an absolute workspace"
+                );
+                return None;
+            }
+            let directory = workspace_dir.join("keyring").join("tinysecurity");
+            log::debug!(
+                "[security] module keyring backend=encrypted_file dir={}",
+                directory.display()
+            );
+            Some(KeyringBackend2::EncryptedFile {
+                directory: directory.display().to_string(),
+            })
+        }
+        Some(BackendKind::Memory) => {
+            log::debug!("[security] module keyring refused: memory keyring backend selected");
+            None
+        }
+        Some(BackendKind::Host) | None => Some(KeyringBackend2::Os),
+    }
 }
 
 /// TinySecurity's deadline for the host's answer to one keyring prompt. It
