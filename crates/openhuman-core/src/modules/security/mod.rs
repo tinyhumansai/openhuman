@@ -18,6 +18,7 @@ pub(crate) mod policy_translation;
 pub(crate) mod sandbox;
 pub(super) mod secret_backend;
 pub(super) mod secret_cipher;
+mod secret_tenants;
 pub(crate) mod sync_seam;
 #[cfg(any(test, feature = "e2e-test-support", feature = "test-keyring-consent"))]
 pub(crate) mod test_host;
@@ -58,6 +59,23 @@ pub(crate) fn remember_unlocked_pairing_scope(scope_id: &str, generation: u64) {
         .insert(scope_id.to_owned(), generation);
 }
 
+/// Forget a retired scope's unlock: its next registration starts locked.
+pub(crate) fn forget_unlocked_pairing_scope(scope_id: &str) {
+    UNLOCKED_PAIRING_SCOPES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(scope_id);
+}
+
+/// `config`'s live runtime secret registration; TinySecurity must be loaded
+/// for `config` first ([`client`] or [`ensure_loaded`]).
+pub(crate) fn secret_tenant(
+    config: &Config,
+) -> Result<std::sync::Arc<host_callbacks::Tenant>, String> {
+    super::ops::security_tenant(config)
+        .ok_or_else(|| "security secret scope unavailable".to_owned())
+}
+
 pub(crate) fn clear_device_pairing_unlock_cache() {
     UNLOCKED_PAIRING_SCOPES
         .lock()
@@ -87,12 +105,9 @@ pub(crate) async fn device_pairing_master(
     String,
 > {
     let client = client(config).await.map_err(|error| error.to_string())?;
-    let scope = host_callbacks::secret_scope()
-        .await
-        .ok_or_else(|| "security secret scope unavailable".to_owned())?;
-    let registration_id = host_callbacks::secret_registration_id()
-        .await
-        .ok_or_else(|| "security master registration unavailable".to_owned())?;
+    let tenant = secret_tenant(config)?;
+    let scope = tenant.scope.clone();
+    let registration_id = tenant.ids.registration_id.clone();
     let master = resolve_user_master(&client, &scope, &registration_id)
         .await
         .map_err(|error| error.to_string())?;
@@ -109,9 +124,7 @@ pub(crate) async fn device_pairing_master(
 
 pub(crate) async fn ensure_device_pairing_unlocked(config: &Config) -> Result<(), String> {
     let client = client(config).await.map_err(|error| error.to_string())?;
-    let scope = host_callbacks::secret_scope()
-        .await
-        .ok_or_else(|| "security secret scope unavailable".to_owned())?;
+    let scope = secret_tenant(config)?.scope.clone();
     let generation = client
         .policy_info()
         .await
@@ -120,9 +133,7 @@ pub(crate) async fn ensure_device_pairing_unlocked(config: &Config) -> Result<()
     if pairing_scope_is_unlocked(scope.scope_id(), generation) {
         return Ok(());
     }
-    let registration_id = host_callbacks::secret_registration_id()
-        .await
-        .ok_or_else(|| "security master registration unavailable".to_owned())?;
+    let registration_id = secret_tenant(config)?.ids.registration_id.clone();
     let master = resolve_user_master(&client, &scope, &registration_id)
         .await
         .map_err(|error| error.to_string())?;
@@ -133,9 +144,10 @@ pub(crate) async fn device_pairing_scope_is_unlocked(config: &Config) -> bool {
     let Ok(client) = client(config).await else {
         return false;
     };
-    let Some(scope) = host_callbacks::secret_scope().await else {
+    let Ok(tenant) = secret_tenant(config) else {
         return false;
     };
+    let scope = &tenant.scope;
     let Ok(policy) = client.policy_info().await else {
         return false;
     };
@@ -243,9 +255,7 @@ pub(crate) async fn device_pairing_recover_event(
         return Err("invalid device recovery channel".to_owned());
     }
     let client = client(config).await.map_err(|error| error.to_string())?;
-    let scope = host_callbacks::secret_scope()
-        .await
-        .ok_or_else(|| "security secret scope unavailable".to_owned())?;
+    let scope = secret_tenant(config)?.scope.clone();
     let generation = client
         .policy_info()
         .await
@@ -275,9 +285,7 @@ pub(crate) async fn device_pairing_recover_event(
 pub(crate) async fn lock_device_pairing_scope(config: &Config) -> Result<(), String> {
     clear_device_pairing_unlock_cache();
     let client = client(config).await.map_err(|error| error.to_string())?;
-    let scope = host_callbacks::secret_scope()
-        .await
-        .ok_or_else(|| "security secret scope unavailable".to_owned())?;
+    let scope = secret_tenant(config)?.scope.clone();
     let generation = client
         .policy_info()
         .await
@@ -330,9 +338,7 @@ fn now_plus_pairing_event_ttl() -> Result<u64, String> {
 /// current scoped legacy device store and fixed TinySecurity source ids.
 pub(crate) async fn device_pairing_legacy_import_event(config: &Config) -> Result<String, String> {
     let (_client, scope, master_handle, generation) = device_pairing_master(config).await?;
-    let registration_id = host_callbacks::secret_registration_id()
-        .await
-        .ok_or_else(|| "security master registration unavailable".to_owned())?;
+    let registration_id = secret_tenant(config)?.ids.registration_id.clone();
     let expires_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "system clock unavailable".to_owned())?
@@ -341,7 +347,7 @@ pub(crate) async fn device_pairing_legacy_import_event(config: &Config) -> Resul
         .min(u128::from(u64::MAX)) as u64;
     let scope_id = scope.scope_id().to_owned();
     let handle = uuid::Uuid::new_v4().simple().to_string();
-    let backend_id = policy::pairing_legacy_backend_id(&registration_id);
+    let backend_id = policy::pairing_legacy_backend_id();
     callbacks::register_legacy_import_grant(
         handle.clone(),
         config.clone(),
@@ -394,9 +400,7 @@ pub(crate) async fn device_pairing_socket_event(
         return Err("expired host tunnel event".to_owned());
     }
     let client = client(config).await.map_err(|error| error.to_string())?;
-    let scope = host_callbacks::secret_scope()
-        .await
-        .ok_or_else(|| "security secret scope unavailable".to_owned())?;
+    let scope = secret_tenant(config)?.scope.clone();
     let generation = client
         .policy_info()
         .await
@@ -446,9 +450,7 @@ pub(crate) async fn device_pairing_reconnect_event(
         return Err("expired host reconnect event".to_owned());
     }
     let client = client(config).await.map_err(|error| error.to_string())?;
-    let scope = host_callbacks::secret_scope()
-        .await
-        .ok_or_else(|| "security secret scope unavailable".to_owned())?;
+    let scope = secret_tenant(config)?.scope.clone();
     let generation = client
         .policy_info()
         .await
@@ -479,9 +481,11 @@ pub(crate) async fn resolve_user_master_with_existing_key(
     registration_id: &str,
     encoded_key: &str,
 ) -> Result<String, SecurityError> {
-    let backend = super::ops::security_secret_backend().await.ok_or_else(|| {
-        SecurityError::Unavailable("TinySecurity secret backend unavailable".into())
-    })?;
+    let backend = host_callbacks::tenant_by_registration(registration_id)
+        .map(|tenant| std::sync::Arc::clone(&tenant.backend))
+        .ok_or_else(|| {
+            SecurityError::Unavailable("TinySecurity secret backend unavailable".into())
+        })?;
     secret_cipher::resolve_user_master_with_existing_key(
         client,
         scope,
@@ -518,7 +522,7 @@ pub(crate) async fn run_secret_cipher(
 pub(super) async fn serve_secret_callbacks(
     binding: &tinybus::module::HostCallbackBinding,
     consumer: std::sync::Arc<cipher_consumer::Consumer>,
-    backend: std::sync::Arc<secret_backend::SecretBackend>,
+    backend: std::sync::Arc<secret_backend::SecretBackends>,
 ) -> tinybus::Result<()> {
     callbacks::serve_on_binding(binding).await?;
     consumer.serve(binding).await?;
@@ -615,6 +619,11 @@ pub(crate) async fn validate_host_path(
 /// See [`crate::security::release_secret_scope`].
 pub(crate) fn release_secret_scope() {
     host_callbacks::release_scopes();
+}
+
+/// See [`crate::security::retire_secret_scope`].
+pub(crate) fn retire_secret_scope(config_dir: &std::path::Path) {
+    host_callbacks::retire_scope(config_dir);
 }
 
 /// See [`crate::security::declare_transient_secret_scope`].
