@@ -756,7 +756,17 @@
     "type": "LazyLock<ReadyBlocks>",
     "count": 1,
     "category": "B",
-    "reason": "Rendered memory blocks wait here for the next generation start. Every key combines the session's workspace directory, its resolved memory identity (profile and agent) and the token budget, so a block is only ever taken by the identity it was read for; the store holds at most READY_CAPACITY entries, each dropped after READY_MAX_AGE.",
-    "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: a_block_is_not_taken_for_another_identity_or_budget"
+    "reason": "Rendered memory blocks wait here for the next generation start. Every key combines the session's workspace directory, its resolved memory identity (profile and agent) and the token budget, so a block is only ever taken by the identity it was read for; the store holds at most READY_CAPACITY entries, each dropped after READY_MAX_AGE. A write to or erasure of memory, or a change of its engine or credentials, drops the blocks of the workspace (all of them for an engine or credential change) and voids the renders then in flight, so a block read before cannot be stored or taken afterwards.",
+    "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: an_invalidation_of_one_workspace_keeps_the_blocks_of_others"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/session_host/runtime_session/memory_block_ready.rs",
+    "scope": "",
+    "name": "BACKGROUND_RENDERS",
+    "type": "RenderSlots",
+    "count": 1,
+    "category": "A",
+    "reason": "A counter of memory-block renders left running in the background past their deadline, capped at MAX_BACKGROUND_RENDERS so a slow memory engine cannot pile up tasks and requests. It holds a number only and carries no tenant data.",
+    "verification": "agent/session_host/runtime_session/memory_block_ready_tests.rs: background_renders_are_admitted_up_to_the_limit_and_freed_when_done"
   }
 ]

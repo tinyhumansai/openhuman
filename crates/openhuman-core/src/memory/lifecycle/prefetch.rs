@@ -125,12 +125,16 @@ fn cache(ctx: &DispatchCtx) -> Arc<Cache> {
 /// successful memory writes and erasure; no engine work runs here.
 pub(crate) fn invalidate(config: &Config) {
     CACHES.invalidate_where(|key| key.workspace == config.workspace_dir);
+    // A memory block rendered ahead of a generation holds what was just
+    // written over or erased; it must not reach a later prompt.
+    crate::agent::session_host::invalidate_ready_memory_blocks(Some(&config.workspace_dir));
 }
 
 /// Clears all automatic packs after engine or credential invalidation. Old
 /// in-flight completions cannot recreate entries they no longer own.
 pub(crate) fn invalidate_all() {
     CACHES.invalidate_all();
+    crate::agent::session_host::invalidate_ready_memory_blocks(None);
 }
 
 fn completed(cache: &Cache, key: &Key) -> Option<TurnPack> {

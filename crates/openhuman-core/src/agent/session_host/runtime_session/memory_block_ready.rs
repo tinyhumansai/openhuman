@@ -13,7 +13,8 @@
 //! [`READY_CAPACITY`] blocks, the oldest making room.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -57,9 +58,10 @@ impl OpenHumanSessionHost {
         if contains(&key) {
             return MemoryBlockPrewarm::AlreadyReady;
         }
+        let ticket = ticket(&key.workspace);
         match prelude.render_in(&scope, max_tokens, "prewarm").await {
-            RenderedBlock::Block(block) => put(key, Some(block.text())),
-            RenderedBlock::Empty => put(key, None),
+            RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
+            RenderedBlock::Empty => put(key, None, ticket),
             _ => return MemoryBlockPrewarm::Failed,
         }
         MemoryBlockPrewarm::Ready
@@ -100,19 +102,39 @@ impl OpenHumanTurnPrelude {
         else {
             return self.render_in(&scope, max_tokens, reason).await;
         };
+        // Renders that outlast their deadline go on in the background; a slow
+        // engine must not pile them up. At the limit this start keeps the
+        // recorded block and tries again at the next one.
+        let Some(slot) = BACKGROUND_RENDERS.acquire() else {
+            tracing::warn!(
+                thread_id = self.thread_id.as_deref().unwrap_or(""),
+                agent_id = self.agent_definition_id.as_str(),
+                reason,
+                limit = MAX_BACKGROUND_RENDERS,
+                "[memory_block] deferred: too many renders in flight, not starting another"
+            );
+            return RenderedBlock::Deferred;
+        };
         let (sender, mut receiver) = tokio::sync::oneshot::channel();
         let prelude = self.clone();
         let reason_owned = reason.to_string();
         let scope_owned = scope.clone();
+        let ticket = ticket(&key.workspace);
         self.spawn_memory_work(async move {
-            let rendered = prelude
-                .render_in(&scope_owned, max_tokens, &reason_owned)
-                .await;
+            let _slot = slot;
+            let Ok(rendered) = tokio::time::timeout(
+                BACKGROUND_RENDER_DEADLINE,
+                prelude.render_in(&scope_owned, max_tokens, &reason_owned),
+            )
+            .await
+            else {
+                return;
+            };
             // Nobody waiting any more: the render is for the next start.
             if let Err(rendered) = sender.send(rendered) {
                 match rendered {
-                    RenderedBlock::Block(block) => put(key, Some(block.text())),
-                    RenderedBlock::Empty => put(key, None),
+                    RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
+                    RenderedBlock::Empty => put(key, None, ticket),
                     _ => {}
                 }
             }
@@ -164,44 +186,181 @@ pub(super) struct ReadyKey {
     pub(super) max_tokens: u32,
 }
 
+/// Most renders left running in the background past their deadline at once.
+pub(super) const MAX_BACKGROUND_RENDERS: usize = 8;
+
+/// How long a background render may run before it is abandoned.
+pub(super) const BACKGROUND_RENDER_DEADLINE: Duration = Duration::from_secs(60);
+
+static BACKGROUND_RENDERS: RenderSlots = RenderSlots::new(MAX_BACKGROUND_RENDERS);
+
+/// A fixed number of places for background renders.
+pub(super) struct RenderSlots {
+    limit: usize,
+    taken: AtomicUsize,
+}
+
+impl RenderSlots {
+    pub(super) const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            taken: AtomicUsize::new(0),
+        }
+    }
+
+    /// A place for one more render; `None` when all are taken. The place is
+    /// freed when the returned guard drops.
+    pub(super) fn acquire(&'static self) -> Option<RenderSlot> {
+        let mut taken = self.taken.load(Ordering::Acquire);
+        while taken < self.limit {
+            match self.taken.compare_exchange_weak(
+                taken,
+                taken + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(RenderSlot(self)),
+                Err(now) => taken = now,
+            }
+        }
+        None
+    }
+}
+
+/// One admitted background render, released on drop.
+pub(super) struct RenderSlot(&'static RenderSlots);
+
+impl Drop for RenderSlot {
+    fn drop(&mut self) {
+        self.0.taken.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Taken when a render starts: it may only store its result while no
+/// invalidation of its workspace (or of everything) has run since, and never
+/// over a block from a render that started after it (`seq`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Ticket {
+    all: u64,
+    workspace: u64,
+    seq: u64,
+}
+
+/// A stored block: its text, when it was put, and the sequence of the render
+/// that produced it.
+type Entry = (Option<String>, Instant, u64);
+
+#[derive(Default)]
+struct State {
+    entries: HashMap<ReadyKey, Entry>,
+    /// Counts invalidations of everything.
+    all: u64,
+    /// Counts invalidations of one workspace; absent is none yet.
+    workspaces: HashMap<PathBuf, u64>,
+    /// Counts renders started.
+    seq: u64,
+}
+
+impl State {
+    fn workspace_epoch(&self, workspace: &Path) -> u64 {
+        self.workspaces.get(workspace).copied().unwrap_or(0)
+    }
+}
+
 /// Blocks waiting for a generation start. `None` is a render that found
 /// nothing known.
 #[derive(Default)]
 pub(super) struct ReadyBlocks {
-    entries: Mutex<HashMap<ReadyKey, (Option<String>, Instant)>>,
+    state: Mutex<State>,
 }
 
 impl ReadyBlocks {
-    /// Holds `block` for `key`, replacing an earlier one.
-    pub(super) fn put_at(&self, key: ReadyKey, block: Option<String>, now: Instant) {
-        let mut entries = self.lock();
-        entries.retain(|_, (_, at)| fresh(*at, now));
+    /// A ticket for a render about to start for `workspace`.
+    pub(super) fn ticket(&self, workspace: &Path) -> Ticket {
+        let mut state = self.lock();
+        state.seq += 1;
+        Ticket {
+            all: state.all,
+            workspace: state.workspace_epoch(workspace),
+            seq: state.seq,
+        }
+    }
+
+    /// Drops every block (those of `workspace` only when given) and voids the
+    /// ticket of every render in flight for it (for all, when none is given),
+    /// so none of them can store a block read before the change that called
+    /// this.
+    pub(super) fn invalidate(&self, workspace: Option<&Path>) {
+        let mut state = self.lock();
+        match workspace {
+            Some(workspace) => {
+                *state.workspaces.entry(workspace.to_path_buf()).or_default() += 1;
+                state.entries.retain(|key, _| key.workspace != workspace);
+            }
+            None => {
+                state.all += 1;
+                state.entries.clear();
+            }
+        }
+    }
+
+    /// Holds `block` for `key`, replacing an earlier one, unless `ticket` is
+    /// void or older than the block already there.
+    pub(super) fn put_ticketed_at(
+        &self,
+        key: ReadyKey,
+        block: Option<String>,
+        ticket: Ticket,
+        now: Instant,
+    ) {
+        let mut state = self.lock();
+        if ticket.all != state.all || ticket.workspace != state.workspace_epoch(&key.workspace) {
+            return;
+        }
+        let entries = &mut state.entries;
+        entries.retain(|_, (_, at, _)| fresh(*at, now));
+        if entries
+            .get(&key)
+            .is_some_and(|(_, _, newer)| *newer > ticket.seq)
+        {
+            return;
+        }
         if entries.len() >= READY_CAPACITY && !entries.contains_key(&key) {
             let oldest = entries
                 .iter()
-                .min_by_key(|(_, (_, at))| *at)
+                .min_by_key(|(_, (_, at, _))| *at)
                 .map(|(key, _)| key.clone());
             if let Some(oldest) = oldest {
                 entries.remove(&oldest);
             }
         }
-        entries.insert(key, (block, now));
+        entries.insert(key, (block, now, ticket.seq));
+    }
+
+    /// Holds `block` for `key`, replacing an earlier one.
+    #[cfg(test)]
+    pub(super) fn put_at(&self, key: ReadyKey, block: Option<String>, now: Instant) {
+        let ticket = self.ticket(&key.workspace);
+        self.put_ticketed_at(key, block, ticket, now);
     }
 
     /// The block ready for `key`, removed; `None` when there is none or it is
     /// stale. `Some(None)` is a ready render that found nothing known.
     pub(super) fn take_at(&self, key: &ReadyKey, now: Instant) -> Option<Option<String>> {
-        let (block, at) = self.lock().remove(key)?;
+        let (block, at, _) = self.lock().entries.remove(key)?;
         fresh(at, now).then_some(block)
     }
 
     /// Whether a fresh block is ready for `key`.
     pub(super) fn contains_at(&self, key: &ReadyKey, now: Instant) -> bool {
-        self.lock().get(key).is_some_and(|(_, at)| fresh(*at, now))
+        self.lock()
+            .entries
+            .get(key)
+            .is_some_and(|(_, at, _)| fresh(*at, now))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<ReadyKey, (Option<String>, Instant)>> {
-        self.entries
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -214,9 +373,22 @@ fn fresh(at: Instant, now: Instant) -> bool {
 
 static READY: LazyLock<ReadyBlocks> = LazyLock::new(ReadyBlocks::default);
 
+/// A ticket for a render about to start for `workspace`; see [`Ticket`].
+pub(super) fn ticket(workspace: &Path) -> Ticket {
+    READY.ticket(workspace)
+}
+
 /// Holds `block` for `key` in the process-wide store.
-pub(super) fn put(key: ReadyKey, block: Option<String>) {
-    READY.put_at(key, block, Instant::now());
+pub(super) fn put(key: ReadyKey, block: Option<String>, ticket: Ticket) {
+    READY.put_ticketed_at(key, block, ticket, Instant::now());
+}
+
+/// Drops the waiting blocks (of one workspace, or all) and voids renders in
+/// flight. Called when memory is written to, erased, or its engine or
+/// credentials change, so a block read before cannot reach a later
+/// generation.
+pub(crate) fn invalidate(workspace: Option<&Path>) {
+    READY.invalidate(workspace);
 }
 
 /// Takes the block ready for `key` from the process-wide store.
