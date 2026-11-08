@@ -48,7 +48,10 @@ fn managed_credential_scope_mirrors_config_not_default_state_dir() {
 #[tokio::test]
 async fn managed_scope_resolves_signin_stored_app_session_token() {
     let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let mut config = test_config(&tmp);
+    // Plaintext, so the scope-only reader needs no TinySecurity configuration
+    // to open it; the scope (dir and flag) is what this test pins.
+    config.secrets.encrypt = false;
 
     // Sign-in writes the app-session token under the config's state dir and
     // encryption setting. `AuthService::from_config` would park it in the
