@@ -98,6 +98,10 @@ pub(super) enum RenderedBlock {
     Empty,
     /// The read failed.
     Failed,
+    /// A memory change (a write, an erase, an engine or account change)
+    /// voided the render while it read: what it read must not be used, nor
+    /// may the block recorded before the change stand in for it.
+    Voided,
     /// The deadline lapsed before the render finished (see
     /// `memory_block_ready.rs`): the render goes on in the background.
     Deferred,
@@ -243,7 +247,7 @@ impl OpenHumanTurnPrelude {
                 SetupPhase::MemoryBlock,
                 self.block_for_generation(max_tokens, reason),
                 |rendered| match rendered {
-                    RenderedBlock::Failed => SetupOutcome::Failed,
+                    RenderedBlock::Failed | RenderedBlock::Voided => SetupOutcome::Failed,
                     RenderedBlock::Deferred => SetupOutcome::Skipped,
                     _ => SetupOutcome::Completed,
                 },
@@ -252,7 +256,7 @@ impl OpenHumanTurnPrelude {
             {
                 RenderedBlock::Block(block) => Some(block),
                 RenderedBlock::Ready(block) => block,
-                RenderedBlock::Empty => None,
+                RenderedBlock::Empty | RenderedBlock::Voided => None,
                 RenderedBlock::Failed | RenderedBlock::Deferred => recorded.clone(),
             },
             None => {
@@ -331,6 +335,7 @@ impl OpenHumanSessionHost {
             RenderedBlock::Block(block) => Some(block),
             RenderedBlock::Empty
             | RenderedBlock::Failed
+            | RenderedBlock::Voided
             | RenderedBlock::Deferred
             | RenderedBlock::Ready(_) => None,
         }

@@ -400,6 +400,7 @@ impl MemoryEngine for SlowEngine {
         &self,
         req: tinymemory_api::ConsolidateRequest,
     ) -> tinymemory_api::Result<tinymemory_api::ConsolidateReceipt> {
+        self.slow().await;
         self.inner.consolidate(req).await
     }
 

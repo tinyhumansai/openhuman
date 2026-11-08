@@ -83,12 +83,17 @@ impl OpenHumanSessionHost {
             );
             return MemoryBlockPrewarm::Failed;
         };
-        match rendered {
+        let stored = match rendered {
             RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
             RenderedBlock::Empty => put(key, None, ticket),
             _ => return MemoryBlockPrewarm::Failed,
+        };
+        // A render a memory change voided stored nothing: no block waits.
+        if stored {
+            MemoryBlockPrewarm::Ready
+        } else {
+            MemoryBlockPrewarm::Failed
         }
-        MemoryBlockPrewarm::Ready
     }
 }
 
@@ -124,7 +129,20 @@ impl OpenHumanTurnPrelude {
             .memory_block_deadline_ms
             .map(Duration::from_millis)
         else {
-            return self.render_in(&scope, max_tokens, reason).await;
+            let rendered = self.render_in(&scope, max_tokens, reason).await;
+            // A memory change while it read voids it: no block rather than
+            // one read before the erase.
+            return if ticket.is_live() {
+                rendered
+            } else {
+                tracing::info!(
+                    thread_id = self.thread_id.as_deref().unwrap_or(""),
+                    agent_id = self.agent_definition_id.as_str(),
+                    reason,
+                    "[memory_block] render voided by a memory change, dropping it"
+                );
+                RenderedBlock::Voided
+            };
         };
         let (mut sender, mut receiver) = tokio::sync::oneshot::channel();
         let prelude = self.clone();
@@ -135,9 +153,15 @@ impl OpenHumanTurnPrelude {
         self.spawn_memory_work(async move {
             let mut render = Box::pin(prelude.render_in(&scope_owned, max_tokens, &reason_owned));
             // The turn waits for the render up to its deadline.
-            let rendered = match tokio::time::timeout(deadline, &mut render).await {
-                Ok(rendered) => rendered,
-                Err(_) => {
+            // A turn that is cancelled drops its receiver: that ends the
+            // wait early, and the render is background work from then on.
+            let waited = tokio::select! {
+                waited = tokio::time::timeout(deadline, &mut render) => waited.ok(),
+                () = sender.closed() => None,
+            };
+            let rendered = match waited {
+                Some(rendered) => rendered,
+                None => {
                     // Past it the render is background work, which a slow
                     // engine must not pile up: at the limit it is dropped,
                     // and the next generation start renders for itself.
@@ -180,15 +204,22 @@ impl OpenHumanTurnPrelude {
                     reason = reason_owned.as_str(),
                     "[memory_block] render voided by a memory change, dropping it"
                 );
-                RenderedBlock::Failed
+                RenderedBlock::Voided
             };
             // Nobody waiting any more: the render is for the next start.
-            if let Err(rendered) = sender.send(rendered) {
-                match rendered {
-                    RenderedBlock::Block(block) => put(key, Some(block.text()), ticket),
-                    RenderedBlock::Empty => put(key, None, ticket),
-                    _ => {}
+            let delivered = matches!(rendered, RenderedBlock::Block(_) | RenderedBlock::Empty);
+            match sender.send(rendered) {
+                // The waiting generation took it: an older render finishing
+                // later must not store its block over this one's.
+                Ok(()) if delivered => delivered_to_generation(key, ticket),
+                Ok(()) => {}
+                Err(RenderedBlock::Block(block)) => {
+                    put(key, Some(block.text()), ticket);
                 }
+                Err(RenderedBlock::Empty) => {
+                    put(key, None, ticket);
+                }
+                Err(_) => {}
             }
         });
         match tokio::time::timeout(deadline, &mut receiver).await {
@@ -401,18 +432,44 @@ impl ReadyBlocks {
         &self,
         key: ReadyKey,
         block: Option<String>,
+        ticket: Ticket,
+        now: Instant,
+    ) -> bool {
+        self.store(key, Some(block), ticket, now)
+    }
+
+    /// Records that the render of `ticket` went straight to a generation
+    /// start: nothing waits, but its sequence is kept so an older render
+    /// finishing later cannot store its own block over it.
+    pub(super) fn delivered_at(&self, key: ReadyKey, ticket: Ticket, now: Instant) {
+        self.store(key, None, ticket, now);
+    }
+
+    fn store(
+        &self,
+        key: ReadyKey,
+        block: Option<Option<String>>,
         mut ticket: Ticket,
         now: Instant,
-    ) {
+    ) -> bool {
         let mut state = self.lock();
         ticket.tracked = false;
         if state.in_flight.remove(&ticket.seq).is_none() {
-            return;
+            tracing::debug!(
+                seq = ticket.seq,
+                "[memory_block] render not stored: voided by a memory change"
+            );
+            return false;
         }
         let entries = &mut state.entries;
         entries.retain(|_, entry| fresh(entry.at, now));
-        if entries.get(&key).is_some_and(|held| held.seq > ticket.seq) {
-            return;
+        if let Some(held) = entries.get(&key).filter(|held| held.seq > ticket.seq) {
+            tracing::debug!(
+                seq = ticket.seq,
+                newer_seq = held.seq,
+                "[memory_block] render not stored: a newer render came first"
+            );
+            return false;
         }
         if entries.len() >= READY_CAPACITY && !entries.contains_key(&key) {
             let oldest = entries
@@ -426,11 +483,12 @@ impl ReadyBlocks {
         entries.insert(
             key,
             Entry {
-                block: Some(block),
+                block,
                 at: now,
                 seq: ticket.seq,
             },
         );
+        true
     }
 
     /// Holds `block` for `key`, replacing an earlier one.
@@ -477,9 +535,16 @@ pub(super) fn ticket(workspace: &Path) -> Ticket {
     READY.ticket(workspace)
 }
 
-/// Holds `block` for `key` in the process-wide store.
-pub(super) fn put(key: ReadyKey, block: Option<String>, ticket: Ticket) {
-    READY.put_ticketed_at(key, block, ticket, Instant::now());
+/// Holds `block` for `key` in the process-wide store; whether it was kept
+/// (not when a memory change voided its render, or a newer one came first).
+pub(super) fn put(key: ReadyKey, block: Option<String>, ticket: Ticket) -> bool {
+    READY.put_ticketed_at(key, block, ticket, Instant::now())
+}
+
+/// Records a render a generation start took directly; see
+/// [`ReadyBlocks::delivered_at`].
+pub(super) fn delivered_to_generation(key: ReadyKey, ticket: Ticket) {
+    READY.delivered_at(key, ticket, Instant::now());
 }
 
 /// Drops the waiting blocks (of one workspace, or all) and voids renders in

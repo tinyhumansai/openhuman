@@ -554,6 +554,28 @@ fn key_digest(key: &str) -> String {
 #[cfg(test)]
 pub(crate) static CACHE_STABLE: RwLock<()> = RwLock::new(());
 
+/// Drops what memory read before its engine, key or account changed: the
+/// waiting blocks and the renders in flight. Under test it holds the same
+/// read guard as [`invalidate`], so a test that pinned the cache with
+/// [`CACHE_STABLE`] is not disturbed by an unrelated one.
+pub(crate) fn drop_memory_reads() {
+    #[cfg(test)]
+    let _stable = CACHE_STABLE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    super::lifecycle::prefetch::invalidate_all();
+}
+
+/// [`drop_memory_reads`] when `provider` names the memory engine's API key
+/// credential: bare or `provider:`-qualified, in any case.
+pub(crate) fn drop_memory_reads_for_provider(provider: &str) {
+    let name = provider.trim().to_ascii_lowercase();
+    let name = name.strip_prefix("provider:").unwrap_or(&name).trim();
+    if name.eq_ignore_ascii_case(MEMORY_CORTEXDB_KEY_NAME) {
+        drop_memory_reads();
+    }
+}
+
 /// Drops every cached engine, so the next [`resolve`] rebuilds.
 pub fn invalidate() {
     #[cfg(test)]
@@ -589,7 +611,7 @@ pub async fn store_cortexdb_key(config: &Config, key: &str) -> Result<()> {
         .map_err(|error| Error::Engine(format!("storing the API key failed: {error}")))?;
     tracing::debug!("[memory:engine] cortexdb key stored");
     // Memory read under the old key is not the new key's account's.
-    super::lifecycle::prefetch::invalidate_all();
+    drop_memory_reads();
     Ok(())
 }
 
@@ -599,7 +621,7 @@ pub async fn clear_cortexdb_key(config: &Config) -> Result<bool> {
         .remove_profile(MEMORY_CORTEXDB_KEY_NAME, DEFAULT_AUTH_PROFILE_NAME)
         .await
         .map_err(|error| Error::Engine(format!("removing the API key failed: {error}")))?;
-    super::lifecycle::prefetch::invalidate_all();
+    drop_memory_reads();
     Ok(removed)
 }
 

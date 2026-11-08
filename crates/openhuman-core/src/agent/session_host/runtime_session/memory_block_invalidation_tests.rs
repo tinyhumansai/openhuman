@@ -209,7 +209,6 @@ async fn a_render_inside_the_foreground_deadline_is_not_cut_at_the_background_li
 #[tokio::test]
 async fn storing_the_memory_credential_drops_the_waiting_block() {
     let (_serial, config) = credential_config().await;
-    let _stable = undisturbed();
     prewarmed(&config).await;
 
     crate::credentials::ops::store_provider_credentials(
@@ -229,7 +228,6 @@ async fn storing_the_memory_credential_drops_the_waiting_block() {
 #[tokio::test]
 async fn removing_the_memory_credential_drops_the_waiting_block() {
     let (_serial, config) = credential_config().await;
-    let _stable = undisturbed();
     prewarmed(&config).await;
 
     crate::credentials::ops::remove_provider_credentials(
@@ -246,6 +244,8 @@ async fn removing_the_memory_credential_drops_the_waiting_block() {
 #[tokio::test]
 async fn another_providers_credential_keeps_the_waiting_block() {
     let (_serial, config) = credential_config().await;
+    // Nothing else may clear the block meanwhile: an unrelated credential
+    // never takes the read guard this holds out.
     let _stable = undisturbed();
     prewarmed(&config).await;
 
@@ -266,7 +266,6 @@ async fn another_providers_credential_keeps_the_waiting_block() {
 #[tokio::test]
 async fn storing_the_cortexdb_key_drops_the_waiting_block() {
     let (_serial, config) = credential_config().await;
-    let _stable = undisturbed();
     prewarmed(&config).await;
 
     crate::memory::engine::store_cortexdb_key(&config, "cdb-key")
@@ -279,7 +278,6 @@ async fn storing_the_cortexdb_key_drops_the_waiting_block() {
 #[tokio::test]
 async fn clearing_the_cortexdb_key_drops_the_waiting_block() {
     let (_serial, config) = credential_config().await;
-    let _stable = undisturbed();
     crate::memory::engine::store_cortexdb_key(&config, "cdb-key")
         .await
         .expect("stored");
@@ -290,6 +288,37 @@ async fn clearing_the_cortexdb_key_drops_the_waiting_block() {
         .expect("cleared");
 
     assert!(!a_block_waits(&config).await);
+}
+
+/// Runs a test that installs the host engine in a child process of its own.
+/// The host engine is the one every workspace resolves to, so installing it
+/// here would change what unrelated tests in this process read. Returns
+/// `true` in the child, which runs the body; the parent asserts the child
+/// passed and returns `false`.
+fn in_child_process(name: &str) -> bool {
+    const CHILD_FLAG: &str = "OPENHUMAN_MEMORY_BLOCK_HOST_ENGINE_CHILD";
+    if std::env::var_os(CHILD_FLAG).as_deref() == Some(std::ffi::OsStr::new("1")) {
+        return true;
+    }
+    let path = module_path!().split_once("::").map_or("", |(_, rest)| rest);
+    let exact = format!("{path}::{name}");
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &exact, "--nocapture"])
+        .env(CHILD_FLAG, "1")
+        .output()
+        .expect("test child starts");
+    assert!(
+        child.status.success(),
+        "host-engine child failed: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&child.stdout).contains("1 passed"),
+        "the exact child test must run: {}",
+        String::from_utf8_lossy(&child.stdout)
+    );
+    false
 }
 
 /// Clears the host engine a test installed, even when it fails.
@@ -303,6 +332,9 @@ impl Drop for ClearHostEngine {
 
 #[tokio::test(start_paused = true)]
 async fn replacing_the_host_engine_drops_the_waiting_block() {
+    if !in_child_process("replacing_the_host_engine_drops_the_waiting_block") {
+        return;
+    }
     let _stable = undisturbed();
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
@@ -422,7 +454,7 @@ async fn generation_starts_beyond_the_render_limit_keep_no_background_render() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_host_engine_is_shared_so_a_write_drops_every_workspaces_block() {
+async fn a_write_through_a_shared_engine_drops_every_workspaces_block() {
     let _stable = undisturbed();
     let one = tempfile::tempdir().unwrap();
     let two = tempfile::tempdir().unwrap();
@@ -430,20 +462,10 @@ async fn the_host_engine_is_shared_so_a_write_drops_every_workspaces_block() {
     prewarmed(&config_one).await;
     prewarmed(&config_two).await;
 
-    let _clear = ClearHostEngine;
-    crate::memory::engine::install_host_engine(Arc::new(
-        tinymemory_api::conformance::ReferenceEngine::new(),
-    ));
-    host(&config_one, PROMPT, false)
-        .prewarm_memory_block()
-        .await;
-    host(&config_two, PROMPT, false)
-        .prewarm_memory_block()
-        .await;
-    assert!(a_block_waits(&config_two).await);
+    // What `invalidate` runs while the host engine serves every workspace.
+    crate::memory::lifecycle::prefetch::invalidate_with(&config_one, true);
 
-    crate::memory::lifecycle::prefetch::invalidate(&config_one);
-
+    assert!(!a_block_waits(&config_one).await);
     assert!(!a_block_waits(&config_two).await);
 }
 
@@ -456,7 +478,7 @@ async fn another_workspaces_write_keeps_a_block_when_engines_are_not_shared() {
     prewarmed(&config_one).await;
     prewarmed(&config_two).await;
 
-    crate::memory::lifecycle::prefetch::invalidate(&config_one);
+    crate::memory::lifecycle::prefetch::invalidate_with(&config_one, false);
 
     assert!(!a_block_waits(&config_one).await);
     assert!(a_block_waits(&config_two).await);
@@ -488,4 +510,232 @@ async fn a_background_memory_job_run_drops_the_waiting_block() {
 
     assert!(!runs.is_empty());
     assert!(!a_block_waits(&config).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_render_whose_turn_was_cancelled_is_held_to_the_background_deadline() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = with_deadline(config_in(&tmp), 120_000);
+    SlowEngine::bind(
+        &SlowEngine::new(std::time::Duration::from_secs(70)),
+        &config,
+    );
+    let prelude = prelude(&config, "You are blocky, v2.", true);
+    let (recorded, history) = generation_start();
+
+    // The turn gives up long before its deadline.
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        prepare(&prelude, false, &view(&recorded, &history, None)),
+    )
+    .await;
+    assert!(cancelled.is_err());
+    tokio::time::sleep(std::time::Duration::from_secs(100)).await;
+
+    assert!(
+        !a_block_waits(&config).await,
+        "the render ran on past the background limit"
+    );
+}
+
+/// A first turn's refresh of a recorded block, with `forget` run `after` into
+/// the render; the memory block the next prefix holds, if any.
+async fn refreshed_across_a_change(config: &Config, after: std::time::Duration) -> Vec<String> {
+    let prelude = prelude(config, "You are blocky, v2.", true);
+    let (recorded, history) = generation_start();
+    let change = async {
+        tokio::time::sleep(after).await;
+        crate::memory::lifecycle::prefetch::invalidate(config);
+    };
+    let view = view(&recorded, &history, None);
+    let (prepared, ()) = tokio::join!(prepare(&prelude, false, &view), change);
+    prepared
+        .0
+        .prefix
+        .map(|prefix| prefix.messages().iter().map(Message::text).collect())
+        .unwrap_or_default()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_render_voided_without_a_deadline_does_not_restore_the_recorded_block() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    SlowEngine::bind(&SlowEngine::new(SLOW), &config);
+
+    let texts = refreshed_across_a_change(&config, SLOW / 2).await;
+
+    assert!(
+        !texts.iter().any(|text| text.contains("teal")),
+        "the block recorded before the change must not stand in: {texts:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_render_voided_inside_the_deadline_does_not_restore_the_recorded_block() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = with_deadline(config_in(&tmp), 60_000);
+    SlowEngine::bind(&SlowEngine::new(SLOW), &config);
+
+    let texts = refreshed_across_a_change(&config, SLOW / 2).await;
+
+    assert!(!texts.iter().any(|text| text.contains("teal")), "{texts:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failed_render_still_keeps_the_recorded_block() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    crate::memory::test_fixtures::RefusingEngine::with(tinymemory_api::Error::Engine(
+        "down".into(),
+    ))
+    .bind(&config);
+    let prelude = prelude(&config, "You are blocky, v2.", true);
+    let (recorded, history) = generation_start();
+
+    let (prepared, _) = prepare(&prelude, false, &view(&recorded, &history, None)).await;
+
+    let texts: Vec<String> = prepared
+        .prefix
+        .map(|prefix| prefix.messages().iter().map(Message::text).collect())
+        .unwrap_or_default();
+    assert!(texts.iter().any(|text| text.contains("teal")), "{texts:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_prewarm_voided_while_it_read_reports_that_nothing_waits() {
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    SlowEngine::bind(&SlowEngine::new(SLOW), &config);
+    let change = async {
+        tokio::time::sleep(SLOW / 2).await;
+        crate::memory::lifecycle::prefetch::invalidate(&config);
+    };
+
+    let session = host(&config, PROMPT, false);
+    let (prewarm, ()) = tokio::join!(session.prewarm_memory_block(), change);
+
+    assert_eq!(prewarm, MemoryBlockPrewarm::Failed);
+    assert!(!a_block_waits(&config).await, "nothing was stored");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_job_run_drops_the_waiting_block() {
+    use crate::memory::lifecycle::jobs;
+    use tinymemory_api::{ConsolidateRequest, ItemKind, Namespace, Reach};
+    use tinymemory_tools::queue::Selection;
+    use tinymemory_tools::BackgroundJob;
+
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_in(&tmp);
+    config.memory.recall.build_delay_secs = 0;
+    prewarmed(&config).await;
+    // The engine now takes a while to build beliefs.
+    SlowEngine::bind(&SlowEngine::new(SLOW), &config);
+    jobs::enqueue(
+        &config,
+        &Namespace::ROOT,
+        vec![BackgroundJob::BuildBeliefs {
+            request: ConsolidateRequest::new(Reach::exact(Namespace::agent("a")))
+                .kinds([ItemKind::Conversation]),
+        }],
+    )
+    .await;
+
+    // A profile fence cancels the run part way.
+    let run = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        jobs::run(&config, Selection::Due),
+    )
+    .await;
+    assert!(run.is_err(), "the run was cancelled");
+
+    assert!(!a_block_waits(&config).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_job_run_with_nothing_due_keeps_the_waiting_block() {
+    use crate::memory::lifecycle::jobs;
+    use tinymemory_tools::queue::Selection;
+
+    let _stable = undisturbed();
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    prewarmed(&config).await;
+
+    let runs = jobs::run(&config, Selection::Due).await.expect("ran");
+
+    assert!(runs.is_empty());
+    assert!(a_block_waits(&config).await);
+}
+
+#[tokio::test]
+async fn a_provider_qualified_memory_credential_drops_the_waiting_block() {
+    let (_serial, config) = credential_config().await;
+    prewarmed(&config).await;
+
+    crate::credentials::ops::store_provider_credentials(
+        &config,
+        "provider:memory-cortexdb",
+        None,
+        Some("cdb-key".into()),
+        None,
+        None,
+    )
+    .await
+    .expect("stored");
+
+    assert!(!a_block_waits(&config).await);
+}
+
+#[tokio::test]
+async fn selecting_another_memory_account_drops_the_waiting_block() {
+    let (_serial, config) = credential_config().await;
+    let auth = crate::credentials::AuthService::from_config(&config);
+    auth.store_provider_token(
+        crate::config::schema::MEMORY_CORTEXDB_KEY_NAME,
+        "second",
+        "cdb-second",
+        std::collections::HashMap::new(),
+        false,
+    )
+    .await
+    .expect("second account stored");
+    prewarmed(&config).await;
+
+    auth.set_active_profile(crate::config::schema::MEMORY_CORTEXDB_KEY_NAME, "second")
+        .await
+        .expect("selected");
+
+    assert!(!a_block_waits(&config).await);
+}
+
+#[tokio::test]
+async fn selecting_another_providers_profile_keeps_the_waiting_block() {
+    let (_serial, config) = credential_config().await;
+    // Nothing else may clear the block meanwhile: an unrelated provider
+    // never takes the read guard this holds out.
+    let _stable = undisturbed();
+    let auth = crate::credentials::AuthService::from_config(&config);
+    auth.store_provider_token(
+        "openai",
+        "second",
+        "sk-second",
+        std::collections::HashMap::new(),
+        false,
+    )
+    .await
+    .expect("stored");
+    prewarmed(&config).await;
+
+    auth.set_active_profile("openai", "second")
+        .await
+        .expect("selected");
+
+    assert!(a_block_waits(&config).await);
 }

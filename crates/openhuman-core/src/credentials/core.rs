@@ -114,6 +114,9 @@ impl AuthService {
         self.store
             .set_active_profile(&provider, &profile_id)
             .await?;
+        // Another account's key now serves memory: what was read as the
+        // previous one must not reach the next generation.
+        crate::memory::engine::drop_memory_reads_for_provider(&provider);
         Ok(profile_id)
     }
 
